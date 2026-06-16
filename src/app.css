@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", "Inter Tight", "Inter", "Segoe UI",
+    system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas,
+    "Liberation Mono", monospace;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Geometry tokens ---- */
+  --topbar-h: 60px;
+  --rail-w: 268px;
+  --inspector-w: 380px;
+  --gap: 16px;
+
+  --radius-xs: 2px; /* crisp data corners */
+  --radius-sm: 6px; /* inputs, chips */
+  --radius-md: 8px; /* buttons, tabs */
+  --radius-lg: 12px; /* cards */
+  --radius-xl: 16px; /* shell panels */
+
+  /* ---- Motion tokens ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-hover: 120ms;
+  --dur-slide: 180ms;
+  --dur-graph: 280ms;
+
+  /* ===== DARK: Graphite Workshop ===== */
+  --canvas: #0d0f10;
+  --bg: #111315;
+  --bg-elevated: #16191c;
+
+  --surface-1: #181b1f;
+  --surface-2: #20242a;
+  --surface-3: #282d34;
+  --surface-inset: #121416;
+
+  --border-subtle: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.095);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --text: #eef0ea;
+  --text-muted: #a7ada5;
+  --text-soft: #737b76;
+  --text-inverse: #171813;
+
+  --brand: #d7a84f; /* brass */
+  --brand-strong: #f1c76a;
+  --brand-muted: #9f7a35;
+  --brand-soft: rgba(215, 168, 79, 0.14);
+
+  --signal: #7ea7a6; /* teal — secondary accent */
+  --signal-strong: #9cc4c3;
+  --signal-soft: rgba(126, 167, 166, 0.14);
+
+  /* Phase identity tints — used by lifecycle visuals */
+  --phase-warmup: #9f7a35;
+  --phase-latency: #7ea7a6;
+  --phase-download: #6fa77a; /* organic green */
+  --phase-upload: #d7a84f; /* brass */
+  --phase-complete: #9cc4c3;
+
+  /* Status tones — industrial, print-friendly */
+  --ok: #6fa77a;
+  --ok-soft: rgba(111, 167, 122, 0.14);
+  --warn: #d7a84f;
+  --warn-soft: rgba(215, 168, 79, 0.14);
+  --err: #c96f5d;
+  --err-soft: rgba(201, 111, 93, 0.15); /* clay */
+  --info: #7ea7a6;
+  --info-soft: rgba(126, 167, 166, 0.14);
+
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.28), 0 10px 30px rgba(0, 0, 0, 0.2);
+  --shadow-float: 0 18px 70px rgba(0, 0, 0, 0.42);
+
+  /* Graph-specific */
+  --grid-line: rgba(255, 255, 255, 0.05);
+  --grid-line-major: rgba(255, 255, 255, 0.09);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #e4ded2;
+  --bg: #efede7;
+  --bg-elevated: #f5f2eb;
+
+  --surface-1: #fbfaf6;
+  --surface-2: #f3f0e8;
+  --surface-3: #e9e4da;
+  --surface-inset: #e7e1d5;
+
+  --border-subtle: rgba(35, 37, 33, 0.06);
+  --border: rgba(35, 37, 33, 0.115);
+  --border-strong: rgba(35, 37, 33, 0.2);
+
+  --text: #232521;
+  --text-muted: #686b62;
+  --text-soft: #8c8f85;
+  --text-inverse: #fbfaf6;
+
+  --brand: #9c6b1f;
+  --brand-strong: #6f4a13;
+  --brand-muted: #b88737;
+  --brand-soft: rgba(156, 107, 31, 0.12);
+
+  --signal: #527f7d;
+  --signal-strong: #3d6361;
+  --signal-soft: rgba(82, 127, 125, 0.13);
+
+  --phase-warmup: #b88737;
+  --phase-latency: #527f7d;
+  --phase-download: #567f5f;
+  --phase-upload: #9c6b1f;
+  --phase-complete: #3d6361;
+
+  --ok: #567f5f;
+  --ok-soft: rgba(86, 127, 95, 0.13);
+  --warn: #9c6b1f;
+  --warn-soft: rgba(156, 107, 31, 0.13);
+  --err: #a85544;
+  --err-soft: rgba(168, 85, 68, 0.13);
+  --info: #527f7d;
+  --info-soft: rgba(82, 127, 125, 0.13);
+
+  --shadow-card: 0 1px 1px rgba(65, 53, 36, 0.08), 0 10px 32px rgba(65, 53, 36, 0.1);
+  --shadow-float: 0 18px 60px rgba(65, 53, 36, 0.18);
+
+  --grid-line: rgba(35, 37, 33, 0.05);
+  --grid-line-major: rgba(35, 37, 33, 0.09);
+}
+
+/* ---- Tailwind semantic bridge: map tokens → utilities ---- */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-bg: var(--bg);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-inset: var(--surface-inset);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-soft: var(--text-soft);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-signal: var(--signal);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+/* ---- Base ---- */
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---- Global focus ring (§7) ---- */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* ---- Reduced motion (§4.5) ---- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
