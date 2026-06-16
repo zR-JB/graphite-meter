@@ -10,6 +10,7 @@
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
   import TriagePanel from "./TriagePanel.svelte";
   import ReactorStage from "./ReactorStage.svelte";
+  import TimeseriesTheatre from "./TimeseriesTheatre.svelte";
   import InfraCard from "./InfraCard.svelte";
   import TelemetryDetail from "./TelemetryDetail.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -80,7 +81,7 @@
   <!-- CENTER STAGE -->
   <section class="zone stage min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
     <ReactorStage />
-    <div class="ph" style="min-height: 220px">TimeseriesTheatre</div>
+    <TimeseriesTheatre />
     <div class="grid grid-cols-3 gap-4">
       <div class="ph" style="min-height: 120px">Download</div>
       <div class="ph" style="min-height: 120px">Upload</div>

@@ -1,0 +1,138 @@
+<script lang="ts">
+  /* ============================================================
+   * <TimeseriesTheatre> — dual-axis canvas chart (§3.2)
+   * Thin wrapper around ChartEngine. Owns hover scrub: feeds the
+   * cursor x to the engine (which draws the guideline) and renders
+   * a floating mono readout chip in DOM.
+   * ============================================================ */
+  import { onMount } from "svelte";
+  import { console as store } from "../state/console.svelte";
+  import { ChartEngine, type HoverInfo } from "../canvas/ChartEngine";
+  import { fmtSpeed, fmtMs } from "../format";
+
+  let canvasEl = $state<HTMLCanvasElement>();
+  let engine: ChartEngine;
+  let hover = $state<HoverInfo | null>(null);
+
+  function onMove(e: MouseEvent) {
+    if (!engine) return;
+    engine.setHover(e.offsetX);
+    hover = engine.hoverInfo();
+  }
+  function onLeave() {
+    engine?.setHover(null);
+    hover = null;
+  }
+
+  onMount(() => {
+    engine = new ChartEngine(
+      () => ({
+        throughput: store.throughput,
+        latency: store.latency,
+        phase: store.phase,
+      }),
+      {
+        throughput: (bps) => fmtSpeed(store.toUnit(bps)),
+        latency: (rtt) => fmtMs(rtt),
+      },
+    );
+    engine.attach(canvasEl!);
+    engine.start();
+
+    const mo = new MutationObserver(() => engine.invalidateTheme());
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    const ro = new ResizeObserver(() => engine.invalidateTheme());
+    ro.observe(canvasEl!);
+
+    return () => {
+      engine.destroy();
+      mo.disconnect();
+      ro.disconnect();
+    };
+  });
+</script>
+
+<section class="theatre">
+  <div
+    class="plot"
+    role="img"
+    aria-label="Throughput and latency over time"
+    onmousemove={onMove}
+    onmouseleave={onLeave}
+  >
+    <canvas bind:this={canvasEl} class="canvas"></canvas>
+
+    {#if hover}
+      <div
+        class="chip"
+        style="left:{hover.x}px"
+        class:flip={canvasEl && hover.x > canvasEl.clientWidth - 130}
+      >
+        <div class="chip-row"><span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b></div>
+        {#if hover.bps != null}
+          <div class="chip-row">
+            <span>rate</span><b>{fmtSpeed(store.toUnit(hover.bps))} {store.unitLabel}</b>
+          </div>
+        {/if}
+        {#if hover.rtt != null}
+          <div class="chip-row"><span>rtt</span><b>{fmtMs(hover.rtt)} ms</b></div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+</section>
+
+<style>
+  .theatre {
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-card);
+  }
+  .plot {
+    position: relative;
+    height: 210px;
+    border-radius: var(--radius-md);
+    background: var(--surface-inset);
+    overflow: hidden;
+  }
+  .canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .chip {
+    position: absolute;
+    top: 8px;
+    transform: translateX(8px);
+    pointer-events: none;
+    min-width: 112px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    box-shadow: var(--shadow-card);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .chip.flip {
+    transform: translateX(-100%) translateX(-8px);
+  }
+  .chip-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    line-height: 1.5;
+  }
+  .chip-row span {
+    color: var(--text-soft);
+  }
+  .chip-row b {
+    color: var(--text);
+    font-weight: 600;
+  }
+</style>
