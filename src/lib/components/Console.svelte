@@ -9,6 +9,7 @@
   import { console as store } from "../state/console.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
   import TriagePanel from "./TriagePanel.svelte";
+  import ReactorStage from "./ReactorStage.svelte";
   import InfraCard from "./InfraCard.svelte";
   import TelemetryDetail from "./TelemetryDetail.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -78,7 +79,7 @@
 
   <!-- CENTER STAGE -->
   <section class="zone stage min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
-    <div class="ph" style="min-height: 240px">ReactorStage</div>
+    <ReactorStage />
     <div class="ph" style="min-height: 220px">TimeseriesTheatre</div>
     <div class="grid grid-cols-3 gap-4">
       <div class="ph" style="min-height: 120px">Download</div>
