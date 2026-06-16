@@ -180,6 +180,32 @@ body {
   outline-offset: 2px;
 }
 
+/* ---- Status / phase tone driver (§4.4) ----
+   A single data-phase attribute on #console lets any descendant
+   theme to the active phase via var(--active-accent), no prop drilling. */
+#console {
+  --active-accent: var(--brand);
+}
+#console[data-phase="warmup"] {
+  --active-accent: var(--phase-warmup);
+}
+#console[data-phase="latency"] {
+  --active-accent: var(--phase-latency);
+}
+#console[data-phase="download"] {
+  --active-accent: var(--phase-download);
+}
+#console[data-phase="upload"] {
+  --active-accent: var(--phase-upload);
+}
+#console[data-phase="complete"] {
+  --active-accent: var(--phase-complete);
+}
+#console[data-phase="error"],
+#console[data-phase="aborted"] {
+  --active-accent: var(--err);
+}
+
 /* ---- Reduced motion (§4.5) ---- */
 @media (prefers-reduced-motion: reduce) {
   *,

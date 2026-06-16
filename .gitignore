@@ -3,3 +3,6 @@ dist
 .DS_Store
 *.local
 .vite
+
+# Claude Code — personal, machine-local settings (shared settings.json is tracked)
+.claude/settings.local.json
