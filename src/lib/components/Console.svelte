@@ -18,7 +18,7 @@
   // Layout state. `inspectorVisible` drives the column (wide) AND the
   // drawer (narrow); matchMedia sets a sensible default per breakpoint.
   let inspectorVisible = $state(true);
-  let railCollapsed = $state(false);
+  let railOpen = $state(true);
 
   function toggleTheme() {
     const cur = document.documentElement.getAttribute("data-theme");
@@ -37,10 +37,21 @@
     apply();
     mq.addEventListener("change", apply);
 
+    // Rail default per breakpoint: a grid column ≥760px, an off-canvas drawer
+    // below. Crossing the boundary resets it so the rail is never stranded,
+    // and ☰ always has a visible effect (collapse on wide, open drawer on narrow).
+    const mqRail = window.matchMedia("(min-width: 760px)");
+    const applyRail = () => {
+      railOpen = mqRail.matches;
+    };
+    applyRail();
+    mqRail.addEventListener("change", applyRail);
+
     void bootRunner();
 
     return () => {
       mq.removeEventListener("change", apply);
+      mqRail.removeEventListener("change", applyRail);
       teardownRunner();
     };
   });
@@ -51,7 +62,8 @@
   data-phase={store.phase}
   class:inspector-collapsed={!inspectorVisible}
   class:inspector-open={inspectorVisible}
-  class:rail-collapsed={railCollapsed}
+  class:rail-open={railOpen}
+  class:rail-collapsed={!railOpen}
   class="bg-bg text-text"
 >
   <!-- TOPBAR -->
@@ -59,7 +71,7 @@
     <button
       class="ghost-btn"
       aria-label="Toggle rail"
-      onclick={() => (railCollapsed = !railCollapsed)}>☰</button
+      onclick={() => (railOpen = !railOpen)}>☰</button
     >
     <span class="font-mono text-sm font-bold tracking-tight">Graphite&nbsp;Meter</span>
     <span class="pill">{store.effectiveConnectivity}</span>
@@ -77,6 +89,14 @@
   <nav class="zone rail border-r border-border bg-surface-1 p-3">
     <TriagePanel />
   </nav>
+
+  <!-- Rail drawer backdrop (narrow viewports only) -->
+  <button
+    class="rail-backdrop"
+    aria-label="Close rail"
+    tabindex={railOpen ? 0 : -1}
+    onclick={() => (railOpen = false)}
+  ></button>
 
   <!-- CENTER STAGE -->
   <section class="zone stage min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
@@ -128,6 +148,7 @@
   }
   .rail {
     grid-area: rail;
+    overflow: hidden auto; /* vertical scroll for tall rails */
   }
   .stage {
     grid-area: stage;
@@ -140,19 +161,29 @@
     font-size: 11px;
   }
 
-  /* Manual collapse (wide mode) */
+  /* Manual collapse (grid mode, ≥760): zero the track AND remove the rail
+     from the render tree, so no content can peek behind the stage panel. */
   #console.inspector-collapsed {
     --inspector-w: 0px;
   }
   #console.rail-collapsed {
     --rail-w: 0px;
   }
+  #console.rail-collapsed .rail {
+    display: none;
+  }
+  /* Same as the rail: when collapsed in grid mode (≥1440) drop the inspector
+     from the render tree so its 0-width column can't overflow to the right. */
+  #console.inspector-collapsed .inspector {
+    display: none;
+  }
   .inspector {
     overflow: hidden auto;
   }
 
-  /* The drawer backdrop is inert on wide layouts */
-  .backdrop {
+  /* Drawer backdrops are inert on wide layouts */
+  .backdrop,
+  .rail-backdrop {
     display: none;
     border: 0;
     padding: 0;
@@ -223,6 +254,12 @@
       z-index: 40;
       box-shadow: var(--shadow-float);
     }
+    /* In drawer mode keep the inspector rendered (overriding the grid-mode
+       display:none) so its slide transition can play; off-canvas content is
+       clipped by the body's overflow-x:hidden. */
+    #console.inspector-collapsed .inspector {
+      display: block;
+    }
     #console.inspector-open .inspector {
       transform: translateX(0);
     }
@@ -235,14 +272,12 @@
     }
   }
 
-  /* 760–1099: rail collapses to a 56px icon strip */
-  @media (max-width: 1099px) {
-    #console {
-      --rail-w: 56px;
-    }
-  }
+  /* (The former 760–1099 56px icon-strip half-state was removed: the rail is
+     now binary — full column or fully hidden — which is cleaner and avoids
+     clipped, unusable icon-only content.) */
 
-  /* < 760: single-column stack */
+  /* < 760: single-column stack; the rail becomes a left slide-in drawer
+     (mirroring the inspector) so it stays reachable via ☰. */
   @media (max-width: 759px) {
     #console {
       grid-template-columns: 1fr;
@@ -254,7 +289,30 @@
       min-height: 100dvh;
     }
     .rail {
-      display: none;
+      position: fixed;
+      top: var(--topbar-h);
+      left: 0;
+      bottom: 28px;
+      width: min(280px, 82vw);
+      transform: translateX(-100%);
+      transition: transform var(--dur-slide) var(--ease-out);
+      z-index: 40;
+      box-shadow: var(--shadow-float);
+    }
+    /* In drawer mode hide via transform (animatable), overriding the
+       grid-mode display:none so the slide transition can play. */
+    #console.rail-collapsed .rail {
+      display: block;
+    }
+    #console.rail-open .rail {
+      transform: translateX(0);
+    }
+    #console.rail-open .rail-backdrop {
+      display: block;
+      position: fixed;
+      inset: var(--topbar-h) 0 28px 0;
+      z-index: 30;
+      background: color-mix(in srgb, var(--canvas) 50%, transparent);
     }
     .stage :global(.grid-cols-3) {
       grid-template-columns: 1fr;

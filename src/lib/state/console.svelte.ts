@@ -25,6 +25,38 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   pingConcurrency: "medium",
   parallelStreams: 4,
   endpoint: { host: "auto", port: 443, path: "/measure" },
+  // ----- Ported config surface (§13.1); inert until Batches C/D consume it -----
+  compensation: {
+    enabled: true,
+    factors: {
+      ethernetFraming: true,
+      tlsRecords: true,
+      applicationFraming: true,
+      reversePathControl: true,
+      lossRetransmission: true,
+      steadyStateRamp: true,
+      browserRuntime: true,
+    },
+    params: {
+      mtuBytes: 1500,
+      vlanTagged: false,
+      tcpOptionsBytes: 12,
+      framePayloadBytes: 16384,
+      tlsRecordBytes: 5,
+      aeadTagBytes: 16,
+      quicConnIdBytes: 8,
+      maxLossRatio: 0.12,
+    },
+  },
+  adaptive: {
+    enabled: false, // off by default → durations behave as the base build
+    minCoverageRatio: 0.52,
+    stabilityThreshold: 0.86,
+    maxPhaseReductionRatio: 0.5,
+    minLatencySamples: 8,
+    minTransferSamples: 12,
+  },
+  visualization: { throughputMaxBps: "auto" },
 };
 
 export const DURATION_PRESETS = {

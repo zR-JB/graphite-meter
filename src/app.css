@@ -163,6 +163,9 @@
 html,
 body {
   height: 100%;
+  /* Off-canvas drawers (rail/inspector) live just past the viewport edges;
+     clip horizontally so they never add a left/right scrollbar. */
+  overflow-x: hidden;
 }
 
 body {
