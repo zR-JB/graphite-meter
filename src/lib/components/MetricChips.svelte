@@ -294,7 +294,7 @@
   .chips {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 16px;
+    gap: 12px;
   }
   /* Stack into a single column on the narrow single-column shell (<760px). */
   @media (max-width: 759px) {
@@ -306,9 +306,9 @@
   .chip {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    min-height: 120px;
-    padding: 14px;
+    gap: 6px;
+    min-height: 92px;
+    padding: 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface-1);
@@ -437,7 +437,7 @@
   .num {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: 26px;
+    font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.03em;
     color: var(--text);
@@ -480,7 +480,7 @@
 
   /* Guided empty-state line (§14.3) — quiet invitation while there's no data. */
   .metric-guidance {
-    margin: 12px 0 0;
+    margin: 8px 0 0;
     text-align: center;
     font-size: 12px;
     line-height: 1.4;
@@ -490,9 +490,9 @@
   /* Wire-rate opt-in (simple mode) — a quiet, full-width disclosure under the
      three cards. Brass on hover to signal it reveals the estimate refinement. */
   .wire-toggle {
-    margin-top: 12px;
+    margin-top: 8px;
     width: 100%;
-    min-height: 36px;
+    min-height: 34px;
     padding: 0 12px;
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius-md);

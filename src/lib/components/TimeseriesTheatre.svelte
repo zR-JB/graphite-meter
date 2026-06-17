@@ -84,15 +84,17 @@
 
 <style>
   .theatre {
-    padding: 14px;
+    padding: 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface-1);
     box-shadow: var(--shadow-card);
   }
+  /* Secondary, compact: a modest capped height keeps the chart legible while
+     leaving the gauge hero as the focal point and the stage scroll-free. */
   .plot {
     position: relative;
-    height: 210px;
+    height: 140px;
     border-radius: var(--radius-md);
     background: var(--surface-inset);
     overflow: hidden;

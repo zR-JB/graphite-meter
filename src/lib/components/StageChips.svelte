@@ -86,7 +86,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    min-height: 44px;
+    min-height: 38px;
     padding: 0 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);

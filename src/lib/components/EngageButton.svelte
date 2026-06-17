@@ -46,8 +46,13 @@
     align-items: center;
     justify-content: center;
     gap: 10px;
+    /* Primary action — prominent but not a full-bleed slab. Centered under the
+       gauge with a sensible max so it reads as a button, not a banner. As a
+       flex item in .controls, align-self centers it within the column. */
     width: 100%;
-    min-height: 52px;
+    max-width: 320px;
+    align-self: center;
+    min-height: 46px;
     border-radius: var(--radius-md);
     font-family: var(--font-mono);
     font-weight: 700;

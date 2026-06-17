@@ -149,8 +149,8 @@
   .reactor {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 14px;
+    gap: 10px;
+    padding: 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     background: var(--surface-1);
@@ -158,8 +158,10 @@
   }
   .stage {
     position: relative;
-    flex: 1;
-    min-height: 230px;
+    flex: 1 1 auto;
+    /* Floor keeps the gauge readable; flex lets it absorb spare vertical space
+       so the gauge + number remain the centered focal point of the stage. */
+    min-height: 170px;
     border-radius: var(--radius-md);
     background: var(--surface-inset);
     overflow: hidden;
@@ -276,8 +278,8 @@
   .controls {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding-top: 4px;
+    gap: 8px;
+    padding-top: 2px;
   }
   .controls-head {
     display: flex;

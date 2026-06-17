@@ -202,8 +202,10 @@
     >
   </header>
 
-  <!-- CENTER STAGE -->
-  <section class="zone stage min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
+  <!-- CENTER STAGE — height-bounded flex column (§14.2). The gauge hero is the
+       focal point and takes the lion's share; chart + chips are secondary and
+       compact so the simple default fits the viewport without vertical scroll. -->
+  <section class="zone stage min-w-0 overflow-y-auto flex flex-col">
     <ReactorStage />
     <TimeseriesTheatre />
     <MetricChips />
@@ -270,6 +272,23 @@
   }
   .stage {
     grid-area: stage;
+    /* Height-bounded flex column: the hero gauge flexes to fill, chart + chips
+       stay at their compact intrinsic height. Tighter pad/gap than the cards so
+       the simple default fits ~1280×800 and ~1440×900 without vertical scroll. */
+    padding: 12px;
+    gap: 12px;
+  }
+  /* The gauge hero is the focal point — let it absorb spare height; the chart
+     and chips below it never grow past their compact basis. */
+  .stage > :global(.reactor) {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+  .stage > :global(.theatre),
+  .stage > :global(.chips),
+  .stage > :global(.metric-guidance),
+  .stage > :global(.wire-toggle) {
+    flex: 0 0 auto;
   }
   .inspector {
     grid-area: inspector;
