@@ -13,6 +13,7 @@
   import StageChips from "./StageChips.svelte";
   import EngageButton from "./EngageButton.svelte";
   import { fmtSpeed, fmtMs } from "../format";
+  import { deriveVerdict } from "../verdict";
 
   // Total run ETA = warmup + each enabled stage's duration (read-only here;
   // duration itself is edited only in the Workbench, §14.2). Shown so the
@@ -41,6 +42,32 @@
     return { value: fmtSpeed(store.liveMetric.value), unit: store.liveMetric.unit };
   });
 
+  // Guided idle / empty + transient states (§14.3) — never a dead, bare dash.
+  // Shown as soft copy beneath the big metric so a newcomer always knows what
+  // to do (idle) or what is happening (warmup probing / error / aborted).
+  const hint = $derived.by(() => {
+    switch (store.phase) {
+      case "idle":
+        return "Press Engage to start your speed test";
+      case "warmup":
+        return "Checking your connection…";
+      case "aborted":
+        return "Test stopped — press Engage to try again";
+      case "error":
+        return store.errorMsg ?? "Something went wrong — press Engage to retry";
+      default:
+        return "";
+    }
+  });
+
+  // Plain-language verdict on completion (§14.3) — a short human read of the
+  // result derived from measured download/upload + latency thresholds.
+  const verdict = $derived(
+    store.phase === "complete" && store.result
+      ? deriveVerdict(store.result)
+      : null,
+  );
+
   // Screen-reader mirror, throttled to 1Hz + phase changes (§7).
   let a11y = $state("");
 
@@ -61,7 +88,13 @@
     ro.observe(canvasEl!);
 
     const tick = setInterval(() => {
-      a11y = `${display.value} ${display.unit}, phase ${store.phase}`;
+      // Prefer the guided hint when there's no live number (idle/warmup/error),
+      // otherwise announce the metric. Verdict headline is announced on complete.
+      a11y = verdict
+        ? `${display.value} ${display.unit}. ${verdict.headline}. ${verdict.detail}`
+        : hint
+          ? hint
+          : `${display.value} ${display.unit}, phase ${store.phase}`;
     }, 1000);
 
     return () => {
@@ -79,10 +112,23 @@
     <div class="metric-wrap">
       <span class="reactor-metric">{display.value}</span>
       {#if display.unit}<span class="reactor-unit">{display.unit}</span>{/if}
+      {#if hint}<span class="reactor-hint">{hint}</span>{/if}
     </div>
     <output class="sr-only" aria-live="polite">{a11y}</output>
   </div>
   <PhaseRail />
+
+  <!-- Plain-language result verdict (§14.3). Appears on complete alongside the
+       numbers so a non-technical user understands the result in words. -->
+  {#if verdict}
+    <div class="verdict verdict--{verdict.tier}" role="status">
+      <span class="verdict-head">{verdict.headline}</span>
+      <span class="verdict-detail">{verdict.detail}</span>
+      {#if verdict.caveat}
+        <span class="verdict-caveat">{verdict.caveat}</span>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Hero controls — gauge + number + stage chips + Engage read as one
        instrument (§14.2). Duration is Workbench-only; the run uses the
@@ -151,6 +197,78 @@
     letter-spacing: 0.04em;
     color: var(--text-soft);
     text-transform: uppercase;
+  }
+  /* Guided idle / empty-state copy (§14.3) — replaces the dead bare dash so the
+     gauge always invites action or explains what's happening. Sits centered
+     beneath the big metric; doesn't affect the metric's zero-shift baseline. */
+  .reactor-hint {
+    position: absolute;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 86%;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text-muted);
+  }
+
+  /* Plain-language verdict banner (§14.3). Tier-tinted left edge; quiet enough
+     to sit under the gauge without competing with the headline number. */
+  .verdict {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--brand);
+    border-radius: var(--radius-md);
+    background: var(--surface-inset);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .verdict {
+      animation: verdict-in 220ms var(--ease-out) both;
+    }
+  }
+  @keyframes verdict-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .verdict--excellent {
+    border-left-color: var(--ok);
+  }
+  .verdict--good {
+    border-left-color: var(--phase-download);
+  }
+  .verdict--ok {
+    border-left-color: var(--signal);
+  }
+  .verdict--basic {
+    border-left-color: var(--warn);
+  }
+  .verdict-head {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+  .verdict-detail {
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-muted);
+  }
+  .verdict-caveat {
+    margin-top: 2px;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--warn);
   }
 
   /* Hero controls block — stage chips + the master Engage action, sitting

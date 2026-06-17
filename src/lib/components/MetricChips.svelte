@@ -21,6 +21,7 @@
   import { console as store } from "../state/console.svelte";
   import { fmtSpeed, fmtMs, countUp } from "../format";
   import { ICON } from "../constants";
+  import { tooltip, JARGON } from "../actions/tooltip";
 
   const dash = "—";
 
@@ -184,6 +185,14 @@
   const anyLift = $derived(
     (dl.has && lifted(dl.multiplier)) || (ul.has && lifted(ul.multiplier)),
   );
+
+  // Guided empty state (§14.3): before the first run there's nothing measured,
+  // so invite action instead of leaving three bare dashes unexplained.
+  const guidance = $derived.by(() => {
+    if (store.phase === "idle") return "Your results appear here once you press Engage.";
+    if (store.phase === "warmup") return "Checking your connection…";
+    return "";
+  });
 </script>
 
 <div class="chips">
@@ -207,7 +216,7 @@
         {#if dl.has && lifted(dl.multiplier)}
           <span class="est-arrow">→</span>
           <span class="est-num">{fmtSpeed(store.toUnit(dl.estimatedBps))}</span>
-          <span class="est-tag">wire {pctLift(dl.multiplier)}</span>
+          <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(dl.multiplier)}</span>
         {:else}
           <span class="est-flat">{dl.has ? "no overhead applied" : ""}</span>
         {/if}
@@ -235,7 +244,7 @@
         {#if ul.has && lifted(ul.multiplier)}
           <span class="est-arrow">→</span>
           <span class="est-num">{fmtSpeed(store.toUnit(ul.estimatedBps))}</span>
-          <span class="est-tag">wire {pctLift(ul.multiplier)}</span>
+          <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(ul.multiplier)}</span>
         {:else}
           <span class="est-flat">{ul.has ? "no overhead applied" : ""}</span>
         {/if}
@@ -247,7 +256,7 @@
   <article class="chip" class:active={ping.active}>
     <header>
       <span class="ico pg">{@html ICON.ping}</span>
-      <span class="label">Ping</span>
+      <span class="label term" use:tooltip={JARGON.ping}>Ping</span>
     </header>
     <div class="val">
       <span class="num">{ping.has ? fmtMs(pingShown) : dash}</span>
@@ -261,6 +270,11 @@
   </article>
 </div>
 
+<!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
+{#if guidance}
+  <p class="metric-guidance">{guidance}</p>
+{/if}
+
 <!-- Opt-in disclosure for the estimated wire-rate (§14.2). Only shown in
      simple mode and only when there is a non-trivial estimate to reveal;
      advanced mode surfaces the estimate inline so no toggle is needed. -->
@@ -270,6 +284,7 @@
     class="wire-toggle"
     aria-pressed={wireOptIn}
     onclick={() => (wireOptIn = !wireOptIn)}
+    use:tooltip={JARGON.wireRate}
   >
     {wireOptIn ? "Hide estimated wire-rate" : "Show estimated wire-rate"}
   </button>
@@ -378,6 +393,17 @@
     letter-spacing: -0.01em;
     color: var(--text);
   }
+  /* Jargon-term affordance (§14.3) — dotted underline cues a hover/focus tooltip. */
+  .label.term {
+    cursor: help;
+    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+  .label.term:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
 
   /* Confidence pip — fixed slot, never reflows the row. */
   .pip {
@@ -450,6 +476,15 @@
   .est-flat {
     color: var(--text-soft);
     font-size: 11px;
+  }
+
+  /* Guided empty-state line (§14.3) — quiet invitation while there's no data. */
+  .metric-guidance {
+    margin: 12px 0 0;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-soft);
   }
 
   /* Wire-rate opt-in (simple mode) — a quiet, full-width disclosure under the

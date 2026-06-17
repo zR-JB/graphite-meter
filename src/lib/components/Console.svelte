@@ -178,8 +178,16 @@
         onclick={() => (store.uxMode = "advanced")}>Advanced</button
       >
     </div>
-    <button class="ghost-btn font-mono" onclick={cycleUnit}>{store.unitBase}</button>
-    <button class="ghost-btn" aria-label="Toggle theme" onclick={toggleTheme}>◐</button>
+    <button
+      class="ghost-btn font-mono"
+      aria-label="Cycle speed units (currently {store.unitBase})"
+      onclick={cycleUnit}>{store.unitBase}</button
+    >
+    <button
+      class="ghost-btn"
+      aria-label="Toggle light or dark theme"
+      onclick={toggleTheme}>◐</button
+    >
     <button
       class="ghost-btn icon-btn"
       aria-label="Open workbench"
@@ -188,7 +196,8 @@
     >
     <button
       class="ghost-btn"
-      aria-label="Toggle inspector"
+      aria-label="Toggle connection details"
+      aria-expanded={inspectorVisible}
       onclick={() => (inspectorVisible = !inspectorVisible)}>⚙</button
     >
   </header>

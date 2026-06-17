@@ -7,6 +7,7 @@
   import { console as store } from "../state/console.svelte";
   import { fmtMs } from "../format";
   import { ICON } from "../constants";
+  import { tooltip, JARGON } from "../actions/tooltip";
 
   const bb = $derived(store.result?.bufferbloat ?? null);
   const lat = $derived(store.result?.latency ?? null);
@@ -32,14 +33,18 @@
   <div class="body">
     <!-- Jitter distribution (canvas placeholder until the canvas stage) -->
     <div class="block">
-      <span class="block-title">Jitter distribution</span>
+      <span class="block-title term" use:tooltip={JARGON.jitter}>
+        Jitter distribution<span class="info-dot">{@html ICON.info}</span>
+      </span>
       <div class="hist-ph">SparkEngine histogram</div>
     </div>
 
     <!-- Bufferbloat -->
     <div class="block">
       <div class="block-row">
-        <span class="block-title">Bufferbloat</span>
+        <span class="block-title term" use:tooltip={JARGON.bufferbloat}>
+          Bufferbloat<span class="info-dot">{@html ICON.info}</span>
+        </span>
         {#if bb}
           <span class="grade grade-{gradeTone(bb.grade)}">{bb.grade}</span>
         {:else}
@@ -81,13 +86,13 @@
           <tr>
             <th>min</th>
             <td>{lat ? `${fmtMs(lat.minMs)}` : dash}</td>
-            <th>p50</th>
+            <th class="term" use:tooltip={JARGON.p50}>p50</th>
             <td>{lat ? `${fmtMs(lat.p50Ms)}` : dash}</td>
           </tr>
           <tr>
-            <th>p95</th>
+            <th class="term" use:tooltip={JARGON.p95}>p95</th>
             <td>{lat ? `${fmtMs(lat.p95Ms)}` : dash}</td>
-            <th>loss</th>
+            <th class="term" use:tooltip={JARGON.packetLoss}>loss</th>
             <td>{lat ? `${lat.packetLossPct.toFixed(1)}%` : dash}</td>
           </tr>
         </tbody>
@@ -145,6 +150,37 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-soft);
+  }
+
+  /* Jargon term affordance (§14.3): a dotted underline + small info dot cues
+     that the term carries a plain-language tooltip on hover/focus. */
+  .term {
+    cursor: help;
+    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+  .term.block-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .term:hover,
+  .term:focus-visible {
+    color: var(--text);
+  }
+  .term:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+  .info-dot {
+    display: inline-grid;
+    place-items: center;
+    opacity: 0.6;
+  }
+  .info-dot :global(svg) {
+    width: 12px;
+    height: 12px;
   }
   .block-row {
     display: flex;

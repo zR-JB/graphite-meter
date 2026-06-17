@@ -11,6 +11,10 @@
    * ============================================================ */
   import { console as store, type LatencyLane, type StageKey } from "../state/console.svelte";
   import { fmtMs, niceDomain } from "../format";
+  import { tooltip } from "../actions/tooltip";
+
+  const PROFILE_HELP =
+    "Latency profile: how steady your ping is, idle and under load. Each bar's shaded band is the P10–P90 range (your typical pings); the dot is the latest reading. Tighter is steadier.";
 
   type MetricKey = "min" | "p10" | "average" | "p90" | "max" | "current";
 
@@ -123,7 +127,7 @@
 
 <section class="card" aria-label="Latency distribution">
   <header class="card-head">
-    <h3>Latency Profile</h3>
+    <h3 class="term" use:tooltip={PROFILE_HELP}>Latency Profile</h3>
     <p>Range / avg / loss</p>
   </header>
 
@@ -220,6 +224,17 @@
     font-size: 13px;
     font-weight: 820;
     letter-spacing: -0.02em;
+  }
+  /* Jargon-term affordance on the profile heading (§14.3). */
+  .card-head h3.term {
+    cursor: help;
+    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+  .card-head h3.term:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
   }
   .card-head p {
     margin: 0;

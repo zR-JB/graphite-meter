@@ -11,6 +11,7 @@
     DURATION_PRESETS,
   } from "../../state/console.svelte";
   import type { RunnerConfig } from "../../runner/contract";
+  import { tooltip, JARGON } from "../../actions/tooltip";
 
   interface Props {
     /** Mirrors store.isRunning — locks mid-run-unsafe inputs. */
@@ -165,7 +166,7 @@
           bind:value={store.config.adaptive.minCoverageRatio} />
       </label>
       <label>
-        <span>Stability</span>
+        <span use:tooltip={JARGON.stability}>Stability</span>
         <input type="number" min="0.5" max="0.99" step="0.01" disabled={running}
           bind:value={store.config.adaptive.stabilityThreshold} />
       </label>

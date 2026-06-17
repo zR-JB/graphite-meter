@@ -28,6 +28,8 @@ export const ICON = {
   flask: `<svg viewBox="0 0 24 24" ${A}><path d="M9 3h6M10 3v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7 14h10"/></svg>`,
   // Close (X) — used by the Workbench drawer header.
   close: `<svg viewBox="0 0 24 24" ${A}><path d="M18 6 6 18M6 6l12 12"/></svg>`,
+  // Info — jargon tooltip affordance (§14.3); small "i" in a circle.
+  info: `<svg viewBox="0 0 24 24" ${A}><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`,
 } as const;
 
 export type IconName = keyof typeof ICON;

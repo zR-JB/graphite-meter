@@ -7,16 +7,31 @@
   import { engage } from "../runner/wire.svelte";
   import { pointerIntent } from "../actions/pointerIntent";
   import { ICON } from "../constants";
+
+  // Once a run has resolved, the master action re-runs the test. Surfacing
+  // "Run again" (vs a bare repeat of "Engage") makes that affordance obvious
+  // (§14.3) — pairs with the R key + the CommandHints strip.
+  const resolved = $derived(
+    store.phase === "complete" ||
+      store.phase === "aborted" ||
+      store.phase === "error",
+  );
+  const label = $derived(
+    store.isRunning ? "Abort test" : resolved ? "Run the test again" : "Start the speed test",
+  );
 </script>
 
 <button
   class="engage"
   class:running={store.isRunning}
+  aria-label={label}
   onclick={engage}
   use:pointerIntent
 >
   {#if store.isRunning}
     <span class="stop-sq"></span> ABORT
+  {:else if resolved}
+    <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
   {:else}
     <span class="ico">{@html ICON.bolt}</span> ENGAGE
   {/if}
