@@ -9,11 +9,9 @@
   import { onMount } from "svelte";
   import { console as store } from "../state/console.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
-  import PhaseRail from "./PhaseRail.svelte";
-  import StageChips from "./StageChips.svelte";
+  import StageTrack from "./StageTrack.svelte";
   import EngageButton from "./EngageButton.svelte";
   import { fmtSpeed, fmtMs } from "../format";
-  import { deriveVerdict } from "../verdict";
 
   // Total run ETA = warmup + each enabled stage's duration (read-only here;
   // duration itself is edited only in the Workbench, §14.2). Shown so the
@@ -60,14 +58,6 @@
     }
   });
 
-  // Plain-language verdict on completion (§14.3) — a short human read of the
-  // result derived from measured download/upload + latency thresholds.
-  const verdict = $derived(
-    store.phase === "complete" && store.result
-      ? deriveVerdict(store.result)
-      : null,
-  );
-
   // Screen-reader mirror, throttled to 1Hz + phase changes (§7).
   let a11y = $state("");
 
@@ -89,12 +79,10 @@
 
     const tick = setInterval(() => {
       // Prefer the guided hint when there's no live number (idle/warmup/error),
-      // otherwise announce the metric. Verdict headline is announced on complete.
-      a11y = verdict
-        ? `${display.value} ${display.unit}. ${verdict.headline}. ${verdict.detail}`
-        : hint
-          ? hint
-          : `${display.value} ${display.unit}, phase ${store.phase}`;
+      // otherwise announce the measured metric (factual only — no verdict §14.3).
+      a11y = hint
+        ? hint
+        : `${display.value} ${display.unit}, phase ${store.phase}`;
     }, 1000);
 
     return () => {
@@ -116,23 +104,11 @@
     </div>
     <output class="sr-only" aria-live="polite">{a11y}</output>
   </div>
-  <PhaseRail />
 
-  <!-- Plain-language result verdict (§14.3). Appears on complete alongside the
-       numbers so a non-technical user understands the result in words. -->
-  {#if verdict}
-    <div class="verdict verdict--{verdict.tier}" role="status">
-      <span class="verdict-head">{verdict.headline}</span>
-      <span class="verdict-detail">{verdict.detail}</span>
-      {#if verdict.caveat}
-        <span class="verdict-caveat">{verdict.caveat}</span>
-      {/if}
-    </div>
-  {/if}
-
-  <!-- Hero controls — gauge + number + stage chips + Engage read as one
-       instrument (§14.2). Duration is Workbench-only; the run uses the
-       saved duration and shows just its ETA here. -->
+  <!-- Hero controls — gauge + number + combined stage track + Engage read as
+       one instrument (§14.2). The StageTrack is BOTH the stage selector and the
+       live phase-progress indicator (no standalone warmup/✓ segments). Duration
+       is Workbench-only; the run uses the saved duration and shows its ETA. -->
   <div class="controls">
     <div class="controls-head">
       <span class="controls-title">Test stages</span>
@@ -140,7 +116,7 @@
         ~{(etaMs / 1000).toFixed(0)}s
       </span>
     </div>
-    <StageChips />
+    <StageTrack />
     <EngageButton />
   </div>
 </section>
@@ -216,64 +192,7 @@
     color: var(--text-muted);
   }
 
-  /* Plain-language verdict banner (§14.3). Tier-tinted left edge; quiet enough
-     to sit under the gauge without competing with the headline number. */
-  .verdict {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--brand);
-    border-radius: var(--radius-md);
-    background: var(--surface-inset);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .verdict {
-      animation: verdict-in 220ms var(--ease-out) both;
-    }
-  }
-  @keyframes verdict-in {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  .verdict--excellent {
-    border-left-color: var(--ok);
-  }
-  .verdict--good {
-    border-left-color: var(--phase-download);
-  }
-  .verdict--ok {
-    border-left-color: var(--signal);
-  }
-  .verdict--basic {
-    border-left-color: var(--warn);
-  }
-  .verdict-head {
-    font-size: 13px;
-    font-weight: 800;
-    letter-spacing: -0.01em;
-    color: var(--text);
-  }
-  .verdict-detail {
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--text-muted);
-  }
-  .verdict-caveat {
-    margin-top: 2px;
-    font-size: 11.5px;
-    line-height: 1.4;
-    color: var(--warn);
-  }
-
-  /* Hero controls block — stage chips + the master Engage action, sitting
+  /* Hero controls block — stage track + the master Engage action, sitting
      directly under the gauge so the three read as one instrument. */
   .controls {
     display: flex;
