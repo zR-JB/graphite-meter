@@ -7,7 +7,7 @@
  * a frozen, non-reactive config into the engine) is compiled.
  * ============================================================ */
 
-import type { NetworkRunner } from "./contract";
+import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { DummyRunner } from "./dummy";
 import { console as store } from "../state/console.svelte";
 
@@ -51,6 +51,15 @@ export function applyStageChange() {
     reconfigureStages?: (s: typeof store.config.stages) => void;
   };
   r.reconfigureStages?.($state.snapshot(store.config.stages));
+}
+
+/**
+ * Pass a live dev anomaly through to the active engine (§13.6). Optional on
+ * the contract, so this is a no-op when the engine doesn't implement it or
+ * when nothing is running (the runner itself guards on its tick timer).
+ */
+export function injectAnomaly(a: RunnerAnomaly) {
+  getRunner().injectAnomaly?.(a);
 }
 
 export function teardownRunner() {

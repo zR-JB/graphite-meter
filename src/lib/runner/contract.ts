@@ -159,6 +159,16 @@ export type RunnerEvent =
   | { type: "complete"; result: RunResult }
   | { type: "error"; message: string };
 
+/* ---------- Runtime anomaly injection (§13.6 — Developer panel) ---------- */
+/** A live, dev-only perturbation fired into a *running* engine. Unlike the
+ *  construction-time `DummyOptions.anomalies` (phase fractions), these fire
+ *  relative to the current moment in the active phase — the Workbench
+ *  Developer panel triggers them via `wire.injectAnomaly`. */
+export type RunnerAnomaly =
+  | { kind: "latency-spike"; magnitude?: number; durationMs?: number } // rtt ×magnitude
+  | { kind: "packet-loss"; magnitude?: number; durationMs?: number } // loss probability
+  | { kind: "throughput-drop"; magnitude?: number; durationMs?: number }; // bps ×(1−magnitude)
+
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
   start(config: RunnerConfig): void;
@@ -166,5 +176,8 @@ export interface NetworkRunner {
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
   probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo>;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
+  /** OPTIONAL — fire a live anomaly into an in-flight run (§13.6). Kept
+   *  optional so a minimal real engine need not implement it. */
+  injectAnomaly?(a: RunnerAnomaly): void;
   readonly phase: Phase;
 }

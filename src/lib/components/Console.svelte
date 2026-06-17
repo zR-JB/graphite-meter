@@ -16,11 +16,16 @@
   import TelemetryDetail from "./TelemetryDetail.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import StatusBar from "./StatusBar.svelte";
+  import WorkbenchDrawer from "./workbench/WorkbenchDrawer.svelte";
+  import { ICON } from "../constants";
 
   // Layout state. `inspectorVisible` drives the column (wide) AND the
   // drawer (narrow); matchMedia sets a sensible default per breakpoint.
   let inspectorVisible = $state(true);
   let railOpen = $state(true);
+  // The Workbench power-user drawer (§13.6). Keyboard shortcut `W` lands in
+  // Batch G; for now the topbar flask button is the only trigger.
+  let workbenchOpen = $state(false);
 
   function toggleTheme() {
     const cur = document.documentElement.getAttribute("data-theme");
@@ -81,6 +86,12 @@
     <button class="ghost-btn font-mono" onclick={cycleUnit}>{store.unitBase}</button>
     <button class="ghost-btn" aria-label="Toggle theme" onclick={toggleTheme}>◐</button>
     <button
+      class="ghost-btn icon-btn"
+      aria-label="Open workbench"
+      aria-expanded={workbenchOpen}
+      onclick={() => (workbenchOpen = !workbenchOpen)}>{@html ICON.flask}</button
+    >
+    <button
       class="ghost-btn"
       aria-label="Toggle inspector"
       onclick={() => (inspectorVisible = !inspectorVisible)}>⚙</button
@@ -126,6 +137,9 @@
   <footer class="zone status flex items-center gap-4 px-4 border-t border-border bg-surface-1 font-mono text-soft">
     <StatusBar />
   </footer>
+
+  <!-- Workbench power-user drawer (§13.6) — fixed overlay, opens from topbar -->
+  <WorkbenchDrawer bind:open={workbenchOpen} />
 </main>
 
 <style>
@@ -206,6 +220,10 @@
   .ghost-btn:hover {
     border-color: var(--border-strong);
     color: var(--text);
+  }
+  .icon-btn :global(svg) {
+    width: 16px;
+    height: 16px;
   }
 
   .pill {

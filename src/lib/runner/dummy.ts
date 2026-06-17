@@ -10,6 +10,7 @@ import type {
   NetworkRunner,
   RunnerConfig,
   RunnerEvent,
+  RunnerAnomaly,
   Phase,
   PhaseTransition,
   InfraInfo,
@@ -66,6 +67,25 @@ const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
 const THROUGHPUT_CADENCE_MS = 60; // ≈16Hz
 const TICK_MS = 20; // master loop resolution
 
+/* ---------- Live anomaly defaults (§13.6) ----------
+ * Construction-time anomalies (DummyOptions.anomalies) fire at phase fractions.
+ * These are the defaults for RUNTIME anomalies injected mid-run via
+ * `injectAnomaly` — each occupies an absolute [start,end) window measured in
+ * ms since run start, computed from "now" when the Developer button is hit. */
+const LIVE_ANOMALY_DEFAULTS = {
+  latencySpike: { magnitude: 3, durationMs: 600 }, // rtt ×3 for 600ms
+  packetLoss: { magnitude: 0.6, durationMs: 900 }, // 60% loss probability
+  throughputDrop: { magnitude: 0.4, durationMs: 600 }, // bps −40%
+} as const;
+
+/** A scheduled live anomaly with an absolute window on the run timeline. */
+interface LiveAnomaly {
+  kind: RunnerAnomaly["kind"];
+  start: number; // ms since run start
+  end: number;
+  magnitude: number;
+}
+
 /* ---------- Deterministic RNG (mulberry32 + Box–Muller) ---------- */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -109,6 +129,10 @@ export class DummyRunner implements NetworkRunner {
   #lastPingAt = -Infinity;
   #bytesCumulative = 0;
   #cfg: RunnerConfig | null = null;
+
+  // Live, dev-injected anomalies (§13.6). Each is an absolute [start,end)
+  // window on the effective timeline; the synthesis hooks read this list.
+  #liveAnomalies: LiveAnomaly[] = [];
 
   // Adaptive early-exit: time removed from the timeline by phases that
   // exited early. Effective elapsed = realElapsed − #shiftMs, which slides
@@ -231,6 +255,44 @@ export class DummyRunner implements NetworkRunner {
     this.#phaseRtts = [];
     this.#phasePings = 0;
     this.#phasePingsLost = 0;
+    this.#liveAnomalies = [];
+  }
+
+  /* ================= LIVE ANOMALY INJECTION (§13.6) ================= */
+  /**
+   * Fire a dev-only anomaly into the in-flight run. It opens an absolute
+   * window starting at the current effective elapsed and is consumed by the
+   * existing synthesis hooks (#emitThroughput / #emitLatency). No-op when not
+   * running, so the Developer panel's disabled state mirrors `isRunning`.
+   */
+  injectAnomaly(a: RunnerAnomaly): void {
+    if (!this.#tickTimer) return;
+    const elapsed = performance.now() - this.#t0 - this.#shiftMs;
+    const d =
+      a.kind === "latency-spike"
+        ? LIVE_ANOMALY_DEFAULTS.latencySpike
+        : a.kind === "packet-loss"
+          ? LIVE_ANOMALY_DEFAULTS.packetLoss
+          : LIVE_ANOMALY_DEFAULTS.throughputDrop;
+    const durationMs = a.durationMs ?? d.durationMs;
+    this.#liveAnomalies.push({
+      kind: a.kind,
+      start: elapsed,
+      end: elapsed + durationMs,
+      magnitude: a.magnitude ?? d.magnitude,
+    });
+  }
+
+  /** The currently-active live anomaly of a given kind, if any. Also prunes
+   *  windows that have fully elapsed so the list stays bounded. */
+  #activeAnomaly(kind: RunnerAnomaly["kind"], elapsed: number): LiveAnomaly | null {
+    if (this.#liveAnomalies.length) {
+      this.#liveAnomalies = this.#liveAnomalies.filter((x) => elapsed < x.end);
+    }
+    for (const x of this.#liveAnomalies) {
+      if (x.kind === kind && elapsed >= x.start && elapsed < x.end) return x;
+    }
+    return null;
   }
 
   /* ================= ABORT ================= */
@@ -405,6 +467,11 @@ export class DummyRunner implements NetworkRunner {
       if (tp >= center && tp < center + 400) bps *= 0.6;
     }
 
+    // Live throughput-drop anomaly (§13.6): reduce bps by `magnitude` over its
+    // window. Fired relative to the current moment, not a phase fraction.
+    const drop = this.#activeAnomaly("throughput-drop", elapsed);
+    if (drop) bps *= Math.max(0, 1 - drop.magnitude);
+
     bps = Math.max(0, bps);
 
     // Accumulate cumulative bytes (bits → bytes over the cadence window).
@@ -448,11 +515,18 @@ export class DummyRunner implements NetworkRunner {
       if (Math.abs(frac - f) < 0.02) rtt *= 3;
     }
 
+    // Live latency-spike anomaly (§13.6): scale rtt by `magnitude` in-window.
+    const spike = this.#activeAnomaly("latency-spike", elapsed);
+    if (spike) rtt *= spike.magnitude;
+
     // Packet loss: baseline + burst windows.
     let lossProb = this.#spec.lossBase;
     for (const f of this.#opts.anomalies?.packetDropAt ?? []) {
       if (Math.abs(frac - f) < 0.03) lossProb = 0.6;
     }
+    // Live packet-loss anomaly (§13.6): raise loss probability in-window.
+    const drop = this.#activeAnomaly("packet-loss", elapsed);
+    if (drop) lossProb = Math.max(lossProb, drop.magnitude);
     const lost = this.#rand() < lossProb;
 
     this.#pingsTotal++;
