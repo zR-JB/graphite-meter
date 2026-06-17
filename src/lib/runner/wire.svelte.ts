@@ -15,6 +15,10 @@ let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
 
 export function getRunner(): NetworkRunner {
+  // To go live against a real speedtest backend, change this ONE line — the UI
+  // and store are engine-agnostic (§14.4 · see docs/REAL_RUNNER.md):
+  //   import { RealRunner } from "./RealRunner";
+  //   if (!runner) runner = new RealRunner({ endpoint: store.config.endpoint });
   if (!runner) runner = new DummyRunner({ profile: "fiber" });
   return runner;
 }
