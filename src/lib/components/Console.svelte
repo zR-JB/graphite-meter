@@ -18,6 +18,7 @@
   import WorkbenchDrawer from "./workbench/WorkbenchDrawer.svelte";
   import PhaseToast from "./PhaseToast.svelte";
   import CommandHints from "./CommandHints.svelte";
+  import ConnectivityPulse from "./ConnectivityPulse.svelte";
   import { engage } from "../runner/wire.svelte";
   import { ICON } from "../constants";
 
@@ -161,7 +162,7 @@
   <!-- TOPBAR -->
   <header class="zone topbar flex items-center gap-3 px-4 border-b border-border">
     <span class="font-mono text-sm font-bold tracking-tight">Graphite&nbsp;Meter</span>
-    <span class="pill">{store.effectiveConnectivity}</span>
+    <ConnectivityPulse />
     <div class="flex-1"></div>
     <!-- Simple / Advanced progressive-disclosure toggle (§14.2) -->
     <div class="mode-toggle" role="group" aria-label="Detail level">
@@ -339,16 +340,6 @@
   .icon-btn :global(svg) {
     width: 16px;
     height: 16px;
-  }
-
-  .pill {
-    padding: 2px 8px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--surface-2);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 11px;
   }
 
   /* Simple / Advanced segmented toggle (§14.2) — the persisted disclosure
