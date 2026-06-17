@@ -6,8 +6,37 @@
    * ============================================================ */
   import Switch from "./Switch.svelte";
   import EngageButton from "./EngageButton.svelte";
-  import { console as store, DURATION_PRESETS } from "../state/console.svelte";
+  import {
+    console as store,
+    DURATION_PRESETS,
+    type StageKey,
+  } from "../state/console.svelte";
+  import { applyStageChange } from "../runner/wire.svelte";
   import type { RunnerConfig } from "../runner/contract";
+
+  // Stage toggles — wired through the store's guarded toggleStage so the
+  // ≥1-enabled floor and the future-only live-toggle rule are enforced.
+  const STAGES: { key: StageKey; label: string }[] = [
+    { key: "latency", label: "Latency" },
+    { key: "download", label: "Download" },
+    { key: "upload", label: "Upload" },
+  ];
+
+  function onStageToggle(stage: StageKey) {
+    if (store.toggleStage(stage)) applyStageChange();
+  }
+
+  const ORDER: StageKey[] = ["latency", "download", "upload"];
+
+  /** Short reason a toggle is locked, or null when it is free. */
+  function lockReason(stage: StageKey): string | null {
+    if (store.canToggleStage(stage)) return null;
+    if (store.phase === stage) return "running";
+    const curI = ORDER.indexOf(store.phase as StageKey);
+    const stI = ORDER.indexOf(stage);
+    // Locked because it is at or before the current phase — already underway.
+    return curI >= 0 && stI < curI ? "done" : "locked";
+  }
 
   type PresetKey = "short" | "medium" | "long" | "custom";
   const PRESET_KEYS: PresetKey[] = ["short", "medium", "long", "custom"];
@@ -57,9 +86,18 @@
   <section class="group">
     <h4 class="group-title">Stages</h4>
     <div class="flex flex-col gap-3">
-      <Switch bind:checked={store.config.stages.latency} label="Latency" />
-      <Switch bind:checked={store.config.stages.download} label="Download" />
-      <Switch bind:checked={store.config.stages.upload} label="Upload" />
+      {#each STAGES as s (s.key)}
+        {@const reason = lockReason(s.key)}
+        <div class="stage-row">
+          <Switch
+            checked={store.config.stages[s.key]}
+            label={s.label}
+            disabled={reason !== null}
+            onToggle={() => onStageToggle(s.key)}
+          />
+          {#if reason}<span class="stage-reason">{reason}</span>{/if}
+        </div>
+      {/each}
     </div>
   </section>
 
@@ -110,6 +148,26 @@
 </div>
 
 <style>
+  .stage-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  /* Why a toggle is locked (e.g. "running" / "done") while a test is live. */
+  .stage-reason {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+    padding: 2px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    background: var(--surface-inset);
+  }
+
   .group-title {
     font-size: 11px;
     font-weight: 700;

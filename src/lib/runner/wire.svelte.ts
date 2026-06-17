@@ -40,6 +40,19 @@ export function engage() {
   getRunner().start($state.snapshot(store.config));
 }
 
+/**
+ * Push the live enabled-stage set into the running engine so a mid-run
+ * future-stage toggle actually shortens the run (§13.4). No-op when idle or
+ * when the active engine doesn't support live reconfigure.
+ */
+export function applyStageChange() {
+  if (!store.isRunning) return;
+  const r = getRunner() as NetworkRunner & {
+    reconfigureStages?: (s: typeof store.config.stages) => void;
+  };
+  r.reconfigureStages?.($state.snapshot(store.config.stages));
+}
+
 export function teardownRunner() {
   unsub?.();
   unsub = null;

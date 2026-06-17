@@ -20,6 +20,11 @@ import type {
   LatencyResult,
   BufferbloatGrade,
 } from "./contract";
+import {
+  transferConfidence,
+  latencyConfidence,
+  shouldExitPhase,
+} from "./adaptive";
 
 export interface DummyOptions {
   seed?: number;
@@ -104,6 +109,17 @@ export class DummyRunner implements NetworkRunner {
   #lastPingAt = -Infinity;
   #bytesCumulative = 0;
   #cfg: RunnerConfig | null = null;
+
+  // Adaptive early-exit: time removed from the timeline by phases that
+  // exited early. Effective elapsed = realElapsed − #shiftMs, which slides
+  // every later segment earlier so the run finishes sooner WITHOUT ever
+  // faking a phase's progress to 1.0 — coverage stays truthful (§13.4).
+  #shiftMs = 0;
+  // Per-phase sample windows feeding the confidence math (reset per phase).
+  #phaseBps: number[] = [];
+  #phaseRtts: number[] = [];
+  #phasePings = 0;
+  #phasePingsLost = 0;
 
   // result bookkeeping
   #dl: PhaseAccum = { bpsValues: [], bytes: 0 };
@@ -210,6 +226,11 @@ export class DummyRunner implements NetworkRunner {
     this.#allRtts = [];
     this.#pingsTotal = 0;
     this.#pingsLost = 0;
+    this.#shiftMs = 0;
+    this.#phaseBps = [];
+    this.#phaseRtts = [];
+    this.#phasePings = 0;
+    this.#phasePingsLost = 0;
   }
 
   /* ================= ABORT ================= */
@@ -225,9 +246,50 @@ export class DummyRunner implements NetworkRunner {
     });
   }
 
+  /* ================= LIVE STAGE RECONFIGURE (§13.4) ================= */
+  /**
+   * Apply a live change to the enabled stage set mid-run. Only FUTURE
+   * segments (those that start after the current effective elapsed) are
+   * rebuilt; the current and past phases are untouched, so toggling a
+   * not-yet-started stage off simply shortens the remaining timeline.
+   * No-op when idle (the next start() snapshot already reflects the change).
+   */
+  reconfigureStages(stages: RunnerConfig["stages"]): void {
+    if (!this.#tickTimer || !this.#cfg) return;
+    this.#cfg = { ...this.#cfg, stages };
+
+    const elapsed = performance.now() - this.#t0 - this.#shiftMs;
+    // Keep every segment that has already started; rebuild the tail.
+    const kept = this.#segments.filter((s) => s.start <= elapsed);
+    let cursor = kept.length ? kept[kept.length - 1].end : 0;
+
+    const dur = this.#cfg.duration;
+    const tail: Segment[] = [];
+    const pushIf = (
+      on: boolean,
+      phase: Segment["phase"],
+      ms: number,
+    ) => {
+      // Skip phases already kept (started) and disabled phases.
+      if (!on || ms <= 0) return;
+      if (kept.some((k) => k.phase === phase)) return;
+      tail.push({ phase, start: cursor, end: cursor + ms });
+      cursor += ms;
+    };
+    pushIf(stages.latency, "latency", dur.latencyMs);
+    pushIf(stages.download, "download", dur.downloadMs);
+    pushIf(stages.upload, "upload", dur.uploadMs);
+
+    this.#segments = [...kept, ...tail];
+    this.#totalMs = cursor;
+  }
+
   /* ================= MASTER TICK ================= */
   #tick() {
-    const elapsed = performance.now() - this.#t0;
+    // Effective elapsed = real elapsed minus the time reclaimed by phases that
+    // exited early. The whole timeline (and the configured total) shrinks by
+    // #shiftMs, so progress fractions and the finish point stay honest.
+    const elapsed = performance.now() - this.#t0 - this.#shiftMs;
 
     if (elapsed >= this.#totalMs) {
       this.#finish();
@@ -247,9 +309,10 @@ export class DummyRunner implements NetworkRunner {
       this.#lastEmittedPhase = seg.phase;
       this.#setPhase(seg.phase);
       this.#emit({ type: "phase", transition });
+      this.#beginAdaptivePhase();
     }
 
-    // Progress within the current phase.
+    // Progress within the current phase (real coverage — never faked).
     const frac = (elapsed - seg.start) / (seg.end - seg.start);
     this.#emit({ type: "progress", phase: seg.phase, fraction: Math.min(1, Math.max(0, frac)) });
 
@@ -270,6 +333,54 @@ export class DummyRunner implements NetworkRunner {
       this.#lastPingAt = elapsed;
       this.#emitLatency(seg, elapsed);
     }
+
+    // Adaptive early exit: once this phase is confidently stable, reclaim the
+    // rest of its nominal window by growing #shiftMs to the segment boundary.
+    // Next tick lands in the following segment (or finishes) cleanly.
+    this.#maybeExitEarly(seg, elapsed);
+  }
+
+  /** Reset the per-phase confidence windows when a measured phase begins. */
+  #beginAdaptivePhase() {
+    this.#phaseBps = [];
+    this.#phaseRtts = [];
+    this.#phasePings = 0;
+    this.#phasePingsLost = 0;
+  }
+
+  /** Evaluate the adaptive early-exit predicate for the current segment. */
+  #maybeExitEarly(seg: Segment, elapsed: number) {
+    const cfg = this.#cfg!;
+    if (!cfg.adaptive.enabled) return;
+
+    const durationMs = seg.end - seg.start;
+    const elapsedInPhase = elapsed - seg.start;
+
+    let exit = false;
+    if (seg.phase === "latency") {
+      const conf = latencyConfidence(this.#phaseRtts, this.#phasePings, this.#phasePingsLost);
+      exit = shouldExitPhase({
+        kind: "latency",
+        elapsedMs: elapsedInPhase,
+        durationMs,
+        confidence: conf,
+        cfg: cfg.adaptive,
+      });
+    } else if (seg.phase === "download" || seg.phase === "upload") {
+      const conf = transferConfidence(this.#phaseBps);
+      exit = shouldExitPhase({
+        kind: "transfer",
+        elapsedMs: elapsedInPhase,
+        durationMs,
+        confidence: conf,
+        cfg: cfg.adaptive,
+      });
+    }
+    if (!exit) return;
+
+    // Reclaim the unused tail of this segment. We do NOT emit a progress=1;
+    // the phase ends at its real coverage and the next phase takes over.
+    this.#shiftMs += seg.end - elapsed;
   }
 
   #setPhase(p: Phase) {
@@ -304,6 +415,9 @@ export class DummyRunner implements NetworkRunner {
     const accum = seg.phase === "download" ? this.#dl : this.#ul;
     accum.bpsValues.push(bps);
     accum.bytes += bytes;
+
+    // Feed the adaptive confidence window for the current transfer phase.
+    this.#phaseBps.push(bps);
 
     const sample: ThroughputSample = {
       t: elapsed,
@@ -350,6 +464,12 @@ export class DummyRunner implements NetworkRunner {
       else this.#idleRtts.push(rtt);
     }
 
+    // Feed the adaptive confidence window for the current phase. Latency
+    // confidence uses unloaded RTTs + the loss count over the same window.
+    this.#phasePings++;
+    if (lost) this.#phasePingsLost++;
+    else if (!underLoad) this.#phaseRtts.push(rtt);
+
     const sample: LatencySample = { t: elapsed, rttMs: rtt, underLoad, lost };
     this.#emit({ type: "latency", sample });
   }
@@ -362,13 +482,16 @@ export class DummyRunner implements NetworkRunner {
     }
 
     const cfg = this.#cfg!;
+    // Actual wall-clock length — shorter than the nominal #totalMs whenever
+    // adaptive early-exit reclaimed time (#shiftMs).
+    const actualMs = Math.max(0, this.#totalMs - this.#shiftMs);
     const result: RunResult = {
       download: cfg.stages.download ? this.#throughputResult(this.#dl) : null,
       upload: cfg.stages.upload ? this.#throughputResult(this.#ul) : null,
       latency: this.#latencyResult(),
       bufferbloat: this.#bufferbloatGrade(),
-      startedAt: Date.now() - this.#totalMs,
-      durationMs: this.#totalMs,
+      startedAt: Date.now() - actualMs,
+      durationMs: actualMs,
     };
 
     this.#setPhase("complete");

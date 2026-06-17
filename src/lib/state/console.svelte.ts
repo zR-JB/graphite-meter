@@ -21,6 +21,14 @@ import {
   type CompensationEstimate,
 } from "../compensation";
 
+/* ================= STAGE SELECTION (§13.4) ================= */
+
+/** The three user-selectable measured stages. */
+export type StageKey = "latency" | "download" | "upload";
+
+/** Execution order — used by the future-only live-toggle constraint. */
+const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
+
 /* ================= DEFAULTS (§2.4) ================= */
 
 export const DEFAULT_CONFIG: RunnerConfig = {
@@ -140,6 +148,50 @@ class ConsoleStore {
   isRunning = $derived(
     !["idle", "complete", "aborted", "error"].includes(this.phase),
   );
+
+  /* ============================================================
+   * Stage selection (§13.4)
+   * Live stage toggling with linerate's constraints: ≥1 stage must
+   * always stay enabled, and while a run is in flight only FUTURE
+   * stages (after the current phase in order latency→download→upload)
+   * may be toggled.
+   * ============================================================ */
+
+  /** Enabled stages in execution order — drives the timeline + rail. */
+  activeStages = $derived.by<StageKey[]>(() => {
+    const out: StageKey[] = [];
+    if (this.config.stages.latency) out.push("latency");
+    if (this.config.stages.download) out.push("download");
+    if (this.config.stages.upload) out.push("upload");
+    return out;
+  });
+
+  /** True when `stage` may be toggled right now. Idle → always; while
+   *  running → only stages strictly after the current phase in STAGE_ORDER. */
+  canToggleStage(stage: StageKey): boolean {
+    if (!this.isRunning) return true;
+    const currentIndex = STAGE_ORDER.indexOf(this.phase as StageKey);
+    const stageIndex = STAGE_ORDER.indexOf(stage);
+    return currentIndex >= 0 && stageIndex > currentIndex;
+  }
+
+  /** Toggle a stage, enforcing the ≥1-enabled floor and the future-only
+   *  rule. No-ops (returns false) when the toggle is not permitted. */
+  toggleStage(stage: StageKey): boolean {
+    if (!this.canToggleStage(stage)) return false;
+
+    const currentlyEnabled = this.config.stages[stage];
+    const enabledCount =
+      Number(this.config.stages.latency) +
+      Number(this.config.stages.download) +
+      Number(this.config.stages.upload);
+
+    // Never let the last enabled stage be turned off.
+    if (currentlyEnabled && enabledCount <= 1) return false;
+
+    this.config.stages[stage] = !currentlyEnabled;
+    return true;
+  }
 
   /* ============================================================
    * Overhead compensation (§13.3)

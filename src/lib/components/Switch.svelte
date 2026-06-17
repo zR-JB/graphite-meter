@@ -9,12 +9,33 @@
     label?: string;
     disabled?: boolean;
     id?: string;
+    /** Optional controlled handler. When provided, the parent owns state:
+     *  the toggle is vetoable (e.g. live-toggle constraints) and `checked`
+     *  is treated as a one-way input rather than a bound value. */
+    onToggle?: (next: boolean) => void;
   }
-  let { checked = $bindable(false), label, disabled = false, id }: Props = $props();
+  let {
+    checked = $bindable(false),
+    label,
+    disabled = false,
+    id,
+    onToggle,
+  }: Props = $props();
+
+  function handleChange(e: Event) {
+    const next = (e.currentTarget as HTMLInputElement).checked;
+    if (onToggle) {
+      // Controlled: revert the DOM to `checked` and let the parent decide.
+      (e.currentTarget as HTMLInputElement).checked = checked;
+      onToggle(next);
+    } else {
+      checked = next;
+    }
+  }
 </script>
 
 <label class="switch" class:disabled>
-  <input type="checkbox" bind:checked {disabled} {id} />
+  <input type="checkbox" {checked} {disabled} {id} onchange={handleChange} />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
   {#if label}<span class="label">{label}</span>{/if}
 </label>
