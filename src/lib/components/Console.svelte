@@ -11,6 +11,7 @@
   import TriagePanel from "./TriagePanel.svelte";
   import ReactorStage from "./ReactorStage.svelte";
   import TimeseriesTheatre from "./TimeseriesTheatre.svelte";
+  import MetricChips from "./MetricChips.svelte";
   import InfraCard from "./InfraCard.svelte";
   import TelemetryDetail from "./TelemetryDetail.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -102,11 +103,7 @@
   <section class="zone stage min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
     <ReactorStage />
     <TimeseriesTheatre />
-    <div class="grid grid-cols-3 gap-4">
-      <div class="ph" style="min-height: 120px">Download</div>
-      <div class="ph" style="min-height: 120px">Upload</div>
-      <div class="ph" style="min-height: 120px">Ping</div>
-    </div>
+    <MetricChips />
   </section>
 
   <!-- RIGHT INSPECTOR -->
@@ -189,19 +186,6 @@
     padding: 0;
   }
 
-  /* ===== Placeholder boxes ===== */
-  .ph {
-    display: grid;
-    place-items: center;
-    text-align: center;
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--radius-lg);
-    background: var(--surface-1);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 13px;
-    box-shadow: var(--shadow-card);
-  }
   .ghost-btn {
     display: grid;
     place-items: center;
@@ -313,9 +297,6 @@
       inset: var(--topbar-h) 0 28px 0;
       z-index: 30;
       background: color-mix(in srgb, var(--canvas) 50%, transparent);
-    }
-    .stage :global(.grid-cols-3) {
-      grid-template-columns: 1fr;
     }
   }
 </style>

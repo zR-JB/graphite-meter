@@ -15,6 +15,11 @@ import type {
   ThroughputSample,
   LatencySample,
 } from "../runner/contract";
+import {
+  estimateLiveCompensation,
+  estimateResultCompensation,
+  type CompensationEstimate,
+} from "../compensation";
 
 /* ================= DEFAULTS (§2.4) ================= */
 
@@ -134,6 +139,48 @@ class ConsoleStore {
 
   isRunning = $derived(
     !["idle", "complete", "aborted", "error"].includes(this.phase),
+  );
+
+  /* ============================================================
+   * Overhead compensation (§13.3)
+   * The store stays bps-canonical: estimates are bps in / bps out;
+   * conversion to display units happens at the UI layer via toUnit.
+   * ============================================================ */
+
+  /**
+   * LIVE estimate — O(1) protocol/config-only multipliers applied to the
+   * current instantaneous bps. This is a $derived (not $derived.by walking
+   * samples) so it recomputes only when the latest sample's bps or the
+   * compensation config changes — never per-sample-iteration. Fixes
+   * linerate's per-sample recompute hot-path (§13.3).
+   */
+  liveCompensation = $derived<CompensationEstimate>(
+    estimateLiveCompensation(
+      this.throughput.at(-1)?.bps ?? 0,
+      this.config.compensation,
+    ),
+  );
+
+  /**
+   * RESULT estimate (download) — full sample-derived estimate. Recomputes
+   * ONLY when `result` (or the config) changes, since both inputs are the
+   * only reactive reads here; the heavy factor math runs once on `complete`.
+   */
+  downloadCompensation = $derived<CompensationEstimate>(
+    estimateResultCompensation(
+      this.result?.download ?? null,
+      "download",
+      this.config.compensation,
+    ),
+  );
+
+  /** RESULT estimate (upload) — same memoization profile as download. */
+  uploadCompensation = $derived<CompensationEstimate>(
+    estimateResultCompensation(
+      this.result?.upload ?? null,
+      "upload",
+      this.config.compensation,
+    ),
   );
 
   get unitLabel() {
