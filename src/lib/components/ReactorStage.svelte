@@ -8,12 +8,12 @@
    * ============================================================ */
   import { onMount } from "svelte";
   import { console as store } from "../state/console.svelte";
-  import { ReactorEngine } from "../canvas/ReactorEngine";
+  import { GaugeEngine } from "../canvas/GaugeEngine";
   import PhaseRail from "./PhaseRail.svelte";
   import { fmtSpeed, fmtMs } from "../format";
 
   let canvasEl = $state<HTMLCanvasElement>();
-  let engine: ReactorEngine;
+  let engine: GaugeEngine;
 
   // The single big number, per phase (§3.1 behavior table).
   const display = $derived.by(() => {
@@ -33,7 +33,7 @@
   let a11y = $state("");
 
   onMount(() => {
-    engine = new ReactorEngine(() => ({
+    engine = new GaugeEngine(() => ({
       phase: store.phase,
       intensity: store.liveMetric.value,
       rtt: store.liveRtt,
@@ -111,7 +111,7 @@
   .reactor-metric {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: clamp(40px, 6vw, 72px);
+    font-size: clamp(30px, 4.4vw, 54px);
     font-weight: 700;
     letter-spacing: -0.04em;
     color: var(--text);
