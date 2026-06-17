@@ -47,6 +47,62 @@ export function niceCeil(v: number): number {
   return nf * 10 ** exp;
 }
 
+/** Linear-interpolated quantile (q∈0–1) over a SORTED ascending array.
+ *  Single shared implementation — dedupes linerate's two copies (the
+ *  `percentile`/`quantile` helpers it scattered across measurement +
+ *  LatencyProfile). Returns null for an empty input. */
+export function quantile(sorted: number[], q: number): number | null {
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const pos = (sorted.length - 1) * Math.min(1, Math.max(0, q));
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  const w = pos - lo;
+  return sorted[lo] * (1 - w) + sorted[hi] * w;
+}
+
+/** "Nice" step (1/2/5 × 10ⁿ) at-or-below `span` — the rung size for a
+ *  centered, snapped axis domain. Mirrors linerate's `latencyDomainStep`
+ *  but generalized to any magnitude instead of the hard-coded 10/5/2/1. */
+export function niceStep(span: number): number {
+  if (span <= 0) return 1;
+  const exp = Math.floor(Math.log10(span));
+  const base = 10 ** exp;
+  const f = span / base; // 1–10
+  const nf = f >= 5 ? 5 : f >= 2 ? 2 : 1;
+  return nf * base;
+}
+
+export interface NiceDomain {
+  min: number;
+  max: number;
+  span: number;
+}
+
+/** Smart centered, snapped domain for an auto-scaled axis (latency-style).
+ *  Lifts linerate's weighted-span math: widen the raw min–max by 1.35×
+ *  (and never less than 16% of the peak, nor a small absolute floor), center
+ *  it, then snap the bounds out to a nice step. Used by both the chart's
+ *  latency axis and the latency profile so they scale identically. */
+export function niceDomain(
+  values: number[],
+  opts: { widen?: number; minSpanRatio?: number; floor?: number; clampMinZero?: boolean } = {},
+): NiceDomain {
+  const { widen = 1.35, minSpanRatio = 0.16, floor = 12, clampMinZero = true } = opts;
+  if (!values.length) return { min: 0, max: floor, span: floor };
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const rawSpan = Math.max(1, rawMax - rawMin);
+  const weighted = Math.max(rawSpan * widen, rawMax * minSpanRatio, floor);
+  const center = (rawMin + rawMax) / 2;
+  const step = niceStep(weighted);
+  let min = Math.floor((center - weighted / 2) / step) * step;
+  if (clampMinZero) min = Math.max(0, min);
+  const max = Math.ceil((center + weighted / 2) / step) * step;
+  const span = Math.max(step, max - min);
+  return { min, max: min + span, span };
+}
+
 /** Count-up tween generator for result snap (rAF-driven, 220ms ease-out). */
 export function countUp(
   from: number,

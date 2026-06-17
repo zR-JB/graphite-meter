@@ -14,6 +14,7 @@
   import MetricChips from "./MetricChips.svelte";
   import InfraCard from "./InfraCard.svelte";
   import TelemetryDetail from "./TelemetryDetail.svelte";
+  import LatencyProfile from "./LatencyProfile.svelte";
   import StatusBar from "./StatusBar.svelte";
 
   // Layout state. `inspectorVisible` drives the column (wide) AND the
@@ -109,6 +110,7 @@
   <!-- RIGHT INSPECTOR -->
   <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4">
     <InfraCard />
+    <LatencyProfile />
     <TelemetryDetail />
   </aside>
 

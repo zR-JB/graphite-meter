@@ -9,7 +9,7 @@
 
 import type { Phase, ThroughputSample, LatencySample } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
-import { niceCeil } from "../format";
+import { niceCeil, niceDomain } from "../format";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -33,7 +33,19 @@ interface Viewport {
   tMin: number;
   tMax: number;
   bpsMax: number;
+  rttMin: number; // latency axis floor (0 live; centered span in result mode)
   rttMax: number;
+}
+
+/** Per-phase throughput summary drawn as min/max/avg overlays in result mode. */
+interface PhaseStat {
+  phase: Phase;
+  t0: number;
+  t1: number;
+  min: number;
+  max: number;
+  avg: number;
+  stroke: string;
 }
 
 interface PhaseSpan {
@@ -69,6 +81,12 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
+/** Hex (#rgb/#rrggbb) → rgba() string at the given alpha. */
+function withAlpha(hex: string, a: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
 export class ChartEngine implements CanvasEngine {
   #get: () => ChartData;
   #fmt: ChartFormatters;
@@ -81,11 +99,12 @@ export class ChartEngine implements CanvasEngine {
   #w = 0;
   #h = 0;
 
-  #vp: Viewport = { tMin: 0, tMax: 6000, bpsMax: 1e6, rttMax: 50 };
+  #vp: Viewport = { tMin: 0, tMax: 6000, bpsMax: 1e6, rttMin: 0, rttMax: 50 };
   #vpInit = false;
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
+  #result = false; // frozen post-run result mode
 
   #c: ThemeColors = {
     download: "#6fa77a",
@@ -147,7 +166,10 @@ export class ChartEngine implements CanvasEngine {
     this.#hoverX = x;
   }
 
-  /** Nearest-sample readout under the hover cursor (for the DOM chip). */
+  /** Hover readout under the cursor (for the DOM chip). Snaps to the time
+   *  under the pointer, then LINEARLY INTERPOLATES the series value between
+   *  the two bracketing samples (not nearest-only) — ports linerate's
+   *  `transferPointAt`/`latencyPointAt` weight-blend onto the time axis. */
   hoverInfo(): HoverInfo | null {
     if (this.#hoverX == null) return null;
     const plotW = this.#w - PAD_L - PAD_R;
@@ -156,23 +178,36 @@ export class ChartEngine implements CanvasEngine {
     const frac = (x - PAD_L) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
-    const bps = this.#nearest(data.throughput, t)?.bps ?? null;
-    const lat = this.#nearest(data.latency, t);
-    return { x, t, bps, rtt: lat && !lat.lost ? lat.rttMs : null };
+    return {
+      x,
+      t,
+      bps: this.#interp(data.throughput, t, (s) => s.bps),
+      rtt: this.#interp(
+        data.latency.filter((s) => !s.lost),
+        t,
+        (s) => s.rttMs,
+      ),
+    };
   }
 
-  #nearest<T extends { t: number }>(arr: T[], t: number): T | null {
+  /** Value at time `t` linearly interpolated between the bracketing samples.
+   *  Clamps to the endpoints outside the sampled range; null if empty. */
+  #interp<T extends { t: number }>(arr: T[], t: number, pick: (s: T) => number): number | null {
     if (!arr.length) return null;
-    let best = arr[0];
-    let bestD = Math.abs(arr[0].t - t);
+    if (t <= arr[0].t) return pick(arr[0]);
+    const last = arr[arr.length - 1];
+    if (t >= last.t) return pick(last);
+    // arr is time-ordered (push order); linear scan + neighbour blend.
     for (let i = 1; i < arr.length; i++) {
-      const d = Math.abs(arr[i].t - t);
-      if (d < bestD) {
-        bestD = d;
-        best = arr[i];
+      const b = arr[i];
+      if (b.t >= t) {
+        const a = arr[i - 1];
+        const span = b.t - a.t || 1;
+        const w = (t - a.t) / span;
+        return pick(a) * (1 - w) + pick(b) * w;
       }
     }
-    return best;
+    return pick(last);
   }
 
   #resolveColors(): void {
@@ -221,11 +256,13 @@ export class ChartEngine implements CanvasEngine {
 
     const latest = this.#latestT(d);
     const complete = d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
+    this.#result = complete;
 
     // Target viewport.
     let tMin: number;
     let tMax: number;
     if (complete) {
+      // Frozen result view: settle the camera to the whole timeline.
       tMin = 0;
       tMax = Math.max(latest * 1.02, 1000);
     } else {
@@ -236,11 +273,25 @@ export class ChartEngine implements CanvasEngine {
     }
 
     const peak = this.#peakIn(d.throughput, tMin, tMax);
-    const p95 = this.#p95In(d.latency, tMin, tMax);
     const bpsMax = niceCeil(Math.max(peak * 1.15, 1e6));
-    const rttMax = niceCeil(Math.max(p95 * 1.3, 20));
 
-    const target: Viewport = { tMin, tMax, bpsMax, rttMax };
+    // Latency axis. Live → simple 0-based nice ceiling (stable while scrolling).
+    // Result → centered, weighted, nice-step domain (shared `niceDomain`), so
+    // a flat latency band fills the lane instead of hugging the floor.
+    let rttMin = 0;
+    let rttMax: number;
+    if (complete) {
+      const rtts: number[] = [];
+      for (const s of d.latency) if (!s.lost) rtts.push(s.rttMs);
+      const dom = niceDomain(rtts, { floor: 20 });
+      rttMin = dom.min;
+      rttMax = dom.max;
+    } else {
+      const p95 = this.#p95In(d.latency, tMin, tMax);
+      rttMax = niceCeil(Math.max(p95 * 1.3, 20));
+    }
+
+    const target: Viewport = { tMin, tMax, bpsMax, rttMin, rttMax };
     if (!this.#vpInit) {
       this.#vp = { ...target };
       this.#vpInit = true;
@@ -248,6 +299,7 @@ export class ChartEngine implements CanvasEngine {
       this.#vp.tMin += (target.tMin - this.#vp.tMin) * FOLLOW;
       this.#vp.tMax += (target.tMax - this.#vp.tMax) * FOLLOW;
       this.#vp.bpsMax += (target.bpsMax - this.#vp.bpsMax) * FOLLOW;
+      this.#vp.rttMin += (target.rttMin - this.#vp.rttMin) * FOLLOW;
       this.#vp.rttMax += (target.rttMax - this.#vp.rttMax) * FOLLOW;
     }
   }
@@ -277,7 +329,8 @@ export class ChartEngine implements CanvasEngine {
   }
   #yR(rtt: number): number {
     const plotH = this.#h - PAD_T - PAD_B;
-    return PAD_T + (1 - rtt / this.#vp.rttMax) * plotH;
+    const span = this.#vp.rttMax - this.#vp.rttMin || 1;
+    return PAD_T + (1 - (rtt - this.#vp.rttMin) / span) * plotH;
   }
 
   #draw(): void {
@@ -289,9 +342,75 @@ export class ChartEngine implements CanvasEngine {
     this.#drawBufferbloatBands(ctx);
     this.#drawGrid(ctx);
     this.#drawThroughput(ctx, d.throughput);
+    if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
     this.#drawLatency(ctx, d.latency);
     this.#drawAxesLabels(ctx);
-    this.#drawHover(ctx, d);
+    this.#drawHover(ctx);
+  }
+
+  /** Per-phase throughput min/max/avg overlays — drawn only in the frozen
+   *  result view. A faint min→max band per transfer phase plus a dashed
+   *  average rule and a small "avg" tag. Ports linerate's per-series
+   *  average-line + peak summary onto the canvas. */
+  #drawPhaseStats(ctx: CanvasRenderingContext2D, all: ThroughputSample[]): void {
+    for (const stat of this.#phaseStats(all)) {
+      const x0 = Math.max(PAD_L, this.#x(stat.t0));
+      const x1 = Math.min(this.#w - PAD_R, this.#x(stat.t1));
+      if (x1 <= x0) continue;
+      const yMin = this.#yL(stat.min);
+      const yMax = this.#yL(stat.max);
+      const yAvg = this.#yL(stat.avg);
+
+      // min→max band.
+      ctx.fillStyle = withAlpha(stat.stroke, 0.1);
+      ctx.fillRect(x0, yMax, x1 - x0, yMin - yMax);
+
+      // dashed average rule.
+      ctx.save();
+      ctx.strokeStyle = stat.stroke;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = 1.25;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(x0, Math.round(yAvg) + 0.5);
+      ctx.lineTo(x1, Math.round(yAvg) + 0.5);
+      ctx.stroke();
+      ctx.restore();
+
+      // avg tag.
+      ctx.fillStyle = stat.stroke;
+      ctx.font = '9px "IBM Plex Mono", monospace';
+      ctx.textAlign = "left";
+      ctx.fillText(`avg ${this.#fmt.throughput(stat.avg)}`, x0 + 4, yAvg - 4);
+    }
+  }
+
+  #phaseStats(all: ThroughputSample[]): PhaseStat[] {
+    const out: PhaseStat[] = [];
+    for (const span of this.#spans) {
+      if (span.phase !== "download" && span.phase !== "upload") continue;
+      const t1 = span.t1 === Infinity ? this.#vp.tMax + 1 : span.t1;
+      const seg = all.filter((s) => s.t >= span.t0 && s.t <= t1);
+      if (seg.length < 2) continue;
+      let min = Infinity;
+      let max = 0;
+      let sum = 0;
+      for (const s of seg) {
+        if (s.bps < min) min = s.bps;
+        if (s.bps > max) max = s.bps;
+        sum += s.bps;
+      }
+      out.push({
+        phase: span.phase,
+        t0: span.t0,
+        t1,
+        min,
+        max,
+        avg: sum / seg.length,
+        stroke: span.phase === "download" ? this.#c.download : this.#c.upload,
+      });
+    }
+    return out;
   }
 
   #drawBufferbloatBands(ctx: CanvasRenderingContext2D): void {
@@ -406,7 +525,7 @@ export class ChartEngine implements CanvasEngine {
       const frac = i / 2; // 0 top, 1 bottom
       const y = top + (bot - top) * frac;
       const bps = this.#vp.bpsMax * (1 - frac);
-      const rtt = this.#vp.rttMax * (1 - frac);
+      const rtt = this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
       ctx.textAlign = "left";
       ctx.fillText(this.#fmt.throughput(bps), 4, y + 3);
       ctx.textAlign = "right";
@@ -414,7 +533,7 @@ export class ChartEngine implements CanvasEngine {
     }
   }
 
-  #drawHover(ctx: CanvasRenderingContext2D, d: ChartData): void {
+  #drawHover(ctx: CanvasRenderingContext2D): void {
     if (this.#hoverX == null) return;
     const x = Math.max(PAD_L, Math.min(this.#w - PAD_R, this.#hoverX));
     const top = PAD_T;
@@ -429,14 +548,12 @@ export class ChartEngine implements CanvasEngine {
 
     const info = this.hoverInfo();
     if (!info) return;
+    // Dots ride the interpolated value (matches the chip + the drawn line).
     ctx.fillStyle = this.#c.brand;
     if (info.bps != null) {
-      const ty = this.#nearest(d.throughput, info.t);
-      if (ty) {
-        ctx.beginPath();
-        ctx.arc(x, this.#yL(ty.bps), 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.beginPath();
+      ctx.arc(x, this.#yL(info.bps), 2.5, 0, Math.PI * 2);
+      ctx.fill();
     }
     if (info.rtt != null) {
       ctx.fillStyle = this.#c.warn;

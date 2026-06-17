@@ -20,11 +20,26 @@ import {
   estimateResultCompensation,
   type CompensationEstimate,
 } from "../compensation";
+import { quantile } from "../format";
 
 /* ================= STAGE SELECTION (§13.4) ================= */
 
 /** The three user-selectable measured stages. */
 export type StageKey = "latency" | "download" | "upload";
+
+/** One distribution lane of the native LatencyProfile (§13.5). */
+export interface LatencyLane {
+  key: StageKey;
+  min: number | null;
+  max: number | null;
+  p10: number | null;
+  p90: number | null;
+  average: number | null;
+  current: number | null;
+  lossRatio: number;
+  count: number;
+  active: boolean;
+}
 
 /** Execution order — used by the future-only live-toggle constraint. */
 const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
@@ -88,6 +103,15 @@ class ConsoleStore {
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
   phaseFraction = $state(0); // 0–1 within current phase
+
+  /* Time windows [t0,t1] (ms since run start) per measured phase, captured
+   * on phase transitions. The single source of truth for mapping a sample's
+   * `t` → its phase: latency/throughput samples carry no phase field, so the
+   * result-mode chart (per-phase stats) and LatencyProfile (lane bucketing)
+   * both read this instead of re-deriving boundaries. `t1` stays open
+   * (Infinity) for the live phase and is closed on the next transition. */
+  phaseWindows = $state<Record<string, { t0: number; t1: number }>>({});
+  #lastSampleT = 0;
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
   result = $state<RunResult | null>(null);
@@ -259,19 +283,30 @@ class ConsoleStore {
       case "infra":
         this.infra = e.info;
         break;
-      case "phase":
-        this.phase = e.transition.to;
+      case "phase": {
+        // Close the outgoing phase's window at the latest sample time, open
+        // the incoming one. Drives `phaseWindows` (shared time→phase map).
+        const to = e.transition.to;
+        const prev = this.phaseWindows[this.phase];
+        if (prev && prev.t1 === Infinity) prev.t1 = this.#lastSampleT;
+        if (to === "download" || to === "upload" || to === "latency") {
+          this.phaseWindows[to] = { t0: this.#lastSampleT, t1: Infinity };
+        }
+        this.phase = to;
         this.phaseFraction = 0;
-        if (e.transition.to === "warmup") this.startEpoch = Date.now();
+        if (to === "warmup") this.startEpoch = Date.now();
         break;
+      }
       case "progress":
         this.phaseFraction = e.fraction;
         break;
       case "throughput":
+        this.#lastSampleT = e.sample.t;
         this.throughput.push(e.sample);
         if (this.throughput.length > MAX_SAMPLES) this.throughput.shift();
         break;
       case "latency":
+        if (e.sample.t > this.#lastSampleT) this.#lastSampleT = e.sample.t;
         this.latency.push(e.sample);
         if (this.latency.length > MAX_SAMPLES) this.latency.shift();
         break;
@@ -297,7 +332,55 @@ class ConsoleStore {
     this.result = null;
     this.errorMsg = null;
     this.startEpoch = 0;
+    this.phaseWindows = {};
+    this.#lastSampleT = 0;
   }
+
+  /* ============================================================
+   * Latency lanes (§13.5 — LatencyProfile)
+   * Bucket every latency sample into one of three lanes by the
+   * shared phase→time map: idle (the `latency` phase), loaded-down
+   * (the `download` window), loaded-up (the `upload` window). Each
+   * lane carries the distribution stats the native profile renders:
+   * min/max range, P10–P90 band, average, current, loss. Recomputes
+   * only when `latency` / `phaseWindows` change (not per render).
+   * ============================================================ */
+  latencyLanes = $derived.by<LatencyLane[]>(() => {
+    const inWin = (t: number, key: StageKey) => {
+      const w = this.phaseWindows[key];
+      if (!w) return false;
+      return t >= w.t0 && t <= (w.t1 === Infinity ? Number.POSITIVE_INFINITY : w.t1);
+    };
+    return (["latency", "download", "upload"] as const).map((key) => {
+      // Idle = latency-phase pings; loaded = under-load pings inside the
+      // respective transfer window (covers any pre/post-window stragglers).
+      const laneSamples = this.latency.filter((s) =>
+        key === "latency"
+          ? !s.underLoad && inWin(s.t, "latency")
+          : s.underLoad && inWin(s.t, key),
+      );
+      const valid = laneSamples.filter((s) => !s.lost);
+      const sorted = valid.map((s) => s.rttMs).sort((a, b) => a - b);
+      const avg = valid.length
+        ? valid.reduce((sum, s) => sum + s.rttMs, 0) / valid.length
+        : null;
+      const lossRatio = laneSamples.length
+        ? laneSamples.filter((s) => s.lost).length / laneSamples.length
+        : 0;
+      return {
+        key,
+        min: sorted.at(0) ?? null,
+        max: sorted.at(-1) ?? null,
+        p10: quantile(sorted, 0.1),
+        p90: quantile(sorted, 0.9),
+        average: avg,
+        current: valid.at(-1)?.rttMs ?? null,
+        lossRatio,
+        count: laneSamples.length,
+        active: this.phase === key,
+      };
+    });
+  });
 
   #lastSampleForPhase() {
     return this.throughput.at(-1) ?? null;
