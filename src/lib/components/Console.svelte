@@ -31,8 +31,9 @@
   let workbenchOpen = $state(false);
 
   function toggleTheme() {
-    const cur = document.documentElement.getAttribute("data-theme");
-    document.documentElement.setAttribute("data-theme", cur === "light" ? "dark" : "light");
+    // Flip the persisted pref; the store's $effect applies it to
+    // <html data-theme> and the debounced save persists it (§14.1).
+    store.theme = store.theme === "light" ? "dark" : "light";
   }
 
   function cycleUnit() {

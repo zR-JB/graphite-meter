@@ -21,6 +21,12 @@ import {
   type CompensationEstimate,
 } from "../compensation";
 import { quantile } from "../format";
+import {
+  loadPersisted,
+  savePersisted,
+  type ThemePref,
+  type UxMode,
+} from "./persistence";
 
 /* ================= STAGE SELECTION (§13.4) ================= */
 
@@ -118,12 +124,32 @@ class ConsoleStore {
   errorMsg = $state<string | null>(null);
   startEpoch = $state(0);
 
-  /* ---- config (bound to settings UI) ---- */
+  /* ---- config + display prefs (hydrated from localStorage, §14.1) ----
+   * `loadPersisted()` deep-merges the saved blob over the defaults so a
+   * missing/extra/corrupt field never crashes; first-ever load → defaults
+   * (theme from system `prefers-color-scheme`). A module-scope $effect
+   * (see bottom of file) writes any change back, debounced ~250ms. */
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
 
   /* ---- display preferences ---- */
   unitBase = $state<"base10" | "base2">("base10"); // Mbps vs Mibit/s
   unitKind = $state<"bits" | "bytes">("bits");
+
+  /* ---- persisted UI prefs (single source of truth) ---- */
+  /** Active theme. Applied to `document.documentElement[data-theme]` by an
+   *  $effect below — the ONLY place the attribute is set at runtime. */
+  theme = $state<ThemePref>("dark");
+  /** Newcomer vs power-user face (§14.2). Persisted now, wired in Batch I. */
+  uxMode = $state<UxMode>("simple");
+
+  constructor() {
+    const p = loadPersisted();
+    this.config = p.config;
+    this.unitBase = p.unitBase;
+    this.unitKind = p.unitKind;
+    this.theme = p.theme;
+    this.uxMode = p.uxMode;
+  }
 
   /* ================= DERIVED ================= */
 
@@ -388,3 +414,45 @@ class ConsoleStore {
 }
 
 export const console = new ConsoleStore();
+
+/* ============================================================
+ * Persistence side-effects (§14.1, Batch H) — browser only.
+ *
+ * A single module-scope `$effect.root` owns two effects:
+ *   1. THEME APPLY — writes `console.theme` to the documentElement
+ *      `data-theme` attribute. This is the single runtime source of
+ *      truth for the attribute (the boot script in main.ts only seeds
+ *      it pre-paint to avoid a flash; this effect keeps it in sync).
+ *   2. DEBOUNCED SAVE — reads every persisted field (so any change to
+ *      config / prefs re-runs it) and writes a `$state.snapshot` of the
+ *      whole blob to localStorage ~250ms after the last change.
+ *
+ * `$state.snapshot` unwraps the reactive proxies so JSON.stringify sees
+ * plain data. Guarded with `typeof window` so SSR/tests stay inert.
+ * `.root` is never torn down — these live for the app's lifetime. ============================================================ */
+const SAVE_DEBOUNCE_MS = 250;
+
+if (typeof window !== "undefined") {
+  $effect.root(() => {
+    // 1. Apply theme → <html data-theme>.
+    $effect(() => {
+      document.documentElement.setAttribute("data-theme", console.theme);
+    });
+
+    // 2. Debounced write-through of all persisted fields.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    $effect(() => {
+      // Touch every persisted field so the effect tracks them all.
+      const snapshot = {
+        config: $state.snapshot(console.config),
+        unitBase: console.unitBase,
+        unitKind: console.unitKind,
+        theme: console.theme,
+        uxMode: console.uxMode,
+      };
+      clearTimeout(timer);
+      timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);
+      return () => clearTimeout(timer);
+    });
+  });
+}
