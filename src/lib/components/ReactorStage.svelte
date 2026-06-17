@@ -10,7 +10,19 @@
   import { console as store } from "../state/console.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
   import PhaseRail from "./PhaseRail.svelte";
+  import StageChips from "./StageChips.svelte";
+  import EngageButton from "./EngageButton.svelte";
   import { fmtSpeed, fmtMs } from "../format";
+
+  // Total run ETA = warmup + each enabled stage's duration (read-only here;
+  // duration itself is edited only in the Workbench, §14.2). Shown so the
+  // newcomer knows roughly how long Engage will take.
+  const etaMs = $derived(
+    store.config.duration.warmupMs +
+      (store.config.stages.latency ? store.config.duration.latencyMs : 0) +
+      (store.config.stages.download ? store.config.duration.downloadMs : 0) +
+      (store.config.stages.upload ? store.config.duration.uploadMs : 0),
+  );
 
   let canvasEl = $state<HTMLCanvasElement>();
   let engine: GaugeEngine;
@@ -71,6 +83,20 @@
     <output class="sr-only" aria-live="polite">{a11y}</output>
   </div>
   <PhaseRail />
+
+  <!-- Hero controls — gauge + number + stage chips + Engage read as one
+       instrument (§14.2). Duration is Workbench-only; the run uses the
+       saved duration and shows just its ETA here. -->
+  <div class="controls">
+    <div class="controls-head">
+      <span class="controls-title">Test stages</span>
+      <span class="eta" title="Estimated run time at the saved duration">
+        ~{(etaMs / 1000).toFixed(0)}s
+      </span>
+    </div>
+    <StageChips />
+    <EngageButton />
+  </div>
 </section>
 
 <style>
@@ -125,5 +151,33 @@
     letter-spacing: 0.04em;
     color: var(--text-soft);
     text-transform: uppercase;
+  }
+
+  /* Hero controls block — stage chips + the master Engage action, sitting
+     directly under the gauge so the three read as one instrument. */
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 4px;
+  }
+  .controls-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .controls-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+  }
+  .eta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0;
   }
 </style>

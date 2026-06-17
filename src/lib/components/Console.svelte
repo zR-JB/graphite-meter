@@ -8,7 +8,6 @@
   import { onMount } from "svelte";
   import { console as store } from "../state/console.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
-  import TriagePanel from "./TriagePanel.svelte";
   import ReactorStage from "./ReactorStage.svelte";
   import TimeseriesTheatre from "./TimeseriesTheatre.svelte";
   import MetricChips from "./MetricChips.svelte";
@@ -24,8 +23,9 @@
 
   // Layout state. `inspectorVisible` drives the column (wide) AND the
   // drawer (narrow); matchMedia sets a sensible default per breakpoint.
+  // The left rail is dissolved (§14.2): primary controls (stage chips +
+  // Engage) now live in the hero stage, advanced config in the Workbench.
   let inspectorVisible = $state(true);
-  let railOpen = $state(true);
   // The Workbench power-user drawer (§13.6). Keyboard shortcut `W` lands in
   // Batch G; for now the topbar flask button is the only trigger.
   let workbenchOpen = $state(false);
@@ -40,6 +40,11 @@
     store.unitBase = store.unitBase === "base10" ? "base2" : "base10";
   }
 
+  /** Progressive-disclosure toggle (§14.2) — persisted via the store. */
+  function toggleUxMode() {
+    store.uxMode = store.uxMode === "simple" ? "advanced" : "simple";
+  }
+
   /* ---- Global keyboard map (§7, extended by Batch G §13.7) ----
      | Key            | Action                                          |
      | Space / Enter  | Engage / Abort (wire.engage toggle)             |
@@ -49,6 +54,7 @@
      | R              | Re-run when phase is complete                   |
      | U              | Cycle unit base                                 |
      | T              | Cycle theme                                     |
+     | M              | Toggle Simple / Advanced (uxMode)               |
      Guarded against text inputs / contentEditable so typing is never hijacked. */
   function inEditable(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
@@ -74,8 +80,6 @@
         workbenchOpen = false;
       } else if (inspectorVisible) {
         inspectorVisible = false;
-      } else if (railOpen) {
-        railOpen = false;
       } else {
         return;
       }
@@ -119,6 +123,10 @@
         toggleTheme();
         e.preventDefault();
         break;
+      case "m":
+        toggleUxMode();
+        e.preventDefault();
+        break;
     }
   }
 
@@ -130,23 +138,12 @@
     apply();
     mq.addEventListener("change", apply);
 
-    // Rail default per breakpoint: a grid column ≥760px, an off-canvas drawer
-    // below. Crossing the boundary resets it so the rail is never stranded,
-    // and ☰ always has a visible effect (collapse on wide, open drawer on narrow).
-    const mqRail = window.matchMedia("(min-width: 760px)");
-    const applyRail = () => {
-      railOpen = mqRail.matches;
-    };
-    applyRail();
-    mqRail.addEventListener("change", applyRail);
-
     window.addEventListener("keydown", onKeydown);
 
     void bootRunner();
 
     return () => {
       mq.removeEventListener("change", apply);
-      mqRail.removeEventListener("change", applyRail);
       window.removeEventListener("keydown", onKeydown);
       teardownRunner();
     };
@@ -156,22 +153,31 @@
 <main
   id="console"
   data-phase={store.phase}
+  data-ux={store.uxMode}
   class:inspector-collapsed={!inspectorVisible}
   class:inspector-open={inspectorVisible}
-  class:rail-open={railOpen}
-  class:rail-collapsed={!railOpen}
   class="bg-bg text-text"
 >
   <!-- TOPBAR -->
   <header class="zone topbar flex items-center gap-3 px-4 border-b border-border">
-    <button
-      class="ghost-btn"
-      aria-label="Toggle rail"
-      onclick={() => (railOpen = !railOpen)}>☰</button
-    >
     <span class="font-mono text-sm font-bold tracking-tight">Graphite&nbsp;Meter</span>
     <span class="pill">{store.effectiveConnectivity}</span>
     <div class="flex-1"></div>
+    <!-- Simple / Advanced progressive-disclosure toggle (§14.2) -->
+    <div class="mode-toggle" role="group" aria-label="Detail level">
+      <button
+        class="mode-seg"
+        class:active={store.uxMode === "simple"}
+        aria-pressed={store.uxMode === "simple"}
+        onclick={() => (store.uxMode = "simple")}>Simple</button
+      >
+      <button
+        class="mode-seg"
+        class:active={store.uxMode === "advanced"}
+        aria-pressed={store.uxMode === "advanced"}
+        onclick={() => (store.uxMode = "advanced")}>Advanced</button
+      >
+    </div>
     <button class="ghost-btn font-mono" onclick={cycleUnit}>{store.unitBase}</button>
     <button class="ghost-btn" aria-label="Toggle theme" onclick={toggleTheme}>◐</button>
     <button
@@ -187,19 +193,6 @@
     >
   </header>
 
-  <!-- LEFT RAIL -->
-  <nav class="zone rail border-r border-border bg-surface-1 p-3">
-    <TriagePanel />
-  </nav>
-
-  <!-- Rail drawer backdrop (narrow viewports only) -->
-  <button
-    class="rail-backdrop"
-    aria-label="Close rail"
-    tabindex={railOpen ? 0 : -1}
-    onclick={() => (railOpen = false)}
-  ></button>
-
   <!-- CENTER STAGE -->
   <section class="zone stage min-w-0 overflow-y-auto p-4 flex flex-col gap-4">
     <ReactorStage />
@@ -207,11 +200,23 @@
     <MetricChips />
   </section>
 
-  <!-- RIGHT INSPECTOR -->
+  <!-- RIGHT INSPECTOR — InfraCard (connection) + the latency profile stay in
+       the default view (latency profile is core, §14.2). TelemetryDetail's
+       heavy percentiles/jitter are secondary: surfaced inline in advanced,
+       tucked behind an opt-in disclosure in simple. -->
   <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4">
     <InfraCard />
     <LatencyProfile />
-    <TelemetryDetail />
+    {#if store.uxMode === "advanced"}
+      <TelemetryDetail />
+    {:else}
+      <details class="telemetry-disclose">
+        <summary>Show detailed telemetry</summary>
+        <div class="telemetry-disclose__body">
+          <TelemetryDetail />
+        </div>
+      </details>
+    {/if}
   </aside>
 
   <!-- Drawer backdrop (narrow viewports only) -->
@@ -236,25 +241,23 @@
 </main>
 
 <style>
-  /* ===== Three-zone grid (§1.1) ===== */
+  /* ===== Two-zone console grid (§1.1, rail dissolved §14.2) =====
+     Stage + inspector; the old left control rail is gone — primary
+     controls now live in the hero stage. */
   #console {
     display: grid;
-    grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--inspector-w);
+    grid-template-columns: minmax(0, 1fr) var(--inspector-w);
     grid-template-rows: var(--topbar-h) minmax(0, 1fr) 28px;
     grid-template-areas:
-      "topbar  topbar  topbar"
-      "rail    stage   inspector"
-      "status  status  status";
+      "topbar  topbar"
+      "stage   inspector"
+      "status  status";
     height: 100dvh;
     gap: 0;
   }
 
   .topbar {
     grid-area: topbar;
-  }
-  .rail {
-    grid-area: rail;
-    overflow: hidden auto; /* vertical scroll for tall rails */
   }
   .stage {
     grid-area: stage;
@@ -267,19 +270,11 @@
     font-size: 11px;
   }
 
-  /* Manual collapse (grid mode, ≥760): zero the track AND remove the rail
-     from the render tree, so no content can peek behind the stage panel. */
+  /* Manual collapse (grid mode, ≥1440): zero the track AND drop the inspector
+     from the render tree so its 0-width column can't overflow to the right. */
   #console.inspector-collapsed {
     --inspector-w: 0px;
   }
-  #console.rail-collapsed {
-    --rail-w: 0px;
-  }
-  #console.rail-collapsed .rail {
-    display: none;
-  }
-  /* Same as the rail: when collapsed in grid mode (≥1440) drop the inspector
-     from the render tree so its 0-width column can't overflow to the right. */
   #console.inspector-collapsed .inspector {
     display: none;
   }
@@ -287,9 +282,8 @@
     overflow: hidden auto;
   }
 
-  /* Drawer backdrops are inert on wide layouts */
-  .backdrop,
-  .rail-backdrop {
+  /* Drawer backdrop is inert on wide layouts */
+  .backdrop {
     display: none;
     border: 0;
     padding: 0;
@@ -329,16 +323,108 @@
     font-size: 11px;
   }
 
+  /* Simple / Advanced segmented toggle (§14.2) — the persisted disclosure
+     switch. Mirrors the .seg pattern used across the config surfaces. */
+  .mode-toggle {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-inset);
+  }
+  .mode-seg {
+    min-height: 28px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition:
+      background var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  .mode-seg:hover {
+    color: var(--text);
+  }
+  .mode-seg.active {
+    background: var(--brand-soft);
+    color: var(--brand-strong);
+  }
+  .mode-seg:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+  }
+  /* On the narrow topbar, drop the mode toggle's labels to keep the bar tidy;
+     keep the segmented control itself reachable. */
+  @media (max-width: 759px) {
+    .mode-seg {
+      padding: 0 8px;
+      font-size: 10px;
+    }
+  }
+
+  /* Opt-in disclosure wrapping the heavy telemetry in simple mode (§14.2). */
+  .telemetry-disclose {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-1);
+    box-shadow: var(--shadow-card);
+    overflow: clip;
+  }
+  .telemetry-disclose > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 13px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  .telemetry-disclose > summary::-webkit-details-marker {
+    display: none;
+  }
+  .telemetry-disclose > summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 8px;
+    color: var(--text-soft);
+    transition: transform var(--dur-hover) var(--ease-out);
+  }
+  .telemetry-disclose[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .telemetry-disclose > summary:hover {
+    color: var(--text);
+  }
+  .telemetry-disclose > summary:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: -2px;
+  }
+  /* The nested card already has its own border/radius; drop the top border so
+     it reads as one continuous panel under the summary. */
+  .telemetry-disclose__body :global(.card) {
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
+  }
+
   /* ===== Responsive collapse (§1.1) ===== */
 
   /* 1100–1439: inspector becomes a right slide-in overlay drawer */
   @media (max-width: 1439px) {
     #console {
-      grid-template-columns: var(--rail-w) minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
-        "topbar  topbar"
-        "rail    stage"
-        "status  status";
+        "topbar"
+        "stage"
+        "status";
     }
     .inspector {
       position: fixed;
@@ -369,47 +455,12 @@
     }
   }
 
-  /* (The former 760–1099 56px icon-strip half-state was removed: the rail is
-     now binary — full column or fully hidden — which is cleaner and avoids
-     clipped, unusable icon-only content.) */
-
-  /* < 760: single-column stack; the rail becomes a left slide-in drawer
-     (mirroring the inspector) so it stays reachable via ☰. */
+  /* < 760: single-column stack; the stage flows above the status bar and the
+     inspector stays a right slide-in drawer (from the ≥max-1439 rule above). */
   @media (max-width: 759px) {
     #console {
-      grid-template-columns: 1fr;
-      grid-template-areas:
-        "topbar"
-        "stage"
-        "status";
       height: auto;
       min-height: 100dvh;
-    }
-    .rail {
-      position: fixed;
-      top: var(--topbar-h);
-      left: 0;
-      bottom: 28px;
-      width: min(280px, 82vw);
-      transform: translateX(-100%);
-      transition: transform var(--dur-slide) var(--ease-out);
-      z-index: 40;
-      box-shadow: var(--shadow-float);
-    }
-    /* In drawer mode hide via transform (animatable), overriding the
-       grid-mode display:none so the slide transition can play. */
-    #console.rail-collapsed .rail {
-      display: block;
-    }
-    #console.rail-open .rail {
-      transform: translateX(0);
-    }
-    #console.rail-open .rail-backdrop {
-      display: block;
-      position: fixed;
-      inset: var(--topbar-h) 0 28px 0;
-      z-index: 30;
-      background: color-mix(in srgb, var(--canvas) 50%, transparent);
     }
   }
 </style>
