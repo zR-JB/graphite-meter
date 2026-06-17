@@ -17,6 +17,9 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import StatusBar from "./StatusBar.svelte";
   import WorkbenchDrawer from "./workbench/WorkbenchDrawer.svelte";
+  import PhaseToast from "./PhaseToast.svelte";
+  import CommandHints from "./CommandHints.svelte";
+  import { engage } from "../runner/wire.svelte";
   import { ICON } from "../constants";
 
   // Layout state. `inspectorVisible` drives the column (wide) AND the
@@ -34,6 +37,88 @@
 
   function cycleUnit() {
     store.unitBase = store.unitBase === "base10" ? "base2" : "base10";
+  }
+
+  /* ---- Global keyboard map (§7, extended by Batch G §13.7) ----
+     | Key            | Action                                          |
+     | Space / Enter  | Engage / Abort (wire.engage toggle)             |
+     | Esc            | Abort if running, else close any open drawer    |
+     | W              | Toggle Workbench                                |
+     | D              | Toggle inspector (Details)                      |
+     | R              | Re-run when phase is complete                   |
+     | U              | Cycle unit base                                 |
+     | T              | Cycle theme                                     |
+     Guarded against text inputs / contentEditable so typing is never hijacked. */
+  function inEditable(el: EventTarget | null): boolean {
+    if (!(el instanceof HTMLElement)) return false;
+    const tag = el.tagName;
+    return (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      el.isContentEditable
+    );
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (inEditable(e.target)) return;
+
+    // Esc is allowed even mid-typing-context above already returned; here it
+    // aborts a live run, otherwise closes whichever drawer is open.
+    if (e.key === "Escape") {
+      if (store.isRunning) {
+        engage();
+      } else if (workbenchOpen) {
+        workbenchOpen = false;
+      } else if (inspectorVisible) {
+        inspectorVisible = false;
+      } else if (railOpen) {
+        railOpen = false;
+      } else {
+        return;
+      }
+      e.preventDefault();
+      return;
+    }
+
+    if (e.key === " " || e.key === "Enter") {
+      // If a button/link is focused, let its native activation fire instead so
+      // we never double-toggle (e.g. Enter on the focused EngageButton).
+      const t = e.target;
+      if (t instanceof HTMLElement) {
+        const tag = t.tagName;
+        if (tag === "BUTTON" || tag === "A" || t.getAttribute("role") === "button") return;
+      }
+      engage();
+      e.preventDefault();
+      return;
+    }
+
+    switch (e.key.toLowerCase()) {
+      case "w":
+        workbenchOpen = !workbenchOpen;
+        e.preventDefault();
+        break;
+      case "d":
+        inspectorVisible = !inspectorVisible;
+        e.preventDefault();
+        break;
+      case "r":
+        if (store.phase === "complete") {
+          engage();
+          e.preventDefault();
+        }
+        break;
+      case "u":
+        cycleUnit();
+        e.preventDefault();
+        break;
+      case "t":
+        toggleTheme();
+        e.preventDefault();
+        break;
+    }
   }
 
   onMount(() => {
@@ -54,11 +139,14 @@
     applyRail();
     mqRail.addEventListener("change", applyRail);
 
+    window.addEventListener("keydown", onKeydown);
+
     void bootRunner();
 
     return () => {
       mq.removeEventListener("change", apply);
       mqRail.removeEventListener("change", applyRail);
+      window.removeEventListener("keydown", onKeydown);
       teardownRunner();
     };
   });
@@ -136,10 +224,14 @@
   <!-- STATUS BAR -->
   <footer class="zone status flex items-center gap-4 px-4 border-t border-border bg-surface-1 font-mono text-soft">
     <StatusBar />
+    <CommandHints />
   </footer>
 
   <!-- Workbench power-user drawer (§13.6) — fixed overlay, opens from topbar -->
   <WorkbenchDrawer bind:open={workbenchOpen} />
+
+  <!-- Transient phase-change toast (§13.7) — fixed, bottom-right -->
+  <PhaseToast />
 </main>
 
 <style>

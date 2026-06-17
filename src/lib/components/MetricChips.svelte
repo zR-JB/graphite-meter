@@ -17,11 +17,17 @@
    * pip width, and a fixed two-line value block so the estimate
    * line is always reserved even when absent.
    * ============================================================ */
+  import { untrack } from "svelte";
   import { console as store } from "../state/console.svelte";
-  import { fmtSpeed, fmtMs } from "../format";
+  import { fmtSpeed, fmtMs, countUp } from "../format";
   import { ICON } from "../constants";
 
   const dash = "—";
+
+  // Honour the user's motion preference once (the count-up tween is decorative).
+  const reduced =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /** Is the named transfer phase the live, currently-running one? */
   function isLivePhase(p: "download" | "upload"): boolean {
@@ -97,6 +103,74 @@
   function pctLift(multiplier: number): string {
     return `+${((multiplier - 1) * 100).toFixed(1)}%`;
   }
+
+  /* ---- Count-up snaps on complete (§13.7) ----
+     Each card's MEASURED value tweens from its live reading to the final
+     aggregate when a run resolves (220ms ease-out via the shared `countUp`).
+     The override holds the in-flight number; while it's null the templates
+     fall back to the derived live value, so during a run nothing is intercepted.
+     Reduced motion skips the tween (the override is set instantly). */
+  const TWEEN_MS = 220;
+  let dlSnap = $state<number | null>(null);
+  let ulSnap = $state<number | null>(null);
+  let pingSnap = $state<number | null>(null);
+  let cancels: Array<() => void> = [];
+
+  function tweenTo(
+    from: number,
+    to: number,
+    set: (v: number) => void,
+  ): () => void {
+    if (reduced || from === to) {
+      set(to);
+      return () => {};
+    }
+    set(from);
+    return countUp(from, to, TWEEN_MS, set);
+  }
+
+  $effect(() => {
+    // Re-run only when `result` flips (becomes available / cleared on reset).
+    // The live "from" values are read untracked so per-tick live updates don't
+    // retrigger this effect mid-run.
+    const res = store.result;
+    for (const c of cancels) c();
+    cancels = [];
+
+    if (!res) {
+      dlSnap = null;
+      ulSnap = null;
+      pingSnap = null;
+      return;
+    }
+
+    untrack(() => {
+      if (res.download) {
+        cancels.push(
+          tweenTo(store.toUnit(dl.measuredBps), store.toUnit(res.download.meanBps), (v) => (dlSnap = v)),
+        );
+      }
+      if (res.upload) {
+        cancels.push(
+          tweenTo(store.toUnit(ul.measuredBps), store.toUnit(res.upload.meanBps), (v) => (ulSnap = v)),
+        );
+      }
+      if (res.latency) {
+        cancels.push(tweenTo(ping.ms, res.latency.p50Ms, (v) => (pingSnap = v)));
+      }
+    });
+
+    return () => {
+      for (const c of cancels) c();
+      cancels = [];
+    };
+  });
+
+  // The number each card actually renders: the tweened snap when present,
+  // otherwise the live derived measured value.
+  const dlShown = $derived(dlSnap ?? store.toUnit(dl.measuredBps));
+  const ulShown = $derived(ulSnap ?? store.toUnit(ul.measuredBps));
+  const pingShown = $derived(pingSnap ?? ping.ms);
 </script>
 
 <div class="chips">
@@ -112,7 +186,7 @@
       {/if}
     </header>
     <div class="val">
-      <span class="num">{dl.has ? fmtSpeed(store.toUnit(dl.measuredBps)) : dash}</span>
+      <span class="num">{dl.has ? fmtSpeed(dlShown) : dash}</span>
       <span class="unit">{store.unitLabel}</span>
     </div>
     <div class="est">
@@ -138,7 +212,7 @@
       {/if}
     </header>
     <div class="val">
-      <span class="num">{ul.has ? fmtSpeed(store.toUnit(ul.measuredBps)) : dash}</span>
+      <span class="num">{ul.has ? fmtSpeed(ulShown) : dash}</span>
       <span class="unit">{store.unitLabel}</span>
     </div>
     <div class="est">
@@ -159,7 +233,7 @@
       <span class="label">Ping</span>
     </header>
     <div class="val">
-      <span class="num">{ping.has ? fmtMs(ping.ms) : dash}</span>
+      <span class="num">{ping.has ? fmtMs(pingShown) : dash}</span>
       <span class="unit">ms</span>
     </div>
     <div class="est">
@@ -198,6 +272,34 @@
   .chip:hover {
     transform: translateY(-1px);
     border-color: var(--border-strong);
+  }
+
+  /* Staggered enter (§13.7): the three cards fade/rise in sequence (0–120ms)
+     on mount. Decorative — gated on no-preference so reduced-motion users get
+     them instantly (and the global §4.5 guard further neutralizes it). */
+  @media (prefers-reduced-motion: no-preference) {
+    .chip {
+      animation: chip-enter 220ms var(--ease-out) both;
+    }
+    .chip:nth-child(1) {
+      animation-delay: 0ms;
+    }
+    .chip:nth-child(2) {
+      animation-delay: 60ms;
+    }
+    .chip:nth-child(3) {
+      animation-delay: 120ms;
+    }
+  }
+  @keyframes chip-enter {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   /* The live/active metric gains a faint brand ring (mirrors §3.8). */
   .chip.active {
