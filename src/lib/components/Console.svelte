@@ -239,10 +239,10 @@
   .stage {
     grid-area: stage;
     /* Height-bounded flex column: the hero gauge flexes to fill, chart + chips
-       stay at their compact intrinsic height. Tighter pad/gap than the cards so
-       the simple default fits ~1280×800 and ~1440×900 without vertical scroll. */
-    padding: 12px;
-    gap: 12px;
+       stay at their compact intrinsic height. The faceplate surface; the wells
+       inside it carry the depth. Token-driven spacing (density knob). */
+    padding: var(--space-3);
+    gap: var(--space-3);
   }
   /* The gauge hero is the focal point — let it absorb spare height; the chart
      and chips below it never grow past their compact basis. */
@@ -302,17 +302,20 @@
     outline-offset: 2px;
   }
 
+  /* Flat chrome on the faceplate: a milled top edge-highlight gives the
+     button a tactile lift without a floating drop shadow. */
   .ghost-btn {
     display: grid;
     place-items: center;
     min-width: 32px;
     height: 32px;
-    padding: 0 8px;
+    padding: 0 var(--space-2);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-2);
+    box-shadow: inset 0 1px 0 var(--edge-light);
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: var(--type-md);
     transition:
       border-color var(--dur-hover) var(--ease-out),
       color var(--dur-hover) var(--ease-out);
