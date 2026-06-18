@@ -16,6 +16,7 @@
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
   import { ICON } from "../constants";
+  import { tooltip } from "../actions/tooltip";
 
   interface Props {
     open?: boolean;
@@ -162,7 +163,7 @@
       <button
         class="close-btn"
         aria-label={`Close ${title}`}
-        title="Close (Esc)"
+        use:tooltip={"Close (Esc)"}
         onclick={close}
       >
         {@html ICON.close}

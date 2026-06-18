@@ -8,6 +8,7 @@
    * ============================================================ */
   import { injectAnomaly } from "../../runner/wire.svelte";
   import { pointerIntent } from "../../actions/pointerIntent";
+  import { tooltip } from "../../actions/tooltip";
   import type { RunnerAnomaly } from "../../runner/contract";
 
   interface Props {
@@ -64,7 +65,7 @@
         <p>{c.desc}</p>
         <button
           disabled={!running}
-          title="{c.title}: inject this anomaly live into the running test"
+          use:tooltip={`${c.title}: inject this anomaly live into the running test`}
           onclick={() => fire(c.kind)}>{c.cta}</button
         >
       </article>

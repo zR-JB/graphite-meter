@@ -13,6 +13,7 @@
   import EngageButton from "./EngageButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
+  import { tooltip } from "../actions/tooltip";
 
   // Gate the latency panel: hidden on a fresh idle load (gauge sits alone,
   // full-width), joins the row once a run starts and persists after completion
@@ -137,7 +138,7 @@
   <div class="controls">
     <div class="controls-head">
       <span class="controls-title">Test stages</span>
-      <span class="eta" title="Estimated run time at the saved duration">
+      <span class="eta" use:tooltip={"Estimated run time at the saved duration"}>
         ~{(etaMs / 1000).toFixed(0)}s
       </span>
     </div>

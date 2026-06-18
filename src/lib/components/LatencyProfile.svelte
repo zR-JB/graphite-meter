@@ -178,12 +178,12 @@
               <i class="avg-marker" style="left:{pos(lane.average)}%"></i>
             {/if}
             {#if lane.current != null}
-              <i class="cur-marker" title="Latest {fmtMs(lane.current)}" style="left:{pos(lane.current)}%"></i>
+              <i class="cur-marker" use:tooltip={`Latest ${fmtMs(lane.current)} ms`} style="left:{pos(lane.current)}%"></i>
             {/if}
             {#if lane.lossRatio > 0}
               <i
                 class="loss-marker"
-                title={lossLabel(lane.lossRatio)}
+                use:tooltip={lossLabel(lane.lossRatio)}
                 style="width:{Math.min(34, Math.max(8, lane.lossRatio * 100))}%"
               ></i>
             {/if}

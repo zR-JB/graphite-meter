@@ -24,6 +24,7 @@
   } from "../state/console.svelte";
   import { applyStageChange } from "../runner/wire.svelte";
   import { ICON } from "../constants";
+  import { tooltip } from "../actions/tooltip";
 
   const STAGES: { key: StageKey; label: string; icon: string }[] = [
     { key: "latency", label: "Latency", icon: ICON.ping },
@@ -112,7 +113,7 @@
       role="switch"
       aria-checked={s.enabled}
       aria-label="{s.label} stage{s.reason ? ` (${s.reason})` : ''}"
-      title={s.reason
+      use:tooltip={s.reason
         ? s.reason === "skipped" && !s.locked
           ? `${s.label} — skipped, tap to include`
           : `${s.label} — ${s.reason}`

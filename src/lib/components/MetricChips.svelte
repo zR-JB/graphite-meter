@@ -246,7 +246,7 @@
         <span class="ico dl">{@html ICON.download}</span>
         <span class="label">Download</span>
         {#if dl.has && lifted(dl.multiplier)}
-          <span class="pip pip-{dl.confidence}" title="Estimate confidence: {dl.confidence}"
+          <span class="pip pip-{dl.confidence}" use:tooltip={`Estimate confidence: ${dl.confidence}`}
             >{dl.confidence}</span
           >
         {/if}
@@ -276,7 +276,7 @@
         <span class="ico ul">{@html ICON.upload}</span>
         <span class="label">Upload</span>
         {#if ul.has && lifted(ul.multiplier)}
-          <span class="pip pip-{ul.confidence}" title="Estimate confidence: {ul.confidence}"
+          <span class="pip pip-{ul.confidence}" use:tooltip={`Estimate confidence: ${ul.confidence}`}
             >{ul.confidence}</span
           >
         {/if}

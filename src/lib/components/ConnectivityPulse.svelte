@@ -8,6 +8,7 @@
    * ============================================================ */
   import { onMount } from "svelte";
   import { console as store } from "../state/console.svelte";
+  import { tooltip } from "../actions/tooltip";
 
   let canvasEl = $state<HTMLCanvasElement>();
 
@@ -68,7 +69,7 @@
   class="pulse"
   role="status"
   aria-label={`Connection: ${store.effectiveConnectivity}`}
-  title={`Connection: ${store.effectiveConnectivity}`}
+  use:tooltip={`Connection: ${store.effectiveConnectivity}`}
 >
   <span class="dot" data-state={store.effectiveConnectivity}></span>
   <canvas bind:this={canvasEl} class="spark" width="36" height="16" aria-hidden="true"></canvas>
