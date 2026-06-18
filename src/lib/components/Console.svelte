@@ -230,11 +230,14 @@
     padding: var(--space-3);
     gap: var(--space-3);
   }
-  /* The gauge hero is the focal point — let it absorb spare height; the chart
-     and chips below it never grow past their compact basis. */
+  /* The gauge hero is the focal point — it absorbs spare height (flex-grow) on
+     tall screens. Crucially it must NOT shrink below its own content: with
+     min-height:0 the reactor would under-shrink and its gauge/controls would
+     overflow and overlap the chart/chips. Keeping the content floor means the
+     stage column overflows and the stage (overflow-y:auto) scrolls instead —
+     correct when space is tight (e.g. both panels docked on a narrow stage). */
   .stage > :global(.reactor) {
     flex: 1 1 auto;
-    min-height: 0;
   }
   .stage > :global(.theatre),
   .stage > :global(.chips),
