@@ -365,6 +365,9 @@
     min-width: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    /* Stop scroll chaining: reaching the panel's scroll boundary must not
+       scroll the page behind it (which would lift the anchored status bar). */
+    overscroll-behavior: contain;
     padding-right: var(--space-1);
     scrollbar-gutter: stable;
     display: flex;

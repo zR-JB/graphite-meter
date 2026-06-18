@@ -255,6 +255,8 @@
        inside it carry the depth. Token-driven spacing (density knob). */
     padding: var(--space-3);
     gap: var(--space-3);
+    /* Keep stage scrolling from chaining out to the document (anchored bars). */
+    overscroll-behavior: contain;
   }
   /* The gauge hero is the focal point — it absorbs spare height (flex-grow) on
      tall screens. Crucially it must NOT shrink below its own content: with

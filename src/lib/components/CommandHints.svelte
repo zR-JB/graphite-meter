@@ -22,40 +22,42 @@
 </div>
 
 <style>
+  /* A quiet row of keycap + label pairs. No pill container (that read cheap and
+     cramped) — just a single clean keycap in the Faceplate tile language and a
+     muted label, with generous spacing between groups. */
   .command-hints {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-4);
     color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
+    font-family: var(--font-sans);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
   }
 
   span {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--surface-inset) 84%, transparent);
-    padding: 4px 8px;
+    gap: 5px;
   }
 
   kbd {
     display: inline-grid;
-    min-width: 20px;
-    height: 18px;
     place-items: center;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-xs);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
+    min-width: 16px;
+    height: 15px;
+    padding: 0 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+    box-shadow: var(--elev-tile);
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: 9px;
-    font-weight: 700;
-    box-shadow: inset 0 -1px 0 var(--border-subtle);
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   /* The 28px status zone has no room for keycaps on a phone; the
