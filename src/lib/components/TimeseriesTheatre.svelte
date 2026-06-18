@@ -30,6 +30,7 @@
         throughput: store.throughput,
         latency: store.latency,
         phase: store.phase,
+        runSeq: store.runSeq,
       }),
       {
         throughput: (bps) => fmtSpeed(store.toUnit(bps)),

@@ -108,6 +108,10 @@ class ConsoleStore {
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
   phaseFraction = $state(0); // 0–1 within current phase
+  /* Monotonic run counter, bumped on every reset(). Stateful canvas engines
+   * (e.g. ChartEngine) watch this to drop accumulated per-run state — the
+   * single source of truth for "a new run started, clear yourself". */
+  runSeq = $state(0);
 
   /* Time windows [t0,t1] (ms since run start) per measured phase, captured
    * on phase transitions. The single source of truth for mapping a sample's
@@ -362,6 +366,7 @@ class ConsoleStore {
     this.startEpoch = 0;
     this.phaseWindows = {};
     this.#lastSampleT = 0;
+    this.runSeq++;
   }
 
   /* ============================================================

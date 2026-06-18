@@ -15,6 +15,9 @@ export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencySample[];
   phase: Phase;
+  /** Monotonic run counter from the store; a change means a new run started
+   *  and the engine must drop all accumulated per-run state. */
+  runSeq: number;
 }
 
 export interface ChartFormatters {
@@ -107,6 +110,7 @@ export class ChartEngine implements CanvasEngine {
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
   #result = false; // frozen post-run result mode
+  #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
 
   #c: ThemeColors = {
     download: "#6fa77a",
@@ -249,10 +253,26 @@ export class ChartEngine implements CanvasEngine {
     return Math.max(a, b);
   }
 
+  /** Drop all accumulated per-run state. Called when the store's runSeq
+   *  changes (reset/engage/return-home) so nothing from a prior run — phase
+   *  spans, the settled camera, result overlays — can bleed into the next. */
+  #resetRunState(): void {
+    this.#spans = [];
+    this.#lastPhase = null;
+    this.#vpInit = false;
+    this.#result = false;
+  }
+
   #update(): void {
     const d = this.#get();
 
-    // Track phase spans (for per-phase colouring + bufferbloat band).
+    // New run → clear everything accumulated from the previous one.
+    if (d.runSeq !== this.#runSeq) {
+      this.#runSeq = d.runSeq;
+      this.#resetRunState();
+    }
+
+    // Track phase spans (for per-phase colouring + the phase ribbon).
     if (d.phase !== this.#lastPhase) {
       const lt = this.#latestT(d);
       if (this.#spans.length) this.#spans[this.#spans.length - 1].t1 = lt;
