@@ -186,7 +186,7 @@
        gauge (§14.2), so it reads with the instrument. TelemetryDetail's heavy
        percentiles/jitter stay secondary: tucked behind an opt-in disclosure so
        the default view stays uncluttered. -->
-  <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4" aria-label="Connection and telemetry info">
+  <aside class="zone inspector border-l border-border bg-bg overflow-y-auto p-4 flex flex-col gap-4" aria-label="Connection and telemetry info">
     <InfraCard />
     <details class="telemetry-disclose">
       <summary>Show detailed telemetry</summary>
@@ -332,9 +332,9 @@
   /* Opt-in disclosure wrapping the heavy telemetry (§14.2). */
   .telemetry-disclose {
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--elev-tile);
     overflow: clip;
   }
   .telemetry-disclose > summary {

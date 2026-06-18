@@ -50,16 +50,16 @@
 <style>
   .card {
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--elev-tile);
     overflow: clip;
   }
   .card-head {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 14px;
+    gap: var(--space-3);
+    padding: var(--space-3);
     border-bottom: 1px solid var(--border);
     background: linear-gradient(180deg, var(--surface-2), transparent);
   }
@@ -68,7 +68,7 @@
     place-items: center;
     width: 34px;
     height: 34px;
-    border-radius: var(--radius-md);
+    border-radius: var(--r-well);
     border: 1px solid color-mix(in srgb, var(--signal) 34%, var(--border));
     background: var(--signal-soft);
     color: var(--signal);
