@@ -46,9 +46,44 @@
       <TelemetryDetail />
     </div>
   </details>
+
+  <p class="license">
+    <span>License</span>
+    <a
+      href="https://www.gnu.org/licenses/agpl-3.0.html"
+      target="_blank"
+      rel="license noopener noreferrer">AGPL-3.0-or-later</a
+    >
+  </p>
 </SidePanel>
 
 <style>
+  /* Footer license line — quiet, label + linked SPDX id. */
+  .license {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: 0 var(--space-1);
+    font-size: var(--type-xs);
+    color: var(--text-soft);
+  }
+  .license a {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    text-decoration: none;
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  .license a:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+  .license a:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
   /* Opt-in disclosure wrapping the heavy telemetry (§14.2). */
   .telemetry-disclose {
     border: 1px solid var(--border);
