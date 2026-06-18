@@ -179,6 +179,10 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
     overflow: hidden;
+    /* Query container so the hero number scales to the GAUGE width (cqw),
+       not the viewport — it shrinks to fit when the well is narrow instead
+       of overflowing sideways. */
+    container-type: inline-size;
   }
   /* Latency profile — a matching engraved well; identical sizing to the gauge
      so the pair always reads as one balanced instrument. Its content scrolls
@@ -208,19 +212,26 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    /* Keep the number clear of the gauge ring's sides; the inline padding also
+       bounds how wide the value can get before the cqw sizing reins it in. */
+    padding-inline: 9%;
     pointer-events: none;
   }
   /* The hero number — the one typographic moment. Space Grotesk (display),
-     tabular figures so the live-updating value never shifts layout. */
+     tabular figures so the live-updating value never shifts layout. Sized in
+     cqw (relative to the gauge well) so large numbers shrink to fit a narrow
+     gauge instead of overflowing; clamped so it stays legible and never huge. */
   .reactor-metric {
     font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
-    font-size: var(--type-hero);
+    font-size: clamp(22px, 15cqw, 72px);
     font-weight: 600;
     letter-spacing: var(--track-tight);
     color: var(--text);
     line-height: 0.95;
+    max-width: 100%;
+    white-space: nowrap;
   }
   .reactor-unit {
     margin-top: var(--space-1);
