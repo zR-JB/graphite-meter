@@ -242,6 +242,11 @@
   /* ---- Docked: in-flow column in the #console grid, pushing the stage ---- */
   .panel-layer.docked .panel {
     position: relative; /* anchors the resize handle */
+    /* Neutralize the flyout's fixed offsets — as a relative grid item the
+       panel must sit flush in its cell (no top:topbar-h shift, which caused a
+       gap below the topbar). */
+    top: 0;
+    bottom: auto;
     width: auto;
     height: 100%;
     transform: none;
