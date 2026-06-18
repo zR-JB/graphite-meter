@@ -15,11 +15,16 @@
 import type { Phase } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 
-/** What the engine pulls each frame. `intensity` is the raw display value
- *  (e.g. Mbps) during transfer; the engine normalizes it itself. */
+/** What the engine pulls each frame. The sweep is normalized against an
+ *  ABSOLUTE scale (`scaleBps`, shared by download + upload for comparability)
+ *  rather than a per-phase peak, so the dial position is meaningful at a
+ *  glance. `valueBps` is the current raw throughput. `ticks` are the 5
+ *  pre-formatted quarter labels (0 … scale) in the active display unit. */
 export interface GaugeState {
   phase: Phase;
-  intensity: number;
+  valueBps: number;
+  scaleBps: number;
+  ticks: string[];
   rtt: number;
   pingCount: number;
 }
@@ -62,12 +67,14 @@ export class GaugeEngine implements CanvasEngine {
   #accent = "#888";
   #track = "#2a2f36";
   #tick = "#454b54";
+  #label = "#726d83";
 
   #lastPhase: Phase | null = null;
   #ema = 0; // smoothed normalized sweep 0–1
   #fill = 0; // slower follower (reduced-motion)
-  #peak = 0; // per-phase running throughput peak for normalization
   #rttPeak = 0; // running rtt peak for the latency-phase sweep
+  #scale = 1; // absolute throughput scale (bit/s) for normalization
+  #ticks: string[] = []; // quarter labels in the active unit
   #frozen = 0; // sweep value held through the complete phase
   #lastPing = 0;
   #ripples: number[] = []; // start timestamps of active ping ripples
@@ -125,6 +132,7 @@ export class GaugeEngine implements CanvasEngine {
     this.#accent = this.#cssVar(PHASE_VAR[phase], this.#accent);
     this.#track = this.#cssVar("--surface-2", this.#track);
     this.#tick = this.#cssVar("--border-strong", this.#tick);
+    this.#label = this.#cssVar("--text-soft", this.#label);
   }
 
   #loop = (now: number): void => {
@@ -137,21 +145,23 @@ export class GaugeEngine implements CanvasEngine {
   #step(now: number): void {
     const s = this.#get();
 
+    this.#scale = s.scaleBps > 0 ? s.scaleBps : 1;
+    this.#ticks = s.ticks;
+
     if (s.phase !== this.#lastPhase) {
-      // Freeze the dial where it ended when entering `complete`; otherwise
-      // reset the per-phase peaks so each phase normalizes independently.
+      // Freeze the dial where it ended when entering `complete`.
       if (s.phase === "complete") this.#frozen = this.#ema;
-      this.#peak = 0;
       this.#resolveColors(s.phase);
       this.#lastPhase = s.phase;
     }
 
-    // Normalize the sweep target to 0–1 per phase.
+    // Normalize the sweep target to 0–1 against the ABSOLUTE scale so the
+    // dial position means the same thing across download + upload (and runs).
     let target = 0;
-    if (s.phase === "download" || s.phase === "upload" || s.phase === "warmup") {
-      this.#peak = Math.max(this.#peak, s.intensity);
-      target = this.#peak > 0 ? s.intensity / this.#peak : 0;
-      if (s.phase === "warmup") target = Math.max(target, 0.3);
+    if (s.phase === "download" || s.phase === "upload") {
+      target = Math.min(1, Math.max(0, s.valueBps / this.#scale));
+    } else if (s.phase === "warmup") {
+      target = 0.3; // indeterminate — connection probe, no meaningful rate yet
     } else if (s.phase === "latency") {
       // Reads RTT during latency: sweep tracks relative rtt, kept in the
       // lower half of the dial since this phase isn't about throughput.
@@ -187,7 +197,7 @@ export class GaugeEngine implements CanvasEngine {
 
     const cx = this.#w / 2;
     const cy = this.#h / 2;
-    const r = Math.max(40, Math.min(this.#w, this.#h) * 0.5 - 24);
+    const r = Math.max(36, Math.min(this.#w, this.#h) * 0.37);
     const arcW = Math.max(6, r * 0.13);
     const sweep = this.#reduced ? this.#fill : this.#ema;
     const valueEnd = ARC_START + ARC_SWEEP * Math.min(1, Math.max(0, sweep));
@@ -232,6 +242,31 @@ export class GaugeEngine implements CanvasEngine {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+
+    // Quarter scale labels (0 … full scale) in the active unit. Deliberately
+    // recessive — small, soft, low-alpha — so they inform without competing
+    // with the hero number or the sweep. Aligned radially so they read cleanly
+    // around the dial. Skipped during phases where the scale has no meaning.
+    const scaleMeaningful =
+      this.#lastPhase === "download" ||
+      this.#lastPhase === "upload" ||
+      this.#lastPhase === "complete" ||
+      this.#lastPhase === "idle";
+    if (scaleMeaningful && this.#ticks.length >= 2) {
+      ctx.font = '600 8.5px "IBM Plex Mono", monospace';
+      ctx.fillStyle = this.#label;
+      ctx.globalAlpha = 0.5;
+      const lr = tOut + 7;
+      for (let j = 0; j < this.#ticks.length; j++) {
+        const a = ARC_START + (j / (this.#ticks.length - 1)) * ARC_SWEEP;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        ctx.textAlign = ca < -0.25 ? "right" : ca > 0.25 ? "left" : "center";
+        ctx.textBaseline = sa < -0.25 ? "bottom" : sa > 0.25 ? "top" : "middle";
+        ctx.fillText(this.#ticks[j], cx + ca * lr, cy + sa * lr);
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // Value arc — the live sweep, phase-tinted, with a soft glow.
     if (sweep > 0.002) {

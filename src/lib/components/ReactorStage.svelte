@@ -72,7 +72,12 @@
   onMount(() => {
     engine = new GaugeEngine(() => ({
       phase: store.phase,
-      intensity: store.liveMetric.value,
+      valueBps: store.throughput.at(-1)?.bps ?? 0,
+      scaleBps: store.displayScaleBps,
+      // Five quarter labels (0 … full scale) in the active display unit.
+      ticks: [0, 0.25, 0.5, 0.75, 1].map((f) =>
+        fmtSpeed(store.toUnit(store.displayScaleBps * f)),
+      ),
       rtt: store.liveRtt,
       pingCount: store.latency.length,
     }));

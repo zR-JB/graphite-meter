@@ -86,7 +86,10 @@ export function rateValueAt(bps: number, base: UnitBase, kind: UnitKind, idx: nu
  *  rather than continuously rescaling. */
 export function niceScaleUp(v: number): number {
   if (v <= 0) return 1;
-  const steps = [1, 1.5, 2, 3, 5, 7.5, 10];
+  // Coarse 1·2·4·8 ladder: clearly distinct rungs (a gigabit link and a
+  // 20-unit link never share one) AND every quarter lands on a round value,
+  // so the gauge tick labels are clean.
+  const steps = [1, 2, 4, 8];
   const exp = Math.floor(Math.log10(v));
   const base = 10 ** exp;
   const f = v / base; // 1–10
