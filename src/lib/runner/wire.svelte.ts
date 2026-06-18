@@ -45,6 +45,17 @@ export function engage() {
 }
 
 /**
+ * Return to the fresh, blank idle view — what the logo click offers, matching
+ * a page reload's starting state (persisted settings are untouched). Aborts any
+ * in-flight run first (synchronous in the dummy engine, so the subsequent reset
+ * sticks), then clears samples / result / phase back to idle.
+ */
+export function returnToStart() {
+  if (store.isRunning) getRunner().abort();
+  store.reset();
+}
+
+/**
  * Push the live enabled-stage set into the running engine so a mid-run
  * future-stage toggle actually shortens the run (§13.4). No-op when idle or
  * when the active engine doesn't support live reconfigure.

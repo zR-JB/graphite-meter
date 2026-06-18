@@ -18,7 +18,7 @@
   import PhaseToast from "./PhaseToast.svelte";
   import CommandHints from "./CommandHints.svelte";
   import ConnectivityPulse from "./ConnectivityPulse.svelte";
-  import { engage } from "../runner/wire.svelte";
+  import { engage, returnToStart } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 
@@ -141,7 +141,13 @@
 >
   <!-- TOPBAR -->
   <header class="zone topbar flex items-center gap-3 px-4 border-b border-border">
-    <span class="font-mono text-sm font-bold tracking-tight">Graphite&nbsp;Meter</span>
+    <button
+      type="button"
+      class="brand-btn font-mono text-sm font-bold tracking-tight"
+      aria-label="Graphite Meter — return to a fresh, blank test"
+      use:tooltip={"Return to a fresh, blank test"}
+      onclick={returnToStart}>Graphite&nbsp;Meter</button
+    >
     <button
       class="ghost-btn icon-btn"
       aria-label="Open settings workbench"
@@ -274,6 +280,26 @@
     display: none;
     border: 0;
     padding: 0;
+  }
+
+  /* The logo doubles as a "home" action — reads as the wordmark, with just a
+     hover/focus affordance to signal it's clickable. */
+  .brand-btn {
+    padding: 4px 6px;
+    margin-left: -6px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  .brand-btn:hover {
+    color: var(--brand-strong);
+  }
+  .brand-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
   }
 
   .ghost-btn {
