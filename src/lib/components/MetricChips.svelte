@@ -238,7 +238,7 @@
   });
 </script>
 
-<div class="chips">
+<div class="chips" class:reserve={store.phase !== "idle"}>
   <!-- DOWNLOAD -->
   {#if dlShow}
     <article class="chip" class:active={dl.active}>
@@ -334,6 +334,13 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-3);
+  }
+  /* Reserve one card-row of height for the whole run (from warmup on) so the
+     progressive reveal of cards doesn't resize the gauge above it — the dial
+     stays put from warmup through testing instead of snapping smaller when the
+     first card appears. */
+  .chips.reserve {
+    min-height: 92px;
   }
   /* Stack into a single column on the narrow single-column shell (<760px).
      In the column the chips must size to their content (header + value +

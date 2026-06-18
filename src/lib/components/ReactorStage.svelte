@@ -14,7 +14,7 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { tooltip } from "../actions/tooltip";
-  import { PRE_STAGE_WARMUP_MS } from "../runner/contract";
+  import { preStageWarmupMs } from "../runner/contract";
 
   // Gate the latency panel: hidden on a fresh idle load (gauge sits alone,
   // full-width), joins the row once a run starts and persists after completion
@@ -26,16 +26,16 @@
   // Total run ETA = warmup + each enabled stage's duration (read-only here;
   // duration itself is edited only in the Workbench, §14.2). Shown so the
   // newcomer knows roughly how long Engage will take.
-  const etaMs = $derived(
-    store.config.duration.warmupMs +
-      (store.config.stages.latency ? store.config.duration.latencyMs : 0) +
-      (store.config.stages.download
-        ? PRE_STAGE_WARMUP_MS + store.config.duration.downloadMs
-        : 0) +
-      (store.config.stages.upload
-        ? PRE_STAGE_WARMUP_MS + store.config.duration.uploadMs
-        : 0),
-  );
+  const etaMs = $derived.by(() => {
+    const d = store.config.duration;
+    const pre = preStageWarmupMs(d.warmupMs);
+    return (
+      d.warmupMs +
+      (store.config.stages.latency ? d.latencyMs : 0) +
+      (store.config.stages.download ? pre + d.downloadMs : 0) +
+      (store.config.stages.upload ? pre + d.uploadMs : 0)
+    );
+  });
 
   let canvasEl = $state<HTMLCanvasElement>();
   let engine: GaugeEngine;
@@ -250,9 +250,9 @@
     font-family: var(--font-mono);
     font-size: var(--type-sm);
     font-weight: 600;
-    letter-spacing: var(--track-wide);
+    letter-spacing: 0.02em;
     color: var(--text-soft);
-    text-transform: uppercase;
+    /* No uppercase — unit symbols are case-significant (Mbit/s, kB/s, MiB/s). */
   }
   /* Guided idle / empty-state copy (§14.3) — replaces the dead bare dash so the
      gauge always invites action or explains what's happening. Sits centered

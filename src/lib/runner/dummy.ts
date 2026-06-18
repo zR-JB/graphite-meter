@@ -21,7 +21,7 @@ import type {
   LatencyResult,
   BufferbloatGrade,
 } from "./contract";
-import { PRE_STAGE_WARMUP_MS } from "./contract";
+import { preStageWarmupMs } from "./contract";
 import {
   transferConfidence,
   latencyConfidence,
@@ -229,14 +229,15 @@ export class DummyRunner implements NetworkRunner {
     // Initial connection warmup, then a short re-prime warmup immediately
     // before each transfer stage so the link is at steady state when the
     // stage's measurement window opens.
+    const pre = preStageWarmupMs(config.duration.warmupMs);
     push("warmup", config.duration.warmupMs);
     if (config.stages.latency) push("latency", config.duration.latencyMs);
     if (config.stages.download) {
-      push("warmup", PRE_STAGE_WARMUP_MS);
+      push("warmup", pre);
       push("download", config.duration.downloadMs);
     }
     if (config.stages.upload) {
-      push("warmup", PRE_STAGE_WARMUP_MS);
+      push("warmup", pre);
       push("upload", config.duration.uploadMs);
     }
 
@@ -347,8 +348,9 @@ export class DummyRunner implements NetworkRunner {
       if (!on || ms <= 0) return;
       if (kept.some((k) => k.phase === phase)) return;
       if (prewarm) {
-        tail.push({ phase: "warmup", start: cursor, end: cursor + PRE_STAGE_WARMUP_MS });
-        cursor += PRE_STAGE_WARMUP_MS;
+        const pre = preStageWarmupMs(dur.warmupMs);
+        tail.push({ phase: "warmup", start: cursor, end: cursor + pre });
+        cursor += pre;
       }
       tail.push({ phase, start: cursor, end: cursor + ms });
       cursor += ms;

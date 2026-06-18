@@ -377,9 +377,10 @@ export class ChartEngine implements CanvasEngine {
     this.#drawHover(ctx);
   }
 
-  /** Phase colour for the ribbon / labels (null = not shown). */
+  /** Phase colour for the ribbon / labels (null = not shown). Warmup is a
+   *  muted grey so it recedes and never reads like the (lavender) upload. */
   #phaseColor(phase: Phase): string | null {
-    if (phase === "warmup") return this.#c.warmup;
+    if (phase === "warmup") return this.#c.textSoft;
     if (phase === "latency") return this.#c.signal;
     if (phase === "download") return this.#c.download;
     if (phase === "upload") return this.#c.upload;
