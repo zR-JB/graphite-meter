@@ -63,7 +63,16 @@
     const curI = ORDER.indexOf(cur as StageKey); // -1 unless running a stage
     return STAGES.map((s) => {
       const enabled = store.config.stages[s.key];
-      const reason = lockReason(s.key);
+      // Tag: enabled stages keep the running/done/upcoming logic; a deselected
+      // stage reads "skipped" once a run has started, no tag while idle (§14.x).
+      const reason = enabled
+        ? lockReason(s.key)
+        : store.phase !== "idle"
+          ? "skipped"
+          : null;
+      // Interaction lock is decoupled from the tag: a "skipped" future stage
+      // stays clickable so it can be re-included.
+      const locked = !store.canToggleStage(s.key);
       let state: SegState;
       let fill = 0;
       if (!enabled) {
@@ -88,7 +97,7 @@
           state = "pending";
         }
       }
-      return { ...s, enabled, reason, state, fill };
+      return { ...s, enabled, reason, locked, state, fill };
     });
   });
 </script>
@@ -104,11 +113,13 @@
       aria-checked={s.enabled}
       aria-label="{s.label} stage{s.reason ? ` (${s.reason})` : ''}"
       title={s.reason
-        ? `${s.label} — ${s.reason}`
+        ? s.reason === "skipped" && !s.locked
+          ? `${s.label} — skipped, tap to include`
+          : `${s.label} — ${s.reason}`
         : s.enabled
           ? `${s.label} — tap to skip`
           : `${s.label} — tap to include`}
-      disabled={s.reason !== null}
+      disabled={s.locked}
       onclick={() => onToggle(s.key)}
     >
       <div class="seg-bar" aria-hidden="true">

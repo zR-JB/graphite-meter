@@ -63,7 +63,12 @@
           <span class="kicker">Advanced Layer</span>
           <h2>Workbench</h2>
         </div>
-        <button class="close-btn" aria-label="Close workbench" onclick={close}>
+        <button
+          class="close-btn"
+          aria-label="Close workbench"
+          title="Close (Esc)"
+          onclick={close}
+        >
           {@html ICON.close}
         </button>
       </header>

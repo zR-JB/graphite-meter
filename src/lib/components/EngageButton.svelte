@@ -6,6 +6,7 @@
   import { console as store } from "../state/console.svelte";
   import { engage } from "../runner/wire.svelte";
   import { pointerIntent } from "../actions/pointerIntent";
+  import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
   // Once a run has resolved, the master action re-runs the test. Surfacing
@@ -27,6 +28,9 @@
   aria-label={label}
   onclick={engage}
   use:pointerIntent
+  use:tooltip={store.isRunning
+    ? "Stop the test (Space / Esc)"
+    : "Start the test (Space)"}
 >
   {#if store.isRunning}
     <span class="stop-sq"></span> ABORT

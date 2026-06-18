@@ -12,6 +12,35 @@
   const bb = $derived(store.result?.bufferbloat ?? null);
   const lat = $derived(store.result?.latency ?? null);
 
+  // Latency distribution (idle vs loaded) — a token-styled DOM-bar histogram
+  // that recomputes only when the sample set changes (not per frame). Splits
+  // non-lost pings into idle (!underLoad) and loaded (underLoad) series over a
+  // shared domain + shared vertical scale so the two read comparably.
+  const BINS = 16;
+  const histo = $derived.by(() => {
+    const samples = store.latency.filter((s) => !s.lost);
+    if (samples.length < 2) return null;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const s of samples) {
+      if (s.rttMs < min) min = s.rttMs;
+      if (s.rttMs > max) max = s.rttMs;
+    }
+    const span = Math.max(1, max - min);
+    const idle = new Array(BINS).fill(0);
+    const loaded = new Array(BINS).fill(0);
+    for (const s of samples) {
+      const i = Math.min(
+        BINS - 1,
+        Math.max(0, Math.floor(((s.rttMs - min) / span) * BINS)),
+      );
+      if (s.underLoad) loaded[i]++;
+      else idle[i]++;
+    }
+    const peak = Math.max(...idle, ...loaded, 1);
+    return { idle, loaded, peak, min, max };
+  });
+
   // Bar widths: scale idle/loaded against the larger of the two.
   const barScale = $derived(bb ? Math.max(bb.idleMs, bb.loadedMs, 1) : 1);
 
@@ -31,12 +60,43 @@
   </header>
 
   <div class="body">
-    <!-- Jitter distribution (canvas placeholder until the canvas stage) -->
+    <!-- Latency distribution — idle vs loaded RTT histogram (DOM bars). -->
     <div class="block">
-      <span class="block-title term" use:tooltip={JARGON.jitter}>
-        Jitter distribution<span class="info-dot">{@html ICON.info}</span>
-      </span>
-      <div class="hist-ph">SparkEngine histogram</div>
+      <div class="block-row">
+        <span class="block-title term" use:tooltip={JARGON.jitter}>
+          Latency distribution (idle / loaded)<span class="info-dot"
+            >{@html ICON.info}</span
+          >
+        </span>
+        <span class="hist-legend" aria-hidden="true">
+          <span class="hist-key"><i class="sw sw-idle"></i>idle</span>
+          <span class="hist-key"><i class="sw sw-loaded"></i>loaded</span>
+        </span>
+      </div>
+      {#if histo}
+        <div class="hist" role="img" aria-label="Latency distribution histogram">
+          {#each histo.idle as _, i (i)}
+            <div class="hist-bin">
+              <span
+                class="hist-bar hist-idle"
+                style="height:{(histo.idle[i] / histo.peak) *
+                  100}%;min-height:{histo.idle[i] ? 1 : 0}px"
+              ></span>
+              <span
+                class="hist-bar hist-loaded"
+                style="height:{(histo.loaded[i] / histo.peak) *
+                  100}%;min-height:{histo.loaded[i] ? 1 : 0}px"
+              ></span>
+            </div>
+          {/each}
+        </div>
+        <div class="hist-ticks">
+          <span>{fmtMs(histo.min)}</span>
+          <span>{fmtMs(histo.max)}</span>
+        </div>
+      {:else}
+        <div class="hist-ph">Awaiting pings…</div>
+      {/if}
     </div>
 
     <!-- Bufferbloat -->
@@ -199,6 +259,73 @@
     color: var(--text-soft);
     font-family: var(--font-mono);
     font-size: 11px;
+  }
+
+  /* Idle-vs-loaded RTT histogram — 16 paired sub-bars, shared vertical scale. */
+  .hist {
+    margin-top: 8px;
+    height: 64px;
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    padding: 0 1px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hist-bin {
+    flex: 1;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    min-width: 0;
+  }
+  .hist-bar {
+    flex: 1;
+    min-width: 0;
+    border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+    transition: height var(--dur-graph) var(--ease-out);
+  }
+  .hist-idle {
+    background: var(--phase-latency);
+  }
+  .hist-loaded {
+    background: var(--warn);
+  }
+  .hist-ticks {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-soft);
+  }
+
+  /* Legend — tiny swatches decoding the two series. */
+  .hist-legend {
+    display: flex;
+    gap: 10px;
+  }
+  .hist-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+  }
+  .sw {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+  }
+  .sw-idle {
+    background: var(--phase-latency);
+  }
+  .sw-loaded {
+    background: var(--warn);
   }
 
   /* Bufferbloat */

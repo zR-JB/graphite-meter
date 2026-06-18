@@ -62,7 +62,11 @@
       <article class="card" use:pointerIntent={{ disabled: !running }}>
         <h4>{c.title}</h4>
         <p>{c.desc}</p>
-        <button disabled={!running} onclick={() => fire(c.kind)}>{c.cta}</button>
+        <button
+          disabled={!running}
+          title="{c.title}: inject this anomaly live into the running test"
+          onclick={() => fire(c.kind)}>{c.cta}</button
+        >
       </article>
     {/each}
   </div>
