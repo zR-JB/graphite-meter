@@ -21,6 +21,7 @@ import type {
   LatencyResult,
   BufferbloatGrade,
 } from "./contract";
+import { PRE_STAGE_WARMUP_MS } from "./contract";
 import {
   transferConfidence,
   latencyConfidence,
@@ -225,10 +226,19 @@ export class DummyRunner implements NetworkRunner {
       segs.push({ phase, start: cursor, end: cursor + ms });
       cursor += ms;
     };
+    // Initial connection warmup, then a short re-prime warmup immediately
+    // before each transfer stage so the link is at steady state when the
+    // stage's measurement window opens.
     push("warmup", config.duration.warmupMs);
     if (config.stages.latency) push("latency", config.duration.latencyMs);
-    if (config.stages.download) push("download", config.duration.downloadMs);
-    if (config.stages.upload) push("upload", config.duration.uploadMs);
+    if (config.stages.download) {
+      push("warmup", PRE_STAGE_WARMUP_MS);
+      push("download", config.duration.downloadMs);
+    }
+    if (config.stages.upload) {
+      push("warmup", PRE_STAGE_WARMUP_MS);
+      push("upload", config.duration.uploadMs);
+    }
 
     this.#segments = segs;
     this.#totalMs = cursor;
@@ -327,20 +337,25 @@ export class DummyRunner implements NetworkRunner {
 
     const dur = this.#cfg.duration;
     const tail: Segment[] = [];
-    const pushIf = (
+    const pushStage = (
       on: boolean,
       phase: Segment["phase"],
       ms: number,
+      prewarm: boolean,
     ) => {
       // Skip phases already kept (started) and disabled phases.
       if (!on || ms <= 0) return;
       if (kept.some((k) => k.phase === phase)) return;
+      if (prewarm) {
+        tail.push({ phase: "warmup", start: cursor, end: cursor + PRE_STAGE_WARMUP_MS });
+        cursor += PRE_STAGE_WARMUP_MS;
+      }
       tail.push({ phase, start: cursor, end: cursor + ms });
       cursor += ms;
     };
-    pushIf(stages.latency, "latency", dur.latencyMs);
-    pushIf(stages.download, "download", dur.downloadMs);
-    pushIf(stages.upload, "upload", dur.uploadMs);
+    pushStage(stages.latency, "latency", dur.latencyMs, false);
+    pushStage(stages.download, "download", dur.downloadMs, true);
+    pushStage(stages.upload, "upload", dur.uploadMs, true);
 
     this.#segments = [...kept, ...tail];
     this.#totalMs = cursor;

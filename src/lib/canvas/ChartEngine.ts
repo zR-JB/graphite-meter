@@ -68,6 +68,7 @@ interface ThemeColors {
   downloadRgb: { r: number; g: number; b: number };
   upload: string;
   uploadRgb: { r: number; g: number; b: number };
+  warmup: string;
   signal: string;
   warn: string;
   warnSoft: string;
@@ -117,6 +118,7 @@ export class ChartEngine implements CanvasEngine {
     downloadRgb: { r: 147, g: 196, b: 154 },
     upload: "#b6a6e6",
     uploadRgb: { r: 182, g: 166, b: 230 },
+    warmup: "#8e95d4",
     signal: "#84c5c0",
     warn: "#d8b57e",
     warnSoft: "rgba(216,181,126,0.14)",
@@ -228,6 +230,7 @@ export class ChartEngine implements CanvasEngine {
       downloadRgb: hexToRgb(download),
       upload,
       uploadRgb: hexToRgb(upload),
+      warmup: g("--phase-warmup", "#8e95d4"),
       signal: g("--signal", "#7ea7a6"),
       warn: g("--warn", "#d7a84f"),
       warnSoft: g("--warn-soft", "rgba(215,168,79,0.14)"),
@@ -376,6 +379,7 @@ export class ChartEngine implements CanvasEngine {
 
   /** Phase colour for the ribbon / labels (null = not shown). */
   #phaseColor(phase: Phase): string | null {
+    if (phase === "warmup") return this.#c.warmup;
     if (phase === "latency") return this.#c.signal;
     if (phase === "download") return this.#c.download;
     if (phase === "upload") return this.#c.upload;
@@ -466,6 +470,7 @@ export class ChartEngine implements CanvasEngine {
    *  phase label per segment in the frozen result view. Replaces the old flat
    *  bufferbloat band: clear about what it shows, and on-brand. */
   #PHASE_NAME: Partial<Record<Phase, string>> = {
+    warmup: "WARM-UP",
     latency: "PING",
     download: "DOWNLOAD",
     upload: "UPLOAD",

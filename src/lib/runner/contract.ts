@@ -181,3 +181,8 @@ export interface NetworkRunner {
   injectAnomaly?(a: RunnerAnomaly): void;
   readonly phase: Phase;
 }
+
+/** Duration (ms) of the short connection re-prime that runs immediately before
+ *  each transfer stage (download / upload), in addition to the initial warmup.
+ *  Shared so the runner timeline and the UI ETA agree. */
+export const PRE_STAGE_WARMUP_MS = 700;

@@ -14,6 +14,7 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { tooltip } from "../actions/tooltip";
+  import { PRE_STAGE_WARMUP_MS } from "../runner/contract";
 
   // Gate the latency panel: hidden on a fresh idle load (gauge sits alone,
   // full-width), joins the row once a run starts and persists after completion
@@ -28,8 +29,12 @@
   const etaMs = $derived(
     store.config.duration.warmupMs +
       (store.config.stages.latency ? store.config.duration.latencyMs : 0) +
-      (store.config.stages.download ? store.config.duration.downloadMs : 0) +
-      (store.config.stages.upload ? store.config.duration.uploadMs : 0),
+      (store.config.stages.download
+        ? PRE_STAGE_WARMUP_MS + store.config.duration.downloadMs
+        : 0) +
+      (store.config.stages.upload
+        ? PRE_STAGE_WARMUP_MS + store.config.duration.uploadMs
+        : 0),
   );
 
   let canvasEl = $state<HTMLCanvasElement>();
