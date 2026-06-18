@@ -83,19 +83,18 @@
   --well-depth: 0.5; /* inner-shadow strength for engraved wells */
   --raise-depth: 0.4; /* drop-shadow strength for raised chrome */
 
-  /* Engraved well, lit from above: the TOP inner edge sits in shadow (so the
-     border meets the interior with no light seam) and the BOTTOM lip catches a
-     faint highlight. */
+  /* Engraved well, lit from above: depth is conveyed purely by the inner
+     shadow (darker at the top, fading down) plus the crisp border. NO bright
+     edge-highlight hairline — on a recess a light 1px line at either edge reads
+     as a seam/gap. The highlight belongs only on raised tiles (--elev-tile). */
   --elev-inset: inset 0 1px 3px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.9)),
-    inset 0 9px 20px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.6)),
-    inset 0 -1px 0 var(--edge-light);
+    inset 0 9px 20px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.6));
   --elev-raised: 0 1px 0 var(--edge-light),
     0 6px 18px rgba(var(--shadow-ink), var(--raise-depth));
   --elev-flat: 0 0 0 transparent;
   /* Shallow recess for secondary screens (chart canvas, mini readouts) — set
      into a flat tile but never as deep as the gauge, preserving hierarchy. */
-  --elev-recess: inset 0 1px 3px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.5)),
-    inset 0 -1px 0 var(--edge-light);
+  --elev-recess: inset 0 1px 3px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.5));
   /* Flat milled tile: a top edge-highlight only — reads as a panel resting on
      the faceplate, quieter than any inset well. */
   --elev-tile: inset 0 1px 0 var(--edge-light);
