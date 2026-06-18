@@ -89,6 +89,13 @@
   --elev-raised: 0 1px 0 var(--edge-light),
     0 6px 18px rgba(var(--shadow-ink), var(--raise-depth));
   --elev-flat: 0 0 0 transparent;
+  /* Shallow recess for secondary screens (chart canvas, mini readouts) — set
+     into a flat tile but never as deep as the gauge, preserving hierarchy. */
+  --elev-recess: inset 0 1px 0 var(--edge-light),
+    inset 0 4px 12px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.5));
+  /* Flat milled tile: a top edge-highlight only — reads as a panel resting on
+     the faceplate, quieter than any inset well. */
+  --elev-tile: inset 0 1px 0 var(--edge-light);
 
   /* ===== DARK: Twilight — muted lavender instrument =====
      Cool plum-charcoal (never warm graphite, never pure black). A quietly

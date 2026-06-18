@@ -83,20 +83,23 @@
 </section>
 
 <style>
+  /* Flat milled tile on the faceplate (quieter than the gauge well). */
   .theatre {
-    padding: 10px;
+    padding: var(--space-2);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--elev-tile);
   }
   /* Secondary, compact: a modest capped height keeps the chart legible while
-     leaving the gauge hero as the focal point and the stage scroll-free. */
+     leaving the gauge hero as the focal point and the stage scroll-free. The
+     plot screen is a shallow recess set into the tile. */
   .plot {
     position: relative;
     height: 140px;
-    border-radius: var(--radius-md);
+    border-radius: var(--r-well);
     background: var(--surface-inset);
+    box-shadow: var(--elev-recess);
     overflow: hidden;
   }
   .canvas {
@@ -113,13 +116,13 @@
     transform: translateX(8px);
     pointer-events: none;
     min-width: 112px;
-    padding: 6px 8px;
+    padding: var(--space-1) var(--space-2);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: var(--surface-2);
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--elev-raised);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--type-xs);
   }
   .chip.flip {
     transform: translateX(-100%) translateX(-8px);
