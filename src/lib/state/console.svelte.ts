@@ -53,6 +53,7 @@ const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
 
 export const DEFAULT_CONFIG: RunnerConfig = {
   stages: { latency: true, download: true, upload: true },
+  skipLoadedLatencyWhenStageOff: true,
   duration: { warmupMs: 1500, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000 },
   transport: { transfer: "webtransport", latency: "websocket" },
   pingConcurrency: "medium",
@@ -254,6 +255,14 @@ class ConsoleStore {
     this.config.stages[stage] = !currentlyEnabled;
     return true;
   }
+
+  /** Whether latency is measured & shown at all. False only when the latency
+   *  stage is off AND the user opted to skip loaded latency with it — then no
+   *  pings run during dl/ul and the profile/chart latency are suppressed.
+   *  The single source of truth for "latency is fully disabled". */
+  latencyEnabled = $derived(
+    this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
+  );
 
   /* ============================================================
    * Overhead compensation (§13.3)

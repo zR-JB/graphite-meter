@@ -243,6 +243,19 @@
     {#if store.config.parallelStreams > 16}
       <p class="warn">High stream counts ({store.config.parallelStreams}) can distort loaded latency.</p>
     {/if}
+    <label class="check-row">
+      <input
+        type="checkbox"
+        disabled={running}
+        bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      />
+      <span>Skip loaded-latency when the latency stage is off</span>
+    </label>
+    <p class="hint">
+      Turning the latency stage off also drops the under-load pings during
+      download/upload — no latency profile or chart line. Off keeps measuring
+      bufferbloat even with the idle latency stage disabled.
+    </p>
   </section>
 
   <!-- Overhead compensation (wide) -->

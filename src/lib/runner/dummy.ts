@@ -406,10 +406,15 @@ export class DummyRunner implements NetworkRunner {
       this.#emitThroughput(seg, elapsed);
     }
 
-    // Latency pings (latency + under-load during dl/ul).
-    const pingInterval = PING_INTERVAL[this.#cfg!.pingConcurrency];
+    // Latency pings (latency + under-load during dl/ul). Loaded pings are
+    // suppressed when latency is fully off (stage off + skip-with-stage on),
+    // so disabling the latency stage removes bufferbloat sampling too.
+    const cfg = this.#cfg!;
+    const loadedLatency = cfg.stages.latency || !cfg.skipLoadedLatencyWhenStageOff;
+    const pingInterval = PING_INTERVAL[cfg.pingConcurrency];
     const pingActive =
-      seg.phase === "latency" || seg.phase === "download" || seg.phase === "upload";
+      seg.phase === "latency" ||
+      ((seg.phase === "download" || seg.phase === "upload") && loadedLatency);
     if (pingActive && elapsed - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = elapsed;
       this.#emitLatency(seg, elapsed);

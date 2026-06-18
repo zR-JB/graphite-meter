@@ -29,6 +29,7 @@
       () => ({
         throughput: store.throughput,
         latency: store.latency,
+        latencyEnabled: store.latencyEnabled,
         phase: store.phase,
         runSeq: store.runSeq,
       }),

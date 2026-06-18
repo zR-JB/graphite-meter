@@ -20,7 +20,8 @@
   // full-width), joins the row once a run starts and persists after completion
   // (leftover samples / result keep it shown so results stay readable).
   const showLatency = $derived(
-    store.phase !== "idle" || store.latency.length > 0 || store.result != null,
+    store.latencyEnabled &&
+      (store.phase !== "idle" || store.latency.length > 0 || store.result != null),
   );
 
   // Total run ETA = warmup + each enabled stage's duration (read-only here;

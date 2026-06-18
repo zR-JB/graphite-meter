@@ -64,6 +64,10 @@ export interface AdaptiveDurationConfig {
 /* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
   stages: { latency: boolean; download: boolean; upload: boolean };
+  /** When the latency stage is off, also skip the under-load latency pings
+   *  taken during download/upload — so latency is fully off (no measurement,
+   *  no profile, no chart line) rather than just dropping the idle phase. */
+  skipLoadedLatencyWhenStageOff: boolean;
   duration: {
     warmupMs: number;
     latencyMs: number;

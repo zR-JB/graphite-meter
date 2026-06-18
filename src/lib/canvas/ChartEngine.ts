@@ -14,6 +14,9 @@ import { niceCeil, niceDomain } from "../format";
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencySample[];
+  /** False when latency is fully disabled — suppresses the latency line and
+   *  the right (latency) axis so the chart reads as throughput-only. */
+  latencyEnabled: boolean;
   phase: Phase;
   /** Monotonic run counter from the store; a change means a new run started
    *  and the engine must drop all accumulated per-run state. */
@@ -371,9 +374,9 @@ export class ChartEngine implements CanvasEngine {
     this.#drawGrid(ctx);
     this.#drawThroughput(ctx, d.throughput);
     if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
-    this.#drawLatency(ctx, d.latency);
+    if (d.latencyEnabled) this.#drawLatency(ctx, d.latency);
     this.#drawPhases(ctx);
-    this.#drawAxesLabels(ctx);
+    this.#drawAxesLabels(ctx, d.latencyEnabled);
     this.#drawHover(ctx);
   }
 
@@ -615,21 +618,23 @@ export class ChartEngine implements CanvasEngine {
     }
   }
 
-  #drawAxesLabels(ctx: CanvasRenderingContext2D): void {
+  #drawAxesLabels(ctx: CanvasRenderingContext2D, latencyEnabled: boolean): void {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
     ctx.font = '10px "IBM Plex Mono", monospace';
     ctx.fillStyle = this.#c.textSoft;
-    // Left: throughput. Right: latency. Top + 50% + (near bottom).
+    // Left: throughput. Right: latency (omitted when latency is disabled).
     for (let i = 0; i <= 2; i++) {
       const frac = i / 2; // 0 top, 1 bottom
       const y = top + (bot - top) * frac;
       const bytesPerSec = this.#vp.bytesPerSecMax * (1 - frac);
-      const rtt = this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
       ctx.textAlign = "left";
       ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
-      ctx.textAlign = "right";
-      ctx.fillText(this.#fmt.latency(rtt), this.#w - 4, y + 3);
+      if (latencyEnabled) {
+        const rtt = this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
+        ctx.textAlign = "right";
+        ctx.fillText(this.#fmt.latency(rtt), this.#w - 4, y + 3);
+      }
     }
   }
 
