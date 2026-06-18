@@ -49,6 +49,11 @@
 <span class="soft">build {BUILD_HASH}</span>
 
 <style>
+  /* Keep each status token on one line; the strip clips (Console .status) if
+     the row is too narrow, so nothing wraps past the fixed 28px height. */
+  span {
+    white-space: nowrap;
+  }
   .label {
     color: var(--text);
     font-weight: 600;

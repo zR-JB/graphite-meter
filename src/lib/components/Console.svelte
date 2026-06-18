@@ -218,6 +218,10 @@
   .status {
     grid-area: status;
     font-size: 11px;
+    /* Fixed-height chrome strip: clip anything that can't fit rather than let
+       text spill out or wrap past the 28px row at awkward widths. */
+    min-width: 0;
+    overflow: hidden;
   }
 
   /* The logo doubles as a "home" action — reads as the wordmark, with just a

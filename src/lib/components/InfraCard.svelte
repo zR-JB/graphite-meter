@@ -108,9 +108,10 @@
   }
   dd {
     margin: 0;
+    min-width: 0;
     text-align: right;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--type-sm);
     color: var(--text);
     overflow-wrap: anywhere;
   }
