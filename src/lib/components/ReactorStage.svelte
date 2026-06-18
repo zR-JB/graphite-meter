@@ -154,35 +154,39 @@
     padding: 0;
     background: transparent;
   }
-  /* Peer row: gauge + latency panel are equal-importance flex siblings that
-     wrap to stack when the row gets too narrow (responsive break-free). */
+  /* Peer row: gauge + latency panel are equal-importance siblings. They share
+     an identical flex basis + min-width + min-height and align-items:stretch,
+     so side-by-side they are always exactly equal in both dimensions; when the
+     row can't hold both at their floor they wrap and stack cleanly. min-width
+     is a modest wrap-trigger (well under any mobile width) so a single panel
+     can never overflow horizontally. */
   .viz {
     display: flex;
     flex: 1 1 auto;
     flex-wrap: wrap;
+    align-items: stretch;
     gap: var(--space-3);
     min-height: 0;
   }
   /* The gauge well — the deepest recess on the faceplate, the signature. */
   .stage {
     position: relative;
-    /* Equal-weight flex item, like the latency panel; floor keeps the gauge
-       readable and the min-width forces a wrap (panel drops below) when tight. */
-    flex: 1 1 320px;
-    min-width: 280px;
-    min-height: 210px;
+    flex: 1 1 300px;
+    min-width: 240px;
+    min-height: 220px;
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
     overflow: hidden;
   }
-  /* Latency profile — a matching engraved well beside the gauge; resizes with
-     it and wraps below when the row is too narrow. */
+  /* Latency profile — a matching engraved well; identical sizing to the gauge
+     so the pair always reads as one balanced instrument. Its content scrolls
+     within the shared height rather than forcing the row taller. */
   .latency-panel {
-    flex: 1 1 320px;
-    min-width: 260px;
-    min-height: 210px;
+    flex: 1 1 300px;
+    min-width: 240px;
+    min-height: 220px;
     padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-well);
