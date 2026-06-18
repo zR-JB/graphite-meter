@@ -117,6 +117,17 @@
   let pingSnap = $state<number | null>(null);
   let cancels: Array<() => void> = [];
 
+  /* ---- Progressive reveal — "reveal & keep" ----
+     A card appears when its stage runs and STAYS once finished; not-yet-run
+     stages are hidden until they start (final results show every enabled card).
+     Since `store.result` only lands at completion, each stage's last live value
+     is frozen at hand-off (the $effect below tracks the live phase every tick,
+     then stops when the phase moves on — leaving the last value put) so a
+     finished card keeps a real number through the later stages. */
+  let pingFrozen = $state<number | null>(null);
+  let dlFrozen = $state<number | null>(null);
+  let ulFrozen = $state<number | null>(null);
+
   function tweenTo(
     from: number,
     to: number,
@@ -148,16 +159,16 @@
     untrack(() => {
       if (res.download) {
         cancels.push(
-          tweenTo(store.toUnit(dl.measuredBps), store.toUnit(res.download.meanBps), (v) => (dlSnap = v)),
+          tweenTo(dlFrozen ?? store.toUnit(dl.measuredBps), store.toUnit(res.download.meanBps), (v) => (dlSnap = v)),
         );
       }
       if (res.upload) {
         cancels.push(
-          tweenTo(store.toUnit(ul.measuredBps), store.toUnit(res.upload.meanBps), (v) => (ulSnap = v)),
+          tweenTo(ulFrozen ?? store.toUnit(ul.measuredBps), store.toUnit(res.upload.meanBps), (v) => (ulSnap = v)),
         );
       }
       if (res.latency) {
-        cancels.push(tweenTo(ping.ms, res.latency.p50Ms, (v) => (pingSnap = v)));
+        cancels.push(tweenTo(pingFrozen ?? ping.ms, res.latency.p50Ms, (v) => (pingSnap = v)));
       }
     });
 
@@ -167,11 +178,50 @@
     };
   });
 
-  // The number each card actually renders: the tweened snap when present,
-  // otherwise the live derived measured value.
-  const dlShown = $derived(dlSnap ?? store.toUnit(dl.measuredBps));
-  const ulShown = $derived(ulSnap ?? store.toUnit(ul.measuredBps));
-  const pingShown = $derived(pingSnap ?? ping.ms);
+  // Freeze each stage's last live value at hand-off. While a stage is the live
+  // phase this re-runs every tick (it reads that phase's live value), tracking
+  // it; once the phase moves on, the branch stops firing and the value stays.
+  // A fresh run (idle/warmup) clears everything so nothing leaks in early.
+  $effect(() => {
+    const p = store.phase;
+    if (p === "idle" || p === "warmup") {
+      pingFrozen = null;
+      dlFrozen = null;
+      ulFrozen = null;
+      return;
+    }
+    if (p === "latency") pingFrozen = ping.ms;
+    else if (p === "download") dlFrozen = store.toUnit(dl.measuredBps);
+    else if (p === "upload") ulFrozen = store.toUnit(ul.measuredBps);
+  });
+
+  // Visibility (reveal & keep): a card shows once its enabled stage is live,
+  // has been frozen (finished), or has a final result. Disabled stages never show.
+  const pingShow = $derived(
+    store.config.stages.latency && (ping.active || pingFrozen != null || ping.has),
+  );
+  const dlShow = $derived(
+    store.config.stages.download && (dl.active || dlFrozen != null || dl.has),
+  );
+  const ulShow = $derived(
+    store.config.stages.upload && (ul.active || ulFrozen != null || ul.has),
+  );
+
+  // Does the card have a real number to print (vs a dash)? While live, dash
+  // until the first sample; once frozen/resolved, the kept/final value.
+  const pingHasVal = $derived(ping.active ? ping.has : ping.has || pingFrozen != null);
+  const dlHasVal = $derived(dl.active ? dl.has : dl.has || dlFrozen != null);
+  const ulHasVal = $derived(ul.active ? ul.has : ul.has || ulFrozen != null);
+
+  // The number each card actually renders: the tweened snap when present, else
+  // the live value while active, else the frozen (kept) value for a finished stage.
+  const dlShown = $derived(
+    dlSnap ?? (dl.active ? store.toUnit(dl.measuredBps) : dlFrozen ?? store.toUnit(dl.measuredBps)),
+  );
+  const ulShown = $derived(
+    ulSnap ?? (ul.active ? store.toUnit(ul.measuredBps) : ulFrozen ?? store.toUnit(ul.measuredBps)),
+  );
+  const pingShown = $derived(pingSnap ?? (ping.active ? ping.ms : pingFrozen ?? ping.ms));
 
   /* ---- Progressive disclosure of the wire-rate estimate (§14.2) ----
      The headline numbers are always the plainly MEASURED values. The
@@ -190,77 +240,83 @@
 
 <div class="chips">
   <!-- DOWNLOAD -->
-  <article class="chip" class:active={dl.active}>
-    <header>
-      <span class="ico dl">{@html ICON.download}</span>
-      <span class="label">Download</span>
-      {#if dl.has && lifted(dl.multiplier)}
-        <span class="pip pip-{dl.confidence}" title="Estimate confidence: {dl.confidence}"
-          >{dl.confidence}</span
-        >
-      {/if}
-    </header>
-    <div class="val">
-      <span class="num">{dl.has ? fmtSpeed(dlShown) : dash}</span>
-      <span class="unit">{store.unitLabel}</span>
-    </div>
-    {#if showWire}
-      <div class="est">
+  {#if dlShow}
+    <article class="chip" class:active={dl.active}>
+      <header>
+        <span class="ico dl">{@html ICON.download}</span>
+        <span class="label">Download</span>
         {#if dl.has && lifted(dl.multiplier)}
-          <span class="est-arrow">→</span>
-          <span class="est-num">{fmtSpeed(store.toUnit(dl.estimatedBps))}</span>
-          <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(dl.multiplier)}</span>
-        {:else}
-          <span class="est-flat">{dl.has ? "no overhead applied" : ""}</span>
+          <span class="pip pip-{dl.confidence}" title="Estimate confidence: {dl.confidence}"
+            >{dl.confidence}</span
+          >
         {/if}
+      </header>
+      <div class="val">
+        <span class="num">{dlHasVal ? fmtSpeed(dlShown) : dash}</span>
+        <span class="unit">{store.unitLabel}</span>
       </div>
-    {/if}
-  </article>
+      {#if showWire}
+        <div class="est">
+          {#if dl.has && lifted(dl.multiplier)}
+            <span class="est-arrow">→</span>
+            <span class="est-num">{fmtSpeed(store.toUnit(dl.estimatedBps))}</span>
+            <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(dl.multiplier)}</span>
+          {:else}
+            <span class="est-flat">{dl.has ? "no overhead applied" : ""}</span>
+          {/if}
+        </div>
+      {/if}
+    </article>
+  {/if}
 
   <!-- UPLOAD -->
-  <article class="chip" class:active={ul.active}>
-    <header>
-      <span class="ico ul">{@html ICON.upload}</span>
-      <span class="label">Upload</span>
-      {#if ul.has && lifted(ul.multiplier)}
-        <span class="pip pip-{ul.confidence}" title="Estimate confidence: {ul.confidence}"
-          >{ul.confidence}</span
-        >
-      {/if}
-    </header>
-    <div class="val">
-      <span class="num">{ul.has ? fmtSpeed(ulShown) : dash}</span>
-      <span class="unit">{store.unitLabel}</span>
-    </div>
-    {#if showWire}
-      <div class="est">
+  {#if ulShow}
+    <article class="chip" class:active={ul.active}>
+      <header>
+        <span class="ico ul">{@html ICON.upload}</span>
+        <span class="label">Upload</span>
         {#if ul.has && lifted(ul.multiplier)}
-          <span class="est-arrow">→</span>
-          <span class="est-num">{fmtSpeed(store.toUnit(ul.estimatedBps))}</span>
-          <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(ul.multiplier)}</span>
-        {:else}
-          <span class="est-flat">{ul.has ? "no overhead applied" : ""}</span>
+          <span class="pip pip-{ul.confidence}" title="Estimate confidence: {ul.confidence}"
+            >{ul.confidence}</span
+          >
         {/if}
+      </header>
+      <div class="val">
+        <span class="num">{ulHasVal ? fmtSpeed(ulShown) : dash}</span>
+        <span class="unit">{store.unitLabel}</span>
       </div>
-    {/if}
-  </article>
+      {#if showWire}
+        <div class="est">
+          {#if ul.has && lifted(ul.multiplier)}
+            <span class="est-arrow">→</span>
+            <span class="est-num">{fmtSpeed(store.toUnit(ul.estimatedBps))}</span>
+            <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(ul.multiplier)}</span>
+          {:else}
+            <span class="est-flat">{ul.has ? "no overhead applied" : ""}</span>
+          {/if}
+        </div>
+      {/if}
+    </article>
+  {/if}
 
   <!-- PING (latency — no compensation) -->
-  <article class="chip" class:active={ping.active}>
-    <header>
-      <span class="ico pg">{@html ICON.ping}</span>
-      <span class="label term" use:tooltip={JARGON.ping}>Ping</span>
-    </header>
-    <div class="val">
-      <span class="num">{ping.has ? fmtMs(pingShown) : dash}</span>
-      <span class="unit">ms</span>
-    </div>
-    {#if showWire}
-      <div class="est">
-        <span class="est-flat">latency — uncompensated</span>
+  {#if pingShow}
+    <article class="chip" class:active={ping.active}>
+      <header>
+        <span class="ico pg">{@html ICON.ping}</span>
+        <span class="label term" use:tooltip={JARGON.ping}>Ping</span>
+      </header>
+      <div class="val">
+        <span class="num">{pingHasVal ? fmtMs(pingShown) : dash}</span>
+        <span class="unit">ms</span>
       </div>
-    {/if}
-  </article>
+      {#if showWire}
+        <div class="est">
+          <span class="est-flat">latency — uncompensated</span>
+        </div>
+      {/if}
+    </article>
+  {/if}
 </div>
 
 <!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
@@ -269,19 +325,22 @@
 {/if}
 
 <style>
+  /* Flex so only the currently-visible cards share the width (progressive
+     reveal): one card spans full width, two split in half, three in thirds. */
   .chips {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
     gap: 12px;
   }
   /* Stack into a single column on the narrow single-column shell (<760px). */
   @media (max-width: 759px) {
     .chips {
-      grid-template-columns: 1fr;
+      flex-direction: column;
     }
   }
 
   .chip {
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
