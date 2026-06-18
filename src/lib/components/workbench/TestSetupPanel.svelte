@@ -333,11 +333,11 @@
     gap: 12px;
     min-width: 0;
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: linear-gradient(180deg, var(--surface-2), transparent),
       var(--surface-inset);
-    padding: 14px;
-    box-shadow: inset 0 1px 0 var(--border-subtle);
+    padding: var(--space-3);
+    box-shadow: var(--elev-recess);
   }
   .panel.wide {
     grid-column: 1 / -1;

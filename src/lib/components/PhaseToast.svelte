@@ -93,10 +93,10 @@
     min-width: 220px;
     pointer-events: none;
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
     box-shadow: var(--shadow-float);
-    padding: 10px 12px;
+    padding: var(--space-2) var(--space-3);
     opacity: 0;
     transform: translateY(10px) scale(0.985);
     transition:

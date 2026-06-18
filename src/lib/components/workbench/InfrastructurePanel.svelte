@@ -107,10 +107,11 @@
     gap: 10px;
     min-width: 0;
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: linear-gradient(180deg, var(--surface-2), transparent),
       var(--surface-inset);
-    padding: 14px;
+    box-shadow: var(--elev-recess);
+    padding: var(--space-3);
     overflow: clip;
     transition:
       transform var(--dur-hover) var(--ease-out),
