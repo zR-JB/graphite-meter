@@ -16,8 +16,9 @@
 
   interface Props {
     open?: boolean;
+    docked?: boolean;
   }
-  let { open = $bindable(false) }: Props = $props();
+  let { open = $bindable(false), docked = false }: Props = $props();
 
   type Tab = "setup" | "infrastructure" | "developer";
   let tab = $state<Tab>("setup");
@@ -31,6 +32,7 @@
 
 <SidePanel
   bind:open
+  {docked}
   side="left"
   title="Workbench"
   kicker="Advanced Layer"

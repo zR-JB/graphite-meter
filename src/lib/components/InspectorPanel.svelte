@@ -13,12 +13,14 @@
 
   interface Props {
     open?: boolean;
+    docked?: boolean;
   }
-  let { open = $bindable(false) }: Props = $props();
+  let { open = $bindable(false), docked = false }: Props = $props();
 </script>
 
 <SidePanel
   bind:open
+  {docked}
   side="right"
   title="Connection & telemetry"
   kicker="Live"

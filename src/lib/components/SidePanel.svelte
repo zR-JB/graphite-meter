@@ -26,6 +26,9 @@
     label?: string;
     /** Optional width override (CSS length); defaults to the shared token. */
     width?: string;
+    /** When true (wide screens) the panel docks in-flow instead of overlaying:
+        no backdrop, non-modal, no focus trap — it's a persistent sidebar. */
+    docked?: boolean;
     toolbar?: Snippet;
     children: Snippet;
   }
@@ -36,6 +39,7 @@
     kicker,
     label,
     width,
+    docked = false,
     toolbar,
     children,
   }: Props = $props();
@@ -45,7 +49,7 @@
   }
 </script>
 
-<div class="panel-layer" class:open aria-hidden={!open}>
+<div class="panel-layer" class:open class:docked aria-hidden={!open}>
   <button
     class="backdrop"
     aria-label={`Close ${title}`}
@@ -57,12 +61,12 @@
     class="panel"
     data-side={side}
     style={width ? `--panel-w: ${width}` : undefined}
-    role="dialog"
-    aria-modal="true"
+    role={docked ? "region" : "dialog"}
+    aria-modal={docked ? undefined : true}
     aria-label={label ?? title}
     inert={!open}
     tabindex="-1"
-    use:focusTrap={open}
+    use:focusTrap={open && !docked}
     onkeydown={(e) => {
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -94,18 +98,18 @@
 </div>
 
 <style>
-  /* The layer spans the viewport below the topbar so the topbar stays
-     visible and clickable while a panel is open. */
+  /* The layer is a logical grouping only (display:contents) so the panel and
+     backdrop are direct children of the #console grid — the panel can then be
+     placed into a reserved grid column when docked. Backdrop and panel both
+     position themselves explicitly, so they don't depend on the layer box. */
   .panel-layer {
-    position: fixed;
-    inset: var(--topbar-h) 0 0 0;
-    z-index: 50;
-    pointer-events: none;
+    display: contents;
   }
 
   .backdrop {
-    position: absolute;
-    inset: 0;
+    position: fixed;
+    inset: var(--topbar-h) 0 0 0;
+    z-index: 49;
     border: 0;
     padding: 0;
     background: color-mix(in srgb, var(--canvas) 55%, transparent);
@@ -117,12 +121,18 @@
     opacity: 1;
     pointer-events: auto;
   }
+  /* Docked = a persistent sidebar, never an overlay → no backdrop. */
+  .panel-layer.docked .backdrop {
+    display: none;
+  }
 
+  /* ---- Flyout (default): fixed overlay below the topbar, slides from side ---- */
   .panel {
-    position: absolute;
-    top: 0;
+    position: fixed;
+    top: var(--topbar-h);
     bottom: 0;
     width: var(--panel-w, min(480px, 92vw));
+    z-index: 50;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
@@ -137,15 +147,33 @@
     right: 0;
     border-left: 1px solid var(--border-strong);
     transform: translateX(100%);
+    grid-area: rightdock;
   }
   .panel[data-side="left"] {
     left: 0;
     border-right: 1px solid var(--border-strong);
     transform: translateX(-100%);
+    grid-area: leftdock;
   }
   .panel-layer.open .panel {
     transform: translateX(0);
   }
+
+  /* ---- Docked: in-flow column in the #console grid, pushing the stage ---- */
+  .panel-layer.docked .panel {
+    position: static;
+    width: auto;
+    height: 100%;
+    transform: none;
+    z-index: auto;
+    box-shadow: none;
+    transition: none;
+  }
+  /* Closed while docked → fully removed so its grid column collapses. */
+  .panel-layer.docked:not(.open) .panel {
+    display: none;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .panel,
     .backdrop {

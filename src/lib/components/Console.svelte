@@ -23,11 +23,14 @@
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 
-  // The two auxiliary flyouts. Both closed by default (progressive
-  // disclosure): the gauge owns the default view; Settings/telemetry are
-  // summoned from the topbar or via the W / D shortcuts.
+  // The two auxiliary panels. Both closed by default (progressive disclosure):
+  // the gauge owns the default view; Settings/telemetry are summoned from the
+  // topbar or via the W / D shortcuts. On wide screens (`wide`) an open panel
+  // docks as an in-flow column that pushes the stage; below that it's a flyout
+  // overlay. Same shared <SidePanel> either way.
   let infoOpen = $state(false);
   let workbenchOpen = $state(false);
+  let wide = $state(false);
 
   function toggleTheme() {
     // Flip the persisted pref; the store's $effect applies it to
@@ -110,17 +113,30 @@
   }
 
   onMount(() => {
+    // Dock the panels once there's room; flyout below this width.
+    const mq = window.matchMedia("(min-width: 1200px)");
+    const applyWide = () => (wide = mq.matches);
+    applyWide();
+    mq.addEventListener("change", applyWide);
+
     window.addEventListener("keydown", onKeydown);
     void bootRunner();
 
     return () => {
+      mq.removeEventListener("change", applyWide);
       window.removeEventListener("keydown", onKeydown);
       teardownRunner();
     };
   });
 </script>
 
-<main id="console" data-phase={store.phase} class="bg-bg text-text">
+<main
+  id="console"
+  data-phase={store.phase}
+  class:dock-left={wide && workbenchOpen}
+  class:dock-right={wide && infoOpen}
+  class="bg-bg text-text"
+>
   <!-- TOPBAR -->
   <header class="zone topbar flex items-center gap-3 px-4 border-b border-border">
     <button
@@ -169,28 +185,38 @@
     <CommandHints />
   </footer>
 
-  <!-- Auxiliary flyouts — identical shared base, opposite sides -->
-  <WorkbenchDrawer bind:open={workbenchOpen} />
-  <InspectorPanel bind:open={infoOpen} />
+  <!-- Auxiliary panels — identical shared base, opposite sides; dock on wide
+       screens (pushing the stage), flyout overlay below that. -->
+  <WorkbenchDrawer bind:open={workbenchOpen} docked={wide} />
+  <InspectorPanel bind:open={infoOpen} docked={wide} />
 
   <!-- Transient phase-change toast (§13.7) — fixed, bottom-right -->
   <PhaseToast />
 </main>
 
 <style>
-  /* ===== Single-column console grid (§1.1) =====
-     The stage owns the full width; both auxiliary surfaces are flyout
-     overlays (<SidePanel>), so the shell no longer reserves a column. */
+  /* ===== Console grid (§1.1) =====
+     The stage owns the middle; the left/right dock columns are 0-width until a
+     panel docks (wide screens), at which point the matching .dock-* class
+     reserves space and the panel (a <SidePanel> grid child via display:contents)
+     slots into leftdock / rightdock, pushing the stage. Below the dock
+     breakpoint the panels are flyout overlays and these columns stay collapsed. */
   #console {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(--dock-right, 0px);
     grid-template-rows: var(--topbar-h) minmax(0, 1fr) 28px;
     grid-template-areas:
-      "topbar"
-      "stage"
-      "status";
+      "topbar   topbar  topbar"
+      "leftdock stage   rightdock"
+      "status   status  status";
     height: 100dvh;
     gap: 0;
+  }
+  #console.dock-left {
+    --dock-left: min(520px, 42vw);
+  }
+  #console.dock-right {
+    --dock-right: min(420px, 34vw);
   }
 
   .topbar {
