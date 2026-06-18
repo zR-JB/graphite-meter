@@ -62,12 +62,31 @@
     domain.max,
   ]);
 
-  let hover = $state<{ key: StageKey; metric: MetricKey; side: "left" | "right" } | null>(null);
+  // `anchorPct` is the snapped marker's position (0–100) within the track;
+  // `trackW` is that track's pixel width at hover time. The card is placed
+  // relative to the ANCHOR (not the mouse) and clamped to the track below.
+  let hover = $state<{ key: StageKey; metric: MetricKey; anchorPct: number; trackW: number } | null>(null);
+  // Measured live so we can clamp the card inside the track (no edge cutoff).
+  let cardW = $state(0);
 
   const hoverLane = $derived(hover ? (lanes.find((l) => l.key === hover!.key) ?? null) : null);
   const hoverValue = $derived(
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
+
+  // Card left edge, in px within the track. Prefer the side of the anchor with
+  // more room (anchor in the left half → card to the right, and vice-versa),
+  // then clamp so the card never spills past either track edge.
+  const CARD_GAP = 12;
+  const CARD_PAD = 6;
+  const cardLeft = $derived.by(() => {
+    if (!hover) return 0;
+    const anchorPx = (hover.anchorPct / 100) * hover.trackW;
+    const preferRight = hover.anchorPct <= 50;
+    const desired = preferRight ? anchorPx + CARD_GAP : anchorPx - cardW - CARD_GAP;
+    const maxLeft = Math.max(CARD_PAD, hover.trackW - cardW - CARD_PAD);
+    return Math.min(Math.max(CARD_PAD, desired), maxLeft);
+  });
 
   function pos(value: number | null): number {
     if (value == null) return 0;
@@ -127,7 +146,12 @@
       hover = null;
       return;
     }
-    hover = { key, metric, side: ratio > 0.55 ? "left" : "right" };
+    const value = metricValue(lane, metric);
+    if (value == null) {
+      hover = null;
+      return;
+    }
+    hover = { key, metric, anchorPct: pos(value), trackW: rect.width };
   }
   function clearHover() {
     hover = null;
@@ -191,7 +215,7 @@
             {#if hover?.key === lane.key && hoverValue != null}
               <span class="guide" style="left:{pos(hoverValue)}%"></span>
               <span class="pin" class:avg={hover.metric === "average"} style="left:{pos(hoverValue)}%"></span>
-              <div class="hover-card" class:left={hover.side === "left"} style="left:{pos(hoverValue)}%">
+              <div class="hover-card" bind:clientWidth={cardW} style="left:{cardLeft}px">
                 <div class="hc-head">
                   <span>{meta.label}</span>
                   <strong>{METRIC_LABELS[hover.metric]} {fmtMs(hoverValue)}</strong>
@@ -494,10 +518,8 @@
     padding: 8px 9px;
     box-shadow: var(--shadow-float);
     pointer-events: none;
-    transform: translate(12px, -50%);
-  }
-  .hover-card.left {
-    transform: translate(calc(-100% - 12px), -50%);
+    /* `left` is pre-offset + clamped in JS; only the vertical centering here. */
+    transform: translateY(-50%);
   }
   .hc-head {
     display: flex;
