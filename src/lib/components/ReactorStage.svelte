@@ -14,8 +14,8 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
 
-  // Gate the compact latency strip: hidden on a fresh idle load (gauge sits
-  // alone, centered), appears once a run starts and persists after completion
+  // Gate the latency panel: hidden on a fresh idle load (gauge sits alone,
+  // full-width), joins the row once a run starts and persists after completion
   // (leftover samples / result keep it shown so results stay readable).
   const showLatency = $derived(
     store.phase !== "idle" || store.latency.length > 0 || store.result != null,
@@ -103,14 +103,26 @@
 </script>
 
 <section class="reactor">
-  <div class="stage">
-    <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
-    <div class="metric-wrap">
-      <span class="reactor-metric">{display.value}</span>
-      {#if display.unit}<span class="reactor-unit">{display.unit}</span>{/if}
-      {#if hint}<span class="reactor-hint">{hint}</span>{/if}
+  <!-- Gauge and latency profile are peer containers on the same layer (§14.2):
+       a wrapping flex row so they resize together on wide layouts and the
+       latency panel breaks free below the gauge when space gets tight. The
+       latency panel only joins the row once a run has produced data. -->
+  <div class="viz">
+    <div class="stage">
+      <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+      <div class="metric-wrap">
+        <span class="reactor-metric">{display.value}</span>
+        {#if display.unit}<span class="reactor-unit">{display.unit}</span>{/if}
+        {#if hint}<span class="reactor-hint">{hint}</span>{/if}
+      </div>
+      <output class="sr-only" aria-live="polite">{a11y}</output>
     </div>
-    <output class="sr-only" aria-live="polite">{a11y}</output>
+
+    {#if showLatency}
+      <div class="latency-panel">
+        <LatencyProfile bare />
+      </div>
+    {/if}
   </div>
 
   <!-- Hero controls — gauge + number + combined stage track + Engage read as
@@ -128,14 +140,6 @@
     <EngageButton />
   </div>
 
-  <!-- Compact latency strip — sits inside the gauge card so the gauge + lanes
-       read as one instrument (§14.2). Gated by showLatency: hidden on a fresh
-       idle load, appears once a run starts, persists after completion. -->
-  {#if showLatency}
-    <div class="reactor-latency">
-      <LatencyProfile compact />
-    </div>
-  {/if}
 </section>
 
 <style>
@@ -149,27 +153,37 @@
     background: var(--surface-1);
     box-shadow: var(--shadow-card);
   }
+  /* Peer row: gauge + latency panel are equal-importance flex siblings that
+     wrap to stack when the row gets too narrow (responsive break-free). */
+  .viz {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 12px;
+    min-height: 0;
+  }
   .stage {
     position: relative;
-    flex: 1 1 auto;
-    /* Floor keeps the gauge readable; flex lets it absorb spare vertical space
-       so the gauge + number remain the centered focal point of the stage. */
-    min-height: 170px;
+    /* Equal-weight flex item, like the latency panel; floor keeps the gauge
+       readable and the min-width forces a wrap (panel drops below) when tight. */
+    flex: 1 1 320px;
+    min-width: 280px;
+    min-height: 210px;
     border-radius: var(--radius-md);
     background: var(--surface-inset);
     overflow: hidden;
   }
-  /* When the compact latency strip is present, lower the gauge's floor so the
-     extra strip height doesn't push the default view into a vertical scroll.
-     The gauge stays the flex-grow hero (flex:1 1 auto) — only its minimum
-     shrinks. :has() is within this codebase's modern target. */
-  .reactor:has(.reactor-latency) .stage {
-    min-height: 140px;
-  }
-  /* The strip never steals the gauge's grow space — it sits at its intrinsic
-     (compact) height below the controls. */
-  .reactor-latency {
-    flex: 0 0 auto;
+  /* Latency profile as a peer container on the same layer as the gauge — a
+     matching inset panel that resizes with the gauge and wraps below it when
+     the row is too narrow. */
+  .latency-panel {
+    flex: 1 1 320px;
+    min-width: 260px;
+    min-height: 210px;
+    padding: 10px;
+    border-radius: var(--radius-md);
+    background: var(--surface-inset);
+    overflow: auto;
   }
   .canvas {
     position: absolute;

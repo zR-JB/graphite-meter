@@ -71,6 +71,8 @@ interface ThemeColors {
   grid: string;
   gridMajor: string;
   textSoft: string;
+  text: string;
+  panel: string;
   brand: string;
 }
 
@@ -117,6 +119,8 @@ export class ChartEngine implements CanvasEngine {
     grid: "rgba(255,255,255,0.05)",
     gridMajor: "rgba(255,255,255,0.09)",
     textSoft: "#737b76",
+    text: "#e7ece9",
+    panel: "#1b211e",
     brand: "#d7a84f",
   };
 
@@ -226,6 +230,8 @@ export class ChartEngine implements CanvasEngine {
       grid: g("--grid-line", "rgba(255,255,255,0.05)"),
       gridMajor: g("--grid-line-major", "rgba(255,255,255,0.09)"),
       textSoft: g("--text-soft", "#737b76"),
+      text: g("--text", "#e7ece9"),
+      panel: g("--surface-1", "#1b211e"),
       brand: g("--brand", "#d7a84f"),
     };
   }
@@ -377,11 +383,34 @@ export class ChartEngine implements CanvasEngine {
       ctx.stroke();
       ctx.restore();
 
-      // avg tag.
-      ctx.fillStyle = stat.stroke;
+      // avg tag — drawn on a solid chip so the label never blends into the
+      // series line it sits on (same-colour-on-same-colour was illegible).
+      const label = `avg ${this.#fmt.throughput(stat.avg)}`;
       ctx.font = '9px "IBM Plex Mono", monospace';
       ctx.textAlign = "left";
-      ctx.fillText(`avg ${this.#fmt.throughput(stat.avg)}`, x0 + 4, yAvg - 4);
+      ctx.textBaseline = "alphabetic";
+      const padX = 4;
+      const chipH = 13;
+      const tw = ctx.measureText(label).width;
+      const chipW = tw + padX * 2;
+      const chipX = x0 + 2;
+      // Sit the chip above the rule; flip below if it would clip the top pad.
+      let chipY = yAvg - 3 - chipH;
+      if (chipY < PAD_T) chipY = yAvg + 3;
+      const baselineY = chipY + chipH - 4;
+
+      ctx.beginPath();
+      ctx.roundRect(chipX, chipY, chipW, chipH, 3);
+      ctx.fillStyle = this.#c.panel;
+      ctx.globalAlpha = 0.9;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = withAlpha(stat.stroke, 0.6);
+      ctx.stroke();
+
+      ctx.fillStyle = stat.stroke;
+      ctx.fillText(label, chipX + padX, baselineY);
     }
   }
 

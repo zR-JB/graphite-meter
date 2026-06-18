@@ -13,12 +13,13 @@
   import { fmtMs, niceDomain } from "../format";
   import { tooltip } from "../actions/tooltip";
 
-  // Compact mode (embedded under the gauge): no card header, tighter rows, and
-  // empty/not-yet-running lanes suppressed so warmup shows no dead rows.
+  // Bare mode: drop the outer card chrome (border/background/shadow + header)
+  // so the component sits cleanly inside a host panel — used when it's a peer
+  // container next to the gauge. Lane internals keep their full sizing.
   interface Props {
-    compact?: boolean;
+    bare?: boolean;
   }
-  let { compact = false }: Props = $props();
+  let { bare = false }: Props = $props();
 
   const PROFILE_HELP =
     "Latency profile: how steady your ping is, idle and under load. Each bar's shaded band is the P10–P90 range (your typical pings); the dot is the latest reading. Tighter is steadier.";
@@ -39,19 +40,13 @@
     current: "Latest",
   };
 
-  // Filter lanes by enabled stages; skip ones with no samples yet (waiting).
-  // In compact mode additionally suppress lanes that have no data AND aren't
-  // the currently-running phase, so the warmup/early state shows no dead rows
-  // (full mode keeps every enabled lane so it can read as a stable legend).
+  // Enabled lanes. Empty lanes are kept (they show "waiting") — matching the
+  // original info-drawer behavior; no empty-suppression.
   const lanes = $derived(
-    store.latencyLanes.filter(
-      (lane) =>
-        store.config.stages[lane.key] &&
-        (!compact || lane.average != null || lane.key === store.phase),
-    ),
+    store.latencyLanes.filter((l) => store.config.stages[l.key]),
   );
 
-  // Shared centered, snapped latency domain across every visible lane.
+  // Shared centered, snapped latency domain across every enabled lane.
   const domain = $derived.by(() => {
     const values: number[] = [];
     for (const lane of lanes) {
@@ -139,14 +134,11 @@
   }
 </script>
 
-<section class="card" class:compact aria-label="Latency distribution">
+<section class="card" class:bare aria-label="Latency distribution">
   <header class="card-head">
     <h3 class="term" use:tooltip={PROFILE_HELP}>Latency Profile</h3>
     <p>Range / avg / loss</p>
   </header>
-  {#if compact}
-    <span class="compact-caption" use:tooltip={PROFILE_HELP}>Latency profile</span>
-  {/if}
 
   <div class="lanes" role="img" aria-label="Latency, jitter and loss by phase">
     {#each lanes as lane (lane.key)}
@@ -555,66 +547,35 @@
     }
   }
 
-  /* ===== Compact variant — embedded under the gauge (§14.2) =====
-     Reclaims vertical space so the default main view never scrolls: header
-     dropped (~46px) for a tiny inline caption, tighter padding/gaps, no ticks
-     row, a shorter track, and the verbose min–max range text dropped so each
-     lane is one tight row. Default/full styles above are untouched. */
-  .compact {
-    /* Sits inside the gauge card already — drop its own chrome so it reads as
-       one continuous instrument rather than a nested card. */
+  /* ===== Bare variant — sits inside a host panel as a peer of the gauge =====
+     Drops the card frame (border/background/shadow) and the header so the host
+     panel (an inset surface matching the gauge) provides the chrome. Lanes get
+     a subtle raised backdrop so each reads as its own row. Lane INTERNALS keep
+     their full sizing. Default/full styles above are untouched (safe fallback). */
+  .bare {
     border: 0;
-    border-top: 1px solid var(--border);
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+    overflow: visible;
+    height: 100%;
   }
-  .compact .card-head {
+  .bare .card-head {
     display: none;
   }
-  .compact .compact-caption {
-    display: block;
-    padding: 8px 2px 0;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    cursor: help;
+  .bare .lanes {
+    gap: 8px;
+    padding: 0;
   }
-  .compact .lanes {
-    gap: 6px;
-    padding: 8px 2px 2px;
+  .bare .lane {
+    /* Raised row over the inset host panel. */
+    background: var(--surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
   }
-  .compact .lane {
-    gap: 4px;
-    padding: 6px 8px;
-  }
-  .compact .lane-meta em {
-    /* Drop the verbose min–max range so each lane stays a single tight row. */
-    display: none;
-  }
-  .compact .strip {
-    gap: 0;
-  }
-  .compact .ticks {
-    /* The shared axis ticks aren't needed in the dense strip. */
-    display: none;
-  }
-  .compact .track {
-    height: 22px;
-  }
-  .compact .range {
-    top: 9px;
-  }
-  .compact .range::before,
-  .compact .range::after {
-    top: -6px;
-    height: 16px;
-  }
-  .compact .band {
-    top: 4px;
-    height: 14px;
+  .bare .lane[data-active="true"] {
+    border-color: color-mix(in srgb, var(--signal) 44%, var(--border));
+    background: color-mix(in srgb, var(--signal-soft) 60%, var(--surface-1));
   }
 </style>
