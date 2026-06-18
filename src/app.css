@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 @theme {
+  /* Display — the characterful, mechanical face for the hero number + headings */
+  --font-display: "Space Grotesk", "Inter Tight", system-ui, sans-serif;
   --font-sans: "IBM Plex Sans", "Inter Tight", "Inter", "Segoe UI",
     system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas,
@@ -16,11 +18,14 @@
   --inspector-w: 380px;
   --gap: 16px;
 
-  --radius-xs: 2px; /* crisp data corners */
-  --radius-sm: 6px; /* inputs, chips */
-  --radius-md: 8px; /* buttons, tabs */
-  --radius-lg: 12px; /* cards */
-  --radius-xl: 16px; /* shell panels */
+  /* Legacy radii — now derived from --feel-radius so they respond to the knob
+     too (identical values at --feel-radius:1). Prefer the semantic --r-* below
+     for new work; these stay for components not yet migrated to Faceplate. */
+  --radius-xs: calc(2px * var(--feel-radius));
+  --radius-sm: calc(6px * var(--feel-radius));
+  --radius-md: calc(8px * var(--feel-radius));
+  --radius-lg: calc(12px * var(--feel-radius));
+  --radius-xl: calc(16px * var(--feel-radius));
 
   /* ---- Motion tokens ---- */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -29,109 +34,181 @@
   --dur-slide: 180ms;
   --dur-graph: 280ms;
 
-  /* ===== DARK: Graphite Workshop ===== */
-  --canvas: #0d0f10;
-  --bg: #111315;
-  --bg-elevated: #16191c;
+  /* ============ FACEPLATE — FORM CONTROL PANEL ============
+     The form counterpart to the color tokens. Three master knobs drive the
+     whole feel; everything below derives from them, so the app's shape, space
+     and texture are tuned here in one place — exactly like the palette.
 
-  --surface-1: #181b1f;
-  --surface-2: #20242a;
-  --surface-3: #282d34;
-  --surface-inset: #121416;
+       --feel-radius   0 = sharp panel   · 1 = default · 1.6 = soft
+       --feel-density  0.85 = compact    · 1 = default · 1.2 = airy
+       --feel-edge     0 = flat/matte    · 1 = milled  · 2 = strong
+  */
+  --feel-radius: 1;
+  --feel-density: 1;
+  --feel-edge: 1;
 
-  --border-subtle: rgba(255, 255, 255, 0.055);
-  --border: rgba(255, 255, 255, 0.095);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  /* Modular space scale — every padding / margin / gap derives from this,
+     so density is a single knob instead of scattered pixel values. */
+  --space-1: calc(4px * var(--feel-density));
+  --space-2: calc(8px * var(--feel-density));
+  --space-3: calc(12px * var(--feel-density));
+  --space-4: calc(16px * var(--feel-density));
+  --space-5: calc(24px * var(--feel-density));
+  --space-6: calc(32px * var(--feel-density));
 
-  --text: #eef0ea;
-  --text-muted: #a7ada5;
-  --text-soft: #737b76;
-  --text-inverse: #171813;
+  /* Semantic radii — instrument-crisp, all driven by --feel-radius */
+  --r-well: calc(6px * var(--feel-radius)); /* recessed data wells */
+  --r-chrome: calc(8px * var(--feel-radius)); /* flat chrome: buttons, chips, panels */
+  --r-pill: calc(12px * var(--feel-radius)); /* the Engage master action */
 
-  --brand: #d7a84f; /* brass */
-  --brand-strong: #f1c76a;
-  --brand-muted: #9f7a35;
-  --brand-soft: rgba(215, 168, 79, 0.14);
+  /* Type scale — display (Space Grotesk) / data (Plex Mono) / body (Plex Sans).
+     --type-hero is the live number: the one typographic moment. */
+  --type-hero: clamp(40px, 6vw, 76px);
+  --type-xl: 22px;
+  --type-lg: 17px;
+  --type-md: 14px;
+  --type-sm: 12px;
+  --type-xs: 11px;
+  --track-tight: -0.03em;
+  --track-wide: 0.08em;
 
-  --signal: #7ea7a6; /* teal — secondary accent */
-  --signal-strong: #9cc4c3;
-  --signal-soft: rgba(126, 167, 166, 0.14);
+  /* ---- Faceplate texture (DARK): light reads from above ----
+     Tactile milled edges (top highlight / inner shade) + elevation recipes.
+     The signature contrast is --elev-inset (engraved data wells) vs
+     --elev-raised (flat chrome). Mode-specific primitives below are overridden
+     in [data-theme="light"]; the recipes themselves are written once. */
+  --edge-light: rgba(214, 206, 240, calc(0.07 * var(--feel-edge)));
+  --edge-shade: rgba(0, 0, 0, calc(0.5 * var(--feel-edge)));
+  --shadow-ink: 7, 5, 16; /* rgb triple composed into shadows */
+  --well-depth: 0.5; /* inner-shadow strength for engraved wells */
+  --raise-depth: 0.4; /* drop-shadow strength for raised chrome */
 
-  /* Phase identity tints — used by lifecycle visuals */
-  --phase-warmup: #9f7a35;
-  --phase-latency: #7ea7a6;
-  --phase-download: #6fa77a; /* organic green */
-  --phase-upload: #d7a84f; /* brass */
-  --phase-complete: #9cc4c3;
+  --elev-inset: inset 0 1px 0 var(--edge-light),
+    inset 0 10px 26px rgba(var(--shadow-ink), var(--well-depth)),
+    inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8));
+  --elev-raised: 0 1px 0 var(--edge-light),
+    0 6px 18px rgba(var(--shadow-ink), var(--raise-depth));
+  --elev-flat: 0 0 0 transparent;
 
-  /* Status tones — industrial, print-friendly */
-  --ok: #6fa77a;
-  --ok-soft: rgba(111, 167, 122, 0.14);
-  --warn: #d7a84f;
-  --warn-soft: rgba(215, 168, 79, 0.14);
-  --err: #c96f5d;
-  --err-soft: rgba(201, 111, 93, 0.15); /* clay */
-  --info: #7ea7a6;
-  --info-soft: rgba(126, 167, 166, 0.14);
+  /* ===== DARK: Twilight — muted lavender instrument =====
+     Cool plum-charcoal (never warm graphite, never pure black). A quietly
+     colorful palette: lavender brand + a muted phase ramp carry the whole
+     UI; the gauge & results get the punchiest accent so they own focus. */
+  --canvas: #0b0a10;
+  --bg: #100e16;
+  --bg-elevated: #15131d;
 
-  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.28), 0 10px 30px rgba(0, 0, 0, 0.2);
-  --shadow-float: 0 18px 70px rgba(0, 0, 0, 0.42);
+  --surface-1: #191622;
+  --surface-2: #221e2d;
+  --surface-3: #2c2839;
+  --surface-inset: #0d0b12;
+
+  --border-subtle: rgba(196, 186, 232, 0.06);
+  --border: rgba(196, 186, 232, 0.1);
+  --border-strong: rgba(196, 186, 232, 0.18);
+
+  --text: #ecebf3;
+  --text-muted: #a8a2bb;
+  --text-soft: #726d83;
+  --text-inverse: #16131f;
+
+  --brand: #b6a6e6; /* lavender */
+  --brand-strong: #d0c4f5;
+  --brand-muted: #877ab1;
+  --brand-soft: rgba(182, 166, 230, 0.15);
+
+  --signal: #84c5c0; /* dusty teal — secondary accent */
+  --signal-strong: #a7dad5;
+  --signal-soft: rgba(132, 197, 192, 0.15);
+
+  /* Phase identity tints — a muted, harmonious spectral journey */
+  --phase-warmup: #8e95d4; /* periwinkle */
+  --phase-latency: #84c5c0; /* dusty teal */
+  --phase-download: #93c49a; /* sage */
+  --phase-upload: #b6a6e6; /* lavender */
+  --phase-complete: #a7dad5; /* aqua */
+
+  /* Status tones — muted, harmonious with the palette */
+  --ok: #93c49a;
+  --ok-soft: rgba(147, 196, 154, 0.15);
+  --warn: #d8b57e;
+  --warn-soft: rgba(216, 181, 126, 0.15);
+  --err: #d58c8c;
+  --err-soft: rgba(213, 140, 140, 0.16); /* dusty rose */
+  --info: #8e95d4;
+  --info-soft: rgba(142, 149, 212, 0.15);
+
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.32), 0 12px 34px rgba(7, 5, 16, 0.46);
+  --shadow-float: 0 20px 72px rgba(6, 4, 15, 0.56);
 
   /* Graph-specific */
-  --grid-line: rgba(255, 255, 255, 0.05);
-  --grid-line-major: rgba(255, 255, 255, 0.09);
+  --grid-line: rgba(196, 186, 232, 0.05);
+  --grid-line-major: rgba(196, 186, 232, 0.09);
 }
 
 [data-theme="light"] {
+  /* ===== LIGHT: Daylight — co-equal lavender mode =====
+     A cool, lavender-tinted off-white (deliberately not cream). Fully tuned
+     to match the dark mode's character: same muted hue family, darkened for
+     contrast on a bright ground so the gauge & results still read crisply. */
   color-scheme: light;
 
-  --canvas: #e4ded2;
-  --bg: #efede7;
-  --bg-elevated: #f5f2eb;
+  --canvas: #e7e5f1;
+  --bg: #f0eff7;
+  --bg-elevated: #f6f5fc;
 
-  --surface-1: #fbfaf6;
-  --surface-2: #f3f0e8;
-  --surface-3: #e9e4da;
-  --surface-inset: #e7e1d5;
+  --surface-1: #ffffff;
+  --surface-2: #f2f0f9;
+  --surface-3: #e8e5f3;
+  --surface-inset: #edebf6;
 
-  --border-subtle: rgba(35, 37, 33, 0.06);
-  --border: rgba(35, 37, 33, 0.115);
-  --border-strong: rgba(35, 37, 33, 0.2);
+  --border-subtle: rgba(58, 48, 90, 0.07);
+  --border: rgba(58, 48, 90, 0.12);
+  --border-strong: rgba(58, 48, 90, 0.2);
 
-  --text: #232521;
-  --text-muted: #686b62;
-  --text-soft: #8c8f85;
-  --text-inverse: #fbfaf6;
+  --text: #221d30;
+  --text-muted: #5d5773;
+  --text-soft: #8b86a0;
+  --text-inverse: #fbfaff;
 
-  --brand: #9c6b1f;
-  --brand-strong: #6f4a13;
-  --brand-muted: #b88737;
-  --brand-soft: rgba(156, 107, 31, 0.12);
+  --brand: #6d5bb0; /* rich lavender */
+  --brand-strong: #543e9e;
+  --brand-muted: #9385c2;
+  --brand-soft: rgba(109, 91, 176, 0.12);
 
-  --signal: #527f7d;
-  --signal-strong: #3d6361;
-  --signal-soft: rgba(82, 127, 125, 0.13);
+  --signal: #3e8a84; /* teal */
+  --signal-strong: #2c6c66;
+  --signal-soft: rgba(62, 138, 132, 0.12);
 
-  --phase-warmup: #b88737;
-  --phase-latency: #527f7d;
-  --phase-download: #567f5f;
-  --phase-upload: #9c6b1f;
-  --phase-complete: #3d6361;
+  --phase-warmup: #5a62b8; /* indigo-periwinkle */
+  --phase-latency: #3e8a84; /* teal */
+  --phase-download: #549a66; /* sage */
+  --phase-upload: #6d5bb0; /* lavender */
+  --phase-complete: #2c6c66; /* deep aqua */
 
-  --ok: #567f5f;
-  --ok-soft: rgba(86, 127, 95, 0.13);
-  --warn: #9c6b1f;
-  --warn-soft: rgba(156, 107, 31, 0.13);
-  --err: #a85544;
-  --err-soft: rgba(168, 85, 68, 0.13);
-  --info: #527f7d;
-  --info-soft: rgba(82, 127, 125, 0.13);
+  --ok: #549a66;
+  --ok-soft: rgba(84, 154, 102, 0.13);
+  --warn: #b07d34;
+  --warn-soft: rgba(176, 125, 52, 0.13);
+  --err: #be6a6a;
+  --err-soft: rgba(190, 106, 106, 0.14);
+  --info: #5a62b8;
+  --info-soft: rgba(90, 98, 184, 0.13);
 
-  --shadow-card: 0 1px 1px rgba(65, 53, 36, 0.08), 0 10px 32px rgba(65, 53, 36, 0.1);
-  --shadow-float: 0 18px 60px rgba(65, 53, 36, 0.18);
+  --shadow-card: 0 1px 1px rgba(46, 36, 80, 0.07), 0 10px 32px rgba(46, 36, 80, 0.1);
+  --shadow-float: 0 18px 60px rgba(46, 36, 80, 0.18);
 
-  --grid-line: rgba(35, 37, 33, 0.05);
-  --grid-line-major: rgba(35, 37, 33, 0.09);
+  --grid-line: rgba(58, 48, 90, 0.05);
+  --grid-line-major: rgba(58, 48, 90, 0.09);
+
+  /* ---- Faceplate texture (LIGHT) — only the primitives change; the
+     --elev-* recipes above recompute. Light wells read inset via a bright
+     top highlight + a faint plum inner shadow (never heavy darkness). ---- */
+  --edge-light: rgba(255, 255, 255, calc(0.85 * var(--feel-edge)));
+  --edge-shade: rgba(58, 48, 90, calc(0.14 * var(--feel-edge)));
+  --shadow-ink: 46, 36, 80;
+  --well-depth: 0.12;
+  --raise-depth: 0.1;
 }
 
 /* ---- Tailwind semantic bridge: map tokens → utilities ---- */
