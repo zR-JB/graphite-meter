@@ -78,9 +78,10 @@
 
   /* ---------- Compensation factor groups (de-magicked labels) ---------- */
   type FactorKey = keyof RunnerConfig["compensation"]["factors"];
-  const COMP_GROUPS: { label: string; toggles: { key: FactorKey; label: string }[] }[] = [
+  const COMP_GROUPS: { label: string; tip: string; toggles: { key: FactorKey; label: string }[] }[] = [
     {
       label: "Protocol bytes",
+      tip: JARGON.compProtocol,
       toggles: [
         { key: "ethernetFraming", label: "Ethernet / IP / transport" },
         { key: "tlsRecords", label: "TLS records" },
@@ -89,6 +90,7 @@
     },
     {
       label: "Path behavior",
+      tip: JARGON.compPath,
       toggles: [
         { key: "reversePathControl", label: "ACK / control traffic" },
         { key: "lossRetransmission", label: "Loss / retransmission" },
@@ -96,6 +98,7 @@
     },
     {
       label: "Measurement model",
+      tip: JARGON.compModel,
       toggles: [
         { key: "steadyStateRamp", label: "Steady-state ramp" },
         { key: "browserRuntime", label: "Browser runtime tax" },
@@ -238,12 +241,12 @@
     </label>
     <label class="check-row">
       <input type="checkbox" disabled={running} bind:checked={store.config.compensation.enabled} />
-      <span>Show estimated wire-rate compensation</span>
+      <span use:tooltip={JARGON.overheadCompensation}>Show estimated wire-rate compensation</span>
     </label>
     <div class="toggle-groups">
       {#each COMP_GROUPS as g (g.label)}
         <div class="toggle-group">
-          <strong>{g.label}</strong>
+          <strong use:tooltip={g.tip}>{g.label}</strong>
           {#each g.toggles as t (t.key)}
             <label class="check-row">
               <input

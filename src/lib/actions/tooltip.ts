@@ -199,4 +199,12 @@ export const JARGON = {
   stability:
     "Stability: how steady the speed held during the test. Higher means a flat, consistent line; lower means it fluctuated.",
   ping: "Ping: the round-trip time for a small message to reach the server and come back. Lower feels snappier.",
+  overheadCompensation:
+    "Overhead compensation: estimates your true wire-rate by adding back the bytes the browser never sees but your link still carries — Ethernet/IP/TCP framing, TLS records, HTTP framing, and return-path ACKs. Shown as the “wire” figure on the result cards; your measured speed is unchanged. At a 1500-byte MTU the exact protocol factors add roughly +3–8% combined; the heuristic factors add a few % more when on. How much depends on MTU, TCP/TLS/frame sizes and the transport, plus (for the heuristics) measured loss, stability and peak-vs-average.",
+  compProtocol:
+    "Protocol bytes — exact, fixed byte accounting from the protocol headers (high confidence). Adds the framing every packet carries at your MTU; typically a few percent each.",
+  compPath:
+    "Path behavior — heuristic estimates (low confidence): return-path ACK/control traffic, and a loss/retransmission tax ≈ loss ÷ (1 − loss) from measured loss, capped by Max loss ratio.",
+  compModel:
+    "Measurement model — heuristic estimates (low confidence) of how the measurement undercounts: the early-test ramp toward the plateau (peak-vs-average) and browser/runtime timing jitter (derived from stability).",
 } as const;
