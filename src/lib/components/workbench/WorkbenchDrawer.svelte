@@ -191,8 +191,9 @@
     height: 34px;
     flex: none;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
+    box-shadow: var(--elev-tile);
     color: var(--text-muted);
     transition:
       border-color var(--dur-hover) var(--ease-out),
@@ -212,17 +213,18 @@
   /* Tab switcher — mirrors the .tool-group segmented pattern. */
   .tabs {
     display: flex;
-    gap: 4px;
-    padding: 4px;
+    gap: var(--space-1);
+    padding: var(--space-1);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
+    box-shadow: var(--elev-recess);
   }
   .tab {
     flex: 1;
     min-height: 34px;
     border: 0;
-    border-radius: var(--radius-md);
+    border-radius: var(--r-well);
     background: transparent;
     color: var(--text-soft);
     font-size: 12px;
@@ -237,6 +239,7 @@
   }
   .tab.active {
     background: var(--brand-soft);
+    box-shadow: var(--elev-tile);
     color: var(--brand-strong);
   }
 
