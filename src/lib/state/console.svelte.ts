@@ -20,7 +20,7 @@ import {
   estimateResultCompensation,
   type CompensationEstimate,
 } from "../compensation";
-import { quantile } from "../format";
+import { quantile, niceScaleUp, rateScaleIndex, rateUnit, rateValueAt } from "../format";
 import {
   loadPersisted,
   savePersisted,
@@ -291,22 +291,36 @@ class ConsoleStore {
     ),
   );
 
+  /** Absolute throughput scale (bit/s) shared by the gauge AND the display
+   *  unit, so a glance at the dial maps to the number. Fixed when the user
+   *  pins `visualization.throughputMaxBps`; otherwise auto — a large nice rung
+   *  above the observed peak across BOTH transfer phases (download + upload),
+   *  so up/down stay on one comparable scale. Peak is monotonic per run, so
+   *  this derived value ratchets and never jitters down mid-run. */
+  displayScaleBps = $derived.by(() => {
+    const cfg = this.config.visualization.throughputMaxBps;
+    if (typeof cfg === "number" && cfg > 0) return cfg;
+    let peak = 0;
+    for (const s of this.throughput) if (s.bps > peak) peak = s.bps;
+    if (peak <= 0) return 1e8; // idle default: 100 Mbit/s so ticks show
+    return niceScaleUp(peak * 1.08);
+  });
+
+  /** Prefix index (k/M/G…) the whole UI displays in, derived from the scale so
+   *  the unit only changes in large steps — never per-sample flicker. */
+  #unitIndex = $derived(
+    rateScaleIndex(
+      this.unitKind === "bits" ? this.displayScaleBps : this.displayScaleBps / 8,
+      this.unitBase,
+    ),
+  );
+
   get unitLabel() {
-    const speed =
-      this.unitKind === "bits"
-        ? this.unitBase === "base10"
-          ? "Mbps"
-          : "Mibit/s"
-        : this.unitBase === "base10"
-          ? "MB/s"
-          : "MiB/s";
-    return speed;
+    return rateUnit(this.unitBase, this.unitKind, this.#unitIndex);
   }
 
   toUnit(bps: number): number {
-    const div = this.unitBase === "base10" ? 1e6 : 2 ** 20;
-    const v = this.unitKind === "bits" ? bps / div : bps / 8 / div;
-    return v;
+    return rateValueAt(bps, this.unitBase, this.unitKind, this.#unitIndex);
   }
 
   /* ================= INGEST ================= */

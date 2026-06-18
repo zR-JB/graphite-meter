@@ -28,7 +28,8 @@ export function fmtMs(ms: number): string {
 
 export function fmtBytes(b: number, base: "base10" | "base2"): string {
   const k = base === "base10" ? 1000 : 1024;
-  const u = base === "base10" ? ["B", "KB", "MB", "GB"] : ["B", "KiB", "MiB", "GiB"];
+  // Official notation: SI decimal uses lowercase k (kB); IEC binary uses KiB.
+  const u = base === "base10" ? ["B", "kB", "MB", "GB", "TB"] : ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
   let n = b;
   while (n >= k && i < u.length - 1) {
@@ -36,6 +37,61 @@ export function fmtBytes(b: number, base: "base10" | "base2"): string {
     i++;
   }
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+
+/* ============================================================
+ * Rate units — official notation (IEC 80000-13 / SI).
+ *   bits, decimal:  bit/s · kbit/s · Mbit/s · Gbit/s · Tbit/s
+ *   bits, binary:   bit/s · Kibit/s · Mibit/s · Gibit/s · Tibit/s
+ *   bytes, decimal: B/s · kB/s · MB/s · GB/s · TB/s
+ *   bytes, binary:  B/s · KiB/s · MiB/s · GiB/s · TiB/s
+ * (lowercase k for kilo; uppercase Ki for kibi). Internal values are
+ * always bits-per-second; these convert + label for display.
+ * ============================================================ */
+export type UnitBase = "base10" | "base2";
+export type UnitKind = "bits" | "bytes";
+
+const SI_PREFIX = ["", "k", "M", "G", "T"];
+const IEC_PREFIX = ["", "Ki", "Mi", "Gi", "Ti"];
+
+/** Official unit symbol at a prefix index (0 = base … 4 = T/Ti). */
+export function rateUnit(base: UnitBase, kind: UnitKind, idx: number): string {
+  const prefixes = base === "base10" ? SI_PREFIX : IEC_PREFIX;
+  const p = prefixes[Math.max(0, Math.min(prefixes.length - 1, idx))];
+  return kind === "bits" ? `${p}bit/s` : `${p}B/s`;
+}
+
+/** Divisor (in base units) for a prefix index. */
+function unitDivisor(base: UnitBase, idx: number): number {
+  const k = base === "base10" ? 1000 : 1024;
+  return Math.pow(k, Math.max(0, Math.min(4, idx)));
+}
+
+/** Prefix index for a magnitude expressed in base units (bit/s or B/s). */
+export function rateScaleIndex(baseUnits: number, base: UnitBase): number {
+  const k = base === "base10" ? 1000 : 1024;
+  if (baseUnits < 1) return 0;
+  return Math.max(0, Math.min(4, Math.floor(Math.log(baseUnits) / Math.log(k))));
+}
+
+/** Convert raw bit/s → display value at an explicit prefix index. */
+export function rateValueAt(bps: number, base: UnitBase, kind: UnitKind, idx: number): number {
+  const baseUnits = kind === "bits" ? bps : bps / 8;
+  return baseUnits / unitDivisor(base, idx);
+}
+
+/** Smallest "nice" rung (1 / 1.5 / 2 / 3 / 5 / 7.5 × 10ⁿ) at or above `v`.
+ *  Used for the gauge's large-step absolute scale so the dial reads at a
+ *  glance (a gigabit link and a 20-unit link land on clearly different rungs)
+ *  rather than continuously rescaling. */
+export function niceScaleUp(v: number): number {
+  if (v <= 0) return 1;
+  const steps = [1, 1.5, 2, 3, 5, 7.5, 10];
+  const exp = Math.floor(Math.log10(v));
+  const base = 10 ** exp;
+  const f = v / base; // 1–10
+  for (const s of steps) if (s >= f - 1e-9) return s * base;
+  return 10 * base;
 }
 
 /** "Nice" axis ceiling for charts. */
