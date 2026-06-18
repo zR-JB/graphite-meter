@@ -49,22 +49,24 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 10px;
-    /* Primary action — prominent but not a full-bleed slab. Centered under the
-       gauge with a sensible max so it reads as a button, not a banner. As a
-       flex item in .controls, align-self centers it within the column. */
+    gap: var(--space-2);
+    /* The one pill — Faceplate's single bold element. Prominent but not a
+       full-bleed slab; centered under the gauge with a sensible max. The lit
+       top edge + brand glow are the only place we spend this much elevation. */
     width: 100%;
     max-width: 320px;
     align-self: center;
     min-height: 46px;
-    border-radius: var(--radius-md);
-    font-family: var(--font-mono);
-    font-weight: 700;
-    letter-spacing: 0.08em;
+    border-radius: var(--r-pill);
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: var(--track-wide);
     background: linear-gradient(180deg, var(--brand-strong), var(--brand));
     color: var(--text-inverse);
     border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
-    box-shadow: 0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
     cursor: pointer;
     transition:
       transform var(--dur-hover) var(--ease-out),
