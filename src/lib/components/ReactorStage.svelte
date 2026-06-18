@@ -245,11 +245,18 @@
 
   /* Hero controls block — stage track + the master Engage action, sitting
      directly under the gauge so the three read as one instrument. */
+  /* The controls group (stage header + track + Engage) reads as one
+     instrument cluster. Capped to a comfortable measure and centered so the
+     stage track spans the full width only when the viewport is genuinely
+     narrow (mobile) and never stretches absurdly wide on desktop. */
   .controls {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
     padding-top: 0;
+    width: 100%;
+    max-width: 600px;
+    align-self: center;
   }
   .controls-head {
     display: flex;
