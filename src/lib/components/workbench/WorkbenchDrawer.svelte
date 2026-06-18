@@ -17,8 +17,17 @@
   interface Props {
     open?: boolean;
     docked?: boolean;
+    dockWidth?: number;
+    onResize?: (px: number) => void;
+    onResetWidth?: () => void;
   }
-  let { open = $bindable(false), docked = false }: Props = $props();
+  let {
+    open = $bindable(false),
+    docked = false,
+    dockWidth,
+    onResize,
+    onResetWidth,
+  }: Props = $props();
 
   type Tab = "setup" | "infrastructure" | "developer";
   let tab = $state<Tab>("setup");
@@ -33,6 +42,9 @@
 <SidePanel
   bind:open
   {docked}
+  {dockWidth}
+  {onResize}
+  {onResetWidth}
   side="left"
   title="Workbench"
   kicker="Advanced Layer"

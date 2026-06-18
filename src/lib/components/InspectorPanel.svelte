@@ -14,13 +14,25 @@
   interface Props {
     open?: boolean;
     docked?: boolean;
+    dockWidth?: number;
+    onResize?: (px: number) => void;
+    onResetWidth?: () => void;
   }
-  let { open = $bindable(false), docked = false }: Props = $props();
+  let {
+    open = $bindable(false),
+    docked = false,
+    dockWidth,
+    onResize,
+    onResetWidth,
+  }: Props = $props();
 </script>
 
 <SidePanel
   bind:open
   {docked}
+  {dockWidth}
+  {onResize}
+  {onResetWidth}
   side="right"
   title="Connection & telemetry"
   kicker="Live"

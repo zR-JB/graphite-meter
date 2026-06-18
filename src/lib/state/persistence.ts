@@ -25,6 +25,10 @@ export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light";
 
+/** Default docked side-panel widths (px). Applied widths are clamped to a
+ *  sane range on use, so a stale/large saved value can never eat the screen. */
+export const DEFAULT_DOCK_WIDTH = { left: 520, right: 420 };
+
 /** The full persisted snapshot. Display prefs + the entire RunnerConfig. */
 export interface PersistedState {
   config: RunnerConfig;
@@ -32,6 +36,8 @@ export interface PersistedState {
   unitKind: "bits" | "bytes";
   theme: ThemePref;
   showWireEstimates: boolean;
+  /** User-resized docked panel widths (px), per side. */
+  dockWidth: { left: number; right: number };
 }
 
 /** System-preference default for theme when nothing is saved yet. */
@@ -51,6 +57,7 @@ export function defaultPersisted(): PersistedState {
     unitKind: "bits",
     theme: systemThemeDefault(),
     showWireEstimates: false,
+    dockWidth: { ...DEFAULT_DOCK_WIDTH },
   };
 }
 

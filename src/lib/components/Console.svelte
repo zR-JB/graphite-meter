@@ -22,6 +22,7 @@
   import { engage, returnToStart } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
+  import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
 
   // The two auxiliary panels. Both closed by default (progressive disclosure):
   // the gauge owns the default view; Settings/telemetry are summoned from the
@@ -36,6 +37,19 @@
     // Flip the persisted pref; the store's $effect applies it to
     // <html data-theme> and the debounced save persists it (§14.1).
     store.theme = store.theme === "light" ? "dark" : "light";
+  }
+
+  // Docked-panel widths (persisted). The reserved grid column is the saved
+  // width only while that panel is docked + open, else 0 (column collapses).
+  // The grid template also CSS-clamps to 46vw so a stale large value is safe.
+  const dockLeft = $derived(wide && workbenchOpen ? store.dockWidth.left : 0);
+  const dockRight = $derived(wide && infoOpen ? store.dockWidth.right : 0);
+
+  function setDockWidth(side: "left" | "right", px: number) {
+    store.dockWidth = { ...store.dockWidth, [side]: px };
+  }
+  function resetDockWidth(side: "left" | "right") {
+    store.dockWidth = { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] };
   }
 
   /* ---- Global keyboard map (§7, extended by Batch G §13.7) ----
@@ -133,8 +147,7 @@
 <main
   id="console"
   data-phase={store.phase}
-  class:dock-left={wide && workbenchOpen}
-  class:dock-right={wide && infoOpen}
+  style="--dock-left: {dockLeft}px; --dock-right: {dockRight}px;"
   class="bg-bg text-text"
 >
   <!-- TOPBAR -->
@@ -186,9 +199,22 @@
   </footer>
 
   <!-- Auxiliary panels — identical shared base, opposite sides; dock on wide
-       screens (pushing the stage), flyout overlay below that. -->
-  <WorkbenchDrawer bind:open={workbenchOpen} docked={wide} />
-  <InspectorPanel bind:open={infoOpen} docked={wide} />
+       screens (pushing the stage), flyout overlay below that. Docked panels are
+       resizable from their inner edge (persisted via store.dockWidth). -->
+  <WorkbenchDrawer
+    bind:open={workbenchOpen}
+    docked={wide}
+    dockWidth={store.dockWidth.left}
+    onResize={(px) => setDockWidth("left", px)}
+    onResetWidth={() => resetDockWidth("left")}
+  />
+  <InspectorPanel
+    bind:open={infoOpen}
+    docked={wide}
+    dockWidth={store.dockWidth.right}
+    onResize={(px) => setDockWidth("right", px)}
+    onResetWidth={() => resetDockWidth("right")}
+  />
 
   <!-- Transient phase-change toast (§13.7) — fixed, bottom-right -->
   <PhaseToast />
@@ -203,7 +229,13 @@
      breakpoint the panels are flyout overlays and these columns stay collapsed. */
   #console {
     display: grid;
-    grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(--dock-right, 0px);
+    /* Dock columns are driven by inline --dock-left/right (0 when not
+       docked-open) and CSS-clamped to 46vw so a stale/large saved width can
+       never starve the stage. */
+    grid-template-columns:
+      min(var(--dock-left, 0px), 46vw)
+      minmax(0, 1fr)
+      min(var(--dock-right, 0px), 46vw);
     grid-template-rows: var(--topbar-h) minmax(0, 1fr) 28px;
     grid-template-areas:
       "topbar   topbar  topbar"
@@ -211,12 +243,6 @@
       "status   status  status";
     height: 100dvh;
     gap: 0;
-  }
-  #console.dock-left {
-    --dock-left: min(520px, 42vw);
-  }
-  #console.dock-right {
-    --dock-right: min(420px, 34vw);
   }
 
   .topbar {

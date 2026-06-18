@@ -140,6 +140,8 @@ class ConsoleStore {
   theme = $state<ThemePref>("dark");
   /** Whether result cards surface the compensated wire-rate estimate (§14.2). */
   showWireEstimates = $state(false);
+  /** User-resized docked side-panel widths (px), per side. Persisted. */
+  dockWidth = $state<{ left: number; right: number }>({ left: 520, right: 420 });
 
   constructor() {
     const p = loadPersisted();
@@ -148,6 +150,7 @@ class ConsoleStore {
     this.unitKind = p.unitKind;
     this.theme = p.theme;
     this.showWireEstimates = p.showWireEstimates;
+    this.dockWidth = p.dockWidth;
   }
 
   /* ================= DERIVED ================= */
@@ -448,6 +451,7 @@ if (typeof window !== "undefined") {
         unitKind: console.unitKind,
         theme: console.theme,
         showWireEstimates: console.showWireEstimates,
+        dockWidth: $state.snapshot(console.dockWidth),
       };
       clearTimeout(timer);
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);

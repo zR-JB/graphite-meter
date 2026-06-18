@@ -29,6 +29,12 @@
     /** When true (wide screens) the panel docks in-flow instead of overlaying:
         no backdrop, non-modal, no focus trap — it's a persistent sidebar. */
     docked?: boolean;
+    /** Current docked width (px) — used for the resize handle's aria value. */
+    dockWidth?: number;
+    /** Report a new docked width (px) as the inner edge is dragged. */
+    onResize?: (px: number) => void;
+    /** Reset the docked width to its default (double-click / Enter on handle). */
+    onResetWidth?: () => void;
     toolbar?: Snippet;
     children: Snippet;
   }
@@ -40,12 +46,70 @@
     label,
     width,
     docked = false,
+    dockWidth,
+    onResize,
+    onResetWidth,
     toolbar,
     children,
   }: Props = $props();
 
   function close() {
     open = false;
+  }
+
+  // ---- Docked resize (inner edge). Pointer-capture so the drag tracks
+  // outside the thin handle; clamped; cleans up on up/cancel. ----
+  const MIN_W = 320;
+  function maxW() {
+    return Math.round(Math.min(720, window.innerWidth * 0.6));
+  }
+  let panelEl = $state<HTMLDivElement>();
+
+  function clamp(px: number) {
+    return Math.max(MIN_W, Math.min(maxW(), px));
+  }
+
+  function startResize(e: PointerEvent) {
+    if (!docked || !panelEl) return;
+    e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    const startX = e.clientX;
+    const startW = panelEl.offsetWidth;
+    handle.setPointerCapture(e.pointerId);
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const onMove = (ev: PointerEvent) => {
+      // Left-docked grows as the pointer moves right; right-docked grows as it
+      // moves left (the handle is always on the panel's inner edge).
+      const delta = side === "left" ? ev.clientX - startX : startX - ev.clientX;
+      onResize?.(clamp(startW + delta));
+    };
+    const finish = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  }
+
+  function onHandleKey(e: KeyboardEvent) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onResetWidth?.();
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    if (!panelEl) return;
+    e.preventDefault();
+    const step = (e.shiftKey ? 48 : 16) * (e.key === "ArrowRight" ? 1 : -1);
+    // Map screen direction to "grow" depending on which edge the handle is on.
+    const grow = side === "left" ? step : -step;
+    onResize?.(clamp(panelEl.offsetWidth + grow));
   }
 </script>
 
@@ -59,6 +123,7 @@
 
   <div
     class="panel"
+    bind:this={panelEl}
     data-side={side}
     style={width ? `--panel-w: ${width}` : undefined}
     role={docked ? "region" : "dialog"}
@@ -74,6 +139,21 @@
       }
     }}
   >
+    {#if docked}
+      <div
+        class="resize-handle"
+        role="slider"
+        aria-orientation="vertical"
+        aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
+        aria-valuemin={MIN_W}
+        aria-valuemax={720}
+        aria-valuenow={dockWidth}
+        tabindex="0"
+        onpointerdown={startResize}
+        onkeydown={onHandleKey}
+        ondblclick={() => onResetWidth?.()}
+      ></div>
+    {/if}
     <header class="panel-head">
       <div class="title">
         {#if kicker}<span class="kicker">{kicker}</span>{/if}
@@ -161,13 +241,50 @@
 
   /* ---- Docked: in-flow column in the #console grid, pushing the stage ---- */
   .panel-layer.docked .panel {
-    position: static;
+    position: relative; /* anchors the resize handle */
     width: auto;
     height: 100%;
     transform: none;
     z-index: auto;
     box-shadow: none;
     transition: none;
+  }
+
+  /* Resize handle — straddles the panel's INNER edge (right edge for a
+     left-docked panel, left edge for a right-docked one). A wide invisible
+     hit area with a thin grip that shows on hover/focus/drag. */
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 11px;
+    z-index: 3;
+    cursor: col-resize;
+    touch-action: none; /* let pointer drag own the gesture on touch */
+  }
+  .panel[data-side="left"] .resize-handle {
+    right: -6px;
+  }
+  .panel[data-side="right"] .resize-handle {
+    left: -6px;
+  }
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    background: transparent;
+    transition: background var(--dur-hover) var(--ease-out);
+  }
+  .resize-handle:hover::after,
+  .resize-handle:focus-visible::after {
+    background: color-mix(in srgb, var(--brand) 65%, transparent);
+  }
+  .resize-handle:focus-visible {
+    outline: none;
   }
   /* Closed while docked → fully removed so its grid column collapses. */
   .panel-layer.docked:not(.open) .panel {
