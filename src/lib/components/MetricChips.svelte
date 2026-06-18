@@ -175,16 +175,9 @@
 
   /* ---- Progressive disclosure of the wire-rate estimate (§14.2) ----
      The headline numbers are always the plainly MEASURED values. The
-     compensated wire-rate is a refinement: surfaced inline in advanced mode,
-     but collapsed to an opt-in toggle in simple mode so a newcomer isn't
-     confronted with two numbers per card. `showWire` is the live decision:
-     always on in advanced, otherwise the user's per-session opt-in. */
-  let wireOptIn = $state(false);
-  const showWire = $derived(store.uxMode === "advanced" || wireOptIn);
-  // Is there any compensation worth disclosing across the transfer cards?
-  const anyLift = $derived(
-    (dl.has && lifted(dl.multiplier)) || (ul.has && lifted(ul.multiplier)),
-  );
+     compensated wire-rate is a refinement, surfaced on the result cards only
+     when the user opts in via the persisted Workbench setting. */
+  const showWire = $derived(store.showWireEstimates);
 
   // Guided empty state (§14.3): before the first run there's nothing measured,
   // so invite action instead of leaving three bare dashes unexplained.
@@ -273,21 +266,6 @@
 <!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
 {#if guidance}
   <p class="metric-guidance">{guidance}</p>
-{/if}
-
-<!-- Opt-in disclosure for the estimated wire-rate (§14.2). Only shown in
-     simple mode and only when there is a non-trivial estimate to reveal;
-     advanced mode surfaces the estimate inline so no toggle is needed. -->
-{#if store.uxMode === "simple" && anyLift}
-  <button
-    type="button"
-    class="wire-toggle"
-    aria-pressed={wireOptIn}
-    onclick={() => (wireOptIn = !wireOptIn)}
-    use:tooltip={JARGON.wireRate}
-  >
-    {wireOptIn ? "Hide estimated wire-rate" : "Show estimated wire-rate"}
-  </button>
 {/if}
 
 <style>
@@ -487,33 +465,4 @@
     color: var(--text-soft);
   }
 
-  /* Wire-rate opt-in (simple mode) — a quiet, full-width disclosure under the
-     three cards. Brass on hover to signal it reveals the estimate refinement. */
-  .wire-toggle {
-    margin-top: 8px;
-    width: 100%;
-    min-height: 34px;
-    padding: 0 12px;
-    border: 1px dashed var(--border-strong);
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out);
-  }
-  .wire-toggle:hover {
-    border-color: color-mix(in srgb, var(--brand) 50%, var(--border-strong));
-    color: var(--brand-strong);
-    background: var(--brand-soft);
-  }
-  .wire-toggle:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
-    outline-offset: 2px;
-  }
 </style>

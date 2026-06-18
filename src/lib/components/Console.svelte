@@ -21,6 +21,7 @@
   import ConnectivityPulse from "./ConnectivityPulse.svelte";
   import { engage } from "../runner/wire.svelte";
   import { ICON } from "../constants";
+  import { tooltip } from "../actions/tooltip";
 
   // Layout state. `inspectorVisible` drives the column (wide) AND the
   // drawer (narrow); matchMedia sets a sensible default per breakpoint.
@@ -37,15 +38,6 @@
     store.theme = store.theme === "light" ? "dark" : "light";
   }
 
-  function cycleUnit() {
-    store.unitBase = store.unitBase === "base10" ? "base2" : "base10";
-  }
-
-  /** Progressive-disclosure toggle (§14.2) — persisted via the store. */
-  function toggleUxMode() {
-    store.uxMode = store.uxMode === "simple" ? "advanced" : "simple";
-  }
-
   /* ---- Global keyboard map (§7, extended by Batch G §13.7) ----
      | Key            | Action                                          |
      | Space / Enter  | Engage / Abort (wire.engage toggle)             |
@@ -53,9 +45,7 @@
      | W              | Toggle Workbench                                |
      | D              | Toggle inspector (Details)                      |
      | R              | Re-run when phase is complete                   |
-     | U              | Cycle unit base                                 |
      | T              | Cycle theme                                     |
-     | M              | Toggle Simple / Advanced (uxMode)               |
      Guarded against text inputs / contentEditable so typing is never hijacked. */
   function inEditable(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
@@ -116,16 +106,8 @@
           e.preventDefault();
         }
         break;
-      case "u":
-        cycleUnit();
-        e.preventDefault();
-        break;
       case "t":
         toggleTheme();
-        e.preventDefault();
-        break;
-      case "m":
-        toggleUxMode();
         e.preventDefault();
         break;
     }
@@ -154,7 +136,6 @@
 <main
   id="console"
   data-phase={store.phase}
-  data-ux={store.uxMode}
   class:inspector-collapsed={!inspectorVisible}
   class:inspector-open={inspectorVisible}
   class="bg-bg text-text"
@@ -164,29 +145,10 @@
     <span class="font-mono text-sm font-bold tracking-tight">Graphite&nbsp;Meter</span>
     <ConnectivityPulse />
     <div class="flex-1"></div>
-    <!-- Simple / Advanced progressive-disclosure toggle (§14.2) -->
-    <div class="mode-toggle" role="group" aria-label="Detail level">
-      <button
-        class="mode-seg"
-        class:active={store.uxMode === "simple"}
-        aria-pressed={store.uxMode === "simple"}
-        onclick={() => (store.uxMode = "simple")}>Simple</button
-      >
-      <button
-        class="mode-seg"
-        class:active={store.uxMode === "advanced"}
-        aria-pressed={store.uxMode === "advanced"}
-        onclick={() => (store.uxMode = "advanced")}>Advanced</button
-      >
-    </div>
-    <button
-      class="ghost-btn font-mono"
-      aria-label="Cycle speed units (currently {store.unitBase})"
-      onclick={cycleUnit}>{store.unitBase}</button
-    >
     <button
       class="ghost-btn"
       aria-label="Toggle light or dark theme"
+      use:tooltip={"Toggle light / dark theme (T)"}
       onclick={toggleTheme}>◐</button
     >
     <button
@@ -214,21 +176,17 @@
 
   <!-- RIGHT INSPECTOR — InfraCard (connection) + the latency profile stay in
        the default view (latency profile is core, §14.2). TelemetryDetail's
-       heavy percentiles/jitter are secondary: surfaced inline in advanced,
-       tucked behind an opt-in disclosure in simple. -->
+       heavy percentiles/jitter are secondary: tucked behind an opt-in
+       disclosure so the default view stays uncluttered. -->
   <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4">
     <InfraCard />
     <LatencyProfile />
-    {#if store.uxMode === "advanced"}
-      <TelemetryDetail />
-    {:else}
-      <details class="telemetry-disclose">
-        <summary>Show detailed telemetry</summary>
-        <div class="telemetry-disclose__body">
-          <TelemetryDetail />
-        </div>
-      </details>
-    {/if}
+    <details class="telemetry-disclose">
+      <summary>Show detailed telemetry</summary>
+      <div class="telemetry-disclose__body">
+        <TelemetryDetail />
+      </div>
+    </details>
   </aside>
 
   <!-- Drawer backdrop (narrow viewports only) -->
@@ -287,8 +245,7 @@
   }
   .stage > :global(.theatre),
   .stage > :global(.chips),
-  .stage > :global(.metric-guidance),
-  .stage > :global(.wire-toggle) {
+  .stage > :global(.metric-guidance) {
     flex: 0 0 auto;
   }
   .inspector {
@@ -342,52 +299,7 @@
     height: 16px;
   }
 
-  /* Simple / Advanced segmented toggle (§14.2) — the persisted disclosure
-     switch. Mirrors the .seg pattern used across the config surfaces. */
-  .mode-toggle {
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-inset);
-  }
-  .mode-seg {
-    min-height: 28px;
-    padding: 0 12px;
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--text-soft);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .mode-seg:hover {
-    color: var(--text);
-  }
-  .mode-seg.active {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-  .mode-seg:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
-    outline-offset: 2px;
-  }
-  /* On the narrow topbar, drop the mode toggle's labels to keep the bar tidy;
-     keep the segmented control itself reachable. */
-  @media (max-width: 759px) {
-    .mode-seg {
-      padding: 0 8px;
-      font-size: 10px;
-    }
-  }
-
-  /* Opt-in disclosure wrapping the heavy telemetry in simple mode (§14.2). */
+  /* Opt-in disclosure wrapping the heavy telemetry (§14.2). */
   .telemetry-disclose {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);

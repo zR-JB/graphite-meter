@@ -16,7 +16,6 @@
   <span><kbd>Space</kbd>{primary}</span>
   <span><kbd>W</kbd>Workbench</span>
   <span><kbd>D</kbd>Details</span>
-  <span><kbd>M</kbd>{store.uxMode === "simple" ? "Advanced" : "Simple"}</span>
   {#if store.phase === "complete"}
     <span><kbd>R</kbd>Run again</span>
   {/if}

@@ -24,17 +24,14 @@ export const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light";
-export type UxMode = "simple" | "advanced";
 
-/** The full persisted snapshot. Display prefs + the entire RunnerConfig.
- *  `uxMode` is included now (default "simple") so Batch I can consume it
- *  without reworking storage. */
+/** The full persisted snapshot. Display prefs + the entire RunnerConfig. */
 export interface PersistedState {
   config: RunnerConfig;
   unitBase: "base10" | "base2";
   unitKind: "bits" | "bytes";
   theme: ThemePref;
-  uxMode: UxMode;
+  showWireEstimates: boolean;
 }
 
 /** System-preference default for theme when nothing is saved yet. */
@@ -53,7 +50,7 @@ export function defaultPersisted(): PersistedState {
     unitBase: "base10",
     unitKind: "bits",
     theme: systemThemeDefault(),
-    uxMode: "simple",
+    showWireEstimates: false,
   };
 }
 

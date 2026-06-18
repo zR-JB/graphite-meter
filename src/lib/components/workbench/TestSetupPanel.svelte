@@ -233,6 +233,10 @@
   <section class="panel wide">
     <h3>Overhead Compensation</h3>
     <label class="check-row">
+      <input type="checkbox" bind:checked={store.showWireEstimates} />
+      <span use:tooltip={JARGON.wireRate}>Include wire-rate estimates in result cards</span>
+    </label>
+    <label class="check-row">
       <input type="checkbox" disabled={running} bind:checked={store.config.compensation.enabled} />
       <span>Show estimated wire-rate compensation</span>
     </label>

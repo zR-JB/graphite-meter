@@ -25,7 +25,6 @@ import {
   loadPersisted,
   savePersisted,
   type ThemePref,
-  type UxMode,
 } from "./persistence";
 
 /* ================= STAGE SELECTION (§13.4) ================= */
@@ -139,8 +138,8 @@ class ConsoleStore {
   /** Active theme. Applied to `document.documentElement[data-theme]` by an
    *  $effect below — the ONLY place the attribute is set at runtime. */
   theme = $state<ThemePref>("dark");
-  /** Newcomer vs power-user face (§14.2). Persisted now, wired in Batch I. */
-  uxMode = $state<UxMode>("simple");
+  /** Whether result cards surface the compensated wire-rate estimate (§14.2). */
+  showWireEstimates = $state(false);
 
   constructor() {
     const p = loadPersisted();
@@ -148,7 +147,7 @@ class ConsoleStore {
     this.unitBase = p.unitBase;
     this.unitKind = p.unitKind;
     this.theme = p.theme;
-    this.uxMode = p.uxMode;
+    this.showWireEstimates = p.showWireEstimates;
   }
 
   /* ================= DERIVED ================= */
@@ -448,7 +447,7 @@ if (typeof window !== "undefined") {
         unitBase: console.unitBase,
         unitKind: console.unitKind,
         theme: console.theme,
-        uxMode: console.uxMode,
+        showWireEstimates: console.showWireEstimates,
       };
       clearTimeout(timer);
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);
