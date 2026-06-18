@@ -143,15 +143,16 @@
 </section>
 
 <style>
+  /* Faceplate: the reactor is part of the instrument surface, not a floating
+     card. It's flat and transparent; the gauge + latency panels are the
+     engraved wells milled into it (--elev-inset), and the controls sit on the
+     faceplate below them. */
   .reactor {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface-1);
-    box-shadow: var(--shadow-card);
+    gap: var(--space-3);
+    padding: 0;
+    background: transparent;
   }
   /* Peer row: gauge + latency panel are equal-importance flex siblings that
      wrap to stack when the row gets too narrow (responsive break-free). */
@@ -159,9 +160,10 @@
     display: flex;
     flex: 1 1 auto;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: var(--space-3);
     min-height: 0;
   }
+  /* The gauge well — the deepest recess on the faceplate, the signature. */
   .stage {
     position: relative;
     /* Equal-weight flex item, like the latency panel; floor keeps the gauge
@@ -169,20 +171,23 @@
     flex: 1 1 320px;
     min-width: 280px;
     min-height: 210px;
-    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
     background: var(--surface-inset);
+    box-shadow: var(--elev-inset);
     overflow: hidden;
   }
-  /* Latency profile as a peer container on the same layer as the gauge — a
-     matching inset panel that resizes with the gauge and wraps below it when
-     the row is too narrow. */
+  /* Latency profile — a matching engraved well beside the gauge; resizes with
+     it and wraps below when the row is too narrow. */
   .latency-panel {
     flex: 1 1 320px;
     min-width: 260px;
     min-height: 210px;
-    padding: 10px;
-    border-radius: var(--radius-md);
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
     background: var(--surface-inset);
+    box-shadow: var(--elev-inset);
     overflow: auto;
   }
   .canvas {
@@ -201,21 +206,24 @@
     justify-content: center;
     pointer-events: none;
   }
+  /* The hero number — the one typographic moment. Space Grotesk (display),
+     tabular figures so the live-updating value never shifts layout. */
   .reactor-metric {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
-    font-size: clamp(30px, 4.4vw, 54px);
-    font-weight: 700;
-    letter-spacing: -0.04em;
+    font-feature-settings: "tnum" 1;
+    font-size: var(--type-hero);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
     color: var(--text);
-    line-height: 1;
+    line-height: 0.95;
   }
   .reactor-unit {
-    margin-top: 4px;
+    margin-top: var(--space-1);
     font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
+    font-size: var(--type-sm);
+    font-weight: 600;
+    letter-spacing: var(--track-wide);
     color: var(--text-soft);
     text-transform: uppercase;
   }
@@ -240,8 +248,8 @@
   .controls {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding-top: 2px;
+    gap: var(--space-2);
+    padding-top: 0;
   }
   .controls-head {
     display: flex;
@@ -249,15 +257,15 @@
     justify-content: space-between;
   }
   .controls-title {
-    font-size: 11px;
+    font-size: var(--type-xs);
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--track-wide);
     text-transform: uppercase;
     color: var(--text-soft);
   }
   .eta {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--type-sm);
     font-weight: 700;
     color: var(--text-muted);
     letter-spacing: 0;
