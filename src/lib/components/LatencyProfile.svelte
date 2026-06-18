@@ -13,6 +13,13 @@
   import { fmtMs, niceDomain } from "../format";
   import { tooltip } from "../actions/tooltip";
 
+  // Compact mode (embedded under the gauge): no card header, tighter rows, and
+  // empty/not-yet-running lanes suppressed so warmup shows no dead rows.
+  interface Props {
+    compact?: boolean;
+  }
+  let { compact = false }: Props = $props();
+
   const PROFILE_HELP =
     "Latency profile: how steady your ping is, idle and under load. Each bar's shaded band is the P10–P90 range (your typical pings); the dot is the latest reading. Tighter is steadier.";
 
@@ -33,8 +40,15 @@
   };
 
   // Filter lanes by enabled stages; skip ones with no samples yet (waiting).
+  // In compact mode additionally suppress lanes that have no data AND aren't
+  // the currently-running phase, so the warmup/early state shows no dead rows
+  // (full mode keeps every enabled lane so it can read as a stable legend).
   const lanes = $derived(
-    store.latencyLanes.filter((lane) => store.config.stages[lane.key]),
+    store.latencyLanes.filter(
+      (lane) =>
+        store.config.stages[lane.key] &&
+        (!compact || lane.average != null || lane.key === store.phase),
+    ),
   );
 
   // Shared centered, snapped latency domain across every visible lane.
@@ -125,11 +139,14 @@
   }
 </script>
 
-<section class="card" aria-label="Latency distribution">
+<section class="card" class:compact aria-label="Latency distribution">
   <header class="card-head">
     <h3 class="term" use:tooltip={PROFILE_HELP}>Latency Profile</h3>
     <p>Range / avg / loss</p>
   </header>
+  {#if compact}
+    <span class="compact-caption" use:tooltip={PROFILE_HELP}>Latency profile</span>
+  {/if}
 
   <div class="lanes" role="img" aria-label="Latency, jitter and loss by phase">
     {#each lanes as lane (lane.key)}
@@ -536,5 +553,68 @@
     .lane-meta {
       flex-wrap: wrap;
     }
+  }
+
+  /* ===== Compact variant — embedded under the gauge (§14.2) =====
+     Reclaims vertical space so the default main view never scrolls: header
+     dropped (~46px) for a tiny inline caption, tighter padding/gaps, no ticks
+     row, a shorter track, and the verbose min–max range text dropped so each
+     lane is one tight row. Default/full styles above are untouched. */
+  .compact {
+    /* Sits inside the gauge card already — drop its own chrome so it reads as
+       one continuous instrument rather than a nested card. */
+    border: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .compact .card-head {
+    display: none;
+  }
+  .compact .compact-caption {
+    display: block;
+    padding: 8px 2px 0;
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: help;
+  }
+  .compact .lanes {
+    gap: 6px;
+    padding: 8px 2px 2px;
+  }
+  .compact .lane {
+    gap: 4px;
+    padding: 6px 8px;
+  }
+  .compact .lane-meta em {
+    /* Drop the verbose min–max range so each lane stays a single tight row. */
+    display: none;
+  }
+  .compact .strip {
+    gap: 0;
+  }
+  .compact .ticks {
+    /* The shared axis ticks aren't needed in the dense strip. */
+    display: none;
+  }
+  .compact .track {
+    height: 22px;
+  }
+  .compact .range {
+    top: 9px;
+  }
+  .compact .range::before,
+  .compact .range::after {
+    top: -6px;
+    height: 16px;
+  }
+  .compact .band {
+    top: 4px;
+    height: 14px;
   }
 </style>

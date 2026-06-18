@@ -11,7 +11,15 @@
   import { GaugeEngine } from "../canvas/GaugeEngine";
   import StageTrack from "./StageTrack.svelte";
   import EngageButton from "./EngageButton.svelte";
+  import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
+
+  // Gate the compact latency strip: hidden on a fresh idle load (gauge sits
+  // alone, centered), appears once a run starts and persists after completion
+  // (leftover samples / result keep it shown so results stay readable).
+  const showLatency = $derived(
+    store.phase !== "idle" || store.latency.length > 0 || store.result != null,
+  );
 
   // Total run ETA = warmup + each enabled stage's duration (read-only here;
   // duration itself is edited only in the Workbench, §14.2). Shown so the
@@ -119,6 +127,15 @@
     <StageTrack />
     <EngageButton />
   </div>
+
+  <!-- Compact latency strip — sits inside the gauge card so the gauge + lanes
+       read as one instrument (§14.2). Gated by showLatency: hidden on a fresh
+       idle load, appears once a run starts, persists after completion. -->
+  {#if showLatency}
+    <div class="reactor-latency">
+      <LatencyProfile compact />
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -141,6 +158,18 @@
     border-radius: var(--radius-md);
     background: var(--surface-inset);
     overflow: hidden;
+  }
+  /* When the compact latency strip is present, lower the gauge's floor so the
+     extra strip height doesn't push the default view into a vertical scroll.
+     The gauge stays the flex-grow hero (flex:1 1 auto) — only its minimum
+     shrinks. :has() is within this codebase's modern target. */
+  .reactor:has(.reactor-latency) .stage {
+    min-height: 140px;
+  }
+  /* The strip never steals the gauge's grow space — it sits at its intrinsic
+     (compact) height below the controls. */
+  .reactor-latency {
+    flex: 0 0 auto;
   }
   .canvas {
     position: absolute;

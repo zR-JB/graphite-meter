@@ -13,7 +13,6 @@
   import MetricChips from "./MetricChips.svelte";
   import InfraCard from "./InfraCard.svelte";
   import TelemetryDetail from "./TelemetryDetail.svelte";
-  import LatencyProfile from "./LatencyProfile.svelte";
   import StatusBar from "./StatusBar.svelte";
   import WorkbenchDrawer from "./workbench/WorkbenchDrawer.svelte";
   import PhaseToast from "./PhaseToast.svelte";
@@ -176,13 +175,13 @@
     <MetricChips />
   </section>
 
-  <!-- RIGHT INSPECTOR — InfraCard (connection) + the latency profile stay in
-       the default view (latency profile is core, §14.2). TelemetryDetail's
-       heavy percentiles/jitter are secondary: tucked behind an opt-in
-       disclosure so the default view stays uncluttered. -->
+  <!-- RIGHT INSPECTOR — InfraCard (connection) only in the default view. The
+       latency profile moved into the gauge card as a compact strip below the
+       gauge (§14.2), so it reads with the instrument. TelemetryDetail's heavy
+       percentiles/jitter stay secondary: tucked behind an opt-in disclosure so
+       the default view stays uncluttered. -->
   <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4" aria-label="Connection and telemetry info">
     <InfraCard />
-    <LatencyProfile />
     <details class="telemetry-disclose">
       <summary>Show detailed telemetry</summary>
       <div class="telemetry-disclose__body">
