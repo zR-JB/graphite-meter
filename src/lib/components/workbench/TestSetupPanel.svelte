@@ -31,15 +31,25 @@
       a.uploadMs === b.uploadMs
     );
   }
-  // Derived so it stays in sync whether changed here or in the rail.
-  const activePreset = $derived.by<PresetKey>(() => {
+  function presetFromDurations(): PresetKey {
     for (const k of ["short", "medium", "long"] as const) {
       if (durationsEqual(store.config.duration, DURATION_PRESETS[k])) return k;
     }
     return "custom";
-  });
+  }
+  // Explicit mode (seeded from the loaded durations) so the Custom tab is
+  // directly selectable and editing any field switches to Custom — the old
+  // value-equality-only derivation left the Custom tab inert.
+  let durationMode = $state<PresetKey>(presetFromDurations());
+
   function applyPreset(k: PresetKey) {
+    durationMode = k;
+    // Presets apply their durations; Custom keeps the current values for editing.
     if (k !== "custom") store.config.duration = { ...DURATION_PRESETS[k] };
+  }
+  /** Any manual field edit means we're no longer on a named preset. */
+  function onDurationEdit() {
+    durationMode = "custom";
   }
 
   const DUR_FIELDS = [
@@ -126,8 +136,8 @@
       {#each PRESET_KEYS as k (k)}
         <button
           role="tab"
-          aria-selected={activePreset === k}
-          class:active={activePreset === k}
+          aria-selected={durationMode === k}
+          class:active={durationMode === k}
           disabled={running}
           onclick={() => applyPreset(k)}
         >
@@ -144,11 +154,13 @@
             min="0"
             step="500"
             disabled={running}
+            oninput={onDurationEdit}
             bind:value={store.config.duration[f.key]}
           />
         </label>
       {/each}
     </div>
+    <p class="hint">Pick a preset, or edit any field to switch to Custom.</p>
   </section>
 
   <!-- Adaptive -->
