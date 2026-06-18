@@ -214,9 +214,9 @@
 <style>
   .card {
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--elev-tile);
     overflow: clip;
   }
   .card-head {
@@ -267,9 +267,9 @@
     gap: 8px;
     min-width: 0;
     border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-well);
     background: var(--surface-inset);
-    padding: 10px 12px;
+    padding: var(--space-2) var(--space-3);
   }
   .lane[data-active="true"] {
     border-color: color-mix(in srgb, var(--signal) 44%, var(--border));
@@ -568,11 +568,12 @@
     padding: 0;
   }
   .bare .lane {
-    /* Raised row over the inset host panel. */
+    /* Flat milled row resting over the inset host (the gauge-row well). */
     background: var(--surface-1);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    padding: 10px 12px;
+    border-radius: var(--r-well);
+    box-shadow: var(--elev-tile);
+    padding: var(--space-2) var(--space-3);
   }
   .bare .lane[data-active="true"] {
     border-color: color-mix(in srgb, var(--signal) 44%, var(--border));
