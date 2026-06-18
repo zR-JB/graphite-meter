@@ -331,10 +331,16 @@
     display: flex;
     gap: var(--space-3);
   }
-  /* Stack into a single column on the narrow single-column shell (<760px). */
+  /* Stack into a single column on the narrow single-column shell (<760px).
+     In the column the chips must size to their content (header + value +
+     optional estimate) — flex:1 1 0 with the min-height floor would otherwise
+     let a chip shrink below its content and clip the bottom padding. */
   @media (max-width: 759px) {
     .chips {
       flex-direction: column;
+    }
+    .chip {
+      flex: 0 0 auto;
     }
   }
 
