@@ -150,7 +150,7 @@
   .stage-track {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    gap: var(--space-2);
     margin: 0;
     padding: 0;
     border: 0;
@@ -166,12 +166,13 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--space-1);
     min-height: 40px;
-    padding: 7px 10px 8px;
+    padding: var(--space-2) var(--space-2) var(--space-2);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-2);
+    box-shadow: var(--elev-tile);
     color: var(--text-muted);
     cursor: pointer;
     text-align: left;
