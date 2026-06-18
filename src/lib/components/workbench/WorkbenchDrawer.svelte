@@ -125,13 +125,13 @@
   .drawer {
     position: fixed;
     top: 0;
-    right: 0;
+    left: 0;
     bottom: 0;
     width: min(560px, 94vw);
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
     gap: 14px;
-    border-left: 1px solid var(--border-strong);
+    border-right: 1px solid var(--border-strong);
     background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%),
       var(--surface-1);
     box-shadow: var(--shadow-float);
@@ -142,7 +142,7 @@
 
   @keyframes drawer-in {
     from {
-      transform: translateX(100%);
+      transform: translateX(-100%);
     }
     to {
       transform: translateX(0);

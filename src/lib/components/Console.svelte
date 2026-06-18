@@ -143,6 +143,13 @@
   <!-- TOPBAR -->
   <header class="zone topbar flex items-center gap-3 px-4 border-b border-border">
     <span class="font-mono text-sm font-bold tracking-tight">Graphite&nbsp;Meter</span>
+    <button
+      class="ghost-btn icon-btn"
+      aria-label="Open settings workbench"
+      aria-expanded={workbenchOpen}
+      use:tooltip={"Settings — test setup, infrastructure, developer (W)"}
+      onclick={() => (workbenchOpen = !workbenchOpen)}>{@html ICON.settings}</button
+    >
     <ConnectivityPulse />
     <div class="flex-1"></div>
     <button
@@ -153,15 +160,10 @@
     >
     <button
       class="ghost-btn icon-btn"
-      aria-label="Open workbench"
-      aria-expanded={workbenchOpen}
-      onclick={() => (workbenchOpen = !workbenchOpen)}>{@html ICON.flask}</button
-    >
-    <button
-      class="ghost-btn"
-      aria-label="Toggle connection details"
+      aria-label="Toggle connection & telemetry info"
       aria-expanded={inspectorVisible}
-      onclick={() => (inspectorVisible = !inspectorVisible)}>⚙</button
+      use:tooltip={"Connection & telemetry info (D)"}
+      onclick={() => (inspectorVisible = !inspectorVisible)}>{@html ICON.info}</button
     >
   </header>
 
@@ -178,7 +180,7 @@
        the default view (latency profile is core, §14.2). TelemetryDetail's
        heavy percentiles/jitter are secondary: tucked behind an opt-in
        disclosure so the default view stays uncluttered. -->
-  <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4">
+  <aside class="zone inspector border-l border-border bg-surface-1 overflow-y-auto p-4 flex flex-col gap-4" aria-label="Connection and telemetry info">
     <InfraCard />
     <LatencyProfile />
     <details class="telemetry-disclose">
@@ -192,7 +194,7 @@
   <!-- Drawer backdrop (narrow viewports only) -->
   <button
     class="backdrop"
-    aria-label="Close inspector"
+    aria-label="Close info panel"
     tabindex={inspectorVisible ? 0 : -1}
     onclick={() => (inspectorVisible = false)}
   ></button>
