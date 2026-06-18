@@ -113,19 +113,19 @@ export class ChartEngine implements CanvasEngine {
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
 
   #c: ThemeColors = {
-    download: "#6fa77a",
-    downloadRgb: { r: 111, g: 167, b: 122 },
-    upload: "#d7a84f",
-    uploadRgb: { r: 215, g: 168, b: 79 },
-    signal: "#7ea7a6",
-    warn: "#d7a84f",
-    warnSoft: "rgba(215,168,79,0.14)",
-    grid: "rgba(255,255,255,0.05)",
-    gridMajor: "rgba(255,255,255,0.09)",
-    textSoft: "#737b76",
-    text: "#e7ece9",
-    panel: "#1b211e",
-    brand: "#d7a84f",
+    download: "#93c49a",
+    downloadRgb: { r: 147, g: 196, b: 154 },
+    upload: "#b6a6e6",
+    uploadRgb: { r: 182, g: 166, b: 230 },
+    signal: "#84c5c0",
+    warn: "#d8b57e",
+    warnSoft: "rgba(216,181,126,0.14)",
+    grid: "rgba(196,186,232,0.05)",
+    gridMajor: "rgba(196,186,232,0.09)",
+    textSoft: "#726d83",
+    text: "#ecebf3",
+    panel: "#191622",
+    brand: "#b6a6e6",
   };
 
   constructor(get: () => ChartData, fmt: ChartFormatters) {
@@ -365,13 +365,21 @@ export class ChartEngine implements CanvasEngine {
     const d = this.#get();
     ctx.clearRect(0, 0, this.#w, this.#h);
 
-    this.#drawBufferbloatBands(ctx);
     this.#drawGrid(ctx);
     this.#drawThroughput(ctx, d.throughput);
     if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
     this.#drawLatency(ctx, d.latency);
+    this.#drawPhases(ctx);
     this.#drawAxesLabels(ctx);
     this.#drawHover(ctx);
+  }
+
+  /** Phase colour for the ribbon / labels (null = not shown). */
+  #phaseColor(phase: Phase): string | null {
+    if (phase === "latency") return this.#c.signal;
+    if (phase === "download") return this.#c.download;
+    if (phase === "upload") return this.#c.upload;
+    return null;
   }
 
   /** Per-phase throughput min/max/avg overlays — drawn only in the frozen
@@ -383,50 +391,41 @@ export class ChartEngine implements CanvasEngine {
       const x0 = Math.max(PAD_L, this.#x(stat.t0));
       const x1 = Math.min(this.#w - PAD_R, this.#x(stat.t1));
       if (x1 <= x0) continue;
-      const yMin = this.#yL(stat.min);
-      const yMax = this.#yL(stat.max);
       const yAvg = this.#yL(stat.avg);
 
-      // min→max band.
-      ctx.fillStyle = withAlpha(stat.stroke, 0.1);
-      ctx.fillRect(x0, yMax, x1 - x0, yMin - yMax);
-
-      // dashed average rule.
+      // Clean dashed average rule (no busy min→max band).
       ctx.save();
       ctx.strokeStyle = stat.stroke;
-      ctx.globalAlpha = 0.75;
+      ctx.globalAlpha = 0.8;
       ctx.lineWidth = 1.25;
-      ctx.setLineDash([5, 5]);
+      ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(x0, Math.round(yAvg) + 0.5);
       ctx.lineTo(x1, Math.round(yAvg) + 0.5);
       ctx.stroke();
       ctx.restore();
 
-      // avg tag — drawn on a solid chip so the label never blends into the
-      // series line it sits on (same-colour-on-same-colour was illegible).
+      // avg pill on a solid chip so the label never blends into the line it
+      // sits on. Faceplate-styled: panel fill + hairline in the phase colour.
       const label = `avg ${this.#fmt.throughput(stat.avg)}`;
-      ctx.font = '9px "IBM Plex Mono", monospace';
+      ctx.font = '700 9px "IBM Plex Mono", monospace';
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
-      const padX = 4;
-      const chipH = 13;
+      const padX = 5;
+      const chipH = 14;
       const tw = ctx.measureText(label).width;
       const chipW = tw + padX * 2;
-      const chipX = x0 + 2;
-      // Sit the chip above the rule; flip below if it would clip the top pad.
-      let chipY = yAvg - 3 - chipH;
-      if (chipY < PAD_T) chipY = yAvg + 3;
+      const chipX = Math.min(x0 + 3, this.#w - PAD_R - chipW);
+      let chipY = yAvg - 4 - chipH;
+      if (chipY < PAD_T) chipY = yAvg + 4;
       const baselineY = chipY + chipH - 4;
 
       ctx.beginPath();
-      ctx.roundRect(chipX, chipY, chipW, chipH, 3);
+      ctx.roundRect(chipX, chipY, chipW, chipH, 4);
       ctx.fillStyle = this.#c.panel;
-      ctx.globalAlpha = 0.9;
       ctx.fill();
-      ctx.globalAlpha = 1;
       ctx.lineWidth = 1;
-      ctx.strokeStyle = withAlpha(stat.stroke, 0.6);
+      ctx.strokeStyle = withAlpha(stat.stroke, 0.55);
       ctx.stroke();
 
       ctx.fillStyle = stat.stroke;
@@ -462,40 +461,74 @@ export class ChartEngine implements CanvasEngine {
     return out;
   }
 
-  #drawBufferbloatBands(ctx: CanvasRenderingContext2D): void {
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
-    ctx.fillStyle = this.#c.warnSoft;
+  /** Phase ribbon — a thin colour-coded strip in the bottom gutter mapping the
+   *  timeline to its phases (colours match the throughput area), plus a small
+   *  phase label per segment in the frozen result view. Replaces the old flat
+   *  bufferbloat band: clear about what it shows, and on-brand. */
+  #PHASE_NAME: Partial<Record<Phase, string>> = {
+    latency: "PING",
+    download: "DOWNLOAD",
+    upload: "UPLOAD",
+  };
+
+  #drawPhases(ctx: CanvasRenderingContext2D): void {
+    const ry = this.#h - PAD_B + 4;
     for (const s of this.#spans) {
-      if (s.phase !== "download" && s.phase !== "upload") continue;
+      const color = this.#phaseColor(s.phase);
+      if (!color) continue;
       const x0 = Math.max(PAD_L, this.#x(s.t0));
       const x1 = Math.min(this.#w - PAD_R, this.#x(s.t1 === Infinity ? this.#vp.tMax : s.t1));
-      if (x1 > x0) ctx.fillRect(x0, top, x1 - x0, bot - top);
+      const w = x1 - x0 - 2;
+      if (w < 3) continue;
+
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(x0, ry, w, 3, 1.5);
+      ctx.fill();
+
+      // Name the segment in the static result view (room + no scroll).
+      if (this.#result && w > 56) {
+        ctx.globalAlpha = 0.62;
+        ctx.font = '700 9px "IBM Plex Mono", monospace';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText(this.#PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
+      }
     }
+    ctx.globalAlpha = 1;
+  }
+
+  /** Adaptive nice step (ms) targeting ~5 vertical divisions for any span. */
+  #niceTimeStep(target: number): number {
+    const steps = [1000, 2000, 5000, 10000, 20000, 30000, 60000];
+    for (const s of steps) if (s >= target) return s;
+    return 60000;
   }
 
   #drawGrid(ctx: CanvasRenderingContext2D): void {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
-    const startT = Math.ceil(this.#vp.tMin / 1000) * 1000;
+    // Vertical time grid — one clean, labelled line per nice step (no dense
+    // 1s minor clutter on a compact chart).
+    const step = this.#niceTimeStep((this.#vp.tMax - this.#vp.tMin) / 5);
+    const startT = Math.ceil(this.#vp.tMin / step) * step;
     ctx.lineWidth = 1;
-    for (let t = startT; t <= this.#vp.tMax; t += 1000) {
+    ctx.strokeStyle = this.#c.grid;
+    ctx.fillStyle = this.#c.textSoft;
+    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.textAlign = "center";
+    for (let t = startT; t <= this.#vp.tMax; t += step) {
       const x = Math.round(this.#x(t)) + 0.5;
       if (x < PAD_L || x > this.#w - PAD_R) continue;
-      const major = t % 5000 === 0;
-      ctx.strokeStyle = major ? this.#c.gridMajor : this.#c.grid;
       ctx.beginPath();
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
       ctx.stroke();
-      if (major) {
-        ctx.fillStyle = this.#c.textSoft;
-        ctx.font = '10px "IBM Plex Mono", monospace';
-        ctx.textAlign = "center";
-        ctx.fillText(`${t / 1000}s`, x, this.#h - 5);
-      }
+      const s = t / 1000;
+      ctx.fillText(Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`, x, this.#h - 5);
     }
-    // Horizontal throughput gridlines (left axis).
+    // Horizontal gridlines (quarters).
     ctx.strokeStyle = this.#c.grid;
     for (let i = 1; i <= 3; i++) {
       const y = Math.round(top + ((bot - top) * i) / 4) + 0.5;
@@ -504,6 +537,19 @@ export class ChartEngine implements CanvasEngine {
       ctx.lineTo(this.#w - PAD_R, y);
       ctx.stroke();
     }
+  }
+
+  /** Trace a smoothed path through `pts` from the current point. Midpoint-
+   *  quadratic: each sample is a control point and the curve passes through
+   *  the segment midpoints — smooth, overshoot-free, cheap. */
+  #smoothTo(ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[]): void {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const xc = (pts[i].x + pts[i + 1].x) / 2;
+      const yc = (pts[i].y + pts[i + 1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc);
+    }
+    const last = pts[pts.length - 1];
+    ctx.lineTo(last.x, last.y);
   }
 
   #drawThroughput(ctx: CanvasRenderingContext2D, all: ThroughputSample[]): void {
@@ -516,30 +562,29 @@ export class ChartEngine implements CanvasEngine {
       if (seg.length < 2) continue;
       const rgb = span.phase === "download" ? this.#c.downloadRgb : this.#c.uploadRgb;
       const stroke = span.phase === "download" ? this.#c.download : this.#c.upload;
+      const pts = seg.map((s) => ({ x: this.#x(s.t), y: this.#yL(s.bps) }));
 
-      // Filled area with vertical 18%→0 gradient.
+      // Filled area under a smoothed top edge, soft vertical gradient.
       const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
-      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.18)`);
+      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
       grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.moveTo(this.#x(seg[0].t), bot);
-      for (const s of seg) ctx.lineTo(this.#x(s.t), this.#yL(s.bps));
-      ctx.lineTo(this.#x(seg[seg.length - 1].t), bot);
+      ctx.moveTo(pts[0].x, bot);
+      ctx.lineTo(pts[0].x, pts[0].y);
+      this.#smoothTo(ctx, pts);
+      ctx.lineTo(pts[pts.length - 1].x, bot);
       ctx.closePath();
       ctx.fill();
 
-      // Solid 1.5px stroke.
+      // Smoothed stroke on top.
       ctx.strokeStyle = stroke;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.75;
       ctx.lineJoin = "round";
+      ctx.lineCap = "round";
       ctx.beginPath();
-      seg.forEach((s, i) => {
-        const x = this.#x(s.t);
-        const y = this.#yL(s.bps);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
+      ctx.moveTo(pts[0].x, pts[0].y);
+      this.#smoothTo(ctx, pts);
       ctx.stroke();
     }
   }
@@ -567,7 +612,7 @@ export class ChartEngine implements CanvasEngine {
   #drawAxesLabels(ctx: CanvasRenderingContext2D): void {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
-    ctx.font = "10px var(--font-mono), monospace";
+    ctx.font = '10px "IBM Plex Mono", monospace';
     ctx.fillStyle = this.#c.textSoft;
     // Left: throughput. Right: latency. Top + 50% + (near bottom).
     for (let i = 0; i <= 2; i++) {
