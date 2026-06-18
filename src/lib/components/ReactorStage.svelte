@@ -179,10 +179,11 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
     overflow: hidden;
-    /* Query container so the hero number scales to the GAUGE width (cqw),
-       not the viewport — it shrinks to fit when the well is narrow instead
-       of overflowing sideways. */
-    container-type: inline-size;
+    /* Size query container so the hero number scales to the gauge's SMALLER
+       dimension (cqmin) — the same dimension that sizes the ring. cqw alone
+       overflowed in a wide-but-short well (ring sized by height, text by
+       width); cqmin keeps the number proportional to the ring at any aspect. */
+    container-type: size;
   }
   /* Latency profile — a matching engraved well; identical sizing to the gauge
      so the pair always reads as one balanced instrument. Its content scrolls
@@ -225,7 +226,7 @@
     font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
-    font-size: clamp(22px, 15cqw, 72px);
+    font-size: clamp(20px, 14cqmin, 64px);
     font-weight: 600;
     letter-spacing: var(--track-tight);
     color: var(--text);

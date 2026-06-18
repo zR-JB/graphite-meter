@@ -327,8 +327,12 @@
 <style>
   /* Flex so only the currently-visible cards share the width (progressive
      reveal): one card spans full width, two split in half, three in thirds. */
+  /* Wrap on actual available width (not a viewport breakpoint): when the stage
+     is narrow — e.g. panels docked — the cards re-split 3 → 2 → 1 instead of
+     squeezing past their content. */
   .chips {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-3);
   }
   /* Stack into a single column on the narrow single-column shell (<760px).
@@ -341,12 +345,13 @@
     }
     .chip {
       flex: 0 0 auto;
+      min-width: 0;
     }
   }
 
   .chip {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 1 180px;
+    min-width: 150px;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);

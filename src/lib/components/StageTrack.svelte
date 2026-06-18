@@ -147,18 +147,15 @@
 </fieldset>
 
 <style>
+  /* Auto-fit so the segments re-split (3 → 2 → 1) on actual available width —
+     a narrow stage (docked panels) no longer crams 3 across and clips labels. */
   .stage-track {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
     gap: var(--space-2);
     margin: 0;
     padding: 0;
     border: 0;
-  }
-  @media (max-width: 479px) {
-    .stage-track {
-      grid-template-columns: 1fr;
-    }
   }
 
   /* Each segment is the chip AND the progress lane. */
@@ -271,6 +268,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
+    min-width: 0;
   }
   .seg-ico {
     display: grid;
@@ -288,6 +286,9 @@
     font-weight: 700;
     letter-spacing: -0.01em;
     white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   /* Settled done glyph — subtle, replaces the retired standalone ✓ segment. */
   .seg-check {
