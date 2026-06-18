@@ -167,7 +167,9 @@
   --surface-1: #ffffff;
   --surface-2: #f2f0f9;
   --surface-3: #e8e5f3;
-  --surface-inset: #edebf6;
+  /* Wells sit a clear step below the faceplate base (--bg #f0eff7) so the
+     engraved recess reads on a bright ground, not just via shadow. */
+  --surface-inset: #e7e3f1;
 
   --border-subtle: rgba(58, 48, 90, 0.07);
   --border: rgba(58, 48, 90, 0.12);
@@ -211,11 +213,11 @@
   /* ---- Faceplate texture (LIGHT) — only the primitives change; the
      --elev-* recipes above recompute. Light wells read inset via a bright
      top highlight + a faint plum inner shadow (never heavy darkness). ---- */
-  --edge-light: rgba(255, 255, 255, calc(0.85 * var(--feel-edge)));
+  --edge-light: rgba(255, 255, 255, calc(0.72 * var(--feel-edge)));
   --edge-shade: rgba(58, 48, 90, calc(0.14 * var(--feel-edge)));
   --shadow-ink: 46, 36, 80;
-  --well-depth: 0.12;
-  --raise-depth: 0.1;
+  --well-depth: 0.18;
+  --raise-depth: 0.12;
 }
 
 /* ---- Tailwind semantic bridge: map tokens → utilities ---- */
