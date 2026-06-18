@@ -74,12 +74,12 @@ export interface LatencyConfidenceScore extends Omit<ConfidenceScore, "slopeRati
 }
 
 /**
- * Transfer (download/upload) confidence from a window of bits/sec values.
+ * Transfer (download/upload) confidence from a window of bytes/sec values.
  * Stability falls as the plateau gets noisier (variance) or keeps drifting
  * up/down (slope). Returns score 0 when there is not enough signal yet.
  */
-export function transferConfidence(bpsValues: number[]): ConfidenceScore {
-  const values = bpsValues.slice(-CONFIDENCE_WINDOW);
+export function transferConfidence(bytesPerSecValues: number[]): ConfidenceScore {
+  const values = bytesPerSecValues.slice(-CONFIDENCE_WINDOW);
   if (values.length < 2) {
     return { score: 0, varianceRatio: 1, slopeRatio: 1, sampleCount: values.length };
   }

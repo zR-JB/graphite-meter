@@ -82,13 +82,13 @@ export interface RunnerConfig {
   /** Confidence-based early exit (§13.4). */
   adaptive: AdaptiveDurationConfig;
   /** Manual Y-axis ceiling for the gauge/chart; "auto" lets it self-scale. */
-  visualization: { throughputMaxBps: number | "auto" };
+  visualization: { throughputMaxBytesPerSec: number | "auto" };
 }
 
 /* ---------- Raw samples emitted DURING a run ---------- */
 export interface ThroughputSample {
   t: number; // ms since run start (monotonic)
-  bps: number; // instantaneous bits/sec (raw, base-10 neutral)
+  bytesPerSec: number; // instantaneous bytes/sec (raw, browser-native; UI converts/labels)
   bytesCumulative: number;
   streamCount: number;
 }
@@ -117,8 +117,8 @@ export interface RunResult {
 }
 
 export interface ThroughputResult {
-  meanBps: number;
-  peakBps: number;
+  meanBytesPerSec: number;
+  peakBytesPerSec: number;
   stabilityPct: number; // coefficient-of-variation based (0–100)
   totalBytes: number;
 }
@@ -167,7 +167,7 @@ export type RunnerEvent =
 export type RunnerAnomaly =
   | { kind: "latency-spike"; magnitude?: number; durationMs?: number } // rtt ×magnitude
   | { kind: "packet-loss"; magnitude?: number; durationMs?: number } // loss probability
-  | { kind: "throughput-drop"; magnitude?: number; durationMs?: number }; // bps ×(1−magnitude)
+  | { kind: "throughput-drop"; magnitude?: number; durationMs?: number }; // bytesPerSec ×(1−magnitude)
 
 /* ---------- The contract ---------- */
 export interface NetworkRunner {

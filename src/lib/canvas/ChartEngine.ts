@@ -21,21 +21,21 @@ export interface ChartData {
 }
 
 export interface ChartFormatters {
-  throughput: (bps: number) => string;
+  throughput: (bytesPerSec: number) => string;
   latency: (rtt: number) => string;
 }
 
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
-  bps: number | null;
+  bytesPerSec: number | null;
   rtt: number | null;
 }
 
 interface Viewport {
   tMin: number;
   tMax: number;
-  bpsMax: number;
+  bytesPerSecMax: number;
   rttMin: number; // latency axis floor (0 live; centered span in result mode)
   rttMax: number;
 }
@@ -105,7 +105,7 @@ export class ChartEngine implements CanvasEngine {
   #w = 0;
   #h = 0;
 
-  #vp: Viewport = { tMin: 0, tMax: 6000, bpsMax: 1e6, rttMin: 0, rttMax: 50 };
+  #vp: Viewport = { tMin: 0, tMax: 6000, bytesPerSecMax: 125_000, rttMin: 0, rttMax: 50 };
   #vpInit = false;
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
@@ -191,7 +191,7 @@ export class ChartEngine implements CanvasEngine {
     return {
       x,
       t,
-      bps: this.#interp(data.throughput, t, (s) => s.bps),
+      bytesPerSec: this.#interp(data.throughput, t, (s) => s.bytesPerSec),
       rtt: this.#interp(
         data.latency.filter((s) => !s.lost),
         t,
@@ -302,7 +302,7 @@ export class ChartEngine implements CanvasEngine {
     }
 
     const peak = this.#peakIn(d.throughput, tMin, tMax);
-    const bpsMax = niceCeil(Math.max(peak * 1.15, 1e6));
+    const bytesPerSecMax = niceCeil(Math.max(peak * 1.15, 125_000)); // floor ~1 Mbit/s so ticks render
 
     // Latency axis. Live → simple 0-based nice ceiling (stable while scrolling).
     // Result → centered, weighted, nice-step domain (shared `niceDomain`), so
@@ -320,14 +320,14 @@ export class ChartEngine implements CanvasEngine {
       rttMax = niceCeil(Math.max(p95 * 1.3, 20));
     }
 
-    const target: Viewport = { tMin, tMax, bpsMax, rttMin, rttMax };
+    const target: Viewport = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
     if (!this.#vpInit) {
       this.#vp = { ...target };
       this.#vpInit = true;
     } else {
       this.#vp.tMin += (target.tMin - this.#vp.tMin) * FOLLOW;
       this.#vp.tMax += (target.tMax - this.#vp.tMax) * FOLLOW;
-      this.#vp.bpsMax += (target.bpsMax - this.#vp.bpsMax) * FOLLOW;
+      this.#vp.bytesPerSecMax += (target.bytesPerSecMax - this.#vp.bytesPerSecMax) * FOLLOW;
       this.#vp.rttMin += (target.rttMin - this.#vp.rttMin) * FOLLOW;
       this.#vp.rttMax += (target.rttMax - this.#vp.rttMax) * FOLLOW;
     }
@@ -335,7 +335,7 @@ export class ChartEngine implements CanvasEngine {
 
   #peakIn(arr: ThroughputSample[], t0: number, t1: number): number {
     let peak = 0;
-    for (const s of arr) if (s.t >= t0 && s.t <= t1 && s.bps > peak) peak = s.bps;
+    for (const s of arr) if (s.t >= t0 && s.t <= t1 && s.bytesPerSec > peak) peak = s.bytesPerSec;
     return peak;
   }
 
@@ -352,9 +352,9 @@ export class ChartEngine implements CanvasEngine {
     const plotW = this.#w - PAD_L - PAD_R;
     return PAD_L + ((t - this.#vp.tMin) / (this.#vp.tMax - this.#vp.tMin)) * plotW;
   }
-  #yL(bps: number): number {
+  #yL(bytesPerSec: number): number {
     const plotH = this.#h - PAD_T - PAD_B;
-    return PAD_T + (1 - bps / this.#vp.bpsMax) * plotH;
+    return PAD_T + (1 - bytesPerSec / this.#vp.bytesPerSecMax) * plotH;
   }
   #yR(rtt: number): number {
     const plotH = this.#h - PAD_T - PAD_B;
@@ -449,9 +449,9 @@ export class ChartEngine implements CanvasEngine {
       let max = 0;
       let sum = 0;
       for (const s of seg) {
-        if (s.bps < min) min = s.bps;
-        if (s.bps > max) max = s.bps;
-        sum += s.bps;
+        if (s.bytesPerSec < min) min = s.bytesPerSec;
+        if (s.bytesPerSec > max) max = s.bytesPerSec;
+        sum += s.bytesPerSec;
       }
       out.push({
         phase: span.phase,
@@ -568,7 +568,7 @@ export class ChartEngine implements CanvasEngine {
       if (seg.length < 2) continue;
       const rgb = span.phase === "download" ? this.#c.downloadRgb : this.#c.uploadRgb;
       const stroke = span.phase === "download" ? this.#c.download : this.#c.upload;
-      const pts = seg.map((s) => ({ x: this.#x(s.t), y: this.#yL(s.bps) }));
+      const pts = seg.map((s) => ({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) }));
 
       // Filled area under a smoothed top edge, soft vertical gradient.
       const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
@@ -624,10 +624,10 @@ export class ChartEngine implements CanvasEngine {
     for (let i = 0; i <= 2; i++) {
       const frac = i / 2; // 0 top, 1 bottom
       const y = top + (bot - top) * frac;
-      const bps = this.#vp.bpsMax * (1 - frac);
+      const bytesPerSec = this.#vp.bytesPerSecMax * (1 - frac);
       const rtt = this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
       ctx.textAlign = "left";
-      ctx.fillText(this.#fmt.throughput(bps), 4, y + 3);
+      ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
       ctx.textAlign = "right";
       ctx.fillText(this.#fmt.latency(rtt), this.#w - 4, y + 3);
     }
@@ -650,9 +650,9 @@ export class ChartEngine implements CanvasEngine {
     if (!info) return;
     // Dots ride the interpolated value (matches the chip + the drawn line).
     ctx.fillStyle = this.#c.brand;
-    if (info.bps != null) {
+    if (info.bytesPerSec != null) {
       ctx.beginPath();
-      ctx.arc(x, this.#yL(info.bps), 2.5, 0, Math.PI * 2);
+      ctx.arc(x, this.#yL(info.bytesPerSec), 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
     if (info.rtt != null) {

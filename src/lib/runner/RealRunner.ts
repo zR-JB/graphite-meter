@@ -29,9 +29,9 @@
  *
  * ── Units rule (§14.0 / §14.4) ──────────────────────────────
  *  Raw on the wire: the server serves/sinks BYTES; the client derives
- *  bits/sec. `ThroughputSample.bps` is raw instantaneous bits/sec and
- *  `bytesCumulative` is raw bytes. NO base-2/base-10 or unit conversion
- *  happens in the runner — that is the UI's job.
+ *  bytes/sec. `ThroughputSample.bytesPerSec` is raw instantaneous bytes/sec and
+ *  `bytesCumulative` is raw bytes. NO bits, base-2/base-10, or unit conversion
+ *  happens in the runner — that (incl. any bit/s rendering) is the UI's job.
  * ============================================================ */
 
 import type {
@@ -125,7 +125,7 @@ export class RealRunner implements NetworkRunner {
    *                      concurrent streams (or WebTransport per
    *                      `config.transport.transfer`); sum received bytes/sec.
    *                      Emit `throughput` ~16Hz (~60ms). Server streams
-   *                      INCOMPRESSIBLE random bytes; client derives bps.
+   *                      INCOMPRESSIBLE random bytes; client derives bytesPerSec.
    *   • upload phase   → `POST {path}/upload` streamed body × parallelStreams;
    *                      server discards + may echo a received-byte count;
    *                      client measures sent bytes/sec → `throughput` ~16Hz.

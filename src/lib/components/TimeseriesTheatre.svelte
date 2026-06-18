@@ -33,7 +33,7 @@
         runSeq: store.runSeq,
       }),
       {
-        throughput: (bps) => fmtSpeed(store.toUnit(bps)),
+        throughput: (bytesPerSec) => fmtSpeed(store.toUnit(bytesPerSec)),
         latency: (rtt) => fmtMs(rtt),
       },
     );
@@ -70,9 +70,9 @@
         class:flip={canvasEl && hover.x > canvasEl.clientWidth - 130}
       >
         <div class="chip-row"><span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b></div>
-        {#if hover.bps != null}
+        {#if hover.bytesPerSec != null}
           <div class="chip-row">
-            <span>rate</span><b>{fmtSpeed(store.toUnit(hover.bps))} {store.unitLabel}</b>
+            <span>rate</span><b>{fmtSpeed(store.toUnit(hover.bytesPerSec))} {store.unitLabel}</b>
           </div>
         {/if}
         {#if hover.rtt != null}

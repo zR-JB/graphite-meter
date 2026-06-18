@@ -4,14 +4,14 @@
  * renders pass through here.
  * ============================================================ */
 
-/** Convert raw bps → display value in active unit (mirrors store.toUnit). */
+/** Convert raw bytesPerSec → display value in active unit (mirrors store.toUnit). */
 export function toDisplaySpeed(
-  bps: number,
+  bytesPerSec: number,
   base: "base10" | "base2",
   kind: "bits" | "bytes",
 ): number {
   const div = base === "base10" ? 1e6 : 2 ** 20;
-  return kind === "bits" ? bps / div : bps / 8 / div;
+  return kind === "bytes" ? bytesPerSec / div : (bytesPerSec * 8) / div;
 }
 
 /** Fixed-width formatting: always returns same char count for a magnitude band
@@ -46,7 +46,7 @@ export function fmtBytes(b: number, base: "base10" | "base2"): string {
  *   bytes, decimal: B/s · kB/s · MB/s · GB/s · TB/s
  *   bytes, binary:  B/s · KiB/s · MiB/s · GiB/s · TiB/s
  * (lowercase k for kilo; uppercase Ki for kibi). Internal values are
- * always bits-per-second; these convert + label for display.
+ * always bytes-per-second (browser-native); these convert + label for display.
  * ============================================================ */
 export type UnitBase = "base10" | "base2";
 export type UnitKind = "bits" | "bytes";
@@ -67,17 +67,29 @@ function unitDivisor(base: UnitBase, idx: number): number {
   return Math.pow(k, Math.max(0, Math.min(4, idx)));
 }
 
-/** Prefix index for a magnitude expressed in base units (bit/s or B/s). */
-export function rateScaleIndex(baseUnits: number, base: UnitBase): number {
+/** Prefix index for a magnitude expressed in base units (bit/s or B/s).
+ *  `headroom` (≥1) delays stepping up to the next prefix until the magnitude
+ *  is that factor past the boundary — so the unit only changes once we're
+ *  comfortably above the threshold (e.g. ≥1.2 Gbit/s rather than at 1.0), never
+ *  landing on a 0.xx reading of the larger unit. */
+export function rateScaleIndex(baseUnits: number, base: UnitBase, headroom = 1): number {
   const k = base === "base10" ? 1000 : 1024;
-  if (baseUnits < 1) return 0;
-  return Math.max(0, Math.min(4, Math.floor(Math.log(baseUnits) / Math.log(k))));
+  if (baseUnits < headroom) return 0;
+  return Math.max(0, Math.min(4, Math.floor(Math.log(baseUnits / headroom) / Math.log(k))));
 }
 
-/** Convert raw bit/s → display value at an explicit prefix index. */
-export function rateValueAt(bps: number, base: UnitBase, kind: UnitKind, idx: number): number {
-  const baseUnits = kind === "bits" ? bps : bps / 8;
+/** Convert raw bytes/s → display value at an explicit prefix index. */
+export function rateValueAt(bytesPerSec: number, base: UnitBase, kind: UnitKind, idx: number): number {
+  const baseUnits = kind === "bytes" ? bytesPerSec : bytesPerSec * 8;
   return baseUnits / unitDivisor(base, idx);
+}
+
+/** Inverse of `rateValueAt`: a display value in the active unit → raw bytes/s.
+ *  Used when the UI writes a user-entered ceiling back into the (bytes-native)
+ *  config, so the round-trip is lossless at the current prefix. */
+export function rawRateFrom(displayValue: number, base: UnitBase, kind: UnitKind, idx: number): number {
+  const baseUnits = displayValue * unitDivisor(base, idx);
+  return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
 /** Smallest "nice" rung (1 / 1.5 / 2 / 3 / 5 / 7.5 × 10ⁿ) at or above `v`.

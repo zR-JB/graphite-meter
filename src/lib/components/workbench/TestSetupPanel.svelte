@@ -60,30 +60,31 @@
   ] as const;
 
   /* ---------- Visualization throughput max ----------
-   * Stored as bps (or "auto"); edited in the active display unit. */
-  const vizAuto = $derived(store.config.visualization.throughputMaxBps === "auto");
-  const vizUnitDivisor = $derived(store.unitBase === "base10" ? 1e6 : 2 ** 20);
-  // Display value = bps → active unit (matches the gauge/chart label).
+   * Stored as bytesPerSec (or "auto"); edited in the active display unit. */
+  const vizAuto = $derived(store.config.visualization.throughputMaxBytesPerSec === "auto");
+  // Display value = bytesPerSec → active unit (matches the gauge/chart label).
   const vizDisplay = $derived(
-    vizAuto ? 0 : store.toUnit(store.config.visualization.throughputMaxBps as number),
+    vizAuto ? 0 : store.toUnit(store.config.visualization.throughputMaxBytesPerSec as number),
   );
+  // Inverse of vizDisplay: a value typed in the active unit → raw bytes/s. Uses
+  // store.fromUnit so it tracks the same dynamic prefix the field displays in
+  // (e.g. Gbit/s for a multi-gigabit ceiling), keeping the round-trip lossless.
+  function toBytesPerSec(displayValue: number): number {
+    return Math.max(1, Math.round(store.fromUnit(displayValue)));
+  }
   function setVizAuto(auto: boolean) {
     if (auto) {
-      store.config.visualization.throughputMaxBps = "auto";
+      store.config.visualization.throughputMaxBytesPerSec = "auto";
     } else {
       // Seed a sane manual ceiling from the current display value (or 1000 unit).
       const seed = vizAuto ? 1000 : vizDisplay;
-      store.config.visualization.throughputMaxBps = toBps(seed);
+      store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(seed);
     }
-  }
-  function toBps(displayValue: number): number {
-    const v = store.unitKind === "bits" ? displayValue : displayValue * 8;
-    return Math.max(1, Math.round(v * vizUnitDivisor));
   }
   function onVizInput(e: Event) {
     const n = Number((e.currentTarget as HTMLInputElement).value);
     if (!Number.isFinite(n) || n <= 0) return;
-    store.config.visualization.throughputMaxBps = toBps(n);
+    store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(n);
   }
 
   /* ---------- Compensation factor groups (de-magicked labels) ---------- */

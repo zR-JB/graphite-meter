@@ -9,7 +9,7 @@
    *
    * Reactivity (§13.3): the live cards read the store's O(1)
    * `liveCompensation` derived (protocol/config multipliers on the
-   * latest bps); the post-run cards read `downloadCompensation` /
+   * latest bytesPerSec); the post-run cards read `downloadCompensation` /
    * `uploadCompensation`, which recompute only when `result`
    * changes. This component never iterates sample arrays.
    *
@@ -41,19 +41,19 @@
     if (live) {
       const comp = store.liveCompensation;
       return {
-        measuredBps: comp.measuredBps,
-        estimatedBps: comp.estimatedBps,
+        measuredBytesPerSec: comp.measuredBytesPerSec,
+        estimatedBytesPerSec: comp.estimatedBytesPerSec,
         multiplier: comp.totalMultiplier,
         confidence: comp.confidence,
         active: true,
-        has: comp.measuredBps > 0,
+        has: comp.measuredBytesPerSec > 0,
       };
     }
     const res = store.result?.download ?? null;
     const comp = store.downloadCompensation;
     return {
-      measuredBps: res?.meanBps ?? 0,
-      estimatedBps: comp.estimatedBps,
+      measuredBytesPerSec: res?.meanBytesPerSec ?? 0,
+      estimatedBytesPerSec: comp.estimatedBytesPerSec,
       multiplier: comp.totalMultiplier,
       confidence: comp.confidence,
       active: false,
@@ -67,19 +67,19 @@
     if (live) {
       const comp = store.liveCompensation;
       return {
-        measuredBps: comp.measuredBps,
-        estimatedBps: comp.estimatedBps,
+        measuredBytesPerSec: comp.measuredBytesPerSec,
+        estimatedBytesPerSec: comp.estimatedBytesPerSec,
         multiplier: comp.totalMultiplier,
         confidence: comp.confidence,
         active: true,
-        has: comp.measuredBps > 0,
+        has: comp.measuredBytesPerSec > 0,
       };
     }
     const res = store.result?.upload ?? null;
     const comp = store.uploadCompensation;
     return {
-      measuredBps: res?.meanBps ?? 0,
-      estimatedBps: comp.estimatedBps,
+      measuredBytesPerSec: res?.meanBytesPerSec ?? 0,
+      estimatedBytesPerSec: comp.estimatedBytesPerSec,
       multiplier: comp.totalMultiplier,
       confidence: comp.confidence,
       active: false,
@@ -159,12 +159,12 @@
     untrack(() => {
       if (res.download) {
         cancels.push(
-          tweenTo(dlFrozen ?? store.toUnit(dl.measuredBps), store.toUnit(res.download.meanBps), (v) => (dlSnap = v)),
+          tweenTo(dlFrozen ?? store.toUnit(dl.measuredBytesPerSec), store.toUnit(res.download.meanBytesPerSec), (v) => (dlSnap = v)),
         );
       }
       if (res.upload) {
         cancels.push(
-          tweenTo(ulFrozen ?? store.toUnit(ul.measuredBps), store.toUnit(res.upload.meanBps), (v) => (ulSnap = v)),
+          tweenTo(ulFrozen ?? store.toUnit(ul.measuredBytesPerSec), store.toUnit(res.upload.meanBytesPerSec), (v) => (ulSnap = v)),
         );
       }
       if (res.latency) {
@@ -191,8 +191,8 @@
       return;
     }
     if (p === "latency") pingFrozen = ping.ms;
-    else if (p === "download") dlFrozen = store.toUnit(dl.measuredBps);
-    else if (p === "upload") ulFrozen = store.toUnit(ul.measuredBps);
+    else if (p === "download") dlFrozen = store.toUnit(dl.measuredBytesPerSec);
+    else if (p === "upload") ulFrozen = store.toUnit(ul.measuredBytesPerSec);
   });
 
   // Visibility (reveal & keep): a card shows once its enabled stage is live,
@@ -216,10 +216,10 @@
   // The number each card actually renders: the tweened snap when present, else
   // the live value while active, else the frozen (kept) value for a finished stage.
   const dlShown = $derived(
-    dlSnap ?? (dl.active ? store.toUnit(dl.measuredBps) : dlFrozen ?? store.toUnit(dl.measuredBps)),
+    dlSnap ?? (dl.active ? store.toUnit(dl.measuredBytesPerSec) : dlFrozen ?? store.toUnit(dl.measuredBytesPerSec)),
   );
   const ulShown = $derived(
-    ulSnap ?? (ul.active ? store.toUnit(ul.measuredBps) : ulFrozen ?? store.toUnit(ul.measuredBps)),
+    ulSnap ?? (ul.active ? store.toUnit(ul.measuredBytesPerSec) : ulFrozen ?? store.toUnit(ul.measuredBytesPerSec)),
   );
   const pingShown = $derived(pingSnap ?? (ping.active ? ping.ms : pingFrozen ?? ping.ms));
 
@@ -259,7 +259,7 @@
         <div class="est">
           {#if dl.has && lifted(dl.multiplier)}
             <span class="est-arrow">→</span>
-            <span class="est-num">{fmtSpeed(store.toUnit(dl.estimatedBps))}</span>
+            <span class="est-num">{fmtSpeed(store.toUnit(dl.estimatedBytesPerSec))}</span>
             <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(dl.multiplier)}</span>
           {:else}
             <span class="est-flat">{dl.has ? "no overhead applied" : ""}</span>
@@ -289,7 +289,7 @@
         <div class="est">
           {#if ul.has && lifted(ul.multiplier)}
             <span class="est-arrow">→</span>
-            <span class="est-num">{fmtSpeed(store.toUnit(ul.estimatedBps))}</span>
+            <span class="est-num">{fmtSpeed(store.toUnit(ul.estimatedBytesPerSec))}</span>
             <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(ul.multiplier)}</span>
           {:else}
             <span class="est-flat">{ul.has ? "no overhead applied" : ""}</span>

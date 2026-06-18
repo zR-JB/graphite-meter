@@ -47,7 +47,7 @@
     if (p === "idle" || p === "error" || p === "aborted") return { value: "—", unit: "" };
     if (p === "complete" && store.result?.download) {
       return {
-        value: fmtSpeed(store.toUnit(store.result.download.meanBps)),
+        value: fmtSpeed(store.toUnit(store.result.download.meanBytesPerSec)),
         unit: store.unitLabel,
       };
     }
@@ -78,11 +78,11 @@
   onMount(() => {
     engine = new GaugeEngine(() => ({
       phase: store.phase,
-      valueBps: store.throughput.at(-1)?.bps ?? 0,
-      scaleBps: store.displayScaleBps,
+      valueBytesPerSec: store.throughput.at(-1)?.bytesPerSec ?? 0,
+      scaleBytesPerSec: store.displayScaleBytesPerSec,
       // Five quarter labels (0 … full scale) in the active display unit.
       ticks: [0, 0.25, 0.5, 0.75, 1].map((f) =>
-        fmtSpeed(store.toUnit(store.displayScaleBps * f)),
+        fmtSpeed(store.toUnit(store.displayScaleBytesPerSec * f)),
       ),
       rtt: store.liveRtt,
       pingCount: store.latency.length,

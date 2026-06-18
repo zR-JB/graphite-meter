@@ -20,7 +20,7 @@ import {
   estimateResultCompensation,
   type CompensationEstimate,
 } from "../compensation";
-import { quantile, niceScaleUp, rateScaleIndex, rateUnit, rateValueAt } from "../format";
+import { quantile, niceScaleUp, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
 import {
   loadPersisted,
   savePersisted,
@@ -89,7 +89,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     minLatencySamples: 8,
     minTransferSamples: 12,
   },
-  visualization: { throughputMaxBps: "auto" },
+  visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
 export const DURATION_PRESETS = {
@@ -99,6 +99,12 @@ export const DURATION_PRESETS = {
 } as const;
 
 const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered
+
+/** How far past a unit boundary the peak must reach before the display steps
+ *  up to the larger prefix. 1.2 → we stay in Mbit/s until ~1200 Mbit/s, then
+ *  switch to Gbit/s — so the dial never reads a fresh "0.xx Gbit/s" the instant
+ *  it crosses 1000; the larger scale only appears once we're clearly above it. */
+const UNIT_STEP_UP_HEADROOM = 1.2;
 
 class ConsoleStore {
   /* ---- raw ingest (ring buffers) ---- */
@@ -135,7 +141,7 @@ class ConsoleStore {
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
 
   /* ---- display preferences ---- */
-  unitBase = $state<"base10" | "base2">("base10"); // Mbps vs Mibit/s
+  unitBase = $state<"base10" | "base2">("base10"); // Mbit/s vs Mibit/s
   unitKind = $state<"bits" | "bytes">("bits");
 
   /* ---- persisted UI prefs (single source of truth) ---- */
@@ -163,7 +169,7 @@ class ConsoleStore {
   liveMetric = $derived.by(() => {
     const last = this.#lastSampleForPhase();
     if (!last) return { value: 0, unit: this.unitLabel };
-    return { value: this.toUnit(last.bps), unit: this.unitLabel };
+    return { value: this.toUnit(last.bytesPerSec), unit: this.unitLabel };
   });
 
   /** Most recent rtt for the connectivity pulse + live ping. */
@@ -251,20 +257,20 @@ class ConsoleStore {
 
   /* ============================================================
    * Overhead compensation (§13.3)
-   * The store stays bps-canonical: estimates are bps in / bps out;
+   * The store stays bytesPerSec-canonical: estimates are bytesPerSec in / bytesPerSec out;
    * conversion to display units happens at the UI layer via toUnit.
    * ============================================================ */
 
   /**
    * LIVE estimate — O(1) protocol/config-only multipliers applied to the
-   * current instantaneous bps. This is a $derived (not $derived.by walking
-   * samples) so it recomputes only when the latest sample's bps or the
+   * current instantaneous bytesPerSec. This is a $derived (not $derived.by walking
+   * samples) so it recomputes only when the latest sample's bytesPerSec or the
    * compensation config changes — never per-sample-iteration. Fixes
    * linerate's per-sample recompute hot-path (§13.3).
    */
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
-      this.throughput.at(-1)?.bps ?? 0,
+      this.throughput.at(-1)?.bytesPerSec ?? 0,
       this.config.compensation,
     ),
   );
@@ -291,36 +297,55 @@ class ConsoleStore {
     ),
   );
 
-  /** Absolute throughput scale (bit/s) shared by the gauge AND the display
-   *  unit, so a glance at the dial maps to the number. Fixed when the user
-   *  pins `visualization.throughputMaxBps`; otherwise auto — a large nice rung
-   *  above the observed peak across BOTH transfer phases (download + upload),
-   *  so up/down stay on one comparable scale. Peak is monotonic per run, so
-   *  this derived value ratchets and never jitters down mid-run. */
-  displayScaleBps = $derived.by(() => {
-    const cfg = this.config.visualization.throughputMaxBps;
-    if (typeof cfg === "number" && cfg > 0) return cfg;
+  /** Observed throughput peak (bytes/s) across BOTH transfer phases. Monotonic
+   *  per run, so derivations off it ratchet and never jitter down mid-run. */
+  #peakBytesPerSec = $derived.by(() => {
     let peak = 0;
-    for (const s of this.throughput) if (s.bps > peak) peak = s.bps;
-    if (peak <= 0) return 1e8; // idle default: 100 Mbit/s so ticks show
-    return niceScaleUp(peak * 1.08);
+    for (const s of this.throughput) if (s.bytesPerSec > peak) peak = s.bytesPerSec;
+    return peak;
   });
 
-  /** Prefix index (k/M/G…) the whole UI displays in, derived from the scale so
-   *  the unit only changes in large steps — never per-sample flicker. */
-  #unitIndex = $derived(
-    rateScaleIndex(
-      this.unitKind === "bits" ? this.displayScaleBps : this.displayScaleBps / 8,
-      this.unitBase,
-    ),
-  );
+  /** Absolute throughput scale (bytes/s) shared by the gauge AND the display
+   *  unit, so a glance at the dial maps to the number. Fixed when the user
+   *  pins `visualization.throughputMaxBytesPerSec`; otherwise auto — a large nice
+   *  rung above the observed peak across BOTH transfer phases (download +
+   *  upload), so up/down stay on one comparable scale. */
+  displayScaleBytesPerSec = $derived.by(() => {
+    const cfg = this.config.visualization.throughputMaxBytesPerSec;
+    if (typeof cfg === "number" && cfg > 0) return cfg;
+    if (this.#peakBytesPerSec <= 0) return 1.25e7; // idle default: 12.5 MB/s (~100 Mbit/s) so ticks show
+    return niceScaleUp(this.#peakBytesPerSec * 1.08);
+  });
+
+  /** Prefix index (k/M/G…) the whole UI displays in. Derived from the observed
+   *  raw-byte peak — NOT the rounded-up gauge ceiling — so a peak whose ceiling
+   *  rounds up to the next unit doesn't flip the display and leave readings at
+   *  "0.xx". The decision lives entirely in the raw-byte domain: a single
+   *  headroom multiplier (UNIT_STEP_UP_HEADROOM) on the raw peak delays the
+   *  step-up until we're comfortably past the boundary. */
+  #unitIndex = $derived.by(() => {
+    const cfg = this.config.visualization.throughputMaxBytesPerSec;
+    // Pinned scale: track the user's fixed ceiling. Otherwise the live peak.
+    const refBytesPerSec = typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
+    // Express the raw byte rate in the active display kind's base units (bits
+    // when showing bit/s), then pick the prefix with headroom baked in.
+    const baseUnits = this.unitKind === "bytes" ? refBytesPerSec : refBytesPerSec * 8;
+    return rateScaleIndex(baseUnits, this.unitBase, UNIT_STEP_UP_HEADROOM);
+  });
 
   get unitLabel() {
     return rateUnit(this.unitBase, this.unitKind, this.#unitIndex);
   }
 
-  toUnit(bps: number): number {
-    return rateValueAt(bps, this.unitBase, this.unitKind, this.#unitIndex);
+  toUnit(bytesPerSec: number): number {
+    return rateValueAt(bytesPerSec, this.unitBase, this.unitKind, this.#unitIndex);
+  }
+
+  /** Inverse of `toUnit`: a value the user typed in the active display unit →
+   *  raw bytes/s for storage in the (bytes-native) config. Uses the same prefix
+   *  index as `toUnit`, so editing a pinned ceiling round-trips losslessly. */
+  fromUnit(displayValue: number): number {
+    return rawRateFrom(displayValue, this.unitBase, this.unitKind, this.#unitIndex);
   }
 
   /* ================= INGEST ================= */

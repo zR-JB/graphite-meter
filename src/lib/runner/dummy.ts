@@ -42,8 +42,8 @@ export interface DummyOptions {
 
 /* ---------- Profile table: mean throughput + latency character ---------- */
 interface ProfileSpec {
-  downBps: number;
-  upBps: number;
+  downBytesPerSec: number;
+  upBytesPerSec: number;
   idleRttMs: number;
   /** RTT increase under load — drives the bufferbloat grade. */
   loadedDeltaMs: number;
@@ -51,12 +51,14 @@ interface ProfileSpec {
   lossBase: number;
 }
 
+// Throughput is bytes/sec (browser-native). Link rates are conventionally
+// quoted in bits/sec, so the trailing comment notes the familiar bit-rate.
 const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
-  fiber: { downBps: 940e6, upBps: 880e6, idleRttMs: 6, loadedDeltaMs: 4, lossBase: 0.0 },
-  cable: { downBps: 320e6, upBps: 22e6, idleRttMs: 16, loadedDeltaMs: 34, lossBase: 0.002 },
-  lte: { downBps: 64e6, upBps: 24e6, idleRttMs: 38, loadedDeltaMs: 62, lossBase: 0.01 },
-  satellite: { downBps: 110e6, upBps: 14e6, idleRttMs: 600, loadedDeltaMs: 180, lossBase: 0.015 },
-  throttled: { downBps: 9.5e6, upBps: 4.5e6, idleRttMs: 28, loadedDeltaMs: 48, lossBase: 0.005 },
+  fiber: { downBytesPerSec: 117.5e6, upBytesPerSec: 110e6, idleRttMs: 6, loadedDeltaMs: 4, lossBase: 0.0 }, // ~940/880 Mbit/s
+  cable: { downBytesPerSec: 40e6, upBytesPerSec: 2.75e6, idleRttMs: 16, loadedDeltaMs: 34, lossBase: 0.002 }, // ~320/22 Mbit/s
+  lte: { downBytesPerSec: 8e6, upBytesPerSec: 3e6, idleRttMs: 38, loadedDeltaMs: 62, lossBase: 0.01 }, // ~64/24 Mbit/s
+  satellite: { downBytesPerSec: 13.75e6, upBytesPerSec: 1.75e6, idleRttMs: 600, loadedDeltaMs: 180, lossBase: 0.015 }, // ~110/14 Mbit/s
+  throttled: { downBytesPerSec: 1.1875e6, upBytesPerSec: 0.5625e6, idleRttMs: 28, loadedDeltaMs: 48, lossBase: 0.005 }, // ~9.5/4.5 Mbit/s
 };
 
 const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
@@ -76,7 +78,7 @@ const TICK_MS = 20; // master loop resolution
 const LIVE_ANOMALY_DEFAULTS = {
   latencySpike: { magnitude: 3, durationMs: 600 }, // rtt ×3 for 600ms
   packetLoss: { magnitude: 0.6, durationMs: 900 }, // 60% loss probability
-  throughputDrop: { magnitude: 0.4, durationMs: 600 }, // bps −40%
+  throughputDrop: { magnitude: 0.4, durationMs: 600 }, // bytesPerSec −40%
 } as const;
 
 /** A scheduled live anomaly with an absolute window on the run timeline. */
@@ -108,7 +110,7 @@ interface Segment {
 
 /* ---------- Per-phase sample bookkeeping for the final result ---------- */
 interface PhaseAccum {
-  bpsValues: number[];
+  bytesPerSecValues: number[];
   bytes: number;
 }
 
@@ -141,14 +143,14 @@ export class DummyRunner implements NetworkRunner {
   // faking a phase's progress to 1.0 — coverage stays truthful (§13.4).
   #shiftMs = 0;
   // Per-phase sample windows feeding the confidence math (reset per phase).
-  #phaseBps: number[] = [];
+  #phaseBytesPerSec: number[] = [];
   #phaseRtts: number[] = [];
   #phasePings = 0;
   #phasePingsLost = 0;
 
   // result bookkeeping
-  #dl: PhaseAccum = { bpsValues: [], bytes: 0 };
-  #ul: PhaseAccum = { bpsValues: [], bytes: 0 };
+  #dl: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
+  #ul: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
   #idleRtts: number[] = [];
   #loadedRtts: number[] = [];
   #allRtts: number[] = [];
@@ -254,15 +256,15 @@ export class DummyRunner implements NetworkRunner {
     this.#lastThroughputAt = -Infinity;
     this.#lastPingAt = -Infinity;
     this.#bytesCumulative = 0;
-    this.#dl = { bpsValues: [], bytes: 0 };
-    this.#ul = { bpsValues: [], bytes: 0 };
+    this.#dl = { bytesPerSecValues: [], bytes: 0 };
+    this.#ul = { bytesPerSecValues: [], bytes: 0 };
     this.#idleRtts = [];
     this.#loadedRtts = [];
     this.#allRtts = [];
     this.#pingsTotal = 0;
     this.#pingsLost = 0;
     this.#shiftMs = 0;
-    this.#phaseBps = [];
+    this.#phaseBytesPerSec = [];
     this.#phaseRtts = [];
     this.#phasePings = 0;
     this.#phasePingsLost = 0;
@@ -421,7 +423,7 @@ export class DummyRunner implements NetworkRunner {
 
   /** Reset the per-phase confidence windows when a measured phase begins. */
   #beginAdaptivePhase() {
-    this.#phaseBps = [];
+    this.#phaseBytesPerSec = [];
     this.#phaseRtts = [];
     this.#phasePings = 0;
     this.#phasePingsLost = 0;
@@ -446,7 +448,7 @@ export class DummyRunner implements NetworkRunner {
         cfg: cfg.adaptive,
       });
     } else if (seg.phase === "download" || seg.phase === "upload") {
-      const conf = transferConfidence(this.#phaseBps);
+      const conf = transferConfidence(this.#phaseBytesPerSec);
       exit = shouldExitPhase({
         kind: "transfer",
         elapsedMs: elapsedInPhase,
@@ -470,42 +472,42 @@ export class DummyRunner implements NetworkRunner {
   #emitThroughput(seg: Segment, elapsed: number) {
     const tp = elapsed - seg.start; // ms into this phase
     const phaseLen = seg.end - seg.start;
-    const mean = seg.phase === "download" ? this.#spec.downBps : this.#spec.upBps;
+    const mean = seg.phase === "download" ? this.#spec.downBytesPerSec : this.#spec.upBytesPerSec;
 
     // Logistic ramp-up over the first ~1.2s.
     const ramp = 1 / (1 + Math.exp(-(tp - 600) / 150));
 
     // Noisy plateau, Gaussian ±8% of mean.
-    let bps = mean * ramp * (1 + this.#gauss() * 0.08);
+    let bytesPerSec = mean * ramp * (1 + this.#gauss() * 0.08);
 
     // Throughput dip anomaly: 400ms 40% drop centred on each fraction.
     for (const f of this.#opts.anomalies?.throughputDipAt ?? []) {
       const center = f * phaseLen;
-      if (tp >= center && tp < center + 400) bps *= 0.6;
+      if (tp >= center && tp < center + 400) bytesPerSec *= 0.6;
     }
 
-    // Live throughput-drop anomaly (§13.6): reduce bps by `magnitude` over its
+    // Live throughput-drop anomaly (§13.6): reduce bytesPerSec by `magnitude` over its
     // window. Fired relative to the current moment, not a phase fraction.
     const drop = this.#activeAnomaly("throughput-drop", elapsed);
-    if (drop) bps *= Math.max(0, 1 - drop.magnitude);
+    if (drop) bytesPerSec *= Math.max(0, 1 - drop.magnitude);
 
-    bps = Math.max(0, bps);
+    bytesPerSec = Math.max(0, bytesPerSec);
 
-    // Accumulate cumulative bytes (bits → bytes over the cadence window).
+    // Accumulate cumulative bytes over the cadence window (rate is bytes/sec).
     const dtSec = THROUGHPUT_CADENCE_MS / 1000;
-    const bytes = (bps / 8) * dtSec;
+    const bytes = bytesPerSec * dtSec;
     this.#bytesCumulative += bytes;
 
     const accum = seg.phase === "download" ? this.#dl : this.#ul;
-    accum.bpsValues.push(bps);
+    accum.bytesPerSecValues.push(bytesPerSec);
     accum.bytes += bytes;
 
     // Feed the adaptive confidence window for the current transfer phase.
-    this.#phaseBps.push(bps);
+    this.#phaseBytesPerSec.push(bytesPerSec);
 
     const sample: ThroughputSample = {
       t: elapsed,
-      bps,
+      bytesPerSec,
       bytesCumulative: this.#bytesCumulative,
       streamCount: this.#cfg!.parallelStreams,
     };
@@ -591,16 +593,16 @@ export class DummyRunner implements NetworkRunner {
   }
 
   #throughputResult(a: PhaseAccum): ThroughputResult {
-    const v = a.bpsValues;
+    const v = a.bytesPerSecValues;
     if (!v.length) {
-      return { meanBps: 0, peakBps: 0, stabilityPct: 0, totalBytes: a.bytes };
+      return { meanBytesPerSec: 0, peakBytesPerSec: 0, stabilityPct: 0, totalBytes: a.bytes };
     }
     const mean = v.reduce((s, x) => s + x, 0) / v.length;
     const peak = Math.max(...v);
     const variance = v.reduce((s, x) => s + (x - mean) ** 2, 0) / v.length;
     const cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
     const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
-    return { meanBps: mean, peakBps: peak, stabilityPct, totalBytes: a.bytes };
+    return { meanBytesPerSec: mean, peakBytesPerSec: peak, stabilityPct, totalBytes: a.bytes };
   }
 
   #latencyResult(): LatencyResult {

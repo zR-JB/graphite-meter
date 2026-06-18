@@ -12,9 +12,9 @@
  * Ported from linerate-atelier's 7-factor estimator (§13.0:
  * lift the math, not the SvelteKit structure). Two structural
  * adaptations for this repo:
- *   1. CANONICAL UNIT IS bps (bits/sec), not bytes/sec — the
- *      store stays bps-canonical, so every estimate is bps in,
- *      bps out. Multipliers are unitless, so the byte-accounting
+ *   1. CANONICAL UNIT IS bytes/sec (browser-native), not bits/sec — the
+ *      store stays bytes-canonical, so every estimate is bytes/sec in,
+ *      bytes/sec out. Multipliers are unitless, so the byte-accounting
  *      math is identical; only the carried value differs.
  *   2. NO server-reported metadata object — protocol is derived
  *      from `config.transport.transfer` and the endpoint is
@@ -65,8 +65,8 @@ export interface CompensationFactor {
 
 /** Aggregate wire-rate estimate for one phase. */
 export interface CompensationEstimate {
-  measuredBps: number;
-  estimatedBps: number;
+  measuredBytesPerSec: number;
+  estimatedBytesPerSec: number;
   /** Product of every active factor's multiplier (1.0 when disabled). */
   totalMultiplier: number;
   confidence: CompensationConfidence;
@@ -141,11 +141,11 @@ export function estimateResultCompensation(
   phase: CompensationPhase,
   config: OverheadCompensationConfig,
 ): CompensationEstimate {
-  const measuredBps = result?.meanBps ?? 0;
+  const measuredBytesPerSec = result?.meanBytesPerSec ?? 0;
 
   // Disabled, no data, or no factors → identity (1.0) multiplier.
-  if (!config.enabled || measuredBps <= 0 || result == null) {
-    return identityEstimate(measuredBps);
+  if (!config.enabled || measuredBytesPerSec <= 0 || result == null) {
+    return identityEstimate(measuredBytesPerSec);
   }
 
   // `phase` selects which result the caller passed (download vs upload) and is
@@ -172,26 +172,26 @@ export function estimateResultCompensation(
     pushFactor(factors, browserRuntimeFactor(result));
   }
 
-  return finalize(measuredBps, factors);
+  return finalize(measuredBytesPerSec, factors);
 }
 
 /**
  * CHEAP, O(1) live estimate (§13.3). Applies ONLY the protocol/config
  * multipliers (ethernet framing, TLS records, application framing,
- * reverse-path control) to a single instantaneous bps value. Skips
+ * reverse-path control) to a single instantaneous bytesPerSec value. Skips
  * every sample-array-heavy factor (steady-state ramp, browser-runtime)
  * so it is safe to call on the live render cadence — it never touches
  * a sample buffer.
  */
 export function estimateLiveCompensation(
-  bps: number,
+  bytesPerSec: number,
   config: OverheadCompensationConfig,
 ): CompensationEstimate {
-  if (!config.enabled || bps <= 0) return identityEstimate(bps);
+  if (!config.enabled || bytesPerSec <= 0) return identityEstimate(bytesPerSec);
 
   const factors: CompensationFactor[] = [];
   collectProtocolFactors(factors, config);
-  return finalize(bps, factors);
+  return finalize(bytesPerSec, factors);
 }
 
 /* ============================================================
@@ -218,23 +218,23 @@ function collectProtocolFactors(
 }
 
 function finalize(
-  measuredBps: number,
+  measuredBytesPerSec: number,
   factors: CompensationFactor[],
 ): CompensationEstimate {
   const totalMultiplier = factors.reduce((p, f) => p * f.multiplier, 1);
   return {
-    measuredBps,
-    estimatedBps: measuredBps * totalMultiplier,
+    measuredBytesPerSec,
+    estimatedBytesPerSec: measuredBytesPerSec * totalMultiplier,
     totalMultiplier,
     confidence: combinedConfidence(factors),
     factors,
   };
 }
 
-function identityEstimate(bps: number): CompensationEstimate {
+function identityEstimate(bytesPerSec: number): CompensationEstimate {
   return {
-    measuredBps: bps,
-    estimatedBps: bps,
+    measuredBytesPerSec: bytesPerSec,
+    estimatedBytesPerSec: bytesPerSec,
     totalMultiplier: 1,
     confidence: "high",
     factors: [],
@@ -440,14 +440,14 @@ function steadyStateRampFactor(
   result: ThroughputResult,
 ): CompensationFactor | null {
   const C = COMPENSATION_DEFAULTS;
-  if (result.meanBps <= 0 || result.peakBps <= result.meanBps) return null;
+  if (result.meanBytesPerSec <= 0 || result.peakBytesPerSec <= result.meanBytesPerSec) return null;
 
   // Blend mean→peak by the plateau percentile: the "plateau" sits between
   // the average and the peak, approximated at the p65 fraction of that span.
   const plateau =
-    result.meanBps +
-    (result.peakBps - result.meanBps) * C.steadyStatePlateauPercentile;
-  const rawLift = plateau / result.meanBps - 1;
+    result.meanBytesPerSec +
+    (result.peakBytesPerSec - result.meanBytesPerSec) * C.steadyStatePlateauPercentile;
+  const rawLift = plateau / result.meanBytesPerSec - 1;
   const lift = Math.min(Math.max(0, rawLift), maxLift(result));
   if (lift <= C.steadyStateMinLift) return null;
 

@@ -16,14 +16,14 @@ import type { Phase } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 
 /** What the engine pulls each frame. The sweep is normalized against an
- *  ABSOLUTE scale (`scaleBps`, shared by download + upload for comparability)
+ *  ABSOLUTE scale (`scaleBytesPerSec`, shared by download + upload for comparability)
  *  rather than a per-phase peak, so the dial position is meaningful at a
- *  glance. `valueBps` is the current raw throughput. `ticks` are the 5
+ *  glance. `valueBytesPerSec` is the current raw throughput. `ticks` are the 5
  *  pre-formatted quarter labels (0 … scale) in the active display unit. */
 export interface GaugeState {
   phase: Phase;
-  valueBps: number;
-  scaleBps: number;
+  valueBytesPerSec: number;
+  scaleBytesPerSec: number;
   ticks: string[];
   rtt: number;
   pingCount: number;
@@ -73,7 +73,7 @@ export class GaugeEngine implements CanvasEngine {
   #ema = 0; // smoothed normalized sweep 0–1
   #fill = 0; // slower follower (reduced-motion)
   #rttPeak = 0; // running rtt peak for the latency-phase sweep
-  #scale = 1; // absolute throughput scale (bit/s) for normalization
+  #scale = 1; // absolute throughput scale (bytes/s) for normalization
   #ticks: string[] = []; // quarter labels in the active unit
   #frozen = 0; // sweep value held through the complete phase
   #lastPing = 0;
@@ -145,7 +145,7 @@ export class GaugeEngine implements CanvasEngine {
   #step(now: number): void {
     const s = this.#get();
 
-    this.#scale = s.scaleBps > 0 ? s.scaleBps : 1;
+    this.#scale = s.scaleBytesPerSec > 0 ? s.scaleBytesPerSec : 1;
     this.#ticks = s.ticks;
 
     if (s.phase !== this.#lastPhase) {
@@ -159,7 +159,7 @@ export class GaugeEngine implements CanvasEngine {
     // dial position means the same thing across download + upload (and runs).
     let target = 0;
     if (s.phase === "download" || s.phase === "upload") {
-      target = Math.min(1, Math.max(0, s.valueBps / this.#scale));
+      target = Math.min(1, Math.max(0, s.valueBytesPerSec / this.#scale));
     } else if (s.phase === "warmup") {
       target = 0.3; // indeterminate — connection probe, no meaningful rate yet
     } else if (s.phase === "latency") {
