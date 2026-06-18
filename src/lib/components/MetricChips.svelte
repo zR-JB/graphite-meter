@@ -329,7 +329,7 @@
      reveal): one card spans full width, two split in half, three in thirds. */
   .chips {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
   }
   /* Stack into a single column on the narrow single-column shell (<760px). */
   @media (max-width: 759px) {
@@ -343,13 +343,13 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--space-2);
     min-height: 92px;
-    padding: 12px;
+    padding: var(--space-3);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--elev-tile);
     transition:
       border-color var(--dur-hover) var(--ease-out),
       transform var(--dur-hover) var(--ease-out);
@@ -390,7 +390,7 @@
   .chip.active {
     border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
     box-shadow:
-      var(--shadow-card),
+      var(--elev-tile),
       0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
   }
 
@@ -404,7 +404,7 @@
     place-items: center;
     width: 26px;
     height: 26px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     border: 1px solid var(--border);
     background: var(--surface-2);
   }
@@ -425,7 +425,7 @@
     border-color: color-mix(in srgb, var(--phase-latency) 34%, var(--border));
   }
   .label {
-    font-size: 12px;
+    font-size: var(--type-sm);
     font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--text);
@@ -471,18 +471,21 @@
     align-items: baseline;
     gap: 6px;
   }
+  /* Results stand out: the value uses the Space Grotesk display face (tabular
+     so it doesn't shift), echoing the hero number a tier down. */
   .num {
-    font-family: var(--font-mono);
+    font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.03em;
+    font-feature-settings: "tnum" 1;
+    font-size: var(--type-xl);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
     color: var(--text);
     line-height: 1;
   }
   .unit {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--type-xs);
     font-weight: 700;
     color: var(--text-soft);
   }
