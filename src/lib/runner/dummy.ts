@@ -230,16 +230,22 @@ export class DummyRunner implements NetworkRunner {
     };
     // Initial connection warmup, then a re-prime warmup (same duration)
     // immediately before each transfer stage so the link is at steady state
-    // when the stage's measurement window opens.
+    // when the stage's measurement window opens. Skip the re-prime when a
+    // warmup already sits right before us (e.g. latency off → the initial
+    // warmup leads straight into download): two adjacent warmups would merge
+    // into one double-length span, and the existing one already serves.
     const pre = preStageWarmupMs(config.duration.warmupMs);
+    const reprime = () => {
+      if (segs.length && segs[segs.length - 1].phase !== "warmup") push("warmup", pre);
+    };
     push("warmup", config.duration.warmupMs);
     if (config.stages.latency) push("latency", config.duration.latencyMs);
     if (config.stages.download) {
-      push("warmup", pre);
+      reprime();
       push("download", config.duration.downloadMs);
     }
     if (config.stages.upload) {
-      push("warmup", pre);
+      reprime();
       push("upload", config.duration.uploadMs);
     }
 
@@ -349,7 +355,10 @@ export class DummyRunner implements NetworkRunner {
       // Skip phases already kept (started) and disabled phases.
       if (!on || ms <= 0) return;
       if (kept.some((k) => k.phase === phase)) return;
-      if (prewarm) {
+      // Re-prime warmup, unless a warmup already sits right before us — two
+      // adjacent warmups merge into one double-length span (see start()).
+      const prev = tail.length ? tail[tail.length - 1] : kept[kept.length - 1];
+      if (prewarm && prev?.phase !== "warmup") {
         const pre = preStageWarmupMs(dur.warmupMs);
         tail.push({ phase: "warmup", start: cursor, end: cursor + pre });
         cursor += pre;

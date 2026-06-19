@@ -27,13 +27,32 @@
   // newcomer knows roughly how long Engage will take.
   const etaMs = $derived.by(() => {
     const d = store.config.duration;
+    const st = store.config.stages;
     const pre = preStageWarmupMs(d.warmupMs);
-    return (
-      d.warmupMs +
-      (store.config.stages.latency ? d.latencyMs : 0) +
-      (store.config.stages.download ? pre + d.downloadMs : 0) +
-      (store.config.stages.upload ? pre + d.uploadMs : 0)
-    );
+    // Mirror the runner timeline (dummy.start): one initial warmup, then a
+    // re-prime before each transfer stage — but skipped when a warmup already
+    // sits right before it (e.g. latency off → initial warmup leads straight
+    // into download), since the runner merges adjacent warmups into one.
+    let total = 0;
+    let lastWarmup = false;
+    if (d.warmupMs > 0) {
+      total += d.warmupMs;
+      lastWarmup = true;
+    }
+    if (st.latency && d.latencyMs > 0) {
+      total += d.latencyMs;
+      lastWarmup = false;
+    }
+    for (const ms of [
+      st.download ? d.downloadMs : 0,
+      st.upload ? d.uploadMs : 0,
+    ]) {
+      if (ms <= 0) continue;
+      if (total > 0 && !lastWarmup) total += pre;
+      total += ms;
+      lastWarmup = false;
+    }
+    return total;
   });
 
   let canvasEl = $state<HTMLCanvasElement>();
