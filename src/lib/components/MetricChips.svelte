@@ -6,8 +6,10 @@
    * and, beneath it, the COMPENSATED wire-rate estimate. A small
    * stability pip (low/medium/high) — sourced from the runner's live
    * `liveStability` / the result's `band`, NOT the overhead estimate —
-   * climbs as the connection settles. Shown on all three cards
-   * (Ping has no wire-rate compensation, but it does have stability).
+   * climbs as the connection settles. Each visible stage becomes a card via
+   * one shared {#snippet} fed a typed CardVM (download, upload, bidirectional,
+   * ping). Ping has no wire-rate compensation; bidirectional shows a combined
+   * headline with a per-direction subline and no live pip.
    *
    * Reactivity (§13.3): the live cards read the store's O(1)
    * `liveCompensation` derived (protocol/config multipliers on the
@@ -32,19 +34,14 @@
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /** Is the named transfer phase the live, currently-running one? */
-  function isLivePhase(p: "download" | "upload"): boolean {
-    return store.phase === p;
-  }
-
-  // ---- Download card ----
-  // Stability pip: live → the runner's `liveStability`; resolved → the
-  // result's `band`; frozen (finished, run not yet complete) → the last live
-  // snapshot (kept until reset), so a settled card doesn't drop back to "low".
-  const dl = $derived.by(() => {
-    const st = store.liveStability.download;
-    const live = isLivePhase("download");
-    if (live) {
+  /** Build a transfer card's model (download or upload). Live → the store's O(1)
+   *  `liveCompensation` on the latest sample + the runner's `liveStability`;
+   *  resolved → the per-stage result + its phase-specific compensation. One
+   *  helper for both directions — the only difference is which result + which
+   *  memoized compensation derived to read. */
+  function transferModel(phase: "download" | "upload") {
+    const st = store.liveStability[phase];
+    if (store.phase === phase) {
       const comp = store.liveCompensation;
       return {
         measuredBytesPerSec: comp.measuredBytesPerSec,
@@ -56,8 +53,8 @@
         has: comp.measuredBytesPerSec > 0,
       };
     }
-    const res = store.stageResults.download;
-    const comp = store.downloadCompensation;
+    const res = store.stageResults[phase];
+    const comp = phase === "download" ? store.downloadCompensation : store.uploadCompensation;
     return {
       measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
@@ -67,34 +64,39 @@
       active: false,
       has: !!res,
     };
-  });
+  }
 
-  // ---- Upload card ----
-  const ul = $derived.by(() => {
-    const st = store.liveStability.upload;
-    const live = isLivePhase("upload");
-    if (live) {
-      const comp = store.liveCompensation;
+  const dl = $derived.by(() => transferModel("download"));
+  const ul = $derived.by(() => transferModel("upload"));
+
+  // ---- Bidirectional card (combined down+up; live lanes → final pair) ----
+  // No wire-rate estimate or live stability pip (the engine emits none for this
+  // phase); it carries a per-direction subline and, when resolved, the band of
+  // its down lane. Live = store.liveBidirectional; resolved = result.bidirectional.
+  const bidi = $derived.by(() => {
+    if (store.phase === "bidirectional") {
+      const b = store.liveBidirectional ?? { down: 0, up: 0 };
       return {
-        measuredBytesPerSec: comp.measuredBytesPerSec,
-        estimatedBytesPerSec: comp.estimatedBytesPerSec,
-        multiplier: comp.totalMultiplier,
-        band: st?.band ?? "low",
-        score: st?.score ?? 0,
+        down: b.down,
+        up: b.up,
+        combined: b.down + b.up,
+        band: "low" as const,
+        score: 0,
         active: true,
-        has: comp.measuredBytesPerSec > 0,
+        has: b.down + b.up > 0,
       };
     }
-    const res = store.stageResults.upload;
-    const comp = store.uploadCompensation;
+    const r = store.result?.bidirectional;
+    const down = r?.down.reportedBytesPerSec ?? 0;
+    const up = r?.up.reportedBytesPerSec ?? 0;
     return {
-      measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
-      estimatedBytesPerSec: comp.estimatedBytesPerSec,
-      multiplier: comp.totalMultiplier,
-      band: res?.band ?? st?.band ?? "low",
-      score: res?.stabilityScore ?? st?.score ?? 0,
+      down,
+      up,
+      combined: down + up,
+      band: r?.down.band ?? "low",
+      score: r?.down.stabilityScore ?? 0,
       active: false,
-      has: !!res,
+      has: !!r,
     };
   });
 
@@ -140,9 +142,11 @@
   let dlSnap = $state<number | null>(null);
   let ulSnap = $state<number | null>(null);
   let pingSnap = $state<number | null>(null);
+  let bidiSnap = $state<number | null>(null);
   let dlCancel: (() => void) | null = null;
   let ulCancel: (() => void) | null = null;
   let pingCancel: (() => void) | null = null;
+  let bidiCancel: (() => void) | null = null;
 
   /* ---- Progressive reveal — "reveal & keep" ----
      A card appears when its stage runs and STAYS once finished; not-yet-run
@@ -154,6 +158,7 @@
   let pingFrozen = $state<number | null>(null);
   let dlFrozen = $state<number | null>(null);
   let ulFrozen = $state<number | null>(null);
+  let bidiFrozen = $state<number | null>(null);
 
   function tweenTo(
     from: number,
@@ -222,6 +227,26 @@
     };
   });
 
+  // Bidirectional resolves only at completion (it has no per-stage event), so its
+  // count-up tweens the COMBINED rate from the frozen live value to the final sum.
+  $effect(() => {
+    const r = store.result?.bidirectional;
+    bidiCancel?.();
+    bidiCancel = null;
+    if (!r) {
+      bidiSnap = null;
+      return;
+    }
+    const finalCombined = store.toUnit(r.down.reportedBytesPerSec + r.up.reportedBytesPerSec);
+    bidiCancel = untrack(() =>
+      tweenTo(bidiFrozen ?? store.toUnit(bidi.combined), finalCombined, (v) => (bidiSnap = v)),
+    );
+    return () => {
+      bidiCancel?.();
+      bidiCancel = null;
+    };
+  });
+
   // Freeze each stage's last live value at hand-off. While a stage is the live
   // phase this re-runs every tick (it reads that phase's live value), tracking
   // it; once the phase moves on, the branch stops firing and the value stays.
@@ -232,11 +257,13 @@
       pingFrozen = null;
       dlFrozen = null;
       ulFrozen = null;
+      bidiFrozen = null;
       return;
     }
     if (p === "latency") pingFrozen = ping.ms;
     else if (p === "download") dlFrozen = store.toUnit(dl.measuredBytesPerSec);
     else if (p === "upload") ulFrozen = store.toUnit(ul.measuredBytesPerSec);
+    else if (p === "bidirectional") bidiFrozen = store.toUnit(bidi.combined);
   });
 
   // Visibility (reveal & keep): a card shows once its enabled stage is live,
@@ -250,12 +277,16 @@
   const ulShow = $derived(
     store.config.stages.upload && (ul.active || ulFrozen != null || ul.has),
   );
+  const bidiShow = $derived(
+    store.config.stages.bidirectional && (bidi.active || bidiFrozen != null || bidi.has),
+  );
 
   // Does the card have a real number to print (vs a dash)? While live, dash
   // until the first sample; once frozen/resolved, the kept/final value.
   const pingHasVal = $derived(ping.active ? ping.has : ping.has || pingFrozen != null);
   const dlHasVal = $derived(dl.active ? dl.has : dl.has || dlFrozen != null);
   const ulHasVal = $derived(ul.active ? ul.has : ul.has || ulFrozen != null);
+  const bidiHasVal = $derived(bidi.active ? bidi.has : bidi.has || bidiFrozen != null);
 
   // The number each card actually renders: the tweened snap when present, else
   // the live value while active, else the frozen (kept) value for a finished stage.
@@ -266,12 +297,84 @@
     ulSnap ?? (ul.active ? store.toUnit(ul.measuredBytesPerSec) : ulFrozen ?? store.toUnit(ul.measuredBytesPerSec)),
   );
   const pingShown = $derived(pingSnap ?? (ping.active ? ping.ms : pingFrozen ?? ping.ms));
+  const bidiShown = $derived(
+    bidiSnap ?? (bidi.active ? store.toUnit(bidi.combined) : bidiFrozen ?? store.toUnit(bidi.combined)),
+  );
 
   /* ---- Progressive disclosure of the wire-rate estimate (§14.2) ----
      The headline numbers are always the plainly MEASURED values. The
      compensated wire-rate is a refinement, surfaced on the result cards only
-     when the user opts in via the persisted Workbench setting. */
+     when the user opts in via the persisted Settings switch. */
   const showWire = $derived(store.showWireEstimates);
+
+  /* ---- Card view-models ----
+     One typed descriptor per visible card, consumed by the shared {#snippet}.
+     Replaces four near-identical markup blocks with one list + one template. */
+  type CardWire =
+    | { kind: "lift"; num: string; pct: string }
+    | { kind: "flat"; text: string }
+    | null;
+  interface CardVM {
+    key: string;
+    icon: string;
+    ico: string; // accent class: dl | ul | bd | pg
+    label: string;
+    term: boolean; // dotted-underline jargon affordance (ping)
+    active: boolean;
+    hasVal: boolean;
+    showPip: boolean;
+    band: "low" | "medium" | "high";
+    score: number;
+    num: string; // pre-formatted, or the dash
+    unit: string;
+    sub?: string; // per-direction detail (bidirectional only)
+    wire: CardWire;
+  }
+
+  /** Wire-rate estimate line for a transfer card (null when the user hasn't
+   *  opted in). Mirrors the old inline lift/flat branch. */
+  function wireFor(m: { has: boolean; multiplier: number; estimatedBytesPerSec: number }): CardWire {
+    if (!showWire) return null;
+    if (m.has && lifted(m.multiplier))
+      return { kind: "lift", num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)), pct: pctLift(m.multiplier) };
+    return { kind: "flat", text: m.has ? "no overhead applied" : "" };
+  }
+
+  const cards = $derived.by<CardVM[]>(() => {
+    const out: CardVM[] = [];
+    if (dlShow)
+      out.push({
+        key: "download", icon: ICON.download, ico: "dl", label: "Download", term: false,
+        active: dl.active, hasVal: dlHasVal, showPip: dlHasVal, band: dl.band, score: dl.score,
+        num: dlHasVal ? fmtSpeed(dlShown) : dash, unit: store.unitLabel, wire: wireFor(dl),
+      });
+    if (ulShow)
+      out.push({
+        key: "upload", icon: ICON.upload, ico: "ul", label: "Upload", term: false,
+        active: ul.active, hasVal: ulHasVal, showPip: ulHasVal, band: ul.band, score: ul.score,
+        num: ulHasVal ? fmtSpeed(ulShown) : dash, unit: store.unitLabel, wire: wireFor(ul),
+      });
+    if (bidiShow)
+      out.push({
+        key: "bidirectional", icon: ICON.bidirectional, ico: "bd", label: "Bi-dir", term: false,
+        active: bidi.active, hasVal: bidiHasVal,
+        // No live stability for bidi — show the pip only once resolved.
+        showPip: bidiHasVal && !bidi.active, band: bidi.band, score: bidi.score,
+        num: bidiHasVal ? fmtSpeed(bidiShown) : dash, unit: store.unitLabel,
+        sub: bidiHasVal
+          ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
+          : undefined,
+        wire: null,
+      });
+    if (pingShow)
+      out.push({
+        key: "latency", icon: ICON.ping, ico: "pg", label: "Ping", term: true,
+        active: ping.active, hasVal: pingHasVal, showPip: pingHasVal, band: ping.band, score: ping.score,
+        num: pingHasVal ? fmtMs(pingShown) : dash, unit: "ms",
+        wire: showWire ? { kind: "flat", text: "latency — uncompensated" } : null,
+      });
+    return out;
+  });
 
   // Guided empty state (§14.3): before the first run there's nothing measured,
   // so invite action instead of leaving three bare dashes unexplained. Only the
@@ -283,90 +386,47 @@
   });
 </script>
 
+{#snippet metricCard(c: CardVM)}
+  <article class="chip" class:active={c.active}>
+    <header>
+      <span class="ico {c.ico}">{@html c.icon}</span>
+      {#if c.term}
+        <span class="label term" use:tooltip={JARGON.ping}>{c.label}</span>
+      {:else}
+        <span class="label">{c.label}</span>
+      {/if}
+      {#if c.showPip}
+        <span
+          class="pip pip-{c.band}"
+          use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}>{c.band}</span
+        >
+      {/if}
+    </header>
+    <div class="val">
+      <span class="num">{c.num}</span>
+      <span class="unit">{c.unit}</span>
+    </div>
+    {#if c.sub}
+      <div class="sub">{c.sub}</div>
+    {/if}
+    {#if c.wire}
+      <div class="est">
+        {#if c.wire.kind === "lift"}
+          <span class="est-arrow">→</span>
+          <span class="est-num">{c.wire.num}</span>
+          <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {c.wire.pct}</span>
+        {:else}
+          <span class="est-flat">{c.wire.text}</span>
+        {/if}
+      </div>
+    {/if}
+  </article>
+{/snippet}
+
 <div class="chips" class:reserve={store.phase !== "idle"}>
-  <!-- DOWNLOAD -->
-  {#if dlShow}
-    <article class="chip" class:active={dl.active}>
-      <header>
-        <span class="ico dl">{@html ICON.download}</span>
-        <span class="label">Download</span>
-        {#if dlHasVal}
-          <span class="pip pip-{dl.band}" use:tooltip={`Measurement stability: ${Math.round(dl.score * 100)}%`}
-            >{dl.band}</span
-          >
-        {/if}
-      </header>
-      <div class="val">
-        <span class="num">{dlHasVal ? fmtSpeed(dlShown) : dash}</span>
-        <span class="unit">{store.unitLabel}</span>
-      </div>
-      {#if showWire}
-        <div class="est">
-          {#if dl.has && lifted(dl.multiplier)}
-            <span class="est-arrow">→</span>
-            <span class="est-num">{fmtSpeed(store.toUnit(dl.estimatedBytesPerSec))}</span>
-            <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(dl.multiplier)}</span>
-          {:else}
-            <span class="est-flat">{dl.has ? "no overhead applied" : ""}</span>
-          {/if}
-        </div>
-      {/if}
-    </article>
-  {/if}
-
-  <!-- UPLOAD -->
-  {#if ulShow}
-    <article class="chip" class:active={ul.active}>
-      <header>
-        <span class="ico ul">{@html ICON.upload}</span>
-        <span class="label">Upload</span>
-        {#if ulHasVal}
-          <span class="pip pip-{ul.band}" use:tooltip={`Measurement stability: ${Math.round(ul.score * 100)}%`}
-            >{ul.band}</span
-          >
-        {/if}
-      </header>
-      <div class="val">
-        <span class="num">{ulHasVal ? fmtSpeed(ulShown) : dash}</span>
-        <span class="unit">{store.unitLabel}</span>
-      </div>
-      {#if showWire}
-        <div class="est">
-          {#if ul.has && lifted(ul.multiplier)}
-            <span class="est-arrow">→</span>
-            <span class="est-num">{fmtSpeed(store.toUnit(ul.estimatedBytesPerSec))}</span>
-            <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {pctLift(ul.multiplier)}</span>
-          {:else}
-            <span class="est-flat">{ul.has ? "no overhead applied" : ""}</span>
-          {/if}
-        </div>
-      {/if}
-    </article>
-  {/if}
-
-  <!-- PING (latency — no compensation) -->
-  {#if pingShow}
-    <article class="chip" class:active={ping.active}>
-      <header>
-        <span class="ico pg">{@html ICON.ping}</span>
-        <span class="label term" use:tooltip={JARGON.ping}>Ping</span>
-        {#if pingHasVal}
-          <span class="pip pip-{ping.band}" use:tooltip={`Measurement stability: ${Math.round(ping.score * 100)}%`}
-            >{ping.band}</span
-          >
-        {/if}
-      </header>
-      <div class="val">
-        <span class="num">{pingHasVal ? fmtMs(pingShown) : dash}</span>
-        <span class="unit">ms</span>
-      </div>
-      {#if showWire}
-        <div class="est">
-          <span class="est-flat">latency — uncompensated</span>
-        </div>
-      {/if}
-    </article>
-  {/if}
+  {#each cards as c (c.key)}
+    {@render metricCard(c)}
+  {/each}
 </div>
 
 <!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
@@ -443,6 +503,9 @@
     .chip:nth-child(3) {
       animation-delay: 120ms;
     }
+    .chip:nth-child(4) {
+      animation-delay: 180ms;
+    }
   }
   @keyframes chip-enter {
     from {
@@ -491,6 +554,10 @@
   .ico.pg {
     color: var(--phase-latency);
     border-color: color-mix(in srgb, var(--phase-latency) 34%, var(--border));
+  }
+  .ico.bd {
+    color: var(--phase-bidirectional);
+    border-color: color-mix(in srgb, var(--phase-bidirectional) 34%, var(--border));
   }
   .label {
     font-size: var(--type-sm);
@@ -556,6 +623,16 @@
     font-size: var(--type-xs);
     font-weight: 700;
     color: var(--text-soft);
+  }
+
+  /* Per-direction subline (bidirectional card) — quiet mono detail under the
+     combined headline. */
+  .sub {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    color: var(--text-soft);
+    letter-spacing: 0.01em;
   }
 
   /* Estimate line — always reserved (fixed height) so toggling the
