@@ -3,9 +3,11 @@
    * <MetricChips> — live measured-vs-estimated cards (§13.3)
    * Replaces the Download/Upload/Ping placeholder grid in the
    * center stage. Per metric it shows the MEASURED browser value
-   * and, beneath it, the COMPENSATED wire-rate estimate plus a
-   * small confidence pip (high/medium/low). Latency (Ping) has no
-   * wire-rate compensation, so it shows the live RTT only.
+   * and, beneath it, the COMPENSATED wire-rate estimate. A small
+   * stability pip (low/medium/high) — sourced from the runner's live
+   * `liveStability` / the result's `band`, NOT the overhead estimate —
+   * climbs as the connection settles. Shown on all three cards
+   * (Ping has no wire-rate compensation, but it does have stability).
    *
    * Reactivity (§13.3): the live cards read the store's O(1)
    * `liveCompensation` derived (protocol/config multipliers on the
@@ -36,7 +38,11 @@
   }
 
   // ---- Download card ----
+  // Stability pip: live → the runner's `liveStability`; resolved → the
+  // result's `band`; frozen (finished, run not yet complete) → the last live
+  // snapshot (kept until reset), so a settled card doesn't drop back to "low".
   const dl = $derived.by(() => {
+    const st = store.liveStability.download;
     const live = isLivePhase("download");
     if (live) {
       const comp = store.liveCompensation;
@@ -44,7 +50,8 @@
         measuredBytesPerSec: comp.measuredBytesPerSec,
         estimatedBytesPerSec: comp.estimatedBytesPerSec,
         multiplier: comp.totalMultiplier,
-        confidence: comp.confidence,
+        band: st?.band ?? "low",
+        score: st?.score ?? 0,
         active: true,
         has: comp.measuredBytesPerSec > 0,
       };
@@ -55,7 +62,8 @@
       measuredBytesPerSec: res?.meanBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
       multiplier: comp.totalMultiplier,
-      confidence: comp.confidence,
+      band: res?.band ?? st?.band ?? "low",
+      score: res?.stabilityScore ?? st?.score ?? 0,
       active: false,
       has: !!res,
     };
@@ -63,6 +71,7 @@
 
   // ---- Upload card ----
   const ul = $derived.by(() => {
+    const st = store.liveStability.upload;
     const live = isLivePhase("upload");
     if (live) {
       const comp = store.liveCompensation;
@@ -70,7 +79,8 @@
         measuredBytesPerSec: comp.measuredBytesPerSec,
         estimatedBytesPerSec: comp.estimatedBytesPerSec,
         multiplier: comp.totalMultiplier,
-        confidence: comp.confidence,
+        band: st?.band ?? "low",
+        score: st?.score ?? 0,
         active: true,
         has: comp.measuredBytesPerSec > 0,
       };
@@ -81,19 +91,34 @@
       measuredBytesPerSec: res?.meanBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
       multiplier: comp.totalMultiplier,
-      confidence: comp.confidence,
+      band: res?.band ?? st?.band ?? "low",
+      score: res?.stabilityScore ?? st?.score ?? 0,
       active: false,
       has: !!res,
     };
   });
 
-  // ---- Ping card (no wire-rate compensation) ----
+  // ---- Ping card (no wire-rate compensation, but it does have stability) ----
   const ping = $derived.by(() => {
+    const st = store.liveStability.latency;
     if (store.phase === "latency") {
-      return { ms: store.liveRtt, active: true, has: store.liveRtt > 0 };
+      return {
+        ms: store.liveRtt,
+        band: st?.band ?? "low",
+        score: st?.score ?? 0,
+        active: true,
+        has: store.liveRtt > 0,
+      };
     }
-    const p50 = store.result?.latency?.p50Ms ?? null;
-    return { ms: p50 ?? store.liveRtt, active: false, has: p50 != null };
+    const lat = store.result?.latency ?? null;
+    const p50 = lat?.p50Ms ?? null;
+    return {
+      ms: p50 ?? store.liveRtt,
+      band: lat?.band ?? st?.band ?? "low",
+      score: lat?.stabilityScore ?? st?.score ?? 0,
+      active: false,
+      has: p50 != null,
+    };
   });
 
   /** Whether compensation actually lifts the value (multiplier > ~1). */
@@ -246,9 +271,9 @@
       <header>
         <span class="ico dl">{@html ICON.download}</span>
         <span class="label">Download</span>
-        {#if dl.has && lifted(dl.multiplier)}
-          <span class="pip pip-{dl.confidence}" use:tooltip={`Estimate confidence: ${dl.confidence}`}
-            >{dl.confidence}</span
+        {#if dlHasVal}
+          <span class="pip pip-{dl.band}" use:tooltip={`Measurement stability: ${Math.round(dl.score * 100)}%`}
+            >{dl.band}</span
           >
         {/if}
       </header>
@@ -276,9 +301,9 @@
       <header>
         <span class="ico ul">{@html ICON.upload}</span>
         <span class="label">Upload</span>
-        {#if ul.has && lifted(ul.multiplier)}
-          <span class="pip pip-{ul.confidence}" use:tooltip={`Estimate confidence: ${ul.confidence}`}
-            >{ul.confidence}</span
+        {#if ulHasVal}
+          <span class="pip pip-{ul.band}" use:tooltip={`Measurement stability: ${Math.round(ul.score * 100)}%`}
+            >{ul.band}</span
           >
         {/if}
       </header>
@@ -306,6 +331,11 @@
       <header>
         <span class="ico pg">{@html ICON.ping}</span>
         <span class="label term" use:tooltip={JARGON.ping}>Ping</span>
+        {#if pingHasVal}
+          <span class="pip pip-{ping.band}" use:tooltip={`Measurement stability: ${Math.round(ping.score * 100)}%`}
+            >{ping.band}</span
+          >
+        {/if}
       </header>
       <div class="val">
         <span class="num">{pingHasVal ? fmtMs(pingShown) : dash}</span>
