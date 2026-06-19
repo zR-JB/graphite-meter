@@ -11,8 +11,8 @@
   import { store } from "../state/store.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
   import GaugePanel from "./GaugePanel.svelte";
-  import TimeseriesTheatre from "./TimeseriesTheatre.svelte";
-  import MetricChips from "./MetricChips.svelte";
+  import ThroughputChart from "./ThroughputChart.svelte";
+  import ResultCards from "./ResultCards.svelte";
   import StatusBar from "./StatusBar.svelte";
   import SettingsPanel from "./settings/SettingsPanel.svelte";
   import InspectorPanel from "./InspectorPanel.svelte";
@@ -202,8 +202,8 @@
        compact so the simple default fits the viewport without vertical scroll. -->
   <section class="zone stage min-w-0 overflow-y-auto flex flex-col">
     <GaugePanel />
-    <TimeseriesTheatre />
-    <MetricChips />
+    <ThroughputChart />
+    <ResultCards />
   </section>
 
   <!-- STATUS BAR -->
@@ -283,8 +283,8 @@
   .stage > :global(.gauge-panel) {
     flex: 1 1 auto;
   }
-  .stage > :global(.theatre),
-  .stage > :global(.chips),
+  .stage > :global(.chart),
+  .stage > :global(.result-cards),
   .stage > :global(.metric-guidance) {
     flex: 0 0 auto;
   }

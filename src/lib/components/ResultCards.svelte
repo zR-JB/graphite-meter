@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <MetricChips> — live measured-vs-estimated cards (§13.3)
+   * <ResultCards> — live measured-vs-estimated cards (§13.3)
    * Replaces the Download/Upload/Ping placeholder grid in the
    * center stage. Per metric it shows the MEASURED browser value
    * and, beneath it, the COMPENSATED wire-rate estimate. A small
@@ -386,8 +386,8 @@
   });
 </script>
 
-{#snippet metricCard(c: CardVM)}
-  <article class="chip" class:active={c.active}>
+{#snippet resultCard(c: CardVM)}
+  <article class="result-card" class:active={c.active}>
     <header>
       <span class="ico {c.ico}">{@html c.icon}</span>
       {#if c.term}
@@ -423,9 +423,9 @@
   </article>
 {/snippet}
 
-<div class="chips" class:reserve={store.phase !== "idle"}>
+<div class="result-cards" class:reserve={store.phase !== "idle"}>
   {#each cards as c (c.key)}
-    {@render metricCard(c)}
+    {@render resultCard(c)}
   {/each}
 </div>
 
@@ -440,7 +440,7 @@
   /* Wrap on actual available width (not a viewport breakpoint): when the stage
      is narrow — e.g. panels docked — the cards re-split 3 → 2 → 1 instead of
      squeezing past their content. */
-  .chips {
+  .result-cards {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-3);
@@ -449,24 +449,24 @@
      progressive reveal of cards doesn't resize the gauge above it — the dial
      stays put from warmup through testing instead of snapping smaller when the
      first card appears. */
-  .chips.reserve {
+  .result-cards.reserve {
     min-height: 92px;
   }
   /* Stack into a single column on the narrow single-column shell (<760px).
-     In the column the chips must size to their content (header + value +
+     In the column the cards must size to their content (header + value +
      optional estimate) — flex:1 1 0 with the min-height floor would otherwise
-     let a chip shrink below its content and clip the bottom padding. */
+     let a card shrink below its content and clip the bottom padding. */
   @media (max-width: 759px) {
-    .chips {
+    .result-cards {
       flex-direction: column;
     }
-    .chip {
+    .result-card {
       flex: 0 0 auto;
       min-width: 0;
     }
   }
 
-  .chip {
+  .result-card {
     flex: 1 1 180px;
     min-width: 150px;
     display: flex;
@@ -482,7 +482,7 @@
       border-color var(--dur-hover) var(--ease-out),
       transform var(--dur-hover) var(--ease-out);
   }
-  .chip:hover {
+  .result-card:hover {
     transform: translateY(-1px);
     border-color: var(--border-strong);
   }
@@ -491,23 +491,23 @@
      on mount. Decorative — gated on no-preference so reduced-motion users get
      them instantly (and the global §4.5 guard further neutralizes it). */
   @media (prefers-reduced-motion: no-preference) {
-    .chip {
-      animation: chip-enter 220ms var(--ease-out) both;
+    .result-card {
+      animation: card-enter 220ms var(--ease-out) both;
     }
-    .chip:nth-child(1) {
+    .result-card:nth-child(1) {
       animation-delay: 0ms;
     }
-    .chip:nth-child(2) {
+    .result-card:nth-child(2) {
       animation-delay: 60ms;
     }
-    .chip:nth-child(3) {
+    .result-card:nth-child(3) {
       animation-delay: 120ms;
     }
-    .chip:nth-child(4) {
+    .result-card:nth-child(4) {
       animation-delay: 180ms;
     }
   }
-  @keyframes chip-enter {
+  @keyframes card-enter {
     from {
       opacity: 0;
       transform: translateY(5px);
@@ -518,7 +518,7 @@
     }
   }
   /* The live/active metric gains a faint brand ring (mirrors §3.8). */
-  .chip.active {
+  .result-card.active {
     border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
     box-shadow:
       var(--elev-tile),

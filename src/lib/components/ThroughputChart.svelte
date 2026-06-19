@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <TimeseriesTheatre> — dual-axis canvas chart (§3.2)
+   * <ThroughputChart> — dual-axis canvas chart (§3.2)
    * Thin wrapper around ChartEngine. Owns hover scrub: feeds the
    * cursor x to the engine (which draws the guideline) and renders
    * a floating mono readout chip in DOM.
@@ -67,7 +67,7 @@
   });
 </script>
 
-<section class="theatre">
+<section class="chart">
   <div
     class="plot"
     role="img"
@@ -99,7 +99,7 @@
 
 <style>
   /* Flat milled tile on the faceplate (quieter than the gauge well). */
-  .theatre {
+  .chart {
     padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
