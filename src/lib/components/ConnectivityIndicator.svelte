@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <ConnectivityPulse> — ambient awareness, topbar (§3.4)
+   * <ConnectivityIndicator> — ambient awareness, topbar (§3.4)
    * A 9px state dot (pulse keyed to effectiveConnectivity) + a
    * 36px micro-sparkline of the last 16 RTT samples. Decorative
    * canvas (aria-hidden); the wrapper carries role=status so the

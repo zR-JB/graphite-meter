@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <EngageButton> — the master action (§3.5)
+   * <RunButton> — the master action (label: "Engage") (§3.5)
    * Toggles engage/abort against the runner via the wire seam.
    * ============================================================ */
   import { store } from "../state/store.svelte";
@@ -11,7 +11,7 @@
 
   // Once a run has resolved, the master action re-runs the test. Surfacing
   // "Run again" (vs a bare repeat of "Engage") makes that affordance obvious
-  // (§14.3) — pairs with the R key + the CommandHints strip.
+  // (§14.3) — pairs with the R key + the ShortcutHints strip.
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||

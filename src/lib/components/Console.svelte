@@ -17,8 +17,8 @@
   import SettingsPanel from "./settings/SettingsPanel.svelte";
   import TelemetryPanel from "./TelemetryPanel.svelte";
   import PhaseToast from "./PhaseToast.svelte";
-  import CommandHints from "./CommandHints.svelte";
-  import ConnectivityPulse from "./ConnectivityPulse.svelte";
+  import ShortcutHints from "./ShortcutHints.svelte";
+  import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
   import { engage, returnToStart } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
@@ -107,7 +107,7 @@
 
     if (e.key === " " || e.key === "Enter") {
       // If a button/link is focused, let its native activation fire instead so
-      // we never double-toggle (e.g. Enter on the focused EngageButton).
+      // we never double-toggle (e.g. Enter on the focused RunButton).
       const t = e.target;
       if (t instanceof HTMLElement) {
         const tag = t.tagName;
@@ -180,7 +180,7 @@
       use:tooltip={"Settings — test setup, infrastructure, developer (W)"}
       onclick={() => (settingsOpen = !settingsOpen)}>{@html ICON.settings}</button
     >
-    <ConnectivityPulse />
+    <ConnectivityIndicator />
     <div class="flex-1"></div>
     <button
       class="ghost-btn"
@@ -209,7 +209,7 @@
   <!-- STATUS BAR -->
   <footer class="zone status flex items-center gap-4 px-4 border-t border-border bg-surface-1 font-mono text-soft">
     <StatusBar />
-    <CommandHints />
+    <ShortcutHints />
   </footer>
 
   <!-- Auxiliary panels — identical shared base, opposite sides; dock on wide

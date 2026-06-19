@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <CommandHints> — contextual keyboard-shortcut strip (§7 + §13.7)
+   * <ShortcutHints> — contextual keyboard-shortcut strip (§7 + §13.7)
    * A subtle, tokenized row of keycaps that mirrors the global
    * keyboard map in <Console>. The primary hint flips with run
    * state (Space = Engage / Abort), and an "R · Run again" cap
@@ -61,7 +61,7 @@
   }
 
   /* The 28px status zone has no room for keycaps on a phone; the
-     visible CommandHints strip is a desktop affordance. */
+     visible ShortcutHints strip is a desktop affordance. */
   @media (max-width: 759px) {
     .command-hints {
       display: none;

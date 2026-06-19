@@ -10,7 +10,7 @@
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
   import StageTrack from "./StageTrack.svelte";
-  import EngageButton from "./EngageButton.svelte";
+  import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { tooltip } from "../actions/tooltip";
@@ -254,7 +254,7 @@
       </span>
     </div>
     <StageTrack />
-    <EngageButton />
+    <RunButton />
   </div>
 
 </section>
