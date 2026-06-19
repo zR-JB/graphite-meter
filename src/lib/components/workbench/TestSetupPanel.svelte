@@ -201,8 +201,13 @@
         <input type="number" min="1" max="80" step="1" disabled={running}
           bind:value={store.config.adaptive.minTransferSamples} />
       </label>
+      <label>
+        <span>Glide (ms)</span>
+        <input type="number" min="300" max="1500" step="50" disabled={running}
+          bind:value={store.config.adaptive.glideMs} />
+      </label>
     </div>
-    <p class="hint">Never fakes progress — only advances once coverage and stability are both met.</p>
+    <p class="hint">Once stable, the marker accelerates and glides to the phase end — the test finishes sooner while still measuring. Off → every phase runs full and reports its whole-phase average.</p>
   </section>
 
   <!-- Engine -->

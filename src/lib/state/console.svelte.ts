@@ -84,7 +84,9 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     },
   },
   adaptive: {
-    enabled: false, // off by default → durations behave as the base build
+    // On by default: the "smart" stable-window result needs it; when off, every
+    // phase runs full and reports its whole-phase average (§13.4).
+    enabled: true,
     minCoverageRatio: 0.52,
     stabilityThreshold: 0.86,
     maxPhaseReductionRatio: 0.5,
