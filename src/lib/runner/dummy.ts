@@ -421,8 +421,10 @@ export class DummyRunner implements NetworkRunner {
     const now = performance.now();
     const dtReal = now - this.#lastRealNow;
     this.#lastRealNow = now;
+    // Always advance at least 1:1; an armed glide then pulls the position
+    // further forward along its eased curve (never backward, never slower).
+    this.#virtualElapsed += dtReal;
     if (this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
-    else this.#virtualElapsed += dtReal;
     const elapsed = this.#virtualElapsed;
 
     if (elapsed >= this.#totalMs) {
