@@ -4,6 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="The Graphite Meter — open-source network speed test" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- Pre-paint canvas + theme (§14.1). This MUST live inline in <head>:
+         the real colors live in app.css, which is imported from the JS
+         bundle and so only applies AFTER the module graph loads. The browser
+         paints the empty <body> before then — without this it paints white.
+         Keep the hexes in sync with --canvas in src/app.css (dark/light). -->
+    <style>
+      :root { color-scheme: dark; }
+      html { background: #0b0a10; }            /* --canvas (dark) */
+      html[data-theme="light"] { color-scheme: light; background: #e7e5f1; } /* --canvas (light) */
+    </style>
+    <script>
+      /* Pick the saved theme before first paint — mirrors applyThemePrePaint()
+         in src/main.ts, but runs ahead of the bundle so the very first frame
+         is correct. Storage key: graphite-meter:v1 (see persistence.ts). */
+      try {
+        var raw = localStorage.getItem("graphite-meter:v1");
+        var saved = raw ? JSON.parse(raw).theme : null;
+        var theme =
+          saved === "light" || saved === "dark"
+            ? saved
+            : matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {
+        /* corrupt/blocked storage → leave the dark default */
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

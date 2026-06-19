@@ -3,10 +3,11 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import { STORAGE_KEY } from "./lib/state/persistence";
 
-/* Apply the saved theme BEFORE first paint (§14.1) so there is no
- * dark→light flash on reload. A tiny synchronous localStorage read —
- * the store re-applies the same value via its $effect once it mounts,
- * but doing it here first means the very first frame is already correct.
+/* Apply the saved theme as the bundle loads (§14.1). The TRUE pre-paint
+ * pass is the inline <head> script in index.html — it runs before this
+ * module (and app.css) load, so it owns the very first frame and prevents
+ * the white flash. This is a backstop that keeps data-theme correct if the
+ * inline script was stripped/blocked; the store also re-applies it on mount.
  * Falls back to the system preference, then to the :root dark default. */
 (function applyThemePrePaint() {
   try {
