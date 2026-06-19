@@ -12,6 +12,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/server/internal/config"
 	"github.com/zR-JB/graphite-meter/server/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/server/internal/rng"
 	"github.com/zR-JB/graphite-meter/server/internal/static"
 )
 
@@ -27,8 +28,13 @@ func BuildMux(reg *endpoint.Registry) *http.ServeMux {
 // Run starts the server and blocks until ctx is cancelled, then shuts down
 // gracefully.
 func Run(ctx context.Context, cfg *config.Config) error {
+	// One shared immutable RNG block, generated once: every download serves
+	// slices of it, never regenerating per request (ARCHITECTURE §7).
+	block := rng.NewBlock(rng.BlockSize)
+
 	reg := endpoint.NewRegistry()
 	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
+	reg.RegisterHTTP("/download", endpoint.NewDownload(block))
 
 	mux := BuildMux(reg)
 
