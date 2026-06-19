@@ -1,177 +1,179 @@
 /* ============================================================
- * The Graphite Meter — Real Runner SKELETON (§14.4)
+ * The Graphite Meter — Real Backend SKELETON (§14.4)
  * ============================================================
  *
- * A compile-clean stub that satisfies the `NetworkRunner` contract
- * (§2.1) so a future engine talking to live speedtest-server APIs can be
- * filled in WITHOUT touching the UI or the store. The DummyRunner remains
- * the shipped/default engine; this class is never instantiated by default.
+ * A compile-clean stub implementing `RunnerBackend` (core.ts) so a
+ * future engine talking to live speedtest-server APIs can be filled
+ * in WITHOUT touching the core, the UI, or the store. The shared
+ * `RunnerCore` already owns the timeline, sequencing, accumulation,
+ * stability, early-stop, result reduction, and the whole event
+ * stream — so a real engine implements ONLY network I/O.
  *
- * ── How to fill this in ─────────────────────────────────────
- *  1. Implement each method per the TARGET ENDPOINT comment above it
- *     (mirrors the backend API table in §14.4 / docs/REAL_RUNNER.md).
- *  2. Re-emit the EXACT same `RunnerEvent` stream the dummy emits — the UI
- *     and store are engine-agnostic and only consume those events.
- *  3. To go live, change ONE line in `wire.svelte.ts`:
- *         if (!runner) runner = new RealRunner({ ... });
- *     Nothing else in the app changes.
+ * ── What the backend is responsible for ─────────────────────
+ *  • probe()         — the preflight handshake (+ a few pre-test pings).
+ *  • connection lifecycle — open/prime on onPhaseEnter, close on
+ *                    onPhaseExit / onAbort / onComplete. The CORE decides
+ *                    WHEN phases change; the backend just reacts.
+ *  • measurement     — stream/measure raw throughput + latency and push
+ *                    them in via host.ingestThroughput / host.ingestLatency.
+ *                    (Push model: do NOT implement onTick — that is the
+ *                    dummy's pull hook. Real samples arrive as bytes do.)
+ *  • failures        — report drops/timeouts/protocol errors with
+ *                    host.fail(reason, message, cause). User abort is the
+ *                    core's abort()/"aborted" phase, NOT a failure.
  *
- * ── Event / timing contract (must match DummyRunner) ────────
- *  • probe()  → resolves `InfraInfo`; MAY emit a few pre-test `latency`
- *               samples (underLoad:false, negative `t`) for the sparkline.
- *  • start()  → emits `phase` transitions — each enabled stage is preceded by
- *               its own `warmup` (idle→warmup→latency→warmup→download→warmup→
- *               upload→complete; a warmup is omitted when its stage is off or
- *               warmupMs<=0). During a stage's warmup the engine primes that
- *               stage's connection — for transfers, also the latency connection
- *               when loaded-latency is active (see the warmup contract in
- *               contract.ts). Plus `progress` (fraction 0–1 within phase),
- *               `throughput` samples at ~16Hz (every ~60ms, download/upload
- *               only), `latency` samples at the ping interval (latency phase
- *               + under-load during transfer), an optional `connectivity`
- *               state, and finally `complete` carrying a `RunResult`.
- *  • abort()  → stops work and emits a `phase` transition to "aborted".
+ * ── To go live ──────────────────────────────────────────────
+ *  Change ONE line in wire.svelte.ts:
+ *      runner = new RunnerCore(new RealBackend({ endpoint: ... }));
+ *  Nothing else in the app changes.
  *
  * ── Units rule (§14.0 / §14.4) ──────────────────────────────
  *  Raw on the wire: the server serves/sinks BYTES; the client derives
- *  bytes/sec. `ThroughputSample.bytesPerSec` is raw instantaneous bytes/sec and
- *  `bytesCumulative` is raw bytes. NO bits, base-2/base-10, or unit conversion
- *  happens in the runner — that (incl. any bit/s rendering) is the UI's job.
+ *  bytes/sec. Push raw instantaneous bytes/sec + the bytes moved over the
+ *  interval into host.ingestThroughput. NO bits / base-2/10 / unit
+ *  conversion in the backend — that is the UI's job.
  * ============================================================ */
 
 import type {
-  NetworkRunner,
   RunnerConfig,
-  RunnerEvent,
   RunnerAnomaly,
-  Phase,
   InfraInfo,
+  ServerCandidate,
 } from "./contract";
+import type { CoreHost, RunnerBackend } from "./core";
+import type { StagePhase } from "./schedule";
 
-/** Construction options for a real engine. Mirrors what the dummy needs:
- *  the endpoint to target (host/port/path) plus anything preflight hands
- *  back (e.g. a session token). All optional so the class stays trivial to
- *  drop into `wire.svelte.ts`. */
-export interface RealRunnerOptions {
+/** Construction options for a real engine: the endpoint to target plus anything
+ *  preflight hands back (e.g. a session token). All optional so the class is
+ *  trivial to drop into wire.svelte.ts. */
+export interface RealBackendOptions {
   /** Backend base the API paths in §14.4 are relative to. Falls back to the
-   *  `config.endpoint` passed into `start()` / `probe()` when omitted. */
+   *  `config.endpoint` passed into start()/probe() when omitted. */
   endpoint?: RunnerConfig["endpoint"];
   /** Optional bearer/session token from a prior preflight (§14.4 auth). */
   authToken?: string;
 }
 
 const NOT_IMPL = (method: string) =>
-  new Error(`RealRunner.${method} not implemented — see docs/REAL_RUNNER.md`);
+  new Error(`RealBackend.${method} not implemented — see docs/REAL_RUNNER.md`);
 
-export class RealRunner implements NetworkRunner {
-  /* ---------- Real plumbing (wired) ---------- */
-  #handlers = new Set<(e: RunnerEvent) => void>();
-  #phase: Phase = "idle";
-  #opts: RealRunnerOptions;
-
-  /** AbortController for in-flight fetches/streams; sockets close in abort(). */
+export class RealBackend implements RunnerBackend {
+  #opts: RealBackendOptions;
+  /** The core handle: push samples / emit / report failures through it. */
+  #host: CoreHost | null = null;
+  /** AbortController for in-flight fetches/streams; aborted in onAbort. */
   #abort: AbortController | null = null;
 
-  constructor(opts: RealRunnerOptions = {}) {
+  constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
   }
 
-  /** Engine-agnostic event fan-out — identical shape to DummyRunner.#emit. */
-  #emit(e: RunnerEvent) {
-    for (const h of this.#handlers) h(e);
+  attach(host: CoreHost): void {
+    this.#host = host;
   }
 
-  /** Resolve the backend base for the API paths in §14.4: prefer the endpoint
-   *  passed into start()/probe(), else the one supplied at construction. */
+  /** Resolve the backend base: prefer the endpoint passed in, else construction. */
   #resolveEndpoint(
     passed?: RunnerConfig["endpoint"],
   ): RunnerConfig["endpoint"] | undefined {
     return passed ?? this.#opts.endpoint;
   }
 
-  /** Subscribe to the RunnerEvent stream; returns an unsubscribe fn. */
-  on(handler: (e: RunnerEvent) => void): () => void {
-    this.#handlers.add(handler);
-    return () => this.#handlers.delete(handler);
-  }
-
-  /** Current lifecycle phase — backed by a field flipped during a run. */
-  get phase(): Phase {
-    return this.#phase;
-  }
-
   /* ================= PROBE ================= */
   /**
    * TARGET: `GET {endpoint.path}/preflight` (a.k.a. /config) — §14.4.
-   * Obligation: resolve `InfraInfo` (client public IP, server identity,
-   * negotiated protocol h2/h3/webtransport, engine version, pre-test ping).
-   * May also `GET {path}/ping` (or `WS {path}/ping`) a few times to emit
-   * idle-baseline `latency` samples for the pre-run sparkline.
-   * Cross-cutting: CORS + Timing-Allow-Origin required for accurate timing.
+   * Resolve `InfraInfo` (client public IP, server identity, negotiated
+   * protocol, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
+   * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
+   * via host.emit for the sparkline. On failure, throw — wire.ts maps a probe
+   * rejection to a `preflight-failed` error.
+   * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
   async probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
-    // Effective base + auth the implementation will hit (kept referenced so the
-    // plumbing is real and the skeleton typechecks).
     void this.#resolveEndpoint(endpoint);
     void this.#opts.authToken;
+    void this.#host;
     throw NOT_IMPL("probe");
   }
 
-  /* ================= START ================= */
+  /* ================= LIFECYCLE (core → backend) ================= */
   /**
-   * Orchestrates the full run against the live backend, emitting the same
-   * RunnerEvent stream + cadence as DummyRunner. Per §14.4:
-   *   • latency phase  → `WS {path}/ping` (websocket) / WebTransport datagrams
-   *                      / `GET {path}/ping` (HTTP fallback), chosen by
-   *                      `config.transport.latency`. RTT = now − sent;
-   *                      unacked/timed-out = packet loss. Emit `latency`
-   *                      samples at the ping interval (config.pingConcurrency).
-   *   • download phase → `GET {path}/download?bytes=N` × `config.parallelStreams`
-   *                      concurrent streams (or WebTransport per
-   *                      `config.transport.transfer`); sum received bytes/sec.
-   *                      Emit `throughput` ~16Hz (~60ms). Server streams
-   *                      INCOMPRESSIBLE random bytes; client derives bytesPerSec.
-   *   • upload phase   → `POST {path}/upload` streamed body × parallelStreams;
-   *                      server discards + may echo a received-byte count;
-   *                      client measures sent bytes/sec → `throughput` ~16Hz.
-   *   • Reuse pings under load for bufferbloat (underLoad:true).
-   *   • Emit `phase` transitions + per-phase `progress`, then `complete`
-   *     with the aggregated `RunResult`.
-   * Open a fresh AbortController here so abort() can cancel everything.
+   * A run is starting. Open a fresh AbortController so onAbort can cancel
+   * everything; reset any per-run state. Do NOT open transfer connections yet —
+   * that happens per stage in onPhaseEnter.
    */
-  start(config: RunnerConfig): void {
-    // config.endpoint wins; fall back to the construction-time endpoint.
+  onRunStart(config: RunnerConfig): void {
     void this.#resolveEndpoint(config.endpoint);
-    throw NOT_IMPL("start");
+    this.#abort = new AbortController();
+    throw NOT_IMPL("onRunStart");
   }
 
-  /* ================= ABORT ================= */
   /**
-   * TARGET: client-side only — §14.4. Cancel in-flight fetches/streams via
-   * the AbortController and close any open sockets/WebTransport sessions,
-   * then flip to "aborted" and emit the phase transition. Implemented here as
-   * trivial plumbing so the seam behaves even before start() is wired.
+   * A phase has begun (the core decided the transition). Open/prime the
+   * connection(s) it needs and begin measuring:
+   *   • warmup    → prime the following stage's connection(s) (`warmupFor`);
+   *                 for transfers, also the latency connection when loaded-
+   *                 latency is active (see the warmup contract in contract.ts).
+   *   • latency   → `WS {path}/ping` / WebTransport datagrams / `GET {path}/ping`
+   *                 (per config.transport.latency). RTT = now − sent; unacked /
+   *                 timed-out = lost. Push via host.ingestLatency(rtt, false, lost)
+   *                 at the config.pingConcurrency interval.
+   *   • download  → `GET {path}/download?bytes=N` × config.parallelStreams
+   *                 (or WebTransport per config.transport.transfer). Sum received
+   *                 bytes/sec; push host.ingestThroughput(bytesPerSec, bytesDelta)
+   *                 ~16Hz. Reuse pings under load → host.ingestLatency(..., true, …).
+   *                 Server streams INCOMPRESSIBLE random bytes.
+   *   • upload    → `POST {path}/upload` streamed body × parallelStreams; server
+   *                 discards (may echo a byte count); measure sent bytes/sec.
    */
-  abort(): void {
+  onPhaseEnter(phase: StagePhase | "warmup", warmupFor?: StagePhase): void {
+    void phase;
+    void warmupFor;
+    throw NOT_IMPL("onPhaseEnter");
+  }
+
+  /** A phase has ended (boundary, early finish, or run end). Close/cancel that
+   *  phase's connection(s); the core has already finalized its result. */
+  onPhaseExit(phase: StagePhase | "warmup"): void {
+    void phase;
+    throw NOT_IMPL("onPhaseExit");
+  }
+
+  /** The run finished normally. Close anything still open. */
+  onComplete(): void {
+    this.#closeAll();
+  }
+
+  /** The user aborted. Cancel in-flight fetches/streams and close sockets. The
+   *  core flips to "aborted" and emits the transition — do not emit here. */
+  onAbort(): void {
+    this.#closeAll();
+  }
+
+  /* ================= OPTIONAL SEAMS ================= */
+  /**
+   * OPTIONAL — list the endpoints this backend can target, for a future
+   * server-selection UI (TARGET: `GET {path}/servers`, §14.4). Remove the method
+   * to drop it from the surface; the core then reports an empty list.
+   */
+  async listServers(): Promise<ServerCandidate[]> {
+    throw NOT_IMPL("listServers");
+  }
+
+  /**
+   * OPTIONAL on the contract — a real transport has no synthetic knob to
+   * perturb, so this dev-only hook is a no-op. Remove it to drop it entirely.
+   */
+  injectAnomaly(_a: RunnerAnomaly): void {
+    /* no-op: real transport has no synthetic anomaly to inject */
+  }
+
+  /* ---------- internal ---------- */
+  /** Cancel in-flight I/O and release the AbortController. */
+  #closeAll(): void {
     if (this.#abort) {
       this.#abort.abort();
       this.#abort = null;
     }
-    if (this.#phase === "idle" || this.#phase === "complete" || this.#phase === "aborted") {
-      return;
-    }
-    const from = this.#phase;
-    this.#phase = "aborted";
-    this.#emit({ type: "phase", transition: { from, to: "aborted", t: 0 } });
-  }
-
-  /* ================= OPTIONAL: live anomaly (§13.6) ================= */
-  /**
-   * OPTIONAL on the contract — a minimal real engine need not implement it.
-   * A real engine has no synthetic knob to perturb, so this dev-only hook is
-   * a no-op here. Remove the method entirely to drop it from the surface.
-   */
-  injectAnomaly(_a: RunnerAnomaly): void {
-    /* no-op: real transport has no synthetic anomaly to inject */
   }
 }

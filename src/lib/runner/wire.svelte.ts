@@ -68,10 +68,8 @@ export function returnToStart() {
  */
 export function applyStageChange() {
   if (!store.isRunning) return;
-  const r = getRunner() as NetworkRunner & {
-    reconfigureStages?: (s: typeof store.config.stages) => void;
-  };
-  r.reconfigureStages?.($state.snapshot(store.config.stages));
+  // `reconfigureStages` is now a first-class (optional) contract method.
+  getRunner().reconfigureStages?.($state.snapshot(store.config.stages));
 }
 
 /**
