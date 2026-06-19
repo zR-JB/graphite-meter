@@ -14,6 +14,18 @@
   let engine: ChartEngine;
   let hover = $state<HoverInfo | null>(null);
 
+  // Wake the (self-parking) chart loop whenever the data it draws changes.
+  // During a run the loop sustains itself; this re-arms it on engage, on a new
+  // run (runSeq), and on the latency-enabled toggle while parked.
+  $effect(() => {
+    void store.phase;
+    void store.runSeq;
+    void store.throughput.length;
+    void store.latency.length;
+    void store.latencyEnabled;
+    engine?.wake();
+  });
+
   function onMove(e: MouseEvent) {
     if (!engine) return;
     engine.setHover(e.offsetX);
@@ -41,6 +53,7 @@
     engine.attach(canvasEl!);
     engine.start();
 
+    // invalidateTheme repaints synchronously, so theme/resize need no wake().
     const mo = new MutationObserver(() => engine.invalidateTheme());
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     const ro = new ResizeObserver(() => engine.invalidateTheme());

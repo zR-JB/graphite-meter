@@ -70,6 +70,8 @@ export class GaugeEngine implements CanvasEngine {
   #label = "#726d83";
 
   #lastPhase: Phase | null = null;
+  #lastNow = 0; // timestamp of the last drawn frame (reused for resize repaints)
+  #target = 0; // last computed sweep target (drives self-park decision)
   #ema = 0; // smoothed normalized sweep 0–1
   #fill = 0; // slower follower (reduced-motion)
   #rttPeak = 0; // running rtt peak for the latency-phase sweep
@@ -79,6 +81,21 @@ export class GaugeEngine implements CanvasEngine {
   #lastPing = 0;
   #ripples: number[] = []; // start timestamps of active ping ripples
   #reduced = false;
+
+  // ── Cached layers (pure performance; pixel-identical to drawing inline) ──
+  // Static base = track + ticks + scale labels. These use only theme-fixed
+  // colors + geometry, so they're rendered once to an offscreen canvas and
+  // blitted each frame; rebuilt only when the signature below changes.
+  #base: HTMLCanvasElement | null = null;
+  #baseCtx: CanvasRenderingContext2D | null = null;
+  #baseSig = "";
+  // The glowing head is the one phase-tinted, blur-heavy sprite. Pre-rendered
+  // (circle + shadowBlur) per (accent, size) so we never run shadowBlur on it
+  // per frame — only blit. The sweep arc itself stays drawn live.
+  #head: HTMLCanvasElement | null = null;
+  #headCtx: CanvasRenderingContext2D | null = null;
+  #headSig = "";
+  #headHalf = 0; // sprite half-size in css px (placement offset)
 
   constructor(get: () => GaugeState) {
     this.#get = get;
@@ -92,7 +109,12 @@ export class GaugeEngine implements CanvasEngine {
   }
 
   start(): void {
-    if (this.#running) return;
+    this.wake();
+  }
+
+  /** Re-arm the loop if it has parked. No-op while already running. */
+  wake(): void {
+    if (this.#running || !this.#ctx) return;
     this.#running = true;
     this.#raf = requestAnimationFrame(this.#loop);
   }
@@ -108,6 +130,10 @@ export class GaugeEngine implements CanvasEngine {
     this.#canvas = null;
     this.#ctx = null;
     this.#ripples = [];
+    this.#base = null;
+    this.#baseCtx = null;
+    this.#head = null;
+    this.#headCtx = null;
   }
 
   /** Re-resolve DPR + theme colors; resize the backing store crisply. */
@@ -121,6 +147,11 @@ export class GaugeEngine implements CanvasEngine {
     this.#canvas.height = Math.round(this.#h * this.#dpr);
     this.#ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     this.#resolveColors(this.#lastPhase ?? "idle");
+    // Resizing the backing store wipes it to transparent. Repaint NOW (the
+    // ResizeObserver fires between layout and paint) so the browser never
+    // shows a blank canvas mid-resize — otherwise the dial flickers/vanishes
+    // while dragging because the redraw waited for the next frame.
+    this.#draw(this.#lastNow);
   }
 
   #cssVar(name: string, fallback: string): string {
@@ -137,10 +168,29 @@ export class GaugeEngine implements CanvasEngine {
 
   #loop = (now: number): void => {
     if (!this.#running) return;
+    this.#lastNow = now;
     this.#step(now);
     this.#draw(now);
-    this.#raf = requestAnimationFrame(this.#loop);
+    if (this.#animating()) {
+      this.#raf = requestAnimationFrame(this.#loop);
+    } else {
+      // Nothing left to move — park the loop so the GPU can idle. A wake()
+      // (state change, theme/resize, hover) re-arms it.
+      this.#running = false;
+      this.#raf = 0;
+    }
   };
+
+  /** True while the dial still has motion in flight. Live phases always
+   *  animate (smooth sweep + ripples); idle/complete/error animate only until
+   *  the followers settle on their target, then the loop parks. */
+  #animating(): boolean {
+    const p = this.#lastPhase;
+    if (p === "warmup" || p === "latency" || p === "download" || p === "upload") return true;
+    if (!this.#reduced && this.#ripples.length) return true;
+    const sweep = this.#reduced ? this.#fill : this.#ema;
+    return Math.abs(this.#target - sweep) > 0.0005;
+  }
 
   #step(now: number): void {
     const s = this.#get();
@@ -176,6 +226,7 @@ export class GaugeEngine implements CanvasEngine {
       target = 0.05; // aborted / error
     }
 
+    this.#target = target;
     this.#ema += EMA_ALPHA * (target - this.#ema);
     this.#fill += FILL_ALPHA * (target - this.#fill);
 
@@ -205,7 +256,8 @@ export class GaugeEngine implements CanvasEngine {
     ctx.lineCap = "round";
 
     // Latency ripples: concentric rings expanding from the hub (skip in
-    // reduced-motion — purely decorative).
+    // reduced-motion — purely decorative). Drawn first so the track groove
+    // overdraws them, exactly as before.
     if (!this.#reduced) {
       for (const t of this.#ripples) {
         const age = (now - t) / RIPPLE_MS; // 0–1
@@ -219,56 +271,17 @@ export class GaugeEngine implements CanvasEngine {
       ctx.globalAlpha = 1;
     }
 
-    // Background track (the full 270° groove).
-    ctx.strokeStyle = this.#track;
-    ctx.lineWidth = arcW;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, ARC_START, ARC_START + ARC_SWEEP);
-    ctx.stroke();
-
-    // Tick marks just outside the groove.
-    ctx.strokeStyle = this.#tick;
-    ctx.lineWidth = 1.5;
-    const tIn = r + arcW * 0.5 + 3;
-    const tOut = tIn + r * 0.08;
-    for (let i = 0; i < MAJOR_TICKS; i++) {
-      const a = ARC_START + (i / (MAJOR_TICKS - 1)) * ARC_SWEEP;
-      const ca = Math.cos(a);
-      const sa = Math.sin(a);
-      ctx.globalAlpha = 0.7;
-      ctx.beginPath();
-      ctx.moveTo(cx + ca * tIn, cy + sa * tIn);
-      ctx.lineTo(cx + ca * tOut, cy + sa * tOut);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-
-    // Quarter scale labels (0 … full scale) in the active unit. Deliberately
-    // recessive — small, soft, low-alpha — so they inform without competing
-    // with the hero number or the sweep. Aligned radially so they read cleanly
-    // around the dial. Skipped during phases where the scale has no meaning.
-    const scaleMeaningful =
-      this.#lastPhase === "download" ||
-      this.#lastPhase === "upload" ||
-      this.#lastPhase === "complete" ||
-      this.#lastPhase === "idle";
-    if (scaleMeaningful && this.#ticks.length >= 2) {
-      ctx.font = '600 8.5px "IBM Plex Mono", monospace';
-      ctx.fillStyle = this.#label;
-      ctx.globalAlpha = 0.5;
-      const lr = tOut + 7;
-      for (let j = 0; j < this.#ticks.length; j++) {
-        const a = ARC_START + (j / (this.#ticks.length - 1)) * ARC_SWEEP;
-        const ca = Math.cos(a);
-        const sa = Math.sin(a);
-        ctx.textAlign = ca < -0.25 ? "right" : ca > 0.25 ? "left" : "center";
-        ctx.textBaseline = sa < -0.25 ? "bottom" : sa > 0.25 ? "top" : "middle";
-        ctx.fillText(this.#ticks[j], cx + ca * lr, cy + sa * lr);
-      }
-      ctx.globalAlpha = 1;
+    // Static base (track + ticks + scale labels) — pre-rendered, blitted 1:1.
+    this.#ensureBase(cx, cy, r, arcW);
+    if (this.#base) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // blit device-px sprite without the dpr scale
+      ctx.drawImage(this.#base, 0, 0);
+      ctx.restore();
     }
 
-    // Value arc — the live sweep, phase-tinted, with a soft glow.
+    // Value arc — the live sweep, phase-tinted, with a soft glow. Stays live
+    // (its length changes every frame, so it can't be a static sprite).
     if (sweep > 0.002) {
       if (!this.#reduced) {
         ctx.shadowColor = this.#accent;
@@ -281,18 +294,123 @@ export class GaugeEngine implements CanvasEngine {
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Glowing head at the leading edge of the sweep.
+      // Glowing head at the leading edge — blitted from the cached sprite so
+      // its shadowBlur is computed once per (accent, size), never per frame.
       const hx = cx + Math.cos(valueEnd) * r;
       const hy = cy + Math.sin(valueEnd) * r;
-      ctx.fillStyle = this.#accent;
-      if (!this.#reduced) {
-        ctx.shadowColor = this.#accent;
-        ctx.shadowBlur = 16;
+      this.#ensureHead(arcW);
+      if (this.#head) {
+        const off = this.#headHalf * this.#dpr;
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(this.#head, hx * this.#dpr - off, hy * this.#dpr - off);
+        ctx.restore();
       }
-      ctx.beginPath();
-      ctx.arc(hx, hy, arcW * 0.62, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
     }
+  }
+
+  /** (Re)render the static base layer (track + ticks + scale labels) when its
+   *  signature changes. Keyed by geometry + the theme-fixed colors + the label
+   *  text/visibility — NOT the phase accent, which never touches these. */
+  #ensureBase(cx: number, cy: number, r: number, arcW: number): void {
+    const scaleMeaningful =
+      this.#lastPhase === "download" ||
+      this.#lastPhase === "upload" ||
+      this.#lastPhase === "complete" ||
+      this.#lastPhase === "idle";
+    const showLabels = scaleMeaningful && this.#ticks.length >= 2;
+    const sig =
+      `${this.#w}x${this.#h}@${this.#dpr}|${this.#track}|${this.#tick}|${this.#label}` +
+      `|${showLabels ? this.#ticks.join("~") : ""}`;
+    if (sig === this.#baseSig && this.#base) return;
+    this.#baseSig = sig;
+
+    if (!this.#base) {
+      this.#base = document.createElement("canvas");
+      this.#baseCtx = this.#base.getContext("2d");
+    }
+    const c = this.#base;
+    const bx = this.#baseCtx;
+    if (!bx) return;
+    c.width = Math.round(this.#w * this.#dpr);
+    c.height = Math.round(this.#h * this.#dpr);
+    bx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
+    bx.clearRect(0, 0, this.#w, this.#h);
+    bx.lineCap = "round";
+
+    // Background track (the full 270° groove).
+    bx.strokeStyle = this.#track;
+    bx.lineWidth = arcW;
+    bx.beginPath();
+    bx.arc(cx, cy, r, ARC_START, ARC_START + ARC_SWEEP);
+    bx.stroke();
+
+    // Tick marks just outside the groove.
+    bx.strokeStyle = this.#tick;
+    bx.lineWidth = 1.5;
+    const tIn = r + arcW * 0.5 + 3;
+    const tOut = tIn + r * 0.08;
+    for (let i = 0; i < MAJOR_TICKS; i++) {
+      const a = ARC_START + (i / (MAJOR_TICKS - 1)) * ARC_SWEEP;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      bx.globalAlpha = 0.7;
+      bx.beginPath();
+      bx.moveTo(cx + ca * tIn, cy + sa * tIn);
+      bx.lineTo(cx + ca * tOut, cy + sa * tOut);
+      bx.stroke();
+    }
+    bx.globalAlpha = 1;
+
+    // Quarter scale labels (0 … full scale) — recessive, radially aligned.
+    // Skipped during phases where the scale has no meaning.
+    if (showLabels) {
+      bx.font = '600 8.5px "IBM Plex Mono", monospace';
+      bx.fillStyle = this.#label;
+      bx.globalAlpha = 0.5;
+      const lr = tOut + 7;
+      for (let j = 0; j < this.#ticks.length; j++) {
+        const a = ARC_START + (j / (this.#ticks.length - 1)) * ARC_SWEEP;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        bx.textAlign = ca < -0.25 ? "right" : ca > 0.25 ? "left" : "center";
+        bx.textBaseline = sa < -0.25 ? "bottom" : sa > 0.25 ? "top" : "middle";
+        bx.fillText(this.#ticks[j], cx + ca * lr, cy + sa * lr);
+      }
+      bx.globalAlpha = 1;
+    }
+  }
+
+  /** (Re)render the glowing-head sprite when accent/size/dpr change. The sprite
+   *  is a filled circle + shadowBlur, centered, with a blur-width margin. */
+  #ensureHead(arcW: number): void {
+    const headR = arcW * 0.62;
+    const blur = this.#reduced ? 0 : 16;
+    const half = headR + blur + 2; // css px; includes blur bleed margin
+    this.#headHalf = half;
+    const sig = `${this.#accent}|${arcW}|${this.#reduced ? 1 : 0}|${this.#dpr}`;
+    if (sig === this.#headSig && this.#head) return;
+    this.#headSig = sig;
+
+    if (!this.#head) {
+      this.#head = document.createElement("canvas");
+      this.#headCtx = this.#head.getContext("2d");
+    }
+    const c = this.#head;
+    const hx = this.#headCtx;
+    if (!hx) return;
+    const side = Math.ceil(2 * half * this.#dpr);
+    c.width = side;
+    c.height = side;
+    hx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
+    hx.clearRect(0, 0, side / this.#dpr, side / this.#dpr);
+    hx.fillStyle = this.#accent;
+    if (blur) {
+      hx.shadowColor = this.#accent;
+      hx.shadowBlur = blur;
+    }
+    hx.beginPath();
+    hx.arc(half, half, headR, 0, Math.PI * 2);
+    hx.fill();
   }
 }

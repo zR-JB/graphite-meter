@@ -73,6 +73,19 @@
     }
   });
 
+  // Wake the (self-parking) gauge loop whenever the live state it draws from
+  // changes. During a run the loop sustains itself; this re-arms it on the
+  // idle→engage transition and any discrete change while parked.
+  $effect(() => {
+    // Track the fields the gauge pulls so a change re-runs this effect.
+    void store.phase;
+    void store.throughput.length;
+    void store.latency.length;
+    void store.liveRtt;
+    void store.displayScaleBytesPerSec;
+    engine?.wake();
+  });
+
   // Screen-reader mirror, throttled to 1Hz + phase changes (§7).
   let a11y = $state("");
 
@@ -91,6 +104,7 @@
     engine.attach(canvasEl!);
     engine.start();
 
+    // invalidateTheme repaints synchronously, so theme/resize need no wake().
     const mo = new MutationObserver(() => engine.invalidateTheme());
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 

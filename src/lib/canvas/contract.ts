@@ -10,6 +10,11 @@ export interface CanvasEngine {
   attach(canvas: HTMLCanvasElement): void;
   /** Starts the engine's internal rAF loop. */
   start(): void;
+  /** Re-arm the loop if it has self-parked. Idempotent while running.
+   *  Engines park themselves once there is nothing left to animate (idle,
+   *  settled) so the GPU goes quiet; callers wake() them on any change that
+   *  warrants a redraw (state change, theme/resize, hover). */
+  wake(): void;
   stop(): void;
   /** Re-resolve theme CSS vars + DPR on resize/theme change. */
   invalidateTheme(): void;

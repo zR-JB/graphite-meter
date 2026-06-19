@@ -110,6 +110,14 @@ export class ChartEngine implements CanvasEngine {
 
   #vp: Viewport = { tMin: 0, tMax: 6000, bytesPerSecMax: 125_000, rttMin: 0, rttMax: 50 };
   #vpInit = false;
+  #vpSettled = false; // true once the camera lerp has converged on its target
+
+  // Cached area-fill gradients. They depend only on the phase color + plot
+  // height, so they're rebuilt only when the height changes or the theme is
+  // re-resolved (which resets #gradH) — never per frame.
+  #gradDownload: CanvasGradient | null = null;
+  #gradUpload: CanvasGradient | null = null;
+  #gradH = -1;
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
@@ -145,7 +153,12 @@ export class ChartEngine implements CanvasEngine {
   }
 
   start(): void {
-    if (this.#running) return;
+    this.wake();
+  }
+
+  /** Re-arm the loop if it has parked. No-op while already running. */
+  wake(): void {
+    if (this.#running || !this.#ctx) return;
     this.#running = true;
     this.#raf = requestAnimationFrame(this.#loop);
   }
@@ -173,10 +186,14 @@ export class ChartEngine implements CanvasEngine {
     this.#canvas.height = Math.round(this.#h * this.#dpr);
     this.#ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     this.#resolveColors();
+    // Resizing the backing store wipes it — repaint NOW (the ResizeObserver
+    // fires between layout and paint) so the chart never blanks mid-resize.
+    this.#draw();
   }
 
   setHover(x: number | null): void {
     this.#hoverX = x;
+    this.wake(); // the loop may be parked (idle/result) — redraw the guideline
   }
 
   /** Hover readout under the cursor (for the DOM chip). Snaps to the time
@@ -244,14 +261,49 @@ export class ChartEngine implements CanvasEngine {
       panel: g("--surface-1", "#1b211e"),
       brand: g("--brand", "#d7a84f"),
     };
+    this.#gradH = -1; // colors changed → rebuild cached gradients on next draw
+  }
+
+  /** Cached vertical area-fill gradient for a transfer phase. Rebuilt only when
+   *  the plot height changes or the theme is re-resolved (#gradH reset). */
+  #areaGrad(ctx: CanvasRenderingContext2D, phase: "download" | "upload"): CanvasGradient {
+    if (this.#gradH !== this.#h) {
+      const bot = this.#h - PAD_B;
+      const make = (rgb: { r: number; g: number; b: number }): CanvasGradient => {
+        const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
+        grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
+        grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+        return grad;
+      };
+      this.#gradDownload = make(this.#c.downloadRgb);
+      this.#gradUpload = make(this.#c.uploadRgb);
+      this.#gradH = this.#h;
+    }
+    return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
 
   #loop = (): void => {
     if (!this.#running) return;
     this.#update();
     this.#draw();
-    this.#raf = requestAnimationFrame(this.#loop);
+    if (this.#animating()) {
+      this.#raf = requestAnimationFrame(this.#loop);
+    } else {
+      // Camera settled and no live phase feeding the chart — park so the GPU
+      // can idle. setHover()/wake() re-arm it for hover scrub or a new run.
+      this.#running = false;
+      this.#raf = 0;
+    }
   };
+
+  /** True while the chart still has motion in flight. Live phases scroll the
+   *  viewport continuously; idle/result phases animate only until the camera
+   *  lerp settles, then the loop parks. */
+  #animating(): boolean {
+    const p = this.#lastPhase;
+    if (p === "warmup" || p === "latency" || p === "download" || p === "upload") return true;
+    return !this.#vpSettled;
+  }
 
   #latestT(d: ChartData): number {
     const a = d.throughput.length ? d.throughput[d.throughput.length - 1].t : 0;
@@ -327,12 +379,28 @@ export class ChartEngine implements CanvasEngine {
     if (!this.#vpInit) {
       this.#vp = { ...target };
       this.#vpInit = true;
+      this.#vpSettled = true;
     } else {
-      this.#vp.tMin += (target.tMin - this.#vp.tMin) * FOLLOW;
-      this.#vp.tMax += (target.tMax - this.#vp.tMax) * FOLLOW;
-      this.#vp.bytesPerSecMax += (target.bytesPerSecMax - this.#vp.bytesPerSecMax) * FOLLOW;
-      this.#vp.rttMin += (target.rttMin - this.#vp.rttMin) * FOLLOW;
-      this.#vp.rttMax += (target.rttMax - this.#vp.rttMax) * FOLLOW;
+      // Lerp each axis toward target; snap (and flag unsettled) per-axis so the
+      // loop knows when the camera has converged and can park. Epsilons are in
+      // each axis's own units — sub-pixel for time, ~0.05% for the rate scale.
+      let settled = true;
+      const ease = (cur: number, tgt: number, eps: number): number => {
+        const next = cur + (tgt - cur) * FOLLOW;
+        if (Math.abs(tgt - next) <= eps) return tgt;
+        settled = false;
+        return next;
+      };
+      this.#vp.tMin = ease(this.#vp.tMin, target.tMin, 0.5);
+      this.#vp.tMax = ease(this.#vp.tMax, target.tMax, 0.5);
+      this.#vp.bytesPerSecMax = ease(
+        this.#vp.bytesPerSecMax,
+        target.bytesPerSecMax,
+        Math.max(1, target.bytesPerSecMax * 0.0005),
+      );
+      this.#vp.rttMin = ease(this.#vp.rttMin, target.rttMin, 0.05);
+      this.#vp.rttMax = ease(this.#vp.rttMax, target.rttMax, 0.05);
+      this.#vpSettled = settled;
     }
   }
 
@@ -569,15 +637,11 @@ export class ChartEngine implements CanvasEngine {
       const t1 = span.t1 === Infinity ? this.#vp.tMax + 1 : span.t1;
       const seg = all.filter((s) => s.t >= span.t0 && s.t <= t1);
       if (seg.length < 2) continue;
-      const rgb = span.phase === "download" ? this.#c.downloadRgb : this.#c.uploadRgb;
       const stroke = span.phase === "download" ? this.#c.download : this.#c.upload;
       const pts = seg.map((s) => ({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) }));
 
-      // Filled area under a smoothed top edge, soft vertical gradient.
-      const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
-      grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
-      grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
-      ctx.fillStyle = grad;
+      // Filled area under a smoothed top edge, soft vertical gradient (cached).
+      ctx.fillStyle = this.#areaGrad(ctx, span.phase);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, bot);
       ctx.lineTo(pts[0].x, pts[0].y);
