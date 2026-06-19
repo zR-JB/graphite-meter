@@ -19,9 +19,10 @@ check:
 dev-client:
     cd client && bun run dev
 
-# Regenerate api/gen/preflight.ts from the JSON Schema (source of truth)
+# Regenerate the client's preflight types from the JSON Schema (source of truth).
+# Output lives inside the client tree so Vite's dev-server fs.allow is happy.
 gen-types:
-    cd client && bunx json-schema-to-typescript ../api/preflight.schema.json -o ../api/gen/preflight.ts
+    cd client && bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts
 
 # --- Server (Go) ---
 

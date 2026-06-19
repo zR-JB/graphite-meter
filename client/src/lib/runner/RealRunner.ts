@@ -69,6 +69,16 @@ import type {
   PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
+import type { Preflight } from "../api/preflight";
+
+/** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
+ *  same-origin (relative requests) — the Stage-1 case where the Go server serves
+ *  both the app and the API. A concrete host builds an absolute origin. */
+function resolveBase(endpoint?: RunnerConfig["endpoint"]): string {
+  if (!endpoint || endpoint.host === "auto" || endpoint.host === "") return "";
+  const scheme = endpoint.port === 443 ? "https" : "http";
+  return `${scheme}://${endpoint.host}:${endpoint.port}`;
+}
 
 /** Construction options for a real engine: the endpoint to target plus anything
  *  preflight hands back (e.g. a session token). All optional so the class is
@@ -92,6 +102,10 @@ export class RealBackend implements RunnerBackend {
   #abort: AbortController | null = null;
   /** The transport established for the active phase, for stall/fail reporting. */
   #activeTransport: TransportKind | null = null;
+  /** Server capabilities from the last successful probe (advertised origins +
+   *  endpoint paths + which transports are available). Stashed here so later
+   *  stages negotiate transports against what the server actually offers. */
+  #capabilities: Preflight["capabilities"] | null = null;
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -119,10 +133,47 @@ export class RealBackend implements RunnerBackend {
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
   async probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
-    void this.#resolveEndpoint(endpoint);
-    void this.#opts.authToken;
+    const base = resolveBase(this.#resolveEndpoint(endpoint));
+    let res: Response;
+    try {
+      res = await fetch(`${base}/preflight`, {
+        method: "GET",
+        headers: this.#opts.authToken
+          ? { authorization: `Bearer ${this.#opts.authToken}` }
+          : undefined,
+      });
+    } catch (cause) {
+      // Network-level failure (server down, DNS, CORS). wire.ts maps the
+      // rejection to a `preflight-failed` error.
+      throw new Error(`preflight request failed: ${String(cause)}`, { cause });
+    }
+    if (!res.ok) {
+      throw new Error(`preflight returned HTTP ${res.status}`);
+    }
+    const pf = (await res.json()) as Preflight;
+    this.#capabilities = pf.capabilities;
+    // #host is captured in attach() for later-stage sample pushing (pre-test
+    // pings land here once a ping endpoint exists, Stage 4); referenced now so
+    // the field isn't flagged write-only while the I/O methods are still stubs.
     void this.#host;
-    throw NOT_IMPL("probe");
+    return {
+      clientIp: pf.clientIp,
+      server: {
+        name: pf.server.name,
+        host: pf.server.host,
+        port: pf.server.port,
+        location: pf.server.location,
+      },
+      preTestPingMs: pf.preTestPingMs,
+      engineVersion: pf.engineVersion,
+      protocolNegotiated: pf.protocolNegotiated,
+    };
+  }
+
+  /** The server capabilities captured by the last successful probe (or null
+   *  before probing). Consumed by later-stage transport negotiation. */
+  get capabilities(): Preflight["capabilities"] | null {
+    return this.#capabilities;
   }
 
   /* ================= LIFECYCLE (core → backend) ================= */

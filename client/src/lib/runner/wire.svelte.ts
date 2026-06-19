@@ -11,18 +11,53 @@
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
 import { DummyBackend } from "./dummy";
+import { RealBackend } from "./RealRunner";
 import { store } from "../state/store.svelte";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
 
+/** Which sample source the app is wired to. `dummy` synthesizes samples (the
+ *  default, so the app works with no server); `real` talks to the live Go
+ *  backend. The real engine is built out stage by stage — Stage 1 implements
+ *  only `probe()`, so a `real` run currently lights up the infra panel but
+ *  cannot Engage yet. */
+type EngineKind = "dummy" | "real";
+
+const ENGINE_STORAGE_KEY = "gm.engine";
+
+/** Resolve the engine: a `?engine=real|dummy` URL param wins (and is persisted
+ *  for subsequent reloads), else the last persisted choice, else "dummy". */
+function resolveEngine(): EngineKind {
+  if (typeof window !== "undefined") {
+    const param = new URLSearchParams(window.location.search).get("engine");
+    if (param === "real" || param === "dummy") {
+      try {
+        window.localStorage.setItem(ENGINE_STORAGE_KEY, param);
+      } catch {
+        /* private mode / storage disabled — fall through to the param value */
+      }
+      return param;
+    }
+    try {
+      const saved = window.localStorage.getItem(ENGINE_STORAGE_KEY);
+      if (saved === "real" || saved === "dummy") return saved;
+    } catch {
+      /* storage unavailable — use the default */
+    }
+  }
+  return "dummy";
+}
+
 export function getRunner(): NetworkRunner {
-  // To go live against a real speedtest backend, swap the backend on this ONE
-  // line — the core, UI, and store are all engine-agnostic (§14.4 · see
-  // docs/REAL_RUNNER.md):
-  //   import { RealBackend } from "./RealRunner";
-  //   if (!runner) runner = new RunnerCore(new RealBackend({ endpoint: store.config.endpoint }));
-  if (!runner) runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
+  // The single integration seam. The core/UI/store are engine-agnostic; only
+  // the backend (sample source) is selected here. See docs/REAL_RUNNER.md.
+  if (!runner) {
+    runner =
+      resolveEngine() === "real"
+        ? new RunnerCore(new RealBackend({ endpoint: store.config.endpoint }))
+        : new RunnerCore(new DummyBackend({ profile: "fiber" }));
+  }
   return runner;
 }
 
