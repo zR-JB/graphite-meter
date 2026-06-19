@@ -121,8 +121,11 @@ export class RealBackend implements RunnerBackend {
    *  stages negotiate transports against what the server actually offers. */
   #capabilities: Preflight["capabilities"] | null = null;
 
-  /* ---- download stage state (Stage 2) ---- */
-  /** One read-and-count worker per parallel stream, indexed by stream number. */
+  /* ---- transfer stage state (Stage 2 download, Stage 3 upload) ---- */
+  /** The active transfer direction for the current stage's worker pool. */
+  #dir: FlowDirection = "down";
+  /** One worker per parallel stream, indexed by stream number. Download workers
+   *  read-and-count; upload workers generate-and-stream. Same message protocol. */
   #workers: (Worker | null)[] = [];
   /** The fetch URL each stream worker (re)starts against, by index. */
   #streamUrls: string[] = [];
@@ -360,31 +363,48 @@ export class RealBackend implements RunnerBackend {
    *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
    *  stay open for #measureTransfer to start measuring on the SAME connection. */
   #primeTransfer(kind: TransportKind, dir: FlowDirection): void {
-    if (dir !== "down") throw NOT_IMPL(`primeTransfer(${dir})`); // upload = Stage 3
     if (kind !== "xhr-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
+
+    // A stage that names both lanes (bidirectional) would call this twice; the
+    // single pool can't serve two directions at once — that's Stage 6.
+    if (this.#workers.length) throw NOT_IMPL("bidirectional transfer");
 
     const cfg = this.#host!.config!;
     const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
-    const path = this.#capabilities?.endpoints.download ?? "/download";
     const streams = Math.max(1, cfg.parallelStreams);
+    this.#dir = dir;
+
+    // Download streams the body down (?bytes=N to size it); upload streams a
+    // generated body up (no size — the worker generates until the stage stops).
+    const url = (i: number): string => {
+      const cb = `${this.#cbSeed}-${i}`;
+      if (dir === "down") {
+        const path = this.#capabilities?.endpoints.download ?? "/download";
+        return `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
+      }
+      const path = this.#capabilities?.endpoints.upload ?? "/upload";
+      return `${base}${path}?cb=${cb}`;
+    };
 
     this.#workers = [];
     this.#streamUrls = [];
     for (let i = 0; i < streams; i++) {
-      const url = `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${this.#cbSeed}-${i}`;
-      this.#streamUrls[i] = url;
+      this.#streamUrls[i] = url(i);
       this.#spawnWorker(i);
     }
-    // Workers start fetching + counting now (warming TCP cwnd). Their progress
-    // accrues into #pendingBytes during warmup but is NOT pushed — #measureTransfer
-    // resets the window and starts the aggregation timer.
+    // Workers start now (warming TCP cwnd). Their progress accrues into
+    // #pendingBytes during warmup but is NOT pushed — #measureTransfer resets the
+    // window and starts the aggregation timer.
   }
 
-  /** Open (or re-open) the worker for stream `i` against its stored URL. */
+  /** Open (or re-open) the worker for stream `i` against its stored URL. The
+   *  worker script is chosen by the active direction; both speak the same
+   *  start/stop ⇄ progress/error protocol. */
   #spawnWorker(i: number): void {
-    const w = new Worker(new URL("./workers/download-worker.ts", import.meta.url), {
-      type: "module",
-    });
+    const w =
+      this.#dir === "down"
+        ? new Worker(new URL("./workers/download-worker.ts", import.meta.url), { type: "module" })
+        : new Worker(new URL("./workers/upload-worker.ts", import.meta.url), { type: "module" });
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(e.data, i);
     w.onerror = (e: ErrorEvent) => this.#onWorkerError(i, e.message || "worker error");
     w.postMessage({ type: "start", url: this.#streamUrls[i] });
@@ -405,7 +425,7 @@ export class RealBackend implements RunnerBackend {
    *  across streams and push host.ingestThroughput(dir, bytesPerSec, bytes) at
    *  ~16Hz. */
   #measureTransfer(dir: FlowDirection): void {
-    if (dir !== "down") throw NOT_IMPL(`measureTransfer(${dir})`); // upload = Stage 3
+    void dir; // direction was fixed in #primeTransfer (#dir); the pool is warm.
     // Reuse the SAME workers primed during warmup — never re-spawn (that throws
     // away the warmed congestion window). Just open the measurement window:
     // discard whatever accrued during warmup and start aggregating.
@@ -416,9 +436,9 @@ export class RealBackend implements RunnerBackend {
   }
 
   /** Aggregation tick: sum the byte deltas all workers reported since the last
-   *  tick into one real `down` sample. Pushes nothing on an empty window — dead
-   *  air is never a synthesized sample (principle 1); the core's stall watchdog
-   *  covers a genuine gap. */
+   *  tick into one real sample tagged with the active direction. Pushes nothing
+   *  on an empty window — dead air is never a synthesized sample (principle 1);
+   *  the core's stall watchdog covers a genuine gap. */
   #aggregate(): void {
     const now = performance.now();
     const delta = this.#pendingBytes;
@@ -426,7 +446,7 @@ export class RealBackend implements RunnerBackend {
     const elapsedSec = (now - this.#lastAggAt) / 1000;
     this.#lastAggAt = now;
     if (delta > 0 && elapsedSec > 0) {
-      this.#host!.ingestThroughput("down", delta / elapsedSec, delta);
+      this.#host!.ingestThroughput(this.#dir, delta / elapsedSec, delta);
     }
   }
 
@@ -448,14 +468,14 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Handle a download lane failure. Recoverable (the common case: a dropped
-   *  connection) → stall once, then re-open the lane so a real sample resumes
-   *  it. Only call fail() when the drop is genuinely unrecoverable. */
+  /** Handle a transfer lane failure (download or upload). Recoverable (the common
+   *  case: a dropped connection) → stall once, then re-open the lane so a real
+   *  sample resumes it. Only call fail() when the drop is genuinely unrecoverable. */
   #onWorkerError(i: number, detail: string, recoverable = true): void {
     // A worker that errored after onStageEnd (teardown abort) is noise — ignore.
     if (!this.#workers[i]) return;
     if (!recoverable) {
-      this.#host!.fail("connection-lost", `download stream ${i} failed: ${detail}`, detail);
+      this.#host!.fail("connection-lost", `${this.#dir} stream ${i} failed: ${detail}`, detail);
       return;
     }
     if (this.#measuring && !this.#stalled) {
