@@ -190,6 +190,11 @@ export class DummyRunner implements NetworkRunner {
   #dlFinalScore = 0;
   #ulFinalScore = 0;
   #latFinalScore = 0;
+  // Per-stage results, computed + emitted once the moment each measured phase
+  // ends (independent of the others) and reused to build the final RunResult.
+  #dlResult: ThroughputResult | null = null;
+  #ulResult: ThroughputResult | null = null;
+  #latResult: LatencyResult | null = null;
 
   constructor(opts: DummyOptions = {}) {
     this.#opts = { profile: opts.profile ?? "fiber", ...opts };
@@ -304,6 +309,9 @@ export class DummyRunner implements NetworkRunner {
     this.#dlFinalScore = 0;
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
+    this.#dlResult = null;
+    this.#ulResult = null;
+    this.#latResult = null;
     this.#virtualElapsed = 0;
     this.#lastRealNow = 0;
     this.#glideArmedForSeg = -1;
@@ -438,6 +446,9 @@ export class DummyRunner implements NetworkRunner {
 
     // Phase transition?
     if (seg.phase !== this.#lastEmittedPhase) {
+      // The phase we're leaving has just finished — emit its final per-stage
+      // result before announcing the transition, so its card resolves now.
+      this.#finalizeStage(this.#lastEmittedPhase);
       const transition: PhaseTransition = {
         from: this.#lastEmittedPhase,
         to: seg.phase,
@@ -602,6 +613,24 @@ export class DummyRunner implements NetworkRunner {
     this.#phase = p;
   }
 
+  /** Compute, cache, and emit a measured phase's final result exactly once —
+   *  the moment it ends. Each stage is independent: it reads only its own
+   *  samples + stable-run index + final score. No-op for warmup/non-run stages
+   *  and for an already-finalized stage. */
+  #finalizeStage(phase: Phase) {
+    const cfg = this.#cfg!;
+    if (phase === "download" && cfg.stages.download && !this.#dlResult) {
+      this.#dlResult = this.#throughputResult(this.#dl, this.#dlStableStart, this.#dlFinalScore, cfg);
+      this.#emit({ type: "stageResult", stage: "download", result: this.#dlResult });
+    } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
+      this.#ulResult = this.#throughputResult(this.#ul, this.#ulStableStart, this.#ulFinalScore, cfg);
+      this.#emit({ type: "stageResult", stage: "upload", result: this.#ulResult });
+    } else if (phase === "latency" && cfg.stages.latency && !this.#latResult) {
+      this.#latResult = this.#latencyResult(this.#latStableStart, this.#latFinalScore, cfg);
+      this.#emit({ type: "stageResult", stage: "latency", result: this.#latResult });
+    }
+  }
+
   /* ---------- Throughput sample synthesis ---------- */
   #emitThroughput(seg: Segment, elapsed: number) {
     const tp = elapsed - seg.start; // ms into this phase
@@ -709,17 +738,21 @@ export class DummyRunner implements NetworkRunner {
     }
 
     const cfg = this.#cfg!;
+    // The final measured phase ends here — finalize it like any other (the
+    // earlier phases finalized at their transitions), then assemble RunResult
+    // from the cached per-stage results so the aggregate and the per-stage
+    // events never disagree.
+    this.#finalizeStage(this.#lastEmittedPhase);
     // Actual wall-clock length — shorter than the nominal #totalMs whenever an
     // adaptive glide accelerated one or more phases to an early finish (§13.4).
     const actualMs = Math.max(0, performance.now() - this.#t0);
     const result: RunResult = {
-      download: cfg.stages.download
-        ? this.#throughputResult(this.#dl, this.#dlStableStart, this.#dlFinalScore, cfg)
-        : null,
-      upload: cfg.stages.upload
-        ? this.#throughputResult(this.#ul, this.#ulStableStart, this.#ulFinalScore, cfg)
-        : null,
-      latency: this.#latencyResult(this.#latStableStart, this.#latFinalScore, cfg),
+      download: this.#dlResult,
+      upload: this.#ulResult,
+      // Latency is always present in the aggregate: when the latency STAGE ran
+      // it was finalized as a stage result; otherwise compute it here from any
+      // under-load pings (bufferbloat still needs it).
+      latency: this.#latResult ?? this.#latencyResult(this.#latStableStart, this.#latFinalScore, cfg),
       bufferbloat: this.#bufferbloatGrade(),
       startedAt: Date.now() - actualMs,
       durationMs: actualMs,

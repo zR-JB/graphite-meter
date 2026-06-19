@@ -15,6 +15,8 @@ import type {
   ThroughputSample,
   LatencySample,
   StabilitySnapshot,
+  ThroughputResult,
+  LatencyResult,
 } from "../runner/contract";
 import {
   estimateLiveCompensation,
@@ -143,6 +145,15 @@ class ConsoleStore {
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
   result = $state<RunResult | null>(null);
+  /* Per-stage final results, each landing the instant its phase ends (before
+   * the aggregate `result` on complete). The single source of truth for a
+   * finished stage's headline/method/band — cards read these so a stage's real
+   * result shows while later stages still run. Stages are fully independent. */
+  stageResults = $state<{
+    download: ThroughputResult | null;
+    upload: ThroughputResult | null;
+    latency: LatencyResult | null;
+  }>({ download: null, upload: null, latency: null });
   errorMsg = $state<string | null>(null);
   startEpoch = $state(0);
 
@@ -303,7 +314,7 @@ class ConsoleStore {
    */
   downloadCompensation = $derived<CompensationEstimate>(
     estimateResultCompensation(
-      this.result?.download ?? null,
+      this.stageResults.download,
       "download",
       this.config.compensation,
     ),
@@ -312,7 +323,7 @@ class ConsoleStore {
   /** RESULT estimate (upload) — same memoization profile as download. */
   uploadCompensation = $derived<CompensationEstimate>(
     estimateResultCompensation(
-      this.result?.upload ?? null,
+      this.stageResults.upload,
       "upload",
       this.config.compensation,
     ),
@@ -398,6 +409,10 @@ class ConsoleStore {
       case "stability":
         this.liveStability[e.snapshot.phase] = e.snapshot;
         break;
+      case "stageResult":
+        if (e.stage === "latency") this.stageResults.latency = e.result;
+        else this.stageResults[e.stage] = e.result;
+        break;
       case "throughput":
         this.#lastSampleT = e.sample.t;
         this.throughput.push(e.sample);
@@ -428,6 +443,7 @@ class ConsoleStore {
     this.phase = "idle";
     this.phaseFraction = 0;
     this.liveStability = { latency: null, download: null, upload: null };
+    this.stageResults = { download: null, upload: null, latency: null };
     this.result = null;
     this.errorMsg = null;
     this.startEpoch = 0;

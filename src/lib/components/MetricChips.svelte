@@ -56,10 +56,10 @@
         has: comp.measuredBytesPerSec > 0,
       };
     }
-    const res = store.result?.download ?? null;
+    const res = store.stageResults.download;
     const comp = store.downloadCompensation;
     return {
-      measuredBytesPerSec: res?.meanBytesPerSec ?? 0,
+      measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
       multiplier: comp.totalMultiplier,
       band: res?.band ?? st?.band ?? "low",
@@ -85,10 +85,10 @@
         has: comp.measuredBytesPerSec > 0,
       };
     }
-    const res = store.result?.upload ?? null;
+    const res = store.stageResults.upload;
     const comp = store.uploadCompensation;
     return {
-      measuredBytesPerSec: res?.meanBytesPerSec ?? 0,
+      measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
       multiplier: comp.totalMultiplier,
       band: res?.band ?? st?.band ?? "low",
@@ -110,14 +110,14 @@
         has: store.liveRtt > 0,
       };
     }
-    const lat = store.result?.latency ?? null;
-    const p50 = lat?.p50Ms ?? null;
+    const lat = store.stageResults.latency;
+    const reported = lat?.reportedMs ?? null;
     return {
-      ms: p50 ?? store.liveRtt,
+      ms: reported ?? store.liveRtt,
       band: lat?.band ?? st?.band ?? "low",
       score: lat?.stabilityScore ?? st?.score ?? 0,
       active: false,
-      has: p50 != null,
+      has: reported != null,
     };
   });
 
@@ -140,7 +140,9 @@
   let dlSnap = $state<number | null>(null);
   let ulSnap = $state<number | null>(null);
   let pingSnap = $state<number | null>(null);
-  let cancels: Array<() => void> = [];
+  let dlCancel: (() => void) | null = null;
+  let ulCancel: (() => void) | null = null;
+  let pingCancel: (() => void) | null = null;
 
   /* ---- Progressive reveal — "reveal & keep" ----
      A card appears when its stage runs and STAYS once finished; not-yet-run
@@ -166,40 +168,57 @@
     return countUp(from, to, TWEEN_MS, set);
   }
 
+  /* Per-stage count-up: each card tweens from its frozen live value to its
+     FINAL result the instant that stage's result lands (not waiting for the
+     whole run). One effect per stage, tracking only its own `stageResults`
+     field; the "from" values are read untracked so live ticks don't retrigger.
+     Stages are independent — download resolves while upload still runs. */
   $effect(() => {
-    // Re-run only when `result` flips (becomes available / cleared on reset).
-    // The live "from" values are read untracked so per-tick live updates don't
-    // retrigger this effect mid-run.
-    const res = store.result;
-    for (const c of cancels) c();
-    cancels = [];
-
-    if (!res) {
+    const r = store.stageResults.download;
+    dlCancel?.();
+    dlCancel = null;
+    if (!r) {
       dlSnap = null;
+      return;
+    }
+    dlCancel = untrack(() =>
+      tweenTo(dlFrozen ?? store.toUnit(dl.measuredBytesPerSec), store.toUnit(r.reportedBytesPerSec), (v) => (dlSnap = v)),
+    );
+    return () => {
+      dlCancel?.();
+      dlCancel = null;
+    };
+  });
+
+  $effect(() => {
+    const r = store.stageResults.upload;
+    ulCancel?.();
+    ulCancel = null;
+    if (!r) {
       ulSnap = null;
+      return;
+    }
+    ulCancel = untrack(() =>
+      tweenTo(ulFrozen ?? store.toUnit(ul.measuredBytesPerSec), store.toUnit(r.reportedBytesPerSec), (v) => (ulSnap = v)),
+    );
+    return () => {
+      ulCancel?.();
+      ulCancel = null;
+    };
+  });
+
+  $effect(() => {
+    const r = store.stageResults.latency;
+    pingCancel?.();
+    pingCancel = null;
+    if (!r) {
       pingSnap = null;
       return;
     }
-
-    untrack(() => {
-      if (res.download) {
-        cancels.push(
-          tweenTo(dlFrozen ?? store.toUnit(dl.measuredBytesPerSec), store.toUnit(res.download.meanBytesPerSec), (v) => (dlSnap = v)),
-        );
-      }
-      if (res.upload) {
-        cancels.push(
-          tweenTo(ulFrozen ?? store.toUnit(ul.measuredBytesPerSec), store.toUnit(res.upload.meanBytesPerSec), (v) => (ulSnap = v)),
-        );
-      }
-      if (res.latency) {
-        cancels.push(tweenTo(pingFrozen ?? ping.ms, res.latency.p50Ms, (v) => (pingSnap = v)));
-      }
-    });
-
+    pingCancel = untrack(() => tweenTo(pingFrozen ?? ping.ms, r.reportedMs, (v) => (pingSnap = v)));
     return () => {
-      for (const c of cancels) c();
-      cancels = [];
+      pingCancel?.();
+      pingCancel = null;
     };
   });
 

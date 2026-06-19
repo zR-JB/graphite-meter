@@ -196,6 +196,11 @@ export type RunnerEvent =
   | { type: "connectivity"; state: ConnectivityState }
   | { type: "progress"; phase: Phase; fraction: number } // 0–1 within phase
   | { type: "stability"; snapshot: StabilitySnapshot } // live measurement stability
+  // Per-stage final result, emitted the instant each measured phase ends — so a
+  // finished stage shows its real result while later stages still run. Stages
+  // are independent: each carries its own headline/method/band (§13.4).
+  | { type: "stageResult"; stage: "download" | "upload"; result: ThroughputResult }
+  | { type: "stageResult"; stage: "latency"; result: LatencyResult }
   | { type: "complete"; result: RunResult }
   | { type: "error"; message: string };
 
