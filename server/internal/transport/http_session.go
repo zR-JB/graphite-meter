@@ -69,8 +69,16 @@ func (s *httpSession) OpenDownloadSink() (io.Writer, FlushFunc, error) {
 	return s.w, flush, nil
 }
 
+// OpenUploadSource yields the request body as the byte source to drain and
+// count (the client streams generated incompressible bytes into it). The upload
+// endpoint copies it to io.Discard through a pooled scratch buffer — counting,
+// never accumulating. A WebTransport RecvStream satisfies the same seam in
+// Stage 5.
 func (s *httpSession) OpenUploadSource() (io.Reader, error) {
-	return nil, ErrUnsupported
+	if s.r.Body == nil {
+		return nil, ErrUnsupported
+	}
+	return s.r.Body, nil
 }
 
 func (s *httpSession) Bus() (MessageBus, bool) {

@@ -35,6 +35,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	reg := endpoint.NewRegistry()
 	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
 	reg.RegisterHTTP("/download", endpoint.NewDownload(block))
+	reg.RegisterHTTP("/upload", endpoint.NewUpload())
 
 	mux := BuildMux(reg)
 
