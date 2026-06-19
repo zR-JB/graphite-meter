@@ -39,11 +39,28 @@
   let canvasEl = $state<HTMLCanvasElement>();
   let engine: GaugeEngine;
 
+  // Nice-ceiling ladder (ms) for the latency dial. 1-2-5 steps so the five
+  // quarter labels (0 … scale) always land on clean values (5/10/25/50…).
+  const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
+
+  // A fixed, linear ms scale for the latency-phase dial: round the running peak
+  // RTT (incl. the pre-test ping) up to the next nice ceiling, so the needle
+  // position reads as a real RTT and the tick labels stay round.
+  const latencyScaleMs = $derived.by(() => {
+    let peak = store.infra?.preTestPingMs ?? 0;
+    for (const s of store.latency) if (!s.lost && s.rttMs > peak) peak = s.rttMs;
+    const target = peak * 1.1; // a touch of headroom so the peak isn't pegged
+    return LATENCY_SCALE_LADDER.find((s) => s >= target) ?? LATENCY_SCALE_LADDER.at(-1)!;
+  });
+
   // The single big number, per phase (§3.1 behavior table).
   const display = $derived.by(() => {
     const p = store.phase;
     if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
-    if (p === "idle" || p === "error" || p === "aborted") return { value: "—", unit: "" };
+    // Warmup has no meaningful rate yet — show the same neutral dash as the
+    // idle/error/aborted states rather than a misleading 0 bit/s.
+    if (p === "idle" || p === "error" || p === "aborted" || p === "warmup")
+      return { value: "—", unit: "" };
     if (p === "complete" && store.result?.download) {
       return {
         value: fmtSpeed(store.toUnit(store.result.download.meanBytesPerSec)),
@@ -92,10 +109,16 @@
       phase: store.phase,
       valueBytesPerSec: store.throughput.at(-1)?.bytesPerSec ?? 0,
       scaleBytesPerSec: store.displayScaleBytesPerSec,
-      // Five quarter labels (0 … full scale) in the active display unit.
-      ticks: [0, 0.25, 0.5, 0.75, 1].map((f) =>
-        fmtSpeed(store.toUnit(store.displayScaleBytesPerSec * f)),
-      ),
+      latencyScaleMs,
+      // Five quarter labels (0 … full scale). During the latency phase the dial
+      // reads RTT, so the labels are in ms against the linear latency scale;
+      // otherwise they're throughput in the active display unit.
+      ticks:
+        store.phase === "latency"
+          ? [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f))
+          : [0, 0.25, 0.5, 0.75, 1].map((f) =>
+              fmtSpeed(store.toUnit(store.displayScaleBytesPerSec * f)),
+            ),
       rtt: store.liveRtt,
       pingCount: store.latency.length,
     }));

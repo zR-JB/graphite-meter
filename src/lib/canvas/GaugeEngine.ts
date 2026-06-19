@@ -18,12 +18,15 @@ import type { CanvasEngine } from "./contract";
 /** What the engine pulls each frame. The sweep is normalized against an
  *  ABSOLUTE scale (`scaleBytesPerSec`, shared by download + upload for comparability)
  *  rather than a per-phase peak, so the dial position is meaningful at a
- *  glance. `valueBytesPerSec` is the current raw throughput. `ticks` are the 5
- *  pre-formatted quarter labels (0 … scale) in the active display unit. */
+ *  glance. `valueBytesPerSec` is the current raw throughput. `latencyScaleMs`
+ *  is the linear ms full-scale used during the latency phase. `ticks` are the 5
+ *  pre-formatted quarter labels (0 … scale) — throughput in the active display
+ *  unit, or ms during the latency phase. */
 export interface GaugeState {
   phase: Phase;
   valueBytesPerSec: number;
   scaleBytesPerSec: number;
+  latencyScaleMs: number;
   ticks: string[];
   rtt: number;
   pingCount: number;
@@ -74,7 +77,6 @@ export class GaugeEngine implements CanvasEngine {
   #target = 0; // last computed sweep target (drives self-park decision)
   #ema = 0; // smoothed normalized sweep 0–1
   #fill = 0; // slower follower (reduced-motion)
-  #rttPeak = 0; // running rtt peak for the latency-phase sweep
   #scale = 1; // absolute throughput scale (bytes/s) for normalization
   #ticks: string[] = []; // quarter labels in the active unit
   #frozen = 0; // sweep value held through the complete phase
@@ -213,11 +215,10 @@ export class GaugeEngine implements CanvasEngine {
     } else if (s.phase === "warmup") {
       target = 0.3; // indeterminate — connection probe, no meaningful rate yet
     } else if (s.phase === "latency") {
-      // Reads RTT during latency: sweep tracks relative rtt, kept in the
-      // lower half of the dial since this phase isn't about throughput.
-      this.#rttPeak = Math.max(this.#rttPeak, s.rtt);
-      const rel = this.#rttPeak > 0 ? s.rtt / this.#rttPeak : 0;
-      target = 0.12 + rel * 0.45;
+      // Reads RTT during latency: linear against the fixed ms scale so the dial
+      // position (and its ms tick labels) read as a real round-trip time.
+      const scale = s.latencyScaleMs > 0 ? s.latencyScaleMs : 1;
+      target = Math.min(1, Math.max(0, s.rtt / scale));
     } else if (s.phase === "idle") {
       target = 0.1;
     } else if (s.phase === "complete") {
@@ -313,11 +314,14 @@ export class GaugeEngine implements CanvasEngine {
    *  signature changes. Keyed by geometry + the theme-fixed colors + the label
    *  text/visibility — NOT the phase accent, which never touches these. */
   #ensureBase(cx: number, cy: number, r: number, arcW: number): void {
+    // Labels show where the dial position maps to a real value: throughput
+    // during download/upload/complete, RTT (ms) during latency. The idle dial
+    // and the warmup probe carry no scale, so they stay clean/unlabeled.
     const scaleMeaningful =
       this.#lastPhase === "download" ||
       this.#lastPhase === "upload" ||
       this.#lastPhase === "complete" ||
-      this.#lastPhase === "idle";
+      this.#lastPhase === "latency";
     const showLabels = scaleMeaningful && this.#ticks.length >= 2;
     const sig =
       `${this.#w}x${this.#h}@${this.#dpr}|${this.#track}|${this.#tick}|${this.#label}` +
