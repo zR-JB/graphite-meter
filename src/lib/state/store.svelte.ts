@@ -27,6 +27,7 @@ import {
   type CompensationEstimate,
 } from "../compensation";
 import { quantile, niceScaleUp, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { buildSegments } from "../runner/schedule";
 import {
   loadPersisted,
   savePersisted,
@@ -273,7 +274,11 @@ class AppStore {
     return "connected";
   });
 
-  elapsedMs = $derived(this.startEpoch ? Date.now() - this.startEpoch : 0);
+  /** Total run ETA at the saved config — the sum of every enabled stage's
+   *  test-time budget plus its warmup, computed by the SHARED scheduler so the
+   *  estimate can never drift from the real timeline (and counts bidirectional
+   *  when it's on). Excludes the glide/stall, which only move the actual end. */
+  totalEtaMs = $derived(buildSegments(this.config).totalMs);
 
   /** Test-time remaining in the active phase (budget − measured elapsed). Goes
    *  to 0 at the budget and STOPS shrinking while stalled (both inputs freeze),

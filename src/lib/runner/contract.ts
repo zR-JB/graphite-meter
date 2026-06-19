@@ -305,6 +305,10 @@ export type RunnerEvent =
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
   | { type: "latency"; sample: LatencySample }
+  // Reserved seam: a backend MAY push an explicit connectivity state. No shipped
+  // runner emits it yet — the store derives `effectiveConnectivity` from
+  // loss/jitter/measuring, so this is purely an optional override for a real
+  // engine that has a better signal.
   | { type: "connectivity"; state: ConnectivityState }
   // Progress within the active phase. `fraction` is 0–1 of the phase's
   // TEST-TIME budget consumed; the *Ms fields expose the raw measured-time

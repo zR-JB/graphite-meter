@@ -2,8 +2,8 @@
   /* ============================================================
    * <StatusBar> — bottom status zone (§1.2)
    * State-machine label, elapsed, bytes transferred, build hash.
-   * Owns a local ticker so elapsed advances independently of
-   * sample ingest (store.elapsedMs only recomputes on startEpoch).
+   * Owns a local ticker so elapsed advances continuously (off a
+   * wall clock) rather than only when a sample lands.
    * ============================================================ */
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";

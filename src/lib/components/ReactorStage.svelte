@@ -21,21 +21,11 @@
   // enabled (even on the blank idle gauge), hidden when it isn't.
   const showLatency = $derived(store.latencyEnabled);
 
-  // Total run ETA = warmup + each enabled stage's duration (read-only here;
-  // duration itself is edited only in the Workbench, §14.2). Shown so the
-  // newcomer knows roughly how long Engage will take.
-  const etaMs = $derived.by(() => {
-    const d = store.config.duration;
-    const st = store.config.stages;
-    // Mirror the runner timeline (dummy.start): every enabled stage contributes
-    // its own warmup plus its measurement. No global warmup, no merging.
-    const w = d.warmupMs > 0 ? d.warmupMs : 0;
-    let total = 0;
-    if (st.latency && d.latencyMs > 0) total += w + d.latencyMs;
-    if (st.download && d.downloadMs > 0) total += w + d.downloadMs;
-    if (st.upload && d.uploadMs > 0) total += w + d.uploadMs;
-    return total;
-  });
+  // Total run ETA (read-only here; duration is edited only in Settings, §14.2).
+  // Backed by the shared scheduler via store.totalEtaMs so it can't drift from
+  // the real timeline (and counts bidirectional when on). Shown so a newcomer
+  // knows roughly how long Engage will take.
+  const etaMs = $derived(store.totalEtaMs);
 
   let canvasEl = $state<HTMLCanvasElement>();
   let engine: GaugeEngine;
