@@ -32,6 +32,7 @@ import type {
   LatencyResult,
   StallInfo,
   FlowDirection,
+  TransportAttempt,
 } from "./contract";
 import {
   shouldExitPhase,
@@ -94,6 +95,10 @@ export interface CoreHost {
   /** Clear a stall: measured-time accrual resumes and a `resume` event fires.
    *  No-op if not stalled. (A real sample arriving in ingest* auto-resumes too.) */
   resume(): void;
+  /** Report a transport-negotiation step (which connection method, and whether
+   *  it is negotiating / established / failed). The core simply re-emits it as
+   *  a `transport` event — negotiation logic lives entirely in the backend. */
+  reportTransport(attempt: TransportAttempt): void;
   /** Emit a raw event directly (pre-test pings during probe, connectivity, …).
    *  Bypasses accumulation — use ingest* for measured run samples. */
   emit(e: RunnerEvent): void;
@@ -478,6 +483,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
     this.emit({ type: "resume" });
+  }
+
+  /** Pure pass-through: negotiation lives in the backend; the core only relays
+   *  the telemetry. A terminal all-transports-failed outcome is the backend's
+   *  own fail("transport-unavailable", …) call, not something we infer here. */
+  reportTransport(attempt: TransportAttempt): void {
+    this.emit({ type: "transport", attempt });
   }
 
   /** A real measured sample just arrived — refresh the watchdog and, if we were

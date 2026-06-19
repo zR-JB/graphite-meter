@@ -220,6 +220,24 @@ export type TerminationReason =
  *  failure of one is non-fatal as long as another succeeds. */
 export type TransportKind = "webtransport" | "websocket" | "xhr-stream";
 
+/** The stage a transport is being negotiated for. Mirrors schedule's StagePhase
+ *  (re-declared here to keep contract.ts free of a schedule import — contract
+ *  is the leaf types module) plus the priming `warmup`. */
+export type TransportRole =
+  | Extract<Phase, "latency" | "download" | "upload" | "bidirectional">
+  | "warmup";
+
+/** One step in negotiating a transport for a phase's I/O. A backend reports a
+ *  `negotiating` attempt, then either `established` (success — measuring can
+ *  begin) or `failed` (try the next kind). When every kind fails the backend
+ *  raises a terminal `transport-unavailable` failure (see TerminationReason). */
+export interface TransportAttempt {
+  kind: TransportKind;
+  role: TransportRole;
+  status: "negotiating" | "established" | "failed";
+  detail?: string;
+}
+
 /* ---------- Transient link health (§stall) ---------- */
 /** A NON-terminal stall: the link went quiet mid-phase and the run is waiting
  *  to reconnect. Carried on the `stall` event; the core freezes measured-time
@@ -310,6 +328,10 @@ export type RunnerEvent =
   // enter the accumulator (principle 1).
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
+  // Transport negotiation telemetry: which connection method is being tried for
+  // a phase, and whether it's negotiating / established / failed. Re-emitted
+  // verbatim by the core; the store records it (UI surface deferred — §9).
+  | { type: "transport"; attempt: TransportAttempt }
   // Per-stage final result, emitted the instant each measured phase ends — so a
   // finished stage shows its real result while later stages still run. Stages
   // are independent: each carries its own headline/method/band (§13.4).

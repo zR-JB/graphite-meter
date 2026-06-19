@@ -19,6 +19,7 @@ import type {
   ThroughputResult,
   LatencyResult,
   StallInfo,
+  TransportAttempt,
 } from "../runner/contract";
 import {
   estimateLiveCompensation,
@@ -140,6 +141,12 @@ class ConsoleStore {
   measuring = $state(true);
   stalledSince = $state(0);
   stallInfo = $state<StallInfo | null>(null);
+  /* Transport negotiation telemetry (§transport). `currentTransport` is the
+   * latest attempt (which method, what status); `transportLog` is the running
+   * history for a future negotiation inspector. UI surface is deferred (§9) —
+   * these are store-only for now. Both cleared on reset(). */
+  currentTransport = $state<TransportAttempt | null>(null);
+  transportLog = $state<TransportAttempt[]>([]);
   /* Live measurement stability per measured phase — the single signal behind
    * the result-card pips (and, in the runner, the early-finish glide). Each
    * key fills in once its phase begins emitting; null = no read yet. */
@@ -467,6 +474,11 @@ class ConsoleStore {
         this.stalledSince = 0;
         this.stallInfo = null;
         break;
+      case "transport":
+        // Store-only for now (no visible transport indicator yet — §9).
+        this.currentTransport = e.attempt;
+        this.transportLog.push(e.attempt);
+        break;
       case "stability":
         this.liveStability[e.snapshot.phase] = e.snapshot;
         break;
@@ -518,6 +530,8 @@ class ConsoleStore {
     this.measuring = true;
     this.stalledSince = 0;
     this.stallInfo = null;
+    this.currentTransport = null;
+    this.transportLog = [];
     this.liveStability = { latency: null, download: null, upload: null };
     this.stageResults = { download: null, upload: null, latency: null };
     this.result = null;
