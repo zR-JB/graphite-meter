@@ -12,6 +12,7 @@ import type {
   InfraInfo,
   RunResult,
   RunnerConfig,
+  RunnerError,
   ThroughputSample,
   LatencySample,
   StabilitySnapshot,
@@ -154,7 +155,10 @@ class ConsoleStore {
     upload: ThroughputResult | null;
     latency: LatencyResult | null;
   }>({ download: null, upload: null, latency: null });
-  errorMsg = $state<string | null>(null);
+  /** Structured failure for the last run (null unless phase is "error"). Carries
+   *  the reason, the failed phase, and any partial results (§ structured
+   *  termination). User aborts are NOT errors — they are the "aborted" phase. */
+  error = $state<RunnerError | null>(null);
   startEpoch = $state(0);
 
   /* ---- config + display prefs (hydrated from localStorage, §14.1) ----
@@ -444,10 +448,20 @@ class ConsoleStore {
         this.result = e.result;
         this.phase = "complete";
         break;
-      case "error":
-        this.errorMsg = e.message;
+      case "error": {
+        this.error = e.error;
+        // Surface any partial results the failed run produced — stages that
+        // finished before the failure already arrived as stageResult events,
+        // but a backend may also attach them here.
+        const p = e.error.partial;
+        if (p) {
+          if (p.download) this.stageResults.download = p.download;
+          if (p.upload) this.stageResults.upload = p.upload;
+          if (p.latency) this.stageResults.latency = p.latency;
+        }
         this.phase = "error";
         break;
+      }
     }
   };
 
@@ -459,7 +473,7 @@ class ConsoleStore {
     this.liveStability = { latency: null, download: null, upload: null };
     this.stageResults = { download: null, upload: null, latency: null };
     this.result = null;
-    this.errorMsg = null;
+    this.error = null;
     this.startEpoch = 0;
     this.phaseWindows = {};
     this.#lastSampleT = 0;

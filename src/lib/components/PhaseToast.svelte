@@ -12,6 +12,7 @@
    * Tokens only. Reduced-motion: the slide/scale is dropped (handled
    * by the global §4.5 guard) so it just fades / appears.
    * ============================================================ */
+  import type { RunnerError } from "../runner/contract";
   import { console as store } from "../state/console.svelte";
 
   let visible = $state(false);
@@ -40,6 +41,22 @@
     }
   }
 
+  /** Friendly phrasing for a structured failure reason. */
+  function reasonLabel(reason: RunnerError["reason"]): string {
+    switch (reason) {
+      case "preflight-failed":
+        return "Couldn't reach the server";
+      case "connection-lost":
+        return "Connection lost";
+      case "timeout":
+        return "Connection timed out";
+      case "protocol-error":
+        return "Unexpected server response";
+      case "internal-error":
+        return "Runner needs attention";
+    }
+  }
+
   /** Plain-language message for the active phase. */
   function message(p: typeof store.phase): string {
     switch (p) {
@@ -56,7 +73,7 @@
       case "aborted":
         return "Sequence stopped";
       case "error":
-        return store.errorMsg ?? "Runner needs attention";
+        return store.error ? reasonLabel(store.error.reason) : "Runner needs attention";
       default:
         return "Ready";
     }

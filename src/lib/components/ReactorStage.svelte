@@ -86,7 +86,9 @@
       case "aborted":
         return "Test stopped — press Engage to try again";
       case "error":
-        return store.errorMsg ?? "Something went wrong — press Engage to retry";
+        return store.error
+          ? `${store.error.message} — press Engage to retry`
+          : "Something went wrong — press Engage to retry";
       default:
         return "";
     }

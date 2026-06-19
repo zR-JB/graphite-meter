@@ -178,6 +178,46 @@ export interface BufferbloatGrade {
   increaseMs: number; // loaded − idle
 }
 
+/* ---------- Structured termination ---------- */
+/** Why a run ended abnormally. `user-abort` is modelled separately as the
+ *  `"aborted"` phase (a deliberate stop, not a failure); every other reason is
+ *  carried on the `error` event below.
+ *
+ *  Browser honesty: a server-initiated close and a network-level drop are
+ *  generally indistinguishable from JS (both surface as a generic fetch
+ *  TypeError), so they collapse into `connection-lost`. The distinctions a
+ *  client CAN make reliably are reflected here: never reached the server
+ *  (`preflight-failed`) vs lost mid-run (`connection-lost`), and a stall
+ *  (`timeout`) vs a bad/unexpected response (`protocol-error`). */
+export type TerminationReason =
+  | "user-abort"
+  | "preflight-failed" // handshake never reached / was rejected by a server
+  | "connection-lost" // transport failed mid-run (server close or network loss)
+  | "timeout" // a request/stream stalled past its deadline
+  | "protocol-error" // malformed/unexpected response or close handshake
+  | "internal-error"; // a bug in the engine itself
+
+/** A structured run failure, carried on the `error` event. Distinguishing a
+ *  failure from a user abort (the `"aborted"` phase) and from a clean finish is
+ *  the runner→webapp half of the lifecycle contract. */
+export interface RunnerError {
+  /** Failure category (never `user-abort` — that is the `"aborted"` phase). */
+  reason: Exclude<TerminationReason, "user-abort">;
+  /** Human-readable detail for logs / the toast. */
+  message: string;
+  /** The phase the run was in when it failed. */
+  phase: Phase;
+  /** Best-effort results from stages that completed before the failure, so the
+   *  UI can still show what was measured. */
+  partial?: {
+    download: ThroughputResult | null;
+    upload: ThroughputResult | null;
+    latency: LatencyResult | null;
+  };
+  /** The original thrown value, for logging (not for display). */
+  cause?: unknown;
+}
+
 /* ---------- Pre-test handshake info ---------- */
 export interface InfraInfo {
   clientIp: string;
@@ -202,7 +242,10 @@ export type RunnerEvent =
   | { type: "stageResult"; stage: "download" | "upload"; result: ThroughputResult }
   | { type: "stageResult"; stage: "latency"; result: LatencyResult }
   | { type: "complete"; result: RunResult }
-  | { type: "error"; message: string };
+  // Abnormal end (not user-abort, which is the "aborted" phase). Structured so
+  // the UI can tell preflight-unreachable from a mid-run drop and surface any
+  // partial results — see RunnerError.
+  | { type: "error"; error: RunnerError };
 
 /* ---------- Runtime anomaly injection (§13.6 — Developer panel) ---------- */
 /** A live, dev-only perturbation fired into a *running* engine. Unlike the

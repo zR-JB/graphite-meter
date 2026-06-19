@@ -33,8 +33,11 @@ export async function bootRunner() {
   try {
     const info = await r.probe(store.config.endpoint);
     store.ingest({ type: "infra", info });
-  } catch {
-    store.ingest({ type: "error", message: "Probe failed" });
+  } catch (cause) {
+    store.ingest({
+      type: "error",
+      error: { reason: "preflight-failed", message: "Probe failed", phase: "idle", cause },
+    });
   }
 }
 

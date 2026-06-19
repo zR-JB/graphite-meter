@@ -23,6 +23,7 @@ import type {
   RunnerConfig,
   RunnerEvent,
   RunnerAnomaly,
+  RunnerError,
   Phase,
   PhaseTransition,
   InfraInfo,
@@ -71,9 +72,11 @@ export interface CoreHost {
   /** Emit a raw event directly (pre-test pings during probe, connectivity, …).
    *  Bypasses accumulation — use ingest* for measured run samples. */
   emit(e: RunnerEvent): void;
-  /** Report an unrecoverable failure; the core ends the run into "error".
-   *  (Batch 3 enriches the payload into a structured RunnerError.) */
-  fail(message: string): void;
+  /** Report an unrecoverable failure; the core ends the run into "error",
+   *  attaching the current phase + any partial results. The backend supplies
+   *  the category, a human message, and (optionally) the original thrown value.
+   *  `user-abort` is NOT a failure — call abort() for that. */
+  fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
   /** The active config, or null when idle. */
   readonly config: RunnerConfig | null;
   /** The current lifecycle phase. */
@@ -364,14 +367,25 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.emit({ type: "latency", sample: { t: this.#virtualElapsed, rttMs, underLoad, lost } });
   }
 
-  fail(message: string): void {
+  fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
     if (this.#tickTimer) {
       clearInterval(this.#tickTimer);
       this.#tickTimer = null;
     }
+    const error: RunnerError = {
+      reason,
+      message,
+      phase: this.#phase,
+      partial: {
+        download: this.#dlResult,
+        upload: this.#ulResult,
+        latency: this.#latResult,
+      },
+      cause,
+    };
     this.#setPhase("error");
     this.#lastEmittedPhase = "error";
-    this.emit({ type: "error", message });
+    this.emit({ type: "error", error });
   }
 
   /* ---------- phase helpers ---------- */
