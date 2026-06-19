@@ -33,6 +33,20 @@
   let workbenchOpen = $state(false);
   let wide = $state(false);
 
+  // When both flyout drawers are open on a narrow screen they overlap. Track
+  // which one opened most recently so it stacks on top — without this, DOM
+  // order (left then right) would always bury the left drawer. Captures any
+  // open transition regardless of source (topbar button, W/D key, bind).
+  let lastOpened = $state<"left" | "right">("right");
+  let prevWorkbenchOpen = false;
+  let prevInfoOpen = false;
+  $effect(() => {
+    if (workbenchOpen && !prevWorkbenchOpen) lastOpened = "left";
+    if (infoOpen && !prevInfoOpen) lastOpened = "right";
+    prevWorkbenchOpen = workbenchOpen;
+    prevInfoOpen = infoOpen;
+  });
+
   function toggleTheme() {
     // Flip the persisted pref; the store's $effect applies it to
     // <html data-theme> and the debounced save persists it (§14.1).
@@ -204,6 +218,7 @@
   <WorkbenchDrawer
     bind:open={workbenchOpen}
     docked={wide}
+    raised={lastOpened === "left"}
     dockWidth={store.dockWidth.left}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
@@ -211,6 +226,7 @@
   <InspectorPanel
     bind:open={infoOpen}
     docked={wide}
+    raised={lastOpened === "right"}
     dockWidth={store.dockWidth.right}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}

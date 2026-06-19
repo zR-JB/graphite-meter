@@ -14,6 +14,7 @@
   interface Props {
     open?: boolean;
     docked?: boolean;
+    raised?: boolean;
     dockWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
@@ -21,6 +22,7 @@
   let {
     open = $bindable(false),
     docked = false,
+    raised = false,
     dockWidth,
     onResize,
     onResetWidth,
@@ -30,6 +32,7 @@
 <SidePanel
   bind:open
   {docked}
+  {raised}
   {dockWidth}
   {onResize}
   {onResetWidth}

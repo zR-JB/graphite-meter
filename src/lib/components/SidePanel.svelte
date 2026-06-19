@@ -30,6 +30,9 @@
     /** When true (wide screens) the panel docks in-flow instead of overlaying:
         no backdrop, non-modal, no focus trap — it's a persistent sidebar. */
     docked?: boolean;
+    /** Flyout-only: lift above the sibling panel when the two overlap on a
+        narrow screen, so the most-recently-opened drawer wins the stack. */
+    raised?: boolean;
     /** Current docked width (px) — used for the resize handle's aria value. */
     dockWidth?: number;
     /** Report a new docked width (px) as the inner edge is dragged. */
@@ -47,6 +50,7 @@
     label,
     width,
     docked = false,
+    raised = false,
     dockWidth,
     onResize,
     onResetWidth,
@@ -114,7 +118,7 @@
   }
 </script>
 
-<div class="panel-layer" class:open class:docked aria-hidden={!open}>
+<div class="panel-layer" class:open class:docked class:raised aria-hidden={!open}>
   <button
     class="backdrop"
     aria-label={`Close ${title}`}
@@ -238,6 +242,14 @@
   }
   .panel-layer.open .panel {
     transform: translateX(0);
+  }
+  /* When both flyout drawers are open on a narrow screen they overlap; equal
+     z-index would let DOM order (always left-then-right) decide the stack.
+     The most-recently-opened panel is marked `raised` so it wins instead.
+     Flyout only — docked panels live in separate grid columns and never
+     overlap, so this is scoped away from `.docked`. */
+  .panel-layer.raised:not(.docked) .panel {
+    z-index: 51;
   }
 
   /* ---- Docked: in-flow column in the #console grid, pushing the stage ---- */
