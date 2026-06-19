@@ -16,13 +16,11 @@
   import { tooltip } from "../actions/tooltip";
   import { preStageWarmupMs } from "../runner/contract";
 
-  // Gate the latency panel: hidden on a fresh idle load (gauge sits alone,
-  // full-width), joins the row once a run starts and persists after completion
-  // (leftover samples / result keep it shown so results stay readable).
-  const showLatency = $derived(
-    store.latencyEnabled &&
-      (store.phase !== "idle" || store.latency.length > 0 || store.result != null),
-  );
+  // Gate the latency panel purely on whether latency is measured at all — the
+  // enabled-stage state is the single source of truth. So a wordmark "home"
+  // reset and a page reload land on the same view: panel shown when latency is
+  // enabled (even on the blank idle gauge), hidden when it isn't.
+  const showLatency = $derived(store.latencyEnabled);
 
   // Total run ETA = warmup + each enabled stage's duration (read-only here;
   // duration itself is edited only in the Workbench, §14.2). Shown so the
