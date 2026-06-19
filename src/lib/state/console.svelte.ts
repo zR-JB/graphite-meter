@@ -18,6 +18,7 @@ import type {
   StabilitySnapshot,
   ThroughputResult,
   LatencyResult,
+  StallInfo,
 } from "../runner/contract";
 import {
   estimateLiveCompensation,
@@ -121,7 +122,22 @@ class ConsoleStore {
 
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
-  phaseFraction = $state(0); // 0–1 within current phase
+  phaseFraction = $state(0); // 0–1 within current phase (of the test-time budget)
+  /* Measured test-time accrual for the active phase (§4). `phaseElapsedMs` is
+   * the budget consumed; `phaseBudgetMs` is the phase's test-time budget. Both
+   * freeze while stalled, so the derived `phaseRemainingMs` (budget − elapsed)
+   * stops shrinking during dead air — the visible push-out of the run end. */
+  phaseElapsedMs = $state(0);
+  phaseBudgetMs = $state(0);
+  /* Link health (§4 — presentation-only, principle 2). `measuring` is the
+   * core's measured-time gate: false while a stall has frozen accrual. The
+   * grind-to-zero gauge/number decay keys off `stalledSince` (wall-clock epoch
+   * ms the stall began, 0 = live) + the last REAL sample — it stores/emits
+   * nothing. `stallInfo` carries the reason for the transient "connection
+   * lost — …" message. All cleared on resume. */
+  measuring = $state(true);
+  stalledSince = $state(0);
+  stallInfo = $state<StallInfo | null>(null);
   /* Live measurement stability per measured phase — the single signal behind
    * the result-card pips (and, in the runner, the early-finish glide). Each
    * key fills in once its phase begins emitting; null = no read yet. */
@@ -239,6 +255,9 @@ class ConsoleStore {
   /** UI computes connectivity if runner doesn't push it (defensive). */
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {
     if (this.phase === "error") return "offline";
+    // A stall mid-run is dead air — the link is effectively offline until the
+    // backend reconnects (resume clears `measuring`), so the pulse goes red.
+    if (this.isRunning && !this.measuring) return "offline";
     if (this.connectivity === "offline") return "offline";
     if (this.rollingLossPct > 5) return "unstable";
     if (this.rollingLossPct > 0.5 || this.jitterMs > 30) return "degraded";
@@ -246,6 +265,11 @@ class ConsoleStore {
   });
 
   elapsedMs = $derived(this.startEpoch ? Date.now() - this.startEpoch : 0);
+
+  /** Test-time remaining in the active phase (budget − measured elapsed). Goes
+   *  to 0 at the budget and STOPS shrinking while stalled (both inputs freeze),
+   *  so a connection drop visibly pushes the run end out (§4). */
+  phaseRemainingMs = $derived(Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs));
 
   bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
 
@@ -423,6 +447,23 @@ class ConsoleStore {
       }
       case "progress":
         this.phaseFraction = e.fraction;
+        this.phaseElapsedMs = e.phaseElapsedMs;
+        this.phaseBudgetMs = e.phaseBudgetMs;
+        this.measuring = e.measuring;
+        break;
+      case "stall":
+        // Transient drop: freeze the "measuring" state + record when it began
+        // (wall-clock) so the gauge/number can grind to 0 over ~800ms purely at
+        // draw time. NO sample enters any buffer (principle 1).
+        this.measuring = false;
+        this.stalledSince = Date.now();
+        this.stallInfo = e.info;
+        break;
+      case "resume":
+        // Reconnected: real samples are flowing again; presentation snaps back.
+        this.measuring = true;
+        this.stalledSince = 0;
+        this.stallInfo = null;
         break;
       case "stability":
         this.liveStability[e.snapshot.phase] = e.snapshot;
@@ -470,6 +511,11 @@ class ConsoleStore {
     this.latency = [];
     this.phase = "idle";
     this.phaseFraction = 0;
+    this.phaseElapsedMs = 0;
+    this.phaseBudgetMs = 0;
+    this.measuring = true;
+    this.stalledSince = 0;
+    this.stallInfo = null;
     this.liveStability = { latency: null, download: null, upload: null };
     this.stageResults = { download: null, upload: null, latency: null };
     this.result = null;

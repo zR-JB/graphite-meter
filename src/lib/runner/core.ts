@@ -30,6 +30,7 @@ import type {
   ServerCandidate,
   ThroughputResult,
   LatencyResult,
+  StallInfo,
 } from "./contract";
 import {
   shouldExitPhase,
@@ -48,6 +49,17 @@ import { RunAccumulator } from "./evaluation";
 
 const TICK_MS = 20; // master loop resolution
 const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs every tick)
+
+/* ---------- Stall watchdog / max-stall (§4 — measured-time model) ----------
+ * The backend SHOULD bracket dead air with explicit host.stall()/resume(), but
+ * a push backend can also simply go silent on a drop. The watchdog is the
+ * fallback: in a MEASURED phase, if no real sample has arrived for longer than
+ * STALL_WATCHDOG_MS the core auto-stalls (freezing measured-time accrual); the
+ * next real sample auto-resumes. MAX_STALL_MS bounds patience — a stall that
+ * outlives it is escalated to a terminal connection-lost failure rather than
+ * accruing dead air forever. Both are wall-clock, never measured-time. */
+const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
+const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
 
 /** Per-tick context handed to a pull-style backend so it can synthesize the
  *  samples due this tick. `realNow` lets a backend gate sample cadence on real
@@ -70,6 +82,15 @@ export interface CoreHost {
   ingestThroughput(bytesPerSec: number, bytesDelta: number): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
+  /** Signal a NON-terminal link stall: the link went quiet and the backend is
+   *  hoping to reconnect. The core freezes measured-time accrual (so the phase
+   *  end recedes by the dead-air duration) and emits a `stall` event. No-op if
+   *  already stalled. Bracket with resume(); the run continues. Storing nothing
+   *  in the accumulator — dead air is never a sample (principle 1). */
+  stall(info: StallInfo): void;
+  /** Clear a stall: measured-time accrual resumes and a `resume` event fires.
+   *  No-op if not stalled. (A real sample arriving in ingest* auto-resumes too.) */
+  resume(): void;
   /** Emit a raw event directly (pre-test pings during probe, connectivity, …).
    *  Bypasses accumulation — use ingest* for measured run samples. */
   emit(e: RunnerEvent): void;
@@ -139,20 +160,35 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #lastStabilityAt = -Infinity;
   #bytesCumulative = 0;
 
-  // ---- virtual-time clock + early-finish glide (§13.4) ----
-  // The tick loop advances a virtual timeline each tick, at rest 1:1 with
-  // wall-clock. When a measured phase becomes confidently stable an early-finish
-  // "glide" is armed for that segment: virtual time is driven along an eased
-  // curve to the phase's end over a short real-time window (adaptive.glideMs),
-  // so it crosses seg.end — and eventually #totalMs — sooner in wall-clock. The
-  // progress marker visibly accelerates and the run genuinely finishes early,
-  // without ever faking a bar to 1.0 (coverage stays truthful).
-  #virtualElapsed = 0;
+  // ---- measured test-time clock + early-finish glide (§4 / §13.4) ----
+  // The tick loop advances MEASURED TEST-TIME each tick. Unlike a plain
+  // wall-clock it accrues ONLY while `#measuring` — so a connection drop (dead
+  // air) does NOT count: the phase end recedes by the stall duration (a 5s drop
+  // on a 10s budget ⇒ 15s wall-clock). Segment lookup, progress, phase-end, and
+  // the glide all run off `#measuredElapsed`; the per-phase budgets are the
+  // segment durations from `schedule`. At rest accrual is 1:1 with wall-clock.
+  // When a measured phase becomes confidently stable an early-finish "glide" is
+  // armed for that segment: measured-time is driven along an eased curve to the
+  // phase's end over a short real-time window (adaptive.glideMs), so it crosses
+  // seg.end — and eventually #totalMs — sooner. The progress marker visibly
+  // accelerates and the run genuinely finishes early, without faking coverage.
+  #measuredElapsed = 0;
   #lastRealNow = 0;
   #glideArmedForSeg = -1; // segment index a glide is armed for, or -1
   #glideStartReal = 0;
-  #glideFromVirtual = 0;
-  #glideTargetVirtual = 0;
+  #glideFromMeasured = 0;
+  #glideTargetMeasured = 0;
+
+  // ---- measuring / stall gate (§4 — three unbraided quantities) ----
+  // `#measuring` gates measured-time accrual; it flips false on stall (explicit
+  // host.stall or the watchdog) and true on resume (explicit or a real sample).
+  // `#lastSampleWall` is the wall-clock of the last real sample, read by the
+  // watchdog. `#stalledSinceWall` is when the current stall began (0 = not
+  // stalled), read by the max-stall escalation. All wall-clock, never measured.
+  #measuring = true;
+  #lastSampleWall = 0;
+  #stalledSinceWall = 0;
+  #stallInfo: StallInfo | null = null;
 
   // ---- evaluation + result bookkeeping ----
   #accum = new RunAccumulator();
@@ -175,7 +211,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   get elapsed(): number {
-    return this.#virtualElapsed;
+    return this.#measuredElapsed;
   }
 
   on(handler: (e: RunnerEvent) => void): () => void {
@@ -213,6 +249,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#totalMs = totalMs;
     this.#t0 = performance.now();
     this.#lastRealNow = this.#t0;
+    this.#lastSampleWall = this.#t0; // arm the watchdog from run start
 
     this.#backend.onRunStart(config);
     this.#tickTimer = setInterval(() => this.#tick(), TICK_MS);
@@ -227,12 +264,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#dlResult = null;
     this.#ulResult = null;
     this.#latResult = null;
-    this.#virtualElapsed = 0;
+    this.#measuredElapsed = 0;
     this.#lastRealNow = 0;
     this.#glideArmedForSeg = -1;
     this.#glideStartReal = 0;
-    this.#glideFromVirtual = 0;
-    this.#glideTargetVirtual = 0;
+    this.#glideFromMeasured = 0;
+    this.#glideTargetMeasured = 0;
+    this.#measuring = true;
+    this.#lastSampleWall = 0;
+    this.#stalledSinceWall = 0;
+    this.#stallInfo = null;
   }
 
   /* ================= ABORT ================= */
@@ -261,7 +302,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#tickTimer || !this.#cfg) return;
     this.#cfg = { ...this.#cfg, stages };
 
-    const { segments, totalMs } = rebuildTail(this.#segments, this.#virtualElapsed, this.#cfg);
+    const { segments, totalMs } = rebuildTail(this.#segments, this.#measuredElapsed, this.#cfg);
     this.#segments = segments;
     this.#totalMs = totalMs;
     // Segment indices shifted under us — drop any armed glide so it re-arms
@@ -272,17 +313,24 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= MASTER TICK ================= */
   #tick() {
-    // Advance the virtual clock. Normally 1:1 with wall-clock; while an
-    // early-finish glide is armed the position is driven directly along an eased
-    // curve toward the current phase's end (§13.4).
+    // Advance the MEASURED test-time clock. It accrues at the wall-rate ONLY
+    // while measuring; a stall freezes it (dead air must not count), so the
+    // phase end recedes by exactly the stall duration. While an early-finish
+    // glide is armed the position is then driven further along an eased curve
+    // toward the current phase's end (§13.4).
     const now = performance.now();
-    const dtReal = now - this.#lastRealNow;
+    const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
-    // Always advance at least 1:1; an armed glide then pulls the position
-    // further forward along its eased curve (never backward, never slower).
-    this.#virtualElapsed += dtReal;
-    if (this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
-    const elapsed = this.#virtualElapsed;
+    if (this.#measuring) this.#measuredElapsed += dtWall;
+    // The glide also advances measured-time, so it too must freeze while
+    // stalled — otherwise an armed glide would race the clock through dead air.
+    if (this.#measuring && this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
+    const elapsed = this.#measuredElapsed;
+
+    // Stall handling runs on WALL time so it ticks even with measured-time
+    // frozen. In a measured phase, prolonged silence trips the watchdog (an
+    // auto-stall); a stall outliving MAX_STALL_MS escalates to a terminal fail.
+    if (this.#updateStallState(now)) return; // a max-stall fail ended the run
 
     if (elapsed >= this.#totalMs) {
       this.#finish();
@@ -310,9 +358,21 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#backend.onPhaseEnter(seg.phase, seg.warmupFor);
     }
 
-    // Progress within the current phase (real coverage — never faked).
-    const frac = (elapsed - seg.start) / (seg.end - seg.start);
-    this.emit({ type: "progress", phase: seg.phase, fraction: Math.min(1, Math.max(0, frac)) });
+    // Progress within the current phase (real coverage — never faked). Fraction
+    // and phaseElapsedMs are over MEASURED test-time, so both FREEZE while
+    // stalled (measuredElapsed is frozen) — the bar stops and the UI's
+    // budget − elapsed "time remaining" stops shrinking until resume.
+    const phaseElapsedMs = elapsed - seg.start;
+    const phaseBudgetMs = seg.end - seg.start;
+    const frac = phaseElapsedMs / phaseBudgetMs;
+    this.emit({
+      type: "progress",
+      phase: seg.phase,
+      fraction: Math.min(1, Math.max(0, frac)),
+      phaseElapsedMs,
+      phaseBudgetMs,
+      measuring: this.#measuring,
+    });
 
     // Let a pull-style backend synthesize the samples due this tick. They flow
     // back in through ingestThroughput / ingestLatency before stability is read
@@ -359,12 +419,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!cfg) return;
     const phase = this.#phase;
     if (phase !== "download" && phase !== "upload") return; // ignore stray samples
+    // A real byte sample proves delivery: refresh the watchdog + auto-resume.
+    this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
     this.#accum.pushThroughput(phase, bytesPerSec, bytesDelta);
     this.emit({
       type: "throughput",
       sample: {
-        t: this.#virtualElapsed,
+        t: this.#measuredElapsed,
         bytesPerSec,
         bytesCumulative: this.#bytesCumulative,
         streamCount: cfg.parallelStreams,
@@ -373,8 +435,73 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
+    // A real ping (even a lost-marked one is a real measurement event) proves
+    // the link is alive: refresh the watchdog and auto-resume from any stall.
+    this.#noteRealSample();
     this.#accum.pushLatency(rttMs, underLoad, lost);
-    this.emit({ type: "latency", sample: { t: this.#virtualElapsed, rttMs, underLoad, lost } });
+    this.emit({ type: "latency", sample: { t: this.#measuredElapsed, rttMs, underLoad, lost } });
+  }
+
+  /* ================= STALL / RESUME (CoreHost) ================= */
+  stall(info: StallInfo): void {
+    // No-op if already stalled — a backend may report repeatedly, and the
+    // watchdog must not re-arm a stall that's already running its max-stall
+    // clock (that clock is anchored at #stalledSinceWall).
+    if (!this.#measuring) return;
+    this.#measuring = false;
+    this.#stalledSinceWall = performance.now();
+    this.#stallInfo = info;
+    this.emit({ type: "stall", info });
+  }
+
+  resume(): void {
+    if (this.#measuring) return; // no-op if not stalled
+    this.#measuring = true;
+    this.#stalledSinceWall = 0;
+    this.#stallInfo = null;
+    this.emit({ type: "resume" });
+  }
+
+  /** A real measured sample just arrived — refresh the watchdog and, if we were
+   *  stalled, auto-resume (the link is demonstrably delivering again). Called
+   *  from every ingest* path so dead-air detection keys off genuine samples. */
+  #noteRealSample(): void {
+    this.#lastSampleWall = performance.now();
+    if (!this.#measuring) this.resume();
+  }
+
+  /** Wall-clock stall bookkeeping, run every tick. Returns true iff it ended
+   *  the run (max-stall → terminal fail), so the caller bails out of the tick.
+   *   • Watchdog: in a measured phase, > STALL_WATCHDOG_MS of silence while
+   *     measuring → auto-stall (the backend went quiet without telling us).
+   *   • Max-stall: stalled longer than MAX_STALL_MS → give up (connection-lost).
+   *  Both are wall-clock; measured-time stays frozen across the whole gap. */
+  #updateStallState(now: number): boolean {
+    if (this.#measuring) {
+      // Watchdog only inside a measured phase — warmup primes connections and
+      // legitimately produces no samples, so it must not trip the watchdog.
+      if (this.#isMeasuredPhase(this.#phase) && now - this.#lastSampleWall > STALL_WATCHDOG_MS) {
+        this.stall({ reason: "connection-lost", detail: "no data" });
+      }
+      return false;
+    }
+    // Stalled: bound our patience. Beyond MAX_STALL_MS the drop is treated as
+    // unrecoverable and escalated to a terminal failure (carries partials).
+    if (now - this.#stalledSinceWall > MAX_STALL_MS) {
+      // A stall never carries user-abort (that's the abort() path), but the type
+      // is the broad TerminationReason; narrow to a failure reason for fail().
+      const r = this.#stallInfo?.reason;
+      const reason: RunnerError["reason"] = r && r !== "user-abort" ? r : "connection-lost";
+      this.fail(reason, "Connection lost — gave up after max-stall timeout");
+      return true;
+    }
+    return false;
+  }
+
+  /** Phases that produce real samples and so are subject to the stall watchdog.
+   *  Warmup is excluded (it primes connections without measuring). */
+  #isMeasuredPhase(phase: Phase): boolean {
+    return phase === "latency" || phase === "download" || phase === "upload";
   }
 
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
@@ -434,19 +561,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
     this.#glideArmedForSeg = this.#segments.indexOf(seg);
     this.#glideStartReal = performance.now();
-    this.#glideFromVirtual = elapsed;
-    this.#glideTargetVirtual = seg.end;
+    this.#glideFromMeasured = elapsed;
+    this.#glideTargetMeasured = seg.end;
   }
 
-  /** Drive the virtual clock along the armed glide's eased curve. */
+  /** Drive the measured-time clock along the armed glide's eased curve. */
   #advanceGlide(now: number) {
     const glideMs = Math.max(1, this.#cfg!.adaptive.glideMs);
     const p = Math.min(1, Math.max(0, (now - this.#glideStartReal) / glideMs));
     const eased = easeInOutCubic(p);
     const target =
-      this.#glideFromVirtual + (this.#glideTargetVirtual - this.#glideFromVirtual) * eased;
+      this.#glideFromMeasured + (this.#glideTargetMeasured - this.#glideFromMeasured) * eased;
     // Monotonic: a jittery tick must never rewind the marker.
-    this.#virtualElapsed = Math.max(this.#virtualElapsed, target);
+    this.#measuredElapsed = Math.max(this.#measuredElapsed, target);
   }
 
   #setPhase(p: Phase) {

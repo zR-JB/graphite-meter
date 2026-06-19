@@ -195,7 +195,27 @@ export type TerminationReason =
   | "connection-lost" // transport failed mid-run (server close or network loss)
   | "timeout" // a request/stream stalled past its deadline
   | "protocol-error" // malformed/unexpected response or close handshake
-  | "internal-error"; // a bug in the engine itself
+  | "internal-error" // a bug in the engine itself
+  | "transport-unavailable"; // every negotiated transport failed to establish (§transport)
+
+/* ---------- Transport negotiation (§transport) ---------- */
+/** The connection method a backend may negotiate for a phase's I/O. A real
+ *  engine tries these in preference order; each can fail to establish, and a
+ *  failure of one is non-fatal as long as another succeeds. */
+export type TransportKind = "webtransport" | "websocket" | "xhr-stream";
+
+/* ---------- Transient link health (§stall) ---------- */
+/** A NON-terminal stall: the link went quiet mid-phase and the run is waiting
+ *  to reconnect. Carried on the `stall` event; the core freezes measured-time
+ *  accrual until a matching `resume`. `transport` (when known) names which
+ *  connection dropped. This is NOT a failure — see `fail`/`RunnerError` for the
+ *  terminal case (e.g. a stall that outlives MAX_STALL_MS becomes a
+ *  `connection-lost` failure). */
+export interface StallInfo {
+  reason: TerminationReason;
+  transport?: TransportKind;
+  detail?: string;
+}
 
 /** A structured run failure, carried on the `error` event. Distinguishing a
  *  failure from a user abort (the `"aborted"` phase) and from a clean finish is
@@ -252,8 +272,28 @@ export type RunnerEvent =
   | { type: "throughput"; sample: ThroughputSample }
   | { type: "latency"; sample: LatencySample }
   | { type: "connectivity"; state: ConnectivityState }
-  | { type: "progress"; phase: Phase; fraction: number } // 0–1 within phase
+  // Progress within the active phase. `fraction` is 0–1 of the phase's
+  // TEST-TIME budget consumed; the *Ms fields expose the raw measured-time
+  // accrual so the UI can show a real "time remaining" (budget − elapsed) that
+  // STOPS shrinking while stalled. `measuring` is the core's measured-time gate
+  // — false while a stall (explicit or watchdog) has frozen accrual; the
+  // grind-to-zero presentation (principle 2) keys off this, not off any sample.
+  | {
+      type: "progress";
+      phase: Phase;
+      fraction: number; // 0–1 within phase (of the test-time budget)
+      phaseElapsedMs: number; // measured test-time consumed in this phase
+      phaseBudgetMs: number; // this phase's test-time budget
+      measuring: boolean; // false ⇒ accrual frozen (stalled)
+    }
   | { type: "stability"; snapshot: StabilitySnapshot } // live measurement stability
+  // Transient link health (NON-terminal): the run continues, hoping to
+  // reconnect. `stall` freezes measured-time accrual (the phase end recedes by
+  // the dead-air duration); `resume` un-freezes it. These drive the UI's
+  // grind-to-zero + "connection lost" message — they carry NO sample and NEVER
+  // enter the accumulator (principle 1).
+  | { type: "stall"; info: StallInfo }
+  | { type: "resume" }
   // Per-stage final result, emitted the instant each measured phase ends — so a
   // finished stage shows its real result while later stages still run. Stages
   // are independent: each carries its own headline/method/band (§13.4).

@@ -52,6 +52,8 @@
         return "Connection timed out";
       case "protocol-error":
         return "Unexpected server response";
+      case "transport-unavailable":
+        return "Couldn't establish a connection";
       case "internal-error":
         return "Runner needs attention";
     }
