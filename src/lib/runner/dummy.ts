@@ -19,17 +19,20 @@ import type {
   RunResult,
   ThroughputResult,
   LatencyResult,
-  BufferbloatGrade,
 } from "./contract";
 import {
-  transferConfidence,
-  latencyConfidence,
   shouldExitPhase,
   bandForState,
-  isStillStable,
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
+import {
+  buildSegments,
+  rebuildTail,
+  segmentAt,
+  type Segment,
+} from "./schedule";
+import { RunAccumulator } from "./evaluation";
 
 export interface DummyOptions {
   seed?: number;
@@ -110,26 +113,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/* ---------- Internal phase segment on the timeline ---------- */
-/** The measured stage a warmup window primes. Backend-only metadata: the warmup
- *  is emitted to the UI as the generic `"warmup"` phase, but the runner records
- *  which stage follows so a real engine knows which connection(s) to prime
- *  (the transfer connection, plus the latency one when loaded-latency is active).
- *  Informational in the dummy, which simulates rather than opening sockets. */
-type StagePhase = Extract<Phase, "latency" | "download" | "upload">;
-interface Segment {
-  phase: Extract<Phase, "warmup" | "latency" | "download" | "upload">;
-  start: number; // ms offset from run start
-  end: number;
-  warmupFor?: StagePhase; // set only on warmup segments
-}
-
-/* ---------- Per-phase sample bookkeeping for the final result ---------- */
-interface PhaseAccum {
-  bytesPerSecValues: number[];
-  bytes: number;
-}
-
 export class DummyRunner implements NetworkRunner {
   #handlers = new Set<(e: RunnerEvent) => void>();
   #phase: Phase = "idle";
@@ -171,30 +154,12 @@ export class DummyRunner implements NetworkRunner {
   #glideStartReal = 0; // performance.now() when the glide armed
   #glideFromVirtual = 0; // #virtualElapsed at arm time
   #glideTargetVirtual = 0; // virtual position to glide to (seg.end)
-  // Per-phase sample windows feeding the confidence math (reset per phase).
-  #phaseBytesPerSec: number[] = [];
-  #phaseRtts: number[] = [];
-  #phasePings = 0;
-  #phasePingsLost = 0;
 
-  // result bookkeeping
-  #dl: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
-  #ul: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
-  #idleRtts: number[] = [];
-  #loadedRtts: number[] = [];
-  #allRtts: number[] = [];
-  #pingsTotal = 0;
-  #pingsLost = 0;
-  // Trailing contiguous stable-run trackers (§13.4). Each holds the index into
-  // its phase's sample array where the *current* stable run began (or -1 when
-  // not currently stable), plus the last stability score seen. Read at finish:
-  // still stable (≥0) → average the trailing window; lost it (-1) → full avg.
-  #dlStableStart = -1;
-  #ulStableStart = -1;
-  #latStableStart = -1;
-  #dlFinalScore = 0;
-  #ulFinalScore = 0;
-  #latFinalScore = 0;
+  // Engine-agnostic accumulation + reduction (sample windows, stable-run
+  // tracking, result reducers). The dummy feeds it raw synthesized samples;
+  // a real runner feeds it real ones, so both reduce identically.
+  #accum = new RunAccumulator();
+
   // Per-stage results, computed + emitted once the moment each measured phase
   // ends (independent of the others) and reused to build the final RunResult.
   #dlResult: ThroughputResult | null = null;
@@ -264,30 +229,10 @@ export class DummyRunner implements NetworkRunner {
     this.#cfg = config;
     this.#resetRunState();
 
-    // Build the phase timeline, skipping disabled stages.
-    const segs: Segment[] = [];
-    let cursor = 0;
-    const push = (phase: Segment["phase"], ms: number, warmupFor?: StagePhase) => {
-      if (ms <= 0) return;
-      segs.push({ phase, start: cursor, end: cursor + ms, warmupFor });
-      cursor += ms;
-    };
-    // Each enabled stage owns a self-contained warmup that primes its own
-    // connection — no global initial warmup, so stages carry no cross-deps.
-    // Because every warmup is immediately followed by its stage's measurement,
-    // two warmups can never sit adjacent (no merging into a double-length span).
-    const w = config.duration.warmupMs;
-    const stage = (on: boolean, phase: StagePhase, ms: number) => {
-      if (!on || ms <= 0) return;
-      if (w > 0) push("warmup", w, phase); // warm this stage's connection first
-      push(phase, ms);
-    };
-    stage(config.stages.latency, "latency", config.duration.latencyMs);
-    stage(config.stages.download, "download", config.duration.downloadMs);
-    stage(config.stages.upload, "upload", config.duration.uploadMs);
-
-    this.#segments = segs;
-    this.#totalMs = cursor;
+    // Build the phase timeline, skipping disabled stages (shared scheduler).
+    const { segments, totalMs } = buildSegments(config);
+    this.#segments = segments;
+    this.#totalMs = totalMs;
     this.#t0 = performance.now();
     this.#lastRealNow = this.#t0;
 
@@ -301,19 +246,7 @@ export class DummyRunner implements NetworkRunner {
     this.#lastPingAt = -Infinity;
     this.#lastStabilityAt = -Infinity;
     this.#bytesCumulative = 0;
-    this.#dl = { bytesPerSecValues: [], bytes: 0 };
-    this.#ul = { bytesPerSecValues: [], bytes: 0 };
-    this.#idleRtts = [];
-    this.#loadedRtts = [];
-    this.#allRtts = [];
-    this.#pingsTotal = 0;
-    this.#pingsLost = 0;
-    this.#dlStableStart = -1;
-    this.#ulStableStart = -1;
-    this.#latStableStart = -1;
-    this.#dlFinalScore = 0;
-    this.#ulFinalScore = 0;
-    this.#latFinalScore = 0;
+    this.#accum.reset();
     this.#dlResult = null;
     this.#ulResult = null;
     this.#latResult = null;
@@ -323,10 +256,6 @@ export class DummyRunner implements NetworkRunner {
     this.#glideStartReal = 0;
     this.#glideFromVirtual = 0;
     this.#glideTargetVirtual = 0;
-    this.#phaseBytesPerSec = [];
-    this.#phaseRtts = [];
-    this.#phasePings = 0;
-    this.#phasePingsLost = 0;
     this.#liveAnomalies = [];
   }
 
@@ -392,36 +321,10 @@ export class DummyRunner implements NetworkRunner {
     if (!this.#tickTimer || !this.#cfg) return;
     this.#cfg = { ...this.#cfg, stages };
 
-    const elapsed = this.#virtualElapsed;
-    // Keep every segment that has already started; rebuild the tail.
-    const kept = this.#segments.filter((s) => s.start <= elapsed);
-    let cursor = kept.length ? kept[kept.length - 1].end : 0;
-
-    const dur = this.#cfg.duration;
-    const w = dur.warmupMs;
-    const tail: Segment[] = [];
-    const pushStage = (on: boolean, phase: StagePhase, ms: number) => {
-      // Skip disabled phases and ones whose measurement already started.
-      if (!on || ms <= 0) return;
-      if (kept.some((k) => k.phase === phase)) return;
-      // Prepend this stage's own warmup (see start()) — unless it is already
-      // running (kept), in which case the measurement just follows it.
-      const warmupRunning = kept.some(
-        (k) => k.phase === "warmup" && k.warmupFor === phase,
-      );
-      if (w > 0 && !warmupRunning) {
-        tail.push({ phase: "warmup", start: cursor, end: cursor + w, warmupFor: phase });
-        cursor += w;
-      }
-      tail.push({ phase, start: cursor, end: cursor + ms });
-      cursor += ms;
-    };
-    pushStage(stages.latency, "latency", dur.latencyMs);
-    pushStage(stages.download, "download", dur.downloadMs);
-    pushStage(stages.upload, "upload", dur.uploadMs);
-
-    this.#segments = [...kept, ...tail];
-    this.#totalMs = cursor;
+    // Rebuild only the future tail of the timeline (shared scheduler).
+    const { segments, totalMs } = rebuildTail(this.#segments, this.#virtualElapsed, this.#cfg);
+    this.#segments = segments;
+    this.#totalMs = totalMs;
     // Segment indices shifted under us — drop any armed glide so it re-arms
     // against the rebuilt array on a later tick.
     this.#glideArmedForSeg = -1;
@@ -446,7 +349,7 @@ export class DummyRunner implements NetworkRunner {
       return;
     }
 
-    const seg = this.#segments.find((s) => elapsed >= s.start && elapsed < s.end);
+    const seg = segmentAt(this.#segments, elapsed);
     if (!seg) return;
 
     // Phase transition?
@@ -501,14 +404,11 @@ export class DummyRunner implements NetworkRunner {
     // drives BOTH the live pip (emitted, throttled) and the early-finish glide
     // — one signal, no second meaning to reconcile (§13.4).
     if (seg.phase === "latency" || seg.phase === "download" || seg.phase === "upload") {
-      const conf: ConfidenceScore | LatencyConfidenceScore =
-        seg.phase === "latency"
-          ? latencyConfidence(this.#phaseRtts, this.#phasePings, this.#phasePingsLost)
-          : transferConfidence(this.#phaseBytesPerSec);
+      const conf: ConfidenceScore | LatencyConfidenceScore = this.#accum.confidence(seg.phase);
       // Track the trailing stable run FIRST so the emitted band reflects the
       // hysteretic latched state (entering stable takes a higher bar than
       // leaving — the pip and the stable window don't flicker). (§13.4)
-      const stable = this.#trackStableRun(seg.phase, conf.score);
+      const stable = this.#accum.trackStableRun(seg.phase, conf.score, this.#cfg!.adaptive);
       if (now - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
         this.#lastStabilityAt = now;
         this.#emit({
@@ -527,49 +427,10 @@ export class DummyRunner implements NetworkRunner {
     }
   }
 
-  /** Update the per-phase trailing-stable-run index from this tick's score,
-   *  with hysteresis: the run opens (records the latest sample index) once the
-   *  score crosses `stabilityThreshold` and closes (-1) only after it drops
-   *  below `stabilityThreshold − STABILITY_HYSTERESIS` — so a score hovering at
-   *  the boundary doesn't toggle the stable state. Returns the latched state;
-   *  at finish a ≥0 index means "still on a stable plateau". */
-  #trackStableRun(phase: StagePhase, score: number): boolean {
-    const cfg = this.#cfg!.adaptive;
-    let start: number;
-    let arrLen: number;
-    if (phase === "download") {
-      this.#dlFinalScore = score;
-      start = this.#dlStableStart;
-      arrLen = this.#dl.bytesPerSecValues.length;
-    } else if (phase === "upload") {
-      this.#ulFinalScore = score;
-      start = this.#ulStableStart;
-      arrLen = this.#ul.bytesPerSecValues.length;
-    } else {
-      this.#latFinalScore = score;
-      start = this.#latStableStart;
-      arrLen = this.#idleRtts.length;
-    }
-
-    const wasStable = start >= 0;
-    const nowStable = isStillStable(wasStable, score, cfg);
-    if (nowStable && !wasStable) start = Math.max(0, arrLen - 1);
-    else if (!nowStable && wasStable) start = -1;
-
-    if (phase === "download") this.#dlStableStart = start;
-    else if (phase === "upload") this.#ulStableStart = start;
-    else this.#latStableStart = start;
-
-    return nowStable;
-  }
-
   /** Reset the per-phase confidence windows when a measured phase begins. */
   #beginAdaptivePhase() {
     this.#glideArmedForSeg = -1; // a new phase never inherits the prior glide
-    this.#phaseBytesPerSec = [];
-    this.#phaseRtts = [];
-    this.#phasePings = 0;
-    this.#phasePingsLost = 0;
+    this.#accum.beginPhase();
   }
 
   /** Evaluate the adaptive early-finish predicate; arm a glide if stable.
@@ -625,13 +486,13 @@ export class DummyRunner implements NetworkRunner {
   #finalizeStage(phase: Phase) {
     const cfg = this.#cfg!;
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
-      this.#dlResult = this.#throughputResult(this.#dl, this.#dlStableStart, this.#dlFinalScore, cfg);
+      this.#dlResult = this.#accum.throughputResult("download", cfg);
       this.#emit({ type: "stageResult", stage: "download", result: this.#dlResult });
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
-      this.#ulResult = this.#throughputResult(this.#ul, this.#ulStableStart, this.#ulFinalScore, cfg);
+      this.#ulResult = this.#accum.throughputResult("upload", cfg);
       this.#emit({ type: "stageResult", stage: "upload", result: this.#ulResult });
     } else if (phase === "latency" && cfg.stages.latency && !this.#latResult) {
-      this.#latResult = this.#latencyResult(this.#latStableStart, this.#latFinalScore, cfg);
+      this.#latResult = this.#accum.latencyResult(cfg, this.#spec.idleRttMs);
       this.#emit({ type: "stageResult", stage: "latency", result: this.#latResult });
     }
   }
@@ -666,12 +527,9 @@ export class DummyRunner implements NetworkRunner {
     const bytes = bytesPerSec * dtSec;
     this.#bytesCumulative += bytes;
 
-    const accum = seg.phase === "download" ? this.#dl : this.#ul;
-    accum.bytesPerSecValues.push(bytesPerSec);
-    accum.bytes += bytes;
-
-    // Feed the adaptive confidence window for the current transfer phase.
-    this.#phaseBytesPerSec.push(bytesPerSec);
+    // Accumulate into the shared evaluation core (whole-phase + confidence
+    // window). seg.phase is download/upload here (gated by the tick).
+    this.#accum.pushThroughput(seg.phase as "download" | "upload", bytesPerSec, bytes);
 
     const sample: ThroughputSample = {
       t: elapsed,
@@ -716,20 +574,9 @@ export class DummyRunner implements NetworkRunner {
     if (drop) lossProb = Math.max(lossProb, drop.magnitude);
     const lost = this.#rand() < lossProb;
 
-    this.#pingsTotal++;
-    if (lost) {
-      this.#pingsLost++;
-    } else {
-      this.#allRtts.push(rtt);
-      if (underLoad) this.#loadedRtts.push(rtt);
-      else this.#idleRtts.push(rtt);
-    }
-
-    // Feed the adaptive confidence window for the current phase. Latency
-    // confidence uses unloaded RTTs + the loss count over the same window.
-    this.#phasePings++;
-    if (lost) this.#phasePingsLost++;
-    else if (!underLoad) this.#phaseRtts.push(rtt);
+    // Accumulate into the shared evaluation core (whole-run distribution +
+    // per-phase confidence window).
+    this.#accum.pushLatency(rtt, underLoad, lost);
 
     const sample: LatencySample = { t: elapsed, rttMs: rtt, underLoad, lost };
     this.#emit({ type: "latency", sample });
@@ -757,8 +604,8 @@ export class DummyRunner implements NetworkRunner {
       // Latency is always present in the aggregate: when the latency STAGE ran
       // it was finalized as a stage result; otherwise compute it here from any
       // under-load pings (bufferbloat still needs it).
-      latency: this.#latResult ?? this.#latencyResult(this.#latStableStart, this.#latFinalScore, cfg),
-      bufferbloat: this.#bufferbloatGrade(),
+      latency: this.#latResult ?? this.#accum.latencyResult(cfg, this.#spec.idleRttMs),
+      bufferbloat: this.#accum.bufferbloatGrade(this.#spec.idleRttMs),
       startedAt: Date.now() - actualMs,
       durationMs: actualMs,
     };
@@ -768,115 +615,9 @@ export class DummyRunner implements NetworkRunner {
     this.#emit({ type: "complete", result });
   }
 
-  /**
-   * Reduce a transfer phase's samples to its headline value. When adaptive is
-   * on and the phase was still on a stable plateau at finish (`stableStart ≥ 0`)
-   * the headline is the mean over that trailing window — the steady plateau,
-   * not the ramp-up-diluted whole. Otherwise (adaptive off, or stability lost
-   * before the end) it falls back to the full-phase average (§13.4).
-   */
-  #throughputResult(
-    a: PhaseAccum,
-    stableStart: number,
-    finalScore: number,
-    cfg: RunnerConfig,
-  ): ThroughputResult {
-    const v = a.bytesPerSecValues;
-    const band = bandForState(stableStart >= 0, finalScore);
-    if (!v.length) {
-      return {
-        meanBytesPerSec: 0,
-        peakBytesPerSec: 0,
-        stabilityPct: 0,
-        totalBytes: a.bytes,
-        reportedBytesPerSec: 0,
-        fullAverageBytesPerSec: 0,
-        method: "full-average",
-        stabilityScore: finalScore,
-        band,
-      };
-    }
-    const full = v.reduce((s, x) => s + x, 0) / v.length;
-    const peak = Math.max(...v);
-    const variance = v.reduce((s, x) => s + (x - full) ** 2, 0) / v.length;
-    const cv = full > 0 ? Math.sqrt(variance) / full : 0;
-    const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
-
-    const useWindow = cfg.adaptive.enabled && stableStart >= 0 && stableStart < v.length;
-    const window = useWindow ? v.slice(stableStart) : v;
-    const reported = window.reduce((s, x) => s + x, 0) / window.length;
-
-    return {
-      meanBytesPerSec: reported,
-      peakBytesPerSec: peak,
-      stabilityPct,
-      totalBytes: a.bytes,
-      reportedBytesPerSec: reported,
-      fullAverageBytesPerSec: full,
-      method: useWindow ? "stable-window" : "full-average",
-      stabilityScore: finalScore,
-      band,
-    };
-  }
-
-  #latencyResult(stableStart: number, finalScore: number, cfg: RunnerConfig): LatencyResult {
-    const all = this.#allRtts;
-    const idle = this.#idleRtts;
-    const useWindow = cfg.adaptive.enabled && stableStart >= 0 && stableStart < idle.length;
-    // Headline (median unloaded) follows the same stable-window vs full rule;
-    // min/p50/p95/jitter/loss stay whole-run distribution descriptors.
-    const idleWindow = useWindow ? idle.slice(stableStart) : idle;
-    const idleMs = median(idleWindow.length ? idleWindow : all) || this.#spec.idleRttMs;
-    return {
-      idleMs,
-      minMs: all.length ? Math.min(...all) : 0,
-      p50Ms: percentile(all, 50),
-      p95Ms: percentile(all, 95),
-      jitterMs: meanAbsDeviation(all),
-      packetLossPct: this.#pingsTotal ? (this.#pingsLost / this.#pingsTotal) * 100 : 0,
-      reportedMs: idleMs,
-      method: useWindow ? "stable-window" : "full-average",
-      stabilityScore: finalScore,
-      band: bandForState(stableStart >= 0, finalScore),
-    };
-  }
-
-  #bufferbloatGrade(): BufferbloatGrade {
-    const idleMs = median(this.#idleRtts.length ? this.#idleRtts : this.#allRtts) || this.#spec.idleRttMs;
-    const loadedMs = this.#loadedRtts.length ? median(this.#loadedRtts) : idleMs;
-    const increaseMs = Math.max(0, loadedMs - idleMs);
-    let grade: BufferbloatGrade["grade"];
-    if (increaseMs <= 5) grade = "A";
-    else if (increaseMs <= 30) grade = "B";
-    else if (increaseMs <= 60) grade = "C";
-    else if (increaseMs <= 200) grade = "D";
-    else grade = "F";
-    return { grade, idleMs, loadedMs, increaseMs };
-  }
 }
 
-/* ---------- small statistics helpers ---------- */
-function median(xs: number[]): number {
-  if (!xs.length) return 0;
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-}
-
-function percentile(xs: number[], p: number): number {
-  if (!xs.length) return 0;
-  const s = [...xs].sort((a, b) => a - b);
-  const idx = Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1));
-  return s[idx];
-}
-
-function meanAbsDeviation(xs: number[]): number {
-  if (xs.length < 2) return 0;
-  let acc = 0;
-  for (let i = 1; i < xs.length; i++) acc += Math.abs(xs[i] - xs[i - 1]);
-  return acc / (xs.length - 1);
-}
-
+/* ---------- small simulation helpers ---------- */
 /** Smooth ease-in-out cubic on [0,1]; drives the early-finish glide curve. */
 function easeInOutCubic(p: number): number {
   return p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2;
