@@ -15,7 +15,7 @@
   import ResultCards from "./ResultCards.svelte";
   import StatusBar from "./StatusBar.svelte";
   import SettingsPanel from "./settings/SettingsPanel.svelte";
-  import InspectorPanel from "./InspectorPanel.svelte";
+  import TelemetryPanel from "./TelemetryPanel.svelte";
   import PhaseToast from "./PhaseToast.svelte";
   import CommandHints from "./CommandHints.svelte";
   import ConnectivityPulse from "./ConnectivityPulse.svelte";
@@ -29,7 +29,7 @@
   // topbar or via the W / D shortcuts. On wide screens (`wide`) an open panel
   // docks as an in-flow column that pushes the stage; below that it's a flyout
   // overlay. Same shared <SidePanel> either way.
-  let infoOpen = $state(false);
+  let telemetryOpen = $state(false);
   let settingsOpen = $state(false);
   let wide = $state(false);
 
@@ -39,12 +39,12 @@
   // open transition regardless of source (topbar button, W/D key, bind).
   let lastOpened = $state<"left" | "right">("right");
   let prevSettingsOpen = false;
-  let prevInfoOpen = false;
+  let prevTelemetryOpen = false;
   $effect(() => {
     if (settingsOpen && !prevSettingsOpen) lastOpened = "left";
-    if (infoOpen && !prevInfoOpen) lastOpened = "right";
+    if (telemetryOpen && !prevTelemetryOpen) lastOpened = "right";
     prevSettingsOpen = settingsOpen;
-    prevInfoOpen = infoOpen;
+    prevTelemetryOpen = telemetryOpen;
   });
 
   function toggleTheme() {
@@ -57,7 +57,7 @@
   // width only while that panel is docked + open, else 0 (column collapses).
   // The grid template also CSS-clamps to 46vw so a stale large value is safe.
   const dockLeft = $derived(wide && settingsOpen ? store.dockWidth.left : 0);
-  const dockRight = $derived(wide && infoOpen ? store.dockWidth.right : 0);
+  const dockRight = $derived(wide && telemetryOpen ? store.dockWidth.right : 0);
 
   function setDockWidth(side: "left" | "right", px: number) {
     store.dockWidth = { ...store.dockWidth, [side]: px };
@@ -96,8 +96,8 @@
         engage();
       } else if (settingsOpen) {
         settingsOpen = false;
-      } else if (infoOpen) {
-        infoOpen = false;
+      } else if (telemetryOpen) {
+        telemetryOpen = false;
       } else {
         return;
       }
@@ -124,7 +124,7 @@
         e.preventDefault();
         break;
       case "d":
-        infoOpen = !infoOpen;
+        telemetryOpen = !telemetryOpen;
         e.preventDefault();
         break;
       case "r":
@@ -191,9 +191,9 @@
     <button
       class="ghost-btn icon-btn"
       aria-label="Toggle connection & telemetry info"
-      aria-expanded={infoOpen}
+      aria-expanded={telemetryOpen}
       use:tooltip={"Connection & telemetry info (D)"}
-      onclick={() => (infoOpen = !infoOpen)}>{@html ICON.info}</button
+      onclick={() => (telemetryOpen = !telemetryOpen)}>{@html ICON.info}</button
     >
   </header>
 
@@ -223,8 +223,8 @@
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
   />
-  <InspectorPanel
-    bind:open={infoOpen}
+  <TelemetryPanel
+    bind:open={telemetryOpen}
     docked={wide}
     raised={lastOpened === "right"}
     dockWidth={store.dockWidth.right}

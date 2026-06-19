@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <InspectorPanel> — Connection & telemetry (§3.7)
+   * <TelemetryPanel> — Connection & telemetry (§3.7)
    * Mirror of <SettingsPanel>: a thin wrapper over the shared
    * <SidePanel> (right side), so the two auxiliary panels are visually
    * and behaviourally identical. Shows the connection InfraCard, with
