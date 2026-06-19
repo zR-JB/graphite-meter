@@ -16,7 +16,7 @@
       "h3": null
     },
     "transports": {
-      "xhrStream": false,
+      "xhrStream": true,
       "websocket": false,
       "webtransport": false
     },
