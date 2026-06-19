@@ -143,11 +143,23 @@ export class DummyRunner implements NetworkRunner {
   // window on the effective timeline; the synthesis hooks read this list.
   #liveAnomalies: LiveAnomaly[] = [];
 
-  // Adaptive early-exit: time removed from the timeline by phases that
-  // exited early. Effective elapsed = realElapsed − #shiftMs, which slides
-  // every later segment earlier so the run finishes sooner WITHOUT ever
-  // faking a phase's progress to 1.0 — coverage stays truthful (§13.4).
-  #shiftMs = 0;
+  // ---- Virtual-time clock (§13.4) ----
+  // The tick loop advances a virtual timeline each tick. At rest it tracks
+  // wall-clock 1:1. When a measured phase becomes confidently stable an
+  // early-finish "glide" is armed for that segment: virtual time is driven
+  // along an eased curve to the phase's end over a short real-time window
+  // (adaptive.glideMs), so it crosses seg.end — and eventually #totalMs —
+  // sooner in wall-clock. The progress marker visibly accelerates and the run
+  // genuinely finishes early, without ever faking a bar to 1.0 (coverage stays
+  // truthful, §13.4). Replaces the old global #shiftMs offset, whose sign
+  // pulled elapsed backward and trapped a stable phase in an infinite reset.
+  #virtualElapsed = 0; // ms of virtual timeline consumed
+  #lastRealNow = 0; // performance.now() at the previous tick
+  // Glide state, bound to one segment by its index.
+  #glideArmedForSeg = -1; // segment index a glide is armed for, or -1
+  #glideStartReal = 0; // performance.now() when the glide armed
+  #glideFromVirtual = 0; // #virtualElapsed at arm time
+  #glideTargetVirtual = 0; // virtual position to glide to (seg.end)
   // Per-phase sample windows feeding the confidence math (reset per phase).
   #phaseBytesPerSec: number[] = [];
   #phaseRtts: number[] = [];
@@ -251,6 +263,7 @@ export class DummyRunner implements NetworkRunner {
     this.#segments = segs;
     this.#totalMs = cursor;
     this.#t0 = performance.now();
+    this.#lastRealNow = this.#t0;
 
     this.#tickTimer = setInterval(() => this.#tick(), TICK_MS);
     this.#tick(); // emit the first transition immediately
@@ -268,7 +281,12 @@ export class DummyRunner implements NetworkRunner {
     this.#allRtts = [];
     this.#pingsTotal = 0;
     this.#pingsLost = 0;
-    this.#shiftMs = 0;
+    this.#virtualElapsed = 0;
+    this.#lastRealNow = 0;
+    this.#glideArmedForSeg = -1;
+    this.#glideStartReal = 0;
+    this.#glideFromVirtual = 0;
+    this.#glideTargetVirtual = 0;
     this.#phaseBytesPerSec = [];
     this.#phaseRtts = [];
     this.#phasePings = 0;
@@ -285,7 +303,7 @@ export class DummyRunner implements NetworkRunner {
    */
   injectAnomaly(a: RunnerAnomaly): void {
     if (!this.#tickTimer) return;
-    const elapsed = performance.now() - this.#t0 - this.#shiftMs;
+    const elapsed = this.#virtualElapsed;
     const d =
       a.kind === "latency-spike"
         ? LIVE_ANOMALY_DEFAULTS.latencySpike
@@ -338,7 +356,7 @@ export class DummyRunner implements NetworkRunner {
     if (!this.#tickTimer || !this.#cfg) return;
     this.#cfg = { ...this.#cfg, stages };
 
-    const elapsed = performance.now() - this.#t0 - this.#shiftMs;
+    const elapsed = this.#virtualElapsed;
     // Keep every segment that has already started; rebuild the tail.
     const kept = this.#segments.filter((s) => s.start <= elapsed);
     let cursor = kept.length ? kept[kept.length - 1].end : 0;
@@ -368,14 +386,22 @@ export class DummyRunner implements NetworkRunner {
 
     this.#segments = [...kept, ...tail];
     this.#totalMs = cursor;
+    // Segment indices shifted under us — drop any armed glide so it re-arms
+    // against the rebuilt array on a later tick.
+    this.#glideArmedForSeg = -1;
   }
 
   /* ================= MASTER TICK ================= */
   #tick() {
-    // Effective elapsed = real elapsed minus the time reclaimed by phases that
-    // exited early. The whole timeline (and the configured total) shrinks by
-    // #shiftMs, so progress fractions and the finish point stay honest.
-    const elapsed = performance.now() - this.#t0 - this.#shiftMs;
+    // Advance the virtual clock. Normally 1:1 with wall-clock; while an
+    // early-finish glide is armed the position is driven directly along an
+    // eased curve toward the current phase's end (§13.4).
+    const now = performance.now();
+    const dtReal = now - this.#lastRealNow;
+    this.#lastRealNow = now;
+    if (this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
+    else this.#virtualElapsed += dtReal;
+    const elapsed = this.#virtualElapsed;
 
     if (elapsed >= this.#totalMs) {
       this.#finish();
@@ -425,24 +451,25 @@ export class DummyRunner implements NetworkRunner {
       this.#emitLatency(seg, elapsed);
     }
 
-    // Adaptive early exit: once this phase is confidently stable, reclaim the
-    // rest of its nominal window by growing #shiftMs to the segment boundary.
-    // Next tick lands in the following segment (or finishes) cleanly.
-    this.#maybeExitEarly(seg, elapsed);
+    // Adaptive early finish: once this phase is confidently stable, arm a glide
+    // that accelerates virtual time to the segment boundary (§13.4).
+    this.#maybeArmGlide(seg, elapsed);
   }
 
   /** Reset the per-phase confidence windows when a measured phase begins. */
   #beginAdaptivePhase() {
+    this.#glideArmedForSeg = -1; // a new phase never inherits the prior glide
     this.#phaseBytesPerSec = [];
     this.#phaseRtts = [];
     this.#phasePings = 0;
     this.#phasePingsLost = 0;
   }
 
-  /** Evaluate the adaptive early-exit predicate for the current segment. */
-  #maybeExitEarly(seg: Segment, elapsed: number) {
+  /** Evaluate the adaptive early-finish predicate; arm a glide if stable. */
+  #maybeArmGlide(seg: Segment, elapsed: number) {
     const cfg = this.#cfg!;
     if (!cfg.adaptive.enabled) return;
+    if (this.#glideArmedForSeg >= 0) return; // already gliding this phase
 
     const durationMs = seg.end - seg.start;
     const elapsedInPhase = elapsed - seg.start;
@@ -469,9 +496,24 @@ export class DummyRunner implements NetworkRunner {
     }
     if (!exit) return;
 
-    // Reclaim the unused tail of this segment. We do NOT emit a progress=1;
-    // the phase ends at its real coverage and the next phase takes over.
-    this.#shiftMs += seg.end - elapsed;
+    // Arm the glide for this segment: drive virtual time from here to the phase
+    // end over #glideMs of real time (eased). We never fake progress to 1.0 —
+    // the marker accelerates and the next phase takes over on arrival.
+    this.#glideArmedForSeg = this.#segments.indexOf(seg);
+    this.#glideStartReal = performance.now();
+    this.#glideFromVirtual = elapsed;
+    this.#glideTargetVirtual = seg.end;
+  }
+
+  /** Drive the virtual clock along the armed glide's eased curve. */
+  #advanceGlide(now: number) {
+    const glideMs = Math.max(1, this.#cfg!.adaptive.glideMs);
+    const p = Math.min(1, Math.max(0, (now - this.#glideStartReal) / glideMs));
+    const eased = easeInOutCubic(p);
+    const target =
+      this.#glideFromVirtual + (this.#glideTargetVirtual - this.#glideFromVirtual) * eased;
+    // Monotonic: a jittery tick must never rewind the marker.
+    this.#virtualElapsed = Math.max(this.#virtualElapsed, target);
   }
 
   #setPhase(p: Phase) {
@@ -585,9 +627,9 @@ export class DummyRunner implements NetworkRunner {
     }
 
     const cfg = this.#cfg!;
-    // Actual wall-clock length — shorter than the nominal #totalMs whenever
-    // adaptive early-exit reclaimed time (#shiftMs).
-    const actualMs = Math.max(0, this.#totalMs - this.#shiftMs);
+    // Actual wall-clock length — shorter than the nominal #totalMs whenever an
+    // adaptive glide accelerated one or more phases to an early finish (§13.4).
+    const actualMs = Math.max(0, performance.now() - this.#t0);
     const result: RunResult = {
       download: cfg.stages.download ? this.#throughputResult(this.#dl) : null,
       upload: cfg.stages.upload ? this.#throughputResult(this.#ul) : null,
@@ -662,4 +704,9 @@ function meanAbsDeviation(xs: number[]): number {
   let acc = 0;
   for (let i = 1; i < xs.length; i++) acc += Math.abs(xs[i] - xs[i - 1]);
   return acc / (xs.length - 1);
+}
+
+/** Smooth ease-in-out cubic on [0,1]; drives the early-finish glide curve. */
+function easeInOutCubic(p: number): number {
+  return p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2;
 }

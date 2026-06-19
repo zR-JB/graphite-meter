@@ -89,6 +89,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 8,
     minTransferSamples: 12,
+    glideMs: 700, // early-finish acceleration glide, real-time ms
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };

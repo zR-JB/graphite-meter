@@ -66,6 +66,7 @@ export interface AdaptiveDurationConfig {
   maxPhaseReductionRatio: number; // never cut a phase by more than this fraction
   minLatencySamples: number; // floor before a latency phase may exit
   minTransferSamples: number; // floor before a transfer phase may exit
+  glideMs: number; // real-time duration of the early-finish acceleration glide
 }
 
 /* ---------- Configuration passed INTO the runner ---------- */
