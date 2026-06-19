@@ -39,11 +39,23 @@
     const s = ms / 1000;
     return `${s.toFixed(1)}s`;
   }
+
+  // Test-time remaining in the active measured phase (budget − measured
+  // elapsed). It STOPS shrinking while stalled (both inputs freeze in the
+  // core), so a drop makes the push-out of the run end visible here. Shown
+  // only while running with a real budget; on a stall it's tagged "paused".
+  const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
 
 <span class="label">{PHASE_LABEL[store.phase]}</span>
 <span class="sep">·</span>
 <span>elapsed {fmtElapsed(elapsedMs)}</span>
+{#if showRemaining}
+  <span class="sep">·</span>
+  <span class:paused={!store.measuring}>
+    {fmtElapsed(store.phaseRemainingMs)} left{#if !store.measuring}&nbsp;(paused){/if}
+  </span>
+{/if}
 <span class="sep">·</span>
 <span>{fmtBytes(store.bytesTransferred, store.unitBase)} xfer</span>
 <span class="flex-1"></span>
@@ -67,5 +79,11 @@
   }
   .soft {
     color: var(--text-soft);
+  }
+  /* Remaining-time stalls: tint amber/error so the frozen countdown reads as
+     "paused — link down", not a normal tick. */
+  .paused {
+    color: var(--err);
+    font-weight: 600;
   }
 </style>

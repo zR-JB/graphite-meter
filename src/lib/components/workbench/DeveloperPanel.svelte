@@ -40,6 +40,12 @@
       desc: "Cut receive/send throughput for a window — stress the gauge and chart stability.",
       cta: "Inject Drop",
     },
+    {
+      kind: "connection-drop",
+      title: "Connection Drop",
+      desc: "Kill the link for ~4s — the gauge grinds to 0, the run pauses, then resumes and finishes late by the dropped time.",
+      cta: "Drop Connection",
+    },
   ];
 
   function fire(kind: RunnerAnomaly["kind"]) {

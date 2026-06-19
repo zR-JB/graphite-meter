@@ -40,6 +40,27 @@
   let canvasEl = $state<HTMLCanvasElement>();
   let engine: GaugeEngine;
 
+  // ── Grind-to-zero on a stall (presentation only — principle 2) ──
+  // While the run is stalled (no real samples arriving) the gauge needle + the
+  // big live number EASE to 0 over ~800ms instead of snapping, then snap back
+  // the instant a real sample resumes. This is a pure DRAW-TIME effect computed
+  // from real state (store.stalledSince + the last real sample) — it stores
+  // nothing, emits nothing, and pushes no sample into any buffer. Showing ~0
+  // during dead air is in fact truthful (no bytes are arriving); we just ease
+  // the transition. Needs a per-frame wall clock, so a tiny rAF loop bumps
+  // `nowWall`; the GaugeEngine's own EMA follower carries the needle, while the
+  // DOM number multiplies the last real bytes/sec by the same decay factor.
+  const STALL_DECAY_MS = 800;
+  let nowWall = $state(performance.now());
+  const stallDecay = $derived.by(() => {
+    if (store.measuring || !store.stalledSince) return 1;
+    const since = nowWall - store.stalledSince;
+    return Math.min(1, Math.max(0, 1 - since / STALL_DECAY_MS));
+  });
+  // The last REAL throughput value, eased toward 0 while stalled. Read-only of
+  // the buffer's tail — never mutated.
+  const decayedBytesPerSec = $derived((store.throughput.at(-1)?.bytesPerSec ?? 0) * stallDecay);
+
   // Nice-ceiling ladder (ms) for the latency dial. 1-2-5 steps so the five
   // quarter labels (0 … scale) always land on clean values (5/10/25/50…).
   const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
@@ -71,7 +92,9 @@
       if (fm?.kind === "latency") return { value: fmtMs(fm.ms), unit: "ms" };
       return { value: "—", unit: "" };
     }
-    return { value: fmtSpeed(store.liveMetric.value), unit: store.liveMetric.unit };
+    // Live download/upload/bidirectional speed. While stalled the value eases
+    // to 0 over ~800ms (presentation only — principle 2); snaps back on resume.
+    return { value: fmtSpeed(store.toUnit(decayedBytesPerSec)), unit: store.unitLabel };
   });
 
   // Guided idle / empty + transient states (§14.3) — never a dead, bare dash.
@@ -104,7 +127,33 @@
     void store.latency.length;
     void store.liveRtt;
     void store.displayScaleBytesPerSec;
+    void store.measuring; // re-arm on a stall/resume edge so the decay animates
     engine?.wake();
+  });
+
+  // Per-frame wall clock for the grind-to-zero decay. It only needs to tick
+  // while a stall is easing the value down (and one frame after resume to snap
+  // back); a self-parking rAF keeps it idle otherwise. Bumping `nowWall`
+  // recomputes `stallDecay`/`decayedBytesPerSec`, which the DOM number reads
+  // and which (via the getter) feeds the gauge's EMA.
+  let decayRaf = 0;
+  $effect(() => {
+    const easing = store.isRunning && !store.measuring;
+    if (!easing) {
+      if (decayRaf) cancelAnimationFrame(decayRaf);
+      decayRaf = 0;
+      return;
+    }
+    const loop = () => {
+      nowWall = performance.now();
+      engine?.wake(); // keep the needle's EMA following the decayed value
+      decayRaf = requestAnimationFrame(loop);
+    };
+    decayRaf = requestAnimationFrame(loop);
+    return () => {
+      if (decayRaf) cancelAnimationFrame(decayRaf);
+      decayRaf = 0;
+    };
   });
 
   // Screen-reader mirror, throttled to 1Hz + phase changes (§7).
@@ -131,7 +180,9 @@
       }
       return {
         phase: p,
-        valueBytesPerSec: store.throughput.at(-1)?.bytesPerSec ?? 0,
+        // Stall-decayed (presentation only — principle 2): the needle eases to
+        // 0 during dead air via the engine's EMA, snaps back on resume.
+        valueBytesPerSec: decayedBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs,
         resolvedFraction,

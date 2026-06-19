@@ -112,6 +112,8 @@
           state = "done";
           fill = 100;
         } else if (stI === curI) {
+          // Active phase: while stalled the fill freezes (phaseFraction is
+          // frozen in the core) and pulses to signal the link is down.
           state = "active";
           fill = store.phaseFraction * 100;
         } else {
@@ -150,6 +152,7 @@
           <span
             class="seg-fill seg-fill--{s.key}"
             class:is-done={s.state === "done"}
+            class:is-stalled={s.state === "active" && !store.measuring}
             style="width:{s.fill}%"
           ></span>
         {/if}
@@ -256,6 +259,25 @@
   /* Settled done state — a calm, uniform fill regardless of phase tint. */
   .seg-fill.is-done {
     background: var(--ok);
+  }
+  /* Stalled (link dropped mid-phase): the fill is frozen — pulse it in an error
+     tint so a stuck progress bar reads as "paused, reconnecting", not hung. */
+  .seg-fill.is-stalled {
+    background: var(--err);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .seg-fill.is-stalled {
+      animation: stall-pulse 1100ms var(--ease-out) infinite;
+    }
+  }
+  @keyframes stall-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
   }
 
   /* Warmup lead-in — indeterminate sweep on the first enabled stage,

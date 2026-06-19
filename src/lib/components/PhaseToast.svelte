@@ -12,12 +12,24 @@
    * Tokens only. Reduced-motion: the slide/scale is dropped (handled
    * by the global §4.5 guard) so it just fades / appears.
    * ============================================================ */
-  import type { RunnerError } from "../runner/contract";
+  import type { TerminationReason } from "../runner/contract";
   import { console as store } from "../state/console.svelte";
 
   let visible = $state(false);
   let prevPhase = store.phase;
   let timer: ReturnType<typeof setTimeout> | null = null;
+
+  // A stall (connection lost) takes over the toast for as long as it lasts —
+  // it is not a phase transition, so it has its own sticky visibility. The
+  // moment the link resumes (`measuring` true) it clears and the normal
+  // phase-change toast resumes. Reads store.stallInfo for the reason copy.
+  const stalled = $derived(store.isRunning && !store.measuring);
+  const stallMessage = $derived.by(() => {
+    const info = store.stallInfo;
+    // Prefer the backend's human detail; else the friendly reason phrase.
+    const tail = info?.detail ?? (info ? reasonLabel(info.reason) : "the link dropped");
+    return `Connection lost — ${tail}`;
+  });
 
   /** Short uppercase eyebrow naming the lifecycle stage. */
   function kicker(p: typeof store.phase): string {
@@ -43,8 +55,8 @@
     }
   }
 
-  /** Friendly phrasing for a structured failure reason. */
-  function reasonLabel(reason: RunnerError["reason"]): string {
+  /** Friendly phrasing for a structured failure / stall reason. */
+  function reasonLabel(reason: TerminationReason): string {
     switch (reason) {
       case "preflight-failed":
         return "Couldn't reach the server";
@@ -56,6 +68,8 @@
         return "Unexpected server response";
       case "transport-unavailable":
         return "Couldn't establish a connection";
+      case "user-abort":
+        return "Stopped";
       case "internal-error":
         return "Runner needs attention";
     }
@@ -99,11 +113,21 @@
       if (timer) clearTimeout(timer);
     };
   });
+
+  // While stalled the toast is sticky (no auto-dismiss): it stays up for the
+  // whole dead-air window and clears the instant the link resumes. Cancel any
+  // pending auto-dismiss timer so a phase toast doesn't hide the stall notice.
+  $effect(() => {
+    if (stalled && timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  });
 </script>
 
-<div class="phase-toast" class:visible role="status" aria-live="polite">
-  <span class="kicker">{kicker(store.phase)}</span>
-  <strong>{message(store.phase)}</strong>
+<div class="phase-toast" class:visible={visible || stalled} class:alert={stalled} role="status" aria-live="polite">
+  <span class="kicker">{stalled ? "Link" : kicker(store.phase)}</span>
+  <strong>{stalled ? stallMessage : message(store.phase)}</strong>
 </div>
 
 <style>
@@ -129,6 +153,15 @@
   .phase-toast.visible {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+  /* Stalled (link dropped): error-tinted so the transient notice reads as an
+     alert, not a routine phase change. */
+  .phase-toast.alert {
+    border-color: color-mix(in srgb, var(--err) 45%, var(--border));
+    background: linear-gradient(180deg, var(--err-soft), var(--surface-1));
+  }
+  .phase-toast.alert .kicker {
+    color: var(--err);
   }
 
   .kicker {

@@ -351,7 +351,11 @@ export type RunnerEvent =
 export type RunnerAnomaly =
   | { kind: "latency-spike"; magnitude?: number; durationMs?: number } // rtt ×magnitude
   | { kind: "packet-loss"; magnitude?: number; durationMs?: number } // loss probability
-  | { kind: "throughput-drop"; magnitude?: number; durationMs?: number }; // bytesPerSec ×(1−magnitude)
+  | { kind: "throughput-drop"; magnitude?: number; durationMs?: number } // bytesPerSec ×(1−magnitude)
+  // A full connection drop (dead air): the backend host.stall()s now and
+  // host.resume()s after durationMs. Makes the whole stall/grind-to-zero
+  // scenario visually testable with the dummy (§drop UX).
+  | { kind: "connection-drop"; durationMs?: number };
 
 /* ---------- The contract ---------- */
 export interface NetworkRunner {

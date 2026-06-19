@@ -67,6 +67,7 @@ const LIVE_ANOMALY_DEFAULTS = {
   latencySpike: { magnitude: 3, durationMs: 600 }, // rtt ×3 for 600ms
   packetLoss: { magnitude: 0.6, durationMs: 900 }, // 60% loss probability
   throughputDrop: { magnitude: 0.4, durationMs: 600 }, // bytesPerSec −40%
+  connectionDrop: { durationMs: 4000 }, // full dead-air drop, then reconnect
 } as const;
 
 /** A scheduled live anomaly with an absolute window on the run timeline. */
@@ -104,6 +105,13 @@ export class DummyBackend implements RunnerBackend {
   // Live, dev-injected anomalies (§13.6). Each is an absolute [start,end) window
   // on the effective timeline; the synthesis hooks read this list.
   #liveAnomalies: LiveAnomaly[] = [];
+
+  // A live connection-drop window in REAL (wall-clock) time. While we're inside
+  // it the dummy pushes NO samples — true dead air — so the core's watchdog
+  // doesn't immediately auto-resume us. We stall() on inject and resume() once
+  // wall-clock passes the window's end. Real-time (not measured-time) because
+  // measured-time freezes during the stall, so it could never reach the end. */
+  #dropEndReal = 0; // performance.now() the drop lifts at, or 0 when not dropped
 
   constructor(opts: DummyOptions = {}) {
     this.#opts = { profile: opts.profile ?? "fiber", ...opts };
@@ -160,6 +168,7 @@ export class DummyBackend implements RunnerBackend {
     this.#lastThroughputAt = -Infinity;
     this.#lastPingAt = -Infinity;
     this.#liveAnomalies = [];
+    this.#dropEndReal = 0;
   }
 
   // The dummy simulates rather than opening sockets, so connection lifecycle is
@@ -179,6 +188,19 @@ export class DummyBackend implements RunnerBackend {
     const cfg = this.#host?.config;
     if (!cfg) return;
     const { phase, elapsed, segStart, segEnd, realNow } = ctx;
+
+    // Active connection-drop: true dead air — push NOTHING (so the core watchdog
+    // doesn't auto-resume us), and lift the stall once wall-clock passes the
+    // window end. Measured-time is frozen meanwhile, so the run end recedes by
+    // exactly this real duration — the visible push-out (§4 / §drop UX).
+    if (this.#dropEndReal > 0) {
+      if (realNow < this.#dropEndReal) return;
+      this.#dropEndReal = 0;
+      this.#host!.resume();
+      // Snap the sample cadence gates to "now" so resume doesn't dump a backlog.
+      this.#lastThroughputAt = realNow;
+      this.#lastPingAt = realNow;
+    }
 
     // Throughput (download / upload / bidirectional). Cadence gated on REAL
     // time so the early-finish glide stays smooth (measured-time races ahead;
@@ -292,6 +314,17 @@ export class DummyBackend implements RunnerBackend {
   injectAnomaly(a: RunnerAnomaly): void {
     const host = this.#host;
     if (!host || !host.config || host.phase === "idle") return;
+
+    // Connection-drop is modelled as a real stall, not a synthesis tweak: stall
+    // the core NOW (freezing measured-time) and open a real-time dead-air window
+    // that onTick lifts with resume(). No magnitude — it's a full drop.
+    if (a.kind === "connection-drop") {
+      const durationMs = a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;
+      this.#dropEndReal = performance.now() + durationMs;
+      host.stall({ reason: "connection-lost", detail: "injected drop" });
+      return;
+    }
+
     // Anchor the window at the core's current run clock — the same absolute
     // elapsed the synthesis hooks match anomalies against.
     const elapsed = host.elapsed;
