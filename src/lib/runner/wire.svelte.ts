@@ -11,7 +11,7 @@
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
 import { DummyBackend } from "./dummy";
-import { console as store } from "../state/console.svelte";
+import { store } from "../state/store.svelte";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;

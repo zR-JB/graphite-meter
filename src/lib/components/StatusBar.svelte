@@ -6,7 +6,7 @@
    * sample ingest (store.elapsedMs only recomputes on startEpoch).
    * ============================================================ */
   import { onMount } from "svelte";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { fmtBytes } from "../format";
   import { BUILD_HASH } from "../constants";
   import type { Phase } from "../runner/contract";

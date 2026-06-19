@@ -15,7 +15,7 @@
  * ============================================================ */
 
 import type { RunnerConfig } from "../runner/contract";
-import { DEFAULT_CONFIG } from "./console.svelte";
+import { DEFAULT_CONFIG } from "./store.svelte";
 
 /** Bump when the persisted SHAPE changes incompatibly. The key itself
  *  carries the version so an old blob under `:v1` is simply never read by

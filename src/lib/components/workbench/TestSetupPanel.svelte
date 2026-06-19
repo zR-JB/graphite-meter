@@ -7,9 +7,9 @@
    * change mid-run are disabled while `running`.
    * ============================================================ */
   import {
-    console as store,
+    store,
     DURATION_PRESETS,
-  } from "../../state/console.svelte";
+  } from "../../state/store.svelte";
   import type { RunnerConfig } from "../../runner/contract";
   import { tooltip, JARGON } from "../../actions/tooltip";
 

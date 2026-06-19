@@ -9,7 +9,7 @@
    * / Developer. All Test-Setup controls two-way bind to console.config.
    * ============================================================ */
   import SidePanel from "../SidePanel.svelte";
-  import { console as store } from "../../state/console.svelte";
+  import { store } from "../../state/store.svelte";
   import TestSetupPanel from "./TestSetupPanel.svelte";
   import InfrastructurePanel from "./InfrastructurePanel.svelte";
   import DeveloperPanel from "./DeveloperPanel.svelte";

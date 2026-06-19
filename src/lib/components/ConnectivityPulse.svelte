@@ -7,7 +7,7 @@
    * connection state is announced + tooltip-discoverable.
    * ============================================================ */
   import { onMount } from "svelte";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { tooltip } from "../actions/tooltip";
 
   let canvasEl = $state<HTMLCanvasElement>();

@@ -4,7 +4,7 @@
    * Jitter distribution (canvas — deferred to the canvas stage),
    * bufferbloat idle-vs-loaded bars + grade chip, percentile table.
    * ============================================================ */
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";

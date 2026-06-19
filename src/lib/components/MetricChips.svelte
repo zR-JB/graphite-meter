@@ -20,7 +20,7 @@
    * line is always reserved even when absent.
    * ============================================================ */
   import { untrack } from "svelte";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs, countUp } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";

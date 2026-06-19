@@ -7,7 +7,7 @@
    * fmtSpeed banding); the canvas is decorative (aria-hidden).
    * ============================================================ */
   import { onMount } from "svelte";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
   import StageTrack from "./StageTrack.svelte";
   import EngageButton from "./EngageButton.svelte";

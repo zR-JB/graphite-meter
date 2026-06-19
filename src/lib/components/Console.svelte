@@ -8,7 +8,7 @@
    * so the default view stays focused on the instrument (§14.2).
    * ============================================================ */
   import { onMount } from "svelte";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
   import ReactorStage from "./ReactorStage.svelte";
   import TimeseriesTheatre from "./TimeseriesTheatre.svelte";

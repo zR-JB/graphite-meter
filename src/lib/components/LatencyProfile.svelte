@@ -9,7 +9,7 @@
    * uses the single `quantile()` in format.ts); the domain is the
    * shared `niceDomain()` so it scales like the result chart's axis.
    * ============================================================ */
-  import { console as store, type LatencyLane, type StageKey } from "../state/console.svelte";
+  import { store, type LatencyLane, type StageKey } from "../state/store.svelte";
   import { fmtMs, niceDomain } from "../format";
   import { tooltip } from "../actions/tooltip";
 

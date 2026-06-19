@@ -21,9 +21,9 @@
    * re-enabled.
    * ============================================================ */
   import {
-    console as store,
+    store,
     type StageKey,
-  } from "../state/console.svelte";
+  } from "../state/store.svelte";
   import { applyStageChange } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";

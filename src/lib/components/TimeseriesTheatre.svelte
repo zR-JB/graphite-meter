@@ -6,7 +6,7 @@
    * a floating mono readout chip in DOM.
    * ============================================================ */
   import { onMount } from "svelte";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { ChartEngine, type HoverInfo } from "../canvas/ChartEngine";
   import { fmtSpeed, fmtMs } from "../format";
 

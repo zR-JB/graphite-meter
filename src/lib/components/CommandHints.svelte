@@ -7,7 +7,7 @@
    * appears only once a run has resolved. Decorative + advisory:
    * the real handler lives in Console.
    * ============================================================ */
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
 
   const primary = $derived(store.isRunning ? "Abort" : "Engage");
 </script>

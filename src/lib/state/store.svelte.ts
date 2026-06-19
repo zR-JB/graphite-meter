@@ -118,7 +118,7 @@ const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered
  *  it crosses 1000; the larger scale only appears once we're clearly above it. */
 const UNIT_STEP_UP_HEADROOM = 1.2;
 
-class ConsoleStore {
+class AppStore {
   /* ---- raw ingest (ring buffers) ---- */
   throughput = $state<ThroughputSample[]>([]);
   latency = $state<LatencySample[]>([]);
@@ -593,13 +593,13 @@ class ConsoleStore {
   }
 }
 
-export const console = new ConsoleStore();
+export const store = new AppStore();
 
 /* ============================================================
  * Persistence side-effects (§14.1, Batch H) — browser only.
  *
  * A single module-scope `$effect.root` owns two effects:
- *   1. THEME APPLY — writes `console.theme` to the documentElement
+ *   1. THEME APPLY — writes `store.theme` to the documentElement
  *      `data-theme` attribute. This is the single runtime source of
  *      truth for the attribute (the boot script in main.ts only seeds
  *      it pre-paint to avoid a flash; this effect keeps it in sync).
@@ -616,7 +616,7 @@ if (typeof window !== "undefined") {
   $effect.root(() => {
     // 1. Apply theme → <html data-theme>.
     $effect(() => {
-      document.documentElement.setAttribute("data-theme", console.theme);
+      document.documentElement.setAttribute("data-theme", store.theme);
     });
 
     // 2. Debounced write-through of all persisted fields.
@@ -624,12 +624,12 @@ if (typeof window !== "undefined") {
     $effect(() => {
       // Touch every persisted field so the effect tracks them all.
       const snapshot = {
-        config: $state.snapshot(console.config),
-        unitBase: console.unitBase,
-        unitKind: console.unitKind,
-        theme: console.theme,
-        showWireEstimates: console.showWireEstimates,
-        dockWidth: $state.snapshot(console.dockWidth),
+        config: $state.snapshot(store.config),
+        unitBase: store.unitBase,
+        unitKind: store.unitKind,
+        theme: store.theme,
+        showWireEstimates: store.showWireEstimates,
+        dockWidth: $state.snapshot(store.dockWidth),
       };
       clearTimeout(timer);
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);

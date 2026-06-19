@@ -13,7 +13,7 @@
    * by the global §4.5 guard) so it just fades / appears.
    * ============================================================ */
   import type { TerminationReason } from "../runner/contract";
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
 
   let visible = $state(false);
   let prevPhase = store.phase;

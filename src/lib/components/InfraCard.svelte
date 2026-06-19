@@ -4,7 +4,7 @@
    * Definition list from console.infra (populated by runner.probe
    * on mount). Skeleton shimmer rows while probing.
    * ============================================================ */
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { fmtMs } from "../format";
   import { ICON } from "../constants";
 

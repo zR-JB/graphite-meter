@@ -5,7 +5,7 @@
    * an InfraInfo) plus the negotiated transport/streams config.
    * Uses pointerIntent for a subtle radial hover on each card.
    * ============================================================ */
-  import { console as store } from "../../state/console.svelte";
+  import { store } from "../../state/store.svelte";
   import { pointerIntent } from "../../actions/pointerIntent";
   import { fmtMs } from "../../format";
 

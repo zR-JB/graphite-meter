@@ -3,7 +3,7 @@
    * <EngageButton> — the master action (§3.5)
    * Toggles engage/abort against the runner via the wire seam.
    * ============================================================ */
-  import { console as store } from "../state/console.svelte";
+  import { store } from "../state/store.svelte";
   import { engage } from "../runner/wire.svelte";
   import { pointerIntent } from "../actions/pointerIntent";
   import { tooltip } from "../actions/tooltip";
