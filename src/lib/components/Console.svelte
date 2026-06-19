@@ -10,7 +10,7 @@
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
-  import ReactorStage from "./ReactorStage.svelte";
+  import GaugePanel from "./GaugePanel.svelte";
   import TimeseriesTheatre from "./TimeseriesTheatre.svelte";
   import MetricChips from "./MetricChips.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -201,7 +201,7 @@
        focal point and takes the lion's share; chart + chips are secondary and
        compact so the simple default fits the viewport without vertical scroll. -->
   <section class="zone stage min-w-0 overflow-y-auto flex flex-col">
-    <ReactorStage />
+    <GaugePanel />
     <TimeseriesTheatre />
     <MetricChips />
   </section>
@@ -276,11 +276,11 @@
   }
   /* The gauge hero is the focal point — it absorbs spare height (flex-grow) on
      tall screens. Crucially it must NOT shrink below its own content: with
-     min-height:0 the reactor would under-shrink and its gauge/controls would
+     min-height:0 the gauge panel would under-shrink and its gauge/controls would
      overflow and overlap the chart/chips. Keeping the content floor means the
      stage column overflows and the stage (overflow-y:auto) scrolls instead —
      correct when space is tight (e.g. both panels docked on a narrow stage). */
-  .stage > :global(.reactor) {
+  .stage > :global(.gauge-panel) {
     flex: 1 1 auto;
   }
   .stage > :global(.theatre),

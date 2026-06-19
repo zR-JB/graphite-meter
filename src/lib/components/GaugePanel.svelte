@@ -1,7 +1,7 @@
 <script lang="ts">
   /* ============================================================
-   * <ReactorStage> — the signature visualization (§3.1)
-   * Thin wrapper: instantiates ReactorEngine on mount, feeds it a
+   * <GaugePanel> — the signature visualization (§3.1)
+   * Thin wrapper: instantiates GaugeEngine on mount, feeds it a
    * pull-callback, and reacts to theme/resize. The live primary
    * metric is plain DOM (zero layout shift via tabular-nums +
    * fmtSpeed banding); the canvas is decorative (aria-hidden).
@@ -219,7 +219,7 @@
   });
 </script>
 
-<section class="reactor">
+<section class="gauge-panel">
   <!-- Gauge and latency profile are peer containers on the same layer (§14.2):
        a wrapping flex row so they resize together on wide layouts and the
        latency panel breaks free below the gauge when space gets tight. The
@@ -228,9 +228,9 @@
     <div class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       <div class="metric-wrap">
-        <span class="reactor-metric">{display.value}</span>
-        {#if display.unit}<span class="reactor-unit">{display.unit}</span>{/if}
-        {#if hint}<span class="reactor-hint">{hint}</span>{/if}
+        <span class="gauge-value">{display.value}</span>
+        {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
+        {#if hint}<span class="gauge-hint">{hint}</span>{/if}
       </div>
       <output class="sr-only" aria-live="polite">{a11y}</output>
     </div>
@@ -260,11 +260,11 @@
 </section>
 
 <style>
-  /* Faceplate: the reactor is part of the instrument surface, not a floating
+  /* Faceplate: the gauge panel is part of the instrument surface, not a floating
      card. It's flat and transparent; the gauge + latency panels are the
      engraved wells milled into it (--elev-inset), and the controls sit on the
      faceplate below them. */
-  .reactor {
+  .gauge-panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
@@ -339,7 +339,7 @@
      tabular figures so the live-updating value never shifts layout. Sized in
      cqw (relative to the gauge well) so large numbers shrink to fit a narrow
      gauge instead of overflowing; clamped so it stays legible and never huge. */
-  .reactor-metric {
+  .gauge-value {
     font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
@@ -351,7 +351,7 @@
     max-width: 100%;
     white-space: nowrap;
   }
-  .reactor-unit {
+  .gauge-unit {
     margin-top: var(--space-1);
     font-family: var(--font-mono);
     font-size: var(--type-sm);
@@ -363,7 +363,7 @@
   /* Guided idle / empty-state copy (§14.3) — replaces the dead bare dash so the
      gauge always invites action or explains what's happening. Sits centered
      beneath the big metric; doesn't affect the metric's zero-shift baseline. */
-  .reactor-hint {
+  .gauge-hint {
     position: absolute;
     bottom: 18px;
     left: 50%;

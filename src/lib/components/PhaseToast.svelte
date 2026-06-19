@@ -5,7 +5,7 @@
    * each time `store.phase` changes, then auto-dismisses (~1.35s,
    * ~2.2s on complete). role="status" + aria-live="polite" gives
    * screen readers a calm, per-transition announcement (the gauge
-   * a11y mirror in ReactorStage handles the per-value detail).
+   * a11y mirror in GaugePanel handles the per-value detail).
    *
    * Reactivity: a single `$effect` watches `store.phase`; the kicker
    * (eyebrow) and message are pure functions of the current phase.

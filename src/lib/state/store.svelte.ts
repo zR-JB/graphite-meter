@@ -218,7 +218,7 @@ class AppStore {
 
   /* ================= DERIVED ================= */
 
-  /** The single big number shown in the Reactor, in the active unit. */
+  /** The single big number shown in the gauge, in the active unit. */
   liveMetric = $derived.by(() => {
     const last = this.#lastSampleForPhase();
     if (!last) return { value: 0, unit: this.unitLabel };

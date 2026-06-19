@@ -6,7 +6,7 @@
  * normalizing against a per-phase running peak (so the sweep is
  * smooth and jitter-free regardless of the raw sample rate).
  *
- * The big live number is rendered as plain DOM by <ReactorStage>
+ * The big live number is rendered as plain DOM by <GaugePanel>
  * and sits centered inside this dial; the canvas is decorative
  * (aria-hidden). Visual design is the one area of explicit
  * creative latitude in the port (owner decision).
@@ -36,7 +36,7 @@ export interface GaugeState {
   resolvedFraction: number;
 }
 
-/** Phase → accent token. Mirrors the reactor's mapping so the dial tints
+/** Phase → accent token. Mirrors the gauge panel's mapping so the dial tints
  *  to the active phase via the same design tokens (no hardcoded color). */
 const PHASE_VAR: Record<Phase, string> = {
   idle: "--text-soft",
