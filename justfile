@@ -5,18 +5,29 @@
 default:
     @just --list
 
+# --- RNG (Rust -> WASM payload generator, crates/rng) ---
+
+# Build the canonical xorshift64* generator to WASM into the client tree.
+# Requires the Rust toolchain + wasm-pack on PATH (rustup installs to ~/.cargo/bin).
+build-wasm:
+    cd crates/rng && PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release --out-dir ../../client/src/lib/wasm/rng --out-name gm_rng
+
+# Run the Rust generator's byte-exact conformance test (vs api/rng.testvectors.txt)
+test-rng:
+    cd crates/rng && PATH="$HOME/.cargo/bin:$PATH" cargo test
+
 # --- Client (Svelte/Vite, bun) ---
 
-# Install client deps and produce client/dist
-build-client:
+# Install client deps and produce client/dist (WASM generator built first)
+build-client: build-wasm
     cd client && bun install && bun run build
 
-# Type-check the client
-check:
+# Type-check the client (WASM generator built first so its types resolve)
+check: build-wasm
     cd client && bun run check
 
 # Run the Vite dev server (hot reload, no Go server)
-dev-client:
+dev-client: build-wasm
     cd client && bun run dev
 
 # Regenerate the client's preflight types from the JSON Schema (source of truth).

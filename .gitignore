@@ -10,6 +10,9 @@ server/graphite-meter
 server/internal/static/dist/*
 !server/internal/static/dist/.gitkeep
 
+# --- Rust (crates/rng) ---
+crates/**/target
+
 # --- Generated WASM (crates/rng -> client) ---
 client/src/lib/wasm
 

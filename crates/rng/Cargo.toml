@@ -1,0 +1,21 @@
+[package]
+name = "gm-rng"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Canonical scrambled-counter xorshift64* generator — the WASM payload source for The Graphite Meter upload path. Byte-exact against api/rng.testvectors.txt (API Surface C: identical to the Go port in server/internal/rng)."
+repository = "https://github.com/zR-JB/graphite-meter"
+
+[lib]
+# cdylib → the wasm artifact wasm-pack bundles for the browser; rlib → so the
+# native conformance test can link the generator directly.
+crate-type = ["cdylib", "rlib"]
+
+# wasm-bindgen is added via `cargo add` so the manifest pins the newest release.
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[dependencies]
+wasm-bindgen = "0.2.125"
