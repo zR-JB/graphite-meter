@@ -245,7 +245,7 @@
   <!-- Hero controls — gauge + number + combined stage track + Engage read as
        one instrument (§14.2). The StageTrack is BOTH the stage selector and the
        live phase-progress indicator (no standalone warmup/✓ segments). Duration
-       is Workbench-only; the run uses the saved duration and shows its ETA. -->
+       is Settings-only; the run uses the saved duration and shows its ETA. -->
   <div class="controls">
     <div class="controls-head">
       <span class="controls-title">Test stages</span>

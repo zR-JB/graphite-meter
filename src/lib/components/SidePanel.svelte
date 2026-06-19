@@ -1,7 +1,7 @@
 <script lang="ts">
   /* ============================================================
    * <SidePanel> — the shared flyout base for both auxiliary panels
-   * (Workbench / Settings on the left, Connection & telemetry on the
+   * (Settings / Settings on the left, Connection & telemetry on the
    * right). One component so they look and behave identically:
    *  - opens BELOW the topbar over a shared backdrop (topbar stays
    *    visible + interactive), never over it
@@ -10,7 +10,7 @@
    *  - shared faceplate chrome, header (kicker + title + close),
    *    focus trap, and Esc-to-close
    * Content is provided via snippets: an optional `toolbar` row
-   * (e.g. the Workbench tabs) pinned under the header, and `children`
+   * (e.g. the Settings tabs) pinned under the header, and `children`
    * which scroll in the body.
    * ============================================================ */
   import type { Snippet } from "svelte";

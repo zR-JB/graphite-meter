@@ -18,7 +18,7 @@ export type Phase =
   | "latency"
   | "download"
   | "upload"
-  | "bidirectional" // concurrent down+up load phase (backend-mostly; UI deferred)
+  | "bidirectional" // concurrent down+up load phase (its own warmup; combined-rate stability)
   | "complete"
   | "aborted"
   | "error";
@@ -362,7 +362,7 @@ export type RunnerEvent =
 /* ---------- Runtime anomaly injection (§13.6 — Developer panel) ---------- */
 /** A live, dev-only perturbation fired into a *running* engine. Unlike the
  *  construction-time `DummyOptions.anomalies` (phase fractions), these fire
- *  relative to the current moment in the active phase — the Workbench
+ *  relative to the current moment in the active phase — the Settings
  *  Developer panel triggers them via `wire.injectAnomaly`. */
 export type RunnerAnomaly =
   | { kind: "latency-spike"; magnitude?: number; durationMs?: number } // rtt ×magnitude

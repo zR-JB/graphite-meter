@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <InfrastructurePanel> — Workbench › Infrastructure (§13.6)
+   * <InfrastructurePanel> — Settings › Infrastructure (§13.6)
    * Read-only display of the probe metadata (`console.infra`,
    * an InfraInfo) plus the negotiated transport/streams config.
    * Uses pointerIntent for a subtle radial hover on each card.

@@ -1,12 +1,12 @@
 <script lang="ts">
   /* ============================================================
-   * <WorkbenchDrawer> — power-user surface (§13.6)
-   * Now a thin wrapper over the shared <SidePanel> (left side) so it
+   * <SettingsPanel> — advanced settings surface (§13.6)
+   * A thin wrapper over the shared <SidePanel> (left side) so it
    * looks and behaves exactly like the Connection & telemetry panel.
    * Owns only the tab switcher + which sub-panel is shown; the shell,
    * header, backdrop, slide, focus trap and Esc all live in SidePanel.
-   * The controls live in three sub-panels: Test Setup / Infrastructure
-   * / Developer. All Test-Setup controls two-way bind to console.config.
+   * The controls live in three tabs: Test Setup / Infrastructure /
+   * Developer. All Test-Setup controls two-way bind to store.config.
    * ============================================================ */
   import SidePanel from "../SidePanel.svelte";
   import { store } from "../../state/store.svelte";
@@ -50,13 +50,13 @@
   {onResize}
   {onResetWidth}
   side="left"
-  title="Workbench"
+  title="Settings"
   kicker="Advanced Layer"
-  label="Advanced workbench"
+  label="Settings"
   width="min(560px, 94vw)"
 >
   {#snippet toolbar()}
-    <div class="tabs" role="tablist" aria-label="Workbench sections">
+    <div class="tabs" role="tablist" aria-label="Settings sections">
       {#each TABS as t (t.key)}
         <button
           class="tab"

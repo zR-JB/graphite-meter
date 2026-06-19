@@ -410,7 +410,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const stable = this.#accum.trackStableRun(seg.phase, conf.score, this.#cfg!.adaptive);
       // The `stability` snapshot only models the three single-lane stages; the
       // bidirectional phase still drives the early-stop glide off the combined
-      // rate but emits no pip (its UI is deferred — §9).
+      // rate but emits no live pip (it has no single-lane stability signal).
       if (
         seg.phase !== "bidirectional" &&
         now - this.#lastStabilityAt >= STABILITY_CADENCE_MS
@@ -660,7 +660,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // adaptive glide accelerated one or more phases to an early finish (§13.4),
     // and LONGER whenever a stall padded it with dead air (§4).
     const actualMs = Math.max(0, performance.now() - this.#t0);
-    // Bidirectional has no per-stage event (its UI is deferred — §9); reduce its
+    // Bidirectional has no per-stage event (it resolves at completion); reduce its
     // two lanes here when the stage ran, else null.
     const bidirectional = cfg.stages.bidirectional
       ? this.#accum.bidirectionalResult(cfg)

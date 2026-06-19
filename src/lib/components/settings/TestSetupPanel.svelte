@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <TestSetupPanel> — Workbench › Test Setup (§13.6)
+   * <TestSetupPanel> — Settings › Test Setup (§13.6)
    * Every control two-way binds to `console.config` (or the unit
    * display prefs), so edits reflect instantly in the rail ETA,
    * gauge, chart, and unit labels. Inputs that are unsafe to

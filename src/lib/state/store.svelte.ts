@@ -60,8 +60,8 @@ const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
 /* ================= DEFAULTS (§2.4) ================= */
 
 export const DEFAULT_CONFIG: RunnerConfig = {
-  // bidirectional defaults OFF — it's an advanced, backend-mostly stage with no
-  // dedicated UI yet (§9); enabling it appends a concurrent down+up phase.
+  // bidirectional defaults OFF — an advanced stage toggled in Settings; enabling
+  // it appends a concurrent down+up phase (combined gauge + a result card).
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
   duration: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000, bidirectionalMs: 10000 },

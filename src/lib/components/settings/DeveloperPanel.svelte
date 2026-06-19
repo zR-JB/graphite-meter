@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <DeveloperPanel> — Workbench › Developer (§13.6)
+   * <DeveloperPanel> — Settings › Developer (§13.6)
    * Dev-only affordance: injects LIVE anomalies into the running
    * engine via wire.injectAnomaly. Each fires relative to the
    * current moment in the active phase, so the buttons are only

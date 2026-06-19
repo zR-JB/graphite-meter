@@ -14,7 +14,7 @@
 
 <div class="command-hints" aria-label="Keyboard shortcuts">
   <span><kbd>Space</kbd>{primary}</span>
-  <span><kbd>W</kbd>Workbench</span>
+  <span><kbd>W</kbd>Settings</span>
   <span><kbd>D</kbd>Details</span>
   {#if store.phase === "complete"}
     <span><kbd>R</kbd>Run again</span>

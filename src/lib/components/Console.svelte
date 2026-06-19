@@ -2,7 +2,7 @@
   /* ============================================================
    * <Console> — the Control Console shell (§1.1 + §4.2)
    * A single gauge-first stage between the topbar and status bar.
-   * Two auxiliary surfaces — the Workbench (settings, left) and the
+   * Two auxiliary surfaces — Settings (left) and the
    * Connection & telemetry inspector (right) — are identical flyout
    * panels built on the shared <SidePanel>; both are closed by default
    * so the default view stays focused on the instrument (§14.2).
@@ -14,7 +14,7 @@
   import TimeseriesTheatre from "./TimeseriesTheatre.svelte";
   import MetricChips from "./MetricChips.svelte";
   import StatusBar from "./StatusBar.svelte";
-  import WorkbenchDrawer from "./workbench/WorkbenchDrawer.svelte";
+  import SettingsPanel from "./settings/SettingsPanel.svelte";
   import InspectorPanel from "./InspectorPanel.svelte";
   import PhaseToast from "./PhaseToast.svelte";
   import CommandHints from "./CommandHints.svelte";
@@ -30,7 +30,7 @@
   // docks as an in-flow column that pushes the stage; below that it's a flyout
   // overlay. Same shared <SidePanel> either way.
   let infoOpen = $state(false);
-  let workbenchOpen = $state(false);
+  let settingsOpen = $state(false);
   let wide = $state(false);
 
   // When both flyout drawers are open on a narrow screen they overlap. Track
@@ -38,12 +38,12 @@
   // order (left then right) would always bury the left drawer. Captures any
   // open transition regardless of source (topbar button, W/D key, bind).
   let lastOpened = $state<"left" | "right">("right");
-  let prevWorkbenchOpen = false;
+  let prevSettingsOpen = false;
   let prevInfoOpen = false;
   $effect(() => {
-    if (workbenchOpen && !prevWorkbenchOpen) lastOpened = "left";
+    if (settingsOpen && !prevSettingsOpen) lastOpened = "left";
     if (infoOpen && !prevInfoOpen) lastOpened = "right";
-    prevWorkbenchOpen = workbenchOpen;
+    prevSettingsOpen = settingsOpen;
     prevInfoOpen = infoOpen;
   });
 
@@ -56,7 +56,7 @@
   // Docked-panel widths (persisted). The reserved grid column is the saved
   // width only while that panel is docked + open, else 0 (column collapses).
   // The grid template also CSS-clamps to 46vw so a stale large value is safe.
-  const dockLeft = $derived(wide && workbenchOpen ? store.dockWidth.left : 0);
+  const dockLeft = $derived(wide && settingsOpen ? store.dockWidth.left : 0);
   const dockRight = $derived(wide && infoOpen ? store.dockWidth.right : 0);
 
   function setDockWidth(side: "left" | "right", px: number) {
@@ -70,7 +70,7 @@
      | Key            | Action                                          |
      | Space / Enter  | Engage / Abort (wire.engage toggle)             |
      | Esc            | Abort if running, else close any open panel     |
-     | W              | Toggle Workbench (settings)                     |
+     | W              | Toggle Settings                                    |
      | D              | Toggle Connection & telemetry                   |
      | R              | Re-run when phase is complete                   |
      | T              | Cycle theme                                     |
@@ -94,8 +94,8 @@
     if (e.key === "Escape") {
       if (store.isRunning) {
         engage();
-      } else if (workbenchOpen) {
-        workbenchOpen = false;
+      } else if (settingsOpen) {
+        settingsOpen = false;
       } else if (infoOpen) {
         infoOpen = false;
       } else {
@@ -120,7 +120,7 @@
 
     switch (e.key.toLowerCase()) {
       case "w":
-        workbenchOpen = !workbenchOpen;
+        settingsOpen = !settingsOpen;
         e.preventDefault();
         break;
       case "d":
@@ -175,10 +175,10 @@
     >
     <button
       class="ghost-btn icon-btn"
-      aria-label="Open settings workbench"
-      aria-expanded={workbenchOpen}
+      aria-label="Open settings"
+      aria-expanded={settingsOpen}
       use:tooltip={"Settings — test setup, infrastructure, developer (W)"}
-      onclick={() => (workbenchOpen = !workbenchOpen)}>{@html ICON.settings}</button
+      onclick={() => (settingsOpen = !settingsOpen)}>{@html ICON.settings}</button
     >
     <ConnectivityPulse />
     <div class="flex-1"></div>
@@ -215,8 +215,8 @@
   <!-- Auxiliary panels — identical shared base, opposite sides; dock on wide
        screens (pushing the stage), flyout overlay below that. Docked panels are
        resizable from their inner edge (persisted via store.dockWidth). -->
-  <WorkbenchDrawer
-    bind:open={workbenchOpen}
+  <SettingsPanel
+    bind:open={settingsOpen}
     docked={wide}
     raised={lastOpened === "left"}
     dockWidth={store.dockWidth.left}
