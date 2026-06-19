@@ -230,10 +230,11 @@
   const showWire = $derived(store.showWireEstimates);
 
   // Guided empty state (§14.3): before the first run there's nothing measured,
-  // so invite action instead of leaving three bare dashes unexplained.
+  // so invite action instead of leaving three bare dashes unexplained. Only the
+  // idle pointer lives here — the warmup "checking your connection" status is
+  // already shown below the gauge, so we don't duplicate it above the footer.
   const guidance = $derived.by(() => {
     if (store.phase === "idle") return "Your results appear here once you press Engage.";
-    if (store.phase === "warmup") return "Checking your connection…";
     return "";
   });
 </script>
