@@ -180,6 +180,10 @@ export interface ThroughputResult {
   method: ResultMethod;
   stabilityScore: number; // 0–1 stability at the moment the phase ended
   band: StabilityBand;
+  /** Under-load packet-loss % observed during transfer phases (from the loaded
+   *  pings). Feeds the loss/retransmission compensation factor; 0 when no loaded
+   *  pings ran (latency fully off). */
+  packetLossPct: number;
 }
 
 export interface LatencyResult {

@@ -51,6 +51,9 @@ export class RunAccumulator {
   #allRtts: number[] = [];
   #pingsTotal = 0;
   #pingsLost = 0;
+  // Under-load pings only — feeds the transfer loss/retransmission factor.
+  #loadedPings = 0;
+  #loadedPingsLost = 0;
 
   // ---- per-phase confidence windows (reset each measured phase) ----
   #phaseBytesPerSec: number[] = [];
@@ -87,6 +90,8 @@ export class RunAccumulator {
     this.#allRtts = [];
     this.#pingsTotal = 0;
     this.#pingsLost = 0;
+    this.#loadedPings = 0;
+    this.#loadedPingsLost = 0;
     this.#dlStableStart = -1;
     this.#ulStableStart = -1;
     this.#latStableStart = -1;
@@ -143,8 +148,10 @@ export class RunAccumulator {
    *  count over the same window. */
   pushLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
     this.#pingsTotal++;
+    if (underLoad) this.#loadedPings++;
     if (lost) {
       this.#pingsLost++;
+      if (underLoad) this.#loadedPingsLost++;
     } else {
       this.#allRtts.push(rttMs);
       if (underLoad) this.#loadedRtts.push(rttMs);
@@ -222,7 +229,15 @@ export class RunAccumulator {
     const a = phase === "download" ? this.#dl : this.#ul;
     const stableStart = phase === "download" ? this.#dlStableStart : this.#ulStableStart;
     const finalScore = phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
-    return this.#reduceTransfer(a, stableStart, finalScore, cfg);
+    return this.#reduceTransfer(a, stableStart, finalScore, cfg, this.#loadedLossPct());
+  }
+
+  /** Under-load packet-loss % over the whole run — the loss signal the transfer
+   *  loss/retransmission compensation factor consumes. Loss under load is a link
+   *  property, so the same figure is stamped on both transfer results. 0 when no
+   *  loaded pings ran. */
+  #loadedLossPct(): number {
+    return this.#loadedPings ? (this.#loadedPingsLost / this.#loadedPings) * 100 : 0;
   }
 
   /** Reduce the bidirectional phase's two lanes to a {down, up} result pair —
@@ -231,9 +246,10 @@ export class RunAccumulator {
    *  window), so the trailing stable window is the same span of samples in each
    *  lane (the lanes are pushed in lock-step, so their array indices align). */
   bidirectionalResult(cfg: RunnerConfig): { down: ThroughputResult; up: ThroughputResult } {
+    const lossPct = this.#loadedLossPct();
     return {
-      down: this.#reduceTransfer(this.#biDown, this.#biStableStart, this.#biFinalScore, cfg),
-      up: this.#reduceTransfer(this.#biUp, this.#biStableStart, this.#biFinalScore, cfg),
+      down: this.#reduceTransfer(this.#biDown, this.#biStableStart, this.#biFinalScore, cfg, lossPct),
+      up: this.#reduceTransfer(this.#biUp, this.#biStableStart, this.#biFinalScore, cfg, lossPct),
     };
   }
 
@@ -246,6 +262,7 @@ export class RunAccumulator {
     stableStart: number,
     finalScore: number,
     cfg: RunnerConfig,
+    packetLossPct: number,
   ): ThroughputResult {
     const v = a.bytesPerSecValues;
     const band = bandForState(stableStart >= 0, finalScore);
@@ -260,6 +277,7 @@ export class RunAccumulator {
         method: "full-average",
         stabilityScore: finalScore,
         band,
+        packetLossPct,
       };
     }
     const full = v.reduce((s, x) => s + x, 0) / v.length;
@@ -282,6 +300,7 @@ export class RunAccumulator {
       method: useWindow ? "stable-window" : "full-average",
       stabilityScore: finalScore,
       band,
+      packetLossPct,
     };
   }
 

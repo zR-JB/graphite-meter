@@ -159,10 +159,12 @@ export function estimateResultCompensation(
   // Protocol/config-based factors (same set the live path uses).
   collectProtocolFactors(factors, config);
 
-  // Loss/retransmission — the result type has no per-phase loss, but
-  // stability already folds in dropouts; we model loss separately only
-  // when the runner surfaces it. With no loss signal in ThroughputResult
-  // this factor is skipped (multiplier 1.0).
+  // Loss/retransmission — driven by the under-load packet loss the runner now
+  // surfaces on ThroughputResult (loaded-ping loss). Capped by maxLossRatio;
+  // contributes nothing when no loss was observed.
+  if (config.factors.lossRetransmission) {
+    pushFactor(factors, lossRetransmissionFactor(result.packetLossPct / 100, config));
+  }
 
   // Sample-derived factors, reconstructed from aggregate stats.
   if (config.factors.steadyStateRamp) {
@@ -406,9 +408,9 @@ function reversePathControlFactor(
 
 /**
  * Loss / retransmission tax ≈ loss/(1−loss), capped by `maxLossRatio`.
- * Heuristic — browsers don't expose retransmitted wire bytes. Exposed
- * for callers that DO have a loss signal (the result path here has none
- * in `ThroughputResult`, so it is not invoked end-to-end yet).
+ * Heuristic — browsers don't expose retransmitted wire bytes, so the under-load
+ * ping loss on `ThroughputResult.packetLossPct` is used as the proxy. Invoked by
+ * `estimateResultCompensation` when the loss factor is enabled.
  */
 export function lossRetransmissionFactor(
   packetLossRatio: number,
