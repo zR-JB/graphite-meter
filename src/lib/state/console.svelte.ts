@@ -14,6 +14,7 @@ import type {
   RunnerConfig,
   ThroughputSample,
   LatencySample,
+  StabilitySnapshot,
 } from "../runner/contract";
 import {
   estimateLiveCompensation,
@@ -116,6 +117,14 @@ class ConsoleStore {
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
   phaseFraction = $state(0); // 0–1 within current phase
+  /* Live measurement stability per measured phase — the single signal behind
+   * the result-card pips (and, in the runner, the early-finish glide). Each
+   * key fills in once its phase begins emitting; null = no read yet. */
+  liveStability = $state<{
+    latency: StabilitySnapshot | null;
+    download: StabilitySnapshot | null;
+    upload: StabilitySnapshot | null;
+  }>({ latency: null, download: null, upload: null });
   /* Monotonic run counter, bumped on every reset(). Stateful canvas engines
    * (e.g. ChartEngine) watch this to drop accumulated per-run state — the
    * single source of truth for "a new run started, clear yourself". */
@@ -384,6 +393,9 @@ class ConsoleStore {
       case "progress":
         this.phaseFraction = e.fraction;
         break;
+      case "stability":
+        this.liveStability[e.snapshot.phase] = e.snapshot;
+        break;
       case "throughput":
         this.#lastSampleT = e.sample.t;
         this.throughput.push(e.sample);
@@ -413,6 +425,7 @@ class ConsoleStore {
     this.latency = [];
     this.phase = "idle";
     this.phaseFraction = 0;
+    this.liveStability = { latency: null, download: null, upload: null };
     this.result = null;
     this.errorMsg = null;
     this.startEpoch = 0;

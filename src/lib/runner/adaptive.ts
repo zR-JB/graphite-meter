@@ -8,7 +8,7 @@
  * commented per §13.0 ("de-magic on the way in").
  * ============================================================ */
 
-import type { AdaptiveDurationConfig } from "./contract";
+import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
 
 /* ---------- Stability-score coefficients ----------
  * The stability score is  1 − (varianceRatio·K1 + slopeRatio·K2),
@@ -36,6 +36,22 @@ const CONFIDENCE_WINDOW = 48;
 const SLOPE_SEGMENTS = 3;
 /** Minimum samples per slope segment so a 2-sample window still works. */
 const MIN_SLOPE_SEGMENT = 2;
+
+/** Score at/above this (but below stabilityThreshold) reads as the "medium"
+ *  pip band; below it reads "low". The "high" band starts at the early-exit
+ *  gate (stabilityThreshold), so "green pip" and "ready to finish early"
+ *  coincide — one signal, no second meaning to reconcile. */
+export const STABILITY_MED_BAND = 0.6;
+
+/** Map a 0–1 stability score to its coarse pip band. */
+export function stabilityBand(
+  score: number,
+  cfg: AdaptiveDurationConfig,
+): StabilityBand {
+  if (score >= cfg.stabilityThreshold) return "high";
+  if (score >= STABILITY_MED_BAND) return "medium";
+  return "low";
+}
 
 /* ---------- Pure stats (mirrors measurement-style helpers) ---------- */
 

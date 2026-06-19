@@ -69,6 +69,19 @@ export interface AdaptiveDurationConfig {
   glideMs: number; // real-time duration of the early-finish acceleration glide
 }
 
+/* ---------- Live measurement stability (§13.4) ---------- */
+/** Coarse band of the 0–1 stability score, surfaced as the result-card pip. */
+export type StabilityBand = "low" | "medium" | "high";
+
+/** Live stability snapshot for a measured phase — the single signal the pip,
+ *  the early-finish glide, and the result selection all read. */
+export interface StabilitySnapshot {
+  phase: Extract<Phase, "latency" | "download" | "upload">;
+  score: number; // 0–1 stability score (adaptive.ts)
+  band: StabilityBand;
+  sampleCount: number; // usable samples in the confidence window
+}
+
 /* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
   stages: { latency: boolean; download: boolean; upload: boolean };
@@ -168,6 +181,7 @@ export type RunnerEvent =
   | { type: "latency"; sample: LatencySample }
   | { type: "connectivity"; state: ConnectivityState }
   | { type: "progress"; phase: Phase; fraction: number } // 0–1 within phase
+  | { type: "stability"; snapshot: StabilitySnapshot } // live measurement stability
   | { type: "complete"; result: RunResult }
   | { type: "error"; message: string };
 

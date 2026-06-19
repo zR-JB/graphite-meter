@@ -25,6 +25,9 @@ import {
   transferConfidence,
   latencyConfidence,
   shouldExitPhase,
+  stabilityBand,
+  type ConfidenceScore,
+  type LatencyConfidenceScore,
 } from "./adaptive";
 
 export interface DummyOptions {
@@ -68,6 +71,7 @@ const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
 
 const THROUGHPUT_CADENCE_MS = 60; // ≈16Hz
 const TICK_MS = 20; // master loop resolution
+const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs every tick)
 
 /* ---------- Live anomaly defaults (§13.6) ----------
  * Construction-time anomalies (DummyOptions.anomalies) fire at phase fractions.
@@ -136,6 +140,7 @@ export class DummyRunner implements NetworkRunner {
   #lastEmittedPhase: Phase = "idle";
   #lastThroughputAt = -Infinity;
   #lastPingAt = -Infinity;
+  #lastStabilityAt = -Infinity;
   #bytesCumulative = 0;
   #cfg: RunnerConfig | null = null;
 
@@ -273,6 +278,7 @@ export class DummyRunner implements NetworkRunner {
     this.#lastEmittedPhase = "idle";
     this.#lastThroughputAt = -Infinity;
     this.#lastPingAt = -Infinity;
+    this.#lastStabilityAt = -Infinity;
     this.#bytesCumulative = 0;
     this.#dl = { bytesPerSecValues: [], bytes: 0 };
     this.#ul = { bytesPerSecValues: [], bytes: 0 };
@@ -451,9 +457,30 @@ export class DummyRunner implements NetworkRunner {
       this.#emitLatency(seg, elapsed);
     }
 
-    // Adaptive early finish: once this phase is confidently stable, arm a glide
-    // that accelerates virtual time to the segment boundary (§13.4).
-    this.#maybeArmGlide(seg, elapsed);
+    // Stability is computed ONCE per tick for the active measured phase and
+    // drives BOTH the live pip (emitted, throttled) and the early-finish glide
+    // — one signal, no second meaning to reconcile (§13.4).
+    if (seg.phase === "latency" || seg.phase === "download" || seg.phase === "upload") {
+      const conf: ConfidenceScore | LatencyConfidenceScore =
+        seg.phase === "latency"
+          ? latencyConfidence(this.#phaseRtts, this.#phasePings, this.#phasePingsLost)
+          : transferConfidence(this.#phaseBytesPerSec);
+      if (elapsed - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
+        this.#lastStabilityAt = elapsed;
+        this.#emit({
+          type: "stability",
+          snapshot: {
+            phase: seg.phase,
+            score: conf.score,
+            band: stabilityBand(conf.score, this.#cfg!.adaptive),
+            sampleCount: conf.sampleCount,
+          },
+        });
+      }
+      // Adaptive early finish: once confidently stable, arm a glide that
+      // accelerates virtual time to the segment boundary (§13.4).
+      this.#maybeArmGlide(seg, elapsed, conf);
+    }
   }
 
   /** Reset the per-phase confidence windows when a measured phase begins. */
@@ -465,35 +492,26 @@ export class DummyRunner implements NetworkRunner {
     this.#phasePingsLost = 0;
   }
 
-  /** Evaluate the adaptive early-finish predicate; arm a glide if stable. */
-  #maybeArmGlide(seg: Segment, elapsed: number) {
+  /** Evaluate the adaptive early-finish predicate; arm a glide if stable.
+   *  `conf` is the stability already computed for this tick (shared with the
+   *  pip emit) so the gate and the displayed band can never disagree. */
+  #maybeArmGlide(
+    seg: Segment,
+    elapsed: number,
+    conf: ConfidenceScore | LatencyConfidenceScore,
+  ) {
     const cfg = this.#cfg!;
     if (!cfg.adaptive.enabled) return;
     if (this.#glideArmedForSeg >= 0) return; // already gliding this phase
 
-    const durationMs = seg.end - seg.start;
-    const elapsedInPhase = elapsed - seg.start;
-
-    let exit = false;
-    if (seg.phase === "latency") {
-      const conf = latencyConfidence(this.#phaseRtts, this.#phasePings, this.#phasePingsLost);
-      exit = shouldExitPhase({
-        kind: "latency",
-        elapsedMs: elapsedInPhase,
-        durationMs,
-        confidence: conf,
-        cfg: cfg.adaptive,
-      });
-    } else if (seg.phase === "download" || seg.phase === "upload") {
-      const conf = transferConfidence(this.#phaseBytesPerSec);
-      exit = shouldExitPhase({
-        kind: "transfer",
-        elapsedMs: elapsedInPhase,
-        durationMs,
-        confidence: conf,
-        cfg: cfg.adaptive,
-      });
-    }
+    const kind: "latency" | "transfer" = seg.phase === "latency" ? "latency" : "transfer";
+    const exit = shouldExitPhase({
+      kind,
+      elapsedMs: elapsed - seg.start,
+      durationMs: seg.end - seg.start,
+      confidence: conf,
+      cfg: cfg.adaptive,
+    });
     if (!exit) return;
 
     // Arm the glide for this segment: drive virtual time from here to the phase
