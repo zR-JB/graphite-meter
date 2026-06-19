@@ -135,6 +135,7 @@
   --phase-latency: #84c5c0; /* dusty teal */
   --phase-download: #93c49a; /* sage */
   --phase-upload: #b6a6e6; /* lavender */
+  --phase-bidirectional: #d9b3a0; /* clay — distinct from sage/lavender */
   --phase-complete: #a7dad5; /* aqua */
 
   /* Status tones — muted, harmonious with the palette */
@@ -195,6 +196,7 @@
   --phase-latency: #3e8a84; /* teal */
   --phase-download: #549a66; /* sage */
   --phase-upload: #6d5bb0; /* lavender */
+  --phase-bidirectional: #a8674a; /* clay */
   --phase-complete: #2c6c66; /* deep aqua */
 
   --ok: #549a66;
@@ -288,6 +290,9 @@ body {
 }
 #console[data-phase="upload"] {
   --active-accent: var(--phase-upload);
+}
+#console[data-phase="bidirectional"] {
+  --active-accent: var(--phase-bidirectional);
 }
 #console[data-phase="complete"] {
   --active-accent: var(--phase-complete);

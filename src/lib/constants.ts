@@ -14,6 +14,7 @@ export const ICON = {
   download: `<svg viewBox="0 0 24 24" ${A}><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>`,
   upload: `<svg viewBox="0 0 24 24" ${A}><path d="M12 20V8"/><path d="m7 13 5-5 5 5"/><path d="M5 4h14"/></svg>`,
   ping: `<svg viewBox="0 0 24 24" ${A}><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>`,
+  bidirectional: `<svg viewBox="0 0 24 24" ${A}><path d="M7 7h13"/><path d="m16 3 4 4-4 4"/><path d="M17 17H4"/><path d="m8 21-4-4 4-4"/></svg>`,
   server: `<svg viewBox="0 0 24 24" ${A}><rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/><path d="M8 7h.01M8 17h.01"/></svg>`,
   globe: `<svg viewBox="0 0 24 24" ${A}><circle cx="12" cy="12" r="8"/><path d="M2 12h20M12 4c2.5 2.5 2.5 13 0 16M12 4c-2.5 2.5-2.5 13 0 16"/></svg>`,
   activity: `<svg viewBox="0 0 24 24" ${A}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,

@@ -210,6 +210,34 @@
     <p class="hint">Once stable, the marker accelerates and glides to the phase end — the test finishes sooner while still measuring. Off → every phase runs full and reports its whole-phase average.</p>
   </section>
 
+  <!-- Advanced stages -->
+  <section class="panel">
+    <h3>Advanced Stages</h3>
+    <label class="check-row">
+      <input
+        type="checkbox"
+        disabled={running}
+        bind:checked={store.config.stages.bidirectional}
+      />
+      <span>Bidirectional (concurrent down + up)</span>
+    </label>
+    <label>
+      <span>Bidirectional duration (ms)</span>
+      <input
+        type="number"
+        min="0"
+        step="500"
+        disabled={running || !store.config.stages.bidirectional}
+        bind:value={store.config.duration.bidirectionalMs}
+      />
+    </label>
+    <p class="hint">
+      Appends a final phase that saturates download and upload at once — a truer
+      test of a link under simultaneous two-way load. The result card reports the
+      combined and per-direction rates. Off by default.
+    </p>
+  </section>
+
   <!-- Engine -->
   <section class="panel">
     <h3>Engine</h3>

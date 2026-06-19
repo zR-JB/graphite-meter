@@ -47,9 +47,9 @@
     const since = nowWall - store.stalledSince;
     return Math.min(1, Math.max(0, 1 - since / STALL_DECAY_MS));
   });
-  // The last REAL throughput value, eased toward 0 while stalled. Read-only of
-  // the buffer's tail — never mutated.
-  const decayedBytesPerSec = $derived((store.throughput.at(-1)?.bytesPerSec ?? 0) * stallDecay);
+  // The last REAL throughput value, eased toward 0 while stalled. Reads the
+  // store's live transfer rate (combined down+up in the bidirectional phase).
+  const decayedBytesPerSec = $derived(store.liveTransferBytesPerSec * stallDecay);
 
   // Nice-ceiling ladder (ms) for the latency dial. 1-2-5 steps so the five
   // quarter labels (0 … scale) always land on clean values (5/10/25/50…).

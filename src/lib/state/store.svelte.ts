@@ -219,8 +219,9 @@ class AppStore {
   });
 
   /** The headline metric to rest on at the END of a run: download if it ran,
-   *  else upload, else latency. Phase-agnostic so the gauge + big number never
-   *  assume download exists — a latency-only or upload-only run resolves to a
+   *  else upload, else the combined bidirectional rate, else latency.
+   *  Phase-agnostic so the gauge + big number never assume download exists — a
+   *  latency-only, upload-only, or bidirectional-only run all resolve to a
    *  sensible final reading instead of a stale/misread value. */
   finalMetric = $derived.by<
     { kind: "speed"; bytesPerSec: number } | { kind: "latency"; ms: number } | null
@@ -228,8 +229,47 @@ class AppStore {
     const r = this.stageResults;
     if (r.download) return { kind: "speed", bytesPerSec: r.download.reportedBytesPerSec };
     if (r.upload) return { kind: "speed", bytesPerSec: r.upload.reportedBytesPerSec };
+    const bidi = this.result?.bidirectional;
+    if (bidi)
+      return { kind: "speed", bytesPerSec: bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec };
     if (r.latency) return { kind: "latency", ms: r.latency.reportedMs };
     return null;
+  });
+
+  /** Live instantaneous transfer rate the gauge + big number read. In
+   *  download/upload it's the latest sample; in bidirectional it's the sum of
+   *  the most recent down + up samples (the combined throughput), so the dial
+   *  and number show the aggregate the phase is actually moving. */
+  liveTransferBytesPerSec = $derived.by(() => {
+    if (this.phase === "bidirectional") {
+      let down = 0;
+      let up = 0;
+      for (let i = this.throughput.length - 1; i >= 0; i--) {
+        const s = this.throughput[i];
+        if (s.phase !== "bidirectional") break;
+        if (s.dir === "down" && down === 0) down = s.bytesPerSec;
+        else if (s.dir === "up" && up === 0) up = s.bytesPerSec;
+        if (down > 0 && up > 0) break;
+      }
+      return down + up;
+    }
+    return this.throughput.at(-1)?.bytesPerSec ?? 0;
+  });
+
+  /** The bidirectional phase's two live lanes (latest down + up), for the
+   *  result card while the phase runs. Null outside the bidirectional phase. */
+  liveBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
+    if (this.phase !== "bidirectional") return null;
+    let down = 0;
+    let up = 0;
+    for (let i = this.throughput.length - 1; i >= 0; i--) {
+      const s = this.throughput[i];
+      if (s.phase !== "bidirectional") break;
+      if (s.dir === "down" && down === 0) down = s.bytesPerSec;
+      else if (s.dir === "up" && up === 0) up = s.bytesPerSec;
+      if (down > 0 && up > 0) break;
+    }
+    return { down, up };
   });
 
   /** Most recent rtt for the connectivity pulse + live ping. */

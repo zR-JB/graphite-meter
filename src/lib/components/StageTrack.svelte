@@ -120,6 +120,17 @@
       return { ...s, enabled, reason, locked, state, fill };
     });
   });
+
+  // Bidirectional is the advanced 4th stage — toggled in Settings, not here, so
+  // it renders as a display-only progress segment when enabled. It always runs
+  // last, so its state is simply pending → active (during its phase) → done.
+  const bidi = $derived.by<{ state: SegState; fill: number } | null>(() => {
+    if (!store.config.stages.bidirectional) return null;
+    const p = store.phase;
+    if (p === "complete") return { state: "done", fill: 100 };
+    if (p === "bidirectional") return { state: "active", fill: store.phaseFraction * 100 };
+    return { state: "pending", fill: 0 };
+  });
 </script>
 
 <fieldset class="stage-track">
@@ -165,6 +176,35 @@
       </span>
     </button>
   {/each}
+  {#if bidi}
+    <button
+      type="button"
+      class="seg seg--{bidi.state} on"
+      role="switch"
+      aria-checked="true"
+      aria-label="Bidirectional stage (configured in Settings)"
+      use:tooltip={"Bidirectional — concurrent down + up. Toggle in Settings."}
+      disabled
+    >
+      <div class="seg-bar" aria-hidden="true">
+        {#if bidi.state === "active" || bidi.state === "done"}
+          <span
+            class="seg-fill seg-fill--bidirectional"
+            class:is-done={bidi.state === "done"}
+            class:is-stalled={bidi.state === "active" && !store.measuring}
+            style="width:{bidi.fill}%"
+          ></span>
+        {/if}
+      </div>
+      <span class="seg-row">
+        <span class="seg-ico">{@html ICON.bidirectional}</span>
+        <span class="seg-label">Bi-dir</span>
+        {#if bidi.state === "done"}
+          <span class="seg-ico seg-check">{@html ICON.check}</span>
+        {/if}
+      </span>
+    </button>
+  {/if}
 </fieldset>
 
 <style>
@@ -252,6 +292,9 @@
   }
   .seg-fill--upload {
     background: var(--phase-upload);
+  }
+  .seg-fill--bidirectional {
+    background: var(--phase-bidirectional);
   }
   /* Settled done state — a calm, uniform fill regardless of phase tint. */
   .seg-fill.is-done {
