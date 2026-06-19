@@ -328,11 +328,20 @@
     height: 16px;
   }
 
-  /* < 760: the stage can grow past the viewport and scroll naturally. */
+  /* < 760: the whole document scrolls instead of the stage. The stage must
+     stop being an overscroll-containing scroll container here — otherwise it
+     captures wheel/touch gestures over the middle and, having nothing to
+     scroll internally, refuses to chain them out to the document (the page
+     becomes unscrollable from the center, breaking phone usability). Letting
+     it overflow visibly returns scroll control to the document. */
   @media (max-width: 759px) {
     #console {
       height: auto;
       min-height: 100dvh;
+    }
+    .stage {
+      overflow-y: visible;
+      overscroll-behavior: auto;
     }
   }
 </style>
