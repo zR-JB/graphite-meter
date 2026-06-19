@@ -43,12 +43,39 @@ const MIN_SLOPE_SEGMENT = 2;
  *  coincide — one signal, no second meaning to reconcile. */
 export const STABILITY_MED_BAND = 0.6;
 
-/** Map a 0–1 stability score to its coarse pip band. */
+/** Map a 0–1 stability score to its coarse pip band (stateless). */
 export function stabilityBand(
   score: number,
   cfg: AdaptiveDurationConfig,
 ): StabilityBand {
   if (score >= cfg.stabilityThreshold) return "high";
+  if (score >= STABILITY_MED_BAND) return "medium";
+  return "low";
+}
+
+/** Hysteresis margin below `stabilityThreshold` for *leaving* the stable state.
+ *  A connection becomes "stable" only at the full threshold, but stays stable
+ *  until it drops this far below it — so the pip and the stable window don't
+ *  flicker on and off around the boundary. Confidence shouldn't toggle. */
+export const STABILITY_HYSTERESIS = 0.08;
+
+/** Schmitt trigger for the "stable" state: enter at `stabilityThreshold`, leave
+ *  only once the score falls below `stabilityThreshold − STABILITY_HYSTERESIS`.
+ *  In the dead band between the two it holds whatever it already was. */
+export function isStillStable(
+  wasStable: boolean,
+  score: number,
+  cfg: AdaptiveDurationConfig,
+): boolean {
+  const enter = cfg.stabilityThreshold;
+  const exit = enter - STABILITY_HYSTERESIS;
+  return wasStable ? score >= exit : score >= enter;
+}
+
+/** Band from the *latched* stable state (hysteretic): a sustained stable run
+ *  reads "high"; otherwise the score's climb shows as medium/low. */
+export function bandForState(stable: boolean, score: number): StabilityBand {
+  if (stable) return "high";
   if (score >= STABILITY_MED_BAND) return "medium";
   return "low";
 }

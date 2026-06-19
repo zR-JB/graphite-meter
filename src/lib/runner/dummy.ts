@@ -25,7 +25,8 @@ import {
   transferConfidence,
   latencyConfidence,
   shouldExitPhase,
-  stabilityBand,
+  bandForState,
+  isStillStable,
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
@@ -483,6 +484,10 @@ export class DummyRunner implements NetworkRunner {
         seg.phase === "latency"
           ? latencyConfidence(this.#phaseRtts, this.#phasePings, this.#phasePingsLost)
           : transferConfidence(this.#phaseBytesPerSec);
+      // Track the trailing stable run FIRST so the emitted band reflects the
+      // hysteretic latched state (entering stable takes a higher bar than
+      // leaving — the pip and the stable window don't flicker). (§13.4)
+      const stable = this.#trackStableRun(seg.phase, conf.score);
       if (elapsed - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
         this.#lastStabilityAt = elapsed;
         this.#emit({
@@ -490,41 +495,51 @@ export class DummyRunner implements NetworkRunner {
           snapshot: {
             phase: seg.phase,
             score: conf.score,
-            band: stabilityBand(conf.score, this.#cfg!.adaptive),
+            band: bandForState(stable, conf.score),
             sampleCount: conf.sampleCount,
           },
         });
       }
-      // Track the trailing stable run for result selection (§13.4).
-      this.#trackStableRun(seg.phase, conf.score);
       // Adaptive early finish: once confidently stable, arm a glide that
       // accelerates virtual time to the segment boundary (§13.4).
       this.#maybeArmGlide(seg, elapsed, conf);
     }
   }
 
-  /** Update the per-phase trailing-stable-run index from this tick's score.
-   *  The run opens (records the latest sample index) the moment the score
-   *  crosses the stability threshold and closes (-1) whenever it drops back,
-   *  so at finish a ≥0 value means "still on a stable plateau". */
-  #trackStableRun(phase: StagePhase, score: number) {
-    const stable = score >= this.#cfg!.adaptive.stabilityThreshold;
+  /** Update the per-phase trailing-stable-run index from this tick's score,
+   *  with hysteresis: the run opens (records the latest sample index) once the
+   *  score crosses `stabilityThreshold` and closes (-1) only after it drops
+   *  below `stabilityThreshold − STABILITY_HYSTERESIS` — so a score hovering at
+   *  the boundary doesn't toggle the stable state. Returns the latched state;
+   *  at finish a ≥0 index means "still on a stable plateau". */
+  #trackStableRun(phase: StagePhase, score: number): boolean {
+    const cfg = this.#cfg!.adaptive;
+    let start: number;
+    let arrLen: number;
     if (phase === "download") {
       this.#dlFinalScore = score;
-      if (stable) {
-        if (this.#dlStableStart < 0) this.#dlStableStart = Math.max(0, this.#dl.bytesPerSecValues.length - 1);
-      } else this.#dlStableStart = -1;
+      start = this.#dlStableStart;
+      arrLen = this.#dl.bytesPerSecValues.length;
     } else if (phase === "upload") {
       this.#ulFinalScore = score;
-      if (stable) {
-        if (this.#ulStableStart < 0) this.#ulStableStart = Math.max(0, this.#ul.bytesPerSecValues.length - 1);
-      } else this.#ulStableStart = -1;
+      start = this.#ulStableStart;
+      arrLen = this.#ul.bytesPerSecValues.length;
     } else {
       this.#latFinalScore = score;
-      if (stable) {
-        if (this.#latStableStart < 0) this.#latStableStart = Math.max(0, this.#idleRtts.length - 1);
-      } else this.#latStableStart = -1;
+      start = this.#latStableStart;
+      arrLen = this.#idleRtts.length;
     }
+
+    const wasStable = start >= 0;
+    const nowStable = isStillStable(wasStable, score, cfg);
+    if (nowStable && !wasStable) start = Math.max(0, arrLen - 1);
+    else if (!nowStable && wasStable) start = -1;
+
+    if (phase === "download") this.#dlStableStart = start;
+    else if (phase === "upload") this.#ulStableStart = start;
+    else this.#latStableStart = start;
+
+    return nowStable;
   }
 
   /** Reset the per-phase confidence windows when a measured phase begins. */
@@ -724,7 +739,7 @@ export class DummyRunner implements NetworkRunner {
     cfg: RunnerConfig,
   ): ThroughputResult {
     const v = a.bytesPerSecValues;
-    const band = stabilityBand(finalScore, cfg.adaptive);
+    const band = bandForState(stableStart >= 0, finalScore);
     if (!v.length) {
       return {
         meanBytesPerSec: 0,
@@ -779,7 +794,7 @@ export class DummyRunner implements NetworkRunner {
       reportedMs: idleMs,
       method: useWindow ? "stable-window" : "full-average",
       stabilityScore: finalScore,
-      band: stabilityBand(finalScore, cfg.adaptive),
+      band: bandForState(stableStart >= 0, finalScore),
     };
   }
 
