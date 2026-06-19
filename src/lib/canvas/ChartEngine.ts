@@ -550,6 +550,9 @@ export class ChartEngine implements CanvasEngine {
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
     const ry = this.#h - PAD_B + 4;
+    // Warmup recurs before every transfer stage but shares one colour, so we
+    // label only the first warmup — repeating "WARM-UP" just adds clutter.
+    let warmupLabelled = false;
     for (const s of this.#spans) {
       const color = this.#phaseColor(s.phase);
       if (!color) continue;
@@ -565,13 +568,15 @@ export class ChartEngine implements CanvasEngine {
       ctx.fill();
 
       // Name the segment in the static result view (room + no scroll).
-      if (this.#result && w > 56) {
+      const isRepeatWarmup = s.phase === "warmup" && warmupLabelled;
+      if (this.#result && w > 56 && !isRepeatWarmup) {
         ctx.globalAlpha = 0.62;
         ctx.font = '700 9px "IBM Plex Mono", monospace';
         ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
         ctx.fillText(this.#PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
       }
+      if (s.phase === "warmup") warmupLabelled = true;
     }
     ctx.globalAlpha = 1;
   }

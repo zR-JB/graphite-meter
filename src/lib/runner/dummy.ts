@@ -228,9 +228,9 @@ export class DummyRunner implements NetworkRunner {
       segs.push({ phase, start: cursor, end: cursor + ms });
       cursor += ms;
     };
-    // Initial connection warmup, then a short re-prime warmup immediately
-    // before each transfer stage so the link is at steady state when the
-    // stage's measurement window opens.
+    // Initial connection warmup, then a re-prime warmup (same duration)
+    // immediately before each transfer stage so the link is at steady state
+    // when the stage's measurement window opens.
     const pre = preStageWarmupMs(config.duration.warmupMs);
     push("warmup", config.duration.warmupMs);
     if (config.stages.latency) push("latency", config.duration.latencyMs);

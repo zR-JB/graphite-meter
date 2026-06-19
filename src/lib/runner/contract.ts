@@ -186,11 +186,11 @@ export interface NetworkRunner {
   readonly phase: Phase;
 }
 
-/** Duration (ms) of the short connection re-prime that runs immediately before
- *  each transfer stage (download / upload), in addition to the initial warmup.
+/** Duration (ms) of the connection re-prime that runs immediately before each
+ *  transfer stage (download / upload), in addition to the initial warmup.
  *  Derived from the configured warmup so the single Warmup setting controls
- *  every warmup; kept to half (and floored) so the per-stage primes stay short.
+ *  every warmup — all three phases share the exact same warmup duration.
  *  Shared so the runner timeline and the UI ETA agree. */
 export function preStageWarmupMs(warmupMs: number): number {
-  return Math.max(300, Math.round((Number.isFinite(warmupMs) ? warmupMs : 0) * 0.5));
+  return Math.max(300, Math.round(Number.isFinite(warmupMs) ? warmupMs : 0));
 }
