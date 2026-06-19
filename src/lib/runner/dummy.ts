@@ -8,7 +8,7 @@
  * of the synthesis below; swapping it touches only wire.ts.
  * ============================================================ */
 
-import type { RunnerConfig, RunnerAnomaly, InfraInfo } from "./contract";
+import type { RunnerConfig, RunnerAnomaly, InfraInfo, FlowDirection } from "./contract";
 import type { CoreHost, RunnerBackend, TickContext } from "./core";
 import type { StagePhase } from "./schedule";
 
@@ -180,15 +180,21 @@ export class DummyBackend implements RunnerBackend {
     if (!cfg) return;
     const { phase, elapsed, segStart, segEnd, realNow } = ctx;
 
-    // Throughput (download / upload only). Cadence gated on REAL time so the
-    // early-finish glide stays smooth (virtual time races ahead; gating on it
-    // would dump the tail's samples into the canvas at once). (§13.4)
+    // Throughput (download / upload / bidirectional). Cadence gated on REAL
+    // time so the early-finish glide stays smooth (measured-time races ahead;
+    // gating on it would dump the tail's samples into the canvas at once)
+    // (§13.4). In the bidirectional phase BOTH directions are pushed each tick.
     if (
-      (phase === "download" || phase === "upload") &&
+      (phase === "download" || phase === "upload" || phase === "bidirectional") &&
       realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
     ) {
       this.#lastThroughputAt = realNow;
-      this.#synthThroughput(phase, elapsed, segStart, segEnd);
+      if (phase === "bidirectional") {
+        this.#synthThroughput("down", elapsed, segStart, segEnd);
+        this.#synthThroughput("up", elapsed, segStart, segEnd);
+      } else {
+        this.#synthThroughput(phase === "download" ? "down" : "up", elapsed, segStart, segEnd);
+      }
     }
 
     // Latency pings (latency phase + under-load during dl/ul). Loaded pings are
@@ -198,7 +204,7 @@ export class DummyBackend implements RunnerBackend {
     const pingInterval = PING_INTERVAL[cfg.pingConcurrency];
     const pingActive =
       phase === "latency" ||
-      ((phase === "download" || phase === "upload") && loadedLatency);
+      ((phase === "download" || phase === "upload" || phase === "bidirectional") && loadedLatency);
     if (pingActive && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
       this.#synthLatency(phase, elapsed, segStart, segEnd);
@@ -206,10 +212,12 @@ export class DummyBackend implements RunnerBackend {
   }
 
   /* ---------- Throughput sample synthesis ---------- */
-  #synthThroughput(phase: "download" | "upload", elapsed: number, segStart: number, segEnd: number) {
+  // `dir` (not the phase) picks the rate, so the bidirectional phase synthesizes
+  // a down lane and an up lane from the same profile per tick.
+  #synthThroughput(dir: FlowDirection, elapsed: number, segStart: number, segEnd: number) {
     const tp = elapsed - segStart; // ms into this phase
     const phaseLen = segEnd - segStart;
-    const mean = phase === "download" ? this.#spec.downBytesPerSec : this.#spec.upBytesPerSec;
+    const mean = dir === "down" ? this.#spec.downBytesPerSec : this.#spec.upBytesPerSec;
 
     // Logistic ramp-up over the first ~1.2s.
     const ramp = 1 / (1 + Math.exp(-(tp - 600) / 150));
@@ -231,9 +239,10 @@ export class DummyBackend implements RunnerBackend {
     bytesPerSec = Math.max(0, bytesPerSec);
 
     // Bytes transferred over the cadence window (rate is bytes/sec). The core
-    // accumulates this and tracks the cumulative total.
+    // accumulates this and tracks the cumulative total. Direction travels with
+    // the sample (the core no longer infers it from the phase).
     const bytes = bytesPerSec * (THROUGHPUT_CADENCE_MS / 1000);
-    this.#host!.ingestThroughput(bytesPerSec, bytes);
+    this.#host!.ingestThroughput(dir, bytesPerSec, bytes);
   }
 
   /* ---------- Latency sample synthesis ---------- */
@@ -241,7 +250,7 @@ export class DummyBackend implements RunnerBackend {
     const tp = elapsed - segStart;
     const phaseLen = segEnd - segStart;
     const frac = tp / phaseLen;
-    const underLoad = phase === "download" || phase === "upload";
+    const underLoad = phase === "download" || phase === "upload" || phase === "bidirectional";
 
     let rtt = this.#spec.idleRttMs;
     if (underLoad) {

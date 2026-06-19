@@ -30,6 +30,8 @@
         return "Download";
       case "upload":
         return "Upload";
+      case "bidirectional":
+        return "Bidirectional";
       case "complete":
         return "Complete";
       case "aborted":
@@ -70,6 +72,8 @@
         return "Receiving stream";
       case "upload":
         return "Sending stream";
+      case "bidirectional":
+        return "Sending + receiving";
       case "complete":
         return "Complete";
       case "aborted":

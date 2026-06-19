@@ -9,12 +9,12 @@
 import type { RunnerConfig, Phase } from "./contract";
 
 /** A measured stage a warmup window primes. */
-export type StagePhase = Extract<Phase, "latency" | "download" | "upload">;
+export type StagePhase = Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
 
 /** One phase window on the run timeline. `warmupFor` is set only on warmup
  *  segments — backend-only metadata naming the stage the warmup primes. */
 export interface Segment {
-  phase: Extract<Phase, "warmup" | "latency" | "download" | "upload">;
+  phase: Extract<Phase, "warmup" | "latency" | "download" | "upload" | "bidirectional">;
   start: number; // ms offset from run start
   end: number;
   warmupFor?: StagePhase; // set only on warmup segments
@@ -47,6 +47,8 @@ export function buildSegments(config: RunnerConfig): Timeline {
   stage(config.stages.latency, "latency", config.duration.latencyMs);
   stage(config.stages.download, "download", config.duration.downloadMs);
   stage(config.stages.upload, "upload", config.duration.uploadMs);
+  // Bidirectional (concurrent down+up) runs last, with its own warmup.
+  stage(config.stages.bidirectional, "bidirectional", config.duration.bidirectionalMs);
   return { segments: segs, totalMs: cursor };
 }
 
@@ -85,6 +87,7 @@ export function rebuildTail(
   pushStage(config.stages.latency, "latency", dur.latencyMs);
   pushStage(config.stages.download, "download", dur.downloadMs);
   pushStage(config.stages.upload, "upload", dur.uploadMs);
+  pushStage(config.stages.bidirectional, "bidirectional", dur.bidirectionalMs);
 
   return { segments: [...kept, ...tail], totalMs: cursor };
 }

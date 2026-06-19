@@ -31,6 +31,7 @@ import type {
   ThroughputResult,
   LatencyResult,
   StallInfo,
+  FlowDirection,
 } from "./contract";
 import {
   shouldExitPhase,
@@ -76,10 +77,12 @@ export interface TickContext {
 
 /** The handle a backend uses to push raw samples / emit events into the core. */
 export interface CoreHost {
-  /** Push a measured throughput sample: instantaneous bytes/sec plus the bytes
-   *  transferred over the interval it represents. The core tags it with the
-   *  current phase + elapsed, accumulates it, and emits the throughput event. */
-  ingestThroughput(bytesPerSec: number, bytesDelta: number): void;
+  /** Push a measured throughput sample: its direction, instantaneous bytes/sec,
+   *  and the bytes transferred over the interval it represents. Direction now
+   *  travels WITH the sample (no phase-inference), so the bidirectional phase
+   *  can carry concurrent down + up samples. The core stamps elapsed,
+   *  accumulates it into the matching lane, and emits the throughput event. */
+  ingestThroughput(dir: FlowDirection, bytesPerSec: number, bytesDelta: number): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
   /** Signal a NON-terminal link stall: the link went quiet and the backend is
@@ -389,13 +392,24 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Stability is computed ONCE per tick for the active measured phase and
     // drives BOTH the live pip (emitted, throttled) and the early-finish glide
     // — one signal, no second meaning to reconcile (§13.4).
-    if (seg.phase === "latency" || seg.phase === "download" || seg.phase === "upload") {
+    if (
+      seg.phase === "latency" ||
+      seg.phase === "download" ||
+      seg.phase === "upload" ||
+      seg.phase === "bidirectional"
+    ) {
       const conf: ConfidenceScore | LatencyConfidenceScore = this.#accum.confidence(seg.phase);
       // Track the trailing stable run FIRST so the emitted band reflects the
       // hysteretic latched state (entering stable takes a higher bar than
       // leaving — the pip and the stable window don't flicker). (§13.4)
       const stable = this.#accum.trackStableRun(seg.phase, conf.score, this.#cfg!.adaptive);
-      if (now - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
+      // The `stability` snapshot only models the three single-lane stages; the
+      // bidirectional phase still drives the early-stop glide off the combined
+      // rate but emits no pip (its UI is deferred — §9).
+      if (
+        seg.phase !== "bidirectional" &&
+        now - this.#lastStabilityAt >= STABILITY_CADENCE_MS
+      ) {
         this.#lastStabilityAt = now;
         this.emit({
           type: "stability",
@@ -408,21 +422,24 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         });
       }
       // Adaptive early finish: once confidently stable, arm a glide that
-      // accelerates virtual time to the segment boundary (§13.4).
+      // accelerates measured-time to the segment boundary (§13.4).
       this.#maybeArmGlide(seg, elapsed, conf);
     }
   }
 
   /* ================= SAMPLE INGEST (CoreHost) ================= */
-  ingestThroughput(bytesPerSec: number, bytesDelta: number): void {
+  ingestThroughput(dir: FlowDirection, bytesPerSec: number, bytesDelta: number): void {
     const cfg = this.#cfg;
     if (!cfg) return;
     const phase = this.#phase;
-    if (phase !== "download" && phase !== "upload") return; // ignore stray samples
+    // Direction now travels with the sample, so the bidirectional phase can
+    // carry concurrent down + up samples (no phase-inference). Stray samples
+    // outside a transfer/bidi phase are ignored.
+    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional") return;
     // A real byte sample proves delivery: refresh the watchdog + auto-resume.
     this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
-    this.#accum.pushThroughput(phase, bytesPerSec, bytesDelta);
+    this.#accum.pushThroughput(phase, dir, bytesPerSec, bytesDelta);
     this.emit({
       type: "throughput",
       sample: {
@@ -430,6 +447,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         bytesPerSec,
         bytesCumulative: this.#bytesCumulative,
         streamCount: cfg.parallelStreams,
+        dir,
       },
     });
   }
@@ -534,7 +552,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   /** Notify the backend that a (real) phase ended, so it can close I/O. Skips
    *  the non-segment phases (idle/complete/aborted/error). */
   #exitBackendPhase(phase: Phase) {
-    if (phase === "warmup" || phase === "latency" || phase === "download" || phase === "upload") {
+    if (
+      phase === "warmup" ||
+      phase === "latency" ||
+      phase === "download" ||
+      phase === "upload" ||
+      phase === "bidirectional"
+    ) {
       this.#backend.onPhaseExit(phase);
     }
   }
@@ -617,11 +641,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#finalizeStage(this.#lastEmittedPhase);
     this.#exitBackendPhase(this.#lastEmittedPhase);
     // Actual wall-clock length — shorter than the nominal #totalMs whenever an
-    // adaptive glide accelerated one or more phases to an early finish (§13.4).
+    // adaptive glide accelerated one or more phases to an early finish (§13.4),
+    // and LONGER whenever a stall padded it with dead air (§4).
     const actualMs = Math.max(0, performance.now() - this.#t0);
+    // Bidirectional has no per-stage event (its UI is deferred — §9); reduce its
+    // two lanes here when the stage ran, else null.
+    const bidirectional = cfg.stages.bidirectional
+      ? this.#accum.bidirectionalResult(cfg)
+      : null;
     const result = {
       download: this.#dlResult,
       upload: this.#ulResult,
+      bidirectional,
       // Latency is always present in the aggregate: when the latency STAGE ran it
       // was finalized as a stage result; otherwise compute it here from any
       // under-load pings (bufferbloat still needs it).

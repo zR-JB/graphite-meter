@@ -17,6 +17,7 @@
     latency: "Measuring latency",
     download: "Downloading",
     upload: "Uploading",
+    bidirectional: "Bidirectional",
     complete: "Complete",
     aborted: "Aborted",
     error: "Error",

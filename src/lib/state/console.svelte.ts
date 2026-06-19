@@ -57,9 +57,11 @@ const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
 /* ================= DEFAULTS (§2.4) ================= */
 
 export const DEFAULT_CONFIG: RunnerConfig = {
-  stages: { latency: true, download: true, upload: true },
+  // bidirectional defaults OFF — it's an advanced, backend-mostly stage with no
+  // dedicated UI yet (§9); enabling it appends a concurrent down+up phase.
+  stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
-  duration: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000 },
+  duration: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000, bidirectionalMs: 10000 },
   transport: { transfer: "webtransport", latency: "websocket" },
   pingConcurrency: "medium",
   parallelStreams: 4,
@@ -102,9 +104,9 @@ export const DEFAULT_CONFIG: RunnerConfig = {
 };
 
 export const DURATION_PRESETS = {
-  short: { warmupMs: 600, latencyMs: 2500, downloadMs: 5000, uploadMs: 5000 },
-  medium: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000 },
-  long: { warmupMs: 1200, latencyMs: 6000, downloadMs: 20000, uploadMs: 20000 },
+  short: { warmupMs: 600, latencyMs: 2500, downloadMs: 5000, uploadMs: 5000, bidirectionalMs: 5000 },
+  medium: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000, bidirectionalMs: 10000 },
+  long: { warmupMs: 1200, latencyMs: 6000, downloadMs: 20000, uploadMs: 20000, bidirectionalMs: 20000 },
 } as const;
 
 const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered

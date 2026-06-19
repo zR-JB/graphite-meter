@@ -18,9 +18,15 @@ export type Phase =
   | "latency"
   | "download"
   | "upload"
+  | "bidirectional" // concurrent down+up load phase (backend-mostly; UI deferred)
   | "complete"
   | "aborted"
   | "error";
+
+/** Which way bytes are flowing for a throughput sample. Travels WITH the sample
+ *  so the core never infers direction from the phase — that lets a single
+ *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
+export type FlowDirection = "down" | "up";
 
 export type ConnectivityState =
   | "connected"
@@ -84,16 +90,22 @@ export interface StabilitySnapshot {
 
 /* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
-  stages: { latency: boolean; download: boolean; upload: boolean };
+  /** Enabled measured stages. `bidirectional` (concurrent down+up) defaults
+   *  off; when on it runs after upload with its own warmup. */
+  stages: { latency: boolean; download: boolean; upload: boolean; bidirectional: boolean };
   /** When the latency stage is off, also skip the under-load latency pings
    *  taken during download/upload — so latency is fully off (no measurement,
    *  no profile, no chart line) rather than just dropping the idle phase. */
   skipLoadedLatencyWhenStageOff: boolean;
+  /** Per-phase durations. Every measured `*Ms` is a TEST-TIME BUDGET (§4) — the
+   *  phase runs until that much VALID measurement time is consumed, so dead air
+   *  pushes its wall-clock end out. `warmupMs` stays plain wall-clock priming. */
   duration: {
     warmupMs: number;
     latencyMs: number;
     downloadMs: number;
     uploadMs: number;
+    bidirectionalMs: number;
   };
   transport: {
     transfer: "webtransport" | "xhr-stream";
@@ -116,6 +128,7 @@ export interface ThroughputSample {
   bytesPerSec: number; // instantaneous bytes/sec (raw, browser-native; UI converts/labels)
   bytesCumulative: number;
   streamCount: number;
+  dir: FlowDirection; // which way these bytes flowed (down in download, up in upload, either in bidirectional)
 }
 
 export interface LatencySample {
@@ -135,6 +148,9 @@ export interface PhaseTransition {
 export interface RunResult {
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
+  /** The bidirectional phase's two concurrent lanes, or null when the stage was
+   *  off. Each lane reuses the same throughput reducer as download/upload. */
+  bidirectional: { down: ThroughputResult; up: ThroughputResult } | null;
   latency: LatencyResult;
   bufferbloat: BufferbloatGrade;
   startedAt: number; // epoch ms

@@ -15,6 +15,7 @@ import type {
   ThroughputResult,
   LatencyResult,
   BufferbloatGrade,
+  FlowDirection,
 } from "./contract";
 import type { StagePhase } from "./schedule";
 import {
@@ -37,6 +38,14 @@ export class RunAccumulator {
   // ---- whole-run result bookkeeping ----
   #dl: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
   #ul: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
+  // Bidirectional carries TWO concurrent lanes (down + up), each reduced with
+  // the same throughput reducer as a normal transfer phase.
+  #biDown: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
+  #biUp: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
+  // Latest per-lane rate, so each bidi push can record the COMBINED (down+up)
+  // rate into the confidence window — the single stability signal for the phase.
+  #biLastDown = 0;
+  #biLastUp = 0;
   #idleRtts: number[] = [];
   #loadedRtts: number[] = [];
   #allRtts: number[] = [];
@@ -57,14 +66,22 @@ export class RunAccumulator {
   #dlStableStart = -1;
   #ulStableStart = -1;
   #latStableStart = -1;
+  // Bidi tracks ONE stable run, over the combined-rate confidence window — the
+  // phase has a single early-stop signal even though it reports two lanes.
+  #biStableStart = -1;
   #dlFinalScore = 0;
   #ulFinalScore = 0;
   #latFinalScore = 0;
+  #biFinalScore = 0;
 
   /** Reset all run state — call at the start of each run. */
   reset(): void {
     this.#dl = { bytesPerSecValues: [], bytes: 0 };
     this.#ul = { bytesPerSecValues: [], bytes: 0 };
+    this.#biDown = { bytesPerSecValues: [], bytes: 0 };
+    this.#biUp = { bytesPerSecValues: [], bytes: 0 };
+    this.#biLastDown = 0;
+    this.#biLastUp = 0;
     this.#idleRtts = [];
     this.#loadedRtts = [];
     this.#allRtts = [];
@@ -73,9 +90,11 @@ export class RunAccumulator {
     this.#dlStableStart = -1;
     this.#ulStableStart = -1;
     this.#latStableStart = -1;
+    this.#biStableStart = -1;
     this.#dlFinalScore = 0;
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
+    this.#biFinalScore = 0;
     this.beginPhase();
   }
 
@@ -85,13 +104,35 @@ export class RunAccumulator {
     this.#phaseRtts = [];
     this.#phasePings = 0;
     this.#phasePingsLost = 0;
+    // Per-lane latest only matters within the bidi phase; clear on phase entry
+    // so a fresh bidi phase doesn't combine against a stale lane value.
+    this.#biLastDown = 0;
+    this.#biLastUp = 0;
   }
 
   /* ================= SAMPLE INGEST ================= */
 
   /** Record a transfer sample: instantaneous bytes/sec plus the bytes
-   *  transferred over the cadence window it represents. */
-  pushThroughput(phase: "download" | "upload", bytesPerSec: number, bytesDelta: number): void {
+   *  transferred over the cadence window it represents, tagged with direction.
+   *  In download/upload `dir` matches the phase; in bidirectional it routes the
+   *  sample to the down or up lane and feeds the COMBINED rate (this lane +
+   *  the other lane's latest) into the single confidence window. */
+  pushThroughput(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+    bytesPerSec: number,
+    bytesDelta: number,
+  ): void {
+    if (phase === "bidirectional") {
+      const lane = dir === "down" ? this.#biDown : this.#biUp;
+      lane.bytesPerSecValues.push(bytesPerSec);
+      lane.bytes += bytesDelta;
+      if (dir === "down") this.#biLastDown = bytesPerSec;
+      else this.#biLastUp = bytesPerSec;
+      // One stability signal over the combined throughput (down + up).
+      this.#phaseBytesPerSec.push(this.#biLastDown + this.#biLastUp);
+      return;
+    }
     const accum = phase === "download" ? this.#dl : this.#ul;
     accum.bytesPerSecValues.push(bytesPerSec);
     accum.bytes += bytesDelta;
@@ -142,6 +183,13 @@ export class RunAccumulator {
       this.#ulFinalScore = score;
       start = this.#ulStableStart;
       arrLen = this.#ul.bytesPerSecValues.length;
+    } else if (phase === "bidirectional") {
+      // The stable-run index is into the COMBINED-rate confidence window (the
+      // single signal), not either lane — so the trailing window slices both
+      // lanes consistently at result time.
+      this.#biFinalScore = score;
+      start = this.#biStableStart;
+      arrLen = this.#phaseBytesPerSec.length;
     } else {
       this.#latFinalScore = score;
       start = this.#latStableStart;
@@ -155,6 +203,7 @@ export class RunAccumulator {
 
     if (phase === "download") this.#dlStableStart = start;
     else if (phase === "upload") this.#ulStableStart = start;
+    else if (phase === "bidirectional") this.#biStableStart = start;
     else this.#latStableStart = start;
 
     return nowStable;
@@ -173,7 +222,31 @@ export class RunAccumulator {
     const a = phase === "download" ? this.#dl : this.#ul;
     const stableStart = phase === "download" ? this.#dlStableStart : this.#ulStableStart;
     const finalScore = phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
+    return this.#reduceTransfer(a, stableStart, finalScore, cfg);
+  }
 
+  /** Reduce the bidirectional phase's two lanes to a {down, up} result pair —
+   *  each lane reuses the same transfer reducer as download/upload. Both lanes
+   *  share the phase's single stable-run index (computed over the combined-rate
+   *  window), so the trailing stable window is the same span of samples in each
+   *  lane (the lanes are pushed in lock-step, so their array indices align). */
+  bidirectionalResult(cfg: RunnerConfig): { down: ThroughputResult; up: ThroughputResult } {
+    return {
+      down: this.#reduceTransfer(this.#biDown, this.#biStableStart, this.#biFinalScore, cfg),
+      up: this.#reduceTransfer(this.#biUp, this.#biStableStart, this.#biFinalScore, cfg),
+    };
+  }
+
+  /** Shared transfer-phase reducer: turn a lane's sample buffer + its latched
+   *  stable-run index into a {@link ThroughputResult}. The headline is the mean
+   *  over the trailing stable window when adaptive is on and the lane was still
+   *  stable at finish, else the full-phase average (§13.4). */
+  #reduceTransfer(
+    a: PhaseAccum,
+    stableStart: number,
+    finalScore: number,
+    cfg: RunnerConfig,
+  ): ThroughputResult {
     const v = a.bytesPerSecValues;
     const band = bandForState(stableStart >= 0, finalScore);
     if (!v.length) {

@@ -44,6 +44,9 @@ const PHASE_VAR: Record<Phase, string> = {
   latency: "--phase-latency",
   download: "--phase-download",
   upload: "--phase-upload",
+  // Bidirectional has no dedicated accent token yet (UI deferred) — borrow the
+  // download tint so the dial still renders a sensible color if it ever runs.
+  bidirectional: "--phase-download",
   complete: "--phase-complete",
   aborted: "--err",
   error: "--err",
