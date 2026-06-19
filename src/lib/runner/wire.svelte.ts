@@ -1,25 +1,28 @@
 /* ============================================================
  * The Graphite Meter — Runner Wiring Helper (§6)
- * The single integration seam. Swapping DummyRunner for a real
- * engine touches ONLY this file.
+ * The single integration seam. The shared RunnerCore owns the
+ * engine logic; only the backend (sample source) is swapped here.
+ * Going live touches ONLY this file.
  *
  * Named `.svelte.ts` so the `$state.snapshot` rune (used to pass
  * a frozen, non-reactive config into the engine) is compiled.
  * ============================================================ */
 
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
-import { DummyRunner } from "./dummy";
+import { RunnerCore } from "./core";
+import { DummyBackend } from "./dummy";
 import { console as store } from "../state/console.svelte";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
 
 export function getRunner(): NetworkRunner {
-  // To go live against a real speedtest backend, change this ONE line — the UI
-  // and store are engine-agnostic (§14.4 · see docs/REAL_RUNNER.md):
-  //   import { RealRunner } from "./RealRunner";
-  //   if (!runner) runner = new RealRunner({ endpoint: store.config.endpoint });
-  if (!runner) runner = new DummyRunner({ profile: "fiber" });
+  // To go live against a real speedtest backend, swap the backend on this ONE
+  // line — the core, UI, and store are all engine-agnostic (§14.4 · see
+  // docs/REAL_RUNNER.md):
+  //   import { RealBackend } from "./RealRunner";
+  //   if (!runner) runner = new RunnerCore(new RealBackend({ endpoint: store.config.endpoint }));
+  if (!runner) runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
   return runner;
 }
 
