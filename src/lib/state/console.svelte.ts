@@ -196,6 +196,20 @@ class ConsoleStore {
     return { value: this.toUnit(last.bytesPerSec), unit: this.unitLabel };
   });
 
+  /** The headline metric to rest on at the END of a run: download if it ran,
+   *  else upload, else latency. Phase-agnostic so the gauge + big number never
+   *  assume download exists — a latency-only or upload-only run resolves to a
+   *  sensible final reading instead of a stale/misread value. */
+  finalMetric = $derived.by<
+    { kind: "speed"; bytesPerSec: number } | { kind: "latency"; ms: number } | null
+  >(() => {
+    const r = this.stageResults;
+    if (r.download) return { kind: "speed", bytesPerSec: r.download.reportedBytesPerSec };
+    if (r.upload) return { kind: "speed", bytesPerSec: r.upload.reportedBytesPerSec };
+    if (r.latency) return { kind: "latency", ms: r.latency.reportedMs };
+    return null;
+  });
+
   /** Most recent rtt for the connectivity pulse + live ping. */
   liveRtt = $derived(
     this.latency.length

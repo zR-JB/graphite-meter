@@ -30,6 +30,10 @@ export interface GaugeState {
   ticks: string[];
   rtt: number;
   pingCount: number;
+  /** At `complete`, the 0–1 dial position to rest on for the primary result
+   *  stage (download→upload→latency, picked by the store). -1 when not
+   *  resolved — the dial then holds wherever the last live phase left it. */
+  resolvedFraction: number;
 }
 
 /** Phase → accent token. Mirrors the reactor's mapping so the dial tints
@@ -222,7 +226,9 @@ export class GaugeEngine implements CanvasEngine {
     } else if (s.phase === "idle") {
       target = 0.1;
     } else if (s.phase === "complete") {
-      target = this.#frozen;
+      // Ease to the resolved primary-stage position (phase-agnostic) when the
+      // store supplies one; otherwise hold where the last live phase ended.
+      target = s.resolvedFraction >= 0 ? s.resolvedFraction : this.#frozen;
     } else {
       target = 0.05; // aborted / error
     }

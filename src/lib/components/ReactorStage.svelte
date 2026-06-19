@@ -62,11 +62,14 @@
     // idle/error/aborted states rather than a misleading 0 bit/s.
     if (p === "idle" || p === "error" || p === "aborted" || p === "warmup")
       return { value: "—", unit: "" };
-    if (p === "complete" && store.result?.download) {
-      return {
-        value: fmtSpeed(store.toUnit(store.result.download.meanBytesPerSec)),
-        unit: store.unitLabel,
-      };
+    if (p === "complete") {
+      // Phase-agnostic headline: download if it ran, else upload, else latency
+      // — never assume download exists.
+      const fm = store.finalMetric;
+      if (fm?.kind === "speed")
+        return { value: fmtSpeed(store.toUnit(fm.bytesPerSec)), unit: store.unitLabel };
+      if (fm?.kind === "latency") return { value: fmtMs(fm.ms), unit: "ms" };
+      return { value: "—", unit: "" };
     }
     return { value: fmtSpeed(store.liveMetric.value), unit: store.liveMetric.unit };
   });
@@ -106,23 +109,39 @@
   let a11y = $state("");
 
   onMount(() => {
-    engine = new GaugeEngine(() => ({
-      phase: store.phase,
-      valueBytesPerSec: store.throughput.at(-1)?.bytesPerSec ?? 0,
-      scaleBytesPerSec: store.displayScaleBytesPerSec,
-      latencyScaleMs,
-      // Five quarter labels (0 … full scale). During the latency phase the dial
-      // reads RTT, so the labels are in ms against the linear latency scale;
-      // otherwise they're throughput in the active display unit.
-      ticks:
-        store.phase === "latency"
+    engine = new GaugeEngine(() => {
+      const p = store.phase;
+      const fm = store.finalMetric;
+      const scale = store.displayScaleBytesPerSec;
+      // At complete, resolve the dial + its tick scale to the primary result
+      // stage (download→upload→latency) so a run without download still reads
+      // right (needle and labels match, instead of an RTT needle under speed
+      // labels). -1 elsewhere → the per-phase live logic drives the dial.
+      let resolvedFraction = -1;
+      let msTicks = p === "latency";
+      if (p === "complete" && fm) {
+        if (fm.kind === "speed") {
+          resolvedFraction = scale > 0 ? Math.min(1, Math.max(0, fm.bytesPerSec / scale)) : 0;
+        } else {
+          resolvedFraction = latencyScaleMs > 0 ? Math.min(1, Math.max(0, fm.ms / latencyScaleMs)) : 0;
+          msTicks = true;
+        }
+      }
+      return {
+        phase: p,
+        valueBytesPerSec: store.throughput.at(-1)?.bytesPerSec ?? 0,
+        scaleBytesPerSec: scale,
+        latencyScaleMs,
+        resolvedFraction,
+        // Five quarter labels (0 … full scale): ms during the latency phase or
+        // a latency-resolved end state, otherwise throughput in the active unit.
+        ticks: msTicks
           ? [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f))
-          : [0, 0.25, 0.5, 0.75, 1].map((f) =>
-              fmtSpeed(store.toUnit(store.displayScaleBytesPerSec * f)),
-            ),
-      rtt: store.liveRtt,
-      pingCount: store.latency.length,
-    }));
+          : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtSpeed(store.toUnit(scale * f))),
+        rtt: store.liveRtt,
+        pingCount: store.latency.length,
+      };
+    });
     engine.attach(canvasEl!);
     engine.start();
 
