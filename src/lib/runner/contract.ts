@@ -28,6 +28,29 @@ export type Phase =
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
 
+/* ---------- Phase activity descriptor (core → backend) ----------
+ *  The self-contained description of WHAT a stage exercises, resolved ONCE by
+ *  the scheduler from `RunnerConfig` and handed to the backend on every stage
+ *  lifecycle hook (onStageBegin/onStageMeasure/onStageEnd in core.ts). The
+ *  backend reads NOTHING from global config to decide which connections to open:
+ *  `transfer` names the byte lanes and `loadedLatency` says whether concurrent
+ *  pings run. A stage's warmup window and its measured window carry the SAME
+ *  activity object, so the connection a warmup primes is the exact one the
+ *  measurement reuses. This makes every combination explicit — latency-only,
+ *  download, upload, bidirectional, and each transfer variant with or without
+ *  loaded latency — without the backend inferring anything. */
+export interface PhaseActivity {
+  /** The measured stage this activity belongs to. */
+  stage: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
+  /** Byte lanes to open: `[]` (latency-only), `["down"]`, `["up"]`, or both. */
+  transfer: FlowDirection[];
+  /** Run concurrent pings during the measured window (loaded latency /
+   *  bufferbloat). Always false for the latency stage (which measures IDLE
+   *  latency); for transfer stages it folds in the "skip loaded latency when the
+   *  latency stage is off" config rule, resolved by the scheduler. */
+  loadedLatency: boolean;
+}
+
 export type ConnectivityState =
   | "connected"
   | "degraded" // jitter / minor packet loss
@@ -232,12 +255,15 @@ export type TerminationReason =
  *  failure of one is non-fatal as long as another succeeds. */
 export type TransportKind = "webtransport" | "websocket" | "xhr-stream";
 
-/** The stage a transport is being negotiated for. Mirrors schedule's StagePhase
- *  (re-declared here to keep contract.ts free of a schedule import — contract
- *  is the leaf types module) plus the priming `warmup`. */
-export type TransportRole =
-  | Extract<Phase, "latency" | "download" | "upload" | "bidirectional">
-  | "warmup";
+/** The stage a transport is being negotiated for. A backend negotiates a
+ *  stage's transport ONCE, at stage begin — the warmup primes it and the
+ *  measured window reuses it — so there is no separate priming `warmup` role.
+ *  Mirrors schedule's StagePhase (re-declared here to keep contract.ts free of a
+ *  schedule import — contract is the leaf types module). */
+export type TransportRole = Extract<
+  Phase,
+  "latency" | "download" | "upload" | "bidirectional"
+>;
 
 /** One step in negotiating a transport for a phase's I/O. A backend reports a
  *  `negotiating` attempt, then either `established` (success — measuring can
@@ -394,16 +420,23 @@ export interface NetworkRunner {
   readonly phase: Phase;
 }
 
-/* ---------- Warmup contract ----------
- *  Each enabled stage is preceded by exactly one `"warmup"` window of
- *  `duration.warmupMs` (omitted when that is <= 0). During the window the runner
- *  primes the connection(s) the *following* stage needs, concurrently:
- *    • latency  → the latency (ping) connection
- *    • download → the download transfer connection, plus — when loaded-latency
- *                 is active — the latency connection too (same window)
- *    • upload   → the upload transfer connection, plus the latency connection
- *                 when loaded-latency is active
- *  The window is always emitted to the UI as the generic `"warmup"` phase; which
- *  stage it primes is backend-only (the dummy records it as `warmupFor`). The
- *  single `warmupMs` setting governs every stage's warmup, so the runner timeline
- *  and the UI ETA stay in agreement. */
+/* ---------- Stage lifecycle & warmup contract ----------
+ *  Connections are owned by the STAGE, not by the phase label. The core drives a
+ *  three-call lifecycle per enabled stage (see `RunnerBackend` in core.ts), each
+ *  call carrying the stage's resolved {@link PhaseActivity}:
+ *    onStageBegin(activity)   — open + PRIME every connection the activity names
+ *                               (the `transfer` lanes, plus the ping channel when
+ *                               `loadedLatency` or a latency stage). Fires at the
+ *                               start of the stage's warmup window. No measuring.
+ *    onStageMeasure(activity) — the warmup window has elapsed; START measuring on
+ *                               the SAME primed connections (never reopen). Fires
+ *                               immediately after onStageBegin when warmupMs<=0.
+ *    onStageEnd(activity)     — the measured window ended (boundary, early finish,
+ *                               or run end); close the stage's connection(s).
+ *  Because begin/measure/end bracket ONE connection set, the warmup genuinely
+ *  warms the wire the measurement runs over — there is no cold reconnect at the
+ *  warmup→measure seam (the original purpose of a warmup). Each enabled stage is
+ *  still preceded by exactly one `"warmup"` window of `duration.warmupMs`
+ *  (omitted when <= 0), emitted to the UI as the generic `"warmup"` phase; the
+ *  stage split is backend-only. The single `warmupMs` setting governs every
+ *  stage's warmup, so the runner timeline and the UI ETA stay in agreement. */

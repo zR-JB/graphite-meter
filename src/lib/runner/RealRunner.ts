@@ -15,9 +15,15 @@
  *  • transport       — negotiate webtransport / websocket / xhr-stream per
  *                    phase; report each attempt with host.reportTransport; if
  *                    every kind fails, host.fail("transport-unavailable", …).
- *  • connection lifecycle — open/prime on onPhaseEnter, close on
- *                    onPhaseExit / onAbort / onComplete. The CORE decides
- *                    WHEN phases change; the backend just reacts.
+ *  • connection lifecycle — a STAGE owns its connection(s) across its whole
+ *                    warmup→measure→end span: open + PRIME on onStageBegin, START
+ *                    measuring the SAME connections on onStageMeasure, close on
+ *                    onStageEnd / onAbort / onComplete. The warmup genuinely
+ *                    warms the wire the measurement runs over — never reopen at
+ *                    the seam. The CORE decides WHEN stages change; the backend
+ *                    just reacts. Every hook carries the stage's PhaseActivity
+ *                    (transfer lanes + loadedLatency), so the backend reads
+ *                    NOTHING from global config to know what to open.
  *  • measurement     — stream/measure raw throughput + latency and push them
  *                    in via host.ingestThroughput(dir, …) / host.ingestLatency.
  *                    Direction travels WITH the sample, so a bidirectional
@@ -60,9 +66,9 @@ import type {
   TransportKind,
   TransportRole,
   FlowDirection,
+  PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import type { StagePhase } from "./schedule";
 
 /** Construction options for a real engine: the endpoint to target plus anything
  *  preflight hands back (e.g. a session token). All optional so the class is
@@ -123,7 +129,7 @@ export class RealBackend implements RunnerBackend {
   /**
    * A run is starting. Open a fresh AbortController so onAbort can cancel
    * everything; reset any per-run state. Do NOT open transfer connections yet —
-   * that happens per stage in onPhaseEnter.
+   * that happens per stage in onStageBegin.
    */
   onRunStart(config: RunnerConfig): void {
     void this.#resolveEndpoint(config.endpoint);
@@ -133,49 +139,51 @@ export class RealBackend implements RunnerBackend {
   }
 
   /**
-   * A phase has begun (the core decided the transition). Negotiate the
-   * transport, open/prime the connection(s) it needs, and begin measuring:
-   *   • warmup        → prime the following stage's connection(s) (`warmupFor`);
-   *                     for transfers, also the latency connection when loaded-
-   *                     latency is active (see the warmup contract in contract.ts).
-   *   • latency       → #negotiateTransport("latency") then #openLatencyChannel.
-   *   • download      → #negotiateTransport("download") then #openDownloadStreams.
-   *   • upload        → #negotiateTransport("upload") then #openUploadStreams.
-   *   • bidirectional → #negotiateTransport("bidirectional") then #openBidirectional
-   *                     — concurrent down + up; push BOTH directions.
+   * A stage is beginning — the start of its warmup window (or the stage itself
+   * when warmupMs<=0). Negotiate the transport ONCE for the stage, then open and
+   * PRIME every connection `activity` names — WITHOUT measuring yet:
+   *   • activity.transfer — the byte lanes ("down"/"up"); [] for the latency stage.
+   *   • a ping channel    — when activity.loadedLatency, or the latency stage.
+   * The same connections are reused in onStageMeasure, so the warmup genuinely
+   * warms the wire the measurement runs over (no cold reconnect at the seam).
+   * The stub bodies below throw NOT_IMPL — fill them in to go live.
    */
-  onPhaseEnter(phase: StagePhase | "warmup", warmupFor?: StagePhase): void {
-    // Real shape (the stub bodies below throw NOT_IMPL — fill them in to go
-    // live). Negotiation runs first; on success it returns the established kind
-    // and we open that phase's I/O. A warmup primes its `warmupFor` stage's
-    // connection (default latency).
-    const role: TransportRole = phase === "warmup" ? (warmupFor ?? "latency") : phase;
-    const kind = this.#negotiateTransport(role);
+  onStageBegin(activity: PhaseActivity): void {
+    const kind = this.#negotiateTransport(activity.stage);
     if (!kind) return; // negotiation already raised host.fail("transport-unavailable")
-    switch (phase) {
-      case "latency":
-        this.#openLatencyChannel(kind);
-        break;
-      case "download":
-        this.#openDownloadStreams(kind);
-        break;
-      case "upload":
-        this.#openUploadStreams(kind);
-        break;
-      case "bidirectional":
-        this.#openBidirectional(kind);
-        break;
-      case "warmup":
-        /* prime warmupFor's connection(s) using `kind` */
-        break;
-    }
+    for (const dir of activity.transfer) this.#primeTransfer(kind, dir);
+    if (this.#needsPings(activity)) this.#primeLatencyChannel(kind);
   }
 
-  /** A phase has ended (boundary, early finish, or run end). Close/cancel that
-   *  phase's connection(s); the core has already finalized its result. */
-  onPhaseExit(phase: StagePhase | "warmup"): void {
-    void phase;
-    throw NOT_IMPL("onPhaseExit");
+  /**
+   * The stage's warmup window has elapsed; the connections primed in
+   * onStageBegin are warm. Begin pushing real samples on the SAME connections —
+   * NEVER reopen them (that would discard the warmup). Fires immediately after
+   * onStageBegin when the stage has no warmup window (warmupMs<=0).
+   *   • transfer lanes → #measureTransfer(dir): push host.ingestThroughput(dir,…).
+   *   • ping channel    → #measureLatency(underLoad): push host.ingestLatency(…),
+   *                       with underLoad = the stage moves bytes (bufferbloat).
+   */
+  onStageMeasure(activity: PhaseActivity): void {
+    const underLoad = activity.transfer.length > 0;
+    for (const dir of activity.transfer) this.#measureTransfer(dir);
+    if (this.#needsPings(activity)) this.#measureLatency(underLoad);
+  }
+
+  /** A stage's measured window has ended (boundary, early finish, or run end).
+   *  Close/cancel the stage's connection(s); the core has already finalized its
+   *  result. */
+  onStageEnd(activity: PhaseActivity): void {
+    void activity;
+    throw NOT_IMPL("onStageEnd");
+  }
+
+  /** Whether a stage runs a ping channel: the idle latency stage, or a transfer
+   *  stage with loaded latency (bufferbloat) active. */
+  #needsPings(activity: PhaseActivity): boolean {
+    return (
+      activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency)
+    );
   }
 
   /** The run finished normally. Close anything still open. */
@@ -237,42 +245,45 @@ export class RealBackend implements RunnerBackend {
     throw NOT_IMPL("transportOrder");
   }
 
-  /* ================= CHANNEL / STREAM OPENING ================= */
-  /** Open the latency (ping) channel over `kind`. RTT = now − sent; an unacked /
-   *  timed-out ping is `lost`. Push at the config.pingConcurrency interval via
-   *  host.ingestLatency(rtt, underLoad=false, lost). */
-  #openLatencyChannel(kind: TransportKind): void {
+  /* ================= PRIME (warmup window) — open, don't measure ================= */
+  /** Open `config.parallelStreams` transfer stream(s) for `dir` over `kind`
+   *  (`GET {path}/download?bytes=N` for "down", `POST {path}/upload` streamed body
+   *  for "up", or webtransport) and run priming bytes to warm the path (TCP
+   *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
+   *  stay open for #measureTransfer to start measuring on the SAME connection. */
+  #primeTransfer(kind: TransportKind, dir: FlowDirection): void {
     void kind;
-    throw NOT_IMPL("openLatencyChannel");
+    void dir;
+    // for (let i = 0; i < this.#host!.config!.parallelStreams; i++) { /* open stream i */ }
+    throw NOT_IMPL("primeTransfer");
   }
 
-  /** Open `config.parallelStreams` download streams (`GET {path}/download?bytes=N`
-   *  or webtransport). Sum received bytes/sec across streams; push ~16Hz via a
-   *  #readLoop per stream. Reuse pings under load → ingestLatency(…, true, …). */
-  #openDownloadStreams(kind: TransportKind): void {
+  /** Open the latency (ping) channel over `kind` and optionally exchange a warm-
+   *  up ping or two. Push NOTHING yet — #measureLatency starts the real pinging
+   *  on this same channel. */
+  #primeLatencyChannel(kind: TransportKind): void {
     void kind;
-    // for (let i = 0; i < this.#host!.config!.parallelStreams; i++)
-    //   this.#readLoop(/* reader i */ null, "down");
-    this.#readLoop(null, "down");
-    throw NOT_IMPL("openDownloadStreams");
+    throw NOT_IMPL("primeLatencyChannel");
   }
 
-  /** Open `config.parallelStreams` upload streams (`POST {path}/upload` streamed
-   *  body; server discards). Measure SENT bytes/sec per #readLoop(dir:"up"). */
-  #openUploadStreams(kind: TransportKind): void {
-    void kind;
-    this.#readLoop(null, "up");
-    throw NOT_IMPL("openUploadStreams");
+  /* ================= MEASURE — push real samples on the primed connections ====== */
+  /** Begin measuring the already-open transfer stream(s) for `dir` (opened in
+   *  #primeTransfer — NEVER reopen). Per #readLoop, sum received/sent bytes/sec
+   *  across streams and push host.ingestThroughput(dir, bytesPerSec, bytes) at
+   *  ~16Hz. */
+  #measureTransfer(dir: FlowDirection): void {
+    this.#readLoop(null, dir);
+    throw NOT_IMPL("measureTransfer");
   }
 
-  /** Open concurrent download + upload streams for the bidirectional phase; run
-   *  #readLoop(dir:"down") and #readLoop(dir:"up") at once so the core sees both
-   *  lanes (which it reduces to RunResult.bidirectional.{down,up}). */
-  #openBidirectional(kind: TransportKind): void {
-    void kind;
-    this.#readLoop(null, "down");
-    this.#readLoop(null, "up");
-    throw NOT_IMPL("openBidirectional");
+  /** Begin measuring on the already-open ping channel (opened in
+   *  #primeLatencyChannel). RTT = now − sent; an unacked / timed-out ping is
+   *  `lost`. Push at the config.pingConcurrency interval via
+   *  host.ingestLatency(rtt, underLoad, lost) — `underLoad` is true when the
+   *  pings run concurrently with a transfer (bufferbloat). */
+  #measureLatency(underLoad: boolean): void {
+    void underLoad;
+    throw NOT_IMPL("measureLatency");
   }
 
   /**

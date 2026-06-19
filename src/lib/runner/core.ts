@@ -12,10 +12,13 @@
  * samples always yield identical results.
  *
  * Lifecycle (core → backend), so the backend only reacts:
- *   onRunStart → onPhaseEnter/onPhaseExit per phase → onComplete
- *   (or onAbort). A pull-style backend may implement onTick to
- *   synthesize per tick; a push-style (network) backend leaves it
- *   off and calls host.ingest* from its own I/O callbacks.
+ *   onRunStart → per stage: onStageBegin → onStageMeasure → onStageEnd
+ *   → onComplete (or onAbort). A stage's warmup window lives BETWEEN
+ *   onStageBegin and onStageMeasure, so the connection it primes is the
+ *   one the measurement reuses (no cold reconnect at the seam). A
+ *   pull-style backend may implement onTick to synthesize per tick; a
+ *   push-style (network) backend leaves it off and calls host.ingest*
+ *   from its own I/O callbacks.
  * ============================================================ */
 
 import type {
@@ -33,6 +36,7 @@ import type {
   StallInfo,
   FlowDirection,
   TransportAttempt,
+  PhaseActivity,
 } from "./contract";
 import {
   shouldExitPhase,
@@ -45,7 +49,6 @@ import {
   rebuildTail,
   segmentAt,
   type Segment,
-  type StagePhase,
 } from "./schedule";
 import { RunAccumulator } from "./evaluation";
 
@@ -68,6 +71,12 @@ const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
  *  time (e.g. during the glide, virtual time races but real time does not). */
 export interface TickContext {
   phase: Segment["phase"];
+  /** The active stage's resolved activity (transfer lanes + loaded latency) —
+   *  the backend reads which samples to synthesize from this, never from config. */
+  activity: PhaseActivity;
+  /** True during the priming window (`phase === "warmup"`): a pull backend
+   *  produces NO measured samples yet, matching a real backend's onStageMeasure. */
+  isWarmup: boolean;
   /** absolute virtual ms since run start */
   elapsed: number;
   segStart: number;
@@ -124,14 +133,22 @@ export interface RunnerBackend {
   /** Pre-test handshake; resolves InfraInfo. MAY emit a few pre-test `latency`
    *  samples (underLoad:false, negative `t`) via the host for the sparkline. */
   probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo>;
-  /** A run is starting with this config. Per-phase priming happens in
-   *  onPhaseEnter; reset any per-run state here. */
+  /** A run is starting with this config. Per-stage priming happens in
+   *  onStageBegin; reset any per-run state here. */
   onRunStart(config: RunnerConfig): void;
-  /** A phase has begun. For a warmup, `warmupFor` names the stage being primed.
-   *  Open/prime the connection(s) the phase needs. */
-  onPhaseEnter(phase: Segment["phase"], warmupFor?: StagePhase): void;
-  /** A phase has ended (boundary, early finish, or run end). Close its I/O. */
-  onPhaseExit(phase: Segment["phase"]): void;
+  /** A stage is beginning — the start of its warmup window (or the stage itself
+   *  when warmupMs<=0). Open + PRIME every connection `activity` names (the
+   *  transfer lanes, plus the ping channel when loadedLatency or a latency
+   *  stage), but do NOT push measured samples yet. */
+  onStageBegin(activity: PhaseActivity): void;
+  /** The stage's warmup window has elapsed; the connections primed in
+   *  onStageBegin are warm. START measuring on the SAME connections — never
+   *  reopen them (that discards the warmup). Fires immediately after
+   *  onStageBegin when the stage has no warmup window. */
+  onStageMeasure(activity: PhaseActivity): void;
+  /** The stage's measured window has ended (boundary, early finish, or run end).
+   *  Close the stage's connection(s); the core has already finalized its result. */
+  onStageEnd(activity: PhaseActivity): void;
   /** The run finished normally. Clean up anything still open. */
   onComplete(): void;
   /** The run was aborted by the user. Cancel in-flight I/O and clean up. */
@@ -165,6 +182,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #segments: Segment[] = [];
   #totalMs = 0;
   #lastEmittedPhase: Phase = "idle";
+  // The segment currently driving the run, or null before the first tick / after
+  // it ends. Backend stage lifecycle keys off this segment's STAGE identity (its
+  // `activity.stage`), not the phase label — so the warmup→measure seam (same
+  // stage) is told to MEASURE, while a stage boundary (different stage) ends the
+  // old stage and begins the new one.
+  #activeSeg: Segment | null = null;
   #lastStabilityAt = -Infinity;
   #bytesCumulative = 0;
 
@@ -266,6 +289,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   #resetRunState() {
     this.#lastEmittedPhase = "idle";
+    this.#activeSeg = null;
     this.#lastStabilityAt = -Infinity;
     this.#bytesCumulative = 0;
     this.#accum.reset();
@@ -348,22 +372,44 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const seg = segmentAt(this.#segments, elapsed);
     if (!seg) return;
 
-    // Phase transition?
-    if (seg.phase !== this.#lastEmittedPhase) {
+    // Segment transition? Adjacent segments always differ in phase (a warmup
+    // alternates with its measured stage), so a new segment is always a phase
+    // transition too — we drive both the UI phase event and the backend stage
+    // lifecycle off this single edge.
+    if (seg !== this.#activeSeg) {
+      const prev = this.#activeSeg;
+      // Same stage as the segment we're leaving ⇒ this is the warmup→measure
+      // seam: keep the primed connections and just start measuring on them.
+      // Otherwise we are crossing a STAGE boundary: end the old stage's I/O and
+      // begin (open + prime) the new stage's.
+      const sameStage = prev !== null && prev.activity.stage === seg.activity.stage;
+
       // The phase we're leaving has just finished — emit its final per-stage
-      // result before announcing the transition, so its card resolves now.
+      // result before announcing the transition, so its card resolves now; and
+      // when leaving a stage entirely, close that stage's connections.
       this.#finalizeStage(this.#lastEmittedPhase);
-      this.#exitBackendPhase(this.#lastEmittedPhase);
+      if (prev && !sameStage) this.#backend.onStageEnd(prev.activity);
+
       const transition: PhaseTransition = {
         from: this.#lastEmittedPhase,
         to: seg.phase,
         t: elapsed,
       };
+      this.#activeSeg = seg;
       this.#lastEmittedPhase = seg.phase;
       this.#setPhase(seg.phase);
       this.emit({ type: "phase", transition });
       this.#beginAdaptivePhase();
-      this.#backend.onPhaseEnter(seg.phase, seg.warmupFor);
+
+      if (sameStage) {
+        // Warmup window elapsed — measure on the connections already primed.
+        this.#backend.onStageMeasure(seg.activity);
+      } else {
+        // New stage — open + prime its connection(s). When no warmup window
+        // precedes it (warmupMs<=0), begin measuring immediately on the same.
+        this.#backend.onStageBegin(seg.activity);
+        if (seg.phase !== "warmup") this.#backend.onStageMeasure(seg.activity);
+      }
     }
 
     // Progress within the current phase (real coverage — never faked). Fraction
@@ -388,6 +434,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // (network) backend leaves onTick undefined and feeds samples on its own.
     this.#backend.onTick?.({
       phase: seg.phase,
+      activity: seg.activity,
+      isWarmup: seg.phase === "warmup",
       elapsed,
       segStart: seg.start,
       segEnd: seg.end,
@@ -459,6 +507,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
+    // Only a measured phase feeds the accumulator (real-stats-only): a stray
+    // ping during warmup/idle must never pollute the idle-latency or bufferbloat
+    // stats. (Pre-test probe pings reach the UI via host.emit, not this path.)
+    const phase = this.#phase;
+    if (
+      phase !== "latency" &&
+      phase !== "download" &&
+      phase !== "upload" &&
+      phase !== "bidirectional"
+    ) {
+      return;
+    }
     // A real ping (even a lost-marked one is a real measurement event) proves
     // the link is alive: refresh the watchdog and auto-resume from any stall.
     this.#noteRealSample();
@@ -565,20 +625,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#accum.beginPhase();
   }
 
-  /** Notify the backend that a (real) phase ended, so it can close I/O. Skips
-   *  the non-segment phases (idle/complete/aborted/error). */
-  #exitBackendPhase(phase: Phase) {
-    if (
-      phase === "warmup" ||
-      phase === "latency" ||
-      phase === "download" ||
-      phase === "upload" ||
-      phase === "bidirectional"
-    ) {
-      this.#backend.onPhaseExit(phase);
-    }
-  }
-
   /** Evaluate the adaptive early-finish predicate; arm a glide if stable. */
   #maybeArmGlide(
     seg: Segment,
@@ -651,11 +697,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
     const cfg = this.#cfg!;
     // The final measured phase ends here — finalize it like any other (the
-    // earlier phases finalized at their transitions), close its I/O, then
-    // assemble RunResult from the cached per-stage results so the aggregate and
-    // the per-stage events never disagree.
+    // earlier phases finalized at their transitions), end its stage (close I/O),
+    // then assemble RunResult from the cached per-stage results so the aggregate
+    // and the per-stage events never disagree.
     this.#finalizeStage(this.#lastEmittedPhase);
-    this.#exitBackendPhase(this.#lastEmittedPhase);
+    if (this.#activeSeg) this.#backend.onStageEnd(this.#activeSeg.activity);
     // Actual wall-clock length — shorter than the nominal #totalMs whenever an
     // adaptive glide accelerated one or more phases to an early finish (§13.4),
     // and LONGER whenever a stall padded it with dead air (§4).

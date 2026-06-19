@@ -8,9 +8,14 @@
  * of the synthesis below; swapping it touches only wire.ts.
  * ============================================================ */
 
-import type { RunnerConfig, RunnerAnomaly, InfraInfo, FlowDirection } from "./contract";
+import type {
+  RunnerConfig,
+  RunnerAnomaly,
+  InfraInfo,
+  FlowDirection,
+  PhaseActivity,
+} from "./contract";
 import type { CoreHost, RunnerBackend, TickContext } from "./core";
-import type { StagePhase } from "./schedule";
 
 export interface DummyOptions {
   seed?: number;
@@ -173,10 +178,12 @@ export class DummyBackend implements RunnerBackend {
     this.#dropEndReal = 0;
   }
 
-  // The dummy simulates rather than opening sockets, so connection lifecycle is
-  // a no-op; a real backend opens/primes here and closes on exit.
-  onPhaseEnter(_phase: string, _warmupFor?: StagePhase): void {}
-  onPhaseExit(_phase: string): void {}
+  // The dummy simulates rather than opening sockets, so the stage connection
+  // lifecycle is a no-op; a real backend opens/primes in onStageBegin, starts
+  // measuring in onStageMeasure, and closes in onStageEnd.
+  onStageBegin(_activity: PhaseActivity): void {}
+  onStageMeasure(_activity: PhaseActivity): void {}
+  onStageEnd(_activity: PhaseActivity): void {}
   onComplete(): void {}
   onAbort(): void {}
 
@@ -189,7 +196,7 @@ export class DummyBackend implements RunnerBackend {
   onTick(ctx: TickContext): void {
     const cfg = this.#host?.config;
     if (!cfg) return;
-    const { phase, elapsed, segStart, segEnd, realNow } = ctx;
+    const { activity, isWarmup, elapsed, segStart, segEnd, realNow } = ctx;
 
     // Active connection-drop: true dead air — push NOTHING (so the core watchdog
     // doesn't auto-resume us), and lift the stall once wall-clock passes the
@@ -204,34 +211,32 @@ export class DummyBackend implements RunnerBackend {
       this.#lastPingAt = realNow;
     }
 
-    // Throughput (download / upload / bidirectional). Cadence gated on REAL
-    // time so the early-finish glide stays smooth (measured-time races ahead;
-    // gating on it would dump the tail's samples into the canvas at once)
-    // (§13.4). In the bidirectional phase BOTH directions are pushed each tick.
-    if (
-      (phase === "download" || phase === "upload" || phase === "bidirectional") &&
-      realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
-    ) {
+    // The warmup window primes real connections; the dummy has none, so it emits
+    // nothing until measurement begins — mirroring a real backend, which only
+    // starts pushing samples at onStageMeasure.
+    if (isWarmup) return;
+
+    // Throughput on the stage's transfer lanes (none for the latency stage; both
+    // lanes for bidirectional). Cadence gated on REAL time so the early-finish
+    // glide stays smooth — measured-time races ahead, and gating on it would
+    // dump the tail's samples into the canvas at once (§13.4).
+    if (activity.transfer.length > 0 && realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS) {
       this.#lastThroughputAt = realNow;
-      if (phase === "bidirectional") {
-        this.#synthThroughput("down", elapsed, segStart, segEnd);
-        this.#synthThroughput("up", elapsed, segStart, segEnd);
-      } else {
-        this.#synthThroughput(phase === "download" ? "down" : "up", elapsed, segStart, segEnd);
+      for (const dir of activity.transfer) {
+        this.#synthThroughput(dir, elapsed, segStart, segEnd);
       }
     }
 
-    // Latency pings (latency phase + under-load during dl/ul). Loaded pings are
-    // suppressed when latency is fully off (stage off + skip-with-stage on), so
-    // disabling the latency stage removes bufferbloat sampling too.
-    const loadedLatency = cfg.stages.latency || !cfg.skipLoadedLatencyWhenStageOff;
-    const pingInterval = PING_INTERVAL[cfg.pingConcurrency];
+    // Pings: the idle latency stage, or loaded (bufferbloat) pings during a
+    // transfer stage. `activity.loadedLatency` already folds in the "skip loaded
+    // latency when the latency stage is off" rule — resolved once by the
+    // scheduler, never re-derived from config here.
     const pingActive =
-      phase === "latency" ||
-      ((phase === "download" || phase === "upload" || phase === "bidirectional") && loadedLatency);
+      activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency);
+    const pingInterval = PING_INTERVAL[cfg.pingConcurrency];
     if (pingActive && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
-      this.#synthLatency(phase, elapsed, segStart, segEnd);
+      this.#synthLatency(activity, elapsed, segStart, segEnd);
     }
   }
 
@@ -270,11 +275,13 @@ export class DummyBackend implements RunnerBackend {
   }
 
   /* ---------- Latency sample synthesis ---------- */
-  #synthLatency(phase: string, elapsed: number, segStart: number, segEnd: number) {
+  // `activity.transfer` (not the phase) decides under-load: a stage that moves
+  // bytes produces loaded (bufferbloat) pings; the latency stage produces idle.
+  #synthLatency(activity: PhaseActivity, elapsed: number, segStart: number, segEnd: number) {
     const tp = elapsed - segStart;
     const phaseLen = segEnd - segStart;
     const frac = tp / phaseLen;
-    const underLoad = phase === "download" || phase === "upload" || phase === "bidirectional";
+    const underLoad = activity.transfer.length > 0;
 
     let rtt = this.#spec.idleRttMs;
     if (underLoad) {

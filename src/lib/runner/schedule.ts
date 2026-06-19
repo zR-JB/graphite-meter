@@ -6,23 +6,48 @@
  * so the dummy and a real runner sequence phases identically.
  * ============================================================ */
 
-import type { RunnerConfig, Phase } from "./contract";
+import type { RunnerConfig, Phase, FlowDirection, PhaseActivity } from "./contract";
 
 /** A measured stage a warmup window primes. */
 export type StagePhase = Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
 
-/** One phase window on the run timeline. `warmupFor` is set only on warmup
- *  segments — backend-only metadata naming the stage the warmup primes. */
+/** One phase window on the run timeline. Every segment carries the resolved
+ *  `activity` of its stage: a warmup segment and the measured-stage segment that
+ *  follows it carry the SAME `activity` object, so the backend opens one
+ *  connection set across both (see the stage-lifecycle contract in contract.ts). */
 export interface Segment {
   phase: Extract<Phase, "warmup" | "latency" | "download" | "upload" | "bidirectional">;
   start: number; // ms offset from run start
   end: number;
-  warmupFor?: StagePhase; // set only on warmup segments
+  activity: PhaseActivity; // what this segment exercises (lanes + loaded latency)
 }
 
 export interface Timeline {
   segments: Segment[];
   totalMs: number;
+}
+
+/** Resolve a stage's {@link PhaseActivity} from config — the SINGLE place the
+ *  "is loaded latency active?" rule lives (the latency stage is on, or loaded
+ *  pings are not suppressed when it is off). The backend never re-derives any of
+ *  this; it reads only the activity handed to it. */
+function activityFor(stage: StagePhase, config: RunnerConfig): PhaseActivity {
+  const loadedLatency = config.stages.latency || !config.skipLoadedLatencyWhenStageOff;
+  const transfer: FlowDirection[] =
+    stage === "download"
+      ? ["down"]
+      : stage === "upload"
+        ? ["up"]
+        : stage === "bidirectional"
+          ? ["down", "up"]
+          : []; // latency stage moves no bytes
+  return {
+    stage,
+    transfer,
+    // The latency stage measures IDLE latency — never "loaded"; only transfer
+    // stages carry concurrent (bufferbloat) pings.
+    loadedLatency: stage === "latency" ? false : loadedLatency,
+  };
 }
 
 /** Build the full phase timeline for a run, skipping disabled stages. Each
@@ -33,16 +58,17 @@ export interface Timeline {
 export function buildSegments(config: RunnerConfig): Timeline {
   const segs: Segment[] = [];
   let cursor = 0;
-  const push = (phase: Segment["phase"], ms: number, warmupFor?: StagePhase) => {
+  const push = (phase: Segment["phase"], ms: number, activity: PhaseActivity) => {
     if (ms <= 0) return;
-    segs.push({ phase, start: cursor, end: cursor + ms, warmupFor });
+    segs.push({ phase, start: cursor, end: cursor + ms, activity });
     cursor += ms;
   };
   const w = config.duration.warmupMs;
   const stage = (on: boolean, phase: StagePhase, ms: number) => {
     if (!on || ms <= 0) return;
-    if (w > 0) push("warmup", w, phase); // warm this stage's connection first
-    push(phase, ms);
+    const activity = activityFor(phase, config);
+    if (w > 0) push("warmup", w, activity); // prime this stage's connection(s) first
+    push(phase, ms, activity);
   };
   stage(config.stages.latency, "latency", config.duration.latencyMs);
   stage(config.stages.download, "download", config.duration.downloadMs);
@@ -72,16 +98,19 @@ export function rebuildTail(
     // Skip disabled phases and ones whose measurement already started.
     if (!on || ms <= 0) return;
     if (kept.some((k) => k.phase === phase)) return;
+    // If this stage's warmup is already running, REUSE its activity object so
+    // the warmup→measure seam still shares one connection set (and one loaded-
+    // latency decision) even though we rebuilt the tail under it; otherwise
+    // resolve a fresh activity from the updated config.
+    const keptWarmup = kept.find((k) => k.phase === "warmup" && k.activity.stage === phase);
+    const activity = keptWarmup ? keptWarmup.activity : activityFor(phase, config);
     // Prepend this stage's own warmup — unless it is already running (kept),
     // in which case the measurement just follows it.
-    const warmupRunning = kept.some(
-      (k) => k.phase === "warmup" && k.warmupFor === phase,
-    );
-    if (w > 0 && !warmupRunning) {
-      tail.push({ phase: "warmup", start: cursor, end: cursor + w, warmupFor: phase });
+    if (w > 0 && !keptWarmup) {
+      tail.push({ phase: "warmup", start: cursor, end: cursor + w, activity });
       cursor += w;
     }
-    tail.push({ phase, start: cursor, end: cursor + ms });
+    tail.push({ phase, start: cursor, end: cursor + ms, activity });
     cursor += ms;
   };
   pushStage(config.stages.latency, "latency", dur.latencyMs);
