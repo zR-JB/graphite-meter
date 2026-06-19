@@ -5,6 +5,13 @@
  * ============================================================ */
 
 /* ---------- Lifecycle ---------- */
+/* Phase sequence: every enabled stage is preceded by its own self-contained
+ * `warmup` window, e.g. all stages on →
+ *   idle → warmup → latency → warmup → download → warmup → upload → complete
+ * A warmup is omitted when its stage is off or `duration.warmupMs <= 0`. There
+ * is no standalone global warmup: each warmup primes only the stage that
+ * follows it, so stages carry no cross-dependencies. See the warmup-contract
+ * note below `RunnerConfig`. */
 export type Phase =
   | "idle"
   | "warmup"
@@ -186,11 +193,16 @@ export interface NetworkRunner {
   readonly phase: Phase;
 }
 
-/** Duration (ms) of the connection re-prime that runs immediately before each
- *  transfer stage (download / upload), in addition to the initial warmup.
- *  Derived from the configured warmup so the single Warmup setting controls
- *  every warmup — all three phases share the exact same warmup duration.
- *  Shared so the runner timeline and the UI ETA agree. */
-export function preStageWarmupMs(warmupMs: number): number {
-  return Math.max(300, Math.round(Number.isFinite(warmupMs) ? warmupMs : 0));
-}
+/* ---------- Warmup contract ----------
+ *  Each enabled stage is preceded by exactly one `"warmup"` window of
+ *  `duration.warmupMs` (omitted when that is <= 0). During the window the runner
+ *  primes the connection(s) the *following* stage needs, concurrently:
+ *    • latency  → the latency (ping) connection
+ *    • download → the download transfer connection, plus — when loaded-latency
+ *                 is active — the latency connection too (same window)
+ *    • upload   → the upload transfer connection, plus the latency connection
+ *                 when loaded-latency is active
+ *  The window is always emitted to the UI as the generic `"warmup"` phase; which
+ *  stage it primes is backend-only (the dummy records it as `warmupFor`). The
+ *  single `warmupMs` setting governs every stage's warmup, so the runner timeline
+ *  and the UI ETA stay in agreement. */

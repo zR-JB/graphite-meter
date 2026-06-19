@@ -14,7 +14,6 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { tooltip } from "../actions/tooltip";
-  import { preStageWarmupMs } from "../runner/contract";
 
   // Gate the latency panel purely on whether latency is measured at all — the
   // enabled-stage state is the single source of truth. So a wordmark "home"
@@ -28,30 +27,13 @@
   const etaMs = $derived.by(() => {
     const d = store.config.duration;
     const st = store.config.stages;
-    const pre = preStageWarmupMs(d.warmupMs);
-    // Mirror the runner timeline (dummy.start): one initial warmup, then a
-    // re-prime before each transfer stage — but skipped when a warmup already
-    // sits right before it (e.g. latency off → initial warmup leads straight
-    // into download), since the runner merges adjacent warmups into one.
+    // Mirror the runner timeline (dummy.start): every enabled stage contributes
+    // its own warmup plus its measurement. No global warmup, no merging.
+    const w = d.warmupMs > 0 ? d.warmupMs : 0;
     let total = 0;
-    let lastWarmup = false;
-    if (d.warmupMs > 0) {
-      total += d.warmupMs;
-      lastWarmup = true;
-    }
-    if (st.latency && d.latencyMs > 0) {
-      total += d.latencyMs;
-      lastWarmup = false;
-    }
-    for (const ms of [
-      st.download ? d.downloadMs : 0,
-      st.upload ? d.uploadMs : 0,
-    ]) {
-      if (ms <= 0) continue;
-      if (total > 0 && !lastWarmup) total += pre;
-      total += ms;
-      lastWarmup = false;
-    }
+    if (st.latency && d.latencyMs > 0) total += w + d.latencyMs;
+    if (st.download && d.downloadMs > 0) total += w + d.downloadMs;
+    if (st.upload && d.uploadMs > 0) total += w + d.uploadMs;
     return total;
   });
 

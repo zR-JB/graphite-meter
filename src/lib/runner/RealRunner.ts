@@ -19,8 +19,13 @@
  * ── Event / timing contract (must match DummyRunner) ────────
  *  • probe()  → resolves `InfraInfo`; MAY emit a few pre-test `latency`
  *               samples (underLoad:false, negative `t`) for the sparkline.
- *  • start()  → emits `phase` transitions (idle→warmup→latency→download→
- *               upload→complete), `progress` (fraction 0–1 within phase),
+ *  • start()  → emits `phase` transitions — each enabled stage is preceded by
+ *               its own `warmup` (idle→warmup→latency→warmup→download→warmup→
+ *               upload→complete; a warmup is omitted when its stage is off or
+ *               warmupMs<=0). During a stage's warmup the engine primes that
+ *               stage's connection — for transfers, also the latency connection
+ *               when loaded-latency is active (see the warmup contract in
+ *               contract.ts). Plus `progress` (fraction 0–1 within phase),
  *               `throughput` samples at ~16Hz (every ~60ms, download/upload
  *               only), `latency` samples at the ping interval (latency phase
  *               + under-load during transfer), an optional `connectivity`

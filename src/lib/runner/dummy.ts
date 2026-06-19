@@ -21,7 +21,6 @@ import type {
   LatencyResult,
   BufferbloatGrade,
 } from "./contract";
-import { preStageWarmupMs } from "./contract";
 import {
   transferConfidence,
   latencyConfidence,
@@ -102,10 +101,17 @@ function mulberry32(seed: number): () => number {
 }
 
 /* ---------- Internal phase segment on the timeline ---------- */
+/** The measured stage a warmup window primes. Backend-only metadata: the warmup
+ *  is emitted to the UI as the generic `"warmup"` phase, but the runner records
+ *  which stage follows so a real engine knows which connection(s) to prime
+ *  (the transfer connection, plus the latency one when loaded-latency is active).
+ *  Informational in the dummy, which simulates rather than opening sockets. */
+type StagePhase = Extract<Phase, "latency" | "download" | "upload">;
 interface Segment {
   phase: Extract<Phase, "warmup" | "latency" | "download" | "upload">;
   start: number; // ms offset from run start
   end: number;
+  warmupFor?: StagePhase; // set only on warmup segments
 }
 
 /* ---------- Per-phase sample bookkeeping for the final result ---------- */
@@ -223,31 +229,24 @@ export class DummyRunner implements NetworkRunner {
     // Build the phase timeline, skipping disabled stages.
     const segs: Segment[] = [];
     let cursor = 0;
-    const push = (phase: Segment["phase"], ms: number) => {
+    const push = (phase: Segment["phase"], ms: number, warmupFor?: StagePhase) => {
       if (ms <= 0) return;
-      segs.push({ phase, start: cursor, end: cursor + ms });
+      segs.push({ phase, start: cursor, end: cursor + ms, warmupFor });
       cursor += ms;
     };
-    // Initial connection warmup, then a re-prime warmup (same duration)
-    // immediately before each transfer stage so the link is at steady state
-    // when the stage's measurement window opens. Skip the re-prime when a
-    // warmup already sits right before us (e.g. latency off → the initial
-    // warmup leads straight into download): two adjacent warmups would merge
-    // into one double-length span, and the existing one already serves.
-    const pre = preStageWarmupMs(config.duration.warmupMs);
-    const reprime = () => {
-      if (segs.length && segs[segs.length - 1].phase !== "warmup") push("warmup", pre);
+    // Each enabled stage owns a self-contained warmup that primes its own
+    // connection — no global initial warmup, so stages carry no cross-deps.
+    // Because every warmup is immediately followed by its stage's measurement,
+    // two warmups can never sit adjacent (no merging into a double-length span).
+    const w = config.duration.warmupMs;
+    const stage = (on: boolean, phase: StagePhase, ms: number) => {
+      if (!on || ms <= 0) return;
+      if (w > 0) push("warmup", w, phase); // warm this stage's connection first
+      push(phase, ms);
     };
-    push("warmup", config.duration.warmupMs);
-    if (config.stages.latency) push("latency", config.duration.latencyMs);
-    if (config.stages.download) {
-      reprime();
-      push("download", config.duration.downloadMs);
-    }
-    if (config.stages.upload) {
-      reprime();
-      push("upload", config.duration.uploadMs);
-    }
+    stage(config.stages.latency, "latency", config.duration.latencyMs);
+    stage(config.stages.download, "download", config.duration.downloadMs);
+    stage(config.stages.upload, "upload", config.duration.uploadMs);
 
     this.#segments = segs;
     this.#totalMs = cursor;
@@ -345,30 +344,27 @@ export class DummyRunner implements NetworkRunner {
     let cursor = kept.length ? kept[kept.length - 1].end : 0;
 
     const dur = this.#cfg.duration;
+    const w = dur.warmupMs;
     const tail: Segment[] = [];
-    const pushStage = (
-      on: boolean,
-      phase: Segment["phase"],
-      ms: number,
-      prewarm: boolean,
-    ) => {
-      // Skip phases already kept (started) and disabled phases.
+    const pushStage = (on: boolean, phase: StagePhase, ms: number) => {
+      // Skip disabled phases and ones whose measurement already started.
       if (!on || ms <= 0) return;
       if (kept.some((k) => k.phase === phase)) return;
-      // Re-prime warmup, unless a warmup already sits right before us — two
-      // adjacent warmups merge into one double-length span (see start()).
-      const prev = tail.length ? tail[tail.length - 1] : kept[kept.length - 1];
-      if (prewarm && prev?.phase !== "warmup") {
-        const pre = preStageWarmupMs(dur.warmupMs);
-        tail.push({ phase: "warmup", start: cursor, end: cursor + pre });
-        cursor += pre;
+      // Prepend this stage's own warmup (see start()) — unless it is already
+      // running (kept), in which case the measurement just follows it.
+      const warmupRunning = kept.some(
+        (k) => k.phase === "warmup" && k.warmupFor === phase,
+      );
+      if (w > 0 && !warmupRunning) {
+        tail.push({ phase: "warmup", start: cursor, end: cursor + w, warmupFor: phase });
+        cursor += w;
       }
       tail.push({ phase, start: cursor, end: cursor + ms });
       cursor += ms;
     };
-    pushStage(stages.latency, "latency", dur.latencyMs, false);
-    pushStage(stages.download, "download", dur.downloadMs, true);
-    pushStage(stages.upload, "upload", dur.uploadMs, true);
+    pushStage(stages.latency, "latency", dur.latencyMs);
+    pushStage(stages.download, "download", dur.downloadMs);
+    pushStage(stages.upload, "upload", dur.uploadMs);
 
     this.#segments = [...kept, ...tail];
     this.#totalMs = cursor;

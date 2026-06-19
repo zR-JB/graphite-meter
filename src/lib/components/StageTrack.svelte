@@ -11,12 +11,14 @@
    *       `phaseFraction`, completed stages settle into a done state,
    *       pending enabled stages stay neutral.
    *
-   * Warmup is NOT a standalone segment: during `phase === "warmup"`
-   * the first enabled stage shows a subtle indeterminate "warming up"
-   * shimmer (reduced-motion safe). Completion is NOT a separate ✓
-   * block: on `complete` the track simply settles with each run stage
-   * in its done state. Deselected stages still render (muted) so they
-   * can be re-enabled.
+   * Warmup is NOT a standalone segment: each stage now owns a warmup
+   * lead-in, so during `phase === "warmup"` the *upcoming* stage (the
+   * first enabled stage not yet measured) shows a subtle indeterminate
+   * "warming up" shimmer (reduced-motion safe) while already-measured
+   * stages settle to done. Completion is NOT a separate ✓ block: on
+   * `complete` the track simply settles with each run stage in its done
+   * state. Deselected stages still render (muted) so they can be
+   * re-enabled.
    * ============================================================ */
   import {
     console as store,
@@ -54,9 +56,20 @@
     return curI >= 0 && stI < curI ? "done" : "upcoming";
   }
 
-  // First enabled stage in run order — receives the warmup lead-in.
+  // First enabled stage in run order.
   const firstEnabled = $derived(
     ORDER.find((k) => store.config.stages[k]) ?? null,
+  );
+
+  // A stage is "done" once its measurement window has closed (t1 finite); the
+  // store's phaseWindows is the shared time→phase map (warmups open no window).
+  const isDone = (k: StageKey) => {
+    const win = store.phaseWindows[k];
+    return !!win && win.t1 !== Infinity;
+  };
+  // The stage a warmup is leading into: first enabled stage not yet measured.
+  const upcoming = $derived(
+    ORDER.find((k) => store.config.stages[k] && !isDone(k)) ?? firstEnabled,
   );
 
   const segs = $derived.by(() => {
@@ -82,7 +95,14 @@
         state = "done";
         fill = 100;
       } else if (cur === "warmup") {
-        state = s.key === firstEnabled ? "warmup" : "pending";
+        // Warmup precedes a specific stage now: measured stages settle to done,
+        // the upcoming stage shimmers, the rest stay pending.
+        if (isDone(s.key)) {
+          state = "done";
+          fill = 100;
+        } else {
+          state = s.key === upcoming ? "warmup" : "pending";
+        }
       } else if (curI === -1) {
         // idle / aborted / error — neutral, selectable.
         state = "pending";

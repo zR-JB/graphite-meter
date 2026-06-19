@@ -374,7 +374,10 @@ class ConsoleStore {
         }
         this.phase = to;
         this.phaseFraction = 0;
-        if (to === "warmup") this.startEpoch = Date.now();
+        // Stamp the run clock once, when leaving idle — not on every per-stage
+        // warmup (there are now several), and robust to warmupMs===0 (first
+        // transition is then straight into a measurement phase).
+        if (e.transition.from === "idle") this.startEpoch = Date.now();
         break;
       }
       case "progress":
