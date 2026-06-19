@@ -56,8 +56,17 @@ func (s *httpSession) HTTP() (http.ResponseWriter, *http.Request, bool) {
 	return s.w, s.r, true
 }
 
+// OpenDownloadSink yields the ResponseWriter as the byte sink plus a flush that
+// drains the HTTP write buffer (so streamed bytes reach the client promptly
+// instead of pooling). When the writer is not an http.Flusher the flush is a
+// no-op. The download endpoint writes slices of the shared RNG block into this
+// sink; a WebTransport SendStream satisfies the same seam in Stage 5.
 func (s *httpSession) OpenDownloadSink() (io.Writer, FlushFunc, error) {
-	return nil, nil, ErrUnsupported
+	flush := func() error { return nil }
+	if f, ok := s.w.(http.Flusher); ok {
+		flush = func() error { f.Flush(); return nil }
+	}
+	return s.w, flush, nil
 }
 
 func (s *httpSession) OpenUploadSource() (io.Reader, error) {
