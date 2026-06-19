@@ -1,0 +1,11 @@
+# Build context is the repo root (docker build -f docker/Dockerfile .). Keep it lean.
+.git
+**/node_modules
+client/dist
+client/.vite
+server/graphite-meter
+server/internal/static/dist
+client/src/lib/wasm
+**/.DS_Store
+the-next-step-will-harmonic-harp.md
+.claude

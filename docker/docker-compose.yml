@@ -1,0 +1,22 @@
+# Graphite Meter — local/production compose.
+#   docker compose -f docker/docker-compose.yml up --build
+services:
+  graphite-meter:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        VERSION: "0.1.0"
+        SERVER_IMPL: "go" # reserved: "rust" -> server-rs (future swap)
+    ports:
+      - "8080:8080" # HTTP/1.1 (default)
+      # - "8443:8443/tcp"  # TLS + HTTP/1.1/h2 (Stage 5)
+      # - "8443:8443/udp"  # HTTP/3 + WebTransport (Stage 5)
+    environment:
+      # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
+      # running behind a reverse proxy so /preflight advertises reachable URLs.
+      GM_SERVER_NAME: "graphite-meter"
+      # GM_SERVER_LOCATION: "fra"
+      # PUBLIC_H1_ORIGIN: "http://speed.example:8080"
+      # GM_ADVERTISE_H3: "0"
+    restart: unless-stopped
