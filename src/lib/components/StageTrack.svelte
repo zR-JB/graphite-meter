@@ -61,12 +61,9 @@
     ORDER.find((k) => store.config.stages[k]) ?? null,
   );
 
-  // A stage is "done" once its measurement window has closed (t1 finite); the
-  // store's phaseWindows is the shared time→phase map (warmups open no window).
-  const isDone = (k: StageKey) => {
-    const win = store.phaseWindows[k];
-    return !!win && win.t1 !== Infinity;
-  };
+  // A stage is "done" once its per-stage result has landed — that event fires
+  // the instant a measured phase ends, so it's the direct "finished" signal.
+  const isDone = (k: StageKey) => store.stageResults[k] != null;
   // The stage a warmup is leading into: first enabled stage not yet measured.
   const upcoming = $derived(
     ORDER.find((k) => store.config.stages[k] && !isDone(k)) ?? firstEnabled,

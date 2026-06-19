@@ -141,7 +141,9 @@ export class DummyBackend implements RunnerBackend {
       const rtt = this.#spec.idleRttMs * (1 + this.#gauss() * 0.08);
       this.#host?.emit({
         type: "latency",
-        sample: { t: -interval * (pings - i), rttMs: rtt, underLoad: false, lost: false },
+        // Pre-test idle pings: phase "idle" (negative t), so the LatencyProfile's
+        // idle lane (phase==="latency") excludes them while the sparkline shows them.
+        sample: { t: -interval * (pings - i), rttMs: rtt, underLoad: false, lost: false, phase: "idle" },
       });
     }
 

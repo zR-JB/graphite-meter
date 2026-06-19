@@ -129,6 +129,10 @@ export interface ThroughputSample {
   bytesCumulative: number;
   streamCount: number;
   dir: FlowDirection; // which way these bytes flowed (down in download, up in upload, either in bidirectional)
+  // The phase that produced this sample, stamped at ingest. Travels WITH the
+  // sample (like `dir`) so consumers attribute it by tag — they never re-derive
+  // the phase from timestamps. The single source of truth for sample→phase.
+  phase: Extract<Phase, "download" | "upload" | "bidirectional">;
 }
 
 export interface LatencySample {
@@ -136,6 +140,10 @@ export interface LatencySample {
   rttMs: number;
   underLoad: boolean; // true if captured during dl/ul (bufferbloat)
   lost: boolean; // packet considered lost
+  // The phase that produced this ping (like ThroughputSample.phase). Pre-test
+  // probe pings carry "idle"; in-run pings carry their measured phase. Lets the
+  // LatencyProfile bucket lanes by tag, never by re-derived time windows.
+  phase: Phase;
 }
 
 export interface PhaseTransition {

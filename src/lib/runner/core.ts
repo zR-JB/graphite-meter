@@ -453,6 +453,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         bytesCumulative: this.#bytesCumulative,
         streamCount: cfg.parallelStreams,
         dir,
+        phase, // narrowed to the transfer subset by the guard above
       },
     });
   }
@@ -462,7 +463,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // the link is alive: refresh the watchdog and auto-resume from any stall.
     this.#noteRealSample();
     this.#accum.pushLatency(rttMs, underLoad, lost);
-    this.emit({ type: "latency", sample: { t: this.#measuredElapsed, rttMs, underLoad, lost } });
+    this.emit({
+      type: "latency",
+      sample: { t: this.#measuredElapsed, rttMs, underLoad, lost, phase: this.#phase },
+    });
   }
 
   /* ================= STALL / RESUME (CoreHost) ================= */

@@ -118,6 +118,11 @@ export class ChartEngine implements CanvasEngine {
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
   #gradH = -1;
+  // Phase timeline, tracked from phase-change events. COSMETIC ONLY: it drives
+  // the bottom phase ribbon and the live camera's start edge. Data attribution
+  // (throughput area + per-phase stats) keys off each sample's own `phase` tag,
+  // NOT this — the ribbon still needs a transition timeline because sample-less
+  // phases (warmup) produce no tagged samples to reconstruct it from.
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
@@ -511,10 +516,10 @@ export class ChartEngine implements CanvasEngine {
 
   #phaseStats(all: ThroughputSample[]): PhaseStat[] {
     const out: PhaseStat[] = [];
-    for (const span of this.#spans) {
-      if (span.phase !== "download" && span.phase !== "upload") continue;
-      const t1 = span.t1 === Infinity ? this.#vp.tMax + 1 : span.t1;
-      const seg = all.filter((s) => s.t >= span.t0 && s.t <= t1);
+    // Group by the sample's own phase tag (not a re-derived time window) so the
+    // per-phase stats attribute samples exactly as the engine reduces them.
+    for (const phase of ["download", "upload"] as const) {
+      const seg = all.filter((s) => s.phase === phase);
       if (seg.length < 2) continue;
       let min = Infinity;
       let max = 0;
@@ -525,13 +530,13 @@ export class ChartEngine implements CanvasEngine {
         sum += s.bytesPerSec;
       }
       out.push({
-        phase: span.phase,
-        t0: span.t0,
-        t1,
+        phase,
+        t0: seg[0].t,
+        t1: seg[seg.length - 1].t,
         min,
         max,
         avg: sum / seg.length,
-        stroke: span.phase === "download" ? this.#c.download : this.#c.upload,
+        stroke: phase === "download" ? this.#c.download : this.#c.upload,
       });
     }
     return out;
@@ -637,16 +642,16 @@ export class ChartEngine implements CanvasEngine {
   #drawThroughput(ctx: CanvasRenderingContext2D, all: ThroughputSample[]): void {
     if (!all.length) return;
     const bot = this.#h - PAD_B;
-    for (const span of this.#spans) {
-      if (span.phase !== "download" && span.phase !== "upload") continue;
-      const t1 = span.t1 === Infinity ? this.#vp.tMax + 1 : span.t1;
-      const seg = all.filter((s) => s.t >= span.t0 && s.t <= t1);
+    // Group by the sample's phase tag. Download/upload each run once, so a
+    // straight filter yields each phase's contiguous, time-ordered run.
+    for (const phase of ["download", "upload"] as const) {
+      const seg = all.filter((s) => s.phase === phase);
       if (seg.length < 2) continue;
-      const stroke = span.phase === "download" ? this.#c.download : this.#c.upload;
+      const stroke = phase === "download" ? this.#c.download : this.#c.upload;
       const pts = seg.map((s) => ({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) }));
 
       // Filled area under a smoothed top edge, soft vertical gradient (cached).
-      ctx.fillStyle = this.#areaGrad(ctx, span.phase);
+      ctx.fillStyle = this.#areaGrad(ctx, phase);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, bot);
       ctx.lineTo(pts[0].x, pts[0].y);

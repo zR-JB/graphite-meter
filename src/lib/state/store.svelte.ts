@@ -161,14 +161,6 @@ class AppStore {
    * single source of truth for "a new run started, clear yourself". */
   runSeq = $state(0);
 
-  /* Time windows [t0,t1] (ms since run start) per measured phase, captured
-   * on phase transitions. The single source of truth for mapping a sample's
-   * `t` → its phase: latency/throughput samples carry no phase field, so the
-   * result-mode chart (per-phase stats) and LatencyProfile (lane bucketing)
-   * both read this instead of re-deriving boundaries. `t1` stays open
-   * (Infinity) for the live phase and is closed on the next transition. */
-  phaseWindows = $state<Record<string, { t0: number; t1: number }>>({});
-  #lastSampleT = 0;
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
   result = $state<RunResult | null>(null);
@@ -443,15 +435,7 @@ class AppStore {
         this.infra = e.info;
         break;
       case "phase": {
-        // Close the outgoing phase's window at the latest sample time, open
-        // the incoming one. Drives `phaseWindows` (shared time→phase map).
-        const to = e.transition.to;
-        const prev = this.phaseWindows[this.phase];
-        if (prev && prev.t1 === Infinity) prev.t1 = this.#lastSampleT;
-        if (to === "download" || to === "upload" || to === "latency") {
-          this.phaseWindows[to] = { t0: this.#lastSampleT, t1: Infinity };
-        }
-        this.phase = to;
+        this.phase = e.transition.to;
         this.phaseFraction = 0;
         // Stamp the run clock once, when leaving idle — not on every per-stage
         // warmup (there are now several), and robust to warmupMs===0 (first
@@ -492,12 +476,10 @@ class AppStore {
         else this.stageResults[e.stage] = e.result;
         break;
       case "throughput":
-        this.#lastSampleT = e.sample.t;
         this.throughput.push(e.sample);
         if (this.throughput.length > MAX_SAMPLES) this.throughput.shift();
         break;
       case "latency":
-        if (e.sample.t > this.#lastSampleT) this.#lastSampleT = e.sample.t;
         this.latency.push(e.sample);
         if (this.latency.length > MAX_SAMPLES) this.latency.shift();
         break;
@@ -542,33 +524,25 @@ class AppStore {
     this.result = null;
     this.error = null;
     this.startEpoch = 0;
-    this.phaseWindows = {};
-    this.#lastSampleT = 0;
     this.runSeq++;
   }
 
   /* ============================================================
    * Latency lanes (§13.5 — LatencyProfile)
    * Bucket every latency sample into one of three lanes by the
-   * shared phase→time map: idle (the `latency` phase), loaded-down
-   * (the `download` window), loaded-up (the `upload` window). Each
+   * sample's own `phase` tag: idle (the `latency` phase), loaded-down
+   * (pings during `download`), loaded-up (pings during `upload`). Each
    * lane carries the distribution stats the native profile renders:
    * min/max range, P10–P90 band, average, current, loss. Recomputes
-   * only when `latency` / `phaseWindows` change (not per render).
+   * only when `latency` changes (not per render). Pre-test pings carry
+   * phase "idle", so they never fall into the idle (latency) lane.
    * ============================================================ */
   latencyLanes = $derived.by<LatencyLane[]>(() => {
-    const inWin = (t: number, key: StageKey) => {
-      const w = this.phaseWindows[key];
-      if (!w) return false;
-      return t >= w.t0 && t <= (w.t1 === Infinity ? Number.POSITIVE_INFINITY : w.t1);
-    };
     return (["latency", "download", "upload"] as const).map((key) => {
-      // Idle = latency-phase pings; loaded = under-load pings inside the
-      // respective transfer window (covers any pre/post-window stragglers).
+      // Bucket strictly by the sample's stamped phase: idle = latency-phase
+      // pings; loaded = under-load pings tagged with the matching transfer phase.
       const laneSamples = this.latency.filter((s) =>
-        key === "latency"
-          ? !s.underLoad && inWin(s.t, "latency")
-          : s.underLoad && inWin(s.t, key),
+        key === "latency" ? s.phase === "latency" : s.underLoad && s.phase === key,
       );
       const valid = laneSamples.filter((s) => !s.lost);
       const sorted = valid.map((s) => s.rttMs).sort((a, b) => a - b);
