@@ -94,6 +94,20 @@ export interface RealBackendOptions {
 const NOT_IMPL = (method: string) =>
   new Error(`RealBackend.${method} not implemented — see docs/REAL_RUNNER.md`);
 
+/** Throughput push cadence: aggregate worker deltas and push ~16 Hz (mirrors
+ *  the dummy's THROUGHPUT_CADENCE_MS so both engines feel identical). */
+const THROUGHPUT_CADENCE_MS = 60;
+
+/** Bytes requested per download stream. Large enough that one request lasts the
+ *  whole measured window on a fast link (the server clamps and we abort at stage
+ *  end); the worker also re-fetches if a stream ends early. */
+const PER_STREAM_BYTES = 8 * 1024 * 1024 * 1024; // 8 GiB
+
+/** Order-preserving de-dup for building a transport preference list. */
+function unique<T>(xs: T[]): T[] {
+  return [...new Set(xs)];
+}
+
 export class RealBackend implements RunnerBackend {
   #opts: RealBackendOptions;
   /** The core handle: push samples / emit / report failures + health through it. */
@@ -106,6 +120,24 @@ export class RealBackend implements RunnerBackend {
    *  endpoint paths + which transports are available). Stashed here so later
    *  stages negotiate transports against what the server actually offers. */
   #capabilities: Preflight["capabilities"] | null = null;
+
+  /* ---- download stage state (Stage 2) ---- */
+  /** One read-and-count worker per parallel stream, indexed by stream number. */
+  #workers: (Worker | null)[] = [];
+  /** The fetch URL each stream worker (re)starts against, by index. */
+  #streamUrls: string[] = [];
+  /** Bytes received across all workers since the last aggregation tick. */
+  #pendingBytes = 0;
+  /** performance.now() at the last aggregation tick. */
+  #lastAggAt = 0;
+  /** The ~16 Hz aggregation timer; null while not measuring. */
+  #aggTimer: ReturnType<typeof setInterval> | null = null;
+  /** True between onStageMeasure and onStageEnd — gates pushing samples. */
+  #measuring = false;
+  /** True while a stall is open (so a recovering sample resumes exactly once). */
+  #stalled = false;
+  /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
+  #cbSeed = "";
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -186,7 +218,13 @@ export class RealBackend implements RunnerBackend {
     void this.#resolveEndpoint(config.endpoint);
     this.#abort = new AbortController();
     this.#activeTransport = null;
-    throw NOT_IMPL("onRunStart");
+    this.#teardownTransfer(); // clear any leftover lanes from a prior run
+    this.#measuring = false;
+    this.#stalled = false;
+    this.#pendingBytes = 0;
+    // Unique-per-run cache-buster. performance.now() avoids Date.now and is
+    // monotonic; the stream index is appended per worker.
+    this.#cbSeed = `r${Math.round(performance.now())}`;
   }
 
   /**
@@ -226,7 +264,9 @@ export class RealBackend implements RunnerBackend {
    *  result. */
   onStageEnd(activity: PhaseActivity): void {
     void activity;
-    throw NOT_IMPL("onStageEnd");
+    // The core has finalized this stage's result; release its connections. For
+    // download that means stopping + terminating the worker pool.
+    this.#teardownTransfer();
   }
 
   /** Whether a stage runs a ping channel: the idle latency stage, or a transfer
@@ -265,22 +305,37 @@ export class RealBackend implements RunnerBackend {
    * sketch below shows the control flow a real implementation fills in.
    */
   #negotiateTransport(role: TransportRole): TransportKind | null {
-    const order = this.#transportOrder(role);
-    void order;
-    // for (const kind of order) {
-    //   this.#host!.reportTransport({ kind, role, status: "negotiating" });
-    //   try {
-    //     await this.#tryOpen(kind, role);            // real connect attempt
-    //     this.#host!.reportTransport({ kind, role, status: "established" });
-    //     this.#activeTransport = kind;               // remember for stall/fail
-    //     return kind;
-    //   } catch (cause) {
-    //     this.#host!.reportTransport({ kind, role, status: "failed", detail: String(cause) });
-    //   }
-    // }
-    // this.#host!.fail("transport-unavailable", `No transport could be established for ${role}`);
-    // return null;
-    throw NOT_IMPL("negotiateTransport");
+    const host = this.#host!;
+    for (const kind of this.#transportOrder(role)) {
+      host.reportTransport({ kind, role, status: "negotiating" });
+      // xhr-stream "establishes" the moment the server advertises it — the real
+      // TCP connect happens when #primeTransfer opens the fetch, and a connect
+      // failure there surfaces as a stream error (handled in #onWorkerError).
+      // webtransport/websocket are not serviced yet (Stage 4–5), so they fail
+      // negotiation here and we fall through to the next kind.
+      if (this.#transportAvailable(kind)) {
+        host.reportTransport({ kind, role, status: "established" });
+        this.#activeTransport = kind;
+        return kind;
+      }
+      host.reportTransport({ kind, role, status: "failed", detail: "not advertised by server" });
+    }
+    host.fail("transport-unavailable", `No transport could be established for ${role}`);
+    return null;
+  }
+
+  /** Whether the server's advertised capabilities can service `kind` right now. */
+  #transportAvailable(kind: TransportKind): boolean {
+    const t = this.#capabilities?.transports;
+    if (!t) return false;
+    switch (kind) {
+      case "xhr-stream":
+        return t.xhrStream;
+      case "websocket":
+        return t.websocket;
+      case "webtransport":
+        return t.webtransport;
+    }
   }
 
   /** The transport kinds to try for a role, most-preferred first. Latency roles
@@ -288,12 +343,14 @@ export class RealBackend implements RunnerBackend {
    *  roles use the transfer kinds (webtransport → xhr-stream). Webtransport is
    *  always attempted first when supported, then the configured fallback. */
   #transportOrder(role: TransportRole): TransportKind[] {
-    void role;
-    // const cfg = this.#host!.config!;
-    // return role === "latency"
-    //   ? unique(["webtransport", cfg.transport.latency])
-    //   : unique(["webtransport", cfg.transport.transfer]);
-    throw NOT_IMPL("transportOrder");
+    const cfg = this.#host!.config!;
+    // Webtransport is always preferred when available; latency roles fall back
+    // to the configured ws kind, transfer/bidi roles to xhr-stream. xhr-stream
+    // is appended unconditionally so a webtransport-preferred config still has a
+    // working fallback (the Stage-2 path: webtransport unadvertised → xhr-stream).
+    return role === "latency"
+      ? unique(["webtransport", cfg.transport.latency])
+      : unique(["webtransport", cfg.transport.transfer, "xhr-stream"]);
   }
 
   /* ================= PRIME (warmup window) — open, don't measure ================= */
@@ -303,10 +360,35 @@ export class RealBackend implements RunnerBackend {
    *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
    *  stay open for #measureTransfer to start measuring on the SAME connection. */
   #primeTransfer(kind: TransportKind, dir: FlowDirection): void {
-    void kind;
-    void dir;
-    // for (let i = 0; i < this.#host!.config!.parallelStreams; i++) { /* open stream i */ }
-    throw NOT_IMPL("primeTransfer");
+    if (dir !== "down") throw NOT_IMPL(`primeTransfer(${dir})`); // upload = Stage 3
+    if (kind !== "xhr-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
+
+    const cfg = this.#host!.config!;
+    const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
+    const path = this.#capabilities?.endpoints.download ?? "/download";
+    const streams = Math.max(1, cfg.parallelStreams);
+
+    this.#workers = [];
+    this.#streamUrls = [];
+    for (let i = 0; i < streams; i++) {
+      const url = `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${this.#cbSeed}-${i}`;
+      this.#streamUrls[i] = url;
+      this.#spawnWorker(i);
+    }
+    // Workers start fetching + counting now (warming TCP cwnd). Their progress
+    // accrues into #pendingBytes during warmup but is NOT pushed — #measureTransfer
+    // resets the window and starts the aggregation timer.
+  }
+
+  /** Open (or re-open) the worker for stream `i` against its stored URL. */
+  #spawnWorker(i: number): void {
+    const w = new Worker(new URL("./workers/download-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(e.data, i);
+    w.onerror = (e: ErrorEvent) => this.#onWorkerError(i, e.message || "worker error");
+    w.postMessage({ type: "start", url: this.#streamUrls[i] });
+    this.#workers[i] = w;
   }
 
   /** Open the latency (ping) channel over `kind` and optionally exchange a warm-
@@ -323,8 +405,87 @@ export class RealBackend implements RunnerBackend {
    *  across streams and push host.ingestThroughput(dir, bytesPerSec, bytes) at
    *  ~16Hz. */
   #measureTransfer(dir: FlowDirection): void {
-    this.#readLoop(null, dir);
-    throw NOT_IMPL("measureTransfer");
+    if (dir !== "down") throw NOT_IMPL(`measureTransfer(${dir})`); // upload = Stage 3
+    // Reuse the SAME workers primed during warmup — never re-spawn (that throws
+    // away the warmed congestion window). Just open the measurement window:
+    // discard whatever accrued during warmup and start aggregating.
+    this.#measuring = true;
+    this.#pendingBytes = 0;
+    this.#lastAggAt = performance.now();
+    this.#aggTimer = setInterval(() => this.#aggregate(), THROUGHPUT_CADENCE_MS);
+  }
+
+  /** Aggregation tick: sum the byte deltas all workers reported since the last
+   *  tick into one real `down` sample. Pushes nothing on an empty window — dead
+   *  air is never a synthesized sample (principle 1); the core's stall watchdog
+   *  covers a genuine gap. */
+  #aggregate(): void {
+    const now = performance.now();
+    const delta = this.#pendingBytes;
+    this.#pendingBytes = 0;
+    const elapsedSec = (now - this.#lastAggAt) / 1000;
+    this.#lastAggAt = now;
+    if (delta > 0 && elapsedSec > 0) {
+      this.#host!.ingestThroughput("down", delta / elapsedSec, delta);
+    }
+  }
+
+  /** A worker reported bytes or a stream error. Progress accrues into the
+   *  aggregation window (and clears any open stall); an error stalls + restarts
+   *  that single lane. */
+  #onWorkerMessage(
+    msg: { type: "progress"; bytes: number } | { type: "error"; recoverable: boolean; detail: string },
+    i: number,
+  ): void {
+    if (msg.type === "progress") {
+      this.#pendingBytes += msg.bytes;
+      if (this.#stalled) {
+        this.#host!.resume();
+        this.#stalled = false;
+      }
+    } else {
+      this.#onWorkerError(i, msg.detail, msg.recoverable);
+    }
+  }
+
+  /** Handle a download lane failure. Recoverable (the common case: a dropped
+   *  connection) → stall once, then re-open the lane so a real sample resumes
+   *  it. Only call fail() when the drop is genuinely unrecoverable. */
+  #onWorkerError(i: number, detail: string, recoverable = true): void {
+    // A worker that errored after onStageEnd (teardown abort) is noise — ignore.
+    if (!this.#workers[i]) return;
+    if (!recoverable) {
+      this.#host!.fail("connection-lost", `download stream ${i} failed: ${detail}`, detail);
+      return;
+    }
+    if (this.#measuring && !this.#stalled) {
+      this.#host!.stall({
+        reason: "connection-lost",
+        transport: this.#activeTransport ?? undefined,
+        detail,
+      });
+      this.#stalled = true;
+    }
+    // Re-open this lane against its stored URL; the next real sample auto-resumes.
+    this.#workers[i]?.terminate();
+    this.#spawnWorker(i);
+  }
+
+  /** Stop + terminate the worker pool and the aggregation timer. Idempotent. */
+  #teardownTransfer(): void {
+    if (this.#aggTimer !== null) {
+      clearInterval(this.#aggTimer);
+      this.#aggTimer = null;
+    }
+    for (const w of this.#workers) {
+      if (!w) continue;
+      w.postMessage({ type: "stop" });
+      w.terminate();
+    }
+    this.#workers = [];
+    this.#streamUrls = [];
+    this.#measuring = false;
+    this.#pendingBytes = 0;
   }
 
   /** Begin measuring on the already-open ping channel (opened in
@@ -335,26 +496,6 @@ export class RealBackend implements RunnerBackend {
   #measureLatency(underLoad: boolean): void {
     void underLoad;
     throw NOT_IMPL("measureLatency");
-  }
-
-  /**
-   * Per-stream read/measure loop template. Accumulate bytes over a ~60ms
-   * wall-window, then push host.ingestThroughput(dir, bytesPerSec, bytes).
-   *   • On a RECOVERABLE stream error (transient drop): host.stall({reason:
-   *     "connection-lost", transport: this.#activeTransport, detail}) — the core
-   *     freezes measured-time — then attempt to re-open; on success host.resume()
-   *     (or just let the next real sample auto-resume via the watchdog).
-   *   • On an UNRECOVERABLE error: host.fail("connection-lost", message, cause).
-   * Push NOTHING during the dead air — only real bytes become samples
-   * (principle 1).
-   */
-  #readLoop(reader: unknown, dir: FlowDirection): void {
-    void reader;
-    void dir;
-    // On a recoverable drop, the stall carries the transport that dropped:
-    //   this.#host!.stall({ reason: "connection-lost", transport: this.#activeTransport ?? undefined, detail });
-    void this.#activeTransport;
-    throw NOT_IMPL("readLoop");
   }
 
   /* ================= OPTIONAL SEAMS ================= */
@@ -386,6 +527,8 @@ export class RealBackend implements RunnerBackend {
   /* ---------- internal ---------- */
   /** Cancel in-flight I/O and release the AbortController. */
   #closeAll(): void {
+    this.#teardownTransfer();
+    this.#stalled = false;
     if (this.#abort) {
       this.#abort.abort();
       this.#abort = null;
