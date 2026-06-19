@@ -1,0 +1,32 @@
+{
+  "clientIp": "203.0.113.7",
+  "server": {
+    "name": "graphite-meter",
+    "host": "speed.example",
+    "port": 8080,
+    "location": "fra"
+  },
+  "preTestPingMs": 0,
+  "engineVersion": "0.1.0",
+  "protocolNegotiated": "http/1.1",
+  "capabilities": {
+    "origins": {
+      "h1": "http://speed.example:8080",
+      "tls": null,
+      "h3": null
+    },
+    "transports": {
+      "xhrStream": false,
+      "websocket": false,
+      "webtransport": false
+    },
+    "endpoints": {
+      "download": "/download",
+      "upload": "/upload",
+      "wsPing": "/ws/ping",
+      "wtPing": "/wt/ping",
+      "wtDownload": "/wt/download",
+      "wtUpload": "/wt/upload"
+    }
+  }
+}

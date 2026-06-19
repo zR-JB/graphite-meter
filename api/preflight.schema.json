@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://graphite-meter/api/preflight.schema.json",
+  "title": "Preflight",
+  "description": "Response body of GET /preflight. The client maps the InfraInfo fields onto its InfraInfo type (client/src/lib/runner/contract.ts) and stashes `capabilities` for transport negotiation. The server serves/sinks raw bytes; this document carries no rates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "clientIp",
+    "server",
+    "preTestPingMs",
+    "engineVersion",
+    "protocolNegotiated",
+    "capabilities"
+  ],
+  "properties": {
+    "clientIp": {
+      "type": "string",
+      "description": "The client's public IP as observed by the server (X-Forwarded-For first hop, else the socket remote address)."
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "host", "port"],
+      "properties": {
+        "name": { "type": "string" },
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "location": { "type": "string", "description": "Optional human/region label (e.g. \"fra\")." }
+      }
+    },
+    "preTestPingMs": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Optional server-side pre-test RTT hint in ms. 0 when no ping endpoint has run yet (e.g. Stage 1)."
+    },
+    "engineVersion": {
+      "type": "string",
+      "description": "Server build/engine version (ldflags-injected)."
+    },
+    "protocolNegotiated": {
+      "type": "string",
+      "description": "The HTTP protocol this preflight response was served over, e.g. \"http/1.1\", \"h2\", \"h3\"."
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What this server currently supports, so the client negotiates rather than assumes.",
+      "required": ["origins", "transports", "endpoints"],
+      "properties": {
+        "origins": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Externally-reachable origins the client should target per transport. Env-driven so the values are correct behind a reverse proxy. `null` means that origin is not enabled.",
+          "required": ["h1", "tls", "h3"],
+          "properties": {
+            "h1": { "type": ["string", "null"], "description": "HTTP/1.1 cleartext origin (default, e.g. http://host:8080)." },
+            "tls": { "type": ["string", "null"], "description": "HTTP/1.1+TLS origin (e.g. https://host:8443); null until enabled." },
+            "h3": { "type": ["string", "null"], "description": "HTTP/3 + WebTransport origin (e.g. https://host:8443); null until enabled." }
+          }
+        },
+        "transports": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Which client-side transports this server can currently service. Honest per build stage.",
+          "required": ["xhrStream", "websocket", "webtransport"],
+          "properties": {
+            "xhrStream": { "type": "boolean", "description": "fetch/XHR streaming download+upload." },
+            "websocket": { "type": "boolean", "description": "WebSocket latency bus (/ws/ping)." },
+            "webtransport": { "type": "boolean", "description": "WebTransport datagrams + uni-streams." }
+          }
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Stable endpoint paths, advertised so the client never hardcodes them.",
+          "required": ["download", "upload", "wsPing", "wtPing", "wtDownload", "wtUpload"],
+          "properties": {
+            "download": { "type": "string" },
+            "upload": { "type": "string" },
+            "wsPing": { "type": "string" },
+            "wtPing": { "type": "string" },
+            "wtDownload": { "type": "string" },
+            "wtUpload": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+# Graphite Meter — wire-protocol conformance corpus (shared across Go / TS / Rust).
+#
+# Format (one test per non-comment, non-blank line):
+#   <dir> | <input> | <expected>
+#
+#   dir      = "encode" | "decode"
+#   For decode: <input> is the on-wire string; <expected> is a canonical
+#               key=value;... rendering of the parsed frame (op=..., plus args),
+#               or "ERR:<code>" when the input must be rejected.
+#   For encode: <input> is a canonical op=...;arg=... spec; <expected> is the
+#               exact on-wire string the encoder must produce.
+#
+# Opcodes and semantics are defined in api/wire.md. This file is populated in
+# Stage 4 (WebSocket latency) and Stage 5 (WebTransport); the rows below are the
+# initial happy-path + boundary set. Every implementation's wire test loads THIS
+# file as its fixture.
+
+# --- decode ---
+decode | READY | op=READY
+decode | PING,0 | op=PING;id=0
+decode | PING,4294967295 | op=PING;id=4294967295
+decode | PONG,5;TIME,1234 | op=PONG;id=5;nanos=1234
+decode | SIZE,10000000 | op=SIZE;bytes=10000000
+decode | HI,wt | op=HI;proto=wt
+decode | BYE | op=BYE
+decode | BYTES_RECEIVED,1048576 | op=BYTES_RECEIVED;n=1048576
+decode | UPLOAD_COMPLETE,40000000 | op=UPLOAD_COMPLETE;n=40000000
+decode | ERR,bad_op,unknown | op=ERR;code=bad_op;text=unknown
+# malformed -> rejected
+decode | PNG,5 | ERR:bad_op
+decode | PING | ERR:bad_args
+decode | PING,abc | ERR:bad_args
+
+# --- encode ---
+encode | op=PING;id=5 | PING,5
+encode | op=PING;id=0 | PING,0
+encode | op=PONG;id=5;nanos=1234 | PONG,5;TIME,1234
+encode | op=READY | READY
+encode | op=SIZE;bytes=10000000 | SIZE,10000000
+encode | op=ERR;code=bad_op;text=unknown | ERR,bad_op,unknown
