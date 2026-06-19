@@ -453,12 +453,17 @@ export class DummyRunner implements NetworkRunner {
     const frac = (elapsed - seg.start) / (seg.end - seg.start);
     this.#emit({ type: "progress", phase: seg.phase, fraction: Math.min(1, Math.max(0, frac)) });
 
-    // Throughput (download / upload only, 60ms cadence).
+    // Throughput (download / upload only). Cadence is gated on REAL time, not
+    // virtual: during an early-finish glide virtual time races ahead, and
+    // gating on it would dump a whole tail's worth of samples into the canvas
+    // at once (the "clunky fast-forward" feel). Real-time gating keeps the
+    // emit rate steady; the accelerated tail just carries fewer, sparser
+    // samples (its `t` still advances on the virtual clock). (§13.4)
     if (
       (seg.phase === "download" || seg.phase === "upload") &&
-      elapsed - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
+      now - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
     ) {
-      this.#lastThroughputAt = elapsed;
+      this.#lastThroughputAt = now;
       this.#emitThroughput(seg, elapsed);
     }
 
@@ -471,8 +476,8 @@ export class DummyRunner implements NetworkRunner {
     const pingActive =
       seg.phase === "latency" ||
       ((seg.phase === "download" || seg.phase === "upload") && loadedLatency);
-    if (pingActive && elapsed - this.#lastPingAt >= pingInterval) {
-      this.#lastPingAt = elapsed;
+    if (pingActive && now - this.#lastPingAt >= pingInterval) {
+      this.#lastPingAt = now;
       this.#emitLatency(seg, elapsed);
     }
 
@@ -488,8 +493,8 @@ export class DummyRunner implements NetworkRunner {
       // hysteretic latched state (entering stable takes a higher bar than
       // leaving — the pip and the stable window don't flicker). (§13.4)
       const stable = this.#trackStableRun(seg.phase, conf.score);
-      if (elapsed - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
-        this.#lastStabilityAt = elapsed;
+      if (now - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
+        this.#lastStabilityAt = now;
         this.#emit({
           type: "stability",
           snapshot: {
