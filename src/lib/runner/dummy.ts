@@ -52,16 +52,21 @@ interface ProfileSpec {
   loadedDeltaMs: number;
   /** Baseline loss probability per ping. */
   lossBase: number;
+  /** Relative std of the plateau (throughput and idle RTT) — how *steady* the
+   *  link is. This is what the adaptive stability score reads: steady links
+   *  (fiber/cable) settle to a high band and finish early on the stable window;
+   *  jittery ones (lte/satellite) never settle and report the full average. */
+  jitter: number;
 }
 
 // Throughput is bytes/sec (browser-native). Link rates are conventionally
 // quoted in bits/sec, so the trailing comment notes the familiar bit-rate.
 const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
-  fiber: { downBytesPerSec: 117.5e6, upBytesPerSec: 110e6, idleRttMs: 6, loadedDeltaMs: 4, lossBase: 0.0 }, // ~940/880 Mbit/s
-  cable: { downBytesPerSec: 40e6, upBytesPerSec: 2.75e6, idleRttMs: 16, loadedDeltaMs: 34, lossBase: 0.002 }, // ~320/22 Mbit/s
-  lte: { downBytesPerSec: 8e6, upBytesPerSec: 3e6, idleRttMs: 38, loadedDeltaMs: 62, lossBase: 0.01 }, // ~64/24 Mbit/s
-  satellite: { downBytesPerSec: 13.75e6, upBytesPerSec: 1.75e6, idleRttMs: 600, loadedDeltaMs: 180, lossBase: 0.015 }, // ~110/14 Mbit/s
-  throttled: { downBytesPerSec: 1.1875e6, upBytesPerSec: 0.5625e6, idleRttMs: 28, loadedDeltaMs: 48, lossBase: 0.005 }, // ~9.5/4.5 Mbit/s
+  fiber: { downBytesPerSec: 117.5e6, upBytesPerSec: 110e6, idleRttMs: 6, loadedDeltaMs: 4, lossBase: 0.0, jitter: 0.04 }, // ~940/880 Mbit/s
+  cable: { downBytesPerSec: 40e6, upBytesPerSec: 2.75e6, idleRttMs: 16, loadedDeltaMs: 34, lossBase: 0.002, jitter: 0.05 }, // ~320/22 Mbit/s
+  lte: { downBytesPerSec: 8e6, upBytesPerSec: 3e6, idleRttMs: 38, loadedDeltaMs: 62, lossBase: 0.01, jitter: 0.09 }, // ~64/24 Mbit/s
+  satellite: { downBytesPerSec: 13.75e6, upBytesPerSec: 1.75e6, idleRttMs: 600, loadedDeltaMs: 180, lossBase: 0.015, jitter: 0.11 }, // ~110/14 Mbit/s
+  throttled: { downBytesPerSec: 1.1875e6, upBytesPerSec: 0.5625e6, idleRttMs: 28, loadedDeltaMs: 48, lossBase: 0.005, jitter: 0.05 }, // ~9.5/4.5 Mbit/s
 };
 
 const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
@@ -640,8 +645,8 @@ export class DummyRunner implements NetworkRunner {
     // Logistic ramp-up over the first ~1.2s.
     const ramp = 1 / (1 + Math.exp(-(tp - 600) / 150));
 
-    // Noisy plateau, Gaussian ±8% of mean.
-    let bytesPerSec = mean * ramp * (1 + this.#gauss() * 0.08);
+    // Noisy plateau, Gaussian noise scaled by the profile's steadiness.
+    let bytesPerSec = mean * ramp * (1 + this.#gauss() * this.#spec.jitter);
 
     // Throughput dip anomaly: 400ms 40% drop centred on each fraction.
     for (const f of this.#opts.anomalies?.throughputDipAt ?? []) {
@@ -690,7 +695,7 @@ export class DummyRunner implements NetworkRunner {
       const loadRamp = 1 / (1 + Math.exp(-(tp - 500) / 200));
       rtt += this.#spec.loadedDeltaMs * loadRamp;
     }
-    rtt *= 1 + this.#gauss() * 0.06; // jitter
+    rtt *= 1 + this.#gauss() * this.#spec.jitter; // jitter scaled by profile steadiness
 
     // Latency spike anomaly: 3× RTT near each fraction.
     for (const f of this.#opts.anomalies?.latencySpikeAt ?? []) {
