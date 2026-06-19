@@ -30,6 +30,9 @@ export type ThemePref = "dark" | "light";
 export const DEFAULT_DOCK_WIDTH = { left: 520, right: 420 };
 
 /** The full persisted snapshot. Display prefs + the entire RunnerConfig. */
+/** Which Settings tab was last viewed (restored when the panel reopens). */
+export type SettingsTab = "setup" | "infrastructure" | "developer";
+
 export interface PersistedState {
   config: RunnerConfig;
   unitBase: "base10" | "base2";
@@ -38,6 +41,10 @@ export interface PersistedState {
   showWireEstimates: boolean;
   /** User-resized docked panel widths (px), per side. */
   dockWidth: { left: number; right: number };
+  /** Last-viewed Settings tab + whether the telemetry disclosure was expanded,
+   *  so reopening a panel restores the view instead of resetting it. */
+  settingsTab: SettingsTab;
+  telemetryExpanded: boolean;
 }
 
 /** System-preference default for theme when nothing is saved yet. */
@@ -58,6 +65,8 @@ export function defaultPersisted(): PersistedState {
     theme: systemThemeDefault(),
     showWireEstimates: false,
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
+    settingsTab: "setup",
+    telemetryExpanded: false,
   };
 }
 

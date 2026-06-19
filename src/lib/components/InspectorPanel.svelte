@@ -10,6 +10,7 @@
   import SidePanel from "./SidePanel.svelte";
   import InfraCard from "./InfraCard.svelte";
   import TelemetryDetail from "./TelemetryDetail.svelte";
+  import { store } from "../state/store.svelte";
 
   interface Props {
     open?: boolean;
@@ -43,7 +44,7 @@
   width="min(440px, 92vw)"
 >
   <InfraCard />
-  <details class="telemetry-disclose">
+  <details class="telemetry-disclose" bind:open={store.telemetryExpanded}>
     <summary>Show detailed telemetry</summary>
     <div class="telemetry-disclose__body">
       <TelemetryDetail />

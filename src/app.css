@@ -103,6 +103,10 @@
      Cool plum-charcoal (never warm graphite, never pure black). A quietly
      colorful palette: lavender brand + a muted phase ramp carry the whole
      UI; the gauge & results get the punchiest accent so they own focus. */
+  /* --canvas is duplicated as a literal hex in index.html's pre-paint <style>
+     (the bundle, and thus this file, loads too late to own the first frame).
+     If you change this dark value, change index.html's `html { background }`
+     too — and the light value below mirrors index.html's [data-theme=light]. */
   --canvas: #0b0a10;
   --bg: #100e16;
   --bg-elevated: #15131d;

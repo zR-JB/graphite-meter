@@ -15,6 +15,14 @@
   // Last 16 RTT samples drive the sparkline.
   const spark = $derived(store.latency.slice(-16).map((s) => s.rttMs));
 
+  // Cached stroke color — resolved once and on theme change, NOT per draw
+  // (draw runs on every latency sample, ~16Hz; getComputedStyle there was hot).
+  let sparkColor = "#888";
+  function resolveColor() {
+    sparkColor =
+      getComputedStyle(document.documentElement).getPropertyValue("--text-soft").trim() || "#888";
+  }
+
   function draw() {
     const c = canvasEl;
     if (!c) return;
@@ -33,10 +41,7 @@
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const range = max - min || 1;
-    const col =
-      getComputedStyle(document.documentElement).getPropertyValue("--text-soft").trim() ||
-      "#888";
-    ctx.strokeStyle = col;
+    ctx.strokeStyle = sparkColor;
     ctx.lineWidth = 1;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -57,9 +62,13 @@
   });
 
   onMount(() => {
+    resolveColor();
     draw();
-    // Theme switch recolors the sparkline.
-    const mo = new MutationObserver(draw);
+    // Theme switch recolors the sparkline: re-resolve the cached color, redraw.
+    const mo = new MutationObserver(() => {
+      resolveColor();
+      draw();
+    });
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     return () => mo.disconnect();
   });

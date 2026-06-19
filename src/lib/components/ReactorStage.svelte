@@ -6,7 +6,7 @@
    * metric is plain DOM (zero layout shift via tabular-nums +
    * fmtSpeed banding); the canvas is decorative (aria-hidden).
    * ============================================================ */
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
   import StageTrack from "./StageTrack.svelte";
@@ -146,8 +146,15 @@
     };
   });
 
-  // Screen-reader mirror, throttled to 1Hz + phase changes (§7).
+  // Screen-reader mirror (§7): the live value is refreshed on a 1Hz tick (below)
+  // so a 16Hz number doesn't flood the live region, but phase/hint changes — the
+  // semantic events — are announced immediately via this effect.
   let a11y = $state("");
+  $effect(() => {
+    const h = hint; // track phase-driven hint + phase changes; not the live value
+    void store.phase;
+    a11y = h ? h : untrack(() => `${display.value} ${display.unit}, phase ${store.phase}`);
+  });
 
   onMount(() => {
     engine = new GaugeEngine(() => {

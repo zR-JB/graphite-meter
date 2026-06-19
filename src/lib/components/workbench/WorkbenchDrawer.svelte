@@ -31,8 +31,9 @@
     onResetWidth,
   }: Props = $props();
 
+  // The active tab lives in the store (persisted), so reopening Settings lands
+  // on the last-viewed section rather than resetting to Test Setup.
   type Tab = "setup" | "infrastructure" | "developer";
-  let tab = $state<Tab>("setup");
 
   const TABS: { key: Tab; label: string }[] = [
     { key: "setup", label: "Test Setup" },
@@ -60,9 +61,9 @@
         <button
           class="tab"
           role="tab"
-          class:active={tab === t.key}
-          aria-selected={tab === t.key}
-          onclick={() => (tab = t.key)}
+          class:active={store.settingsTab === t.key}
+          aria-selected={store.settingsTab === t.key}
+          onclick={() => (store.settingsTab = t.key)}
         >
           {t.label}
         </button>
@@ -70,9 +71,9 @@
     </div>
   {/snippet}
 
-  {#if tab === "setup"}
+  {#if store.settingsTab === "setup"}
     <TestSetupPanel running={store.isRunning} />
-  {:else if tab === "infrastructure"}
+  {:else if store.settingsTab === "infrastructure"}
     <InfrastructurePanel />
   {:else}
     <DeveloperPanel running={store.isRunning} />

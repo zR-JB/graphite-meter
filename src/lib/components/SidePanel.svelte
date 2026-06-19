@@ -148,7 +148,7 @@
       <div
         class="resize-handle"
         role="slider"
-        aria-orientation="vertical"
+        aria-orientation="horizontal"
         aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
         aria-valuemin={MIN_W}
         aria-valuemax={720}

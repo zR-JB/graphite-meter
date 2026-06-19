@@ -32,6 +32,7 @@ import {
   loadPersisted,
   savePersisted,
   type ThemePref,
+  type SettingsTab,
 } from "./persistence";
 
 /* ================= STAGE SELECTION (§13.4) ================= */
@@ -198,6 +199,10 @@ class AppStore {
   showWireEstimates = $state(false);
   /** User-resized docked side-panel widths (px), per side. Persisted. */
   dockWidth = $state<{ left: number; right: number }>({ left: 520, right: 420 });
+  /** Last-viewed Settings tab + telemetry disclosure state — persisted so a
+   *  panel reopens where the user left it. */
+  settingsTab = $state<SettingsTab>("setup");
+  telemetryExpanded = $state(false);
 
   constructor() {
     const p = loadPersisted();
@@ -207,6 +212,8 @@ class AppStore {
     this.theme = p.theme;
     this.showWireEstimates = p.showWireEstimates;
     this.dockWidth = p.dockWidth;
+    this.settingsTab = p.settingsTab;
+    this.telemetryExpanded = p.telemetryExpanded;
   }
 
   /* ================= DERIVED ================= */
@@ -649,6 +656,8 @@ if (typeof window !== "undefined") {
         theme: store.theme,
         showWireEstimates: store.showWireEstimates,
         dockWidth: $state.snapshot(store.dockWidth),
+        settingsTab: store.settingsTab,
+        telemetryExpanded: store.telemetryExpanded,
       };
       clearTimeout(timer);
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);
