@@ -141,20 +141,34 @@ export interface RunResult {
   durationMs: number;
 }
 
+/** How the headline value was derived: the trailing stable-plateau window
+ *  (adaptive, still stable at finish) or the whole-phase average (adaptive off,
+ *  or stability was lost before the phase ended). */
+export type ResultMethod = "stable-window" | "full-average";
+
 export interface ThroughputResult {
-  meanBytesPerSec: number;
+  meanBytesPerSec: number; // == reportedBytesPerSec — the headline value
   peakBytesPerSec: number;
   stabilityPct: number; // coefficient-of-variation based (0–100)
   totalBytes: number;
+  reportedBytesPerSec: number; // headline (stable-window or full average)
+  fullAverageBytesPerSec: number; // whole-phase mean, always (inspector/debug)
+  method: ResultMethod;
+  stabilityScore: number; // 0–1 stability at the moment the phase ended
+  band: StabilityBand;
 }
 
 export interface LatencyResult {
-  idleMs: number; // median unloaded
+  idleMs: number; // median unloaded (over the chosen window) — the headline
   minMs: number;
   p50Ms: number;
   p95Ms: number;
   jitterMs: number; // mean abs deviation
   packetLossPct: number;
+  reportedMs: number; // == idleMs — the headline value, named for symmetry
+  method: ResultMethod;
+  stabilityScore: number;
+  band: StabilityBand;
 }
 
 export interface BufferbloatGrade {

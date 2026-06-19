@@ -179,6 +179,16 @@ export class DummyRunner implements NetworkRunner {
   #allRtts: number[] = [];
   #pingsTotal = 0;
   #pingsLost = 0;
+  // Trailing contiguous stable-run trackers (§13.4). Each holds the index into
+  // its phase's sample array where the *current* stable run began (or -1 when
+  // not currently stable), plus the last stability score seen. Read at finish:
+  // still stable (≥0) → average the trailing window; lost it (-1) → full avg.
+  #dlStableStart = -1;
+  #ulStableStart = -1;
+  #latStableStart = -1;
+  #dlFinalScore = 0;
+  #ulFinalScore = 0;
+  #latFinalScore = 0;
 
   constructor(opts: DummyOptions = {}) {
     this.#opts = { profile: opts.profile ?? "fiber", ...opts };
@@ -287,6 +297,12 @@ export class DummyRunner implements NetworkRunner {
     this.#allRtts = [];
     this.#pingsTotal = 0;
     this.#pingsLost = 0;
+    this.#dlStableStart = -1;
+    this.#ulStableStart = -1;
+    this.#latStableStart = -1;
+    this.#dlFinalScore = 0;
+    this.#ulFinalScore = 0;
+    this.#latFinalScore = 0;
     this.#virtualElapsed = 0;
     this.#lastRealNow = 0;
     this.#glideArmedForSeg = -1;
@@ -477,9 +493,35 @@ export class DummyRunner implements NetworkRunner {
           },
         });
       }
+      // Track the trailing stable run for result selection (§13.4).
+      this.#trackStableRun(seg.phase, conf.score);
       // Adaptive early finish: once confidently stable, arm a glide that
       // accelerates virtual time to the segment boundary (§13.4).
       this.#maybeArmGlide(seg, elapsed, conf);
+    }
+  }
+
+  /** Update the per-phase trailing-stable-run index from this tick's score.
+   *  The run opens (records the latest sample index) the moment the score
+   *  crosses the stability threshold and closes (-1) whenever it drops back,
+   *  so at finish a ≥0 value means "still on a stable plateau". */
+  #trackStableRun(phase: StagePhase, score: number) {
+    const stable = score >= this.#cfg!.adaptive.stabilityThreshold;
+    if (phase === "download") {
+      this.#dlFinalScore = score;
+      if (stable) {
+        if (this.#dlStableStart < 0) this.#dlStableStart = Math.max(0, this.#dl.bytesPerSecValues.length - 1);
+      } else this.#dlStableStart = -1;
+    } else if (phase === "upload") {
+      this.#ulFinalScore = score;
+      if (stable) {
+        if (this.#ulStableStart < 0) this.#ulStableStart = Math.max(0, this.#ul.bytesPerSecValues.length - 1);
+      } else this.#ulStableStart = -1;
+    } else {
+      this.#latFinalScore = score;
+      if (stable) {
+        if (this.#latStableStart < 0) this.#latStableStart = Math.max(0, this.#idleRtts.length - 1);
+      } else this.#latStableStart = -1;
     }
   }
 
@@ -649,9 +691,13 @@ export class DummyRunner implements NetworkRunner {
     // adaptive glide accelerated one or more phases to an early finish (§13.4).
     const actualMs = Math.max(0, performance.now() - this.#t0);
     const result: RunResult = {
-      download: cfg.stages.download ? this.#throughputResult(this.#dl) : null,
-      upload: cfg.stages.upload ? this.#throughputResult(this.#ul) : null,
-      latency: this.#latencyResult(),
+      download: cfg.stages.download
+        ? this.#throughputResult(this.#dl, this.#dlStableStart, this.#dlFinalScore, cfg)
+        : null,
+      upload: cfg.stages.upload
+        ? this.#throughputResult(this.#ul, this.#ulStableStart, this.#ulFinalScore, cfg)
+        : null,
+      latency: this.#latencyResult(this.#latStableStart, this.#latFinalScore, cfg),
       bufferbloat: this.#bufferbloatGrade(),
       startedAt: Date.now() - actualMs,
       durationMs: actualMs,
@@ -662,22 +708,65 @@ export class DummyRunner implements NetworkRunner {
     this.#emit({ type: "complete", result });
   }
 
-  #throughputResult(a: PhaseAccum): ThroughputResult {
+  /**
+   * Reduce a transfer phase's samples to its headline value. When adaptive is
+   * on and the phase was still on a stable plateau at finish (`stableStart ≥ 0`)
+   * the headline is the mean over that trailing window — the steady plateau,
+   * not the ramp-up-diluted whole. Otherwise (adaptive off, or stability lost
+   * before the end) it falls back to the full-phase average (§13.4).
+   */
+  #throughputResult(
+    a: PhaseAccum,
+    stableStart: number,
+    finalScore: number,
+    cfg: RunnerConfig,
+  ): ThroughputResult {
     const v = a.bytesPerSecValues;
+    const band = stabilityBand(finalScore, cfg.adaptive);
     if (!v.length) {
-      return { meanBytesPerSec: 0, peakBytesPerSec: 0, stabilityPct: 0, totalBytes: a.bytes };
+      return {
+        meanBytesPerSec: 0,
+        peakBytesPerSec: 0,
+        stabilityPct: 0,
+        totalBytes: a.bytes,
+        reportedBytesPerSec: 0,
+        fullAverageBytesPerSec: 0,
+        method: "full-average",
+        stabilityScore: finalScore,
+        band,
+      };
     }
-    const mean = v.reduce((s, x) => s + x, 0) / v.length;
+    const full = v.reduce((s, x) => s + x, 0) / v.length;
     const peak = Math.max(...v);
-    const variance = v.reduce((s, x) => s + (x - mean) ** 2, 0) / v.length;
-    const cv = mean > 0 ? Math.sqrt(variance) / mean : 0;
+    const variance = v.reduce((s, x) => s + (x - full) ** 2, 0) / v.length;
+    const cv = full > 0 ? Math.sqrt(variance) / full : 0;
     const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
-    return { meanBytesPerSec: mean, peakBytesPerSec: peak, stabilityPct, totalBytes: a.bytes };
+
+    const useWindow = cfg.adaptive.enabled && stableStart >= 0 && stableStart < v.length;
+    const window = useWindow ? v.slice(stableStart) : v;
+    const reported = window.reduce((s, x) => s + x, 0) / window.length;
+
+    return {
+      meanBytesPerSec: reported,
+      peakBytesPerSec: peak,
+      stabilityPct,
+      totalBytes: a.bytes,
+      reportedBytesPerSec: reported,
+      fullAverageBytesPerSec: full,
+      method: useWindow ? "stable-window" : "full-average",
+      stabilityScore: finalScore,
+      band,
+    };
   }
 
-  #latencyResult(): LatencyResult {
+  #latencyResult(stableStart: number, finalScore: number, cfg: RunnerConfig): LatencyResult {
     const all = this.#allRtts;
-    const idleMs = median(this.#idleRtts.length ? this.#idleRtts : all) || this.#spec.idleRttMs;
+    const idle = this.#idleRtts;
+    const useWindow = cfg.adaptive.enabled && stableStart >= 0 && stableStart < idle.length;
+    // Headline (median unloaded) follows the same stable-window vs full rule;
+    // min/p50/p95/jitter/loss stay whole-run distribution descriptors.
+    const idleWindow = useWindow ? idle.slice(stableStart) : idle;
+    const idleMs = median(idleWindow.length ? idleWindow : all) || this.#spec.idleRttMs;
     return {
       idleMs,
       minMs: all.length ? Math.min(...all) : 0,
@@ -685,6 +774,10 @@ export class DummyRunner implements NetworkRunner {
       p95Ms: percentile(all, 95),
       jitterMs: meanAbsDeviation(all),
       packetLossPct: this.#pingsTotal ? (this.#pingsLost / this.#pingsTotal) * 100 : 0,
+      reportedMs: idleMs,
+      method: useWindow ? "stable-window" : "full-average",
+      stabilityScore: finalScore,
+      band: stabilityBand(finalScore, cfg.adaptive),
     };
   }
 
