@@ -141,6 +141,11 @@ class AppStore {
    * nothing. `stallInfo` carries the reason for the transient "connection
    * lost — …" message. All cleared on resume. */
   measuring = $state(true);
+  /* MONOTONIC `performance.now()` timestamp the current stall began (0 = live),
+   * NOT epoch `Date.now()`: its only consumer is the gauge/number grind-to-zero,
+   * which computes `performance.now() - stalledSince` at draw time. Mixing clocks
+   * makes that delta nonsensical (huge), clamping the decay factor to 1 — i.e.
+   * the value freezes at its last reading instead of easing to 0. */
   stalledSince = $state(0);
   stallInfo = $state<StallInfo | null>(null);
   /* Transport negotiation telemetry (§transport). `currentTransport` is the
@@ -501,7 +506,7 @@ class AppStore {
         // (wall-clock) so the gauge/number can grind to 0 over ~800ms purely at
         // draw time. NO sample enters any buffer (principle 1).
         this.measuring = false;
-        this.stalledSince = Date.now();
+        this.stalledSince = performance.now();
         this.stallInfo = e.info;
         break;
       case "resume":

@@ -49,7 +49,20 @@
   });
   // The last REAL throughput value, eased toward 0 while stalled. Reads the
   // store's live transfer rate (combined down+up in the bidirectional phase).
+  // This is the raw, truthful value the NEEDLE follows (the engine's own EMA
+  // carries it at 60Hz).
   const decayedBytesPerSec = $derived(store.liveTransferBytesPerSec * stallDecay);
+
+  // ── Confident live number (presentation only) ──
+  // The raw per-tick samples are honest but visually spiky (worker→main
+  // postMessage jitter aliasing the 60Hz tick). The needle hides this via the
+  // engine EMA; the big NUMBER does not, so it strobes. We smooth ONLY the
+  // displayed number here — a draw-time EMA published at a calm ~4Hz cadence —
+  // without touching the stored samples (the data layer stays truthful). `shown`
+  // is what the DOM number reads; the rAF below maintains it.
+  const SMOOTH_TAU_MS = 450; // EMA time constant — buttery but still responsive
+  const NUMBER_REFRESH_MS = 240; // ~4Hz: a steady, confident readout tempo
+  let shownBytesPerSec = $state(0);
 
   // Nice-ceiling ladder (ms) for the latency dial. 1-2-5 steps so the five
   // quarter labels (0 … scale) always land on clean values (5/10/25/50…).
@@ -82,9 +95,10 @@
       if (fm?.kind === "latency") return { value: fmtMs(fm.ms), unit: "ms" };
       return { value: "—", unit: "" };
     }
-    // Live download/upload/bidirectional speed. While stalled the value eases
-    // to 0 over ~800ms (presentation only — principle 2); snaps back on resume.
-    return { value: fmtSpeed(store.toUnit(decayedBytesPerSec)), unit: store.unitLabel };
+    // Live download/upload/bidirectional speed — the smoothed, calm-cadence
+    // number (not the raw 16Hz sample). While stalled it eases to 0 over ~800ms
+    // (presentation only — principle 2); snaps back on resume.
+    return { value: fmtSpeed(store.toUnit(shownBytesPerSec)), unit: store.unitLabel };
   });
 
   // Guided idle / empty + transient states (§14.3) — never a dead, bare dash.
@@ -121,28 +135,43 @@
     engine?.wake();
   });
 
-  // Per-frame wall clock for the grind-to-zero decay. It only needs to tick
-  // while a stall is easing the value down (and one frame after resume to snap
-  // back); a self-parking rAF keeps it idle otherwise. Bumping `nowWall`
-  // recomputes `stallDecay`/`decayedBytesPerSec`, which the DOM number reads
-  // and which (via the getter) feeds the gauge's EMA.
-  let decayRaf = 0;
+  // One render-layer rAF, live for the whole run (self-parks when idle). It:
+  //  • bumps `nowWall` so `stallDecay`/`decayedBytesPerSec` recompute — the
+  //    grind-to-zero (needle via the engine EMA);
+  //  • eases the big NUMBER toward the live value with a dt-based EMA and
+  //    publishes it at the calm ~4Hz cadence (the spiky-number fix — display
+  //    only, the stored samples are untouched);
+  //  • wakes the gauge engine each frame so the needle follows at 60Hz.
+  // Reads inside the loop are untracked so the effect re-runs only on the
+  // isRunning edge, not every frame.
+  let liveRaf = 0;
   $effect(() => {
-    const easing = store.isRunning && !store.measuring;
-    if (!easing) {
-      if (decayRaf) cancelAnimationFrame(decayRaf);
-      decayRaf = 0;
+    if (!store.isRunning) {
+      if (liveRaf) cancelAnimationFrame(liveRaf);
+      liveRaf = 0;
+      shownBytesPerSec = 0;
       return;
     }
-    const loop = () => {
-      nowWall = performance.now();
-      engine?.wake(); // keep the needle's EMA following the decayed value
-      decayRaf = requestAnimationFrame(loop);
+    let prev = performance.now();
+    let ema = untrack(() => shownBytesPerSec);
+    let lastPublish = prev;
+    const loop = (t: number) => {
+      const dt = t - prev;
+      prev = t;
+      nowWall = t;
+      const target = untrack(() => decayedBytesPerSec);
+      ema += (target - ema) * (1 - Math.exp(-dt / SMOOTH_TAU_MS));
+      if (t - lastPublish >= NUMBER_REFRESH_MS) {
+        shownBytesPerSec = ema;
+        lastPublish = t;
+      }
+      engine?.wake();
+      liveRaf = requestAnimationFrame(loop);
     };
-    decayRaf = requestAnimationFrame(loop);
+    liveRaf = requestAnimationFrame(loop);
     return () => {
-      if (decayRaf) cancelAnimationFrame(decayRaf);
-      decayRaf = 0;
+      if (liveRaf) cancelAnimationFrame(liveRaf);
+      liveRaf = 0;
     };
   });
 
