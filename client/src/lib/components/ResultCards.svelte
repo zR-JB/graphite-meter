@@ -137,7 +137,14 @@
      aggregate when a run resolves (220ms ease-out via the shared `countUp`).
      The override holds the in-flight number; while it's null the templates
      fall back to the derived live value, so during a run nothing is intercepted.
-     Reduced motion skips the tween (the override is set instantly). */
+     Reduced motion skips the tween (the override is set instantly).
+
+     UNIT CONTRACT: the transfer snaps (dl/ul/bidi) carry RAW bytesPerSec, never
+     a scaled display value — `toUnit` is applied once, at render, in `*Shown`.
+     Because `toUnit` is a linear scale the count-up looks identical whether we
+     interpolate in raw or display space, but keeping it raw means a unit toggle
+     re-renders a finished card reactively. `pingSnap` is milliseconds (latency
+     is never unit-converted). */
   const TWEEN_MS = 220;
   let dlSnap = $state<number | null>(null);
   let ulSnap = $state<number | null>(null);
@@ -187,7 +194,7 @@
       return;
     }
     dlCancel = untrack(() =>
-      tweenTo(dlFrozen ?? store.toUnit(dl.measuredBytesPerSec), store.toUnit(r.reportedBytesPerSec), (v) => (dlSnap = v)),
+      tweenTo(dlFrozen ?? dl.measuredBytesPerSec, r.reportedBytesPerSec, (v) => (dlSnap = v)),
     );
     return () => {
       dlCancel?.();
@@ -204,7 +211,7 @@
       return;
     }
     ulCancel = untrack(() =>
-      tweenTo(ulFrozen ?? store.toUnit(ul.measuredBytesPerSec), store.toUnit(r.reportedBytesPerSec), (v) => (ulSnap = v)),
+      tweenTo(ulFrozen ?? ul.measuredBytesPerSec, r.reportedBytesPerSec, (v) => (ulSnap = v)),
     );
     return () => {
       ulCancel?.();
@@ -237,9 +244,9 @@
       bidiSnap = null;
       return;
     }
-    const finalCombined = store.toUnit(r.down.reportedBytesPerSec + r.up.reportedBytesPerSec);
+    const finalCombined = r.down.reportedBytesPerSec + r.up.reportedBytesPerSec;
     bidiCancel = untrack(() =>
-      tweenTo(bidiFrozen ?? store.toUnit(bidi.combined), finalCombined, (v) => (bidiSnap = v)),
+      tweenTo(bidiFrozen ?? bidi.combined, finalCombined, (v) => (bidiSnap = v)),
     );
     return () => {
       bidiCancel?.();
@@ -261,9 +268,9 @@
       return;
     }
     if (p === "latency") pingFrozen = ping.ms;
-    else if (p === "download") dlFrozen = store.toUnit(dl.measuredBytesPerSec);
-    else if (p === "upload") ulFrozen = store.toUnit(ul.measuredBytesPerSec);
-    else if (p === "bidirectional") bidiFrozen = store.toUnit(bidi.combined);
+    else if (p === "download") dlFrozen = dl.measuredBytesPerSec;
+    else if (p === "upload") ulFrozen = ul.measuredBytesPerSec;
+    else if (p === "bidirectional") bidiFrozen = bidi.combined;
   });
 
   // Visibility (reveal & keep): a card shows once its enabled stage is live,
@@ -290,15 +297,18 @@
 
   // The number each card actually renders: the tweened snap when present, else
   // the live value while active, else the frozen (kept) value for a finished stage.
+  // All transfer inputs are raw bytesPerSec; `store.toUnit` hydrates the active
+  // unit here — the single, last-pass conversion — so flipping base/kind in the
+  // settings drawer reactively re-renders every card, live or finished.
   const dlShown = $derived(
-    dlSnap ?? (dl.active ? store.toUnit(dl.measuredBytesPerSec) : dlFrozen ?? store.toUnit(dl.measuredBytesPerSec)),
+    store.toUnit(dlSnap ?? (dl.active ? dl.measuredBytesPerSec : dlFrozen ?? dl.measuredBytesPerSec)),
   );
   const ulShown = $derived(
-    ulSnap ?? (ul.active ? store.toUnit(ul.measuredBytesPerSec) : ulFrozen ?? store.toUnit(ul.measuredBytesPerSec)),
+    store.toUnit(ulSnap ?? (ul.active ? ul.measuredBytesPerSec : ulFrozen ?? ul.measuredBytesPerSec)),
   );
   const pingShown = $derived(pingSnap ?? (ping.active ? ping.ms : pingFrozen ?? ping.ms));
   const bidiShown = $derived(
-    bidiSnap ?? (bidi.active ? store.toUnit(bidi.combined) : bidiFrozen ?? store.toUnit(bidi.combined)),
+    store.toUnit(bidiSnap ?? (bidi.active ? bidi.combined : bidiFrozen ?? bidi.combined)),
   );
 
   /* ---- Progressive disclosure of the wire-rate estimate (§14.2) ----
