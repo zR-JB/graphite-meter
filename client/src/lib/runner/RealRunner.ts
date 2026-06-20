@@ -717,8 +717,12 @@ export class RealBackend implements RunnerBackend {
    *  host.ingestLatency(rtt, underLoad, lost) — `underLoad` is true when the
    *  pings run concurrently with a transfer (bufferbloat). */
   #measureLatency(underLoad: boolean): void {
-    void underLoad;
-    throw NOT_IMPL("measureLatency");
+    // The worker primed in #primeLatencyChannel is already pinging on a warm
+    // socket; just flip reporting on (never re-spawn — that would throw away the
+    // warmup). underLoad tags every forwarded sample: true when these pings run
+    // concurrently with a transfer (bufferbloat), false for the idle stage.
+    this.#latencyUnderLoad = underLoad;
+    this.#pingWorker?.postMessage({ type: "measure" });
   }
 
   /* ================= OPTIONAL SEAMS ================= */
