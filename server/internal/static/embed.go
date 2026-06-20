@@ -36,7 +36,17 @@ func Handler() http.Handler {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		// SPA fallback: serve index.html for unknown (non-asset) routes.
+		// A missing path that LOOKS like a file (has an extension — e.g. a
+		// content-hashed /assets/*.js) must 404, NOT fall back to index.html.
+		// Serving HTML (text/html) for a missing module script makes the browser
+		// reject it on strict MIME checking AND cache the failure — turning a
+		// stale build into a confusing, sticky error. A clean 404 fails loudly.
+		if path.Ext(name) != "" {
+			http.NotFound(w, r)
+			return
+		}
+		// SPA fallback: serve index.html for unknown (extensionless) routes so
+		// client-side routing works.
 		r2 := r.Clone(r.Context())
 		r2.URL.Path = "/index.html"
 		fileServer.ServeHTTP(w, r2)
