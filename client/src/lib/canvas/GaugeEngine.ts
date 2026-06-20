@@ -53,6 +53,11 @@ const PHASE_VAR: Record<Phase, string> = {
 const EMA_ALPHA = 0.15; // intensity follower (smooth, jitter-free)
 const FILL_ALPHA = 0.1; // slower follower used under reduced-motion
 const RIPPLE_MS = 900; // ping ripple lifetime during the latency phase
+/** Minimum gap between ripple emissions. The ping stream reports many samples a
+ *  second (≈50/s on a fast link), but one ring per sample stacks into a frantic,
+ *  cheap-looking flash. Gate emission to a calm, deliberate pulse independent of
+ *  the sample rate — the rings still animate over RIPPLE_MS, just fewer at once. */
+const RIPPLE_MIN_GAP_MS = 240;
 
 /* Dial geometry: a 270° arc with the opening centered at the bottom.
    Canvas angles are clockwise from +x (3 o'clock) with y pointing down. */
@@ -86,6 +91,7 @@ export class GaugeEngine implements CanvasEngine {
   #ticks: string[] = []; // quarter labels in the active unit
   #frozen = 0; // sweep value held through the complete phase
   #lastPing = 0;
+  #lastRippleAt = 0; // timestamp of the last emitted ripple (throttle gate)
   #ripples: number[] = []; // start timestamps of active ping ripples
   #reduced = false;
 
@@ -238,11 +244,14 @@ export class GaugeEngine implements CanvasEngine {
     this.#ema += EMA_ALPHA * (target - this.#ema);
     this.#fill += FILL_ALPHA * (target - this.#fill);
 
-    // Queue a ripple for each new latency sample since the last frame.
+    // Emit at most one ripple per RIPPLE_MIN_GAP_MS, no matter how many samples
+    // arrived since the last frame — a deliberate pulse, not one ring per tick.
     if (s.pingCount > this.#lastPing) {
-      const add = Math.min(3, s.pingCount - this.#lastPing);
-      for (let i = 0; i < add; i++) this.#ripples.push(now);
       this.#lastPing = s.pingCount;
+      if (now - this.#lastRippleAt >= RIPPLE_MIN_GAP_MS) {
+        this.#ripples.push(now);
+        this.#lastRippleAt = now;
+      }
     } else if (s.pingCount < this.#lastPing) {
       this.#lastPing = s.pingCount; // run reset
     }
