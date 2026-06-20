@@ -435,7 +435,16 @@ export class RealBackend implements RunnerBackend {
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(e.data, i);
     w.onerror = (e: ErrorEvent) => this.#onWorkerError(i, e.message || "worker error");
     // `debug`/`id` only drive the worker's own verbose per-stream logging.
-    w.postMessage({ type: "start", url: this.#streamUrls[i], debug: debugEnabled(), id: i });
+    // `streams` lets the upload worker split its total payload budget per stream
+    // (so the in-flight reservoir is constant across stream counts); download
+    // ignores it.
+    w.postMessage({
+      type: "start",
+      url: this.#streamUrls[i],
+      debug: debugEnabled(),
+      id: i,
+      streams: Math.max(1, this.#host!.config!.parallelStreams),
+    });
     this.#workers[i] = w;
   }
 

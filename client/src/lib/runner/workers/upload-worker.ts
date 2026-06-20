@@ -44,8 +44,11 @@
 import init, { ScrambledCounterRng } from "../../wasm/rng/gm_rng.js";
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
 
-/** `debug`/`id` drive verbose per-stream logging only. */
-type InMsg = { type: "start"; url: string; debug?: boolean; id?: number } | { type: "stop" };
+/** `debug`/`id` drive verbose per-stream logging only. `streams` is the active
+ *  parallel-stream count, used to split UPLOAD_TOTAL_BUF_BYTES per worker. */
+type InMsg =
+  | { type: "start"; url: string; debug?: boolean; id?: number; streams?: number }
+  | { type: "stop" };
 type OutMsg =
   | { type: "progress"; bytes: number }
   | { type: "error"; recoverable: boolean; detail: string };
@@ -53,18 +56,23 @@ type OutMsg =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** Bytes per POST. Fixed + reused (one buffer per worker, generated once).
- *  Sized LARGE on purpose: each POST is a discrete request, and the connection
- *  goes idle during the request→response turnaround between POSTs. A small body
- *  (the old 4 MiB) drains in a few ms on a fast link, so that turnaround gap was
- *  a big fraction of wall-time and capped upload far below download. A big body
- *  makes each POST last ~100 ms+, so the turnaround is amortised to a few %.
- *  Accuracy is unaffected: upload.onprogress counts bytes byte-granular AS they
- *  flush to the socket (not per-POST), so even a slow link that never finishes
- *  one POST in a stage still reports its real partial throughput.
- *  Cost: ONE Blob of this size per worker (×parallelStreams), allocated once —
- *  the send no longer copies it, so this can be large without growing memory. */
-const UPLOAD_BUF_BYTES = 16 * 1024 * 1024; // 16 MiB
+/** TOTAL upload payload budget across ALL streams — the single knob to tune.
+ *  Each worker uses TOTAL / parallelStreams (see `bufBytes`), so the combined
+ *  in-flight reservoir (the bytes upload.onprogress can count ahead of what the
+ *  server has actually drained) stays CONSTANT no matter how many streams run.
+ *  That's the point: bump streams for more parallelism WITHOUT silently
+ *  enlarging the reservoir — which is what made "6 streams" drift exactly like a
+ *  too-big per-worker body did (the per-stream body, not the total, had been the
+ *  constant). Sized LARGE on purpose so each POST lasts ~100 ms+ and the
+ *  request→response turnaround between POSTs is amortised to a few % (a small
+ *  body drains in a few ms on a fast link, so that idle gap capped upload far
+ *  below download). upload.onprogress still counts bytes byte-granular AS they
+ *  flush to the socket (not per-POST), so a slow link reports its real partial
+ *  throughput; honesty of that LIVE figure relies on the reservoir staying
+ *  bounded — see docs/THROUGHPUT_MEASUREMENT.md.
+ *  Cost: ONE Blob of (TOTAL / streams) per worker, allocated once and reused;
+ *  send() references it, so the size never grows memory. */
+const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB total (÷ streams per worker)
 /** Batch progress no more often than this (ms). */
 const POST_INTERVAL_MS = 50;
 
@@ -77,6 +85,9 @@ let payload: Blob | null = null;
 /** The payload's byte length, cached so onload can tally the tail without
  *  touching the Blob. */
 let payloadBytes = 0;
+/** Per-worker payload size = UPLOAD_TOTAL_BUF_BYTES / parallelStreams, fixed on
+ *  `start` so the combined in-flight reservoir is independent of stream count. */
+let bufBytes = UPLOAD_TOTAL_BUF_BYTES;
 
 /** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
 let streamId = 0;
@@ -94,6 +105,8 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
+    // Split the total reservoir across the active streams (≥1 byte, integer).
+    bufBytes = Math.max(1, Math.floor(UPLOAD_TOTAL_BUF_BYTES / Math.max(1, msg.streams ?? 1)));
     dbgWinBytes = 0;
     dbgTotal = 0;
     dbgWinStart = performance.now();
@@ -121,9 +134,9 @@ async function run(url: string): Promise<void> {
   }
   if (stopped) return;
 
-  if (!payload) {
+  if (!payload || payloadBytes !== bufBytes) {
     const rng = new ScrambledCounterRng(randomU64(), randomU64() | 1n);
-    const bytes = new Uint8Array(UPLOAD_BUF_BYTES);
+    const bytes = new Uint8Array(bufBytes);
     rng.fill_bytes(bytes); // one-time fill; the bytes are reused every POST
     // Wrap once in a Blob. send(Blob) streams from this without copying, so the
     // POST loop allocates nothing per request (the memory-blowup fix).
