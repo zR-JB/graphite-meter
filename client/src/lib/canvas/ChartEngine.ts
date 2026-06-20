@@ -372,7 +372,9 @@ export class ChartEngine implements CanvasEngine {
     if (complete) {
       const rtts: number[] = [];
       for (const s of d.latency) if (!s.lost) rtts.push(s.rttMs);
-      const dom = niceDomain(rtts, { floor: 20 });
+      // floor:1 matches LatencyProfile — scale down to a 1 ms span on a fast
+      // LAN/localhost rather than bottoming out at a 20 ms step.
+      const dom = niceDomain(rtts, { floor: 1 });
       rttMin = dom.min;
       rttMax = dom.max;
     } else {

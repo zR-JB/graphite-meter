@@ -163,7 +163,11 @@ export function niceDomain(
   if (!values.length) return { min: 0, max: floor, span: floor };
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
-  const rawSpan = Math.max(1, rawMax - rawMin);
+  // No hard 1-unit floor here: on a fast LAN/localhost the whole spread is
+  // sub-millisecond, and a `Math.max(1, …)` pinned the span (and thus the step)
+  // at ≥1 ms regardless of the `floor` knob. The real minimum span is governed by
+  // `floor` below, so callers control how small the axis can scale.
+  const rawSpan = Math.max(0, rawMax - rawMin);
   const weighted = Math.max(rawSpan * widen, rawMax * minSpanRatio, floor);
   const center = (rawMin + rawMax) / 2;
   const step = niceStep(weighted);

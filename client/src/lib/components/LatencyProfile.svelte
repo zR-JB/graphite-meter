@@ -53,7 +53,9 @@
       if (lane.min != null) values.push(lane.min);
       if (lane.max != null) values.push(lane.max);
     }
-    return niceDomain(values, { floor: 20 });
+    // floor:1 lets the axis scale all the way down to a 1 ms span (step 0.5/0.2
+    // ms) on a fast LAN/localhost, instead of bottoming out at a 20 ms step.
+    return niceDomain(values, { floor: 1 });
   });
 
   const ticks = $derived([
