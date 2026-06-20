@@ -6,6 +6,8 @@
  * is defined here in that exact style.
  * ============================================================ */
 
+import { BUILD } from "./buildenv";
+
 const A =
   'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
 
@@ -35,5 +37,6 @@ export const ICON = {
 
 export type IconName = keyof typeof ICON;
 
-/** Build identity shown in the status bar. */
-export const BUILD_HASH = "dev";
+/** Build identity shown in the status bar — "dev" by default, the git short
+ *  hash (or GM_CLIENT_BUILD_LABEL) for a prod build. */
+export const BUILD_HASH = BUILD.buildLabel;
