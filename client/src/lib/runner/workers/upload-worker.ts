@@ -24,8 +24,21 @@
  *   in:  { type: 'start', url } | { type: 'stop' }
  *   out: { type: 'progress', bytes } | { type: 'error', recoverable, detail }
  *
- * Memory is fixed: ONE buffer per worker, generated once and reused for every
+ * Memory is fixed: ONE Blob per worker, generated once and reused for every
  * POST. Nothing grows.
+ *
+ * ── Why a Blob and not an ArrayBuffer (the memory-blowup fix) ──
+ * `xhr.send(arrayBuffer)` COPIES the body bytes into the request every call, so
+ * looping POSTs of a 64/32/4 MiB ArrayBuffer churns a fresh multi-MiB copy per
+ * request. On a fast (loopback) link each POST completes in a few ms, so we
+ * created copies at gigabytes/sec — far faster than GC reclaims them. The heap
+ * ballooned to many GB, GC pauses froze the UI, and `upload.onprogress` counted
+ * those buffered-but-undelivered bytes as "sent" (so the app over-reported vs
+ * the wire/server). `xhr.send(blob)` REFERENCES the Blob instead of copying it:
+ * one Blob, generated once, streamed from for every POST → zero per-request
+ * allocation. The footprint then stays flat and `onprogress` tracks the real
+ * socket throughput (so the app matches the wire/server figure).
+ * See docs/THROUGHPUT_MEASUREMENT.md for the full write-up.
  * ============================================================ */
 
 import init, { ScrambledCounterRng } from "../../wasm/rng/gm_rng.js";
@@ -49,16 +62,21 @@ const post = (m: OutMsg) => ctx.postMessage(m);
  *  Accuracy is unaffected: upload.onprogress counts bytes byte-granular AS they
  *  flush to the socket (not per-POST), so even a slow link that never finishes
  *  one POST in a stage still reports its real partial throughput.
- *  Cost: this much RAM per worker (×parallelStreams). Tune down if memory-bound. */
-const UPLOAD_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB
+ *  Cost: ONE Blob of this size per worker (×parallelStreams), allocated once —
+ *  the send no longer copies it, so this can be large without growing memory. */
+const UPLOAD_BUF_BYTES = 16 * 1024 * 1024; // 16 MiB
 /** Batch progress no more often than this (ms). */
 const POST_INTERVAL_MS = 50;
 
 let stopped = false;
 let xhr: XMLHttpRequest | null = null;
 let ready: Promise<unknown> | null = null;
-/** The single reused payload (generated once on first start). */
-let payload: Uint8Array | null = null;
+/** The single reused payload (generated once on first start). A Blob — NOT an
+ *  ArrayBuffer — so each xhr.send() references it instead of copying it. */
+let payload: Blob | null = null;
+/** The payload's byte length, cached so onload can tally the tail without
+ *  touching the Blob. */
+let payloadBytes = 0;
 
 /** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
 let streamId = 0;
@@ -105,8 +123,12 @@ async function run(url: string): Promise<void> {
 
   if (!payload) {
     const rng = new ScrambledCounterRng(randomU64(), randomU64() | 1n);
-    payload = new Uint8Array(UPLOAD_BUF_BYTES);
-    rng.fill_bytes(payload); // one-time fill; the bytes are reused every POST
+    const bytes = new Uint8Array(UPLOAD_BUF_BYTES);
+    rng.fill_bytes(bytes); // one-time fill; the bytes are reused every POST
+    // Wrap once in a Blob. send(Blob) streams from this without copying, so the
+    // POST loop allocates nothing per request (the memory-blowup fix).
+    payload = new Blob([bytes], { type: "application/octet-stream" });
+    payloadBytes = bytes.byteLength;
   }
   postLoop(url);
 }
@@ -114,7 +136,7 @@ async function run(url: string): Promise<void> {
 /** POST the payload once; on completion, loop to keep the lane saturated. */
 function postLoop(url: string): void {
   if (stopped || !payload) return;
-  const buf = payload;
+  const body = payload;
   const x = new XMLHttpRequest();
   xhr = x;
 
@@ -161,7 +183,7 @@ function postLoop(url: string): void {
   };
   x.onload = () => {
     // Count any tail progress events didn't report (fast POSTs may skip them).
-    const tail = buf.byteLength - lastLoaded;
+    const tail = payloadBytes - lastLoaded;
     if (tail > 0) acc += tail;
     flush(true);
     if (!stopped) postLoop(url); // next POST on the same keep-alive connection
@@ -171,7 +193,8 @@ function postLoop(url: string): void {
     if (!stopped) post({ type: "error", recoverable: true, detail: "xhr upload error" });
   };
   x.onabort = () => flush(true);
-  // Send the exact-fit backing ArrayBuffer (the view spans the whole buffer) —
-  // avoids the Uint8Array<ArrayBufferLike> vs BufferSource generic mismatch.
-  x.send(buf.buffer as ArrayBuffer);
+  // Send the reused Blob: the browser STREAMS the body from it without copying,
+  // so the POST loop allocates nothing per request. (send(ArrayBuffer) would
+  // copy the bytes every call — the old memory blowup.)
+  x.send(body);
 }
