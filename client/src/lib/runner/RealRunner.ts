@@ -81,6 +81,14 @@ function resolveBase(endpoint?: RunnerConfig["endpoint"]): string {
   return `${scheme}://${endpoint.host}:${endpoint.port}`;
 }
 
+/** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything
+ *  already ws(s):// (or relative) passes through unchanged. */
+function httpToWs(origin: string): string {
+  if (origin.startsWith("https://")) return "wss://" + origin.slice("https://".length);
+  if (origin.startsWith("http://")) return "ws://" + origin.slice("http://".length);
+  return origin;
+}
+
 /** Construction options for a real engine: the endpoint to target plus anything
  *  preflight hands back (e.g. a session token). All optional so the class is
  *  trivial to drop into wire.svelte.ts. */
@@ -119,6 +127,40 @@ const LANE_MAX_RESTARTS = 40;
 function unique<T>(xs: T[]): T[] {
   return [...new Set(xs)];
 }
+
+/* ---------- Latency (ping) tuning, handed to the ping worker ---------- */
+/** Pacer interval per pingConcurrency knob — the floor send rate that keeps
+ *  multiple pings on the wire on high-RTT links (mirrors the dummy's map). */
+const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
+  instant: 80,
+  medium: 250,
+  slow: 600,
+};
+/** Max concurrent in-flight pings — bounds wire spam and the worker's pending
+ *  map. Low-RTT links rarely exceed 1–2; high-RTT links fill toward this. */
+const PING_MAX_IN_FLIGHT = 16;
+/** Min gap between sends, so the sub-ms on-receive chain tops out at ~1 kHz. */
+const PING_MIN_GAP_MS = 1;
+/** RTTVAR multiplier for the loss timeout (RFC 6298-style RTO = SRTT + K·RTTVAR).
+ *  The deviation term spikes on an abrupt RTT jump, so the timeout adapts UP
+ *  within ~1 RTT instead of false-flagging loss. */
+const PING_LOSS_K = 4;
+/** Loss-timeout floor (ms) — a sanity minimum that governs cold start before the
+ *  estimator has a sample; the adaptive term takes over after the first pong. */
+const PING_LOSS_FLOOR_MS = 250;
+
+/** One measured ping the worker reports (rtt already computed in-worker). */
+interface PingSample {
+  rtt: number;
+  lost: boolean;
+}
+/** Ping worker → RealRunner messages. The worker owns reconnection, so it emits
+ *  stall/resume around a reconnect window rather than a terminal error. */
+type PingOutMsg =
+  | { type: "open" }
+  | { type: "samples"; samples: PingSample[] }
+  | { type: "stall"; detail: string }
+  | { type: "resume" };
 
 export class RealBackend implements RunnerBackend {
   #opts: RealBackendOptions;
@@ -165,6 +207,17 @@ export class RealBackend implements RunnerBackend {
    *  against the per-worker raw logs and the server `-verbose` figure. */
   #dbgWinBytes = 0;
   #dbgLastLog = 0;
+
+  /* ---- latency (ping) stage state (Stage 4) ---- */
+  /** The dedicated ping worker: owns the WebSocket bus and timestamps RTTs
+   *  in-worker. One per stage (idle latency, then each loaded transfer stage). */
+  #pingWorker: Worker | null = null;
+  /** True from #primeLatencyChannel to #teardownLatency — gates late worker
+   *  messages after teardown. */
+  #pingActive = false;
+  /** The underLoad tag stamped on forwarded samples (true during a transfer
+   *  stage's loaded latency). Set when #measureLatency flips reporting on. */
+  #latencyUnderLoad = false;
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -292,8 +345,10 @@ export class RealBackend implements RunnerBackend {
   onStageEnd(activity: PhaseActivity): void {
     void activity;
     // The core has finalized this stage's result; release its connections. For
-    // download that means stopping + terminating the worker pool.
+    // download that means stopping + terminating the worker pool; for latency (or
+    // a transfer stage's loaded-latency pings) the ping worker + its socket.
     this.#teardownTransfer();
+    this.#teardownLatency();
   }
 
   /** Whether a stage runs a ping channel: the idle latency stage, or a transfer
@@ -448,12 +503,84 @@ export class RealBackend implements RunnerBackend {
     this.#workers[i] = w;
   }
 
-  /** Open the latency (ping) channel over `kind` and optionally exchange a warm-
-   *  up ping or two. Push NOTHING yet — #measureLatency starts the real pinging
-   *  on this same channel. */
+  /** Open the latency (ping) channel over `kind` and warm it. Spawns the
+   *  dedicated ping worker (which owns the WebSocket + the whole ping algorithm),
+   *  hands it the tuning, and lets it send warmup pings — pushing NOTHING into
+   *  the core. #measureLatency flips reporting on over the SAME warmed socket. */
   #primeLatencyChannel(kind: TransportKind): void {
-    void kind;
-    throw NOT_IMPL("primeLatencyChannel");
+    if (kind !== "websocket") throw NOT_IMPL(`primeLatencyChannel:${kind}`); // wt = Stage 5
+
+    const cfg = this.#host!.config!;
+    const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
+    const url = this.#resolveWsBase() + wsPing;
+    const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
+
+    this.#latencyUnderLoad = false;
+    this.#pingActive = true;
+    const w = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), { type: "module" });
+    w.onmessage = (e: MessageEvent<PingOutMsg>): void => this.#onPingMessage(e.data);
+    w.onerror = (e: ErrorEvent): void => this.#onPingMessage({ type: "stall", detail: e.message || "ping worker error" });
+    w.postMessage({
+      type: "start",
+      url,
+      intervalMs,
+      maxInFlight: PING_MAX_IN_FLIGHT,
+      minGapMs: PING_MIN_GAP_MS,
+      lossK: PING_LOSS_K,
+      lossFloorMs: PING_LOSS_FLOOR_MS,
+    });
+    this.#pingWorker = w;
+  }
+
+  /** Resolve the ws(s):// base for the latency bus: prefer the advertised h1
+   *  origin, else the configured endpoint base, else same-origin — each mapped
+   *  http→ws. */
+  #resolveWsBase(): string {
+    const h1 = this.#capabilities?.origins.h1;
+    if (h1) return httpToWs(h1);
+    const base = resolveBase(this.#resolveEndpoint(this.#host!.config!.endpoint));
+    if (base) return httpToWs(base);
+    return httpToWs(location.origin);
+  }
+
+  /** Handle a message from the ping worker. The worker reports already-computed
+   *  RTTs; the runner just tags underLoad and forwards. stall/resume bracket a
+   *  reconnect — surfaced to the core ONLY for the idle latency stage; during a
+   *  transfer stage the byte lanes drive link health (and a ping gap must never
+   *  freeze throughput accrual), so loaded-latency reconnects pass silently. */
+  #onPingMessage(msg: PingOutMsg): void {
+    if (!this.#pingActive) return; // late message after teardown
+    switch (msg.type) {
+      case "samples":
+        for (const s of msg.samples) {
+          this.#host!.ingestLatency(s.rtt, this.#latencyUnderLoad, s.lost);
+        }
+        break;
+      case "stall":
+        if (!this.#transferActive && !this.#stalled) {
+          this.#host!.stall({ reason: "connection-lost", transport: "websocket", detail: msg.detail });
+          this.#stalled = true;
+        }
+        break;
+      case "resume":
+        if (!this.#transferActive && this.#stalled) {
+          this.#host!.resume();
+          this.#stalled = false;
+        }
+        break;
+      case "open":
+        break;
+    }
+  }
+
+  /** Stop + terminate the ping worker (closes its WebSocket). Idempotent. */
+  #teardownLatency(): void {
+    this.#pingActive = false;
+    if (this.#pingWorker) {
+      this.#pingWorker.postMessage({ type: "stop" });
+      this.#pingWorker.terminate();
+      this.#pingWorker = null;
+    }
   }
 
   /* ================= MEASURE — push real samples on the primed connections ====== */
@@ -624,6 +751,7 @@ export class RealBackend implements RunnerBackend {
   /** Cancel in-flight I/O and release the AbortController. */
   #closeAll(): void {
     this.#teardownTransfer();
+    this.#teardownLatency();
     this.#stalled = false;
     if (this.#abort) {
       this.#abort.abort();
