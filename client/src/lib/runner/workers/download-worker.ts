@@ -32,6 +32,20 @@
  * The worker message protocol is identical both ways, so RealBackend's pool
  * treats them uniformly. WebTransport (Stage 5) is the truly-symmetric path.
  *
+ * ── Firefox download RAM caveat (known, documented, not a bug we can fix) ──
+ * When the LINK is faster than this read loop (loopback / fast LAN), Firefox
+ * pulls bytes off the socket into its own internal stream buffers far ahead of
+ * what getReader() has drained, before its high-water mark engages backpressure.
+ * On a ~40 Gbit/s loopback that lookahead buffer is huge and slow to saturate,
+ * so the Firefox PROCESS RAM balloons (10+ GB) and the app's counted rate runs
+ * BELOW what btop/the server see — the missing bytes are sitting in Firefox's
+ * buffer, not lost. We already do everything fetch exposes for backpressure
+ * (one reused BYOB buffer; we only read as fast as we count), so there is no JS
+ * lever left. It only manifests when the BROWSER is the bottleneck; on any real
+ * internet path the LINE is the bottleneck, the reader keeps up, and the gap
+ * never appears. Chrome buffers far less and does not show it. See
+ * docs/THROUGHPUT_MEASUREMENT.md.
+ *
  * Only dependency is the shared debug logger (gated; silent unless the dev
  * flag is on), so it still bundles cleanly as a Vite module worker.
  * ============================================================ */
