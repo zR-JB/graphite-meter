@@ -35,10 +35,14 @@
   // on the last-viewed section rather than resetting to Test Setup.
   type Tab = "setup" | "infrastructure" | "developer";
 
+  // The Developer tab only exists when the build includes dev tools
+  // (GM_CLIENT_DEV_TOOLS). The `...(false ? [...] : [])` spread folds to nothing
+  // in a prod build, and the gated render branch below drops the import — so the
+  // whole DeveloperPanel (debug logging + simulation) leaves the bundle.
   const TABS: { key: Tab; label: string }[] = [
     { key: "setup", label: "Test Setup" },
     { key: "infrastructure", label: "Infrastructure" },
-    { key: "developer", label: "Developer" },
+    ...(__GM_DEV_TOOLS__ ? [{ key: "developer" as Tab, label: "Developer" }] : []),
   ];
 </script>
 
@@ -71,12 +75,13 @@
     </div>
   {/snippet}
 
-  {#if store.settingsTab === "setup"}
-    <TestSetupPanel running={store.isRunning} />
-  {:else if store.settingsTab === "infrastructure"}
+  {#if store.settingsTab === "infrastructure"}
     <InfrastructurePanel />
-  {:else}
+  {:else if __GM_DEV_TOOLS__ && store.settingsTab === "developer"}
     <DeveloperPanel running={store.isRunning} />
+  {:else}
+    <!-- Default + fallback (also when a persisted "developer" tab was stripped). -->
+    <TestSetupPanel running={store.isRunning} />
   {/if}
 </SidePanel>
 
