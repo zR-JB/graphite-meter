@@ -66,6 +66,20 @@ const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs e
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
 const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
 
+/* ---------- Throughput de-aliasing (single smoothing point) ----------
+ * The backend pushes brutally honest per-tick samples, but their per-tick
+ * variance is dominated by a MEASUREMENT ARTIFACT — worker→main postMessage
+ * jitter aliasing the ~60ms aggregation tick — not real throughput variance.
+ * The core low-passes that artifact ONCE here, at the single chokepoint every
+ * consumer reads from (the stability accumulator AND the emitted sample the
+ * store/gauge/chart read), so there is exactly one smoothed source of truth:
+ * never in the backend (it stays honest), never duplicated per UI element.
+ * Byte TOTALS stay exact (raw bytesDelta is untouched); only the RATE is
+ * filtered, and an EMA preserves the mean so results don't shift. The cutoff is
+ * well below real second-scale throughput changes, so stability stays honest —
+ * a genuine sag still reads as instability. */
+const THROUGHPUT_SMOOTH_TAU_MS = 300;
+
 /** Per-tick context handed to a pull-style backend so it can synthesize the
  *  samples due this tick. `realNow` lets a backend gate sample cadence on real
  *  time (e.g. during the glide, virtual time races but real time does not). */
@@ -221,6 +235,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #stalledSinceWall = 0;
   #stallInfo: StallInfo | null = null;
 
+  // ---- throughput de-aliasing EMA (the single smoothing point) ----
+  // Per-direction (down/up run concurrently in bidirectional), dt-aware, and
+  // reseeded whenever the measured phase changes so one stage's rate never
+  // bleeds into the next. See THROUGHPUT_SMOOTH_TAU_MS.
+  #tpEma: { down: { v: number; t: number } | null; up: { v: number; t: number } | null } = {
+    down: null,
+    up: null,
+  };
+  #tpEmaPhase: Phase = "idle";
+
   // ---- evaluation + result bookkeeping ----
   #accum = new RunAccumulator();
   #dlResult: ThroughputResult | null = null;
@@ -306,6 +330,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#lastSampleWall = 0;
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
+    this.#tpEma.down = null;
+    this.#tpEma.up = null;
+    this.#tpEmaPhase = "idle";
   }
 
   /* ================= ABORT ================= */
@@ -492,18 +519,46 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // A real byte sample proves delivery: refresh the watchdog + auto-resume.
     this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
-    this.#accum.pushThroughput(phase, dir, bytesPerSec, bytesDelta);
+    // The SINGLE de-aliasing point: filter the rate once, here, so the stability
+    // accumulator and every UI consumer read the same smoothed value. Byte
+    // totals (#bytesCumulative) stay raw/exact.
+    const rate = this.#smoothThroughput(dir, bytesPerSec);
+    this.#accum.pushThroughput(phase, dir, rate, bytesDelta);
     this.emit({
       type: "throughput",
       sample: {
         t: this.#measuredElapsed,
-        bytesPerSec,
+        bytesPerSec: rate,
         bytesCumulative: this.#bytesCumulative,
         streamCount: cfg.parallelStreams,
         dir,
         phase, // narrowed to the transfer subset by the guard above
       },
     });
+  }
+
+  /** De-alias the per-tick throughput rate (the single smoothing point). A
+   *  dt-aware EMA per direction, seeded on the first sample of each measured
+   *  phase (no startup lag) and reseeded on a phase change. A long stall gap
+   *  resolves itself: dt grows, alpha→1, so the first sample after a stall
+   *  snaps in rather than blending with a stale pre-stall value. */
+  #smoothThroughput(dir: FlowDirection, raw: number): number {
+    const now = performance.now();
+    if (this.#tpEmaPhase !== this.#phase) {
+      this.#tpEma.down = null;
+      this.#tpEma.up = null;
+      this.#tpEmaPhase = this.#phase;
+    }
+    const prev = this.#tpEma[dir];
+    if (!prev) {
+      this.#tpEma[dir] = { v: raw, t: now };
+      return raw;
+    }
+    const dt = now - prev.t;
+    const alpha = 1 - Math.exp(-dt / THROUGHPUT_SMOOTH_TAU_MS);
+    const v = prev.v + alpha * (raw - prev.v);
+    this.#tpEma[dir] = { v, t: now };
+    return v;
   }
 
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
