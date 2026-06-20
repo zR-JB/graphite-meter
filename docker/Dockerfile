@@ -15,7 +15,7 @@ ARG VERSION=0.1.0
 # (.dockerignore excludes only **/target and client/src/lib/wasm, so the crate
 # source + Cargo.{toml,lock} are in context and the artifact is built fresh.)
 # ---------------------------------------------------------------------------
-FROM rust:1 AS wasm
+FROM docker.io/library/rust:1 AS wasm
 RUN cargo install wasm-pack
 WORKDIR /src
 COPY crates/rng ./crates/rng
@@ -25,7 +25,7 @@ RUN cd crates/rng && \
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1 AS client
+FROM docker.io/oven/bun:1 AS client
 # Build-time client config (override with --build-arg). Defaults = production:
 # real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
 # reaches `bun run build`'s process.env, where vite.config.ts reads it.
@@ -51,7 +51,7 @@ RUN bun run build   # -> /app/client/dist
 # ---------------------------------------------------------------------------
 # Stage: server — build the Go binary with the client embedded.
 # ---------------------------------------------------------------------------
-FROM golang:1.26 AS server
+FROM docker.io/library/golang:1.26 AS server
 ARG VERSION
 WORKDIR /src/server
 # Module graph first for caching.
