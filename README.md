@@ -17,7 +17,7 @@ api/             Single source of truth for the cross-language contract:
                    wire.md / wire.testvectors.txt  (WS/WT message protocol -> shared golden vectors)
                    rng.testvectors.txt  (byte-exact RNG agreement)
 docker/          Multi-stage image: bun client build + go server -> single static binary.
-docs/            ARCHITECTURE.md (the "why"), REAL_RUNNER.md, GLOSSARY.md.
+docs/            ARCHITECTURE.md (the "why"), REAL_RUNNER.md, THROUGHPUT_MEASUREMENT.md, GLOSSARY.md.
 reference-demos/ Proven standalone browser demos (download / ping / upload) — implementation refs.
 masterplan.md    Full product/UX blueprint.
 ```
