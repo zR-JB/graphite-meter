@@ -1,0 +1,30 @@
+# Quadlet .build unit — builds the Graphite Meter production image.
+# Referenced by graphite-meter.container via `Image=graphite-meter.build`, so
+# the build runs automatically (as graphite-meter-build.service) before the
+# container starts. Install: see ./README.md.
+#
+# Docs: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
+
+[Unit]
+Description=Build the Graphite Meter production image (arm64)
+
+[Build]
+ImageTag=localhost/graphite-meter:latest
+
+# Containerfile + build context. The Dockerfile COPYs client/, server/, api/
+# and crates/, so the context (SetWorkingDirectory) MUST be the repo root, and
+# File= is resolved relative to it.
+#   ▸ Set SetWorkingDirectory to the ABSOLUTE path of your checkout on this host
+#     (quadlet units live in a systemd search dir, not in the repo — see README).
+SetWorkingDirectory=/path/to/graphite-meter
+File=docker/Dockerfile
+
+# Build natively for arm64 (e.g. on a Raspberry Pi). Drop or change for amd64.
+Arch=arm64
+
+# The Dockerfile defaults already produce a real-only prod image. Uncomment to
+# override the client build knobs or stamp a version (equivalent to --build-arg).
+# BuildArg=VERSION=0.1.0
+# BuildArg=GM_CLIENT_BUILD_LABEL=0.1.0
+# BuildArg=GM_CLIENT_ALLOW_DUMMY=1
+# BuildArg=GM_CLIENT_DEV_TOOLS=1

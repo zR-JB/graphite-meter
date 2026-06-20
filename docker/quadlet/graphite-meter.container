@@ -1,0 +1,37 @@
+# Quadlet .container unit — runs the Graphite Meter server.
+# Mirrors docker/docker-compose.yml. The image is produced by the sibling
+# graphite-meter.build unit (Image=*.build → builds first, then runs).
+# Install: see ./README.md.
+#
+# Docs: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
+
+[Unit]
+Description=Graphite Meter speed-test server
+
+[Container]
+ContainerName=graphite-meter
+# Reference the .build unit by filename — Quadlet builds it on demand and adds a
+# dependency on graphite-meter-build.service.
+Image=graphite-meter.build
+
+# HTTP/1.1 (default). TLS + HTTP/3 (WebTransport) land in a later stage.
+PublishPort=8080:8080
+# PublishPort=8443:8443/tcp
+# PublishPort=8443:8443/udp
+
+# All optional; sensible defaults are baked in. Set the PUBLIC_* origins when
+# running behind a reverse proxy so /preflight advertises reachable URLs.
+Environment=GM_SERVER_NAME=graphite-meter
+# Environment=GM_SERVER_LOCATION=fra
+# Environment=PUBLIC_H1_ORIGIN=http://speed.example:8080
+# Environment=GM_ADVERTISE_H3=0
+# Environment=GM_VERBOSE=1
+
+[Service]
+# docker-compose's `restart: unless-stopped` — systemd's closest is always.
+Restart=always
+RestartSec=5
+
+[Install]
+# Start at boot (`systemctl --user enable` / linger for rootless).
+WantedBy=multi-user.target default.target
