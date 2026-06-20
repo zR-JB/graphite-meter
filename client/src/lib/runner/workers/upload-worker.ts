@@ -29,8 +29,10 @@
  * ============================================================ */
 
 import init, { ScrambledCounterRng } from "../../wasm/rng/gm_rng.js";
+import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
 
-type InMsg = { type: "start"; url: string } | { type: "stop" };
+/** `debug`/`id` drive verbose per-stream logging only. */
+type InMsg = { type: "start"; url: string; debug?: boolean; id?: number } | { type: "stop" };
 type OutMsg =
   | { type: "progress"; bytes: number }
   | { type: "error"; recoverable: boolean; detail: string };
@@ -50,10 +52,25 @@ let ready: Promise<unknown> | null = null;
 /** The single reused payload (generated once on first start). */
 let payload: Uint8Array | null = null;
 
+/** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
+let streamId = 0;
+/** Raw-send debug window: bytes flushed to the socket (via upload.onprogress)
+ *  since the last 1 Hz log + its start time + the running per-stream total.
+ *  This is the real sent count, spanning POST boundaries, so it shows whether
+ *  the request/response turnaround is leaving the wire idle. */
+let dbgWinBytes = 0;
+let dbgWinStart = 0;
+let dbgTotal = 0;
+
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "start") {
     stopped = false;
+    setDebugLogging(msg.debug ?? false);
+    streamId = msg.id ?? 0;
+    dbgWinBytes = 0;
+    dbgTotal = 0;
+    dbgWinStart = performance.now();
     void run(msg.url);
   } else if (msg.type === "stop") {
     stopped = true;
@@ -114,6 +131,24 @@ function postLoop(url: string): void {
     if (d > 0) {
       acc += d;
       flush(false);
+      // Verbose: raw bytes flushed to the socket, 1 Hz, spanning POST
+      // boundaries — the ground truth for the upload turnaround question.
+      if (debugEnabled()) {
+        dbgWinBytes += d;
+        dbgTotal += d;
+        const now = performance.now();
+        const dt = now - dbgWinStart;
+        if (dt >= 1000) {
+          dlog(`ul-worker#${streamId}`, "raw-send", {
+            rate: fmtRate(dbgWinBytes / (dt / 1000)),
+            window: fmtBytes(dbgWinBytes),
+            total: fmtBytes(dbgTotal),
+            dt: fmtMs(dt),
+          });
+          dbgWinBytes = 0;
+          dbgWinStart = now;
+        }
+      }
     }
   };
   x.onload = () => {

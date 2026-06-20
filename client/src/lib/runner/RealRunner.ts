@@ -70,6 +70,7 @@ import type {
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type { Preflight } from "../api/preflight";
+import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 
 /** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
  *  same-origin (relative requests) — the Stage-1 case where the Go server serves
@@ -155,6 +156,11 @@ export class RealBackend implements RunnerBackend {
   #stalled = false;
   /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
   #cbSeed = "";
+  /** Verbose 1 Hz aggregate-log window: bytes summed across the pool since the
+   *  last log + its start time. Lets the pool's combined raw rate be compared
+   *  against the per-worker raw logs and the server `-verbose` figure. */
+  #dbgWinBytes = 0;
+  #dbgLastLog = 0;
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -424,7 +430,8 @@ export class RealBackend implements RunnerBackend {
         : new Worker(new URL("./workers/upload-worker.ts", import.meta.url), { type: "module" });
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(e.data, i);
     w.onerror = (e: ErrorEvent) => this.#onWorkerError(i, e.message || "worker error");
-    w.postMessage({ type: "start", url: this.#streamUrls[i] });
+    // `debug`/`id` only drive the worker's own verbose per-stream logging.
+    w.postMessage({ type: "start", url: this.#streamUrls[i], debug: debugEnabled(), id: i });
     this.#workers[i] = w;
   }
 
@@ -449,6 +456,8 @@ export class RealBackend implements RunnerBackend {
     this.#measuring = true;
     this.#pendingBytes = 0;
     this.#lastAggAt = performance.now();
+    this.#dbgWinBytes = 0;
+    this.#dbgLastLog = this.#lastAggAt;
     this.#aggTimer = setInterval(() => this.#aggregate(), THROUGHPUT_CADENCE_MS);
   }
 
@@ -464,6 +473,26 @@ export class RealBackend implements RunnerBackend {
     this.#lastAggAt = now;
     if (delta > 0 && elapsedSec > 0) {
       this.#host!.ingestThroughput(this.#dir, delta / elapsedSec, delta);
+    }
+    // Verbose: the pool's combined raw rate, 1 Hz. This is the sum the core
+    // then smooths (see core:throughput) — comparing this to the per-worker
+    // raw logs shows whether aggregation loses anything, and to the server
+    // figure whether bytes are lost between the wire and JS.
+    if (debugEnabled()) {
+      this.#dbgWinBytes += delta;
+      const dt = now - this.#dbgLastLog;
+      if (dt >= 1000) {
+        const active = this.#workers.reduce((n, w) => n + (w ? 1 : 0), 0);
+        dlog("realrunner:aggregate", `${this.#dir} pool`, {
+          rate: fmtRate(this.#dbgWinBytes / (dt / 1000)),
+          tick: fmtRate(elapsedSec > 0 ? delta / elapsedSec : 0),
+          window: fmtBytes(this.#dbgWinBytes),
+          streams: active,
+          dt: fmtMs(dt),
+        });
+        this.#dbgWinBytes = 0;
+        this.#dbgLastLog = now;
+      }
     }
   }
 

@@ -27,12 +27,14 @@
  * The worker message protocol is identical both ways, so RealBackend's pool
  * treats them uniformly. WebTransport (Stage 5) is the truly-symmetric path.
  *
- * Self-contained (no imports) so it bundles cleanly as a Vite module worker
- * and dodges verbatimModuleSyntax/isolatedModules concerns.
+ * Only dependency is the shared debug logger (gated; silent unless the dev
+ * flag is on), so it still bundles cleanly as a Vite module worker.
  * ============================================================ */
 
-/** Main → worker. */
-type InMsg = { type: "start"; url: string } | { type: "stop" };
+import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
+
+/** Main → worker. `debug`/`id` drive verbose per-stream logging only. */
+type InMsg = { type: "start"; url: string; debug?: boolean; id?: number } | { type: "stop" };
 /** Worker → main. */
 type OutMsg =
   | { type: "progress"; bytes: number }
@@ -48,10 +50,25 @@ const POST_INTERVAL_MS = 50;
 let abort: AbortController | null = null;
 let stopped = false;
 
+/** Stream index, only used to tag debug lines (`dl-worker#<id>`). */
+let streamId = 0;
+/** Raw-receive debug window: bytes since the last 1 Hz log + its start time +
+ *  the running per-stream total. Independent of the 50 ms progress batching, so
+ *  it reflects exactly what THIS reader pulls off the socket — the figure to
+ *  compare against btop and the server `-verbose` log. */
+let dbgWinBytes = 0;
+let dbgWinStart = 0;
+let dbgTotal = 0;
+
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "start") {
     stopped = false;
+    setDebugLogging(msg.debug ?? false);
+    streamId = msg.id ?? 0;
+    dbgWinBytes = 0;
+    dbgTotal = 0;
+    dbgWinStart = performance.now();
     void run(msg.url);
   } else if (msg.type === "stop") {
     stopped = true;
@@ -85,6 +102,23 @@ async function run(url: string): Promise<void> {
             post({ type: "progress", bytes: acc });
             acc = 0;
             lastPost = now;
+          }
+          // Verbose: raw bytes this reader pulled off the socket, 1 Hz, BEFORE
+          // any aggregation/EMA — the ground truth for "did the data reach JS?".
+          if (debugEnabled()) {
+            dbgWinBytes += value.byteLength;
+            dbgTotal += value.byteLength;
+            const dt = now - dbgWinStart;
+            if (dt >= 1000) {
+              dlog(`dl-worker#${streamId}`, "raw-receive", {
+                rate: fmtRate(dbgWinBytes / (dt / 1000)),
+                window: fmtBytes(dbgWinBytes),
+                total: fmtBytes(dbgTotal),
+                dt: fmtMs(dt),
+              });
+              dbgWinBytes = 0;
+              dbgWinStart = now;
+            }
           }
         }
       }

@@ -208,6 +208,10 @@ class AppStore {
    *  panel reopens where the user left it. */
   settingsTab = $state<SettingsTab>("setup");
   telemetryExpanded = $state(false);
+  /** Dev diagnostic toggle (Settings › Developer). When on, the runner/core/
+   *  workers emit verbose console logs; wire.svelte.ts mirrors it into the
+   *  debug logger. Persisted so it survives reloads during a debugging session. */
+  debugLogging = $state(false);
 
   constructor() {
     const p = loadPersisted();
@@ -219,6 +223,7 @@ class AppStore {
     this.dockWidth = p.dockWidth;
     this.settingsTab = p.settingsTab;
     this.telemetryExpanded = p.telemetryExpanded;
+    this.debugLogging = p.debugLogging;
   }
 
   /* ================= DERIVED ================= */
@@ -663,6 +668,7 @@ if (typeof window !== "undefined") {
         dockWidth: $state.snapshot(store.dockWidth),
         settingsTab: store.settingsTab,
         telemetryExpanded: store.telemetryExpanded,
+        debugLogging: store.debugLogging,
       };
       clearTimeout(timer);
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);

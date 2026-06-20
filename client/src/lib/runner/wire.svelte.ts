@@ -13,9 +13,20 @@ import { RunnerCore } from "./core";
 import { DummyBackend } from "./dummy";
 import { RealBackend } from "./RealRunner";
 import { store } from "../state/store.svelte";
+import { setDebugLogging } from "../debug";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
+
+// Mirror the persisted dev toggle into the (main-thread) debug logger, live.
+// Workers are separate module graphs — they're told the value in their `start`
+// message (RealRunner reads debugEnabled() at spawn), so this only governs the
+// main-thread core/RealRunner logs.
+if (typeof window !== "undefined") {
+  $effect.root(() => {
+    $effect(() => setDebugLogging(store.debugLogging));
+  });
+}
 
 /** Which sample source the app is wired to. `dummy` synthesizes samples (the
  *  default, so the app works with no server); `real` talks to the live Go

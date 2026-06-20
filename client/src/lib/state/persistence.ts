@@ -45,6 +45,9 @@ export interface PersistedState {
    *  so reopening a panel restores the view instead of resetting it. */
   settingsTab: SettingsTab;
   telemetryExpanded: boolean;
+  /** Dev diagnostic: when on, the runner/core/workers emit verbose,
+   *  component-tagged console logs (Settings › Developer). Off by default. */
+  debugLogging: boolean;
 }
 
 /** System-preference default for theme when nothing is saved yet. */
@@ -67,6 +70,7 @@ export function defaultPersisted(): PersistedState {
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
     settingsTab: "setup",
     telemetryExpanded: false,
+    debugLogging: false,
   };
 }
 

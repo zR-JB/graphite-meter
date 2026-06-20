@@ -51,6 +51,7 @@ import {
   type Segment,
 } from "./schedule";
 import { RunAccumulator } from "./evaluation";
+import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 
 const TICK_MS = 20; // master loop resolution
 const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs every tick)
@@ -244,6 +245,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     up: null,
   };
   #tpEmaPhase: Phase = "idle";
+  /** Verbose: last 1 Hz de-alias log time per direction, so the raw-vs-smoothed
+   *  comparison logs at a readable cadence rather than every ~16 Hz sample. */
+  #dbgTpLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
   // ---- evaluation + result bookkeeping ----
   #accum = new RunAccumulator();
@@ -524,6 +528,21 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // totals (#bytesCumulative) stay raw/exact.
     const rate = this.#smoothThroughput(dir, bytesPerSec);
     this.#accum.pushThroughput(phase, dir, rate, bytesDelta);
+    // Verbose: the de-aliasing point — raw push vs the smoothed value every
+    // consumer reads, 1 Hz per direction. If the gauge reads low, this shows
+    // whether it's the raw samples or the EMA.
+    if (debugEnabled()) {
+      const now = performance.now();
+      if (now - this.#dbgTpLogAt[dir] >= 1000) {
+        this.#dbgTpLogAt[dir] = now;
+        dlog("core:throughput", `${dir} de-alias`, {
+          raw: fmtRate(bytesPerSec),
+          smoothed: fmtRate(rate),
+          cumulative: fmtBytes(this.#bytesCumulative),
+          t: fmtMs(this.#measuredElapsed),
+        });
+      }
+    }
     this.emit({
       type: "throughput",
       sample: {
