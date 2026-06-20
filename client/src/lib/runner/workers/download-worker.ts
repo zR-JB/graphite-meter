@@ -20,7 +20,12 @@
  *   • Download = fetch + body.getReader(): the only way to read-and-DISCARD a
  *     streamed response at O(1) memory. XHR buffers the whole response
  *     internally (responseText/response), so a multi-GiB download test would
- *     OOM — XHR-for-download is a non-starter.
+ *     OOM — XHR-for-download is a non-starter. We use a BYOB reader reusing ONE
+ *     buffer (see readBody): at multi-Gbit/s the default reader's per-chunk
+ *     Uint8Array allocation + GC is the read-side ceiling — and the reason the
+ *     JS reader couldn't keep up with the wire (so the link buffered ahead and
+ *     the kernel/btop counter ran higher than what the app actually consumed,
+ *     most visibly in Firefox). Reusing the buffer removes that ceiling.
  *   • Upload = XHR: we need upload.onprogress to count bytes ACTUALLY sent, and
  *     fetch has no upload-progress events at all; fetch *streaming* upload
  *     additionally requires HTTP/2 (dead end on our cleartext h1.1 origin).
@@ -46,6 +51,11 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 /** Post a delta no more often than this (ms); flushed on stream end / stop. */
 const POST_INTERVAL_MS = 50;
+
+/** Size of the single reused BYOB read buffer. Large enough that one read can
+ *  return a big slice (fewer read() turns per second), small enough to stay
+ *  lean — it's one buffer per worker, reused for the whole stage. */
+const READ_BUF_BYTES = 1024 * 1024; // 1 MiB
 
 let abort: AbortController | null = null;
 let stopped = false;
@@ -85,43 +95,40 @@ async function run(url: string): Promise<void> {
     abort = new AbortController();
     let acc = 0;
     let lastPost = performance.now();
+    // Count a chunk's bytes (the chunk itself is dropped): batch deltas to the
+    // main thread (~50 ms) and, when verbose, log the raw 1 Hz receive rate —
+    // BEFORE any aggregation/EMA, the ground truth for "did the data reach JS?".
+    const count = (n: number): void => {
+      acc += n;
+      const now = performance.now();
+      if (now - lastPost >= POST_INTERVAL_MS) {
+        post({ type: "progress", bytes: acc });
+        acc = 0;
+        lastPost = now;
+      }
+      if (debugEnabled()) {
+        dbgWinBytes += n;
+        dbgTotal += n;
+        const dt = now - dbgWinStart;
+        if (dt >= 1000) {
+          dlog(`dl-worker#${streamId}`, "raw-receive", {
+            rate: fmtRate(dbgWinBytes / (dt / 1000)),
+            window: fmtBytes(dbgWinBytes),
+            total: fmtBytes(dbgTotal),
+            dt: fmtMs(dt),
+          });
+          dbgWinBytes = 0;
+          dbgWinStart = now;
+        }
+      }
+    };
     try {
       const res = await fetch(url, { signal: abort.signal, cache: "no-store" });
       if (!res.ok || !res.body) {
         post({ type: "error", recoverable: true, detail: `HTTP ${res.status}` });
         return;
       }
-      const reader = res.body.getReader();
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-          acc += value.byteLength; // count only — the chunk is then dropped
-          const now = performance.now();
-          if (now - lastPost >= POST_INTERVAL_MS) {
-            post({ type: "progress", bytes: acc });
-            acc = 0;
-            lastPost = now;
-          }
-          // Verbose: raw bytes this reader pulled off the socket, 1 Hz, BEFORE
-          // any aggregation/EMA — the ground truth for "did the data reach JS?".
-          if (debugEnabled()) {
-            dbgWinBytes += value.byteLength;
-            dbgTotal += value.byteLength;
-            const dt = now - dbgWinStart;
-            if (dt >= 1000) {
-              dlog(`dl-worker#${streamId}`, "raw-receive", {
-                rate: fmtRate(dbgWinBytes / (dt / 1000)),
-                window: fmtBytes(dbgWinBytes),
-                total: fmtBytes(dbgTotal),
-                dt: fmtMs(dt),
-              });
-              dbgWinBytes = 0;
-              dbgWinStart = now;
-            }
-          }
-        }
-      }
+      await readBody(res.body, count);
       if (acc > 0) post({ type: "progress", bytes: acc }); // flush tail
     } catch (err) {
       if (stopped) return; // aborted by stop() — a clean teardown, not an error
@@ -129,5 +136,39 @@ async function run(url: string): Promise<void> {
       post({ type: "error", recoverable: true, detail: String(err) });
       return; // the main thread decides whether to restart this lane
     }
+  }
+}
+
+/** Read a response body to completion, feeding each chunk's byte count to
+ *  `count`. Prefers a BYOB reader reusing ONE ArrayBuffer so the hot loop does
+ *  no per-chunk allocation/GC (the read-side throughput ceiling); falls back to
+ *  the default reader if the body isn't a byte stream. */
+async function readBody(
+  body: ReadableStream<Uint8Array>,
+  count: (n: number) => void,
+): Promise<void> {
+  let byob: ReadableStreamBYOBReader | null = null;
+  try {
+    byob = body.getReader({ mode: "byob" });
+  } catch {
+    byob = null; // not a byte stream (shouldn't happen for fetch) — fall back
+  }
+  if (byob) {
+    let buf = new ArrayBuffer(READ_BUF_BYTES);
+    for (;;) {
+      const { value, done } = await byob.read(new Uint8Array(buf));
+      if (done) break;
+      if (value && value.byteLength) count(value.byteLength);
+      // read() DETACHED our buffer and handed the same backing store back
+      // inside `value`; reuse it for the next read so nothing is allocated.
+      buf = value!.buffer as ArrayBuffer;
+    }
+    return;
+  }
+  const reader = body.getReader();
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) count(value.byteLength);
   }
 }

@@ -99,10 +99,14 @@ const NOT_IMPL = (method: string) =>
  *  the dummy's THROUGHPUT_CADENCE_MS so both engines feel identical). */
 const THROUGHPUT_CADENCE_MS = 60;
 
-/** Bytes requested per download stream. Large enough that one request lasts the
- *  whole measured window on a fast link (the server clamps and we abort at stage
- *  end); the worker also re-fetches if a stream ends early. */
-const PER_STREAM_BYTES = 8 * 1024 * 1024 * 1024; // 8 GiB
+/** Bytes requested per download stream. Sized so ONE request outlasts any
+ *  reasonable stage even on a fast link: at ~1 GB/s/stream an 8 GiB request ran
+ *  out in ~8 s and the worker re-fetched mid-stage, churning the connection
+ *  (a visible throughput dip + reconnect). 64 GiB (the server's clamp ceiling)
+ *  lasts ~60 s/stream, so a normal stage completes on a single connection; the
+ *  worker still re-fetches if a stream genuinely ends early, and we abort at
+ *  stage end. */
+const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024; // 64 GiB
 
 /** Backoff before re-opening a dropped lane, so a persistently-failing stream
  *  can't spin a tight respawn loop (re-creating workers + re-fetching wasm). */

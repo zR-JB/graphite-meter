@@ -40,9 +40,17 @@ type OutMsg =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** Bytes per POST. Fixed + reused: large enough to amortize request overhead and
- *  keep the connection busy across a few RTTs, small enough to stay lean. */
-const UPLOAD_BUF_BYTES = 4 * 1024 * 1024; // 4 MiB
+/** Bytes per POST. Fixed + reused (one buffer per worker, generated once).
+ *  Sized LARGE on purpose: each POST is a discrete request, and the connection
+ *  goes idle during the request→response turnaround between POSTs. A small body
+ *  (the old 4 MiB) drains in a few ms on a fast link, so that turnaround gap was
+ *  a big fraction of wall-time and capped upload far below download. A big body
+ *  makes each POST last ~100 ms+, so the turnaround is amortised to a few %.
+ *  Accuracy is unaffected: upload.onprogress counts bytes byte-granular AS they
+ *  flush to the socket (not per-POST), so even a slow link that never finishes
+ *  one POST in a stage still reports its real partial throughput.
+ *  Cost: this much RAM per worker (×parallelStreams). Tune down if memory-bound. */
+const UPLOAD_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB
 /** Batch progress no more often than this (ms). */
 const POST_INTERVAL_MS = 50;
 
