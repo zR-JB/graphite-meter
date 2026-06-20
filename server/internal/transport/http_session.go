@@ -3,10 +3,8 @@ package transport
 import (
 	"context"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 // httpSession adapts an (http.ResponseWriter, *http.Request) pair to Session.
@@ -36,21 +34,7 @@ func (s *httpSession) Proto() Proto {
 	}
 }
 
-// ClientIP prefers the first hop of X-Forwarded-For (when behind a proxy),
-// falling back to the socket remote address.
-func (s *httpSession) ClientIP() string {
-	if xff := s.r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, err := net.SplitHostPort(s.r.RemoteAddr)
-	if err != nil {
-		return s.r.RemoteAddr
-	}
-	return host
-}
+func (s *httpSession) ClientIP() string { return ClientIP(s.r) }
 
 func (s *httpSession) HTTP() (http.ResponseWriter, *http.Request, bool) {
 	return s.w, s.r, true

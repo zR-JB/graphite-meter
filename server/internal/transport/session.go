@@ -9,8 +9,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // Proto names the wire protocol a Session is running over.
@@ -20,6 +22,7 @@ const (
 	ProtoH1           Proto = "http/1.1"
 	ProtoH2           Proto = "h2"
 	ProtoH3           Proto = "h3"
+	ProtoWS           Proto = "websocket"
 	ProtoWebTransport Proto = "webtransport"
 )
 
@@ -63,4 +66,21 @@ type Session interface {
 
 	// Bus yields the control-message channel, when the session has one. Stage 4+.
 	Bus() (MessageBus, bool)
+}
+
+// ClientIP resolves the caller's address from a request: the first hop of
+// X-Forwarded-For when behind a proxy, else the socket remote address. Shared by
+// every Session impl so the rule stays identical across transports.
+func ClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

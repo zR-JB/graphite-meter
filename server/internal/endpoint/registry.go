@@ -1,21 +1,28 @@
 package endpoint
 
 import (
+	"context"
 	"net/http"
 
+	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/server/internal/transport"
 )
 
-// Registry maps paths to endpoints. The HTTP mux is built by walking it; the
-// WebTransport dispatcher (Stage 5) resolves from the same registry. Adding an
-// endpoint is a Register call — no listener code changes.
+// Registry maps paths to endpoints. The HTTP mux is built by walking it; bus
+// endpoints (WebSocket now, the WebTransport dispatcher in Stage 5) resolve from
+// the same registry. Adding an endpoint is a Register call — no listener code
+// changes.
 type Registry struct {
 	httpEndpoints map[string]Endpoint
+	wsEndpoints   map[string]Endpoint
 }
 
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
-	return &Registry{httpEndpoints: make(map[string]Endpoint)}
+	return &Registry{
+		httpEndpoints: make(map[string]Endpoint),
+		wsEndpoints:   make(map[string]Endpoint),
+	}
 }
 
 // RegisterHTTP mounts an endpoint as an HTTP request/response handler at path.
@@ -23,11 +30,49 @@ func (r *Registry) RegisterHTTP(path string, e Endpoint) {
 	r.httpEndpoints[path] = e
 }
 
-// Mount attaches all registered HTTP endpoints onto mux.
+// RegisterWS mounts an endpoint as a WebSocket bus at path. The upgrade is an
+// HTTP/1.1 Upgrade on the existing h1 origin — no new listener. The Stage-5 WT
+// dispatcher reuses this same registry to resolve bus endpoints by path.
+func (r *Registry) RegisterWS(path string, e Endpoint) {
+	r.wsEndpoints[path] = e
+}
+
+// Mount attaches all registered endpoints onto mux: HTTP request/response
+// handlers and WebSocket bus upgrades.
 func (r *Registry) Mount(mux *http.ServeMux) {
 	for path, e := range r.httpEndpoints {
 		mux.Handle(path, httpAdapter(e))
 	}
+	for path, e := range r.wsEndpoints {
+		mux.Handle(path, wsAdapter(e))
+	}
+}
+
+// wsAdapter upgrades the request to a WebSocket and runs the endpoint against a
+// websocketSession exposing the message bus. Cross-origin upgrades are allowed
+// (InsecureSkipVerify) to mirror the permissive Access-Control-Allow-Origin: *
+// the HTTP endpoints already set — this is a public, auth-less, cookie-less
+// measurement bus (app on :8080 measuring against :8443), so there is no session
+// state for a forged origin to abuse.
+func wsAdapter(e Endpoint) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return // Accept already wrote the handshake-failure response
+		}
+		// The conn is hijacked, so r.Context() is no longer reliable (see Accept
+		// docs). Bound the bus with a fresh context cancelled when Handle returns.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		defer conn.CloseNow()
+
+		s := transport.NewWebSocketSession(ctx, conn, transport.ClientIP(r), r.URL.Query())
+		if err := e.Handle(s); err != nil {
+			conn.Close(websocket.StatusInternalError, "handler error")
+			return
+		}
+		conn.Close(websocket.StatusNormalClosure, "")
+	})
 }
 
 // httpAdapter wraps an Endpoint as an http.Handler: it applies the global CORS

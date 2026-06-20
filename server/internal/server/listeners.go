@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -55,6 +56,16 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		Addr:              cfg.H1Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		// TCP_NODELAY on every accepted conn (ARCHITECTURE §7): a single ping
+		// frame on the /ws/ping latency bus must not sit in Nagle's buffer waiting
+		// to coalesce. Go's net package already defaults NoDelay=true; we set it
+		// explicitly because it is normative for accurate sub-ms latency.
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if tc, ok := c.(*net.TCPConn); ok {
+				_ = tc.SetNoDelay(true)
+			}
+			return ctx
+		},
 	}
 
 	// Graceful shutdown on ctx cancel.
