@@ -35,6 +35,11 @@ decode | PING,abc | ERR:bad_args
 encode | op=PING;id=5 | PING,5
 encode | op=PING;id=0 | PING,0
 encode | op=PONG;id=5;nanos=1234 | PONG,5;TIME,1234
+encode | op=PONG;id=4294967295;nanos=18446744073709551615 | PONG,4294967295;TIME,18446744073709551615
 encode | op=READY | READY
+encode | op=HI;proto=ws | HI,ws
+encode | op=BYE | BYE
 encode | op=SIZE;bytes=10000000 | SIZE,10000000
+encode | op=BYTES_RECEIVED;n=1048576 | BYTES_RECEIVED,1048576
+encode | op=UPLOAD_COMPLETE;n=40000000 | UPLOAD_COMPLETE,40000000
 encode | op=ERR;code=bad_op;text=unknown | ERR,bad_op,unknown
