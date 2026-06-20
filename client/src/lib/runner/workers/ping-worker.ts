@@ -118,6 +118,9 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let pacer: ReturnType<typeof setInterval> | null = null;
 let sweeper: ReturnType<typeof setInterval> | null = null;
 let flusher: ReturnType<typeof setInterval> | null = null;
+// One-shot: a send deferred because the minGap ceiling hadn't lifted yet (see
+// maybeSend). At most one is ever pending.
+let gapTimer: ReturnType<typeof setTimeout> | null = null;
 
 ctx.onmessage = (e: MessageEvent<InMsg>): void => {
   const m = e.data;
@@ -242,7 +245,22 @@ function onFrame(data: unknown): void {
 function maybeSend(now: number): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   if (pending.size >= maxInFlight) return; // cap: bound wire spam + memory
-  if (now - lastSendAt < minGapMs) return; // rate ceiling for sub-ms links
+  const wait = minGapMs - (now - lastSendAt);
+  if (wait > 0) {
+    // Within the rate ceiling. DON'T drop the send — on a sub-ms link the RTT is
+    // below minGap, so the on-receive chain (PONG → maybeSend) always lands here
+    // and would collapse to the pacer floor (~1 send/intervalMs ≈ 12 Hz). Defer
+    // it to the instant the ceiling lifts so the chain sustains the intended
+    // ~1/minGap kHz. One pending timer suffices: any other maybeSend in the gap
+    // window is a no-op until it fires.
+    if (gapTimer === null) {
+      gapTimer = setTimeout(() => {
+        gapTimer = null;
+        maybeSend(performance.now());
+      }, wait);
+    }
+    return;
+  }
   sendPing(now);
 }
 
@@ -320,6 +338,8 @@ function teardown(): void {
   measuring = false;
   if (reconnectTimer !== null) clearTimeout(reconnectTimer);
   reconnectTimer = null;
+  if (gapTimer !== null) clearTimeout(gapTimer);
+  gapTimer = null;
   for (const t of [pacer, sweeper, flusher]) if (t !== null) clearInterval(t);
   pacer = sweeper = flusher = null;
   flush(); // emit any tail
