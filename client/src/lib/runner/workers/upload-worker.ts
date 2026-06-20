@@ -15,6 +15,10 @@
  * exactly the multi-TCP model (ARCHITECTURE §1). The WebTransport upload path
  * (the demo's `upload-worker.js`) arrives in Stage 5.
  *
+ * (Conversely, download-worker.ts uses fetch, NOT XHR: it must read-and-discard
+ * a streamed response at O(1) memory, which XHR can't do — it buffers the whole
+ * response. See that file's header for the full fetch-vs-XHR rationale.)
+ *
  * Message protocol matches the download worker so the RealBackend pool drives
  * both directions identically:
  *   in:  { type: 'start', url } | { type: 'stop' }

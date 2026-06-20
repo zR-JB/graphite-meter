@@ -14,6 +14,19 @@
  * `stop` aborts the in-flight fetch. A recoverable failure is reported so
  * the main thread can stall + restart this single lane.
  *
+ * ── Why fetch here, but XHR in upload-worker.ts (intentional asymmetry) ──
+ * The two directions use different APIs because the platform forces it, not by
+ * accident:
+ *   • Download = fetch + body.getReader(): the only way to read-and-DISCARD a
+ *     streamed response at O(1) memory. XHR buffers the whole response
+ *     internally (responseText/response), so a multi-GiB download test would
+ *     OOM — XHR-for-download is a non-starter.
+ *   • Upload = XHR: we need upload.onprogress to count bytes ACTUALLY sent, and
+ *     fetch has no upload-progress events at all; fetch *streaming* upload
+ *     additionally requires HTTP/2 (dead end on our cleartext h1.1 origin).
+ * The worker message protocol is identical both ways, so RealBackend's pool
+ * treats them uniformly. WebTransport (Stage 5) is the truly-symmetric path.
+ *
  * Self-contained (no imports) so it bundles cleanly as a Vite module worker
  * and dodges verbatimModuleSyntax/isolatedModules concerns.
  * ============================================================ */
