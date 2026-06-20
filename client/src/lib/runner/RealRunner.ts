@@ -128,6 +128,13 @@ function unique<T>(xs: T[]): T[] {
   return [...new Set(xs)];
 }
 
+/** Median of a non-empty number list (used for the pre-test ping). */
+function median(xs: number[]): number {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
 /* ---------- Latency (ping) tuning, handed to the ping worker ---------- */
 /** Pacer interval per pingConcurrency knob — the floor send rate that keeps
  *  multiple pings on the wire on high-RTT links (mirrors the dummy's map). */
@@ -148,6 +155,16 @@ const PING_LOSS_K = 4;
 /** Loss-timeout floor (ms) — a sanity minimum that governs cold start before the
  *  estimator has a sample; the adaptive term takes over after the first pong. */
 const PING_LOSS_FLOOR_MS = 250;
+
+/* ---------- Pre-test probe pings (idle sparkline, REAL_RUNNER item 2) ---------- */
+/** How many idle samples to collect for the pre-test sparkline. */
+const PROBE_PING_COUNT = 5;
+/** Pacer interval for the probe burst — brisk so the sparkline fills fast. */
+const PROBE_PING_INTERVAL_MS = 120;
+/** x-spacing of the emitted pre-test samples (their `t` ramps negative → 0). */
+const PROBE_PING_T_STEP_MS = 120;
+/** Hard cap on the whole probe burst, so a slow/dead bus never delays the run. */
+const PROBE_PING_TIMEOUT_MS = 1500;
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -264,10 +281,12 @@ export class RealBackend implements RunnerBackend {
     }
     const pf = (await res.json()) as Preflight;
     this.#capabilities = pf.capabilities;
-    // #host is captured in attach() for later-stage sample pushing (pre-test
-    // pings land here once a ping endpoint exists, Stage 4); referenced now so
-    // the field isn't flagged write-only while the I/O methods are still stubs.
-    void this.#host;
+
+    // Pre-test idle pings over /ws/ping: emit a few sparkline samples and use
+    // their median as the pre-test ping (the server sends 0 — RTT is client-
+    // measured). Best-effort: a probe-ping failure must never fail preflight.
+    const probeRtts = await this.#probePings(endpoint).catch(() => [] as number[]);
+
     return {
       clientIp: pf.clientIp,
       server: {
@@ -276,10 +295,71 @@ export class RealBackend implements RunnerBackend {
         port: pf.server.port,
         location: pf.server.location,
       },
-      preTestPingMs: pf.preTestPingMs,
+      preTestPingMs: probeRtts.length ? median(probeRtts) : pf.preTestPingMs,
       engineVersion: pf.engineVersion,
       protocolNegotiated: pf.protocolNegotiated,
     };
+  }
+
+  /** Pre-test idle latency burst for the sparkline (REAL_RUNNER checklist item 2).
+   *  Reuses the ping worker so the timestamping methodology is identical to the
+   *  run, but fully isolated from run state (its own local worker + handler).
+   *  Emits each sample via host.emit (underLoad:false, phase "idle", negative t)
+   *  and resolves with the collected RTTs (median → preTestPingMs). Best-effort:
+   *  resolves to whatever it gathered, never rejects. */
+  #probePings(endpoint: RunnerConfig["endpoint"]): Promise<number[]> {
+    if (!this.#capabilities?.transports.websocket) return Promise.resolve([]);
+    const url = this.#resolveWsBase(endpoint) + (this.#capabilities.endpoints.wsPing ?? "/ws/ping");
+    const rtts: number[] = [];
+
+    return new Promise<number[]>((resolve) => {
+      let worker: Worker | null = null;
+      let done = false;
+      const finish = (): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (worker) {
+          worker.postMessage({ type: "stop" });
+          worker.terminate();
+        }
+        resolve(rtts);
+      };
+      const timer = setTimeout(finish, PROBE_PING_TIMEOUT_MS);
+
+      try {
+        worker = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), { type: "module" });
+      } catch {
+        finish();
+        return;
+      }
+      worker.onerror = (): void => finish();
+      worker.onmessage = (e: MessageEvent<PingOutMsg>): void => {
+        const msg = e.data;
+        if (msg.type !== "samples") return; // stall/resume/open: ignore for a pre-test hint
+        for (const s of msg.samples) {
+          if (s.lost || rtts.length >= PROBE_PING_COUNT) continue;
+          rtts.push(s.rtt);
+          // x ramps from negative toward 0 so the sparkline reads left→right.
+          const t = -(PROBE_PING_COUNT - rtts.length + 1) * PROBE_PING_T_STEP_MS;
+          this.#host!.emit({
+            type: "latency",
+            sample: { t, rttMs: s.rtt, underLoad: false, lost: false, phase: "idle" },
+          });
+        }
+        if (rtts.length >= PROBE_PING_COUNT) finish();
+      };
+      worker.postMessage({
+        type: "start",
+        url,
+        intervalMs: PROBE_PING_INTERVAL_MS,
+        maxInFlight: 4,
+        minGapMs: PING_MIN_GAP_MS,
+        lossK: PING_LOSS_K,
+        lossFloorMs: PING_LOSS_FLOOR_MS,
+      });
+      worker.postMessage({ type: "measure" }); // report immediately — no warmup window for a hint
+    });
   }
 
   /** The server capabilities captured by the last successful probe (or null
@@ -512,7 +592,7 @@ export class RealBackend implements RunnerBackend {
 
     const cfg = this.#host!.config!;
     const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
-    const url = this.#resolveWsBase() + wsPing;
+    const url = this.#resolveWsBase(cfg.endpoint) + wsPing;
     const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
 
     this.#latencyUnderLoad = false;
@@ -533,12 +613,13 @@ export class RealBackend implements RunnerBackend {
   }
 
   /** Resolve the ws(s):// base for the latency bus: prefer the advertised h1
-   *  origin, else the configured endpoint base, else same-origin — each mapped
-   *  http→ws. */
-  #resolveWsBase(): string {
+   *  origin, else the given endpoint base, else same-origin — each mapped
+   *  http→ws. Takes the endpoint explicitly so it is safe during probe(), before
+   *  the run config exists. */
+  #resolveWsBase(endpoint?: RunnerConfig["endpoint"]): string {
     const h1 = this.#capabilities?.origins.h1;
     if (h1) return httpToWs(h1);
-    const base = resolveBase(this.#resolveEndpoint(this.#host!.config!.endpoint));
+    const base = resolveBase(this.#resolveEndpoint(endpoint));
     if (base) return httpToWs(base);
     return httpToWs(location.origin);
   }
