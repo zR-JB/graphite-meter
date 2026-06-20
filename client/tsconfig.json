@@ -18,6 +18,6 @@
     "verbatimModuleSyntax": true
   },
   "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],
-  "// exclude": "Generated wasm-pack glue (src/lib/wasm) ships its own .d.ts; type-check against that, not the loose JS body.",
-  "exclude": ["src/lib/wasm"]
+  "// exclude": "Generated wasm-pack glue (src/lib/wasm) ships its own .d.ts; type-check against that, not the loose JS body. *.test.ts run under `bun test`, which type-checks them natively (its bun:test globals aren't in svelte-check's tsconfig).",
+  "exclude": ["src/lib/wasm", "src/**/*.test.ts"]
 }
