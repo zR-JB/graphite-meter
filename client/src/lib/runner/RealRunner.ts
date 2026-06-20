@@ -405,10 +405,21 @@ export class RealBackend implements RunnerBackend {
    * The stub bodies below throw NOT_IMPL — fill them in to go live.
    */
   onStageBegin(activity: PhaseActivity): void {
-    const kind = this.#negotiateTransport(activity.stage);
-    if (!kind) return; // negotiation already raised host.fail("transport-unavailable")
-    for (const dir of activity.transfer) this.#primeTransfer(kind, dir);
-    if (this.#needsPings(activity)) this.#primeLatencyChannel(kind);
+    // The ping channel is ALWAYS a latency-role transport (websocket today) — it
+    // runs on its OWN socket, never on the stage's transfer transport. Negotiate
+    // it separately (and first) so a loaded transfer stage's xhr-stream kind can
+    // never reach #primeLatencyChannel (which only services websocket), and so
+    // #activeTransport ends as the transfer kind for the lanes' stall reporting.
+    if (this.#needsPings(activity)) {
+      const pingKind = this.#negotiateTransport("latency");
+      if (!pingKind) return; // negotiation already raised host.fail(...)
+      this.#primeLatencyChannel(pingKind);
+    }
+    if (activity.transfer.length > 0) {
+      const kind = this.#negotiateTransport(activity.stage);
+      if (!kind) return; // negotiation already raised host.fail("transport-unavailable")
+      for (const dir of activity.transfer) this.#primeTransfer(kind, dir);
+    }
   }
 
   /**
