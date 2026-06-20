@@ -103,6 +103,13 @@ const THROUGHPUT_CADENCE_MS = 60;
  *  end); the worker also re-fetches if a stream ends early. */
 const PER_STREAM_BYTES = 8 * 1024 * 1024 * 1024; // 8 GiB
 
+/** Backoff before re-opening a dropped lane, so a persistently-failing stream
+ *  can't spin a tight respawn loop (re-creating workers + re-fetching wasm). */
+const LANE_RESTART_BACKOFF_MS = 300;
+/** Give up a lane after this many consecutive restarts (≈12 s at the backoff);
+ *  the core's max-stall timeout also bounds total patience. */
+const LANE_MAX_RESTARTS = 40;
+
 /** Order-preserving de-dup for building a transport preference list. */
 function unique<T>(xs: T[]): T[] {
   return [...new Set(xs)];
@@ -131,10 +138,17 @@ export class RealBackend implements RunnerBackend {
   #streamUrls: string[] = [];
   /** Bytes received across all workers since the last aggregation tick. */
   #pendingBytes = 0;
-  /** performance.now() at the last aggregation tick. */
+  /** performance.now() at the last aggregation tick — the denominator of the
+   *  truthful per-tick rate (real bytes / real elapsed). */
   #lastAggAt = 0;
   /** The ~16 Hz aggregation timer; null while not measuring. */
   #aggTimer: ReturnType<typeof setInterval> | null = null;
+  /** True from #primeTransfer to #teardownTransfer — gates lane restarts so a
+   *  late worker error after teardown can't respawn a lane. */
+  #transferActive = false;
+  /** Per-lane consecutive restart counter (reset on recovery) + backoff timers. */
+  #laneRetry: number[] = [];
+  #laneTimers: (ReturnType<typeof setTimeout> | null)[] = [];
   /** True between onStageMeasure and onStageEnd — gates pushing samples. */
   #measuring = false;
   /** True while a stall is open (so a recovering sample resumes exactly once). */
@@ -388,6 +402,9 @@ export class RealBackend implements RunnerBackend {
 
     this.#workers = [];
     this.#streamUrls = [];
+    this.#laneRetry = [];
+    this.#laneTimers = [];
+    this.#transferActive = true;
     for (let i = 0; i < streams; i++) {
       this.#streamUrls[i] = url(i);
       this.#spawnWorker(i);
@@ -459,6 +476,7 @@ export class RealBackend implements RunnerBackend {
   ): void {
     if (msg.type === "progress") {
       this.#pendingBytes += msg.bytes;
+      this.#laneRetry[i] = 0; // a real sample proves this lane recovered
       if (this.#stalled) {
         this.#host!.resume();
         this.#stalled = false;
@@ -472,8 +490,8 @@ export class RealBackend implements RunnerBackend {
    *  case: a dropped connection) → stall once, then re-open the lane so a real
    *  sample resumes it. Only call fail() when the drop is genuinely unrecoverable. */
   #onWorkerError(i: number, detail: string, recoverable = true): void {
-    // A worker that errored after onStageEnd (teardown abort) is noise — ignore.
-    if (!this.#workers[i]) return;
+    // Ignore late errors after teardown (a stop()/terminate races the worker).
+    if (!this.#transferActive) return;
     if (!recoverable) {
       this.#host!.fail("connection-lost", `${this.#dir} stream ${i} failed: ${detail}`, detail);
       return;
@@ -486,17 +504,31 @@ export class RealBackend implements RunnerBackend {
       });
       this.#stalled = true;
     }
-    // Re-open this lane against its stored URL; the next real sample auto-resumes.
+    // Tear the lane down now; re-open it after a backoff so a persistently-
+    // failing stream can't spin a tight respawn loop (re-creating workers +
+    // re-fetching wasm hundreds of times/sec). Give up the run once a lane
+    // exhausts its restarts — the core's max-stall timeout also bounds patience.
     this.#workers[i]?.terminate();
-    this.#spawnWorker(i);
+    this.#workers[i] = null;
+    if ((this.#laneRetry[i] = (this.#laneRetry[i] ?? 0) + 1) > LANE_MAX_RESTARTS) {
+      this.#host!.fail("connection-lost", `${this.#dir} stream ${i} kept dropping: ${detail}`, detail);
+      return;
+    }
+    this.#laneTimers[i] = setTimeout(() => {
+      this.#laneTimers[i] = null;
+      if (this.#transferActive) this.#spawnWorker(i);
+    }, LANE_RESTART_BACKOFF_MS);
   }
 
-  /** Stop + terminate the worker pool and the aggregation timer. Idempotent. */
+  /** Stop + terminate the worker pool, the aggregation timer, and any pending
+   *  lane-restart backoffs. Idempotent. */
   #teardownTransfer(): void {
+    this.#transferActive = false;
     if (this.#aggTimer !== null) {
       clearInterval(this.#aggTimer);
       this.#aggTimer = null;
     }
+    for (const t of this.#laneTimers) if (t) clearTimeout(t);
     for (const w of this.#workers) {
       if (!w) continue;
       w.postMessage({ type: "stop" });
@@ -504,6 +536,8 @@ export class RealBackend implements RunnerBackend {
     }
     this.#workers = [];
     this.#streamUrls = [];
+    this.#laneRetry = [];
+    this.#laneTimers = [];
     this.#measuring = false;
     this.#pendingBytes = 0;
   }
