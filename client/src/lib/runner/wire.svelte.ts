@@ -10,10 +10,16 @@
 
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
+// NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
+// branch in getRunner(). When that token folds to `false` (a prod build with
+// GM_CLIENT_ALLOW_DUMMY=0), Rollup deletes the branch, this import becomes
+// unused, and — because dummy.ts is side-effect-free — the whole module is
+// tree-shaken out. Keep dummy.ts free of top-level side effects or it'll stay.
 import { DummyBackend } from "./dummy";
 import { RealBackend } from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
+import { BUILD } from "../buildenv";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
@@ -38,7 +44,8 @@ type EngineKind = "dummy" | "real";
 const ENGINE_STORAGE_KEY = "gm.engine";
 
 /** Resolve the engine: a `?engine=real|dummy` URL param wins (and is persisted
- *  for subsequent reloads), else the last persisted choice, else "dummy". */
+ *  for subsequent reloads), else the last persisted choice, else the build's
+ *  configured default (`GM_CLIENT_ENGINE`, "real" unless overridden). */
 function resolveEngine(): EngineKind {
   if (typeof window !== "undefined") {
     const param = new URLSearchParams(window.location.search).get("engine");
@@ -57,17 +64,23 @@ function resolveEngine(): EngineKind {
       /* storage unavailable — use the default */
     }
   }
-  return "dummy";
+  return BUILD.defaultEngine;
 }
 
 export function getRunner(): NetworkRunner {
   // The single integration seam. The core/UI/store are engine-agnostic; only
   // the backend (sample source) is selected here. See docs/REAL_RUNNER.md.
+  //
+  // The dummy branch is gated on the raw `__GM_ALLOW_DUMMY__` literal so that a
+  // prod build (GM_CLIENT_ALLOW_DUMMY=0) folds it away and tree-shakes the
+  // DummyBackend out — a real-only bundle then ignores any persisted/`?engine=`
+  // "dummy" and always runs the real backend.
   if (!runner) {
-    runner =
-      resolveEngine() === "real"
-        ? new RunnerCore(new RealBackend({ endpoint: store.config.endpoint }))
-        : new RunnerCore(new DummyBackend({ profile: "fiber" }));
+    if (__GM_ALLOW_DUMMY__ && resolveEngine() === "dummy") {
+      runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
+    } else {
+      runner = new RunnerCore(new RealBackend({ endpoint: store.config.endpoint }));
+    }
   }
   return runner;
 }
