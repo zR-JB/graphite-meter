@@ -17,7 +17,7 @@
     },
     "transports": {
       "xhrStream": true,
-      "websocket": false,
+      "websocket": true,
       "webtransport": false
     },
     "endpoints": {
