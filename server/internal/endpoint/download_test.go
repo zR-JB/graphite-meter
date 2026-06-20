@@ -19,7 +19,7 @@ import (
 func newDownloadServer(blockSize int) (*httptest.Server, []byte) {
 	block := rng.NewBlock(blockSize)
 	mux := http.NewServeMux()
-	mux.Handle("/download", httpAdapter(NewDownload(block)))
+	mux.Handle("/download", httpAdapter(NewDownload(block, nil)))
 	return httptest.NewServer(mux), block
 }
 
@@ -105,7 +105,7 @@ func TestDownloadDefaultsAndClamps(t *testing.T) {
 // context is cancelled mid-flight, without trying to fulfil the full length.
 func TestDownloadContextCancel(t *testing.T) {
 	block := rng.NewBlock(4096)
-	dl := NewDownload(block)
+	dl := NewDownload(block, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// A sink that cancels the context after the first write, then keeps

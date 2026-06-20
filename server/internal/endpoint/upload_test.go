@@ -13,7 +13,7 @@ import (
 
 func TestUploadCountsAndEchoes(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload()))
+	mux.Handle("/upload", httpAdapter(NewUpload(nil)))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -48,7 +48,7 @@ func TestUploadStopsOnReadError(t *testing.T) {
 		fakeSession: &fakeSession{ctx: context.Background()},
 		src:         &errReader{remaining: 4096},
 	}
-	if err := NewUpload().Handle(s); err != nil {
+	if err := NewUpload(nil).Handle(s); err != nil {
 		t.Fatalf("handle should swallow the abort, got: %v", err)
 	}
 }

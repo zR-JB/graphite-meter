@@ -13,10 +13,12 @@ import (
 // never accumulating (docs/ARCHITECTURE.md §7). The client measures bytes sent;
 // the server only needs to consume them as fast as the link allows and may echo
 // the total.
-type Upload struct{}
+type Upload struct {
+	meter *Meter // optional verbose per-second logger; nil unless -verbose
+}
 
-// NewUpload builds the upload endpoint.
-func NewUpload() *Upload { return &Upload{} }
+// NewUpload builds the upload endpoint. meter may be nil (no verbose logging).
+func NewUpload(meter *Meter) *Upload { return &Upload{meter: meter} }
 
 func (u *Upload) ID() string                 { return "upload" }
 func (u *Upload) Capabilities() Capabilities { return Capabilities{HTTP: true} }
@@ -36,10 +38,14 @@ var scratchPool = sync.Pool{
 
 // discardSink counts via the io.Copy return value while throwing the bytes away.
 // It deliberately does NOT implement io.ReaderFrom, so io.CopyBuffer uses our
-// large pooled buffer instead of io.Discard's small internal one.
-type discardSink struct{}
+// large pooled buffer instead of io.Discard's small internal one. When verbose,
+// it also feeds each drained chunk to the meter for live per-second logging.
+type discardSink struct{ meter *Meter }
 
-func (discardSink) Write(p []byte) (int, error) { return len(p), nil }
+func (s discardSink) Write(p []byte) (int, error) {
+	s.meter.Add(len(p))
+	return len(p), nil
+}
 
 // Handle drains the upload source, counting bytes. A clean EOF echoes the count
 // as JSON; a mid-stream cancel (client aborted the measurement) stops quietly.
@@ -52,10 +58,13 @@ func (u *Upload) Handle(s transport.Session) error {
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
 
+	u.meter.Open()
+	defer u.meter.Close()
+
 	// CopyBuffer reads until EOF or a read error; the http server cancels the
 	// body read when the request context is cancelled, so this returns promptly
 	// on client disconnect.
-	n, copyErr := io.CopyBuffer(discardSink{}, src, *bufp)
+	n, copyErr := io.CopyBuffer(discardSink{meter: u.meter}, src, *bufp)
 	if copyErr != nil {
 		// Client aborted the stream (the common case for a streaming upload
 		// measurement) — the connection is gone, so there's nothing to reply to.

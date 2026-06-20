@@ -32,10 +32,22 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	// slices of it, never regenerating per request (ARCHITECTURE §7).
 	block := rng.NewBlock(rng.BlockSize)
 
+	// Verbose mode: one per-direction throughput logger, each draining its own
+	// 1 Hz goroutine for the run's lifetime. Nil when off — the endpoints'
+	// meter calls are then cheap no-ops.
+	var dlMeter, ulMeter *endpoint.Meter
+	if cfg.Verbose {
+		dlMeter = endpoint.NewMeter("server:download")
+		ulMeter = endpoint.NewMeter("server:upload")
+		go dlMeter.Run(ctx)
+		go ulMeter.Run(ctx)
+		log.Printf("[gm:server] verbose throughput logging enabled")
+	}
+
 	reg := endpoint.NewRegistry()
 	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
-	reg.RegisterHTTP("/download", endpoint.NewDownload(block))
-	reg.RegisterHTTP("/upload", endpoint.NewUpload())
+	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
+	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter))
 
 	mux := BuildMux(reg)
 

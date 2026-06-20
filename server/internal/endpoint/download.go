@@ -13,6 +13,7 @@ import (
 // sinks bytes.
 type Download struct {
 	block []byte
+	meter *Meter // optional verbose per-second logger; nil unless -verbose
 }
 
 // Download size bounds. bytes is the request's requested length; we default it
@@ -23,8 +24,11 @@ const (
 	maxBytes     int64 = 64 * 1024 * 1024 * 1024 // 64 GiB hard ceiling
 )
 
-// NewDownload builds the endpoint bound to the shared RNG block.
-func NewDownload(block []byte) *Download { return &Download{block: block} }
+// NewDownload builds the endpoint bound to the shared RNG block. meter may be
+// nil (no verbose logging).
+func NewDownload(block []byte, meter *Meter) *Download {
+	return &Download{block: block, meter: meter}
+}
 
 func (d *Download) ID() string                 { return "download" }
 func (d *Download) Capabilities() Capabilities { return Capabilities{HTTP: true} }
@@ -49,6 +53,9 @@ func (d *Download) Handle(s transport.Session) error {
 		return err
 	}
 
+	d.meter.Open()
+	defer d.meter.Close()
+
 	ctx := s.Context()
 	block := d.block
 	blockLen := int64(len(block))
@@ -64,6 +71,7 @@ func (d *Download) Handle(s transport.Session) error {
 			chunk = n
 		}
 		wrote, werr := sink.Write(block[off : off+chunk])
+		d.meter.Add(wrote)
 		n -= int64(wrote)
 		off += int64(wrote)
 		if off >= blockLen {

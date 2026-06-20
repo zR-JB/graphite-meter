@@ -38,6 +38,12 @@ type Config struct {
 
 	// Build/engine version surfaced in /preflight.
 	EngineVersion string
+
+	// Verbose enables per-second throughput logging on the download/upload
+	// endpoints (the server-side counterpart to the client's debug logging), so
+	// server-sent / drained rates can be compared against the kernel interface
+	// counters and the browser's own figures. Off by default.
+	Verbose bool
 }
 
 // Default returns a Config with the baseline defaults.
@@ -84,6 +90,9 @@ func Load() Config {
 	}
 	if v := os.Getenv("GM_SERVER_LOCATION"); v != "" {
 		c.ServerLocation = v
+	}
+	if v := os.Getenv("GM_VERBOSE"); v == "1" || v == "true" {
+		c.Verbose = true
 	}
 	return c
 }

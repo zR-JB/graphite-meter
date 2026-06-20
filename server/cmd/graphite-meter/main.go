@@ -20,6 +20,7 @@ func main() {
 	flag.StringVar(&cfg.H1Addr, "addr", cfg.H1Addr, "HTTP/1.1 listen address")
 	flag.StringVar(&cfg.ServerName, "name", cfg.ServerName, "server name advertised in /preflight")
 	flag.StringVar(&cfg.ServerLocation, "location", cfg.ServerLocation, "server location label")
+	flag.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "log per-second download/upload throughput")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
