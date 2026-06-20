@@ -1,22 +1,27 @@
 /* ============================================================
- * The Graphite Meter — Upload generate-and-stream worker (Stage 3)
+ * The Graphite Meter — Upload generate-and-POST worker (Stage 3)
  * ============================================================
  *
- * One worker per parallel upload stream. It generates incompressible bytes with
- * the canonical xorshift64* generator compiled to WASM (crates/rng) and streams
- * them as a chunked POST body to /upload; the server drains + counts them. The
- * payload is produced in the worker and handed straight to the network, so byte
- * generation never competes with gauge rendering on the main thread — only tiny
- * batched `{ bytes }` deltas (bytes handed to the stream) come back.
+ * One worker per parallel upload stream. It generates ONE fixed incompressible
+ * buffer with the canonical xorshift64* generator (crates/rng → WASM) and POSTs
+ * it in a loop over plain HTTP/1.1 via XMLHttpRequest, measuring bytes via
+ * `upload.onprogress` (so we count bytes ACTUALLY sent, never generated-but-
+ * unsent). The server drains + counts them.
  *
- * Message protocol is identical to the download worker, so the RealBackend
- * worker-pool harness drives both directions the same way:
+ * Why XHR and not a streaming `fetch` body: a `fetch` with a ReadableStream
+ * request body (`duplex:'half'`) requires HTTP/2 in Chrome (→ ALPN failure on
+ * our cleartext h1.1 origin) and is unsupported in Firefox. XHR upload works
+ * over HTTP/1.1 in every browser — and each worker is its own TCP connection,
+ * exactly the multi-TCP model (ARCHITECTURE §1). The WebTransport upload path
+ * (the demo's `upload-worker.js`) arrives in Stage 5.
+ *
+ * Message protocol matches the download worker so the RealBackend pool drives
+ * both directions identically:
  *   in:  { type: 'start', url } | { type: 'stop' }
  *   out: { type: 'progress', bytes } | { type: 'error', recoverable, detail }
  *
- * The lane streams continuously until `stop` aborts the fetch (the measured
- * window owns the duration, not a fixed body size). Mirrors the proven
- * reference-demos/upload-demo worker.
+ * Memory is fixed: ONE buffer per worker, generated once and reused for every
+ * POST. Nothing grows.
  * ============================================================ */
 
 import init, { ScrambledCounterRng } from "../../wasm/rng/gm_rng.js";
@@ -29,15 +34,17 @@ type OutMsg =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** 64 KiB chunks — smooth streaming without oversized per-pull allocations. */
-const CHUNK_BYTES = 64 * 1024;
+/** Bytes per POST. Fixed + reused: large enough to amortize request overhead and
+ *  keep the connection busy across a few RTTs, small enough to stay lean. */
+const UPLOAD_BUF_BYTES = 4 * 1024 * 1024; // 4 MiB
 /** Batch progress no more often than this (ms). */
 const POST_INTERVAL_MS = 50;
 
-let abort: AbortController | null = null;
 let stopped = false;
-/** Resolves once the WASM module is initialised (once per worker). */
+let xhr: XMLHttpRequest | null = null;
 let ready: Promise<unknown> | null = null;
+/** The single reused payload (generated once on first start). */
+let payload: Uint8Array | null = null;
 
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
@@ -46,12 +53,11 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     void run(msg.url);
   } else if (msg.type === "stop") {
     stopped = true;
-    abort?.abort();
+    xhr?.abort();
   }
 };
 
-/** A fresh random (seed, inc) per lane so each stream is a distinct
- *  incompressible sequence. inc is forced odd for a full-period counter. */
+/** A fresh random (seed, inc) per lane; inc forced odd for a full-period counter. */
 function randomU64(): bigint {
   const a = new Uint32Array(2);
   crypto.getRandomValues(a);
@@ -68,9 +74,22 @@ async function run(url: string): Promise<void> {
   }
   if (stopped) return;
 
-  const rng = new ScrambledCounterRng(randomU64(), randomU64() | 1n);
-  abort = new AbortController();
+  if (!payload) {
+    const rng = new ScrambledCounterRng(randomU64(), randomU64() | 1n);
+    payload = new Uint8Array(UPLOAD_BUF_BYTES);
+    rng.fill_bytes(payload); // one-time fill; the bytes are reused every POST
+  }
+  postLoop(url);
+}
 
+/** POST the payload once; on completion, loop to keep the lane saturated. */
+function postLoop(url: string): void {
+  if (stopped || !payload) return;
+  const buf = payload;
+  const x = new XMLHttpRequest();
+  xhr = x;
+
+  let lastLoaded = 0;
   let acc = 0;
   let lastPost = performance.now();
   const flush = (force: boolean) => {
@@ -82,42 +101,30 @@ async function run(url: string): Promise<void> {
     }
   };
 
-  // Backpressure-driven byte source: the fetch pulls a chunk only when the
-  // network is ready for more, so `acc` tracks bytes actually handed to the
-  // socket. Never closes on its own — `stop` aborts it.
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (stopped) {
-        controller.close();
-        return;
-      }
-      const chunk = new Uint8Array(CHUNK_BYTES);
-      rng.fill_bytes(chunk);
-      controller.enqueue(chunk);
-      acc += chunk.byteLength;
+  x.open("POST", url);
+  x.setRequestHeader("Content-Type", "application/octet-stream");
+  // upload.onprogress reports bytes flushed to the socket — the real sent count.
+  x.upload.onprogress = (e: ProgressEvent) => {
+    const d = e.loaded - lastLoaded;
+    lastLoaded = e.loaded;
+    if (d > 0) {
+      acc += d;
       flush(false);
-    },
-    cancel() {
-      stopped = true;
-    },
-  });
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      body,
-      signal: abort.signal,
-      headers: { "Content-Type": "application/octet-stream" },
-      // Required for a streaming (ReadableStream) request body.
-      duplex: "half",
-    } as RequestInit & { duplex: "half" });
-    flush(true);
-    if (!res.ok) {
-      post({ type: "error", recoverable: true, detail: `HTTP ${res.status}` });
     }
-  } catch (err) {
+  };
+  x.onload = () => {
+    // Count any tail progress events didn't report (fast POSTs may skip them).
+    const tail = buf.byteLength - lastLoaded;
+    if (tail > 0) acc += tail;
     flush(true);
-    if (stopped) return; // aborted by stop() — clean teardown, not an error
-    post({ type: "error", recoverable: true, detail: String(err) });
-  }
+    if (!stopped) postLoop(url); // next POST on the same keep-alive connection
+  };
+  x.onerror = () => {
+    flush(true);
+    if (!stopped) post({ type: "error", recoverable: true, detail: "xhr upload error" });
+  };
+  x.onabort = () => flush(true);
+  // Send the exact-fit backing ArrayBuffer (the view spans the whole buffer) —
+  // avoids the Uint8Array<ArrayBufferLike> vs BufferSource generic mismatch.
+  x.send(buf.buffer as ArrayBuffer);
 }
