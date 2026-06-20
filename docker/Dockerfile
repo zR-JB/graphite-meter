@@ -10,26 +10,42 @@ ARG SERVER_IMPL=go
 ARG VERSION=0.1.0
 
 # ---------------------------------------------------------------------------
-# Stage: wasm (reserved). The browser upload RNG (crates/rng -> WASM) is wired
-# in at Stage 3. Until then this is a no-op passthrough so the stage exists in
-# the pipeline; the client stage copies from it but it carries nothing yet.
+# Stage: wasm — build the browser upload RNG (crates/rng -> WASM) with
+# wasm-pack. The output is COPYed into the client tree before its build.
+# (.dockerignore excludes only **/target and client/src/lib/wasm, so the crate
+# source + Cargo.{toml,lock} are in context and the artifact is built fresh.)
 # ---------------------------------------------------------------------------
-FROM scratch AS wasm
-# (Stage 3: build crates/rng with wasm-pack into /wasm and COPY it into client.)
+FROM rust:1 AS wasm
+RUN cargo install wasm-pack
+WORKDIR /src
+COPY crates/rng ./crates/rng
+RUN cd crates/rng && \
+    wasm-pack build --target web --release --out-dir /out/rng --out-name gm_rng
 
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.
 # ---------------------------------------------------------------------------
 FROM oven/bun:1 AS client
+# Build-time client config (override with --build-arg). Defaults = production:
+# real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
+# reaches `bun run build`'s process.env, where vite.config.ts reads it.
+ARG GM_CLIENT_ENGINE=real
+ARG GM_CLIENT_ALLOW_DUMMY=0
+ARG GM_CLIENT_DEV_TOOLS=0
+ARG GM_CLIENT_BUILD_LABEL=prod
+ENV GM_CLIENT_ENGINE=$GM_CLIENT_ENGINE \
+    GM_CLIENT_ALLOW_DUMMY=$GM_CLIENT_ALLOW_DUMMY \
+    GM_CLIENT_DEV_TOOLS=$GM_CLIENT_DEV_TOOLS \
+    GM_CLIENT_BUILD_LABEL=$GM_CLIENT_BUILD_LABEL
 WORKDIR /app/client
 # Install deps first for layer caching. (Not --frozen-lockfile: the committed
 # bun.lock may be a newer lockfile version than the pinned bun image; bun then
 # resolves from package.json's pinned ranges, which is fine for a build image.)
 COPY client/package.json client/bun.lock ./
 RUN bun install
-# Then the source + build.
+# Then the source + the freshly-built WASM (upload-worker.ts imports it), then build.
 COPY client/ ./
-# COPY --from=wasm / ./src/lib/wasm   # (Stage 3)
+COPY --from=wasm /out ./src/lib/wasm
 RUN bun run build   # -> /app/client/dist
 
 # ---------------------------------------------------------------------------

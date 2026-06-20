@@ -8,6 +8,12 @@ services:
       args:
         VERSION: "0.1.0"
         SERVER_IMPL: "go" # reserved: "rust" -> server-rs (future swap)
+        # Client build knobs (defaults = prod: real-only, no dev tooling).
+        # Uncomment to build a configurable multi-engine image with dev tools:
+        # GM_CLIENT_ALLOW_DUMMY: "1"
+        # GM_CLIENT_DEV_TOOLS: "1"
+        # GM_CLIENT_ENGINE: "real"        # default runner when multiple are built in
+        # GM_CLIENT_BUILD_LABEL: "0.1.0"  # status-bar label (default "prod")
     ports:
       - "8080:8080" # HTTP/1.1 (default)
       # - "8443:8443/tcp"  # TLS + HTTP/1.1/h2 (Stage 5)
