@@ -51,15 +51,18 @@ type InMsg =
       intervalMs: number;
       maxInFlight: number;
       minGapMs: number;
+      reportGapMs: number;
       lossK: number;
       lossFloorMs: number;
     }
   | { type: "measure" }
   | { type: "stop" };
 
-/** Worker → main. Samples are batched (~50 ms) to cut postMessage overhead; the
- *  rtt is timestamped in-worker so batching delays only the x-position, not the
- *  measured value. stall/resume bracket a reconnect window. */
+/** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
+ *  fast link doesn't flood host.ingestLatency) and then batched (~50 ms) to cut
+ *  postMessage overhead. The rtt is timestamped in-worker, so neither downsample
+ *  nor batch affects the measured value — only how many cross the thread boundary.
+ *  stall/resume bracket a reconnect window. */
 type OutMsg =
   | { type: "open" }
   | { type: "samples"; samples: { rtt: number; lost: boolean }[] }
@@ -89,6 +92,7 @@ let stopped = false;
 let intervalMs = 250;
 let maxInFlight = 16;
 let minGapMs = 1;
+let reportGapMs = 20;
 let lossK = 4;
 let lossFloorMs = 250;
 
@@ -97,6 +101,7 @@ const pending = new Map<number, number>(); // id → sendTime (performance.now()
 const graveyard = new Map<number, number>(); // evicted id → sendTime (late-pong learning)
 let nextId = 0; // client-owned monotonic uint32
 let lastSendAt = 0;
+let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
 let outbox: { rtt: number; lost: boolean }[] = [];
 
 // Adaptive RTT estimator (RFC 6298, ms).
@@ -122,6 +127,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       intervalMs = m.intervalMs;
       maxInFlight = m.maxInFlight;
       minGapMs = m.minGapMs;
+      reportGapMs = m.reportGapMs;
       lossK = m.lossK;
       lossFloorMs = m.lossFloorMs;
       ensureTimers();
@@ -129,6 +135,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       break;
     case "measure":
       measuring = true;
+      lastReportAt = 0; // report the first measured sample promptly
       break;
     case "stop":
       teardown();
@@ -206,8 +213,16 @@ function onFrame(data: unknown): void {
   if (sent !== undefined) {
     pending.delete(f.id);
     const rtt = recv - sent;
-    observeRtt(rtt);
-    if (measuring) outbox.push({ rtt, lost: false });
+    observeRtt(rtt); // ALWAYS — keeps the loss-timeout estimator accurate
+    // Downsample the UI-bound stream: on a fast link the on-receive chain fires
+    // far faster than any chart needs (~1 kHz on localhost), so report at most
+    // one sample per reportGapMs. The pings stay fast (responsiveness + a full
+    // in-flight window); only what crosses to the main thread is capped, so
+    // host.ingestLatency isn't called thousands of times/sec.
+    if (measuring && recv - lastReportAt >= reportGapMs) {
+      lastReportAt = recv;
+      outbox.push({ rtt, lost: false });
+    }
     maybeSend(recv); // on-receive → send-next
     return;
   }

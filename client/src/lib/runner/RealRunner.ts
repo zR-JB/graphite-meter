@@ -148,6 +148,12 @@ const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
 const PING_MAX_IN_FLIGHT = 16;
 /** Min gap between sends, so the sub-ms on-receive chain tops out at ~1 kHz. */
 const PING_MIN_GAP_MS = 1;
+/** Min gap between UI-bound samples (worker downsamples to this). Decouples the
+ *  report rate from the ping rate: on a fast link the chain pings ~1 kHz, but the
+ *  main thread sees ≤ ~50 samples/s — comparable to the 16 Hz throughput path —
+ *  so host.ingestLatency isn't flooded. The loss estimator still sees every pong;
+ *  on slow links (pings farther apart than this) nothing is dropped. */
+const PING_REPORT_GAP_MS = 20;
 /** RTTVAR multiplier for the loss timeout (RFC 6298-style RTO = SRTT + K·RTTVAR).
  *  The deviation term spikes on an abrupt RTT jump, so the timeout adapts UP
  *  within ~1 RTT instead of false-flagging loss. */
@@ -355,6 +361,7 @@ export class RealBackend implements RunnerBackend {
         intervalMs: PROBE_PING_INTERVAL_MS,
         maxInFlight: 4,
         minGapMs: PING_MIN_GAP_MS,
+        reportGapMs: 0, // collect every probe sample — only 5, at a slow cadence
         lossK: PING_LOSS_K,
         lossFloorMs: PING_LOSS_FLOOR_MS,
       });
@@ -606,6 +613,7 @@ export class RealBackend implements RunnerBackend {
       intervalMs,
       maxInFlight: PING_MAX_IN_FLIGHT,
       minGapMs: PING_MIN_GAP_MS,
+      reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
     });
