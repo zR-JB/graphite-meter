@@ -79,7 +79,7 @@ const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
  * filtered, and an EMA preserves the mean so results don't shift. The cutoff is
  * well below real second-scale throughput changes, so stability stays honest —
  * a genuine sag still reads as instability. */
-const THROUGHPUT_SMOOTH_TAU_MS = 2400;
+const THROUGHPUT_SMOOTH_TAU_MS = 1800;
 
 /** Per-tick context handed to a pull-style backend so it can synthesize the
  *  samples due this tick. `realNow` lets a backend gate sample cadence on real
