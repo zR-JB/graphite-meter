@@ -14,11 +14,12 @@
  * `stop` aborts the in-flight fetch. A recoverable failure is reported so
  * the main thread can stall + restart this single lane.
  *
- * ── Why fetch here, but XHR in upload-worker.ts (intentional asymmetry) ──
- * The two directions use different APIs because the platform forces it, not by
- * accident:
+ * ── fetch both ways now; the asymmetry is the body, not the API ──
+ * Both directions use `fetch` (see upload-worker.ts), since the upload no longer
+ * needs `upload.onprogress` — the server's /ws/upload count is authoritative there.
+ * What still differs is which side streams:
  *   • Download = fetch + body.getReader(): the only way to read-and-DISCARD a
- *     streamed response at O(1) memory. XHR buffers the whole response
+ *     streamed RESPONSE at O(1) memory. XHR buffers the whole response
  *     internally (responseText/response), so a multi-GiB download test would
  *     OOM — XHR-for-download is a non-starter. We use a BYOB reader reusing ONE
  *     buffer (see readBody): at multi-Gbit/s the default reader's per-chunk
@@ -26,11 +27,12 @@
  *     JS reader couldn't keep up with the wire (so the link buffered ahead and
  *     the kernel/btop counter ran higher than what the app actually consumed,
  *     most visibly in Firefox). Reusing the buffer removes that ceiling.
- *   • Upload = XHR: we need upload.onprogress to count bytes ACTUALLY sent, and
- *     fetch has no upload-progress events at all; fetch *streaming* upload
- *     additionally requires HTTP/2 (dead end on our cleartext h1.1 origin).
- * The worker message protocol is identical both ways, so RealBackend's pool
- * treats them uniformly. WebTransport (Stage 5) is the truly-symmetric path.
+ *   • Upload = fetch + a fixed Blob REQUEST body (NOT a ReadableStream — that
+ *     `duplex:'half'` streaming form requires HTTP/2, a dead end on our cleartext
+ *     h1.1 origin). The Blob is referenced, not copied, so the footprint stays flat.
+ * The worker message protocol is the same shape both ways (download posts
+ * `progress` byte deltas; upload posts `alive` per completed POST), so RealBackend's
+ * pool treats them uniformly. WebTransport (Stage 5) is the truly-symmetric path.
  *
  * ── Firefox download RAM caveat (known, documented, not a bug we can fix) ──
  * When the LINK is faster than this read loop (loopback / fast LAN), Firefox

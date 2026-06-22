@@ -3,45 +3,54 @@
  * ============================================================
  *
  * One worker per parallel upload stream. It generates ONE fixed incompressible
- * buffer with `crypto.getRandomValues` (no WASM — the buffer is filled once and
- * reused cyclically, so the RNG is never on the hot path; CSPRNG bytes are
- * indistinguishable from xorshift64* to gzip/br, so incompressibility holds) and
- * POSTs it in a loop over plain HTTP/1.1 via XMLHttpRequest, measuring bytes via
- * `upload.onprogress` (so we count bytes ACTUALLY sent, never generated-but-
- * unsent). The server drains + counts them.
+ * Blob with `crypto.getRandomValues` (no WASM — filled once and reused for every
+ * POST, so the RNG is never on the hot path; CSPRNG bytes are indistinguishable
+ * from xorshift64* to gzip/br, so incompressibility holds) and POSTs it in a loop
+ * over plain HTTP/1.1 via `fetch`. The SERVER drains + counts the bytes and
+ * relays the authoritative count over /ws/upload (see upload-progress-worker.ts);
+ * this worker just keeps the lane saturated and is otherwise measurement-blind.
  *
- * Why XHR and not a streaming `fetch` body: a `fetch` with a ReadableStream
- * request body (`duplex:'half'`) requires HTTP/2 in Chrome (→ ALPN failure on
- * our cleartext h1.1 origin) and is unsupported in Firefox. XHR upload works
- * over HTTP/1.1 in every browser — and each worker is its own TCP connection,
- * exactly the multi-TCP model (ARCHITECTURE §1). The WebTransport upload path
- * (the demo's `upload-worker.js`) arrives in Stage 5.
+ * ── Why a fixed-Blob `fetch` (and NOT a streaming fetch) ──
+ * A `fetch` whose body is a *ReadableStream* (`duplex:'half'`) is the streaming
+ * upload primitive — and it requires HTTP/2 in Chrome (→ ALPN failure on our
+ * cleartext h1.1 origin) and is unimplemented in Firefox. That path is NEVER used
+ * here. A `fetch` whose body is a *fixed Blob* has a known Content-Length and is
+ * an ordinary h1.1 request that works in every target browser — exactly like the
+ * XHR repeated-Blob POST it replaces, but with the cleaner fetch/AbortController
+ * ergonomics the download worker already uses (same abort + re-loop shape) and a
+ * real `res.ok`/`res.status` so a 4xx/5xx is handled instead of blindly re-POSTed.
  *
- * (Conversely, download-worker.ts uses fetch, NOT XHR: it must read-and-discard
- * a streamed response at O(1) memory, which XHR can't do — it buffers the whole
- * response. See that file's header for the full fetch-vs-XHR rationale.)
+ * ── Why no progress events (server-authoritative) ──
+ * `fetch` has no upload-progress events at all, and we no longer want them: the
+ * upload figure is the SERVER's drained byte count (the only count downstream of
+ * every browser/proxy send buffer — it can lag the wire but never lead it). So
+ * this worker reports only lane liveness: one `{type:'alive'}` per completed POST
+ * (proving the lane recovered, for the restart logic) and `{type:'error'}` on a
+ * failed POST. It NEVER reports bytes — the /ws/upload count is the sole source.
+ * (The old `upload.onprogress` byte counting is gone, along with its watchdog
+ * keepalive — the 100 ms server frames are the heartbeat now; a dropped progress
+ * socket freezes measured-time via the progress worker's stall/resume.)
  *
- * Message protocol matches the download worker so the RealBackend pool drives
- * both directions identically:
- *   in:  { type: 'start', url } | { type: 'stop' }
- *   out: { type: 'progress', bytes } | { type: 'error', recoverable, detail }
+ * ── Why fetch here mirrors download-worker.ts ──
+ * Download = fetch + body.getReader(): read-and-DISCARD a streamed RESPONSE at
+ * O(1) memory. Upload = fetch + fixed Blob body: stream a generated REQUEST from
+ * one Blob and read nothing back (a tiny JSON echo, drained to free the keep-alive
+ * connection). Same fetch/abort/re-loop skeleton both directions; the platform no
+ * longer forces XHR on the upload side now that we don't need onprogress.
  *
- * Memory is fixed: ONE Blob per worker, generated once and reused for every
- * POST. Nothing grows.
+ * Message protocol (RealBackend's pool drives both directions):
+ *   in:  { type: 'start', url, debug?, id?, streams? } | { type: 'stop' }
+ *   out: { type: 'alive' } | { type: 'error', recoverable, detail }
  *
- * ── Why a Blob and not an ArrayBuffer (the memory-blowup fix) ──
- * `xhr.send(arrayBuffer)` COPIES the body bytes into the request every call, so
- * looping POSTs of a 64/32/4 MiB ArrayBuffer churns a fresh multi-MiB copy per
- * request. On a fast (loopback) link each POST completes in a few ms, so we
- * created copies at gigabytes/sec — far faster than GC reclaims them. The heap
- * ballooned to many GB, GC pauses froze the UI, and `upload.onprogress` counted
- * those buffered-but-undelivered bytes as "sent" (so the app over-reported vs
- * the wire/server). `xhr.send(blob)` REFERENCES the Blob instead of copying it
- * into the request: one Blob, generated once, streamed from for every POST → no
- * per-request JS-heap copy (the engine serialises the Blob's backing store
- * straight to the socket). The footprint then stays flat and `onprogress` tracks
- * the real socket throughput (so the app matches the wire/server figure).
- * See docs/THROUGHPUT_MEASUREMENT.md for the full write-up.
+ * ── Why a Blob and not an ArrayBuffer (the memory-blowup fix, unchanged) ──
+ * `fetch(body: arrayBuffer)` (like `xhr.send(arrayBuffer)`) COPIES the body bytes
+ * into the request every call, so looping POSTs of a multi-MiB ArrayBuffer churn a
+ * fresh copy per request — on a fast (loopback) link that created copies at
+ * gigabytes/sec, far faster than GC reclaimed them, ballooning the heap to many GB.
+ * `fetch(body: blob)` REFERENCES the Blob instead: one Blob, generated once,
+ * streamed from for every POST → no per-request JS-heap copy (the engine serialises
+ * the Blob's backing store straight to the socket). The footprint stays flat.
+ * NEVER revert to a per-POST ArrayBuffer/slice. See docs/THROUGHPUT_MEASUREMENT.md.
  * ============================================================ */
 
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
@@ -51,8 +60,10 @@ import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from ".
 type InMsg =
   | { type: "start"; url: string; debug?: boolean; id?: number; streams?: number }
   | { type: "stop" };
+/** `alive` = one POST drained by the server (lane is live; NO byte count — the
+ *  /ws/upload socket carries the authoritative count). `error` drives lane restart. */
 type OutMsg =
-  | { type: "progress"; bytes: number }
+  | { type: "alive" }
   | { type: "error"; recoverable: boolean; detail: string };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -60,20 +71,14 @@ const post = (m: OutMsg) => ctx.postMessage(m);
 
 /** TOTAL upload payload budget across ALL streams — the single knob to tune.
  *  Each worker uses TOTAL / parallelStreams (see `bufBytes`), so the combined
- *  in-flight reservoir (the bytes upload.onprogress can count ahead of what the
- *  server has actually drained) stays CONSTANT no matter how many streams run.
- *  That's the point: bump streams for more parallelism WITHOUT silently
- *  enlarging the reservoir — which is what made "6 streams" drift exactly like a
- *  too-big per-worker body did (the per-stream body, not the total, had been the
- *  constant). Sized LARGE on purpose so each POST lasts ~100 ms+ and the
- *  request→response turnaround between POSTs is amortised to a few % (a small
- *  body drains in a few ms on a fast link, so that idle gap capped upload far
- *  below download). upload.onprogress still counts bytes byte-granular AS they
- *  flush to the socket (not per-POST), so a slow link reports its real partial
- *  throughput; honesty of that LIVE figure relies on the reservoir staying
- *  bounded — see docs/THROUGHPUT_MEASUREMENT.md.
+ *  payload reservoir stays CONSTANT no matter how many streams run. Sized LARGE on
+ *  purpose so each POST lasts ~100 ms+ and the request→response turnaround between
+ *  POSTs is amortised to a few % (a small body drains in a few ms on a fast link,
+ *  so that idle gap would cap upload far below download). The server counts the
+ *  bytes byte-granular as it drains them, so a slow link still reports its real
+ *  partial throughput over /ws/upload — independent of how big each POST is.
  *  Cost: ONE Blob of (TOTAL / streams) per worker, allocated once and reused;
- *  send() references it, so the size never grows memory. */
+ *  fetch references it, so the size never grows memory. */
 const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB desktop default (÷ streams per worker)
 /** Per-worker payload floor. Below this a POST drains in a few ms on a fast link,
  *  so the request→response turnaround dominates — keep each POST ~100 ms+. */
@@ -84,8 +89,6 @@ const MIN_PER_WORKER_BYTES = 2 * 1024 * 1024;
 const FILL_BLOCK_BYTES = 4 * 1024 * 1024;
 /** crypto.getRandomValues' hard per-call byte quota. */
 const RNG_CHUNK_BYTES = 65536;
-/** Batch progress no more often than this (ms). */
-const POST_INTERVAL_MS = 50;
 
 /** Total upload reservoir scaled to device memory so a low-RAM phone doesn't OOM
  *  building the Blob. `navigator.deviceMemory` is a GiB hint (undefined on Firefox/
@@ -99,29 +102,37 @@ function uploadTotalBudget(): number {
   return UPLOAD_TOTAL_BUF_BYTES;
 }
 
+/** Map a non-OK POST status to whether retrying the lane is worthwhile.
+ *  429 (rate-limited) / 413 (too large) / 503 (unavailable) / 410 (gone) are
+ *  terminal for this run — re-POSTing just hammers a server that won't take it.
+ *  Everything else (incl. 500 and any network/abort error) is treated transient. */
+function recoverableStatus(status: number): boolean {
+  return !(status === 429 || status === 413 || status === 503 || status === 410);
+}
+
 let stopped = false;
-let xhr: XMLHttpRequest | null = null;
+/** Aborts the in-flight POST on `stop` (mirrors download-worker.ts). */
+let abort: AbortController | null = null;
 /** The single reused payload (generated once on first start). A Blob — NOT an
- *  ArrayBuffer — so each xhr.send() references it instead of copying it. */
+ *  ArrayBuffer — so each fetch references it instead of copying it. */
 let payload: Blob | null = null;
 /** The 4 MiB incompressible source block, filled once with CSPRNG bytes and
  *  repeated to build each payload (caps the construction-time heap peak). Typed
  *  over ArrayBuffer (not the default ArrayBufferLike) so it is a valid BlobPart. */
 let fillBlock: Uint8Array<ArrayBuffer> | null = null;
-/** The payload's byte length, cached so onload can tally the tail without
- *  touching the Blob. */
+/** The payload's byte length, cached so the debug log can tally completed POSTs. */
 let payloadBytes = 0;
 /** Per-worker payload size = uploadTotalBudget() / parallelStreams (≥ floor),
- *  fixed on `start` so the combined in-flight reservoir is independent of stream
- *  count (and device-bounded so a phone can't OOM). */
+ *  fixed on `start` so the combined reservoir is independent of stream count (and
+ *  device-bounded so a phone can't OOM). */
 let bufBytes = UPLOAD_TOTAL_BUF_BYTES;
 
 /** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
 let streamId = 0;
-/** Raw-send debug window: bytes flushed to the socket (via upload.onprogress)
- *  since the last 1 Hz log + its start time + the running per-stream total.
- *  This is the real sent count, spanning POST boundaries, so it shows whether
- *  the request/response turnaround is leaving the wire idle. */
+/** Completed-POST debug window: bytes fully POSTed (server-drained) since the last
+ *  1 Hz log + its start time + the running per-stream total. Coarser than the old
+ *  onprogress raw-send window (one step per POST, not byte-granular), but it still
+ *  shows whether the request→response turnaround is leaving the wire idle. */
 let dbgWinBytes = 0;
 let dbgWinStart = 0;
 let dbgTotal = 0;
@@ -140,10 +151,10 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     dbgWinBytes = 0;
     dbgTotal = 0;
     dbgWinStart = performance.now();
-    run(msg.url);
+    void run(msg.url);
   } else if (msg.type === "stop") {
     stopped = true;
-    xhr?.abort();
+    abort?.abort();
   }
 };
 
@@ -160,65 +171,60 @@ function incompressibleBlock(): Uint8Array<ArrayBuffer> {
   return b;
 }
 
-function run(url: string): void {
-  if (stopped) return;
-
-  if (!payload || payloadBytes !== bufBytes) {
-    // Build the payload by REPEATING one filled block up to bufBytes. The Blob
-    // copies each part into its own backing store, so the construction-time heap
-    // peak is ~block + payload (not the 2× a fresh Uint8Array(bufBytes) + its Blob
-    // copy would cost). send(Blob) then streams from it without a per-POST copy.
-    const block = incompressibleBlock();
-    const parts: BlobPart[] = [];
-    let remaining = bufBytes;
-    while (remaining > 0) {
-      const take = Math.min(remaining, block.byteLength);
-      parts.push(take === block.byteLength ? block : block.subarray(0, take));
-      remaining -= take;
-    }
-    payload = new Blob(parts, { type: "application/octet-stream" });
-    payloadBytes = bufBytes;
+/** Build the reused payload by REPEATING one filled block up to bufBytes. The Blob
+ *  copies each part into its own backing store, so the construction-time heap peak
+ *  is ~block + payload (not the 2× a fresh Uint8Array(bufBytes) + its Blob copy
+ *  would cost). fetch then streams from it without a per-POST copy. */
+function buildPayload(): void {
+  if (payload && payloadBytes === bufBytes) return;
+  const block = incompressibleBlock();
+  const parts: BlobPart[] = [];
+  let remaining = bufBytes;
+  while (remaining > 0) {
+    const take = Math.min(remaining, block.byteLength);
+    parts.push(take === block.byteLength ? block : block.subarray(0, take));
+    remaining -= take;
   }
-  postLoop(url);
+  payload = new Blob(parts, { type: "application/octet-stream" });
+  payloadBytes = bufBytes;
 }
 
-/** POST the payload once; on completion, loop to keep the lane saturated. */
-function postLoop(url: string): void {
-  if (stopped || !payload) return;
+/** POST the fixed Blob in a loop to keep the lane saturated for the whole stage.
+ *  Mirrors download-worker.ts's re-fetch loop: a fresh AbortController per POST,
+ *  `stop` aborts it, a network error ends the lane (RealBackend restarts it). */
+async function run(url: string): Promise<void> {
+  if (stopped) return;
+  buildPayload();
+  if (!payload) return;
   const body = payload;
-  const x = new XMLHttpRequest();
-  xhr = x;
 
-  let lastLoaded = 0;
-  let acc = 0;
-  let lastPost = performance.now();
-  const flush = (force: boolean) => {
-    const now = performance.now();
-    if (acc > 0 && (force || now - lastPost >= POST_INTERVAL_MS)) {
-      post({ type: "progress", bytes: acc });
-      acc = 0;
-      lastPost = now;
-    }
-  };
-
-  x.open("POST", url);
-  x.setRequestHeader("Content-Type", "application/octet-stream");
-  // upload.onprogress reports bytes flushed to the socket — the real sent count.
-  x.upload.onprogress = (e: ProgressEvent) => {
-    const d = e.loaded - lastLoaded;
-    lastLoaded = e.loaded;
-    if (d > 0) {
-      acc += d;
-      flush(false);
-      // Verbose: raw bytes flushed to the socket, 1 Hz, spanning POST
-      // boundaries — the ground truth for the upload turnaround question.
+  while (!stopped) {
+    abort = new AbortController();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        body,
+        signal: abort.signal,
+        cache: "no-store",
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+      // Drain the tiny JSON echo so this keep-alive connection is reusable for the
+      // next POST (an unread body can pin the connection and stall the lane).
+      await res.arrayBuffer().catch(() => {});
+      if (!res.ok) {
+        post({ type: "error", recoverable: recoverableStatus(res.status), detail: `HTTP ${res.status}` });
+        return; // RealBackend decides whether to restart this lane
+      }
+      // One full payload was drained by the server: the lane is alive. NO bytes —
+      // the /ws/upload count is authoritative; this only resets the restart counter.
+      post({ type: "alive" });
       if (debugEnabled()) {
-        dbgWinBytes += d;
-        dbgTotal += d;
+        dbgWinBytes += payloadBytes;
+        dbgTotal += payloadBytes;
         const now = performance.now();
         const dt = now - dbgWinStart;
         if (dt >= 1000) {
-          dlog(`ul-worker#${streamId}`, "raw-send", {
+          dlog(`ul-worker#${streamId}`, "post-complete", {
             rate: fmtRate(dbgWinBytes / (dt / 1000)),
             window: fmtBytes(dbgWinBytes),
             total: fmtBytes(dbgTotal),
@@ -228,22 +234,10 @@ function postLoop(url: string): void {
           dbgWinStart = now;
         }
       }
+    } catch (err) {
+      if (stopped) return; // aborted by stop() — a clean teardown, not an error
+      post({ type: "error", recoverable: true, detail: String(err) });
+      return; // the main thread decides whether to restart this lane
     }
-  };
-  x.onload = () => {
-    // Count any tail progress events didn't report (fast POSTs may skip them).
-    const tail = payloadBytes - lastLoaded;
-    if (tail > 0) acc += tail;
-    flush(true);
-    if (!stopped) postLoop(url); // next POST on the same keep-alive connection
-  };
-  x.onerror = () => {
-    flush(true);
-    if (!stopped) post({ type: "error", recoverable: true, detail: "xhr upload error" });
-  };
-  x.onabort = () => flush(true);
-  // Send the reused Blob: the browser STREAMS the body from it without copying,
-  // so the POST loop allocates nothing per request. (send(ArrayBuffer) would
-  // copy the bytes every call — the old memory blowup.)
-  x.send(body);
+  }
 }
