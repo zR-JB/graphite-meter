@@ -123,6 +123,22 @@ const LANE_RESTART_BACKOFF_MS = 300;
  *  the core's max-stall timeout also bounds total patience. */
 const LANE_MAX_RESTARTS = 40;
 
+/** Effective same-origin upload-stream cap — the configurable knob for the
+ *  connection-budget experiment (#2). The browser's ~6-connections-per-host limit
+ *  must also seat /ws/upload + /ws/ping; 4 POST lanes + those 2 buses = the cap
+ *  with zero headroom for the preflight OPTIONS / lane-respawn overlap, which then
+ *  queues and stalls the very progress/latency frames the design needs. So clamp
+ *  POST lanes to cap − 2 buses − 1 safety = 3. Honoring a configured value >3
+ *  needs a separate control origin (LATER). Lower to 2 if experiment #2 shows
+ *  contention at 3. */
+const SAME_ORIGIN_STREAM_CAP = 3;
+/** Grace after BYE for the /ws/upload worker to flush + receive UPLOAD_COMPLETE
+ *  before we terminate it (the client headline is already set, so we don't block). */
+const PROGRESS_BYE_GRACE_MS = 1000;
+/** The server progress count is considered stale — so upload.onprogress drives the
+ *  live curve as a fallback — if no /ws/upload byte has arrived for this long. */
+const SERVER_STALE_MS = 2000;
+
 /** Order-preserving de-dup for building a transport preference list. */
 function unique<T>(xs: T[]): T[] {
   return [...new Set(xs)];
@@ -185,6 +201,16 @@ type PingOutMsg =
   | { type: "stall"; detail: string }
   | { type: "resume" };
 
+/** Upload-progress worker → RealRunner. `bytes`/`complete` carry the SERVER's
+ *  cumulative drained count for the test; stall/resume bracket a reconnect (the
+ *  socket dropping is non-fatal — the upload still measures client-side). */
+type ProgressOutMsg =
+  | { type: "open" }
+  | { type: "bytes"; n: number }
+  | { type: "complete"; n: number }
+  | { type: "stall"; detail: string }
+  | { type: "resume" };
+
 export class RealBackend implements RunnerBackend {
   #opts: RealBackendOptions;
   /** The core handle: push samples / emit / report failures + health through it. */
@@ -225,6 +251,24 @@ export class RealBackend implements RunnerBackend {
   #stalled = false;
   /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
   #cbSeed = "";
+
+  /* ---- server-authoritative upload state (Stage 3+) ---- */
+  /** The per-call upload-session id minted at /preflight; appended as &id= on the
+   *  upload POST lanes AND the /ws/upload socket so the server correlates them.
+   *  null ⇒ server-authoritative upload unavailable (the client self-counts). */
+  #testId: string | null = null;
+  /** The dedicated /ws/upload progress worker (up stage only), or null. */
+  #progressWorker: Worker | null = null;
+  /** True while the up stage has a progress worker (server count is the source). */
+  #serverUp = false;
+  /** Latest cumulative server byte count + the measured-window anchors for the
+   *  totals-based headline = (lastN − startN) / (lastT − startT). */
+  #srvN = 0;
+  #srvPrevN = 0; // cumulative at the last delta fed into the live curve
+  #srvStartN = 0;
+  #srvStartT = 0;
+  #srvHaveStart = false;
+  #srvLastByteAt = 0; // performance.now() of the last server byte (staleness gate)
   /** Verbose 1 Hz aggregate-log window: bytes summed across the pool since the
    *  last log + its start time. Lets the pool's combined raw rate be compared
    *  against the per-worker raw logs and the server `-verbose` figure. */
@@ -287,6 +331,9 @@ export class RealBackend implements RunnerBackend {
     }
     const pf = (await res.json()) as Preflight;
     this.#capabilities = pf.capabilities;
+    // Stash the server-minted upload-session id (absent ⇒ client self-counts the
+    // upload). It correlates the upload POST lanes with the /ws/upload socket.
+    this.#testId = pf.uploadId ?? null;
 
     // Pre-test idle pings over /ws/ping: emit a few sparkline samples and use
     // their median as the pre-test ping (the server sends 0 — RTT is client-
@@ -539,6 +586,27 @@ export class RealBackend implements RunnerBackend {
    *  for "up", or webtransport) and run priming bytes to warm the path (TCP
    *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
    *  stay open for #measureTransfer to start measuring on the SAME connection. */
+  /** Effective parallel-stream count: the configured value clamped to the
+   *  same-origin cap (so the POST lanes leave headroom for /ws/upload + /ws/ping
+   *  under the browser's per-host connection limit). Used for BOTH the lane loop
+   *  and the per-worker reservoir split, so the per-worker Blob size matches the
+   *  real lane count. */
+  #effectiveStreams(): number {
+    return Math.min(Math.max(1, this.#host!.config!.parallelStreams), SAME_ORIGIN_STREAM_CAP);
+  }
+
+  /** Whether the server count is currently the authoritative byte source for the
+   *  up stage: a progress worker exists AND a /ws/upload byte arrived recently.
+   *  When false (no worker, or the socket has gone stale), upload.onprogress
+   *  drives the live curve as a fallback instead of just keeping the watchdog warm. */
+  #serverDriving(): boolean {
+    return (
+      this.#serverUp &&
+      this.#dir === "up" &&
+      performance.now() - this.#srvLastByteAt < SERVER_STALE_MS
+    );
+  }
+
   #primeTransfer(kind: TransportKind, dir: FlowDirection): void {
     if (kind !== "xhr-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
 
@@ -548,11 +616,12 @@ export class RealBackend implements RunnerBackend {
 
     const cfg = this.#host!.config!;
     const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
-    const streams = Math.max(1, cfg.parallelStreams);
+    const streams = this.#effectiveStreams();
     this.#dir = dir;
 
     // Download streams the body down (?bytes=N to size it); upload streams a
     // generated body up (no size — the worker generates until the stage stops).
+    // The upload lanes carry the minted &id= so the server aggregates them.
     const url = (i: number): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
@@ -560,7 +629,8 @@ export class RealBackend implements RunnerBackend {
         return `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
       const path = this.#capabilities?.endpoints.upload ?? "/upload";
-      return `${base}${path}?cb=${cb}`;
+      const idParam = this.#testId ? `&id=${encodeURIComponent(this.#testId)}` : "";
+      return `${base}${path}?cb=${cb}${idParam}`;
     };
 
     this.#workers = [];
@@ -572,9 +642,45 @@ export class RealBackend implements RunnerBackend {
       this.#streamUrls[i] = url(i);
       this.#spawnWorker(i);
     }
+    // For upload, also open the /ws/upload progress socket (server-authoritative
+    // count). Spawned during warmup so it is warm before measurement; non-fatal.
+    if (dir === "up") this.#primeUploadProgress();
     // Workers start now (warming TCP cwnd). Their progress accrues into
     // #pendingBytes during warmup but is NOT pushed — #measureTransfer resets the
     // window and starts the aggregation timer.
+  }
+
+  /** Spawn the /ws/upload progress worker for the up stage. Resets the server
+   *  window anchors. Best-effort: when there is no minted id or the server does
+   *  not advertise WebSocket, server-authoritative upload is simply unavailable
+   *  and the upload measures client-side via upload.onprogress (fallback). */
+  #primeUploadProgress(): void {
+    this.#serverUp = false;
+    this.#srvN = 0;
+    this.#srvPrevN = 0;
+    this.#srvStartN = 0;
+    this.#srvStartT = 0;
+    this.#srvHaveStart = false;
+    this.#srvLastByteAt = 0;
+
+    const caps = this.#capabilities;
+    if (!this.#testId || !caps?.transports.websocket) return; // → client fallback
+
+    const wsUpload = caps.endpoints.wsUpload ?? "/ws/upload";
+    const url =
+      this.#resolveWsBase(this.#host!.config!.endpoint) +
+      wsUpload +
+      `?id=${encodeURIComponent(this.#testId)}`;
+    const w = new Worker(new URL("./workers/upload-progress-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void => this.#onProgressMessage(e.data);
+    w.onerror = (): void => {
+      /* non-fatal: the client-side upload count remains the fallback */
+    };
+    w.postMessage({ type: "start", url });
+    this.#progressWorker = w;
+    this.#serverUp = true;
   }
 
   /** Open (or re-open) the worker for stream `i` against its stored URL. The
@@ -596,7 +702,8 @@ export class RealBackend implements RunnerBackend {
       url: this.#streamUrls[i],
       debug: debugEnabled(),
       id: i,
-      streams: Math.max(1, this.#host!.config!.parallelStreams),
+      // Clamped count so the per-worker payload split matches the real lane count.
+      streams: this.#effectiveStreams(),
     });
     this.#workers[i] = w;
   }
@@ -698,6 +805,11 @@ export class RealBackend implements RunnerBackend {
     this.#lastAggAt = performance.now();
     this.#dbgWinBytes = 0;
     this.#dbgLastLog = this.#lastAggAt;
+    // Anchor the server-authoritative window at measure-start so warmup bytes are
+    // excluded from both the live curve delta and the totals-based headline. The
+    // start (startN/startT) is captured on the first measured server byte.
+    this.#srvHaveStart = false;
+    this.#srvPrevN = this.#srvN;
     this.#aggTimer = setInterval(() => this.#aggregate(), THROUGHPUT_CADENCE_MS);
   }
 
@@ -744,11 +856,22 @@ export class RealBackend implements RunnerBackend {
     i: number,
   ): void {
     if (msg.type === "progress") {
-      this.#pendingBytes += msg.bytes;
-      this.#laneRetry[i] = 0; // a real sample proves this lane recovered
-      if (this.#stalled) {
-        this.#host!.resume();
+      this.#laneRetry[i] = 0; // a real send proves this lane recovered
+      if (this.#serverDriving()) {
+        // The server count is authoritative; upload.onprogress only proves the
+        // lane is alive — keep the watchdog warm (no bytes, so no double-count)
+        // so a gap in /ws/upload frames can't auto-stall a healthy upload.
+        // keepAlive auto-resumes the core stall; mirror that in our own flag.
+        this.#host!.keepAlive();
         this.#stalled = false;
+      } else {
+        // Download, or the upload fallback (no/stale server progress): the
+        // client-side count drives the live curve.
+        this.#pendingBytes += msg.bytes;
+        if (this.#stalled) {
+          this.#host!.resume();
+          this.#stalled = false;
+        }
       }
     } else {
       this.#onWorkerError(i, msg.detail, msg.recoverable);
@@ -789,6 +912,58 @@ export class RealBackend implements RunnerBackend {
     }, LANE_RESTART_BACKOFF_MS);
   }
 
+  /** A /ws/upload byte total arrived. The server count is the authoritative byte
+   *  source for the up curve (onprogress only keepalives — see #onWorkerMessage),
+   *  so feed the measured delta into the aggregation window AND report the
+   *  totals-based headline rate over the measured window. A dropped socket
+   *  (stall) is non-fatal — onprogress takes over until it recovers. */
+  #onProgressMessage(msg: ProgressOutMsg): void {
+    if (!this.#transferActive || this.#dir !== "up") return; // late message after teardown
+    if (msg.type !== "bytes" && msg.type !== "complete") return; // open/stall/resume: nothing to do
+
+    const now = performance.now();
+    this.#srvLastByteAt = now;
+    if (msg.n > this.#srvN) this.#srvN = msg.n; // cumulative + monotonic guard
+    if (!this.#measuring) return; // warmup bytes are excluded from the window
+
+    if (!this.#srvHaveStart) {
+      this.#srvHaveStart = true;
+      this.#srvStartN = this.#srvN;
+      this.#srvStartT = now;
+      this.#srvPrevN = this.#srvN;
+    }
+    // Server bytes drive the live curve: feed the delta into the ~16 Hz window.
+    const delta = this.#srvN - this.#srvPrevN;
+    if (delta > 0) {
+      this.#srvPrevN = this.#srvN;
+      this.#pendingBytes += delta;
+      if (this.#stalled) {
+        this.#host!.resume();
+        this.#stalled = false;
+      }
+    }
+    // Totals-based authoritative headline over the measured window — one ratio,
+    // immune to per-frame arrival jitter (unlike a mean of per-tick rates), using
+    // real wall-clock between the first and last server sample.
+    const dtSec = (now - this.#srvStartT) / 1000;
+    if (dtSec > 0) {
+      this.#host!.reportUploadServerRate((this.#srvN - this.#srvStartN) / dtSec);
+    }
+  }
+
+  /** Stop the /ws/upload worker: it sends BYE (the server's authoritative
+   *  finalizer) then closes; we terminate after a grace so BYE + UPLOAD_COMPLETE
+   *  can flush. The client headline was already set from the last reported rate,
+   *  so we never block on it. Idempotent. */
+  #teardownProgress(): void {
+    const w = this.#progressWorker;
+    this.#progressWorker = null;
+    this.#serverUp = false;
+    if (!w) return;
+    w.postMessage({ type: "stop" });
+    setTimeout(() => w.terminate(), PROGRESS_BYE_GRACE_MS);
+  }
+
   /** Stop + terminate the worker pool, the aggregation timer, and any pending
    *  lane-restart backoffs. Idempotent. */
   #teardownTransfer(): void {
@@ -803,6 +978,9 @@ export class RealBackend implements RunnerBackend {
       w.postMessage({ type: "stop" });
       w.terminate();
     }
+    // Stop the progress worker AFTER the POST lanes — BYE must follow the lanes
+    // ending so the server's final count includes everything they drained.
+    this.#teardownProgress();
     this.#workers = [];
     this.#streamUrls = [];
     this.#laneRetry = [];
