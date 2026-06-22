@@ -42,7 +42,7 @@ WORKDIR /app/client
 # bun.lock may be a newer lockfile version than the pinned bun image; bun then
 # resolves from package.json's pinned ranges, which is fine for a build image.)
 COPY client/package.json client/bun.lock ./
-RUN bun install
+RUN bun --bun install
 # Then the source + the freshly-built WASM (upload-worker.ts imports it), then build.
 COPY client/ ./
 COPY --from=wasm /out ./src/lib/wasm
