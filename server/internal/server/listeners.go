@@ -45,8 +45,14 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		log.Printf("[gm:server] verbose throughput logging enabled")
 	}
 
+	// Per-id upload aggregate store: correlates the upload's POST lanes with its
+	// /ws/upload progress socket (separate connections, same minted ?id=) into one
+	// server-authoritative drained-byte count. Its sweeper reaps idle test state.
+	uploadStore := endpoint.NewUploadStore()
+	go uploadStore.RunSweeper(ctx)
+
 	reg := endpoint.NewRegistry()
-	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
+	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg, uploadStore))
 	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
 	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter))
 	reg.RegisterWS("/ws/ping", endpoint.NewPing())

@@ -12,7 +12,12 @@ type Preflight struct {
 	PreTestPingMs      float64      `json:"preTestPingMs"`
 	EngineVersion      string       `json:"engineVersion"`
 	ProtocolNegotiated string       `json:"protocolNegotiated"`
-	Capabilities       Capabilities `json:"capabilities"`
+	// UploadID is an opaque per-call token minted by the server and echoed as ?id=
+	// on POST /upload and GET /ws/upload, correlating those separate connections
+	// into one authoritative drained-byte count. omitempty: absent => the client
+	// falls back to its own client-side upload count.
+	UploadID     string       `json:"uploadId,omitempty"`
+	Capabilities Capabilities `json:"capabilities"`
 }
 
 // ServerInfo identifies the measurement server.
@@ -53,6 +58,7 @@ type Endpoints struct {
 	Download   string `json:"download"`
 	Upload     string `json:"upload"`
 	WSPing     string `json:"wsPing"`
+	WSUpload   string `json:"wsUpload"`
 	WTPing     string `json:"wtPing"`
 	WTDownload string `json:"wtDownload"`
 	WTUpload   string `json:"wtUpload"`
@@ -65,6 +71,7 @@ func DefaultEndpoints() Endpoints {
 		Download:   "/download",
 		Upload:     "/upload",
 		WSPing:     "/ws/ping",
+		WSUpload:   "/ws/upload",
 		WTPing:     "/wt/ping",
 		WTDownload: "/wt/download",
 		WTUpload:   "/wt/upload",

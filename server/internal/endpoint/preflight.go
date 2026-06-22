@@ -12,13 +12,20 @@ import (
 )
 
 // Preflight serves GET /preflight: server identity, advertised origins, and
-// per-stage capability flags. Request/response JSON (no wire protocol).
+// per-stage capability flags. Request/response JSON (no wire protocol). It also
+// mints the per-call upload-session id (store.Mint) that correlates the upload's
+// POST lanes with its /ws/upload progress socket.
 type Preflight struct {
-	cfg *config.Config
+	cfg   *config.Config
+	store *UploadStore
 }
 
-// NewPreflight builds the preflight endpoint bound to cfg.
-func NewPreflight(cfg *config.Config) *Preflight { return &Preflight{cfg: cfg} }
+// NewPreflight builds the preflight endpoint bound to cfg. store mints the upload
+// id surfaced in the response; it may be nil (then no uploadId is issued and the
+// client falls back to its own client-side upload count).
+func NewPreflight(cfg *config.Config, store *UploadStore) *Preflight {
+	return &Preflight{cfg: cfg, store: store}
+}
 
 func (p *Preflight) ID() string                  { return "preflight" }
 func (p *Preflight) Capabilities() Capabilities  { return Capabilities{HTTP: true} }
@@ -40,6 +47,14 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 	cfg := p.cfg
 
 	host, port := hostPort(r)
+
+	// Mint a per-call upload-session id so the upload's POST lanes and its
+	// /ws/upload progress socket (separate connections) share one server-side
+	// drained-byte count. Empty when no store is wired (client then self-counts).
+	var uploadID string
+	if p.store != nil {
+		uploadID = p.store.Mint()
+	}
 
 	// h1 origin: configured public origin, else derived from how the client
 	// reached us.
@@ -68,6 +83,7 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 		PreTestPingMs:      0, // no ping endpoint yet (Stage 4)
 		EngineVersion:      cfg.EngineVersion,
 		ProtocolNegotiated: string(s.Proto()),
+		UploadID:           uploadID,
 		Capabilities: wire.Capabilities{
 			Origins: origins,
 			Transports: wire.Transports{

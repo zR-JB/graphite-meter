@@ -2,13 +2,15 @@ package endpoint
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// uploadStore holds the per-test shared state that makes the SERVER-side drained
+// UploadStore holds the per-test shared state that makes the SERVER-side drained
 // byte count the authoritative upload result (docs/UPLOAD_ARCHITECTURE.md §3).
 // The upload's HTTP POST lanes and its /ws/upload progress socket are SEPARATE
 // TCP connections; both carry the same ?id= and meet here. Each POST drains into
@@ -30,7 +32,7 @@ import (
 // a flood of forged ids on this auth-less bus then creates no state, which both
 // stops cross-tab reads of a victim's progress stream and defuses the
 // maxLiveUploads-amplified DoS/lockout vector (§9).
-type uploadStore struct {
+type UploadStore struct {
 	shards [uploadShardCount]uploadShard
 	issued sync.Map     // id (string) -> issue time (mono ns); only minted ids may create an agg
 	live   atomic.Int32 // count of live aggregates, bounding the map (maxLiveUploads)
@@ -73,8 +75,8 @@ const (
 )
 
 // NewUploadStore builds an empty store with its shard maps initialised.
-func NewUploadStore() *uploadStore {
-	s := &uploadStore{}
+func NewUploadStore() *UploadStore {
+	s := &UploadStore{}
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
 	}
@@ -87,15 +89,31 @@ func NewUploadStore() *uploadStore {
 func monoNanos() int64 { return int64(time.Since(startMono)) }
 
 // shard returns the shard owning id (hash computed OUTSIDE any lock).
-func (s *uploadStore) shard(id string) *uploadShard {
+func (s *UploadStore) shard(id string) *uploadShard {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(id))
 	return &s.shards[h.Sum32()%uploadShardCount]
 }
 
+// Mint generates a fresh opaque upload-session token (128 bits of crypto entropy,
+// URL-safe so it rides ?id= without escaping), records it as issued, and returns
+// it. /preflight calls this once per request; only minted tokens can create an
+// aggregate, which is the store's primary abuse defence (§9).
+func (s *UploadStore) Mint() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is effectively fatal; return "" so the client simply
+		// runs without server-authoritative upload rather than getting a weak token.
+		return ""
+	}
+	id := "gmu_" + base64.RawURLEncoding.EncodeToString(b[:])
+	s.markIssued(id)
+	return id
+}
+
 // markIssued records that the server minted id at /preflight, so a later POST/WS
 // carrying it may create an aggregate. Idempotent.
-func (s *uploadStore) markIssued(id string) {
+func (s *UploadStore) markIssued(id string) {
 	if id == "" {
 		return
 	}
@@ -103,7 +121,7 @@ func (s *uploadStore) markIssued(id string) {
 }
 
 // isIssued reports whether id was minted by this server and not yet pruned.
-func (s *uploadStore) isIssued(id string) bool {
+func (s *UploadStore) isIssued(id string) bool {
 	if id == "" {
 		return false
 	}
@@ -117,7 +135,7 @@ func (s *uploadStore) isIssued(id string) bool {
 // the issued gate and the cap apply only to the first create, so pruning `issued`
 // or hitting the cap mid-test never strands a running test's later lanes. Every
 // successful call bumps lastTouchMono so an active id never looks idle to the sweeper.
-func (s *uploadStore) getOrCreate(id string) (*uploadAgg, bool) {
+func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -142,7 +160,7 @@ func (s *uploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 }
 
 // get returns the existing aggregate for id without creating one.
-func (s *uploadStore) get(id string) (*uploadAgg, bool) {
+func (s *UploadStore) get(id string) (*uploadAgg, bool) {
 	if id == "" {
 		return nil, false
 	}
@@ -155,7 +173,7 @@ func (s *uploadStore) get(id string) (*uploadAgg, bool) {
 
 // delete removes id's aggregate if present. Idempotent — a second delete (or a
 // delete racing the sweeper) is a no-op and never double-decrements `live`.
-func (s *uploadStore) delete(id string) {
+func (s *UploadStore) delete(id string) {
 	sh := s.shard(id)
 	sh.mu.Lock()
 	if _, ok := sh.m[id]; ok {
@@ -169,7 +187,7 @@ func (s *uploadStore) delete(id string) {
 // forgets every minted id older than issuedIDTTL. It is the store's only deleter
 // of aggregate state; bytes are never lost because the sole authoritative read is
 // the cumulative value at the client's BYE, long before idle reaping.
-func (s *uploadStore) sweep(ttl time.Duration) {
+func (s *UploadStore) sweep(ttl time.Duration) {
 	now := monoNanos()
 	aggCutoff := now - int64(ttl)
 	for i := range s.shards {
@@ -196,7 +214,7 @@ func (s *uploadStore) sweep(ttl time.Duration) {
 // in its own goroutine (like Meter.Run). It reaps map STATE only — goroutine
 // lifetimes on the /ws/upload bus are bounded separately by that handler's idle
 // read deadline (docs/UPLOAD_ARCHITECTURE.md §4).
-func (s *uploadStore) RunSweeper(ctx context.Context) {
+func (s *UploadStore) RunSweeper(ctx context.Context) {
 	ticker := time.NewTicker(uploadSweepInterval)
 	defer ticker.Stop()
 	for {

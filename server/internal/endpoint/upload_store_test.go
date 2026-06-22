@@ -94,6 +94,32 @@ func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	}
 }
 
+// TestUploadStoreMint checks minted ids are unique, issued (so getOrCreate accepts
+// them), and carry the opaque prefix.
+func TestUploadStoreMint(t *testing.T) {
+	s := NewUploadStore()
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		id := s.Mint()
+		if id == "" {
+			t.Fatal("Mint returned empty")
+		}
+		if len(id) < 8 || id[:4] != "gmu_" {
+			t.Fatalf("minted id %q lacks the gmu_ prefix", id)
+		}
+		if seen[id] {
+			t.Fatalf("Mint returned a duplicate id %q", id)
+		}
+		seen[id] = true
+		if !s.isIssued(id) {
+			t.Fatalf("minted id %q is not marked issued", id)
+		}
+		if _, ok := s.getOrCreate(id); !ok {
+			t.Fatalf("getOrCreate rejected the freshly minted id %q", id)
+		}
+	}
+}
+
 // TestUploadStoreDeleteIdempotent checks a double delete never double-decrements live.
 func TestUploadStoreDeleteIdempotent(t *testing.T) {
 	s := NewUploadStore()
