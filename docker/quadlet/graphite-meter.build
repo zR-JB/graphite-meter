@@ -28,3 +28,9 @@ Arch=arm64
 # BuildArg=GM_CLIENT_BUILD_LABEL=0.1.0
 # BuildArg=GM_CLIENT_ALLOW_DUMMY=1
 # BuildArg=GM_CLIENT_DEV_TOOLS=1
+
+
+PodmanArgs=--build-arg-file=%t/graphite-meter-build.args
+
+[Service]
+ExecStartPre=/bin/sh -c 'cd /path/to/graphite-meter && rev="$$(git rev-parse --short=7 HEAD)"; git diff --quiet || rev="$${rev}-dirty"; printf "VERSION=%%s\nGM_CLIENT_BUILD_LABEL=%%s\n" "$$rev" "$$rev" > %t/graphite-meter-build.args'
