@@ -15,7 +15,7 @@ ARG VERSION=0.1.0
 # (.dockerignore excludes only **/target and client/src/lib/wasm, so the crate
 # source + Cargo.{toml,lock} are in context and the artifact is built fresh.)
 # ---------------------------------------------------------------------------
-FROM docker.io/library/rust:1 AS wasm
+FROM docker.io/library/rust:1.96.0@sha256:c6811167278337db5f3b0234964ced5f538f154a2a20f09ec03721d7411c933d AS wasm
 RUN cargo install wasm-pack
 WORKDIR /src
 COPY crates/rng ./crates/rng
