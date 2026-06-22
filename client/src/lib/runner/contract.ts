@@ -207,6 +207,12 @@ export interface ThroughputResult {
    *  pings). Feeds the loss/retransmission compensation factor; 0 when no loaded
    *  pings ran (latency fully off). */
   packetLossPct: number;
+  /** Upload only: true when the headline came from the SERVER-measured drained
+   *  byte count over the measured window (via /ws/upload), not the client's
+   *  upload.onprogress. Absent/false ⇒ client-side fallback (e.g. the progress
+   *  socket never opened). The live curve/peak/stability still derive from
+   *  samples; only meanBytesPerSec is the server totals-based figure. */
+  serverAuthoritative?: boolean;
 }
 
 export interface LatencyResult {
