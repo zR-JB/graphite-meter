@@ -15,12 +15,12 @@ version     := env_var_or_default("VERSION", label)
 default:
     @just --list
 
-# --- RNG (Rust -> WASM payload generator, crates/rng) ---
-
-# Build the canonical xorshift64* generator to WASM into the client tree.
-# Requires the Rust toolchain + wasm-pack on PATH (rustup installs to ~/.cargo/bin).
-build-wasm:
-    cd crates/rng && PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release --out-dir ../../client/src/lib/wasm/rng --out-name gm_rng
+# --- RNG (Rust generator, crates/rng) ---
+# The client no longer bundles a WASM build of this: upload-worker.ts fills its
+# payload with crypto.getRandomValues (the buffer is generated once and reused, so
+# the RNG is never on the hot path). The crate is kept for the byte-exact
+# cross-language conformance pin (api/rng.testvectors.txt) and a possible future
+# WebTransport payload path.
 
 # Run the Rust generator's byte-exact conformance test (vs api/rng.testvectors.txt)
 test-rng:
@@ -28,16 +28,16 @@ test-rng:
 
 # --- Client (Svelte/Vite, bun) ---
 
-# Install client deps and produce client/dist (WASM generator built first)
-build-client: build-wasm
+# Install client deps and produce client/dist
+build-client:
     cd client && bun install && bun run build
 
-# Type-check the client (WASM generator built first so its types resolve)
-check: build-wasm
+# Type-check the client
+check:
     cd client && bun run check
 
 # Run the Vite dev server (hot reload, no Go server)
-dev-client: build-wasm
+dev-client:
     cd client && bun run dev
 
 # Regenerate the client's preflight types from the JSON Schema (source of truth).
@@ -69,7 +69,7 @@ test-server:
 # Inline GM_CLIENT_* scopes the knobs to this build only — `dev`/`build-client`
 # keep their dev defaults. Defaults: real-only engine, no dev tools, git-hash label.
 # Build the client in production mode (real-only, dev tooling stripped)
-prod-client: build-wasm
+prod-client:
     cd client && bun install && \
       GM_CLIENT_ENGINE="{{engine}}" \
       GM_CLIENT_ALLOW_DUMMY="{{allow_dummy}}" \

@@ -3,8 +3,10 @@
  * ============================================================
  *
  * One worker per parallel upload stream. It generates ONE fixed incompressible
- * buffer with the canonical xorshift64* generator (crates/rng → WASM) and POSTs
- * it in a loop over plain HTTP/1.1 via XMLHttpRequest, measuring bytes via
+ * buffer with `crypto.getRandomValues` (no WASM — the buffer is filled once and
+ * reused cyclically, so the RNG is never on the hot path; CSPRNG bytes are
+ * indistinguishable from xorshift64* to gzip/br, so incompressibility holds) and
+ * POSTs it in a loop over plain HTTP/1.1 via XMLHttpRequest, measuring bytes via
  * `upload.onprogress` (so we count bytes ACTUALLY sent, never generated-but-
  * unsent). The server drains + counts them.
  *
@@ -34,14 +36,14 @@
  * created copies at gigabytes/sec — far faster than GC reclaims them. The heap
  * ballooned to many GB, GC pauses froze the UI, and `upload.onprogress` counted
  * those buffered-but-undelivered bytes as "sent" (so the app over-reported vs
- * the wire/server). `xhr.send(blob)` REFERENCES the Blob instead of copying it:
- * one Blob, generated once, streamed from for every POST → zero per-request
- * allocation. The footprint then stays flat and `onprogress` tracks the real
- * socket throughput (so the app matches the wire/server figure).
+ * the wire/server). `xhr.send(blob)` REFERENCES the Blob instead of copying it
+ * into the request: one Blob, generated once, streamed from for every POST → no
+ * per-request JS-heap copy (the engine serialises the Blob's backing store
+ * straight to the socket). The footprint then stays flat and `onprogress` tracks
+ * the real socket throughput (so the app matches the wire/server figure).
  * See docs/THROUGHPUT_MEASUREMENT.md for the full write-up.
  * ============================================================ */
 
-import init, { ScrambledCounterRng } from "../../wasm/rng/gm_rng.js";
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
 
 /** `debug`/`id` drive verbose per-stream logging only. `streams` is the active
@@ -72,21 +74,46 @@ const post = (m: OutMsg) => ctx.postMessage(m);
  *  bounded — see docs/THROUGHPUT_MEASUREMENT.md.
  *  Cost: ONE Blob of (TOTAL / streams) per worker, allocated once and reused;
  *  send() references it, so the size never grows memory. */
-const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB total (÷ streams per worker)
+const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB desktop default (÷ streams per worker)
+/** Per-worker payload floor. Below this a POST drains in a few ms on a fast link,
+ *  so the request→response turnaround dominates — keep each POST ~100 ms+. */
+const MIN_PER_WORKER_BYTES = 2 * 1024 * 1024;
+/** The payload is built by repeating ONE filled block, so the peak transient heap
+ *  during construction is ~block + payload, not the 2× a fresh Uint8Array(bufBytes)
+ *  plus its Blob copy would cost (the iOS-Safari tab-kill guard at 1 stream). */
+const FILL_BLOCK_BYTES = 4 * 1024 * 1024;
+/** crypto.getRandomValues' hard per-call byte quota. */
+const RNG_CHUNK_BYTES = 65536;
 /** Batch progress no more often than this (ms). */
 const POST_INTERVAL_MS = 50;
 
+/** Total upload reservoir scaled to device memory so a low-RAM phone doesn't OOM
+ *  building the Blob. `navigator.deviceMemory` is a GiB hint (undefined on Firefox/
+ *  Safari → treated as desktop). */
+function uploadTotalBudget(): number {
+  const dm = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+  if (typeof dm === "number") {
+    if (dm <= 2) return 16 * 1024 * 1024;
+    if (dm <= 4) return 24 * 1024 * 1024;
+  }
+  return UPLOAD_TOTAL_BUF_BYTES;
+}
+
 let stopped = false;
 let xhr: XMLHttpRequest | null = null;
-let ready: Promise<unknown> | null = null;
 /** The single reused payload (generated once on first start). A Blob — NOT an
  *  ArrayBuffer — so each xhr.send() references it instead of copying it. */
 let payload: Blob | null = null;
+/** The 4 MiB incompressible source block, filled once with CSPRNG bytes and
+ *  repeated to build each payload (caps the construction-time heap peak). Typed
+ *  over ArrayBuffer (not the default ArrayBufferLike) so it is a valid BlobPart. */
+let fillBlock: Uint8Array<ArrayBuffer> | null = null;
 /** The payload's byte length, cached so onload can tally the tail without
  *  touching the Blob. */
 let payloadBytes = 0;
-/** Per-worker payload size = UPLOAD_TOTAL_BUF_BYTES / parallelStreams, fixed on
- *  `start` so the combined in-flight reservoir is independent of stream count. */
+/** Per-worker payload size = uploadTotalBudget() / parallelStreams (≥ floor),
+ *  fixed on `start` so the combined in-flight reservoir is independent of stream
+ *  count (and device-bounded so a phone can't OOM). */
 let bufBytes = UPLOAD_TOTAL_BUF_BYTES;
 
 /** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
@@ -105,43 +132,52 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
-    // Split the total reservoir across the active streams (≥1 byte, integer).
-    bufBytes = Math.max(1, Math.floor(UPLOAD_TOTAL_BUF_BYTES / Math.max(1, msg.streams ?? 1)));
+    // Split the device-scaled reservoir across the active streams, with a floor.
+    bufBytes = Math.max(
+      MIN_PER_WORKER_BYTES,
+      Math.floor(uploadTotalBudget() / Math.max(1, msg.streams ?? 1)),
+    );
     dbgWinBytes = 0;
     dbgTotal = 0;
     dbgWinStart = performance.now();
-    void run(msg.url);
+    run(msg.url);
   } else if (msg.type === "stop") {
     stopped = true;
     xhr?.abort();
   }
 };
 
-/** A fresh random (seed, inc) per lane; inc forced odd for a full-period counter. */
-function randomU64(): bigint {
-  const a = new Uint32Array(2);
-  crypto.getRandomValues(a);
-  return (BigInt(a[1]) << 32n) | BigInt(a[0]);
+/** The reusable 4 MiB incompressible source block, filled once with CSPRNG bytes
+ *  in 64 KiB chunks (the getRandomValues per-call quota). Reused for every
+ *  payload, so the fill cost is paid once and never on the POST hot path. */
+function incompressibleBlock(): Uint8Array<ArrayBuffer> {
+  if (fillBlock) return fillBlock;
+  const b = new Uint8Array(new ArrayBuffer(FILL_BLOCK_BYTES));
+  for (let off = 0; off < b.length; off += RNG_CHUNK_BYTES) {
+    crypto.getRandomValues(b.subarray(off, Math.min(off + RNG_CHUNK_BYTES, b.length)));
+  }
+  fillBlock = b;
+  return b;
 }
 
-async function run(url: string): Promise<void> {
-  try {
-    ready ??= init();
-    await ready;
-  } catch (err) {
-    post({ type: "error", recoverable: false, detail: `wasm init failed: ${String(err)}` });
-    return;
-  }
+function run(url: string): void {
   if (stopped) return;
 
   if (!payload || payloadBytes !== bufBytes) {
-    const rng = new ScrambledCounterRng(randomU64(), randomU64() | 1n);
-    const bytes = new Uint8Array(bufBytes);
-    rng.fill_bytes(bytes); // one-time fill; the bytes are reused every POST
-    // Wrap once in a Blob. send(Blob) streams from this without copying, so the
-    // POST loop allocates nothing per request (the memory-blowup fix).
-    payload = new Blob([bytes], { type: "application/octet-stream" });
-    payloadBytes = bytes.byteLength;
+    // Build the payload by REPEATING one filled block up to bufBytes. The Blob
+    // copies each part into its own backing store, so the construction-time heap
+    // peak is ~block + payload (not the 2× a fresh Uint8Array(bufBytes) + its Blob
+    // copy would cost). send(Blob) then streams from it without a per-POST copy.
+    const block = incompressibleBlock();
+    const parts: BlobPart[] = [];
+    let remaining = bufBytes;
+    while (remaining > 0) {
+      const take = Math.min(remaining, block.byteLength);
+      parts.push(take === block.byteLength ? block : block.subarray(0, take));
+      remaining -= take;
+    }
+    payload = new Blob(parts, { type: "application/octet-stream" });
+    payloadBytes = bufBytes;
   }
   postLoop(url);
 }
