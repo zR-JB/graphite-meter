@@ -19,9 +19,10 @@ import (
 
 // BuildMux constructs the shared mux: registered endpoints + the static client
 // at "/". The same mux is reused by every listener (h1/h2/h3) in later stages.
-func BuildMux(reg *endpoint.Registry) *http.ServeMux {
+// ctx is the server's run context, bounding every WebSocket bus handler's lifetime.
+func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
 	mux := http.NewServeMux()
-	reg.Mount(mux)
+	reg.Mount(ctx, mux)
 	mux.Handle("/", static.Handler())
 	return mux
 }
@@ -56,8 +57,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
 	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter, uploadStore))
 	reg.RegisterWS("/ws/ping", endpoint.NewPing())
+	reg.RegisterWS("/ws/upload", endpoint.NewUploadProgress(uploadStore))
 
-	mux := BuildMux(reg)
+	mux := BuildMux(ctx, reg)
 
 	srv := &http.Server{
 		Addr:              cfg.H1Addr,

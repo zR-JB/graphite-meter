@@ -38,13 +38,15 @@ func (r *Registry) RegisterWS(path string, e Endpoint) {
 }
 
 // Mount attaches all registered endpoints onto mux: HTTP request/response
-// handlers and WebSocket bus upgrades.
-func (r *Registry) Mount(mux *http.ServeMux) {
+// handlers and WebSocket bus upgrades. parent bounds every bus's lifetime — it is
+// the server's run context, so srv.Shutdown cancels it and in-flight bus handlers
+// (conn.Read/Write) return promptly instead of hanging the shutdown window.
+func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 	for path, e := range r.httpEndpoints {
 		mux.Handle(path, httpAdapter(e))
 	}
 	for path, e := range r.wsEndpoints {
-		mux.Handle(path, wsAdapter(e))
+		mux.Handle(path, wsAdapter(parent, e))
 	}
 }
 
@@ -54,15 +56,17 @@ func (r *Registry) Mount(mux *http.ServeMux) {
 // the HTTP endpoints already set — this is a public, auth-less, cookie-less
 // measurement bus (app on :8080 measuring against :8443), so there is no session
 // state for a forged origin to abuse.
-func wsAdapter(e Endpoint) http.Handler {
+func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 		if err != nil {
 			return // Accept already wrote the handshake-failure response
 		}
 		// The conn is hijacked, so r.Context() is no longer reliable (see Accept
-		// docs). Bound the bus with a fresh context cancelled when Handle returns.
-		ctx, cancel := context.WithCancel(context.Background())
+		// docs). Bound the bus with a context derived from the SERVER's run context
+		// (not Background): cancelled when Handle returns AND on srv.Shutdown, so a
+		// handler parked in conn.Read/Write unblocks at shutdown instead of hanging.
+		ctx, cancel := context.WithCancel(parent)
 		defer cancel()
 		defer conn.CloseNow()
 

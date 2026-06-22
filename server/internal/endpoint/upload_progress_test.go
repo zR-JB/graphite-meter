@@ -3,9 +3,13 @@ package endpoint
 import (
 	"context"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/server/internal/transport"
 	"github.com/zR-JB/graphite-meter/server/internal/wire"
 )
@@ -134,6 +138,65 @@ func TestUploadProgressFlow(t *testing.T) {
 	}
 	if _, ok := store.get(id); ok {
 		t.Error("aggregate not released after BYE")
+	}
+}
+
+// TestUploadProgressOverWebSocket drives the full bus path (wsAdapter →
+// websocketSession → UploadProgress) over a real WebSocket upgrade: HI→READY,
+// ticked BYTES_RECEIVED reflecting the aggregate, BYE→UPLOAD_COMPLETE.
+func TestUploadProgressOverWebSocket(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+
+	reg := NewRegistry()
+	reg.RegisterWS("/ws/upload", NewUploadProgress(store))
+	mux := http.NewServeMux()
+	reg.Mount(context.Background(), mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/upload?id="+id, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	send := func(msg string) {
+		t.Helper()
+		if err := conn.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
+			t.Fatalf("write %q: %v", msg, err)
+		}
+	}
+	recvUntil := func(match func(wire.Frame) bool, what string) wire.Frame {
+		t.Helper()
+		for {
+			_, data, err := conn.Read(ctx)
+			if err != nil {
+				t.Fatalf("read (%s): %v", what, err)
+			}
+			f, derr := wire.Decode(string(data))
+			if derr != nil {
+				t.Fatalf("decode %q: %v", string(data), derr)
+			}
+			if match(f) {
+				return f
+			}
+		}
+	}
+
+	agg := waitAgg(t, store, id)
+	agg.bytes.Store(8192)
+
+	send("HI,ws")
+	recvUntil(func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY")
+	recvUntil(func(f wire.Frame) bool { return f.Op == wire.OpBytesReceived && f.N == 8192 }, "BYTES_RECEIVED,8192")
+
+	send("BYE")
+	if f := recvUntil(func(f wire.Frame) bool { return f.Op == wire.OpUploadComplete }, "UPLOAD_COMPLETE"); f.N != 8192 {
+		t.Errorf("UPLOAD_COMPLETE N = %d, want 8192", f.N)
 	}
 }
 

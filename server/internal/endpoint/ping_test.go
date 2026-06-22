@@ -19,7 +19,7 @@ func TestPingEcho(t *testing.T) {
 	reg := NewRegistry()
 	reg.RegisterWS("/ws/ping", NewPing())
 	mux := http.NewServeMux()
-	reg.Mount(mux)
+	reg.Mount(context.Background(), mux)
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
