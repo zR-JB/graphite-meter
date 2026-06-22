@@ -46,9 +46,9 @@ function render(f: Frame): string {
     case "HI":
       return `op=HI;proto=${f.proto}`;
     case "BYTES_RECEIVED":
-      return `op=BYTES_RECEIVED;n=${f.n}`;
+      return `op=BYTES_RECEIVED;n=${f.n};nanos=${f.nanos}`;
     case "UPLOAD_COMPLETE":
-      return `op=UPLOAD_COMPLETE;n=${f.n}`;
+      return `op=UPLOAD_COMPLETE;n=${f.n};nanos=${f.nanos}`;
     case "ERR":
       return `op=ERR;code=${f.code};text=${f.text}`;
   }
@@ -76,9 +76,9 @@ function parseCanonical(spec: string): Frame {
     case "HI":
       return { op: "HI", proto: m.get("proto")! };
     case "BYTES_RECEIVED":
-      return { op: "BYTES_RECEIVED", n: BigInt(m.get("n")!) };
+      return { op: "BYTES_RECEIVED", n: BigInt(m.get("n")!), nanos: BigInt(m.get("nanos")!) };
     case "UPLOAD_COMPLETE":
-      return { op: "UPLOAD_COMPLETE", n: BigInt(m.get("n")!) };
+      return { op: "UPLOAD_COMPLETE", n: BigInt(m.get("n")!), nanos: BigInt(m.get("nanos")!) };
     case "ERR":
       return { op: "ERR", code: m.get("code")!, text: m.get("text") ?? "" };
     default:

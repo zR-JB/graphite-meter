@@ -208,10 +208,12 @@ export interface ThroughputResult {
    *  pings ran (latency fully off). */
   packetLossPct: number;
   /** Upload only: true when the headline came from the SERVER-measured drained
-   *  byte count over the measured window (via /ws/upload), not the client's
-   *  upload.onprogress. Absent/false ⇒ client-side fallback (e.g. the progress
-   *  socket never opened). The live curve/peak/stability still derive from
-   *  samples; only meanBytesPerSec is the server totals-based figure. */
+   *  byte count over the measured window (via /ws/upload) — the sole upload byte
+   *  source. The live curve/peak/stability also derive from those server samples;
+   *  only meanBytesPerSec is the jitter-immune totals-based figure. Absent ⇒ no
+   *  server count was ever reported (the progress socket never opened), in which
+   *  case the up stage produced no samples and ended via the stall watchdog rather
+   *  than shipping a number. */
   serverAuthoritative?: boolean;
 }
 

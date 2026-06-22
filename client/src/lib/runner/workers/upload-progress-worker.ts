@@ -28,10 +28,14 @@
 import { encode, decode } from "../real/wire";
 
 type InMsg = { type: "start"; url: string } | { type: "stop" };
+// `t` is the server's ACTIVE measurement time (ns the server was actually draining
+// bytes for this id, dead zones excluded) at which it sampled `n` — the client
+// measures upload rate over this server clock (Δn / Δt), never its own arrival clock
+// and never a wall span. Safe as a JS number: active ns stays < 2^53 for ~104 days.
 type OutMsg =
   | { type: "open" }
-  | { type: "bytes"; n: number }
-  | { type: "complete"; n: number }
+  | { type: "bytes"; n: number; t: number }
+  | { type: "complete"; n: number; t: number }
   | { type: "stall"; detail: string }
   | { type: "resume" };
 
@@ -105,14 +109,14 @@ function onFrame(data: unknown): void {
     const n = Number(f.n);
     if (n >= lastN) {
       lastN = n;
-      post({ type: "bytes", n });
+      post({ type: "bytes", n, t: Number(f.nanos) });
     }
     return;
   }
   if (f.op === "UPLOAD_COMPLETE") {
     const n = Number(f.n);
     if (n >= lastN) lastN = n;
-    post({ type: "complete", n: lastN });
+    post({ type: "complete", n: lastN, t: Number(f.nanos) });
     teardown(); // the authoritative final arrived — close for good
   }
 }

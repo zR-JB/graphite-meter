@@ -44,14 +44,62 @@ type uploadShard struct {
 }
 
 // uploadAgg is one test's cross-connection accumulator. Every field is an atomic
-// so the POST drain hot path (bytes.Add per chunk) and the WS ticker (bytes.Load
+// so the POST drain hot path (recordChunk per chunk) and the WS ticker (bytes.Load
 // every 100 ms) never share a lock.
+//
+// activeNanos is the heart of the measurement: it is the SERVER's own measurement
+// clock — wall time during which bytes were ACTUALLY being drained, with dead zones
+// (TCP/handshake establishment, a lane reconnect, an idle stall) excluded. The
+// /ws/upload bus ships it in the ;TIME field beside `bytes`, both sampled at the one
+// drain point, so the client derives the upload rate as Δbytes / ΔactiveNanos — the
+// upload mirror of the download worker, where the client already measures bytes and
+// time together at the single read point (docs/UPLOAD_ARCHITECTURE.md §5). It is NOT
+// the wall span between the first and last frame, so a stall/reconnect/early-finish
+// can never stretch the denominator with idle time.
 type uploadAgg struct {
 	bytes         atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
-	firstByteMono atomic.Int64 // mono ns of the first chunk, CAS-set once (0 = none yet)
+	activeNanos   atomic.Int64 // cumulative ACTIVE measurement time (ns): wall gaps between chunks, dead zones excluded
+	lastChunkMono atomic.Int64 // mono ns of the previous drained chunk (drain-path ONLY) — the active-clock anchor
 	lastTouchMono atomic.Int64 // mono ns of the last chunk OR last WS tick — the sweeper's idle clock
 	posts         atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
 	done          atomic.Bool  // UPLOAD_COMPLETE already sent — idempotency guard for the WS finalizer
+}
+
+// recordChunk folds one drained chunk (n bytes, drained at monotonic time `now` ns)
+// into the aggregate. It always adds the bytes; it advances the active measurement
+// clock by the wall gap since the PREVIOUS chunk — but only when that gap is at most
+// activeGapCap. A larger gap is a dead zone (establishment, a lane reconnect after
+// the client's restart backoff, an idle stall) and is excluded, so activeNanos only
+// ever counts time bytes were really flowing.
+//
+// Concurrency-safe across a test's parallel POST lanes without a lock, via a
+// forward-only CAS on lastChunkMono: the clock never moves backward, so the per-chunk
+// gaps telescope across interleaved lanes into ONE monotonic per-id timeline
+// (= last chunk − first chunk − Σ dead-zone gaps), exactly the wall time at least one
+// lane was delivering data — and NEVER more (activeNanos ≤ wall span, always). A chunk
+// whose stamp lost the race and is now stale (now ≤ the latest) contributes no time
+// rather than rewinding the clock and inflating the next gap; the lane that advanced
+// the clock already covered that instant. This keeps the measurement conservative:
+// any residual skew can only lengthen the denominator (under-report), never inflate
+// the rate.
+func (a *uploadAgg) recordChunk(now int64, n int) {
+	for {
+		prev := a.lastChunkMono.Load()
+		if now <= prev {
+			break // stale / reordered stamp — don't rewind the clock or double-count
+		}
+		if a.lastChunkMono.CompareAndSwap(prev, now) {
+			if prev != 0 {
+				if gap := now - prev; gap <= int64(activeGapCap) {
+					a.activeNanos.Add(gap)
+				}
+			}
+			break
+		}
+		// CAS lost to a concurrent lane; retry against the fresh clock value.
+	}
+	a.bytes.Add(int64(n))
+	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
 
 const (
@@ -72,6 +120,19 @@ const (
 	issuedIDTTL = 2 * time.Minute
 	// uploadSweepInterval is how often RunSweeper scans for idle aggregates.
 	uploadSweepInterval = 5 * time.Second
+	// activeGapCap bounds what counts as continuous transfer for the active
+	// measurement clock (recordChunk). The wall gap between two consecutive drained
+	// chunks (across all of a test's lanes) is folded into activeNanos only when it is
+	// at most this long; a longer gap is a dead zone and is excluded. On a saturated
+	// direct-origin link TCP delivers data continuously, so real inter-chunk gaps stay
+	// far below this even on slow links (Read returns per arriving segment, not per
+	// full buffer); a lane reconnect (≥ the client's ~300 ms restart backoff + a fresh
+	// handshake) sits well above it — clean separation that neither clips a healthy
+	// transfer nor counts a stall. (A request-buffering proxy can defeat this by
+	// releasing the body in bursts; that topology is already declared UNTRUSTED —
+	// docs/UPLOAD_ARCHITECTURE.md §8 — and is detectable by comparing activeNanos
+	// against the wall span, since a spool collapses the two.)
+	activeGapCap = 250 * time.Millisecond
 )
 
 // NewUploadStore builds an empty store with its shard maps initialised.

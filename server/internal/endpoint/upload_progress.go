@@ -97,7 +97,15 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 				return nil // no keepalive for too long — client vanished silently
 			}
 			agg.lastTouchMono.Store(monoNanos()) // keep the id non-idle for the sweeper
-			if bus.Send(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: uint64(agg.bytes.Load())})) != nil {
+			// N and TIME are sampled together: the client divides Δn by Δtime, so they
+			// must describe the same instant. TIME is NOT the wall clock — it is the
+			// aggregate's ACTIVE measurement clock (ns bytes were actually flowing,
+			// dead zones excluded), the upload twin of the download read-side timing.
+			// Load bytes BEFORE active so a racing chunk can only make active outrun
+			// bytes (under-report), never the reverse (over-report).
+			n := uint64(agg.bytes.Load())
+			active := uint64(agg.activeNanos.Load())
+			if bus.Send(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})) != nil {
 				return nil // socket gone mid-send — client is away
 			}
 
@@ -124,7 +132,10 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 				// every POST lane has stopped. Emit the final total exactly once,
 				// then release the test's state (TTL would otherwise reap it later).
 				if agg.done.CompareAndSwap(false, true) {
-					_ = bus.Send(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: uint64(agg.bytes.Load())}))
+					// Final total + final active measurement time, the same pair the live
+					// ticks carry — so the client's headline denominator is the server's
+					// own active clock, not a span across frame arrivals.
+					_ = bus.Send(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: uint64(agg.bytes.Load()), Nanos: uint64(agg.activeNanos.Load())}))
 				}
 				e.store.delete(id)
 				return nil
