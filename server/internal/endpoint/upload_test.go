@@ -13,7 +13,7 @@ import (
 
 func TestUploadCountsAndEchoes(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil)))
+	mux.Handle("/upload", httpAdapter(NewUpload(nil, nil)))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -41,6 +41,63 @@ func TestUploadCountsAndEchoes(t *testing.T) {
 	}
 }
 
+// TestUploadAggregatesByID checks that a POST carrying a server-minted ?id= adds
+// its drained bytes to the shared per-id aggregate (the server-authoritative count
+// the /ws/upload bus reports) and stamps the first-byte time.
+func TestUploadAggregatesByID(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+
+	mux := http.NewServeMux()
+	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	const n = 2*1024*1024 + 7
+	res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(make([]byte, n)))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	res.Body.Close()
+
+	agg, ok := store.get(id)
+	if !ok {
+		t.Fatal("aggregate missing after an id'd upload")
+	}
+	if got := agg.bytes.Load(); got != n {
+		t.Errorf("aggregate bytes = %d, want %d", got, n)
+	}
+	if agg.firstByteMono.Load() == 0 {
+		t.Error("firstByteMono not stamped")
+	}
+	if got := agg.posts.Load(); got != 0 {
+		t.Errorf("posts = %d after the lane finished, want 0", got)
+	}
+}
+
+// TestUploadUnissuedIDDoesNotAggregate checks the abuse path: a forged (unminted)
+// id drains-and-counts normally but creates no server-side aggregate.
+func TestUploadUnissuedIDDoesNotAggregate(t *testing.T) {
+	store := NewUploadStore()
+	mux := http.NewServeMux()
+	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	res, err := http.Post(srv.URL+"/upload?id=forged", "application/octet-stream", bytes.NewReader(make([]byte, 4096)))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	res.Body.Close()
+
+	if _, ok := store.get("forged"); ok {
+		t.Error("a forged id created an aggregate")
+	}
+	if store.live.Load() != 0 {
+		t.Errorf("live = %d after a forged-id upload, want 0", store.live.Load())
+	}
+}
+
 // TestUploadStopsOnReadError checks a mid-stream read failure (the client
 // aborting a streaming upload) returns cleanly without echoing.
 func TestUploadStopsOnReadError(t *testing.T) {
@@ -48,7 +105,7 @@ func TestUploadStopsOnReadError(t *testing.T) {
 		fakeSession: &fakeSession{ctx: context.Background()},
 		src:         &errReader{remaining: 4096},
 	}
-	if err := NewUpload(nil).Handle(s); err != nil {
+	if err := NewUpload(nil, nil).Handle(s); err != nil {
 		t.Fatalf("handle should swallow the abort, got: %v", err)
 	}
 }
