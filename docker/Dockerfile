@@ -25,7 +25,7 @@ RUN cd crates/rng && \
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.
 # ---------------------------------------------------------------------------
-FROM docker.io/oven/bun:1 AS client
+FROM docker.io/oven/bun:canary AS client
 # Build-time client config (override with --build-arg). Defaults = production:
 # real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
 # reaches `bun run build`'s process.env, where vite.config.ts reads it.
