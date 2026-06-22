@@ -53,8 +53,8 @@ Then open <http://localhost:8080>.
 
 ## Notes
 
-- **First build is slow** on a Pi (the image compiles `wasm-pack` from source);
-  later starts reuse the built image.
+- **First build is slow** on a Pi (bun install + the Go build); later starts
+  reuse the built image.
 - To rebuild from scratch: `podman rmi localhost/graphite-meter:latest` then
   restart the service.
 - Override client build knobs (dummy runner / dev tools / label) by uncommenting

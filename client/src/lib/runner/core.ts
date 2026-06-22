@@ -110,6 +110,11 @@ export interface CoreHost {
   ingestThroughput(dir: FlowDirection, bytesPerSec: number, bytesDelta: number): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
+  /** Upload only: report the SERVER-measured headline rate (bytes/sec) computed
+   *  over the measured window from the cumulative /ws/upload count. The core
+   *  substitutes it for the upload's mean-of-rates headline at finalize (the
+   *  jitter-immune totals-based figure). Not called ⇒ client-side fallback. */
+  reportUploadServerRate(bytesPerSec: number): void;
   /** Signal a NON-terminal link stall: the link went quiet and the backend is
    *  hoping to reconnect. The core freezes measured-time accrual (so the phase
    *  end recedes by the dead-air duration) and emits a `stall` event. No-op if
@@ -254,6 +259,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #dlResult: ThroughputResult | null = null;
   #ulResult: ThroughputResult | null = null;
   #latResult: LatencyResult | null = null;
+  // Server-authoritative upload headline (bytes/sec) reported by the backend over
+  // the measured window, or null when the upload ran client-side (fallback). When
+  // set, it overrides the upload's mean-of-rates headline at finalize.
+  #ulServerRate: number | null = null;
 
   constructor(backend: RunnerBackend) {
     this.#backend = backend;
@@ -324,6 +333,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#dlResult = null;
     this.#ulResult = null;
     this.#latResult = null;
+    this.#ulServerRate = null;
     this.#measuredElapsed = 0;
     this.#lastRealNow = 0;
     this.#glideArmedForSeg = -1;
@@ -603,6 +613,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
+  /** Record the server-measured upload headline rate; applied at finalize. */
+  reportUploadServerRate(bytesPerSec: number): void {
+    this.#ulServerRate = bytesPerSec;
+  }
+
   /* ================= STALL / RESUME (CoreHost) ================= */
   stall(info: StallInfo): void {
     // No-op if already stalled — a backend may report repeatedly, and the
@@ -754,7 +769,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#dlResult = this.#accum.throughputResult("download", cfg);
       this.emit({ type: "stageResult", stage: "download", result: this.#dlResult });
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
-      this.#ulResult = this.#accum.throughputResult("upload", cfg);
+      const r = this.#accum.throughputResult("upload", cfg);
+      // Server-authoritative headline: substitute the totals-based server rate
+      // (jitter-immune) for the mean-of-per-tick-rates. Peak/stability/totalBytes
+      // stay sample-derived. Absent ⇒ client-side fallback keeps the mean-of-rates.
+      if (this.#ulServerRate != null) {
+        r.meanBytesPerSec = this.#ulServerRate;
+        r.reportedBytesPerSec = this.#ulServerRate;
+        r.serverAuthoritative = true;
+      }
+      this.#ulResult = r;
       this.emit({ type: "stageResult", stage: "upload", result: this.#ulResult });
     } else if (phase === "latency" && cfg.stages.latency && !this.#latResult) {
       this.#latResult = this.#accum.latencyResult(cfg, this.#idleHint());

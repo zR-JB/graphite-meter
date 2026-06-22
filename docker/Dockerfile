@@ -10,20 +10,9 @@ ARG SERVER_IMPL=go
 ARG VERSION=0.1.0
 
 # ---------------------------------------------------------------------------
-# Stage: wasm — build the browser upload RNG (crates/rng -> WASM) with
-# wasm-pack. The output is COPYed into the client tree before its build.
-# (.dockerignore excludes only **/target and client/src/lib/wasm, so the crate
-# source + Cargo.{toml,lock} are in context and the artifact is built fresh.)
-# ---------------------------------------------------------------------------
-FROM docker.io/library/rust:1.96.0@sha256:c6811167278337db5f3b0234964ced5f538f154a2a20f09ec03721d7411c933d AS wasm
-RUN cargo install wasm-pack
-WORKDIR /src
-COPY crates/rng ./crates/rng
-RUN cd crates/rng && \
-    wasm-pack build --target web --release --out-dir /out/rng --out-name gm_rng
-
-# ---------------------------------------------------------------------------
-# Stage: client — build the Svelte app with bun.
+# Stage: client — build the Svelte app with bun. (No WASM stage: upload-worker.ts
+# fills its payload with crypto.getRandomValues; crates/rng is kept in the repo
+# only for the conformance pin / a future WebTransport path, not the bundle.)
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:canary AS client
 # Build-time client config (override with --build-arg). Defaults = production:
@@ -43,9 +32,8 @@ WORKDIR /app/client
 # resolves from package.json's pinned ranges, which is fine for a build image.)
 COPY client/package.json client/bun.lock ./
 RUN bun --bun install
-# Then the source + the freshly-built WASM (upload-worker.ts imports it), then build.
+# Then the source, then build.
 COPY client/ ./
-COPY --from=wasm /out ./src/lib/wasm
 RUN bun run build   # -> /app/client/dist
 
 # ---------------------------------------------------------------------------

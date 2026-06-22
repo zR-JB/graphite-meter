@@ -42,6 +42,10 @@
       "type": "string",
       "description": "The HTTP protocol this preflight response was served over, e.g. \"http/1.1\", \"h2\", \"h3\"."
     },
+    "uploadId": {
+      "type": "string",
+      "description": "Opaque per-call upload-session token minted by the server. The client echoes it as ?id= on POST /upload and on GET /ws/upload so the server correlates those separate connections into one authoritative drained-byte count. Absent when server-authoritative upload is unavailable; the client then falls back to its own client-side count."
+    },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
@@ -74,11 +78,12 @@
           "type": "object",
           "additionalProperties": false,
           "description": "Stable endpoint paths, advertised so the client never hardcodes them.",
-          "required": ["download", "upload", "wsPing", "wtPing", "wtDownload", "wtUpload"],
+          "required": ["download", "upload", "wsPing", "wsUpload", "wtPing", "wtDownload", "wtUpload"],
           "properties": {
             "download": { "type": "string" },
             "upload": { "type": "string" },
             "wsPing": { "type": "string" },
+            "wsUpload": { "type": "string", "description": "WebSocket upload-progress bus: streams server-measured BYTES_RECEIVED/UPLOAD_COMPLETE for the test ?id=." },
             "wtPing": { "type": "string" },
             "wtDownload": { "type": "string" },
             "wtUpload": { "type": "string" }

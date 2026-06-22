@@ -19,9 +19,10 @@ import (
 
 // BuildMux constructs the shared mux: registered endpoints + the static client
 // at "/". The same mux is reused by every listener (h1/h2/h3) in later stages.
-func BuildMux(reg *endpoint.Registry) *http.ServeMux {
+// ctx is the server's run context, bounding every WebSocket bus handler's lifetime.
+func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
 	mux := http.NewServeMux()
-	reg.Mount(mux)
+	reg.Mount(ctx, mux)
 	mux.Handle("/", static.Handler())
 	return mux
 }
@@ -45,13 +46,20 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		log.Printf("[gm:server] verbose throughput logging enabled")
 	}
 
-	reg := endpoint.NewRegistry()
-	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
-	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
-	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter))
-	reg.RegisterWS("/ws/ping", endpoint.NewPing())
+	// Per-id upload aggregate store: correlates the upload's POST lanes with its
+	// /ws/upload progress socket (separate connections, same minted ?id=) into one
+	// server-authoritative drained-byte count. Its sweeper reaps idle test state.
+	uploadStore := endpoint.NewUploadStore()
+	go uploadStore.RunSweeper(ctx)
 
-	mux := BuildMux(reg)
+	reg := endpoint.NewRegistry()
+	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg, uploadStore))
+	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
+	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter, uploadStore))
+	reg.RegisterWS("/ws/ping", endpoint.NewPing())
+	reg.RegisterWS("/ws/upload", endpoint.NewUploadProgress(uploadStore))
+
+	mux := BuildMux(ctx, reg)
 
 	srv := &http.Server{
 		Addr:              cfg.H1Addr,

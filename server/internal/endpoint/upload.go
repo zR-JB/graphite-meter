@@ -2,23 +2,38 @@ package endpoint
 
 import (
 	"io"
+	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/server/internal/transport"
 )
 
 // Upload sinks the client's streamed bytes for the upload measurement: it drains
 // the request body to io.Discard through a pooled scratch buffer, counting but
-// never accumulating (docs/ARCHITECTURE.md §7). The client measures bytes sent;
-// the server only needs to consume them as fast as the link allows and may echo
-// the total.
+// never accumulating (docs/ARCHITECTURE.md §7, docs/UPLOAD_ARCHITECTURE.md §3).
+//
+// When the request carries a server-minted ?id=, each drained chunk is also added
+// to that test's shared per-id aggregate (across all its parallel POST lanes), so
+// the SERVER's drained count — not the browser's upload.onprogress — becomes the
+// authoritative upload result, read live by the /ws/upload progress bus. Without
+// an id it behaves exactly as before (client self-counts).
 type Upload struct {
-	meter *Meter // optional verbose per-second logger; nil unless -verbose
+	meter *Meter       // optional verbose per-second logger; nil unless -verbose
+	store *UploadStore // optional per-id aggregate; nil disables server-authoritative counting
 }
 
-// NewUpload builds the upload endpoint. meter may be nil (no verbose logging).
-func NewUpload(meter *Meter) *Upload { return &Upload{meter: meter} }
+// uploadReadTimeout bounds a single stuck POST's body read so a half-open lane
+// can't pin a goroutine indefinitely. Generous vs a normal ~10–20 s upload stage;
+// each POST on a keep-alive connection gets its own fresh deadline.
+const uploadReadTimeout = 120 * time.Second
+
+// NewUpload builds the upload endpoint. meter may be nil (no verbose logging);
+// store may be nil (no server-authoritative per-id counting).
+func NewUpload(meter *Meter, store *UploadStore) *Upload {
+	return &Upload{meter: meter, store: store}
+}
 
 func (u *Upload) ID() string                 { return "upload" }
 func (u *Upload) Capabilities() Capabilities { return Capabilities{HTTP: true} }
@@ -39,11 +54,22 @@ var scratchPool = sync.Pool{
 // discardSink counts via the io.Copy return value while throwing the bytes away.
 // It deliberately does NOT implement io.ReaderFrom, so io.CopyBuffer uses our
 // large pooled buffer instead of io.Discard's small internal one. When verbose,
-// it also feeds each drained chunk to the meter for live per-second logging.
-type discardSink struct{ meter *Meter }
+// it also feeds each drained chunk to the meter for live per-second logging; when
+// an aggregate is attached, it adds the chunk to the test's server-authoritative
+// per-id count and stamps first-byte / last-touch times.
+type discardSink struct {
+	meter *Meter
+	agg   *uploadAgg // nil unless the POST carried a valid server-minted ?id=
+}
 
 func (s discardSink) Write(p []byte) (int, error) {
 	s.meter.Add(len(p))
+	if s.agg != nil {
+		// The ONE upload counting point: bytes AND the active measurement clock are
+		// folded in together here, at the drain, so the rate the client computes
+		// (Δbytes / ΔactiveNanos) is measured at a single point with no double count.
+		s.agg.recordChunk(monoNanos(), len(p))
+	}
 	return len(p), nil
 }
 
@@ -55,6 +81,27 @@ func (u *Upload) Handle(s transport.Session) error {
 		return err
 	}
 
+	// Resolve the test's shared aggregate from a server-minted ?id=. getOrCreate
+	// returns nil for an empty/unissued id or over the live cap — then this POST
+	// is drained-and-counted as before, just not server-authoritatively. posts is
+	// a live-lane gauge only (diagnostics); the TTL sweeper, never a refcount, owns
+	// deletion (docs/UPLOAD_ARCHITECTURE.md §3).
+	var agg *uploadAgg
+	if u.store != nil {
+		if a, ok := u.store.getOrCreate(s.Query().Get("id")); ok {
+			agg = a
+			agg.posts.Add(1)
+			defer agg.posts.Add(-1)
+		}
+	}
+
+	// Bound a single stuck POST's body read (idiomatic per-request deadline via the
+	// ResponseController). The streaming download/upload server has no global
+	// ReadTimeout — that would kill long legit uploads — so we scope it per POST.
+	if w, _, ok := s.HTTP(); ok {
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
+	}
+
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
 
@@ -64,7 +111,7 @@ func (u *Upload) Handle(s transport.Session) error {
 	// CopyBuffer reads until EOF or a read error; the http server cancels the
 	// body read when the request context is cancelled, so this returns promptly
 	// on client disconnect.
-	n, copyErr := io.CopyBuffer(discardSink{meter: u.meter}, src, *bufp)
+	n, copyErr := io.CopyBuffer(discardSink{meter: u.meter, agg: agg}, src, *bufp)
 	if copyErr != nil {
 		// Client aborted the stream (the common case for a streaming upload
 		// measurement) — the connection is gone, so there's nothing to reply to.
