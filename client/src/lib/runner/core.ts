@@ -110,14 +110,6 @@ export interface CoreHost {
   ingestThroughput(dir: FlowDirection, bytesPerSec: number, bytesDelta: number): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
-  /** Prove the transfer is alive WITHOUT accumulating a byte sample: refresh the
-   *  stall watchdog (and auto-resume). A transport that meters bytes out-of-band
-   *  (e.g. server-authoritative upload, where the count arrives on /ws/upload) can
-   *  use this to keep a healthy transfer warm without double-counting. Currently
-   *  unused — the upload's 100 ms server frames are themselves the heartbeat, and a
-   *  dropped progress socket freezes measured-time via stall/resume rather than
-   *  keepalive. No-op outside a transfer phase. */
-  keepAlive(): void;
   /** Upload only: report the SERVER-measured headline rate (bytes/sec) computed
    *  over the measured window from the cumulative /ws/upload count. The core
    *  substitutes it for the upload's mean-of-rates headline at finalize (the
@@ -619,14 +611,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       type: "latency",
       sample: { t: this.#measuredElapsed, rttMs, underLoad, lost, phase: this.#phase },
     });
-  }
-
-  /** Liveness without a byte sample (server-authoritative upload — see CoreHost).
-   *  Only meaningful in a transfer phase; refreshes the watchdog + auto-resumes. */
-  keepAlive(): void {
-    if (this.#phase === "download" || this.#phase === "upload" || this.#phase === "bidirectional") {
-      this.#noteRealSample();
-    }
   }
 
   /** Record the server-measured upload headline rate; applied at finalize. */

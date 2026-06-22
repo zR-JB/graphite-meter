@@ -65,14 +65,10 @@ type discardSink struct {
 func (s discardSink) Write(p []byte) (int, error) {
 	s.meter.Add(len(p))
 	if s.agg != nil {
-		s.agg.bytes.Add(int64(len(p)))
-		now := monoNanos()
-		// First chunk stamps firstByteMono once (Load guards the hot path from the
-		// CAS write after the first chunk; CAS settles the multi-lane race).
-		if s.agg.firstByteMono.Load() == 0 {
-			s.agg.firstByteMono.CompareAndSwap(0, now)
-		}
-		s.agg.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
+		// The ONE upload counting point: bytes AND the active measurement clock are
+		// folded in together here, at the drain, so the rate the client computes
+		// (Δbytes / ΔactiveNanos) is measured at a single point with no double count.
+		s.agg.recordChunk(monoNanos(), len(p))
 	}
 	return len(p), nil
 }

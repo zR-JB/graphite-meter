@@ -12,8 +12,8 @@ const (
 	OpPING           = "PING"            // C→S  latency probe: PING,<id> (uint32, client-owned)
 	OpPONG           = "PONG"            // S→C  echo: PONG,<id>;TIME,<nanos> (id verbatim)
 	OpSIZE           = "SIZE"            // C→S  wt download request: SIZE,<bytes>
-	OpBytesReceived  = "BYTES_RECEIVED"  // S→C  running server-measured upload count
-	OpUploadComplete = "UPLOAD_COMPLETE" // S→C  final server-measured upload total
+	OpBytesReceived  = "BYTES_RECEIVED"  // S→C  running server-measured upload count + active time: BYTES_RECEIVED,<n>;TIME,<activeNanos>
+	OpUploadComplete = "UPLOAD_COMPLETE" // S→C  final server-measured upload total + active time: UPLOAD_COMPLETE,<n>;TIME,<activeNanos>
 	OpBYE            = "BYE"             // C→S  graceful bus close
 	OpERR            = "ERR"             // S→C  non-fatal protocol error: ERR,<code>,<text>
 )

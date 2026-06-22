@@ -8,9 +8,17 @@ import "strconv"
 type Frame struct {
 	Op    string // one of the Op* keyword constants (opcodes.go)
 	ID    uint32 // PING / PONG  — client-owned monotonic id, echoed verbatim
-	Nanos uint64 // PONG         — server monotonic clock ns (TIME, diagnostics only)
+	Nanos uint64 // PONG / BYTES_RECEIVED / UPLOAD_COMPLETE — ns in the TIME sub-field
 	Bytes uint64 // SIZE         — requested byte count
 	N     uint64 // BYTES_RECEIVED / UPLOAD_COMPLETE — server-measured byte total
+	// Nanos is the TIME sub-field, but its meaning differs by opcode:
+	//   • PONG: the server's raw monotonic clock (ns), for the RTT echo.
+	//   • BYTES_RECEIVED / UPLOAD_COMPLETE: the aggregate's ACTIVE measurement clock
+	//     (ns the server was actually draining bytes for this id, dead zones excluded),
+	//     sampled at the same instant as N. The client derives the upload rate as
+	//     Δn / Δnanos over this SERVER active clock — never its own arrival clock and
+	//     never a wall span across frames, so stalls/reconnects/early-finish can't
+	//     skew the denominator (server/internal/endpoint/upload_store.go: activeNanos).
 	Proto string // HI           — "ws" | "wt"
 	Code  string // ERR          — short error token
 	Text  string // ERR          — human detail
@@ -90,18 +98,18 @@ func Decode(msg string) (Frame, error) {
 		return Frame{Op: OpHI, Proto: rest}, nil
 
 	case OpBytesReceived:
-		n, ok := parseU64(rest)
-		if !ok {
-			return Frame{}, badArgs("BYTES_RECEIVED n")
+		n, nanos, err := parseCountTime(rest, "BYTES_RECEIVED")
+		if err != nil {
+			return Frame{}, err
 		}
-		return Frame{Op: OpBytesReceived, N: n}, nil
+		return Frame{Op: OpBytesReceived, N: n, Nanos: nanos}, nil
 
 	case OpUploadComplete:
-		n, ok := parseU64(rest)
-		if !ok {
-			return Frame{}, badArgs("UPLOAD_COMPLETE n")
+		n, nanos, err := parseCountTime(rest, "UPLOAD_COMPLETE")
+		if err != nil {
+			return Frame{}, err
 		}
-		return Frame{Op: OpUploadComplete, N: n}, nil
+		return Frame{Op: OpUploadComplete, N: n, Nanos: nanos}, nil
 
 	case OpERR:
 		code, text := cut(rest, ',')
@@ -131,14 +139,34 @@ func Encode(f Frame) string {
 	case OpHI:
 		return OpHI + "," + f.Proto
 	case OpBytesReceived:
-		return OpBytesReceived + "," + u64(f.N)
+		return OpBytesReceived + "," + u64(f.N) + ";" + timeField + "," + u64(f.Nanos)
 	case OpUploadComplete:
-		return OpUploadComplete + "," + u64(f.N)
+		return OpUploadComplete + "," + u64(f.N) + ";" + timeField + "," + u64(f.Nanos)
 	case OpERR:
 		return OpERR + "," + f.Code + "," + f.Text
 	default:
 		return ""
 	}
+}
+
+// parseCountTime parses the "<n>;TIME,<nanos>" body shared by BYTES_RECEIVED and
+// UPLOAD_COMPLETE: a cumulative server byte total plus the server's ACTIVE
+// measurement time (ns bytes were actually flowing for this id, dead zones excluded)
+// at which it was sampled. The ;TIME sub-field reuses PONG's framing so the client
+// derives upload rate over server time. op names the frame for the error token.
+func parseCountTime(rest, op string) (n, nanos uint64, err error) {
+	nStr, tail := cut(rest, ';')
+	if n, ok := parseU64(nStr); ok {
+		key, nanosStr := cut(tail, ',')
+		if key != timeField {
+			return 0, 0, badArgs(op + " TIME")
+		}
+		if nanos, ok := parseU64(nanosStr); ok {
+			return n, nanos, nil
+		}
+		return 0, 0, badArgs(op + " nanos")
+	}
+	return 0, 0, badArgs(op + " n")
 }
 
 // cut splits s at the first occurrence of sep into (before, after). When sep is

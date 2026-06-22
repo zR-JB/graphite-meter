@@ -114,9 +114,9 @@ func render(f Frame) string {
 	case OpHI:
 		return "op=HI;proto=" + f.Proto
 	case OpBytesReceived:
-		return "op=BYTES_RECEIVED;n=" + u64(f.N)
+		return "op=BYTES_RECEIVED;n=" + u64(f.N) + ";nanos=" + u64(f.Nanos)
 	case OpUploadComplete:
-		return "op=UPLOAD_COMPLETE;n=" + u64(f.N)
+		return "op=UPLOAD_COMPLETE;n=" + u64(f.N) + ";nanos=" + u64(f.Nanos)
 	case OpERR:
 		return "op=ERR;code=" + f.Code + ";text=" + f.Text
 	default:
