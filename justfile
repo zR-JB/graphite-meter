@@ -46,32 +46,32 @@ dev-client:
 gen-types:
     cd client && bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts
 
-# --- Server (Go) ---
+# --- Go module (server + native client) ---
 
-# Copy the built client into the server tree so //go:embed picks it up
+# Copy the built browser client into the Go module so //go:embed picks it up
 _stage-client: build-client
-    rm -rf server/internal/static/dist
-    cp -r client/dist server/internal/static/dist
+    rm -rf go/internal/static/dist
+    cp -r client/dist go/internal/static/dist
 
 # Build the Go server binary (embeds the built client)
 build-server: _stage-client
-    cd server && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter ./cmd/graphite-meter
+    cd go && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter ./cmd/graphite-meter
 
 # Build only the native Go Bubble Tea client. Does not build or stage the Svelte app.
 build-go-client:
-    cd server && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
+    cd go && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
 
 # Run the native Go client against a running Graphite Meter server.
 go-client:
-    cd server && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter-client
+    cd go && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter-client
 
 # Run the server locally; serves the built client + /preflight on :8080
 dev: _stage-client
-    cd server && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter
+    cd go && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter
 
 # Run server tests (includes the preflight schema conformance test)
 test-server:
-    cd server && GOCACHE="{{go_cache}}" go test ./...
+    cd go && GOCACHE="{{go_cache}}" go test ./...
 
 # --- Production ---
 
@@ -86,15 +86,15 @@ prod-client:
       GM_CLIENT_BUILD_LABEL="{{label}}" \
       bun run build
 
-# Stage the prod client into the server tree so //go:embed picks it up
+# Stage the prod browser client into the Go module so //go:embed picks it up
 _prod-stage-client: prod-client
-    rm -rf server/internal/static/dist
-    cp -r client/dist server/internal/static/dist
+    rm -rf go/internal/static/dist
+    cp -r client/dist go/internal/static/dist
 
 # Full production build: real-only client embedded in the versioned server binary
 prod: _prod-stage-client
-    cd server && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build \
-      -ldflags="-s -w -X github.com/zR-JB/graphite-meter/server/internal/config.EngineVersion={{version}}" \
+    cd go && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build \
+      -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion={{version}}" \
       -trimpath -o graphite-meter ./cmd/graphite-meter
 
 # --- Docker ---

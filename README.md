@@ -9,7 +9,7 @@ WebTransport) honestly — the client always picks the transport, never the brow
 
 ```
 client/          Svelte 5 + Tailwind browser client (bun). The engine-agnostic UI + RunnerCore.
-server/          Go measurement server (quic-go / webtransport-go). Serves the embedded client.
+go/              Go module: measurement server plus native Bubble Tea client.
 server-rs/       RESERVED slot for a future Go->Rust server swap (not created yet).
 crates/rng/      Canonical xorshift64* RNG crate -> WASM (browser upload) + native ports (later).
 api/             Single source of truth for the cross-language contract:
@@ -24,7 +24,7 @@ masterplan.md    Full product/UX blueprint.
 
 ## Prerequisites
 
-- **Go 1.26+** — the measurement server.
+- **Go 1.26+** — the measurement server and native TUI client.
 - **Bun 1.4+** — the client toolchain.
 - **Rust toolchain + `wasm-pack`** — builds the upload RNG to WASM (`crates/rng`). Install with
   `rustup` (puts cargo on `~/.cargo/bin`) and `cargo install wasm-pack`. Only needed for local
@@ -62,7 +62,7 @@ just test-rng     # byte-exact RNG conformance test
 bar shows the git short hash instead of `dev`.
 
 ```sh
-just prod         # -> server/graphite-meter  (real-only, dev tooling stripped)
+just prod         # -> go/graphite-meter  (real-only, dev tooling stripped)
 ```
 
 Override the [build-time knobs](#client-build-time-configuration) inline, e.g. keep dummy + dev

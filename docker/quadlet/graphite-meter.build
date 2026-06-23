@@ -11,7 +11,7 @@ Description=Build the Graphite Meter production image (arm64)
 [Build]
 ImageTag=localhost/graphite-meter:latest
 
-# Containerfile + build context. The Dockerfile COPYs client/, server/, api/
+# Containerfile + build context. The Dockerfile COPYs client/, go/, api/
 # and crates/, so the context (SetWorkingDirectory) MUST be the repo root, and
 # File= is resolved relative to it.
 #   ▸ Set SetWorkingDirectory to the ABSOLUTE path of your checkout on this host

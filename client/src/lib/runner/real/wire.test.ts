@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { encode, decode, DecodeError, type Frame } from "./wire";
 
-// The SAME fixture the Go codec asserts against (server/internal/wire/frame_test.go).
+// The SAME fixture the Go codec asserts against (go/internal/wire/frame_test.go).
 // Resolve it from this file's dir up to the repo root (real → runner → lib → src →
 // client → repo). Bun exposes import.meta.dir.
 const corpusPath = `${import.meta.dir}/../../../../../api/wire.testvectors.txt`;

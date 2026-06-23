@@ -1,6 +1,6 @@
 /**
  * Message-bus wire codec (api/wire.md) — the TS half of the cross-language pin;
- * the Go half is server/internal/wire/{opcodes,frame}.go. Both encoders/decoders
+ * the Go half is go/internal/wire/{opcodes,frame}.go. Both encoders/decoders
  * assert byte-for-byte against the shared corpus api/wire.testvectors.txt
  * (wire.test.ts here, frame_test.go there).
  *
@@ -11,7 +11,7 @@
  */
 
 /** Opcode keyword table — the literal uppercase keywords from api/wire.md
- *  §Opcodes, pinned here as the TS mirror of server/internal/wire/opcodes.go. */
+ *  §Opcodes, pinned here as the TS mirror of go/internal/wire/opcodes.go. */
 export const Op = {
   HI: "HI",
   READY: "READY",

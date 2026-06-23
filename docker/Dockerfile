@@ -41,17 +41,17 @@ RUN bun run build   # -> /app/client/dist
 # ---------------------------------------------------------------------------
 FROM docker.io/library/golang:1.26 AS server
 ARG VERSION
-WORKDIR /src/server
+WORKDIR /src/go
 # Module graph first for caching.
-COPY server/go.mod server/go.sum ./
+COPY go/go.mod go/go.sum ./
 RUN go mod download
 # Source + the api/ tree (the schema-conformance test references ../../../api).
-COPY server/ ./
+COPY go/ ./
 COPY api/ /src/api/
 # Embed the built client.
 COPY --from=client /app/client/dist ./internal/static/dist
 RUN CGO_ENABLED=0 go build \
-      -ldflags="-s -w -X github.com/zR-JB/graphite-meter/server/internal/config.EngineVersion=${VERSION}" \
+      -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=${VERSION}" \
       -trimpath \
       -o /graphite-meter ./cmd/graphite-meter
 

@@ -8,13 +8,13 @@
 #   n    = number of bytes to fill (decimal)
 #   hex  = the first n bytes the generator MUST produce, lowercase hex
 #
-# Generator = scrambled-counter xorshift64* (see crates/rng + server/internal/rng):
+# Generator = scrambled-counter xorshift64* (see crates/rng + go/internal/rng):
 #   next: old = state; state = old + inc; return xorshift64star(old)
 #   xorshift64star(x): x ^= x>>12; x ^= x<<25; x ^= x>>27; return x * 0x2545F4914F6CDD1D
 #   fill_bytes writes successive next() as little-endian u64; tail < 8 bytes is the
 #   low bytes of one more next() in little-endian order.
 #
-# Populated in Stage 2 (download RNG): the canonical generator (server/internal/rng)
+# Populated in Stage 2 (download RNG): the canonical generator (go/internal/rng)
 # asserts byte-identical output against these rows; the Rust crate will too.
 #
 # The first pair is the canonical download-block seed/inc (rng.BlockSeed / rng.BlockInc).

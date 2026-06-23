@@ -7,7 +7,7 @@ use normal HTTP (query params, status codes, streaming bodies).
 
 It is frozen before implementation. Every Go / TS / (future) Rust encoder and decoder MUST agree with
 the shared conformance corpus `api/wire.testvectors.txt`. The opcode keywords are additionally pinned
-as a shared constant table in each language (`server/internal/wire/opcodes.go`,
+as a shared constant table in each language (`go/internal/wire/opcodes.go`,
 `client/src/lib/runner/real/wire.ts`).
 
 ## Framing

@@ -1,6 +1,6 @@
 //! Canonical scrambled-counter xorshift64* generator (API Surface C).
 //!
-//! Byte-identical to the Go port in `server/internal/rng` and pinned by
+//! Byte-identical to the Go port in `go/internal/rng` and pinned by
 //! `api/rng.testvectors.txt`. Compiled to WASM (wasm-bindgen) it is the
 //! incompressible-payload source the client streams in the upload measurement;
 //! the server discards and counts those bytes.

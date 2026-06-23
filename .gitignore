@@ -3,12 +3,13 @@ client/node_modules
 client/dist
 client/.vite
 
-# --- Server (Go) ---
-server/graphite-meter
+# --- Go module (server + native client) ---
+go/graphite-meter
+go/graphite-meter-client
 # embedded client build injected at Docker/build time (not committed);
 # keep the placeholder so //go:embed + go build/test work without a client build.
-server/internal/static/dist/*
-!server/internal/static/dist/.gitkeep
+go/internal/static/dist/*
+!go/internal/static/dist/.gitkeep
 
 # --- Rust (crates/rng) ---
 crates/**/target
@@ -17,7 +18,7 @@ crates/**/target
 client/src/lib/wasm
 
 # --- General ---
-# (no bare `dist` rule — it would shadow the server embed placeholder negation
+# (no bare `dist` rule — it would shadow the Go embed placeholder negation
 #  above; dist dirs are ignored explicitly per-package.)
 node_modules
 .DS_Store
