@@ -158,11 +158,16 @@ func TestUploadProgressOverWebSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/upload?id="+id, nil)
+	conn, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/upload?id="+id, &websocket.DialOptions{
+		CompressionMode: websocket.CompressionNoContextTakeover,
+	})
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	if got := resp.Header.Get("Sec-WebSocket-Extensions"); got != "" {
+		t.Fatalf("Sec-WebSocket-Extensions = %q, want no compression negotiation", got)
+	}
 
 	send := func(msg string) {
 		t.Helper()

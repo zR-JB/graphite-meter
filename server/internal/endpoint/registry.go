@@ -58,7 +58,10 @@ func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 // state for a forged origin to abuse.
 func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+			CompressionMode:    websocket.CompressionDisabled,
+		})
 		if err != nil {
 			return // Accept already wrote the handshake-failure response
 		}
