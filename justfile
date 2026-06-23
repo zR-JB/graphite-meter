@@ -10,6 +10,7 @@ allow_dummy := env_var_or_default("GM_CLIENT_ALLOW_DUMMY", "0")
 dev_tools   := env_var_or_default("GM_CLIENT_DEV_TOOLS", "0")
 label       := env_var_or_default("GM_CLIENT_BUILD_LABEL", `git rev-parse --short HEAD 2>/dev/null || echo prod`)
 version     := env_var_or_default("VERSION", label)
+go_cache    := env_var_or_default("GOCACHE", "/tmp/graphite-meter-go-build")
 
 # List available recipes
 default:
@@ -54,15 +55,23 @@ _stage-client: build-client
 
 # Build the Go server binary (embeds the built client)
 build-server: _stage-client
-    cd server && CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter ./cmd/graphite-meter
+    cd server && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter ./cmd/graphite-meter
+
+# Build only the native Go Bubble Tea client. Does not build or stage the Svelte app.
+build-go-client:
+    cd server && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
+
+# Run the native Go client against a running Graphite Meter server.
+go-client:
+    cd server && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter-client
 
 # Run the server locally; serves the built client + /preflight on :8080
 dev: _stage-client
-    cd server && go run ./cmd/graphite-meter
+    cd server && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter
 
 # Run server tests (includes the preflight schema conformance test)
 test-server:
-    cd server && go test ./...
+    cd server && GOCACHE="{{go_cache}}" go test ./...
 
 # --- Production ---
 
@@ -84,7 +93,7 @@ _prod-stage-client: prod-client
 
 # Full production build: real-only client embedded in the versioned server binary
 prod: _prod-stage-client
-    cd server && CGO_ENABLED=0 go build \
+    cd server && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build \
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/server/internal/config.EngineVersion={{version}}" \
       -trimpath -o graphite-meter ./cmd/graphite-meter
 
