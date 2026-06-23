@@ -53,8 +53,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	go uploadStore.RunSweeper(ctx)
 
 	reg := endpoint.NewRegistry()
-	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg, uploadStore))
+	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
 	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
+	reg.RegisterHTTP("/upload/session", endpoint.NewUploadSession(uploadStore))
 	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter, uploadStore))
 	reg.RegisterWS("/ws/ping", endpoint.NewPing())
 	reg.RegisterWS("/ws/upload", endpoint.NewUploadProgress(uploadStore))

@@ -28,7 +28,7 @@ import (
 // never reported). State lives from first-touch until uploadIDTTL idle, monotonic,
 // never resurrected mid-test.
 //
-// Aggregate creation is gated to ids the server MINTED at /preflight (markIssued):
+// Aggregate creation is gated to ids the server MINTED at /upload/session (markIssued):
 // a flood of forged ids on this auth-less bus then creates no state, which both
 // stops cross-tab reads of a victim's progress stream and defuses the
 // maxLiveUploads-amplified DoS/lockout vector (§9).
@@ -113,7 +113,7 @@ const (
 	// by the sweeper — the sole deleter. Covers abort, tab close, worker crash, a
 	// delayed RST, and an orphaned WS that never saw a POST.
 	uploadIDTTL = 30 * time.Second
-	// issuedIDTTL: a minted-but-unconsumed id is forgotten after this, so /preflight
+	// issuedIDTTL: a minted-but-unconsumed id is forgotten after this, so /upload/session
 	// minting can't grow `issued` forever. Far longer than a test's upload stage, and
 	// pruning it never breaks a running test (getOrCreate returns an EXISTING agg
 	// without re-checking issued; the gate only blocks the very first create).
@@ -158,7 +158,7 @@ func (s *UploadStore) shard(id string) *uploadShard {
 
 // Mint generates a fresh opaque upload-session token (128 bits of crypto entropy,
 // URL-safe so it rides ?id= without escaping), records it as issued, and returns
-// it. /preflight calls this once per request; only minted tokens can create an
+// it. /upload/session calls this once per upload stage; only minted tokens can create an
 // aggregate, which is the store's primary abuse defence (§9).
 func (s *UploadStore) Mint() string {
 	var b [16]byte
@@ -172,7 +172,7 @@ func (s *UploadStore) Mint() string {
 	return id
 }
 
-// markIssued records that the server minted id at /preflight, so a later POST/WS
+// markIssued records that the server minted id at /upload/session, so a later POST/WS
 // carrying it may create an aggregate. Idempotent.
 func (s *UploadStore) markIssued(id string) {
 	if id == "" {

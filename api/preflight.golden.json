@@ -9,7 +9,6 @@
   "preTestPingMs": 0,
   "engineVersion": "0.1.0",
   "protocolNegotiated": "http/1.1",
-  "uploadId": "gmu_aGVsbG8td29ybGQtdG9rZW4",
   "capabilities": {
     "origins": {
       "h1": "http://speed.example:8080",
@@ -24,6 +23,7 @@
     "endpoints": {
       "download": "/download",
       "upload": "/upload",
+      "uploadSession": "/upload/session",
       "wsPing": "/ws/ping",
       "wsUpload": "/ws/upload",
       "wtPing": "/wt/ping",

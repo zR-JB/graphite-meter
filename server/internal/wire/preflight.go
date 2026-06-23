@@ -12,12 +12,7 @@ type Preflight struct {
 	PreTestPingMs      float64      `json:"preTestPingMs"`
 	EngineVersion      string       `json:"engineVersion"`
 	ProtocolNegotiated string       `json:"protocolNegotiated"`
-	// UploadID is an opaque per-call token minted by the server and echoed as ?id=
-	// on POST /upload and GET /ws/upload, correlating those separate connections
-	// into one authoritative drained-byte count. omitempty: absent => the client
-	// falls back to its own client-side upload count.
-	UploadID     string       `json:"uploadId,omitempty"`
-	Capabilities Capabilities `json:"capabilities"`
+	Capabilities       Capabilities `json:"capabilities"`
 }
 
 // ServerInfo identifies the measurement server.
@@ -55,25 +50,27 @@ type Transports struct {
 // Endpoints advertises the stable endpoint paths so the client never hardcodes
 // them.
 type Endpoints struct {
-	Download   string `json:"download"`
-	Upload     string `json:"upload"`
-	WSPing     string `json:"wsPing"`
-	WSUpload   string `json:"wsUpload"`
-	WTPing     string `json:"wtPing"`
-	WTDownload string `json:"wtDownload"`
-	WTUpload   string `json:"wtUpload"`
+	Download      string `json:"download"`
+	Upload        string `json:"upload"`
+	UploadSession string `json:"uploadSession"`
+	WSPing        string `json:"wsPing"`
+	WSUpload      string `json:"wsUpload"`
+	WTPing        string `json:"wtPing"`
+	WTDownload    string `json:"wtDownload"`
+	WTUpload      string `json:"wtUpload"`
 }
 
 // DefaultEndpoints returns the canonical endpoint paths (see docs/ARCHITECTURE.md
 // §2 and api/preflight.schema.json).
 func DefaultEndpoints() Endpoints {
 	return Endpoints{
-		Download:   "/download",
-		Upload:     "/upload",
-		WSPing:     "/ws/ping",
-		WSUpload:   "/ws/upload",
-		WTPing:     "/wt/ping",
-		WTDownload: "/wt/download",
-		WTUpload:   "/wt/upload",
+		Download:      "/download",
+		Upload:        "/upload",
+		UploadSession: "/upload/session",
+		WSPing:        "/ws/ping",
+		WSUpload:      "/ws/upload",
+		WTPing:        "/wt/ping",
+		WTDownload:    "/wt/download",
+		WTUpload:      "/wt/upload",
 	}
 }

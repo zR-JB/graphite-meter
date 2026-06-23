@@ -35,10 +35,6 @@ export interface Preflight {
    */
   protocolNegotiated: string;
   /**
-   * Opaque per-call upload-session token minted by the server. The client echoes it as ?id= on POST /upload and on GET /ws/upload so the server correlates those separate connections into one authoritative drained-byte count. Absent when server-authoritative upload is unavailable; the client then falls back to its own client-side count.
-   */
-  uploadId?: string;
-  /**
    * What this server currently supports, so the client negotiates rather than assumes.
    */
   capabilities: {
@@ -82,6 +78,10 @@ export interface Preflight {
     endpoints: {
       download: string;
       upload: string;
+      /**
+       * HTTP endpoint that mints an opaque upload-session token during upload warmup. The client echoes that token as ?id= on POST /upload and GET /ws/upload for that upload stage.
+       */
+      uploadSession: string;
       wsPing: string;
       /**
        * WebSocket upload-progress bus: streams server-measured BYTES_RECEIVED/UPLOAD_COMPLETE for the test ?id=.

@@ -254,9 +254,9 @@ export class RealBackend implements RunnerBackend {
   #cbSeed = "";
 
   /* ---- server-authoritative upload state (Stage 3+) ---- */
-  /** The per-call upload-session id minted at /preflight; appended as &id= on the
+  /** The upload-session id minted during upload warmup; appended as &id= on the
    *  upload POST lanes AND the /ws/upload socket so the server correlates them.
-   *  null ⇒ server-authoritative upload unavailable (the client self-counts). */
+   *  null ⇒ the current upload stage has not been allocated yet. */
   #testId: string | null = null;
   /** The dedicated /ws/upload progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
@@ -333,9 +333,6 @@ export class RealBackend implements RunnerBackend {
     }
     const pf = (await res.json()) as Preflight;
     this.#capabilities = pf.capabilities;
-    // Stash the server-minted upload-session id (absent ⇒ client self-counts the
-    // upload). It correlates the upload POST lanes with the /ws/upload socket.
-    this.#testId = pf.uploadId ?? null;
 
     // Pre-test idle pings over /ws/ping: emit a few sparkline samples and use
     // their median as the pre-test ping (the server sends 0 — RTT is client-
@@ -438,6 +435,7 @@ export class RealBackend implements RunnerBackend {
     this.#measuring = false;
     this.#stalled = false;
     this.#pendingBytes = 0;
+    this.#testId = null;
     // Unique-per-run cache-buster. performance.now() avoids Date.now and is
     // monotonic; the stream index is appended per worker.
     this.#cbSeed = `r${Math.round(performance.now())}`;
@@ -611,15 +609,15 @@ export class RealBackend implements RunnerBackend {
 
     // Download streams the body down (?bytes=N to size it); upload streams a
     // generated body up (no size — the worker generates until the stage stops).
-    // The upload lanes carry the minted &id= so the server aggregates them.
-    const url = (i: number): string => {
+    // Upload gets its per-stage id asynchronously below before opening lanes.
+    const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
         const path = this.#capabilities?.endpoints.download ?? "/download";
         return `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
       const path = this.#capabilities?.endpoints.upload ?? "/upload";
-      const idParam = this.#testId ? `&id=${encodeURIComponent(this.#testId)}` : "";
+      const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
 
@@ -628,17 +626,63 @@ export class RealBackend implements RunnerBackend {
     this.#laneRetry = [];
     this.#laneTimers = [];
     this.#transferActive = true;
+    this.#testId = null;
+
+    if (dir === "up") {
+      void this.#primeUploadTransfer(base, streams, url);
+      return;
+    }
+
     for (let i = 0; i < streams; i++) {
       this.#streamUrls[i] = url(i);
       this.#spawnWorker(i);
     }
-    // For upload, also open the /ws/upload progress socket — the SOLE upload byte
-    // source. Spawned during warmup so it is warm before measurement.
-    if (dir === "up") this.#primeUploadProgress();
     // Workers start now (warming TCP cwnd). For download their byte progress
     // accrues into #pendingBytes during warmup but is NOT pushed; for upload the
     // workers report no bytes (only `alive`) and the server count accrues instead.
     // Either way #measureTransfer resets the window and starts the aggregation timer.
+  }
+
+  async #primeUploadTransfer(
+    base: string,
+    streams: number,
+    url: (i: number, uploadId?: string) => string,
+  ): Promise<void> {
+    let id: string;
+    try {
+      id = await this.#mintUploadSession(base);
+    } catch (cause) {
+      if (!this.#transferActive) return; // aborted/teardown while the warmup request was in flight
+      this.#host!.fail("protocol-error", "Upload session request failed", cause);
+      return;
+    }
+    if (!this.#transferActive || this.#dir !== "up") return;
+    this.#testId = id;
+    for (let i = 0; i < streams; i++) {
+      this.#streamUrls[i] = url(i, id);
+      this.#spawnWorker(i);
+    }
+    // Open the /ws/upload progress socket after the token exists. It is still part
+    // of warmup; measurement starts later via #measureTransfer.
+    this.#primeUploadProgress();
+  }
+
+  async #mintUploadSession(base: string): Promise<string> {
+    const path = this.#capabilities?.endpoints.uploadSession ?? "/upload/session";
+    const res = await fetch(`${base}${path}`, {
+      method: "POST",
+      cache: "no-store",
+      signal: this.#abort?.signal,
+      headers: this.#opts.authToken
+        ? { authorization: `Bearer ${this.#opts.authToken}` }
+        : undefined,
+    });
+    if (!res.ok) throw new Error(`upload session returned HTTP ${res.status}`);
+    const body = (await res.json()) as { uploadId?: unknown };
+    if (typeof body.uploadId !== "string" || body.uploadId === "") {
+      throw new Error("upload session returned no uploadId");
+    }
+    return body.uploadId;
   }
 
   /** Spawn the /ws/upload progress worker for the up stage. Resets the server
