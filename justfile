@@ -5,12 +5,12 @@
 # These feed the client's Vite `define` (see client/vite.config.ts) and the
 # server's version ldflag. The `prod` recipe builds a real-only, dev-tooling-free
 # bundle by default; flip the knobs to produce a configurable multi-engine build.
-engine      := env_var_or_default("GM_CLIENT_ENGINE", "real")
-allow_dummy := env_var_or_default("GM_CLIENT_ALLOW_DUMMY", "0")
-dev_tools   := env_var_or_default("GM_CLIENT_DEV_TOOLS", "0")
-label       := env_var_or_default("GM_CLIENT_BUILD_LABEL", `git rev-parse --short HEAD 2>/dev/null || echo prod`)
-version     := env_var_or_default("VERSION", label)
-go_cache    := env_var_or_default("GOCACHE", "/tmp/graphite-meter-go-build")
+engine      := env("GM_CLIENT_ENGINE", "real")
+allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
+dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
+label       := env("GM_CLIENT_BUILD_LABEL", `git rev-parse --short HEAD 2>/dev/null || echo prod`)
+version     := env("VERSION", label)
+go_cache    := env("GOCACHE", "/tmp/graphite-meter-go-build")
 
 # List available recipes
 default:
