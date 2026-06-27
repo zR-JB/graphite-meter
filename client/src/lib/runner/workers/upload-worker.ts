@@ -94,10 +94,17 @@ const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB desktop default (÷ s
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
 
 /* ---- Closed-loop POST sizing (per-worker, no kills; see autosize.ts) ---- */
-/** Wall-time each POST aims to span. ~350 ms is long enough that the request→
- *  response turnaround is a small fraction even on a fast link, short enough that a
- *  slow link still gets frequent measurement and a small in-flight payload. */
-const TARGET_POST_MS = 350;
+/** Wall-time each POST aims to span. The lower bound matters for ACCURACY, not just
+ *  overhead: the server folds the per-lane request→response turnaround gap into its
+ *  active-time denominator whenever that gap ≤ activeGapCap (250 ms, upload_store.go),
+ *  so a too-short POST makes turnaround a large fraction of "active" time and
+ *  under-reports the rate. 500 ms keeps turnaround a small fraction across the range
+ *  where the sizer is below the pool ceiling; the default ≥3 interleaved lanes
+ *  cover the rest (while one lane turns around, the others keep the clock advancing).
+ *  Still short enough to bound in-flight + re-measure within ~½ s on a slow/dropping
+ *  link. (On a fast link the POST clamps to the pool size and drains faster than this
+ *  — unchanged from the old fixed-Blob behaviour.) */
+const TARGET_POST_MS = 500;
 /** Smallest POST. Below this the per-request HTTP overhead dominates; it is also
  *  the size a freshly-dropped link converges down to within a few POSTs. */
 const MIN_POST_BYTES = 128 * 1024;

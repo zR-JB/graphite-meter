@@ -28,11 +28,12 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	defer laneCancel()
 	var total atomic.Uint64
 	var wg sync.WaitGroup
+	stagger := r.laneStaggerStep()
 	for i := 0; i < r.cfg.ParallelStreams; i++ {
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
-			if !staggerSleep(laneCtx, lane) {
+			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
 			r.downloadLane(laneCtx, base, lane, &total)

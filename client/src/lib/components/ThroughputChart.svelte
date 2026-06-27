@@ -40,7 +40,7 @@
     engine = new ChartEngine(
       () => ({
         throughput: store.throughput,
-        latency: store.latencyPlot, // bucketed line (raw `latency` still feeds the stats)
+        latency: store.latency, // raw — the engine buckets the LINE itself; axis/hover use raw
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
         runSeq: store.runSeq,

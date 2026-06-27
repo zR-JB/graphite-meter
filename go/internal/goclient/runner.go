@@ -92,13 +92,28 @@ func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	return w
 }
 
-// staggerSleep delays lane `lane` by lane*laneStagger (lane 0 is immediate),
+// laneStaggerStep is the per-lane spawn delay, shrunk so even the last lane (of
+// up to 128) spawns within half the warmup window — laneStagger is only the cap.
+// 0 ⇒ one lane or no warmup ⇒ spawn together.
+func (r *runner) laneStaggerStep() time.Duration {
+	if r.cfg.ParallelStreams <= 1 {
+		return 0
+	}
+	step := adaptiveWarmup(r.cfg.Warmup, r.idleRTT) / 2 / time.Duration(r.cfg.ParallelStreams-1)
+	if step > laneStagger {
+		step = laneStagger
+	}
+	return step
+}
+
+// staggerSleep delays lane `lane` by lane*step (lane 0 / step 0 are immediate),
 // returning false if the context is cancelled during the wait.
-func staggerSleep(ctx context.Context, lane int) bool {
-	if lane <= 0 {
+func staggerSleep(ctx context.Context, lane int, step time.Duration) bool {
+	delay := time.Duration(lane) * step
+	if delay <= 0 {
 		return true
 	}
-	t := time.NewTimer(time.Duration(lane) * laneStagger)
+	t := time.NewTimer(delay)
 	defer t.Stop()
 	select {
 	case <-ctx.Done():

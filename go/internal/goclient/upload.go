@@ -40,11 +40,12 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	laneCtx, laneCancel := context.WithCancel(ctx)
 	defer laneCancel()
 	var wg sync.WaitGroup
+	stagger := r.laneStaggerStep()
 	for i := 0; i < r.cfg.ParallelStreams; i++ {
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
-			if !staggerSleep(laneCtx, lane) {
+			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
 			r.uploadLane(laneCtx, id, lane, bodyBlock)

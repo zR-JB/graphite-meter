@@ -76,15 +76,23 @@ const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
  * store/gauge/chart read), so there is exactly one smoothed source of truth:
  * never in the backend (it stays honest), never duplicated per UI element.
  * Byte TOTALS stay exact (raw bytesDelta is untouched); only the RATE is
- * filtered, and an EMA preserves the mean so results don't shift. The cutoff is
- * well below real second-scale throughput changes, so stability stays honest —
- * a genuine sag still reads as instability.
+ * filtered, and an EMA preserves the mean so results don't shift.
  *
- * Kept short (700 ms, was 1800) so the displayed curve tracks a real line's ramp
- * — up AND down — within ~0.7 s instead of trailing it by ~1.8 s. On a changing
- * link that lag was the bulk of "always below the true max"; the postMessage
- * aliasing it removes lives well under 700 ms, so the artifact is still filtered. */
-const THROUGHPUT_SMOOTH_TAU_MS = 700;
+ * TWO smoothings, because the two consumers have opposite needs:
+ *   • DISPLAY (gauge/chart) wants a SHORT tau so the curve tracks a real line's
+ *     ramp — up and down — instead of trailing it; that lag was the bulk of the
+ *     "always below the true max" complaint.
+ *   • STABILITY (confidence / early-exit / stable-window headline) wants the
+ *     ORIGINAL longer tau: its coefficients (TRANSFER_VARIANCE_K, stabilityThreshold)
+ *     are tuned to that variance — a shorter tau ~doubles per-tick variance and the
+ *     phase would stop early-exiting on a moderately noisy link.
+ * The postMessage aliasing both filter lives well under 700 ms, so both still
+ * remove the artifact. Byte totals stay raw either way. */
+const THROUGHPUT_DISPLAY_TAU_MS = 700;
+const THROUGHPUT_STABILITY_TAU_MS = 1800;
+
+/** Per-direction dt-aware EMA state (one store per smoothing purpose). */
+type TpEma = { down: { v: number; t: number } | null; up: { v: number; t: number } | null };
 
 /** Per-tick context handed to a pull-style backend so it can synthesize the
  *  samples due this tick. `realNow` lets a backend gate sample cadence on real
@@ -250,10 +258,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   // Per-direction (down/up run concurrently in bidirectional), dt-aware, and
   // reseeded whenever the measured phase changes so one stage's rate never
   // bleeds into the next. See THROUGHPUT_SMOOTH_TAU_MS.
-  #tpEma: { down: { v: number; t: number } | null; up: { v: number; t: number } | null } = {
-    down: null,
-    up: null,
-  };
+  #tpEma: TpEma = { down: null, up: null }; // display-smoothed (fast)
+  #tpEmaStable: TpEma = { down: null, up: null }; // stability-smoothed (slow)
   #tpEmaPhase: Phase = "idle";
   /** Verbose: last 1 Hz de-alias log time per direction, so the raw-vs-smoothed
    *  comparison logs at a readable cadence rather than every ~16 Hz sample. */
@@ -349,8 +355,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#lastSampleWall = 0;
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
-    this.#tpEma.down = null;
-    this.#tpEma.up = null;
+    this.#tpEma.down = this.#tpEma.up = null;
+    this.#tpEmaStable.down = this.#tpEmaStable.up = null;
     this.#tpEmaPhase = "idle";
   }
 
@@ -538,21 +544,25 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // A real byte sample proves delivery: refresh the watchdog + auto-resume.
     this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
-    // The SINGLE de-aliasing point: filter the rate once, here, so the stability
-    // accumulator and every UI consumer read the same smoothed value. Byte
-    // totals (#bytesCumulative) stay raw/exact.
-    const rate = this.#smoothThroughput(dir, bytesPerSec);
-    this.#accum.pushThroughput(phase, dir, rate, bytesDelta);
-    // Verbose: the de-aliasing point — raw push vs the smoothed value every
-    // consumer reads, 1 Hz per direction. If the gauge reads low, this shows
-    // whether it's the raw samples or the EMA.
+    // De-alias the rate TWICE from the same raw sample (see the two-tau rationale
+    // above): the fast `display` rate every UI consumer reads, and the slow
+    // `stable` rate the confidence accumulator reads. Byte totals stay raw/exact.
+    if (this.#tpEmaPhase !== this.#phase) {
+      this.#tpEma.down = this.#tpEma.up = null;
+      this.#tpEmaStable.down = this.#tpEmaStable.up = null;
+      this.#tpEmaPhase = this.#phase;
+    }
+    const display = this.#emaStep(this.#tpEma, dir, bytesPerSec, THROUGHPUT_DISPLAY_TAU_MS);
+    const stable = this.#emaStep(this.#tpEmaStable, dir, bytesPerSec, THROUGHPUT_STABILITY_TAU_MS);
+    this.#accum.pushThroughput(phase, dir, stable, bytesDelta);
     if (debugEnabled()) {
       const now = performance.now();
       if (now - this.#dbgTpLogAt[dir] >= 1000) {
         this.#dbgTpLogAt[dir] = now;
         dlog("core:throughput", `${dir} de-alias`, {
           raw: fmtRate(bytesPerSec),
-          smoothed: fmtRate(rate),
+          display: fmtRate(display),
+          stable: fmtRate(stable),
           cumulative: fmtBytes(this.#bytesCumulative),
           t: fmtMs(this.#measuredElapsed),
         });
@@ -562,7 +572,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       type: "throughput",
       sample: {
         t: this.#measuredElapsed,
-        bytesPerSec: rate,
+        bytesPerSec: display,
         bytesCumulative: this.#bytesCumulative,
         dir,
         phase, // narrowed to the transfer subset by the guard above
@@ -570,27 +580,21 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  /** De-alias the per-tick throughput rate (the single smoothing point). A
-   *  dt-aware EMA per direction, seeded on the first sample of each measured
-   *  phase (no startup lag) and reseeded on a phase change. A long stall gap
-   *  resolves itself: dt grows, alpha→1, so the first sample after a stall
-   *  snaps in rather than blending with a stale pre-stall value. */
-  #smoothThroughput(dir: FlowDirection, raw: number): number {
+  /** One dt-aware EMA step on a per-direction store: seeded on the first sample
+   *  (no startup lag), and a long stall gap resolves itself (dt grows, alpha→1, so
+   *  the first post-stall sample snaps in rather than blending with a stale value).
+   *  Phase-change reseeding is handled by the caller (shared across both stores). */
+  #emaStep(store: TpEma, dir: FlowDirection, raw: number, tau: number): number {
     const now = performance.now();
-    if (this.#tpEmaPhase !== this.#phase) {
-      this.#tpEma.down = null;
-      this.#tpEma.up = null;
-      this.#tpEmaPhase = this.#phase;
-    }
-    const prev = this.#tpEma[dir];
+    const prev = store[dir];
     if (!prev) {
-      this.#tpEma[dir] = { v: raw, t: now };
+      store[dir] = { v: raw, t: now };
       return raw;
     }
     const dt = now - prev.t;
-    const alpha = 1 - Math.exp(-dt / THROUGHPUT_SMOOTH_TAU_MS);
+    const alpha = 1 - Math.exp(-dt / tau);
     const v = prev.v + alpha * (raw - prev.v);
-    this.#tpEma[dir] = { v, t: now };
+    store[dir] = { v, t: now };
     return v;
   }
 

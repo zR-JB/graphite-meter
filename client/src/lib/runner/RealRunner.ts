@@ -245,6 +245,9 @@ export class RealBackend implements RunnerBackend {
   /** Experimental chunked-download mode for the active stage (config flag); the
    *  download worker self-sizes its `&bytes=N` requests when set. */
   #chunkDownload = false;
+  /** Per-lane spawn delay for this stage — LANE_STAGGER_MS, but shrunk so even the
+   *  last lane spawns within the warmup window (0 ⇒ no warmup ⇒ spawn immediately). */
+  #laneStaggerMs = 0;
   /** One worker per parallel stream, indexed by stream number. Download workers
    *  read-and-count; upload workers generate-and-stream. Same message protocol. */
   #workers: (Worker | null)[] = [];
@@ -634,6 +637,13 @@ export class RealBackend implements RunnerBackend {
     const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
     this.#laneCount = this.#laneBudget(activity, kind);
     const streams = this.#laneCount;
+    // Bound the stagger so the last lane (index laneCount−1) still spawns within
+    // half the warmup; 0 when there's no warmup (lanes spawn together rather than
+    // bleeding into the measured window).
+    this.#laneStaggerMs =
+      streams > 1
+        ? Math.min(LANE_STAGGER_MS, Math.floor((cfg.duration.warmupMs * 0.5) / (streams - 1)))
+        : 0;
     this.#dir = dir;
     // Experimental: the download worker requests adaptive chunks itself, so omit the
     // baked-in ?bytes= and let it append &bytes=N per fetch (see download-worker.ts).
@@ -759,14 +769,15 @@ export class RealBackend implements RunnerBackend {
    *  lane can't be stagger-pending and restart-pending at once, so sharing the slot
    *  is safe. The URL is already stored before this runs. */
   #spawnLaneStaggered(i: number): void {
-    if (i === 0) {
+    const delay = i * this.#laneStaggerMs;
+    if (delay <= 0) {
       this.#spawnWorker(i);
       return;
     }
     this.#laneTimers[i] = setTimeout(() => {
       this.#laneTimers[i] = null;
       if (this.#transferActive) this.#spawnWorker(i);
-    }, i * LANE_STAGGER_MS);
+    }, delay);
   }
 
   /** Open (or re-open) the worker for stream `i` against its stored URL. The

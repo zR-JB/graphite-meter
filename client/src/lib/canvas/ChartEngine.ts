@@ -677,21 +677,49 @@ export class ChartEngine implements CanvasEngine {
   #drawLatency(ctx: CanvasRenderingContext2D, all: LatencySample[]): void {
     if (all.length < 2) return;
     ctx.lineWidth = 1;
-    let prev: LatencySample | null = null;
-    for (const s of all) {
-      if (s.lost) {
-        prev = null;
-        continue;
-      }
+    // Plot a ~100 ms bucketed MEAN, not every raw ping, so the line is readable
+    // and doesn't redraw per sample. Only the STROKE is bucketed — the axis
+    // ceiling (#p95In), time extent and hover all read the raw `all`, so a
+    // bufferbloat spike still scales the axis. A bucket breaks on a lost ping
+    // (line gap) and on an underLoad transition (so colour + the loaded seam stay
+    // exact instead of averaging idle+loaded RTTs into one mis-tagged point).
+    const BUCKET_MS = 100;
+    let prev: { t: number; rttMs: number; underLoad: boolean } | null = null;
+    let bStart = -Infinity;
+    let sum = 0;
+    let n = 0;
+    let bUnderLoad = false;
+    let bT = 0;
+    const flush = (): void => {
+      if (n === 0) return;
+      const cur = { t: bT, rttMs: sum / n, underLoad: bUnderLoad };
       if (prev) {
-        ctx.strokeStyle = s.underLoad || prev.underLoad ? this.#c.warn : this.#c.signal;
+        ctx.strokeStyle = cur.underLoad || prev.underLoad ? this.#c.warn : this.#c.signal;
         ctx.beginPath();
         ctx.moveTo(this.#x(prev.t), this.#yR(prev.rttMs));
-        ctx.lineTo(this.#x(s.t), this.#yR(s.rttMs));
+        ctx.lineTo(this.#x(cur.t), this.#yR(cur.rttMs));
         ctx.stroke();
       }
-      prev = s;
+      prev = cur;
+      sum = 0;
+      n = 0;
+    };
+    for (const s of all) {
+      if (s.lost) {
+        flush();
+        prev = null; // break the line across a lost ping
+        continue;
+      }
+      if (s.t - bStart >= BUCKET_MS || (n > 0 && s.underLoad !== bUnderLoad)) {
+        flush();
+        bStart = s.t;
+      }
+      sum += s.rttMs;
+      n++;
+      bUnderLoad = s.underLoad;
+      bT = s.t;
     }
+    flush();
   }
 
   #drawAxesLabels(ctx: CanvasRenderingContext2D, latencyEnabled: boolean): void {

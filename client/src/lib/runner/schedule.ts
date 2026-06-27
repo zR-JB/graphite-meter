@@ -59,7 +59,8 @@ function activityFor(stage: StagePhase, config: RunnerConfig): PhaseActivity {
 export function adaptiveWarmupMs(baseMs: number, rttMs: number): number {
   const SLOW_START_RTTS = 10;
   const CEIL_MS = 4000;
-  return Math.min(CEIL_MS, Math.max(baseMs, Math.round(rttMs * SLOW_START_RTTS)));
+  const rtt = Number.isFinite(rttMs) && rttMs > 0 ? rttMs : 0; // NaN/garbage ⇒ floor
+  return Math.min(CEIL_MS, Math.max(baseMs, Math.round(rtt * SLOW_START_RTTS)));
 }
 
 /** Build the full phase timeline for a run, skipping disabled stages. Each
