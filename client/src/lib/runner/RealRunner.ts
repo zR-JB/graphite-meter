@@ -122,6 +122,10 @@ const LANE_RESTART_BACKOFF_MS = 300;
 /** Give up a lane after this many consecutive restarts (≈12 s at the backoff);
  *  the core's max-stall timeout also bounds total patience. */
 const LANE_MAX_RESTARTS = 40;
+/** Per-lane spawn delay so the lanes' TCP slow-starts don't ramp in lockstep
+ *  (synchronised overshoot → synchronised loss → synchronised backoff). At ≤4
+ *  staggered lanes this is ≤300 ms, comfortably inside the warmup window. */
+const LANE_STAGGER_MS = 75;
 
 /** The browser's ~6-connections-per-origin limit — the pool the lane budget is
  *  carved from (see #laneBudget). */
@@ -665,7 +669,7 @@ export class RealBackend implements RunnerBackend {
 
     for (let i = 0; i < streams; i++) {
       this.#streamUrls[i] = url(i);
-      this.#spawnWorker(i);
+      this.#spawnLaneStaggered(i);
     }
     // Workers start now (warming TCP cwnd). For download their byte progress
     // accrues into #pendingBytes during warmup but is NOT pushed; for upload the
@@ -690,7 +694,7 @@ export class RealBackend implements RunnerBackend {
     this.#testId = id;
     for (let i = 0; i < streams; i++) {
       this.#streamUrls[i] = url(i, id);
-      this.#spawnWorker(i);
+      this.#spawnLaneStaggered(i);
     }
     // Open the /ws/upload progress socket after the token exists. It is still part
     // of warmup; measurement starts later via #measureTransfer.
@@ -747,6 +751,22 @@ export class RealBackend implements RunnerBackend {
     };
     w.postMessage({ type: "start", url });
     this.#progressWorker = w;
+  }
+
+  /** Spawn lane `i` at prime time, staggered by LANE_STAGGER_MS per index so the
+   *  lanes don't slow-start in lockstep. Lane 0 is immediate; later lanes fire from
+   *  #laneTimers[i] (which #teardownTransfer clears) within the warmup window. A
+   *  lane can't be stagger-pending and restart-pending at once, so sharing the slot
+   *  is safe. The URL is already stored before this runs. */
+  #spawnLaneStaggered(i: number): void {
+    if (i === 0) {
+      this.#spawnWorker(i);
+      return;
+    }
+    this.#laneTimers[i] = setTimeout(() => {
+      this.#laneTimers[i] = null;
+      if (this.#transferActive) this.#spawnWorker(i);
+    }, i * LANE_STAGGER_MS);
   }
 
   /** Open (or re-open) the worker for stream `i` against its stored URL. The
