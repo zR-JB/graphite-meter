@@ -10,6 +10,7 @@
 
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
+import { adaptiveWarmupMs } from "./schedule";
 // NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
 // GM_CLIENT_ALLOW_DUMMY=0), Rollup deletes the branch, this import becomes
@@ -106,7 +107,15 @@ export function engage() {
     return;
   }
   store.reset();
-  getRunner().start($state.snapshot(store.config));
+  // Stretch warmup to the measured RTT so slow-start finishes before measuring
+  // (the user's configured warmup stays the floor). Mutates the throwaway snapshot
+  // only — the persisted setting is untouched.
+  const cfg = $state.snapshot(store.config);
+  cfg.duration = {
+    ...cfg.duration,
+    warmupMs: adaptiveWarmupMs(cfg.duration.warmupMs, store.infra?.preTestPingMs ?? 0),
+  };
+  getRunner().start(cfg);
 }
 
 /**

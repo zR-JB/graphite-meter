@@ -78,8 +78,13 @@ const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
  * Byte TOTALS stay exact (raw bytesDelta is untouched); only the RATE is
  * filtered, and an EMA preserves the mean so results don't shift. The cutoff is
  * well below real second-scale throughput changes, so stability stays honest —
- * a genuine sag still reads as instability. */
-const THROUGHPUT_SMOOTH_TAU_MS = 1800;
+ * a genuine sag still reads as instability.
+ *
+ * Kept short (700 ms, was 1800) so the displayed curve tracks a real line's ramp
+ * — up AND down — within ~0.7 s instead of trailing it by ~1.8 s. On a changing
+ * link that lag was the bulk of "always below the true max"; the postMessage
+ * aliasing it removes lives well under 700 ms, so the artifact is still filtered. */
+const THROUGHPUT_SMOOTH_TAU_MS = 700;
 
 /** Per-tick context handed to a pull-style backend so it can synthesize the
  *  samples due this tick. `realNow` lets a backend gate sample cadence on real

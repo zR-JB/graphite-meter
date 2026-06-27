@@ -50,6 +50,18 @@ function activityFor(stage: StagePhase, config: RunnerConfig): PhaseActivity {
   };
 }
 
+/** Extend a stage's warmup so TCP slow-start can fill the BDP before the measured
+ *  window opens. A fixed warmup is too short on a high-RTT/far path — the window
+ *  opens mid-ramp, so the measured rate sits below the true line speed. ~10 RTTs
+ *  covers slow-start for typical BDPs (parallel lanes fill faster still); the
+ *  configured warmup is the floor (a LAN keeps it), capped so a satellite-grade RTT
+ *  can't blow the run length. rttMs ≤ 0 (no probe) ⇒ the configured value. */
+export function adaptiveWarmupMs(baseMs: number, rttMs: number): number {
+  const SLOW_START_RTTS = 10;
+  const CEIL_MS = 4000;
+  return Math.min(CEIL_MS, Math.max(baseMs, Math.round(rttMs * SLOW_START_RTTS)));
+}
+
 /** Build the full phase timeline for a run, skipping disabled stages. Each
  *  enabled stage owns a self-contained warmup that primes its own connection —
  *  no global initial warmup, so stages carry no cross-deps. Because every
