@@ -34,6 +34,8 @@
  * ============================================================ */
 
 import type {
+  CompensationTransport,
+  ConnectionProfile,
   OverheadCompensationConfig,
   ThroughputResult,
 } from "./runner/contract";
@@ -47,10 +49,12 @@ export type CompensationPhase = "download" | "upload";
 export interface CompensationFactor {
   key:
     | "ethernet-framing"
+    | "encapsulation"
     | "tls-records"
     | "application-framing"
     | "reverse-path-control"
     | "loss-retransmission"
+    | "receiver-bias"
     | "steady-state-ramp"
     | "browser-runtime";
   label: string;
@@ -114,6 +118,14 @@ export const COMPENSATION_DEFAULTS = {
   /* ---- Browser-runtime tax heuristic ---- */
   runtimeVarianceWeight: 0.08, // map coefficient-of-variation → tax via this weight
   runtimeMinTax: 0.002, // ignore taxes under 0.2% (noise floor)
+  /* ---- Receiver-bias (download) measurement correction ---- */
+  // The browser RECEIVER is CPU-bound and times over wall-dt, so its counted
+  // rate sits below true delivery, and the gap GROWS with rate. The Go receiver
+  // (upload) is active-timed and clean, so this applies to DOWNLOAD only. A
+  // saturating (Michaelis–Menten) curve: ~0 at low rate, → ceil at multi-gigabit.
+  receiverBiasCeilRatio: 0.045, // asymptotic lift ceiling (≈ +4.5% as rate → ∞)
+  receiverBiasHalfRateBytes: 1.5e8, // rate (≈1.2 Gbit/s) at which lift = ½ ceil
+  receiverBiasMinLift: 0.001, // ignore lifts under 0.1% (noise floor)
   /* ---- Confidence noise floor for factor inclusion ---- */
   pushFactorEpsilon: 1, // only factors with multiplier > 1 are recorded
 } as const;
@@ -148,16 +160,12 @@ export function estimateResultCompensation(
     return identityEstimate(measuredBytesPerSec);
   }
 
-  // `phase` selects which result the caller passed (download vs upload) and is
-  // retained in the signature for direction-asymmetric factors (e.g. WebSocket
-  // upload masking); the current TCP/TLS/HTTP-2 + QUIC factor set is
-  // direction-symmetric, so the protocol factors below don't branch on it.
-  void phase;
-
   const factors: CompensationFactor[] = [];
 
-  // Protocol/config-based factors (same set the live path uses).
-  collectProtocolFactors(factors, config);
+  // Protocol/config-based factors (same set the live path uses). `phase` selects
+  // direction-asymmetric factors (the download-only receiver-bias correction);
+  // the wire-framing factors are direction-symmetric.
+  collectProtocolFactors(factors, config, phase, measuredBytesPerSec);
 
   // Loss/retransmission — driven by the under-load packet loss the runner now
   // surfaces on ThroughputResult (loaded-ping loss). Capped by maxLossRatio;
@@ -188,22 +196,82 @@ export function estimateResultCompensation(
 export function estimateLiveCompensation(
   bytesPerSec: number,
   config: OverheadCompensationConfig,
+  phase: CompensationPhase,
 ): CompensationEstimate {
   if (!config.enabled || bytesPerSec <= 0) return identityEstimate(bytesPerSec);
 
   const factors: CompensationFactor[] = [];
-  collectProtocolFactors(factors, config);
+  collectProtocolFactors(factors, config, phase, bytesPerSec);
   return finalize(bytesPerSec, factors);
+}
+
+/**
+ * Sensible factor + param defaults for a (connection profile, transport) pair.
+ * The UI calls this when the user changes either selector and merges the result
+ * over `config.compensation.{factors,params}`; the raw knobs stay editable in the
+ * Advanced disclosure. Pure — no side effects. The wire-framing factor functions
+ * also self-gate on `transport`, so a stale toggle can never produce a wrong
+ * factor (e.g. TLS on cleartext HTTP/1.1); this just sets the obvious defaults.
+ */
+export function applyConnectionProfile(
+  profile: ConnectionProfile,
+  transport: CompensationTransport,
+): {
+  factors: Pick<
+    OverheadCompensationConfig["factors"],
+    | "ethernetFraming"
+    | "encapsulation"
+    | "tlsRecords"
+    | "applicationFraming"
+    | "reversePathControl"
+    | "receiverBias"
+  >;
+  params: Pick<
+    OverheadCompensationConfig["params"],
+    "mtuBytes" | "ipVersion" | "encapsulationBytes" | "tcpOptionsBytes"
+  >;
+} {
+  const tls = transport === "https-tls" || transport === "http2";
+  const appFraming = transport === "http2" || transport === "http3-quic";
+  const quic = transport === "http3-quic";
+  const loopback = profile === "loopback";
+  const tunnel = profile === "tunnel";
+  // Presets default to IPv4 (the common case); flip ipVersion + encapsulationBytes
+  // in the Advanced disclosure for an IPv6 path or a non-WireGuard tunnel.
+  const ipVersion = 4 as const;
+  return {
+    factors: {
+      // No link layer on loopback; real NICs and tunnels carry Ethernet/IP/L4.
+      ethernetFraming: !loopback,
+      encapsulation: tunnel,
+      tlsRecords: tls,
+      applicationFraming: appFraming,
+      reversePathControl: !loopback,
+      // Browser receive-cost bias matters on real NICs/tunnels; loopback receive
+      // is cheap (download there reads at or above upload), so leave it off.
+      receiverBias: !loopback,
+    },
+    params: {
+      mtuBytes: loopback ? 65536 : tunnel ? 1420 : 1500,
+      ipVersion,
+      encapsulationBytes: tunnel ? 60 : 0, // WireGuard IPv4 outer header
+      tcpOptionsBytes: quic ? 0 : 12, // QUIC rides UDP — no TCP options
+    },
+  };
 }
 
 /* ============================================================
  * FACTOR ASSEMBLY
  * ============================================================ */
 
-/** The protocol/config-based factors shared by live + result paths. */
+/** The protocol/config-based factors shared by live + result paths. `rate` is
+ *  the bytes/sec the factors are applied to (instantaneous live, or phase mean),
+ *  used by the rate-aware receiver-bias correction. */
 function collectProtocolFactors(
   factors: CompensationFactor[],
   config: OverheadCompensationConfig,
+  phase: CompensationPhase,
+  rate: number,
 ): void {
   if (config.factors.applicationFraming) {
     pushFactor(factors, applicationFramingFactor(config));
@@ -214,8 +282,14 @@ function collectProtocolFactors(
   if (config.factors.ethernetFraming) {
     pushFactor(factors, ethernetFramingFactor(config));
   }
+  if (config.factors.encapsulation) {
+    pushFactor(factors, encapsulationFactor(config));
+  }
   if (config.factors.reversePathControl) {
     pushFactor(factors, reversePathControlFactor(config));
+  }
+  if (config.factors.receiverBias) {
+    pushFactor(factors, receiverBiasFactor(phase, rate, config));
   }
 }
 
@@ -261,19 +335,17 @@ function pushFactor(
  *   low    = heuristic (control traffic, ramp, runtime jitter)
  * ============================================================ */
 
-/**
- * Whether the transfer rides QUIC (WebTransport) vs TCP (xhr-stream).
- *
- * `OverheadCompensationConfig` (the spec-fixed input) carries NO transport
- * field, and the engine has no transport selector — the transfer always rides
- * TCP/TLS (fetch streams) today. So the estimator models that deterministic,
- * dominant path: TCP/TLS with HTTP/2 DATA framing (the high-confidence byte
- * accounting). The QUIC branches below are retained, gated behind this single
- * switch, so wiring a real QUIC (WebTransport) backend later is a one-line
- * change (pass transport in and flip this) rather than a rewrite.
- */
-function isQuic(_config: OverheadCompensationConfig): boolean {
-  return false;
+/** Whether the transfer rides QUIC (HTTP/3) vs TCP. Drives the UDP-vs-TCP header
+ *  in ethernet framing and the QUIC-vs-HTTP/2 application-framing branch. */
+function isQuic(config: OverheadCompensationConfig): boolean {
+  return config.transport === "http3-quic";
+}
+
+/** Whether the transfer is wrapped in TLS records (HTTP/1.1-over-TLS or HTTP/2).
+ *  QUIC carries its own packet protection (modeled in application framing), and
+ *  cleartext HTTP/1.1 has none. */
+function usesTls(config: OverheadCompensationConfig): boolean {
+  return config.transport === "https-tls" || config.transport === "http2";
 }
 
 /**
@@ -286,6 +358,13 @@ function applicationFramingFactor(
 ): CompensationFactor | null {
   const C = COMPENSATION_DEFAULTS;
   const payloadBytes = positive(config.params.framePayloadBytes);
+
+  // HTTP/1.1 (cleartext or over TLS) streams the body with no per-DATA-frame
+  // header — chunked-encoding markers are negligible over a long stream — so
+  // there is no application-framing lift to add.
+  if (config.transport === "http1-clear" || config.transport === "https-tls") {
+    return null;
+  }
 
   if (isQuic(config)) {
     // HTTP/3 DATA frame overhead × QUIC short-header packetization.
@@ -323,7 +402,9 @@ function applicationFramingFactor(
 function tlsRecordFactor(
   config: OverheadCompensationConfig,
 ): CompensationFactor | null {
-  if (isQuic(config)) return null;
+  // No TLS records on cleartext HTTP/1.1 or on QUIC (its packet protection is
+  // modeled in application framing) — only HTTP/1.1-over-TLS and HTTP/2 carry them.
+  if (!usesTls(config)) return null;
 
   const C = COMPENSATION_DEFAULTS;
   // The amortization denominator is the TLS record PAYLOAD window. `params`
@@ -354,7 +435,7 @@ function ethernetFramingFactor(
 ): CompensationFactor {
   const C = COMPENSATION_DEFAULTS;
   const mtuBytes = positive(config.params.mtuBytes);
-  const ipBytes = C.ipv4HeaderBytes; // IPv4 assumed; no metadata to detect IPv6
+  const ipBytes = config.params.ipVersion === 6 ? C.ipv6HeaderBytes : C.ipv4HeaderBytes;
   const transportBytes = isQuic(config)
     ? C.udpHeaderBytes
     : C.tcpBaseHeaderBytes + Math.max(0, config.params.tcpOptionsBytes);
@@ -403,6 +484,55 @@ function reversePathControlFactor(
     1 + ratio,
     "low",
     "one minimum ACK per two data packets",
+  );
+}
+
+/**
+ * VPN-tunnel encapsulation: a WireGuard/Tailscale/OpenVPN tunnel wraps each inner
+ * frame in an outer IP+UDP+protocol header (~60 B IPv4 / ~80 B IPv6 for
+ * WireGuard), so the physical wire carries that much more per MTU-sized frame.
+ * Byte accounting over the (already smaller) tunnel MTU; medium confidence.
+ */
+function encapsulationFactor(
+  config: OverheadCompensationConfig,
+): CompensationFactor | null {
+  const mtuBytes = positive(config.params.mtuBytes);
+  const encapBytes = Math.max(0, config.params.encapsulationBytes);
+  if (encapBytes <= 0) return null;
+  return factor(
+    "encapsulation",
+    "VPN tunnel encapsulation",
+    (mtuBytes + encapBytes) / mtuBytes,
+    "medium",
+    `${encapBytes} B outer header per ${mtuBytes} B tunnel frame`,
+  );
+}
+
+/**
+ * Receiver-bias (DOWNLOAD only): the browser receiver is CPU-bound and times its
+ * rate over wall-dt, so sub-watchdog micro-pauses (GC, event-loop, receive cost)
+ * sit inside the measured interval and depress the counted rate — and the deficit
+ * GROWS with throughput. Upload is measured by the active-timed Go receiver, which
+ * is immune, so this is asymmetric: it lifts the download estimate, never upload.
+ * A saturating (Michaelis–Menten) curve, ≈0 at low rate → ceil at multi-gigabit.
+ * This is a MEASUREMENT correction, not wire bytes; low confidence.
+ */
+function receiverBiasFactor(
+  phase: CompensationPhase,
+  rate: number,
+  _config: OverheadCompensationConfig,
+): CompensationFactor | null {
+  if (phase !== "download") return null;
+  const C = COMPENSATION_DEFAULTS;
+  const r = Math.max(0, rate);
+  const lift = (C.receiverBiasCeilRatio * r) / (r + C.receiverBiasHalfRateBytes);
+  if (lift <= C.receiverBiasMinLift) return null;
+  return factor(
+    "receiver-bias",
+    "Browser receive cost (download)",
+    1 + lift,
+    "low",
+    `${(lift * 100).toFixed(1)}% browser receive-side measurement bias at this rate`,
   );
 }
 

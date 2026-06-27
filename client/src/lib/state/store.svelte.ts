@@ -26,7 +26,7 @@ import {
   estimateResultCompensation,
   type CompensationEstimate,
 } from "../compensation";
-import { quantile, throughputGaugeScale, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { quantile, sharedThroughputScale, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
 import { buildSegments } from "../runner/schedule";
 import {
   loadPersisted,
@@ -36,6 +36,12 @@ import {
 } from "./persistence";
 
 /* ================= STAGE SELECTION (§13.4) ================= */
+
+/** Dwell window (ms) a throughput level must be held before it can lift the
+ *  gauge/chart scale to the next tier. Filters brief transient spikes out of the
+ *  scale decision while still tracking a genuine plateau within ~1 sample of the
+ *  dwell elapsing. ~700 ms ≈ a dozen samples at the live cadence. */
+const SCALE_DWELL_MS = 700;
 
 /** The three user-selectable measured stages. */
 export type StageKey = "latency" | "download" | "upload";
@@ -74,19 +80,28 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   // ----- Ported config surface (§13.1); inert until Batches C/D consume it -----
   compensation: {
     enabled: true,
+    // Default profile matches the common self-host case: a real LAN NIC, cleartext
+    // HTTP/1.1 (the only transport wired today). applyConnectionProfile() seeds the
+    // factor/param defaults below; the user picks a profile to change them.
+    profile: "lan",
+    transport: "http1-clear",
     factors: {
       ethernetFraming: true,
-      tlsRecords: true,
-      applicationFraming: true,
+      encapsulation: false, // tunnel-only; off on a plain LAN
+      tlsRecords: false, // no TLS on cleartext HTTP/1.1
+      applicationFraming: false, // HTTP/1.1 has no per-DATA-frame header
       reversePathControl: true,
       lossRetransmission: true,
+      receiverBias: true, // download-only browser receive-cost correction
       steadyStateRamp: true,
       browserRuntime: true,
     },
     params: {
       mtuBytes: 1500,
+      ipVersion: 4,
       vlanTagged: false,
       tcpOptionsBytes: 12,
+      encapsulationBytes: 60, // WireGuard IPv4 outer header (used when tunnel on)
       framePayloadBytes: 16384,
       tlsRecordBytes: 5,
       aeadTagBytes: 16,
@@ -411,6 +426,7 @@ class AppStore {
     estimateLiveCompensation(
       this.throughput.at(-1)?.bytesPerSec ?? 0,
       this.config.compensation,
+      this.phase === "upload" ? "upload" : "download",
     ),
   );
 
@@ -444,17 +460,49 @@ class AppStore {
     return peak;
   });
 
-  /** Absolute throughput scale (bytes/s) shared by the gauge AND the display
-   *  unit, so a glance at the dial maps to the number. Fixed when the user
-   *  pins `visualization.throughputMaxBytesPerSec`; otherwise auto — a large nice
-   *  rung above the observed peak across BOTH transfer phases (download +
-   *  upload), so up/down stay on one comparable scale. */
+  /** Sustained throughput peak (bytes/s) — the highest level the link held for at
+   *  least SCALE_DWELL_MS, time-weighted across BOTH transfer phases. This is the
+   *  scale driver, NOT the raw peak: a brief transient spike (e.g. one 1.2 Gbit
+   *  sample on a 1 Gbit line) never accumulates the dwell, so it can't push the
+   *  gauge/chart to the next tier. It is monotonic non-decreasing within a run —
+   *  time-at-or-above any level only grows as samples accrue — so the scale
+   *  ratchets up with the plateau and never flaps down mid-run. */
+  #sustainedPeakBytesPerSec = $derived.by(() => {
+    const arr = this.throughput;
+    const n = arr.length;
+    if (n === 0) return 0;
+    if (n === 1) return arr[0].bytesPerSec;
+    // Weight each sample by its time gap (ms) to the previous one; the first
+    // borrows the second's gap. Walk values high→low, accumulating dwell; the
+    // value at which cumulative time crosses SCALE_DWELL_MS is the sustained peak.
+    const weighted = new Array<{ v: number; w: number }>(n);
+    for (let i = 0; i < n; i++) {
+      const w = i === 0 ? arr[1].t - arr[0].t : arr[i].t - arr[i - 1].t;
+      weighted[i] = { v: arr[i].bytesPerSec, w: Math.max(1, w) };
+    }
+    weighted.sort((a, b) => b.v - a.v);
+    let acc = 0;
+    for (const s of weighted) {
+      acc += s.w;
+      if (acc >= SCALE_DWELL_MS) return s.v;
+    }
+    // Run still shorter than the dwell window → use the lowest level seen, so the
+    // scale starts modest and grows with the ramp instead of latching a transient.
+    return weighted[n - 1].v;
+  });
+
+  /** Absolute throughput scale (bytes/s) shared by the gauge AND the chart AND the
+   *  display unit, so a glance at either instrument maps to the same number and
+   *  the two are identically scaled. Fixed when the user pins
+   *  `visualization.throughputMaxBytesPerSec`; otherwise auto — the next 1-2-5 rung
+   *  above the SUSTAINED peak across BOTH transfer phases (download + upload), so
+   *  up/down stay on one comparable scale and transients don't bump the tier. */
   displayScaleBytesPerSec = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     if (typeof cfg === "number" && cfg > 0) return cfg;
-    // Headroom + the tier ladder both live in throughputGaugeScale; the idle
-    // default (150 Mbit/s) is returned for a non-positive peak so ticks show.
-    return throughputGaugeScale(this.#peakBytesPerSec);
+    // Headroom + the tier ladder both live in sharedThroughputScale; the idle
+    // default (100 Mbit/s) is returned for a non-positive peak so ticks show.
+    return sharedThroughputScale(this.#sustainedPeakBytesPerSec);
   });
 
   /** Prefix index (k/M/G…) the whole UI displays in. Derived from the observed

@@ -21,6 +21,10 @@ export interface ChartData {
   /** Monotonic run counter from the store; a change means a new run started
    *  and the engine must drop all accumulated per-run state. */
   runSeq: number;
+  /** Absolute throughput Y-axis ceiling (bytes/s), shared verbatim with the gauge
+   *  dial (store.displayScaleBytesPerSec) so the two instruments are identically
+   *  scaled. Already dwell-filtered + tiered upstream; the chart just follows it. */
+  scaleBytesPerSec: number;
 }
 
 export interface ChartFormatters {
@@ -361,8 +365,9 @@ export class ChartEngine implements CanvasEngine {
       tMax = Math.max(latest + 2000, phaseStart + 4000);
     }
 
-    const peak = this.#peakIn(d.throughput, tMin, tMax);
-    const bytesPerSecMax = niceCeil(Math.max(peak * 1.15, 125_000)); // floor ~1 Mbit/s so ticks render
+    // Throughput axis ceiling: follow the gauge's shared scale verbatim so the
+    // two instruments are identically scaled (dwell-filtered + tiered upstream).
+    const bytesPerSecMax = d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
 
     // Latency axis. Live → simple 0-based nice ceiling (stable while scrolling).
     // Result → centered, weighted, nice-step domain (shared `niceDomain`), so
@@ -411,11 +416,6 @@ export class ChartEngine implements CanvasEngine {
     }
   }
 
-  #peakIn(arr: ThroughputSample[], t0: number, t1: number): number {
-    let peak = 0;
-    for (const s of arr) if (s.t >= t0 && s.t <= t1 && s.bytesPerSec > peak) peak = s.bytesPerSec;
-    return peak;
-  }
 
   #p95In(arr: LatencySample[], t0: number, t1: number): number {
     const v: number[] = [];

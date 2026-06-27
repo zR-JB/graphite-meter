@@ -62,21 +62,42 @@ export type ConnectivityState =
  *  independently toggleable; the numeric params feed the protocol accounting.
  *  Carried here as of Batch A but inert until the estimator lands in Batch C —
  *  `enabled: false` (or all factors off) yields a 1.0 multiplier. */
+/** Path the transfer takes — picks which overheads physically apply. Driven by
+ *  the UI "Connection profile" preset; loopback has no link layer, a tunnel adds
+ *  outer encapsulation, etc. (see applyConnectionProfile in compensation.ts). */
+export type ConnectionProfile = "lan" | "loopback" | "tunnel" | "internet";
+
+/** Wire transport + security — gates the TLS / HTTP-framing / QUIC byte math.
+ *  Only `http1-clear` runs today; the rest are config seams the estimator already
+ *  models so the TLS/HTTP-2/HTTP-3 stage is a selector flip, not a rewrite. */
+export type CompensationTransport =
+  | "http1-clear" // HTTP/1.1, no TLS
+  | "https-tls" // HTTP/1.1 over TLS
+  | "http2" // HTTP/2 over TLS (DATA framing)
+  | "http3-quic"; // HTTP/3 over QUIC (UDP)
+
 export interface OverheadCompensationConfig {
   enabled: boolean;
+  /** High-level presets that seed factors + params; raw knobs remain editable. */
+  profile: ConnectionProfile;
+  transport: CompensationTransport;
   factors: {
     ethernetFraming: boolean; // IP + L4 + Ethernet preamble/FCS/VLAN
+    encapsulation: boolean; // VPN-tunnel outer header (WireGuard/Tailscale/…)
     tlsRecords: boolean; // TLS record header + AEAD tag (TCP/TLS)
     applicationFraming: boolean; // HTTP/2 DATA, HTTP/3 QUIC, WS masks
     reversePathControl: boolean; // TCP ACKs / QUIC control traffic
     lossRetransmission: boolean; // retransmit tax (capped by maxLossRatio)
+    receiverBias: boolean; // download-only browser receive-cost correction
     steadyStateRamp: boolean; // lift toward late-test plateau
     browserRuntime: boolean; // GC/scheduling/render variance tax
   };
   params: {
-    mtuBytes: number; // path MTU (1500 typical)
+    mtuBytes: number; // path MTU (1500 typical; 1420 on a tunnel)
+    ipVersion: 4 | 6; // IP header size + tunnel encap default (60 v4 / 80 v6)
     vlanTagged: boolean; // 802.1Q tag adds 4B per frame
     tcpOptionsBytes: number; // timestamps/SACK (~12)
+    encapsulationBytes: number; // VPN outer header per packet (~60 WireGuard v4)
     framePayloadBytes: number; // HTTP/2 DATA frame payload window
     tlsRecordBytes: number; // TLS record header (5)
     aeadTagBytes: number; // AEAD auth tag (16)

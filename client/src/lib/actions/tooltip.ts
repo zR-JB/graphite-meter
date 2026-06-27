@@ -206,5 +206,9 @@ export const JARGON = {
   compPath:
     "Path behavior — heuristic estimates (low confidence): return-path ACK/control traffic, and a loss/retransmission tax ≈ loss ÷ (1 − loss) from measured loss, capped by Max loss ratio.",
   compModel:
-    "Measurement model — heuristic estimates (low confidence) of how the measurement undercounts: the early-test ramp toward the plateau (peak-vs-average) and browser/runtime timing jitter (derived from stability).",
+    "Measurement model — heuristic estimates (low confidence) of how the measurement undercounts: the download-only browser receive-cost bias (grows with rate, ~0 at low speed), the early-test ramp toward the plateau (peak-vs-average), and browser/runtime timing jitter (derived from stability).",
+  compProfile:
+    "Connection profile — picks which overheads physically apply to your path and seeds sensible defaults. Local Ethernet adds full Ethernet/IP/TCP framing; Loopback adds none (no wire); VPN tunnel adds ~60 B/packet of WireGuard/Tailscale encapsulation on a smaller MTU; Internet follows your transport choice. You can still fine-tune every value under Advanced.",
+  compTransport:
+    "Transport & security — gates the TLS-record and HTTP-framing byte math. HTTP/1.1 cleartext adds neither; HTTPS adds TLS records; HTTP/2 adds TLS + DATA-frame headers; HTTP/3 swaps TCP for QUIC over UDP (its own packet framing, ~1.6% more than HTTP/2-over-TLS). Only HTTP/1.1 cleartext is wired today; the rest pre-configure the estimator for the TLS/HTTP-3 stage.",
 } as const;

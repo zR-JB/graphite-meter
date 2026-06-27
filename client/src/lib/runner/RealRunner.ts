@@ -130,11 +130,12 @@ const LANE_STAGGER_MS = 75;
 /** The browser's ~6-connections-per-origin limit — the pool the lane budget is
  *  carved from (see #laneBudget). */
 const BROWSER_CONN_BUDGET = 6;
-/** Connections kept free of POST lanes: the buses this phase needs (/ws/ping,
- *  /ws/upload) each take one, plus ONE reserved for the preflight OPTIONS / a
- *  lane-respawn overlap. Without that reserve a bus frame queues behind the POST
- *  lanes and the measurement it carries stalls — so this never drops below 1. */
-const CONN_SAFETY = 1;
+/** Connections kept free of POST lanes: ONLY the buses this phase needs
+ *  (/ws/ping, /ws/upload) each take one. No extra reserve is held — the data
+ *  lanes are keep-alive and reuse their connection on respawn, and the preflight
+ *  OPTIONS completes before the transfer phase opens, so neither contends with a
+ *  bus frame during measurement. Reserving a phantom slot here would silently
+ *  drop every phase one lane below the requested budget. */
 /** Grace after BYE for the /ws/upload worker to flush + receive UPLOAD_COMPLETE
  *  before we terminate it (the client headline is already set, so we don't block). */
 const PROGRESS_BYE_GRACE_MS = 1000;
@@ -606,7 +607,7 @@ export class RealBackend implements RunnerBackend {
   #laneBudget(activity: PhaseActivity, kind: TransportKind): number {
     if (kind !== "xhr-stream") return Math.min(2, this.#laneCeiling()); // multiplexed: one fat conn
     const buses = (this.#needsPings(activity) ? 1 : 0) + (activity.transfer.includes("up") ? 1 : 0);
-    const lanes = BROWSER_CONN_BUDGET - buses - CONN_SAFETY;
+    const lanes = BROWSER_CONN_BUDGET - buses;
     return Math.max(1, Math.min(lanes, this.#laneCeiling()));
   }
 
