@@ -123,15 +123,14 @@ const LANE_RESTART_BACKOFF_MS = 300;
  *  the core's max-stall timeout also bounds total patience. */
 const LANE_MAX_RESTARTS = 40;
 
-/** Effective same-origin upload-stream cap — the configurable knob for the
- *  connection-budget experiment (#2). The browser's ~6-connections-per-host limit
- *  must also seat /ws/upload + /ws/ping; 4 POST lanes + those 2 buses = the cap
- *  with zero headroom for the preflight OPTIONS / lane-respawn overlap, which then
- *  queues and stalls the very progress/latency frames the design needs. So clamp
- *  POST lanes to cap − 2 buses − 1 safety = 3. Honoring a configured value >3
- *  needs a separate control origin (LATER). Lower to 2 if experiment #2 shows
- *  contention at 3. */
-const SAME_ORIGIN_STREAM_CAP = 3;
+/** The browser's ~6-connections-per-origin limit — the pool the lane budget is
+ *  carved from (see #laneBudget). */
+const BROWSER_CONN_BUDGET = 6;
+/** Connections kept free of POST lanes: the buses this phase needs (/ws/ping,
+ *  /ws/upload) each take one, plus ONE reserved for the preflight OPTIONS / a
+ *  lane-respawn overlap. Without that reserve a bus frame queues behind the POST
+ *  lanes and the measurement it carries stalls — so this never drops below 1. */
+const CONN_SAFETY = 1;
 /** Grace after BYE for the /ws/upload worker to flush + receive UPLOAD_COMPLETE
  *  before we terminate it (the client headline is already set, so we don't block). */
 const PROGRESS_BYE_GRACE_MS = 1000;
@@ -235,6 +234,10 @@ export class RealBackend implements RunnerBackend {
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload) ---- */
   /** The active transfer direction for the current stage's worker pool. */
   #dir: FlowDirection = "down";
+  /** Lanes for the active stage, derived per-phase by #laneBudget at prime time
+   *  and cached here because the lane-restart path (#spawnWorker via #onWorkerError)
+   *  has no `activity` in scope. Also the per-worker upload reservoir split. */
+  #laneCount = 1;
   /** One worker per parallel stream, indexed by stream number. Download workers
    *  read-and-count; upload workers generate-and-stream. Same message protocol. */
   #workers: (Worker | null)[] = [];
@@ -472,7 +475,7 @@ export class RealBackend implements RunnerBackend {
     if (activity.transfer.length > 0) {
       const kind = this.#negotiateTransport(activity.stage);
       if (!kind) return; // negotiation already raised host.fail("transport-unavailable")
-      for (const dir of activity.transfer) this.#primeTransfer(kind, dir);
+      for (const dir of activity.transfer) this.#primeTransfer(kind, dir, activity);
     }
   }
 
@@ -593,16 +596,27 @@ export class RealBackend implements RunnerBackend {
    *  for "up", or webtransport) and run priming bytes to warm the path (TCP
    *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
    *  stay open for #measureTransfer to start measuring on the SAME connection. */
-  /** Effective parallel-stream count: the configured value clamped to the
-   *  same-origin cap (so the POST lanes leave headroom for /ws/upload + /ws/ping
-   *  under the browser's per-host connection limit). Used for BOTH the lane loop
-   *  and the per-worker reservoir split, so the per-worker Blob size matches the
-   *  real lane count. */
-  #effectiveStreams(): number {
-    return Math.min(Math.max(1, this.#host!.config!.parallelStreams), SAME_ORIGIN_STREAM_CAP);
+  /** Parallel POST lanes for a stage, derived from (phase, features, transport) —
+   *  no manual count. On HTTP/1.1 each lane is its own TCP connection filling the
+   *  BDP, so we carve them from the per-origin pool after reserving the buses this
+   *  phase needs (#laneBudget). On a multiplexed transport every lane shares ONE
+   *  congestion window, so extra lanes buy no throughput — cap low. The configured
+   *  `parallelStreams` is only an upper ceiling (#laneCeiling), never a target. */
+  #laneBudget(activity: PhaseActivity, kind: TransportKind): number {
+    if (kind !== "xhr-stream") return Math.min(2, this.#laneCeiling()); // multiplexed: one fat conn
+    const buses = (this.#needsPings(activity) ? 1 : 0) + (activity.transfer.includes("up") ? 1 : 0);
+    const lanes = BROWSER_CONN_BUDGET - buses - CONN_SAFETY;
+    return Math.max(1, Math.min(lanes, this.#laneCeiling()));
   }
 
-  #primeTransfer(kind: TransportKind, dir: FlowDirection): void {
+  /** Advanced upper bound on lanes (repurposed `parallelStreams`); 0/unset ⇒ the
+   *  full connection budget, so the derived policy governs unconstrained. */
+  #laneCeiling(): number {
+    const max = this.#host!.config!.parallelStreams;
+    return max > 0 ? max : BROWSER_CONN_BUDGET;
+  }
+
+  #primeTransfer(kind: TransportKind, dir: FlowDirection, activity: PhaseActivity): void {
     if (kind !== "xhr-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
 
     // A stage that names both lanes (bidirectional) would call this twice; the
@@ -611,7 +625,8 @@ export class RealBackend implements RunnerBackend {
 
     const cfg = this.#host!.config!;
     const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
-    const streams = this.#effectiveStreams();
+    this.#laneCount = this.#laneBudget(activity, kind);
+    const streams = this.#laneCount;
     this.#dir = dir;
 
     // Download streams the body down (?bytes=N to size it); upload streams a
@@ -745,8 +760,8 @@ export class RealBackend implements RunnerBackend {
       url: this.#streamUrls[i],
       debug: debugEnabled(),
       id: i,
-      // Clamped count so the per-worker payload split matches the real lane count.
-      streams: this.#effectiveStreams(),
+      // Derived lane count so the per-worker payload split matches the real lanes.
+      streams: this.#laneCount,
     });
     this.#workers[i] = w;
   }

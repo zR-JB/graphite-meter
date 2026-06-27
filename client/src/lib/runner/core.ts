@@ -559,7 +559,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         t: this.#measuredElapsed,
         bytesPerSec: rate,
         bytesCumulative: this.#bytesCumulative,
-        streamCount: cfg.parallelStreams,
         dir,
         phase, // narrowed to the transfer subset by the guard above
       },

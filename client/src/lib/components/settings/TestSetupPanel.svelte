@@ -269,13 +269,11 @@
       </select>
     </label>
     <label>
-      <span>Parallel streams</span>
-      <input type="number" min="1" max="32" step="1" disabled={running}
+      <span>Max parallel streams</span>
+      <input type="number" min="1" max="6" step="1" disabled={running}
         bind:value={store.config.parallelStreams} />
     </label>
-    {#if store.config.parallelStreams > 16}
-      <p class="warn">High stream counts ({store.config.parallelStreams}) can distort loaded latency.</p>
-    {/if}
+    <p class="hint">Lanes are chosen automatically per phase; this only caps the maximum.</p>
     <label class="check-row">
       <input
         type="checkbox"
@@ -576,12 +574,5 @@
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 1.55;
-  }
-  .warn {
-    margin: 0;
-    color: var(--warn);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.5;
   }
 </style>

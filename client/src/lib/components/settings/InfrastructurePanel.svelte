@@ -33,7 +33,7 @@
         rows: [
           ["Transfer", store.config.transport.transfer],
           ["Latency", store.config.transport.latency],
-          ["Streams", String(store.config.parallelStreams)],
+          ["Streams", `auto (≤${store.config.parallelStreams})`],
           ["Pre-test ping", i ? `${fmtMs(i.preTestPingMs)} ms` : "—"],
         ] as [string, string][],
       },

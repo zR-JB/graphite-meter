@@ -135,7 +135,7 @@ export interface RunnerConfig {
     latency: "webtransport" | "websocket";
   };
   pingConcurrency: "instant" | "medium" | "slow"; // → interval map
-  parallelStreams: number; // 1–16
+  parallelStreams: number; // advanced ceiling on derived per-phase lanes (1–6)
   endpoint: { host: string; port: number; path: string };
   /** Wire-rate estimation (§13.3). */
   compensation: OverheadCompensationConfig;
@@ -150,7 +150,6 @@ export interface ThroughputSample {
   t: number; // ms since run start (monotonic)
   bytesPerSec: number; // instantaneous bytes/sec (raw, browser-native; UI converts/labels)
   bytesCumulative: number;
-  streamCount: number;
   dir: FlowDirection; // which way these bytes flowed (down in download, up in upload, either in bidirectional)
   // The phase that produced this sample, stamped at ingest. Travels WITH the
   // sample (like `dir`) so consumers attribute it by tag — they never re-derive

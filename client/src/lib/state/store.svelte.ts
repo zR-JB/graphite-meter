@@ -67,7 +67,9 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   duration: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000, bidirectionalMs: 10000 },
   transport: { transfer: "webtransport", latency: "websocket" },
   pingConcurrency: "medium",
-  parallelStreams: 4,
+  // Advanced ceiling only — lanes are derived per-phase (RealRunner #laneBudget);
+  // 6 = the full per-origin budget, so by default the auto policy is unconstrained.
+  parallelStreams: 6,
   endpoint: { host: "auto", port: 443, path: "/measure" },
   // ----- Ported config surface (§13.1); inert until Batches C/D consume it -----
   compensation: {
