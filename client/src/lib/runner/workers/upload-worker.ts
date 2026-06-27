@@ -65,6 +65,7 @@
  * ============================================================ */
 
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
+import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** `debug`/`id` drive verbose per-stream logging only. `streams` is the active
  *  parallel-stream count, used to split UPLOAD_TOTAL_BUF_BYTES per worker. */
@@ -92,21 +93,23 @@ const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB desktop default (÷ s
  *  below this even at a high stream count, so the size always has room to grow. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
 
-/* ---- Closed-loop POST sizing (per-worker, no kills) ---- */
+/* ---- Closed-loop POST sizing (per-worker, no kills; see autosize.ts) ---- */
 /** Wall-time each POST aims to span. ~350 ms is long enough that the request→
  *  response turnaround is a small fraction even on a fast link, short enough that a
  *  slow link still gets frequent measurement and a small in-flight payload. */
 const TARGET_POST_MS = 350;
-/** Smoothing on this lane's observed rate — filters per-POST noise without lagging
- *  a real line change by more than a couple of POSTs. */
-const RATE_EWMA_ALPHA = 0.3;
-/** Per-step size change clamp = the hysteresis. Growth ≤2×/step keeps the climb
- *  slow-start-friendly; shrink ≥0.5×/step damps a transient dip into oscillation. */
-const STEP_UP = 2;
-const STEP_DOWN = 0.5;
 /** Smallest POST. Below this the per-request HTTP overhead dominates; it is also
  *  the size a freshly-dropped link converges down to within a few POSTs. */
 const MIN_POST_BYTES = 128 * 1024;
+/** Sizer tuning shared with autosize.ts (MAX is the pool size, set on `start`). */
+const SIZER: SizerCfg = {
+  targetMs: TARGET_POST_MS,
+  minBytes: MIN_POST_BYTES,
+  maxBytes: MIN_POST_BYTES, // raised to the pool size in onmessage(start)
+  alpha: 0.3,
+  stepUp: 2,
+  stepDown: 0.5,
+};
 /** The payload is built by repeating ONE filled block, so the peak transient heap
  *  during construction is ~block + payload, not the 2× a fresh Uint8Array(bufBytes)
  *  plus its Blob copy would cost (the iOS-Safari tab-kill guard at 1 stream). */
@@ -178,6 +181,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
       MIN_POOL_BYTES,
       Math.floor(uploadTotalBudget() / Math.max(1, msg.streams ?? 1)),
     );
+    SIZER.maxBytes = bufBytes; // the pool is the size ceiling
     nextBytes = Math.min(MIN_POST_BYTES, bufBytes);
     rateEwma = 0;
     dbgWinBytes = 0;
@@ -221,18 +225,6 @@ function buildPool(): void {
   poolBytes = bufBytes;
 }
 
-/** Re-size the next POST toward the TARGET_POST_MS wall-target from the size and
- *  drain time just observed on THIS lane. EWMA-smoothed, step-clamped (the
- *  hysteresis), bounded to [MIN_POST_BYTES, pool size]. No abort — the resize only
- *  affects the NEXT POST. */
-function resize(sentBytes: number, elapsedMs: number): void {
-  if (elapsedMs <= 0) return;
-  const observed = (sentBytes / elapsedMs) * 1000; // bytes/sec
-  rateEwma = rateEwma === 0 ? observed : RATE_EWMA_ALPHA * observed + (1 - RATE_EWMA_ALPHA) * rateEwma;
-  const want = (rateEwma * TARGET_POST_MS) / 1000;
-  const stepped = Math.min(sentBytes * STEP_UP, Math.max(sentBytes * STEP_DOWN, want));
-  nextBytes = Math.floor(Math.min(bufBytes, Math.max(MIN_POST_BYTES, stepped)));
-}
 
 /** POST adaptively-sized slices of the pool in a loop to keep the lane saturated
  *  for the whole stage. Mirrors download-worker.ts's re-fetch loop: a fresh
@@ -265,7 +257,12 @@ async function run(url: string): Promise<void> {
       // One full slice was drained by the server: the lane is alive. NO bytes — the
       // /ws/upload count is authoritative; this only resets the restart counter.
       post({ type: "alive" });
-      resize(sentBytes, performance.now() - postStart);
+      ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
+        sentBytes,
+        performance.now() - postStart,
+        rateEwma,
+        SIZER,
+      ));
       if (debugEnabled()) {
         dbgWinBytes += sentBytes;
         dbgTotal += sentBytes;

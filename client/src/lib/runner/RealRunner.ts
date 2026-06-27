@@ -238,6 +238,9 @@ export class RealBackend implements RunnerBackend {
    *  and cached here because the lane-restart path (#spawnWorker via #onWorkerError)
    *  has no `activity` in scope. Also the per-worker upload reservoir split. */
   #laneCount = 1;
+  /** Experimental chunked-download mode for the active stage (config flag); the
+   *  download worker self-sizes its `&bytes=N` requests when set. */
+  #chunkDownload = false;
   /** One worker per parallel stream, indexed by stream number. Download workers
    *  read-and-count; upload workers generate-and-stream. Same message protocol. */
   #workers: (Worker | null)[] = [];
@@ -628,6 +631,9 @@ export class RealBackend implements RunnerBackend {
     this.#laneCount = this.#laneBudget(activity, kind);
     const streams = this.#laneCount;
     this.#dir = dir;
+    // Experimental: the download worker requests adaptive chunks itself, so omit the
+    // baked-in ?bytes= and let it append &bytes=N per fetch (see download-worker.ts).
+    this.#chunkDownload = dir === "down" && cfg.experimentalChunkedDownload;
 
     // Download streams the body down (?bytes=N to size it); upload streams a
     // generated body up (no size — the worker generates until the stage stops).
@@ -636,7 +642,9 @@ export class RealBackend implements RunnerBackend {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
         const path = this.#capabilities?.endpoints.download ?? "/download";
-        return `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
+        return this.#chunkDownload
+          ? `${base}${path}?cb=${cb}`
+          : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
       const path = this.#capabilities?.endpoints.upload ?? "/upload";
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
@@ -762,6 +770,8 @@ export class RealBackend implements RunnerBackend {
       id: i,
       // Derived lane count so the per-worker payload split matches the real lanes.
       streams: this.#laneCount,
+      // Download-only experimental chunked mode (ignored by the upload worker).
+      chunk: this.#chunkDownload,
     });
     this.#workers[i] = w;
   }

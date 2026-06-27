@@ -70,6 +70,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   // Advanced ceiling only — lanes are derived per-phase (RealRunner #laneBudget);
   // 6 = the full per-origin budget, so by default the auto policy is unconstrained.
   parallelStreams: 6,
+  experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443, path: "/measure" },
   // ----- Ported config surface (§13.1); inert until Batches C/D consume it -----
   compensation: {

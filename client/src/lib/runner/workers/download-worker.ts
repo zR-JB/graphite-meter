@@ -53,9 +53,14 @@
  * ============================================================ */
 
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
+import { nextTransferBytes, type SizerCfg } from "./autosize";
 
-/** Main → worker. `debug`/`id` drive verbose per-stream logging only. */
-type InMsg = { type: "start"; url: string; debug?: boolean; id?: number } | { type: "stop" };
+/** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
+ *  switches the EXPERIMENTAL mode: instead of one long stream (the 64 GiB request),
+ *  request adaptively-sized `&bytes=N` chunks closed-loop to a wall-target (see
+ *  autosize.ts), re-fetching on the SAME keep-alive connection so cwnd is preserved
+ *  (no per-chunk slow-start). Default off; for A/B-ing ramp responsiveness. */
+type InMsg = { type: "start"; url: string; debug?: boolean; id?: number; chunk?: boolean } | { type: "stop" };
 /** Worker → main. */
 type OutMsg =
   | { type: "progress"; bytes: number }
@@ -73,8 +78,25 @@ const POST_INTERVAL_MS = 50;
  *  lean — it's one buffer per worker, reused for the whole stage. */
 const READ_BUF_BYTES = 1024 * 1024; // 1 MiB
 
+/** Experimental chunked-request sizer (see autosize.ts). MAX is generous — the
+ *  reader discards as it counts (O(1) memory), so a big chunk costs no RAM; on a
+ *  fast stable link the size simply climbs toward it (≈ the long-stream behaviour),
+ *  and only a slow or dropping link shrinks it for responsiveness. */
+const CHUNK_SIZER: SizerCfg = {
+  targetMs: 350,
+  minBytes: 128 * 1024,
+  maxBytes: 256 * 1024 * 1024,
+  alpha: 0.3,
+  stepUp: 2,
+  stepDown: 0.5,
+};
+
 let abort: AbortController | null = null;
 let stopped = false;
+/** Chunked mode (experimental) + its closed-loop state. */
+let chunk = false;
+let nextBytes = CHUNK_SIZER.minBytes;
+let rateEwma = 0;
 
 /** Stream index, only used to tag debug lines (`dl-worker#<id>`). */
 let streamId = 0;
@@ -92,6 +114,9 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
+    chunk = msg.chunk ?? false;
+    nextBytes = CHUNK_SIZER.minBytes;
+    rateEwma = 0;
     dbgWinBytes = 0;
     dbgTotal = 0;
     dbgWinStart = performance.now();
@@ -138,14 +163,27 @@ async function run(url: string): Promise<void> {
         }
       }
     };
+    // Chunked mode appends the adaptive size; long-stream mode uses the URL as-is
+    // (its ?bytes= is baked in by RealBackend). Time the whole fetch to resize next.
+    const sentBytes = nextBytes;
+    const reqUrl = chunk ? `${url}&bytes=${sentBytes}` : url;
+    const fetchStart = performance.now();
     try {
-      const res = await fetch(url, { signal: abort.signal, cache: "no-store" });
+      const res = await fetch(reqUrl, { signal: abort.signal, cache: "no-store" });
       if (!res.ok || !res.body) {
         post({ type: "error", recoverable: true, detail: `HTTP ${res.status}` });
         return;
       }
       await readBody(res.body, count);
       if (acc > 0) post({ type: "progress", bytes: acc }); // flush tail
+      if (chunk) {
+        ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
+          sentBytes,
+          performance.now() - fetchStart,
+          rateEwma,
+          CHUNK_SIZER,
+        ));
+      }
     } catch (err) {
       if (stopped) return; // aborted by stop() — a clean teardown, not an error
       if (acc > 0) post({ type: "progress", bytes: acc });

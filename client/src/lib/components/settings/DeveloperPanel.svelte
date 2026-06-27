@@ -33,6 +33,18 @@
     <Switch bind:checked={store.debugLogging} label="Console" />
   </div>
 
+  <div class="diag">
+    <div class="diag-text">
+      <h4>Chunked download (experimental)</h4>
+      <p>
+        Request adaptively-sized download chunks instead of one long stream per lane.
+        Both adapt to a ~350 ms target on the same keep-alive connection; A/B this
+        against the default to compare ramp responsiveness on a real line.
+      </p>
+    </div>
+    <Switch bind:checked={store.config.experimentalChunkedDownload} label="Chunked" disabled={running} />
+  </div>
+
   {#if __GM_ALLOW_DUMMY__}
     <DeveloperSimulation {running} />
   {/if}

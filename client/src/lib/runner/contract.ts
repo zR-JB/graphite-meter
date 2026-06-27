@@ -136,6 +136,9 @@ export interface RunnerConfig {
   };
   pingConcurrency: "instant" | "medium" | "slow"; // → interval map
   parallelStreams: number; // advanced ceiling on derived per-phase lanes (1–6)
+  /** Experimental: request adaptively-sized download chunks instead of one long
+   *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
+  experimentalChunkedDownload: boolean;
   endpoint: { host: string; port: number; path: string };
   /** Wire-rate estimation (§13.3). */
   compensation: OverheadCompensationConfig;
