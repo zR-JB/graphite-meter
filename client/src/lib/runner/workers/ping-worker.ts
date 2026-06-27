@@ -43,7 +43,18 @@
 import { encode, decode } from "../real/wire";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
- *  reporting on for the SAME warmed socket; `stop` closes everything. */
+ *  reporting on for the SAME warmed socket AND swaps the live cadence to the
+ *  phase's mode (idle = tight, loaded = sparse); `stop` closes everything.
+ *
+ *  ── Why the cadence is mode-dependent (the real-line fix) ──
+ *  The idle latency stage wants the tightest possible sampling (on-receive chain,
+ *  a full in-flight window) to find the true min RTT with zero handshakes. But
+ *  DURING a transfer that same chain sprays hundreds of tiny PING frames/sec
+ *  UPSTREAM, and on a typical asymmetric line that congests the thin uplink and
+ *  starves the download's ACKs — the pings actively slow the very throughput we
+ *  measure. A loaded-latency *distribution* needs only a handful of samples/sec,
+ *  so under load we kill the chain and pace a tiny in-flight window. The cadence
+ *  fields are optional: omitted (the warmup `start`) keeps the `start` tuning. */
 type InMsg =
   | {
       type: "start";
@@ -55,7 +66,16 @@ type InMsg =
       lossK: number;
       lossFloorMs: number;
     }
-  | { type: "measure" }
+  | {
+      type: "measure";
+      /** Loaded phases pass false to stop the PONG→PING chain (the spam source);
+       *  idle passes true. Omitted ⇒ leave as-is. */
+      chainOnReceive?: boolean;
+      /** Swap the in-flight cap live (loaded → small, e.g. 2). Omitted ⇒ leave. */
+      maxInFlight?: number;
+      /** Swap the pacer floor live; restarts the pacer timer. Omitted ⇒ leave. */
+      intervalMs?: number;
+    }
   | { type: "stop" };
 
 /** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
@@ -88,13 +108,16 @@ let ws: WebSocket | null = null;
 let measuring = false;
 let stopped = false;
 
-// Tuning — set on `start`.
+// Tuning — set on `start`, partly re-tuned per phase on `measure`.
 let intervalMs = 250;
 let maxInFlight = 16;
 let minGapMs = 1;
 let reportGapMs = 20;
 let lossK = 4;
 let lossFloorMs = 250;
+/** On-receive chaining (PONG → next PING). True for warmup + idle latency;
+ *  flipped off under load so the chain can't spam the uplink during a transfer. */
+let chainOnReceive = true;
 
 // Send/pending state.
 const pending = new Map<number, number>(); // id → sendTime (performance.now())
@@ -139,6 +162,17 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
     case "measure":
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
+      // Swap to the phase's cadence (idle = tight, loaded = sparse). Each field
+      // is optional so an omitted one keeps the warmup `start` tuning.
+      if (m.chainOnReceive !== undefined) chainOnReceive = m.chainOnReceive;
+      if (m.maxInFlight !== undefined) maxInFlight = m.maxInFlight;
+      if (m.intervalMs !== undefined && m.intervalMs !== intervalMs) {
+        intervalMs = m.intervalMs;
+        restartPacer(); // the pacer floor runs at intervalMs — re-arm it live
+      }
+      // The cap may have shrunk; nothing to evict, but if it GREW, nudge so the
+      // window refills without waiting a full pacer interval.
+      maybeSend(performance.now());
       break;
     case "stop":
       teardown();
@@ -193,12 +227,19 @@ function scheduleReconnect(detail: string): void {
 }
 
 function ensureTimers(): void {
-  // Pacer floor: keep pings flowing when the on-receive chain is starved.
+  // Pacer floor: keep pings flowing when the on-receive chain is starved (or off).
   pacer ??= setInterval(() => maybeSend(performance.now()), intervalMs);
   // Eviction sweep: drop pings stalled past the adaptive timeout.
   sweeper ??= setInterval(sweep, Math.max(lossFloorMs, intervalMs));
   // Batch flush.
   flusher ??= setInterval(flush, FLUSH_MS);
+}
+
+/** Re-arm the pacer at the current intervalMs (the loaded mode raises it so the
+ *  floor — now the sole send driver with the chain off — paces sparsely). */
+function restartPacer(): void {
+  if (pacer !== null) clearInterval(pacer);
+  pacer = setInterval(() => maybeSend(performance.now()), intervalMs);
 }
 
 function onFrame(data: unknown): void {
@@ -226,7 +267,9 @@ function onFrame(data: unknown): void {
       lastReportAt = recv;
       outbox.push({ rtt, lost: false });
     }
-    maybeSend(recv); // on-receive → send-next
+    // On-receive chain — the fast path on idle, but OFF under load (the pacer
+    // floor drives sends instead, so we don't spam the uplink mid-transfer).
+    if (chainOnReceive) maybeSend(recv);
     return;
   }
 

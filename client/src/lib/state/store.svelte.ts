@@ -624,6 +624,45 @@ class AppStore {
     });
   });
 
+  /* ============================================================
+   * Latency PLOT series (the drawn chart line only — NOT stats).
+   * Plotting every raw ping makes the line jitter and redraw on
+   * every sample; we average each ~100 ms window into one point so
+   * the line has a fixed, readable update rate. Raw samples stay in
+   * `latency` for the distribution (latencyLanes); only the line is
+   * smoothed. A window with no valid pings emits a `lost` point so
+   * the line breaks exactly as drawing from raw would.
+   * ============================================================ */
+  latencyPlot = $derived.by<LatencySample[]>(() => {
+    const BUCKET_MS = 100;
+    const out: LatencySample[] = [];
+    let bStart = -Infinity;
+    let sum = 0;
+    let n = 0;
+    let lost = 0;
+    let last: LatencySample | null = null;
+    const flush = (): void => {
+      if (!last) return;
+      if (n > 0) out.push({ t: last.t, rttMs: sum / n, underLoad: last.underLoad, lost: false, phase: last.phase });
+      else if (lost > 0) out.push({ ...last, lost: true });
+    };
+    for (const s of this.latency) {
+      if (s.t - bStart >= BUCKET_MS) {
+        flush();
+        bStart = s.t;
+        sum = n = lost = 0;
+      }
+      if (s.lost) lost++;
+      else {
+        sum += s.rttMs;
+        n++;
+      }
+      last = s;
+    }
+    flush();
+    return out;
+  });
+
   #lastSampleForPhase() {
     return this.throughput.at(-1) ?? null;
   }

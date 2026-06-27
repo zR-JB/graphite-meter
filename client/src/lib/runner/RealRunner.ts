@@ -159,6 +159,13 @@ const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
 /** Max concurrent in-flight pings — bounds wire spam and the worker's pending
  *  map. Low-RTT links rarely exceed 1–2; high-RTT links fill toward this. */
 const PING_MAX_IN_FLIGHT = 16;
+/** Loaded-phase cadence: under a transfer the idle chain would spray hundreds of
+ *  tiny PINGs/sec upstream and starve the download's ACKs on an asymmetric line.
+ *  A loaded-latency distribution needs only a few samples/sec, so we kill the
+ *  on-receive chain and pace a 2-deep window at ~8 Hz — enough to characterize
+ *  bufferbloat, negligible uplink load. */
+const PING_LOADED_INTERVAL_MS = 120;
+const PING_LOADED_MAX_IN_FLIGHT = 2;
 /** Min gap between sends, so the sub-ms on-receive chain tops out at ~1 kHz. */
 const PING_MIN_GAP_MS = 1;
 /** Min gap between UI-bound samples (worker downsamples to this). Decouples the
@@ -1078,7 +1085,12 @@ export class RealBackend implements RunnerBackend {
     // warmup). underLoad tags every forwarded sample: true when these pings run
     // concurrently with a transfer (bufferbloat), false for the idle stage.
     this.#latencyUnderLoad = underLoad;
-    this.#pingWorker?.postMessage({ type: "measure" });
+    const cfg = this.#host!.config!;
+    this.#pingWorker?.postMessage(
+      underLoad
+        ? { type: "measure", chainOnReceive: false, maxInFlight: PING_LOADED_MAX_IN_FLIGHT, intervalMs: PING_LOADED_INTERVAL_MS }
+        : { type: "measure", chainOnReceive: true, maxInFlight: PING_MAX_IN_FLIGHT, intervalMs: PING_INTERVAL[cfg.pingConcurrency] },
+    );
   }
 
   /* ================= OPTIONAL SEAMS ================= */
