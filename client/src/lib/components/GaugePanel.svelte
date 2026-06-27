@@ -121,6 +121,10 @@
     void store.liveRtt;
     void store.displayScaleBytesPerSec;
     void store.measuring; // re-arm on a stall/resume edge so the decay animates
+    // Re-arm on a unit/base toggle so the tick labels re-format after the run
+    // finishes and the loop has parked (the ticks read store.toUnit live).
+    void store.unitBase;
+    void store.unitKind;
     engine?.wake();
   });
 

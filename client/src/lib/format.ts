@@ -92,27 +92,31 @@ export function rawRateFrom(displayValue: number, base: UnitBase, kind: UnitKind
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
-/** Absolute throughput-gauge ceiling (bytes/s) for an observed peak (bytes/s).
+/** Absolute throughput ceiling (bytes/s) for an observed peak (bytes/s). The
+ *  SINGLE source of scale for BOTH the gauge dial and the chart Y-axis, so the
+ *  two are always identically scaled (a glance at either maps to the same tier).
  *
- *  One rung per power of ten, reasoned about in bit/s — the unit people quote
- *  links in — so the ceiling is always a round tier the eye recognizes: 10 / 100
- *  / 1000 Mbit, 10 / 100 Gbit … up to data-center rates. The dial rounds UP to
- *  the next power of ten above the peak, which makes the whole decade the
- *  headroom: the needle can never peg, a transient burst has a full 10× of room
- *  before any rescale, and a ramping measurement settles on one ceiling for the
- *  entire run instead of stepping through intermediate rungs.
+ *  Tiers are a 1-2-5 ladder reasoned about in bit/s — the unit people quote links
+ *  in — so the ceiling is always a round, recognizable rung: 10 / 20 / 50 / 100 /
+ *  200 / 500 Mbit, 1 / 2 / 5 Gbit … up to data-center rates. The 1-2-5 ladder
+ *  rounds UP to the next rung above the peak: at most ~2.5× headroom (vs. 10× for
+ *  a one-per-decade ladder), so the needle/line fills the instrument well while
+ *  still leaving room before any rescale.
  *
- *  This also flatters the common case: real links deliver just UNDER their rated
- *  power (a "1 Gbit" line sustains ~940 Mbit after overhead), so rounding the
- *  peak up to the next power of ten lands it at ~94% on the exactly-named scale
- *  (940 Mbit → 1 Gbit dial). A line that over-delivers past its power of ten
- *  jumps to the next decade and reads low — the deliberate cost of one-per-decade
- *  coarseness, traded for never pegging and never rescaling mid-run. */
-export function throughputGaugeScale(peakBytesPerSec: number): number {
+ *  This flatters the common case: real links deliver just UNDER their rated power
+ *  (a "1 Gbit" line sustains ~940 Mbit after overhead), so the peak rounds up to
+ *  the exactly-named rung and reads ~94% (940 Mbit → 1 Gbit). A line that
+ *  over-delivers past a rung steps to the next 1-2-5 rung (e.g. 1.2 Gbit → 2 Gbit)
+ *  rather than leaping a whole decade. Pair with a sustained (dwell-filtered) peak
+ *  so a brief transient can't push the tier — see store.displayScaleBytesPerSec. */
+export function sharedThroughputScale(peakBytesPerSec: number): number {
   if (peakBytesPerSec <= 0) return 1.25e7; // idle default: 100 Mbit/s so ticks render
   const peakBits = peakBytesPerSec * 8;
-  const ceilBits = 10 ** (Math.floor(Math.log10(peakBits)) + 1); // next power of ten up
-  return ceilBits / 8; // bit/s → byte/s
+  const exp = Math.floor(Math.log10(peakBits));
+  const base = 10 ** exp;
+  const f = peakBits / base; // 1 ≤ f < 10
+  const tierF = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10; // next 1-2-5 rung up
+  return (tierF * base) / 8; // bit/s → byte/s
 }
 
 /** "Nice" axis ceiling for charts. */
