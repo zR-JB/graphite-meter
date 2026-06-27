@@ -10,7 +10,12 @@
     store,
     DURATION_PRESETS,
   } from "../../state/store.svelte";
-  import type { RunnerConfig } from "../../runner/contract";
+  import type {
+    RunnerConfig,
+    ConnectionProfile,
+    CompensationTransport,
+  } from "../../runner/contract";
+  import { applyConnectionProfile } from "../../compensation";
   import { tooltip, JARGON } from "../../actions/tooltip";
 
   interface Props {
@@ -87,6 +92,31 @@
     store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(n);
   }
 
+  /* ---------- Connection profile + transport presets ----------
+   * Picking either seeds the factor/param defaults via applyConnectionProfile;
+   * the raw knobs stay editable in the Advanced disclosure below. */
+  const PROFILE_OPTIONS: { value: ConnectionProfile; label: string }[] = [
+    { value: "lan", label: "Local Ethernet (LAN)" },
+    { value: "loopback", label: "Loopback / same host" },
+    { value: "tunnel", label: "VPN tunnel (WireGuard/Tailscale)" },
+    { value: "internet", label: "Internet" },
+  ];
+  const TRANSPORT_OPTIONS: { value: CompensationTransport; label: string }[] = [
+    { value: "http1-clear", label: "HTTP/1.1 (cleartext)" },
+    { value: "https-tls", label: "HTTPS (TLS)" },
+    { value: "http2", label: "HTTP/2 (TLS)" },
+    { value: "http3-quic", label: "HTTP/3 (QUIC)" },
+  ];
+  /** Re-seed factor + param defaults whenever the profile or transport changes. */
+  function reseedProfile() {
+    const preset = applyConnectionProfile(
+      store.config.compensation.profile,
+      store.config.compensation.transport,
+    );
+    Object.assign(store.config.compensation.factors, preset.factors);
+    Object.assign(store.config.compensation.params, preset.params);
+  }
+
   /* ---------- Compensation factor groups (de-magicked labels) ---------- */
   type FactorKey = keyof RunnerConfig["compensation"]["factors"];
   const COMP_GROUPS: { label: string; tip: string; toggles: { key: FactorKey; label: string }[] }[] = [
@@ -95,6 +125,7 @@
       tip: JARGON.compProtocol,
       toggles: [
         { key: "ethernetFraming", label: "Ethernet / IP / transport" },
+        { key: "encapsulation", label: "VPN tunnel encapsulation" },
         { key: "tlsRecords", label: "TLS records" },
         { key: "applicationFraming", label: "HTTP / WS / QUIC framing" },
       ],
@@ -111,16 +142,18 @@
       label: "Measurement model",
       tip: JARGON.compModel,
       toggles: [
+        { key: "receiverBias", label: "Browser receive cost (download)" },
         { key: "steadyStateRamp", label: "Steady-state ramp" },
         { key: "browserRuntime", label: "Browser runtime tax" },
       ],
     },
   ];
 
-  /* ---------- Compensation numeric params ---------- */
+  /* ---------- Compensation numeric params (Advanced) ---------- */
   const COMP_NUMS = [
-    { key: "mtuBytes", label: "MTU bytes", min: 576, max: 9000, step: 1 },
+    { key: "mtuBytes", label: "MTU bytes", min: 576, max: 65536, step: 1 },
     { key: "tcpOptionsBytes", label: "TCP options B", min: 0, max: 40, step: 4 },
+    { key: "encapsulationBytes", label: "Encapsulation B", min: 0, max: 128, step: 1 },
     { key: "framePayloadBytes", label: "Frame payload B", min: 256, max: 65536, step: 256 },
     { key: "tlsRecordBytes", label: "TLS record B", min: 0, max: 64, step: 1 },
     { key: "aeadTagBytes", label: "AEAD tag B", min: 0, max: 255, step: 1 },
@@ -185,21 +218,6 @@
         <span use:tooltip={JARGON.stability}>Stability</span>
         <input type="number" min="0.5" max="0.99" step="0.01" disabled={running}
           bind:value={store.config.adaptive.stabilityThreshold} />
-      </label>
-      <label>
-        <span>Max reduction</span>
-        <input type="number" min="0" max="0.75" step="0.01" disabled={running}
-          bind:value={store.config.adaptive.maxPhaseReductionRatio} />
-      </label>
-      <label>
-        <span>Min latency smp</span>
-        <input type="number" min="1" max="80" step="1" disabled={running}
-          bind:value={store.config.adaptive.minLatencySamples} />
-      </label>
-      <label>
-        <span>Min transfer smp</span>
-        <input type="number" min="1" max="80" step="1" disabled={running}
-          bind:value={store.config.adaptive.minTransferSamples} />
       </label>
       <label>
         <span>Glide (ms)</span>
@@ -288,6 +306,21 @@
     </p>
   </section>
 
+  <!-- Visualizer -->
+  <section class="panel">
+    <h3>Visualizer</h3>
+    <label class="check-row">
+      <input type="checkbox" checked={vizAuto} onchange={(e) => setVizAuto((e.currentTarget as HTMLInputElement).checked)} />
+      <span>Auto throughput ceiling</span>
+    </label>
+    <label>
+      <span>Throughput max {store.unitLabel}</span>
+      <input type="number" min="1" step="1" disabled={vizAuto}
+        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))} oninput={onVizInput} />
+    </label>
+    <p class="hint">Manual Y-axis ceiling for the gauge and chart; auto self-scales to the peak.</p>
+  </section>
+
   <!-- Overhead compensation (wide) -->
   <section class="panel wide">
     <h3>Overhead Compensation</h3>
@@ -299,6 +332,33 @@
       <input type="checkbox" disabled={running} bind:checked={store.config.compensation.enabled} />
       <span use:tooltip={JARGON.overheadCompensation}>Show estimated wire-rate compensation</span>
     </label>
+    <!-- Connection profile + transport presets: seed the factors/params below. -->
+    <div class="two">
+      <label>
+        <span use:tooltip={JARGON.compProfile}>Connection profile</span>
+        <select
+          disabled={running || !store.config.compensation.enabled}
+          bind:value={store.config.compensation.profile}
+          onchange={reseedProfile}
+        >
+          {#each PROFILE_OPTIONS as o (o.value)}
+            <option value={o.value}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label>
+        <span use:tooltip={JARGON.compTransport}>Transport &amp; security</span>
+        <select
+          disabled={running || !store.config.compensation.enabled}
+          bind:value={store.config.compensation.transport}
+          onchange={reseedProfile}
+        >
+          {#each TRANSPORT_OPTIONS as o (o.value)}
+            <option value={o.value}>{o.label}</option>
+          {/each}
+        </select>
+      </label>
+    </div>
     <div class="toggle-groups">
       {#each COMP_GROUPS as g (g.label)}
         <div class="toggle-group">
@@ -316,48 +376,35 @@
         </div>
       {/each}
     </div>
-    <div class="two">
-      {#each COMP_NUMS as n (n.key)}
+    <details class="advanced">
+      <summary>Advanced — raw byte accounting</summary>
+      <p class="hint">
+        Sane defaults come from the profile + transport above; tweak these only to
+        match a non-standard MTU, jumbo frames, or a custom tunnel/record size.
+      </p>
+      <div class="two">
         <label>
-          <span>{n.label}</span>
-          <input type="number" min={n.min} max={n.max} step={n.step} disabled={running}
-            bind:value={store.config.compensation.params[n.key]} />
+          <span>IP version</span>
+          <select disabled={running} bind:value={store.config.compensation.params.ipVersion}>
+            <option value={4}>IPv4</option>
+            <option value={6}>IPv6</option>
+          </select>
         </label>
-      {/each}
-      <label class="check-row spanned">
-        <input type="checkbox" disabled={running} bind:checked={store.config.compensation.params.vlanTagged} />
-        <span>VLAN tagged (+4B/frame)</span>
-      </label>
-    </div>
+        {#each COMP_NUMS as n (n.key)}
+          <label>
+            <span>{n.label}</span>
+            <input type="number" min={n.min} max={n.max} step={n.step} disabled={running}
+              bind:value={store.config.compensation.params[n.key]} />
+          </label>
+        {/each}
+        <label class="check-row spanned">
+          <input type="checkbox" disabled={running} bind:checked={store.config.compensation.params.vlanTagged} />
+          <span>VLAN tagged (+4B/frame)</span>
+        </label>
+      </div>
+    </details>
   </section>
 
-  <!-- Visualizer -->
-  <section class="panel">
-    <h3>Visualizer</h3>
-    <label class="check-row">
-      <input type="checkbox" checked={vizAuto} onchange={(e) => setVizAuto((e.currentTarget as HTMLInputElement).checked)} />
-      <span>Auto throughput ceiling</span>
-    </label>
-    <label>
-      <span>Throughput max {store.unitLabel}</span>
-      <input type="number" min="1" step="1" disabled={vizAuto}
-        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))} oninput={onVizInput} />
-    </label>
-    <p class="hint">Manual Y-axis ceiling for the gauge and chart; auto self-scales to the peak.</p>
-  </section>
-
-  <!-- Units (always editable — display only) -->
-  <section class="panel">
-    <h3>Units</h3>
-    <div class="seg">
-      <button class:active={store.unitBase === "base10"} onclick={() => (store.unitBase = "base10")}>Base-10</button>
-      <button class:active={store.unitBase === "base2"} onclick={() => (store.unitBase = "base2")}>Base-2</button>
-    </div>
-    <div class="seg">
-      <button class:active={store.unitKind === "bits"} onclick={() => (store.unitKind = "bits")}>Bits</button>
-      <button class:active={store.unitKind === "bytes"} onclick={() => (store.unitKind = "bytes")}>Bytes</button>
-    </div>
-  </section>
 </div>
 
 <style>
@@ -552,5 +599,32 @@
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 1.55;
+  }
+
+  /* Advanced disclosure — keeps the raw byte knobs out of the way until needed. */
+  .advanced {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    padding: 0;
+  }
+  .advanced summary {
+    cursor: pointer;
+    padding: 10px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    user-select: none;
+  }
+  .advanced summary:hover {
+    color: var(--text);
+  }
+  .advanced[open] summary {
+    border-bottom: 1px solid var(--border);
+  }
+  .advanced > :not(summary) {
+    margin: 10px;
   }
 </style>

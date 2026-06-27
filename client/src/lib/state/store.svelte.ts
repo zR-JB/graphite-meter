@@ -74,19 +74,28 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   // ----- Ported config surface (§13.1); inert until Batches C/D consume it -----
   compensation: {
     enabled: true,
+    // Default profile matches the common self-host case: a real LAN NIC, cleartext
+    // HTTP/1.1 (the only transport wired today). applyConnectionProfile() seeds the
+    // factor/param defaults below; the user picks a profile to change them.
+    profile: "lan",
+    transport: "http1-clear",
     factors: {
       ethernetFraming: true,
-      tlsRecords: true,
-      applicationFraming: true,
+      encapsulation: false, // tunnel-only; off on a plain LAN
+      tlsRecords: false, // no TLS on cleartext HTTP/1.1
+      applicationFraming: false, // HTTP/1.1 has no per-DATA-frame header
       reversePathControl: true,
       lossRetransmission: true,
+      receiverBias: true, // download-only browser receive-cost correction
       steadyStateRamp: true,
       browserRuntime: true,
     },
     params: {
       mtuBytes: 1500,
+      ipVersion: 4,
       vlanTagged: false,
       tcpOptionsBytes: 12,
+      encapsulationBytes: 60, // WireGuard IPv4 outer header (used when tunnel on)
       framePayloadBytes: 16384,
       tlsRecordBytes: 5,
       aeadTagBytes: 16,
@@ -411,6 +420,7 @@ class AppStore {
     estimateLiveCompensation(
       this.throughput.at(-1)?.bytesPerSec ?? 0,
       this.config.compensation,
+      this.phase === "upload" ? "upload" : "download",
     ),
   );
 
