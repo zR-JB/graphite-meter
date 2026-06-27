@@ -2,13 +2,24 @@
  * The Graphite Meter — Upload generate-and-POST worker (Stage 3)
  * ============================================================
  *
- * One worker per parallel upload stream. It generates ONE fixed incompressible
- * Blob with `crypto.getRandomValues` (no WASM — filled once and reused for every
- * POST, so the RNG is never on the hot path; CSPRNG bytes are indistinguishable
- * from xorshift64* to gzip/br, so incompressibility holds) and POSTs it in a loop
- * over plain HTTP/1.1 via `fetch`. The SERVER drains + counts the bytes and
- * relays the authoritative count over /ws/upload (see upload-progress-worker.ts);
- * this worker just keeps the lane saturated and is otherwise measurement-blind.
+ * One worker per parallel upload stream. It builds ONE incompressible Blob "pool"
+ * with `crypto.getRandomValues` (no WASM — filled once; CSPRNG bytes are
+ * indistinguishable from xorshift64* to gzip/br, so incompressibility holds) and
+ * POSTs a zero-copy `pool.slice(0, n)` of it in a loop over plain HTTP/1.1 via
+ * `fetch`. The SERVER drains + counts the bytes and relays the authoritative count
+ * over /ws/upload (see upload-progress-worker.ts); this worker just keeps the lane
+ * saturated and is otherwise measurement-blind.
+ *
+ * ── Why the POST size adapts (dial-up → multi-Gbit in one tool) ──
+ * A fixed POST size can't span that range: huge on a slow link (a giant in-flight
+ * payload, coarse measurement, sluggish response when the line drops mid-test);
+ * pinned-too-small everywhere else. So each POST is sized closed-loop to a ~350 ms
+ * wall-target from THIS lane's own observed rate (an EWMA) — purely per-worker, so
+ * lanes never synchronise into oscillation. There are NO preemptive kills: the
+ * current POST always finishes; only the NEXT one is resized (a step-clamp is the
+ * hysteresis). The size rides between MIN_POST_BYTES and the pool size; the pool is
+ * the old fixed reservoir (TOTAL/streams), so the fast end is unchanged and only
+ * the slow end gains the smaller, more responsive POSTs.
  *
  * ── Why a fixed-Blob `fetch` (and NOT a streaming fetch) ──
  * A `fetch` whose body is a *ReadableStream* (`duplex:'half'`) is the streaming
@@ -42,15 +53,15 @@
  *   in:  { type: 'start', url, debug?, id?, streams? } | { type: 'stop' }
  *   out: { type: 'alive' } | { type: 'error', recoverable, detail }
  *
- * ── Why a Blob and not an ArrayBuffer (the memory-blowup fix, unchanged) ──
- * `fetch(body: arrayBuffer)` (like `xhr.send(arrayBuffer)`) COPIES the body bytes
- * into the request every call, so looping POSTs of a multi-MiB ArrayBuffer churn a
- * fresh copy per request — on a fast (loopback) link that created copies at
- * gigabytes/sec, far faster than GC reclaimed them, ballooning the heap to many GB.
- * `fetch(body: blob)` REFERENCES the Blob instead: one Blob, generated once,
- * streamed from for every POST → no per-request JS-heap copy (the engine serialises
- * the Blob's backing store straight to the socket). The footprint stays flat.
- * NEVER revert to a per-POST ArrayBuffer/slice. See docs/THROUGHPUT_MEASUREMENT.md.
+ * ── Why a Blob pool + slice and not a per-POST ArrayBuffer (the memory fix) ──
+ * `fetch(body: arrayBuffer)` (like `xhr.send`) COPIES the body bytes every call, so
+ * looping POSTs of a freshly-built multi-MiB body churn a copy per request — on a
+ * fast (loopback) link that copied at gigabytes/sec, faster than GC reclaimed it,
+ * ballooning the heap to many GB. We build the incompressible pool Blob ONCE and
+ * `pool.slice(0, n)` per POST: a Blob slice REFERENCES the pool's backing store (a
+ * view with an offset/length — no byte copy), and fetch streams from it straight to
+ * the socket. The footprint stays flat regardless of how the size adapts. NEVER
+ * rebuild a Blob per POST. See docs/THROUGHPUT_MEASUREMENT.md.
  * ============================================================ */
 
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
@@ -69,20 +80,33 @@ type OutMsg =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** TOTAL upload payload budget across ALL streams — the single knob to tune.
- *  Each worker uses TOTAL / parallelStreams (see `bufBytes`), so the combined
- *  payload reservoir stays CONSTANT no matter how many streams run. Sized LARGE on
- *  purpose so each POST lasts ~100 ms+ and the request→response turnaround between
- *  POSTs is amortised to a few % (a small body drains in a few ms on a fast link,
- *  so that idle gap would cap upload far below download). The server counts the
- *  bytes byte-granular as it drains them, so a slow link still reports its real
- *  partial throughput over /ws/upload — independent of how big each POST is.
- *  Cost: ONE Blob of (TOTAL / streams) per worker, allocated once and reused;
- *  fetch references it, so the size never grows memory. */
+/** TOTAL upload pool budget across ALL streams — the single knob to tune. Each
+ *  worker's pool is TOTAL / parallelStreams (see `bufBytes`), so the combined
+ *  reservoir stays CONSTANT no matter how many streams run, and the pool also caps
+ *  the autosizer's MAX POST. It is the upper end the size climbs to on a fast link;
+ *  the server counts bytes byte-granular as it drains them, so any POST size reports
+ *  its real throughput over /ws/upload. Cost: ONE Blob of (TOTAL / streams) per
+ *  worker, built once and sliced; fetch references it, so size never grows memory. */
 const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB desktop default (÷ streams per worker)
-/** Per-worker payload floor. Below this a POST drains in a few ms on a fast link,
- *  so the request→response turnaround dominates — keep each POST ~100 ms+. */
-const MIN_PER_WORKER_BYTES = 2 * 1024 * 1024;
+/** Pool floor: the per-worker reservoir (hence the autosizer's MAX) never drops
+ *  below this even at a high stream count, so the size always has room to grow. */
+const MIN_POOL_BYTES = 2 * 1024 * 1024;
+
+/* ---- Closed-loop POST sizing (per-worker, no kills) ---- */
+/** Wall-time each POST aims to span. ~350 ms is long enough that the request→
+ *  response turnaround is a small fraction even on a fast link, short enough that a
+ *  slow link still gets frequent measurement and a small in-flight payload. */
+const TARGET_POST_MS = 350;
+/** Smoothing on this lane's observed rate — filters per-POST noise without lagging
+ *  a real line change by more than a couple of POSTs. */
+const RATE_EWMA_ALPHA = 0.3;
+/** Per-step size change clamp = the hysteresis. Growth ≤2×/step keeps the climb
+ *  slow-start-friendly; shrink ≥0.5×/step damps a transient dip into oscillation. */
+const STEP_UP = 2;
+const STEP_DOWN = 0.5;
+/** Smallest POST. Below this the per-request HTTP overhead dominates; it is also
+ *  the size a freshly-dropped link converges down to within a few POSTs. */
+const MIN_POST_BYTES = 128 * 1024;
 /** The payload is built by repeating ONE filled block, so the peak transient heap
  *  during construction is ~block + payload, not the 2× a fresh Uint8Array(bufBytes)
  *  plus its Blob copy would cost (the iOS-Safari tab-kill guard at 1 stream). */
@@ -113,19 +137,25 @@ function recoverableStatus(status: number): boolean {
 let stopped = false;
 /** Aborts the in-flight POST on `stop` (mirrors download-worker.ts). */
 let abort: AbortController | null = null;
-/** The single reused payload (generated once on first start). A Blob — NOT an
- *  ArrayBuffer — so each fetch references it instead of copying it. */
-let payload: Blob | null = null;
+/** The reused incompressible pool Blob (built once on first start). Each POST is a
+ *  zero-copy slice of it — NOT a fresh Blob/ArrayBuffer — so fetch references the
+ *  pool's backing store instead of copying. */
+let pool: Blob | null = null;
 /** The 4 MiB incompressible source block, filled once with CSPRNG bytes and
- *  repeated to build each payload (caps the construction-time heap peak). Typed
- *  over ArrayBuffer (not the default ArrayBufferLike) so it is a valid BlobPart. */
+ *  repeated to build the pool (caps the construction-time heap peak). Typed over
+ *  ArrayBuffer (not the default ArrayBufferLike) so it is a valid BlobPart. */
 let fillBlock: Uint8Array<ArrayBuffer> | null = null;
-/** The payload's byte length, cached so the debug log can tally completed POSTs. */
-let payloadBytes = 0;
-/** Per-worker payload size = uploadTotalBudget() / parallelStreams (≥ floor),
- *  fixed on `start` so the combined reservoir is independent of stream count (and
- *  device-bounded so a phone can't OOM). */
+/** The pool's byte length = the autosizer's MAX. */
+let poolBytes = 0;
+/** Pool size = uploadTotalBudget() / parallelStreams (≥ floor), fixed on `start` so
+ *  the combined reservoir is independent of stream count (and device-bounded so a
+ *  phone can't OOM). Doubles as the autosizer's upper clamp. */
 let bufBytes = UPLOAD_TOTAL_BUF_BYTES;
+/** Bytes the NEXT POST will send — the closed-loop variable. Starts at MIN for a
+ *  fast first sample, then tracks TARGET_POST_MS × this lane's smoothed rate. */
+let nextBytes = MIN_POST_BYTES;
+/** This lane's smoothed throughput (bytes/sec); 0 until the first POST completes. */
+let rateEwma = 0;
 
 /** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
 let streamId = 0;
@@ -145,9 +175,11 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     streamId = msg.id ?? 0;
     // Split the device-scaled reservoir across the active streams, with a floor.
     bufBytes = Math.max(
-      MIN_PER_WORKER_BYTES,
+      MIN_POOL_BYTES,
       Math.floor(uploadTotalBudget() / Math.max(1, msg.streams ?? 1)),
     );
+    nextBytes = Math.min(MIN_POST_BYTES, bufBytes);
+    rateEwma = 0;
     dbgWinBytes = 0;
     dbgTotal = 0;
     dbgWinStart = performance.now();
@@ -171,12 +203,12 @@ function incompressibleBlock(): Uint8Array<ArrayBuffer> {
   return b;
 }
 
-/** Build the reused payload by REPEATING one filled block up to bufBytes. The Blob
+/** Build the reused pool by REPEATING one filled block up to bufBytes. The Blob
  *  copies each part into its own backing store, so the construction-time heap peak
- *  is ~block + payload (not the 2× a fresh Uint8Array(bufBytes) + its Blob copy
- *  would cost). fetch then streams from it without a per-POST copy. */
-function buildPayload(): void {
-  if (payload && payloadBytes === bufBytes) return;
+ *  is ~block + pool (not the 2× a fresh Uint8Array(bufBytes) + its Blob copy would
+ *  cost). Every POST then slices a view of it — no per-POST copy. */
+function buildPool(): void {
+  if (pool && poolBytes === bufBytes) return;
   const block = incompressibleBlock();
   const parts: BlobPart[] = [];
   let remaining = bufBytes;
@@ -185,25 +217,40 @@ function buildPayload(): void {
     parts.push(take === block.byteLength ? block : block.subarray(0, take));
     remaining -= take;
   }
-  payload = new Blob(parts, { type: "application/octet-stream" });
-  payloadBytes = bufBytes;
+  pool = new Blob(parts, { type: "application/octet-stream" });
+  poolBytes = bufBytes;
 }
 
-/** POST the fixed Blob in a loop to keep the lane saturated for the whole stage.
- *  Mirrors download-worker.ts's re-fetch loop: a fresh AbortController per POST,
- *  `stop` aborts it, a network error ends the lane (RealBackend restarts it). */
+/** Re-size the next POST toward the TARGET_POST_MS wall-target from the size and
+ *  drain time just observed on THIS lane. EWMA-smoothed, step-clamped (the
+ *  hysteresis), bounded to [MIN_POST_BYTES, pool size]. No abort — the resize only
+ *  affects the NEXT POST. */
+function resize(sentBytes: number, elapsedMs: number): void {
+  if (elapsedMs <= 0) return;
+  const observed = (sentBytes / elapsedMs) * 1000; // bytes/sec
+  rateEwma = rateEwma === 0 ? observed : RATE_EWMA_ALPHA * observed + (1 - RATE_EWMA_ALPHA) * rateEwma;
+  const want = (rateEwma * TARGET_POST_MS) / 1000;
+  const stepped = Math.min(sentBytes * STEP_UP, Math.max(sentBytes * STEP_DOWN, want));
+  nextBytes = Math.floor(Math.min(bufBytes, Math.max(MIN_POST_BYTES, stepped)));
+}
+
+/** POST adaptively-sized slices of the pool in a loop to keep the lane saturated
+ *  for the whole stage. Mirrors download-worker.ts's re-fetch loop: a fresh
+ *  AbortController per POST, `stop` aborts it, a network error ends the lane
+ *  (RealBackend restarts it). Each completed POST resizes the NEXT one. */
 async function run(url: string): Promise<void> {
   if (stopped) return;
-  buildPayload();
-  if (!payload) return;
-  const body = payload;
+  buildPool();
+  if (!pool) return;
 
   while (!stopped) {
     abort = new AbortController();
+    const sentBytes = nextBytes;
+    const postStart = performance.now();
     try {
       const res = await fetch(url, {
         method: "POST",
-        body,
+        body: pool.slice(0, sentBytes), // zero-copy view of the pool
         signal: abort.signal,
         cache: "no-store",
         headers: { "Content-Type": "application/octet-stream" },
@@ -215,17 +262,19 @@ async function run(url: string): Promise<void> {
         post({ type: "error", recoverable: recoverableStatus(res.status), detail: `HTTP ${res.status}` });
         return; // RealBackend decides whether to restart this lane
       }
-      // One full payload was drained by the server: the lane is alive. NO bytes —
-      // the /ws/upload count is authoritative; this only resets the restart counter.
+      // One full slice was drained by the server: the lane is alive. NO bytes — the
+      // /ws/upload count is authoritative; this only resets the restart counter.
       post({ type: "alive" });
+      resize(sentBytes, performance.now() - postStart);
       if (debugEnabled()) {
-        dbgWinBytes += payloadBytes;
-        dbgTotal += payloadBytes;
+        dbgWinBytes += sentBytes;
+        dbgTotal += sentBytes;
         const now = performance.now();
         const dt = now - dbgWinStart;
         if (dt >= 1000) {
           dlog(`ul-worker#${streamId}`, "post-complete", {
             rate: fmtRate(dbgWinBytes / (dt / 1000)),
+            postSize: fmtBytes(nextBytes),
             window: fmtBytes(dbgWinBytes),
             total: fmtBytes(dbgTotal),
             dt: fmtMs(dt),
