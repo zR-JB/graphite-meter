@@ -92,21 +92,27 @@ export function rawRateFrom(displayValue: number, base: UnitBase, kind: UnitKind
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
-/** Smallest "nice" rung (1 / 1.5 / 2 / 3 / 5 / 7.5 × 10ⁿ) at or above `v`.
- *  Used for the gauge's large-step absolute scale so the dial reads at a
- *  glance (a gigabit link and a 20-unit link land on clearly different rungs)
- *  rather than continuously rescaling. */
-export function niceScaleUp(v: number): number {
-  if (v <= 0) return 1;
-  // Coarse 1·2·4·8 ladder: clearly distinct rungs (a gigabit link and a
-  // 20-unit link never share one) AND every quarter lands on a round value,
-  // so the gauge tick labels are clean.
-  const steps = [1, 2, 4, 8];
-  const exp = Math.floor(Math.log10(v));
-  const base = 10 ** exp;
-  const f = v / base; // 1–10
-  for (const s of steps) if (s >= f - 1e-9) return s * base;
-  return 10 * base;
+/** Absolute throughput-gauge ceiling (bytes/s) for an observed peak (bytes/s).
+ *
+ *  One rung per power of ten, reasoned about in bit/s — the unit people quote
+ *  links in — so the ceiling is always a round tier the eye recognizes: 10 / 100
+ *  / 1000 Mbit, 10 / 100 Gbit … up to data-center rates. The dial rounds UP to
+ *  the next power of ten above the peak, which makes the whole decade the
+ *  headroom: the needle can never peg, a transient burst has a full 10× of room
+ *  before any rescale, and a ramping measurement settles on one ceiling for the
+ *  entire run instead of stepping through intermediate rungs.
+ *
+ *  This also flatters the common case: real links deliver just UNDER their rated
+ *  power (a "1 Gbit" line sustains ~940 Mbit after overhead), so rounding the
+ *  peak up to the next power of ten lands it at ~94% on the exactly-named scale
+ *  (940 Mbit → 1 Gbit dial). A line that over-delivers past its power of ten
+ *  jumps to the next decade and reads low — the deliberate cost of one-per-decade
+ *  coarseness, traded for never pegging and never rescaling mid-run. */
+export function throughputGaugeScale(peakBytesPerSec: number): number {
+  if (peakBytesPerSec <= 0) return 1.25e7; // idle default: 100 Mbit/s so ticks render
+  const peakBits = peakBytesPerSec * 8;
+  const ceilBits = 10 ** (Math.floor(Math.log10(peakBits)) + 1); // next power of ten up
+  return ceilBits / 8; // bit/s → byte/s
 }
 
 /** "Nice" axis ceiling for charts. */

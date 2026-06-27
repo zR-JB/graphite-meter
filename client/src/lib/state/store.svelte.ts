@@ -26,7 +26,7 @@ import {
   estimateResultCompensation,
   type CompensationEstimate,
 } from "../compensation";
-import { quantile, niceScaleUp, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { quantile, throughputGaugeScale, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
 import { buildSegments } from "../runner/schedule";
 import {
   loadPersisted,
@@ -103,7 +103,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 8,
     minTransferSamples: 12,
-    glideMs: 700, // early-finish acceleration glide, real-time ms
+    glideMs: 1100, // early-finish acceleration glide, real-time ms
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
@@ -452,8 +452,9 @@ class AppStore {
   displayScaleBytesPerSec = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     if (typeof cfg === "number" && cfg > 0) return cfg;
-    if (this.#peakBytesPerSec <= 0) return 1.25e7; // idle default: 12.5 MB/s (~100 Mbit/s) so ticks show
-    return niceScaleUp(this.#peakBytesPerSec * 1.08);
+    // Headroom + the tier ladder both live in throughputGaugeScale; the idle
+    // default (150 Mbit/s) is returned for a non-positive peak so ticks show.
+    return throughputGaugeScale(this.#peakBytesPerSec);
   });
 
   /** Prefix index (k/M/G…) the whole UI displays in. Derived from the observed
