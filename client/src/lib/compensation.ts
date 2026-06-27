@@ -16,9 +16,9 @@
  *      store stays bytes-canonical, so every estimate is bytes/sec in,
  *      bytes/sec out. Multipliers are unitless, so the byte-accounting
  *      math is identical; only the carried value differs.
- *   2. NO server-reported metadata object — protocol is derived
- *      from `config.transport.transfer` and the endpoint is
- *      assumed TLS (port 443 handshakes). Tunable byte counts
+ *   2. NO server-reported metadata object — the transfer rides
+ *      TCP/TLS over HTTP (fetch streams) and
+ *      the endpoint is assumed TLS (port 443). Tunable byte counts
  *      live in `config.compensation.params`.
  *
  * De-magic mandate (§13.0/§13.3): every coefficient linerate
@@ -265,12 +265,12 @@ function pushFactor(
  * Whether the transfer rides QUIC (WebTransport) vs TCP (xhr-stream).
  *
  * `OverheadCompensationConfig` (the spec-fixed input) carries NO transport
- * field — that lives on `RunnerConfig.transport.transfer`, which is not
- * threaded into the estimator's signatures. So the estimator models the
- * deterministic, dominant path: TCP/TLS with HTTP/2 DATA framing (the
- * high-confidence byte accounting). The QUIC branches below are retained,
- * gated behind this single switch, so wiring a real QUIC backend later is a
- * one-line change (pass transport in and flip this) rather than a rewrite.
+ * field, and the engine has no transport selector — the transfer always rides
+ * TCP/TLS (fetch streams) today. So the estimator models that deterministic,
+ * dominant path: TCP/TLS with HTTP/2 DATA framing (the high-confidence byte
+ * accounting). The QUIC branches below are retained, gated behind this single
+ * switch, so wiring a real QUIC (WebTransport) backend later is a one-line
+ * change (pass transport in and flip this) rather than a rewrite.
  */
 function isQuic(_config: OverheadCompensationConfig): boolean {
   return false;

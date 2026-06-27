@@ -139,11 +139,6 @@ const CONN_SAFETY = 1;
  *  before we terminate it (the client headline is already set, so we don't block). */
 const PROGRESS_BYE_GRACE_MS = 1000;
 
-/** Order-preserving de-dup for building a transport preference list. */
-function unique<T>(xs: T[]): T[] {
-  return [...new Set(xs)];
-}
-
 /** Median of a non-empty number list (used for the pre-test ping). */
 function median(xs: number[]): number {
   const sorted = [...xs].sort((a, b) => a - b);
@@ -325,7 +320,7 @@ export class RealBackend implements RunnerBackend {
 
   /* ================= PROBE ================= */
   /**
-   * TARGET: `GET {endpoint.path}/preflight` (a.k.a. /config) — §14.4.
+   * TARGET: `GET {base}/preflight` (a.k.a. /config) — §14.4.
    * Resolve `InfraInfo` (client public IP, server identity, negotiated
    * protocol, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
    * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
@@ -546,10 +541,9 @@ export class RealBackend implements RunnerBackend {
    * If EVERY kind fails, raise the terminal host.fail("transport-unavailable",
    * …) and return null (the caller must NOT open anything).
    *
-   * Order derivation: config.transport.transfer is "webtransport"|"xhr-stream"
-   * and config.transport.latency is "webtransport"|"websocket"; latency roles
-   * use the latency kinds, transfer/bidi roles use the transfer kinds. The
-   * sketch below shows the control flow a real implementation fills in.
+   * Order is fixed (see #transportOrder): latency roles try webtransport then
+   * websocket; transfer/bidi roles try webtransport then xhr-stream. The sketch
+   * below shows the control flow a real implementation fills in.
    */
   #negotiateTransport(role: TransportRole): TransportKind | null {
     const host = this.#host!;
@@ -585,19 +579,16 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** The transport kinds to try for a role, most-preferred first. Latency roles
-   *  use the latency kinds (webtransport → websocket); transfer + bidirectional
-   *  roles use the transfer kinds (webtransport → xhr-stream). Webtransport is
-   *  always attempted first when supported, then the configured fallback. */
+  /** The transport kinds to try for a role, most-preferred first. Webtransport
+   *  is always attempted first when the server advertises it (Stage 4–5), then
+   *  the serviced fallback: websocket for latency roles, xhr-stream for transfer
+   *  and bidirectional roles. Until webtransport lands it fails negotiation and
+   *  we fall through to the fallback — the path the engine actually runs today
+   *  (websocket latency + fetch/xhr-stream transfer). */
   #transportOrder(role: TransportRole): TransportKind[] {
-    const cfg = this.#host!.config!;
-    // Webtransport is always preferred when available; latency roles fall back
-    // to the configured ws kind, transfer/bidi roles to xhr-stream. xhr-stream
-    // is appended unconditionally so a webtransport-preferred config still has a
-    // working fallback (the Stage-2 path: webtransport unadvertised → xhr-stream).
     return role === "latency"
-      ? unique(["webtransport", cfg.transport.latency])
-      : unique(["webtransport", cfg.transport.transfer, "xhr-stream"]);
+      ? ["webtransport", "websocket"]
+      : ["webtransport", "xhr-stream"];
   }
 
   /* ================= PRIME (warmup window) — open, don't measure ================= */

@@ -31,8 +31,8 @@
       {
         title: "Transport",
         rows: [
-          ["Transfer", store.config.transport.transfer],
-          ["Latency", store.config.transport.latency],
+          ["Transfer", "HTTP streams"],
+          ["Latency", "WebSocket"],
           ["Streams", `auto (≤${store.config.parallelStreams})`],
           ["Pre-test ping", i ? `${fmtMs(i.preTestPingMs)} ms` : "—"],
         ] as [string, string][],

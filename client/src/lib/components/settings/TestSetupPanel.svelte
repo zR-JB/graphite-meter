@@ -241,20 +241,19 @@
   <!-- Engine -->
   <section class="panel">
     <h3>Engine</h3>
-    <label>
-      <span>Transfer backend</span>
-      <select disabled={running} bind:value={store.config.transport.transfer}>
-        <option value="webtransport">WebTransport</option>
-        <option value="xhr-stream">XHR Streams</option>
-      </select>
+    <label class="check-row">
+      <input
+        type="checkbox"
+        disabled={running}
+        bind:checked={store.config.experimentalChunkedDownload}
+      />
+      <span>Chunked download (experimental)</span>
     </label>
-    <label>
-      <span>Latency backend</span>
-      <select disabled={running} bind:value={store.config.transport.latency}>
-        <option value="websocket">WebSocket</option>
-        <option value="webtransport">WebTransport</option>
-      </select>
-    </label>
+    <p class="hint">
+      Request adaptively-sized download chunks instead of one long stream per
+      lane — both target ~350&nbsp;ms on the same keep-alive connection. A/B
+      against the default to compare ramp responsiveness on a real line.
+    </p>
   </section>
 
   <!-- Timing / streams -->
@@ -347,26 +346,6 @@
     <p class="hint">Manual Y-axis ceiling for the gauge and chart; auto self-scales to the peak.</p>
   </section>
 
-  <!-- Routing -->
-  <section class="panel">
-    <h3>Routing</h3>
-    <label>
-      <span>Host</span>
-      <input type="text" disabled={running} bind:value={store.config.endpoint.host} />
-    </label>
-    <div class="two">
-      <label>
-        <span>Port</span>
-        <input type="number" min="1" max="65535" disabled={running}
-          bind:value={store.config.endpoint.port} />
-      </label>
-      <label>
-        <span>Path</span>
-        <input type="text" disabled={running} bind:value={store.config.endpoint.path} />
-      </label>
-    </div>
-  </section>
-
   <!-- Units (always editable — display only) -->
   <section class="panel">
     <h3>Units</h3>
@@ -426,7 +405,6 @@
   }
 
   input[type="number"],
-  input[type="text"],
   select {
     width: 100%;
     min-height: 36px;
