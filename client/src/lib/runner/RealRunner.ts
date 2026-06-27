@@ -249,11 +249,14 @@ export class RealBackend implements RunnerBackend {
   #workers: (Worker | null)[] = [];
   /** The fetch URL each stream worker (re)starts against, by index. */
   #streamUrls: string[] = [];
-  /** Bytes received across all workers since the last aggregation tick. */
-  #pendingBytes = 0;
-  /** performance.now() at the last aggregation tick — the denominator of the
-   *  truthful per-tick rate (real bytes / real elapsed). */
-  #lastAggAt = 0;
+  /** Per-download-lane byte windows waiting for the next aggregate sample. Each
+   *  lane reports its own receive elapsed time, so the pool rate can be summed
+   *  from matching per-lane numerators/denominators instead of a UI timer tick. */
+  #pendingLaneBytes: number[] = [];
+  #pendingLaneElapsedSec: number[] = [];
+  /** Monotonic download measurement epoch. Warmup batches carry seq=0; late
+   *  messages from an old epoch are ignored at the warmup/measure boundary. */
+  #downloadMeasureSeq = 0;
   /** The ~16 Hz aggregation timer; null while not measuring. */
   #aggTimer: ReturnType<typeof setInterval> | null = null;
   /** True from #primeTransfer to #teardownTransfer — gates lane restarts so a
@@ -450,7 +453,9 @@ export class RealBackend implements RunnerBackend {
     this.#teardownTransfer(); // clear any leftover lanes from a prior run
     this.#measuring = false;
     this.#stalled = false;
-    this.#pendingBytes = 0;
+    this.#pendingLaneBytes = [];
+    this.#pendingLaneElapsedSec = [];
+    this.#downloadMeasureSeq = 0;
     this.#testId = null;
     // Unique-per-run cache-buster. performance.now() avoids Date.now and is
     // monotonic; the stream index is appended per worker.
@@ -673,10 +678,11 @@ export class RealBackend implements RunnerBackend {
       this.#streamUrls[i] = url(i);
       this.#spawnLaneStaggered(i);
     }
-    // Workers start now (warming TCP cwnd). For download their byte progress
-    // accrues into #pendingBytes during warmup but is NOT pushed; for upload the
-    // workers report no bytes (only `alive`) and the server count accrues instead.
-    // Either way #measureTransfer resets the window and starts the aggregation timer.
+    // Workers start now (warming TCP cwnd). Download worker progress is tagged
+    // seq=0 during warmup and ignored; #measureTransfer opens a new epoch and
+    // resets the worker-side batch so no warmup bytes bleed into measurement.
+    // Upload workers report no bytes (only `alive`) and the server count accrues
+    // instead. Either way #measureTransfer starts the measurement path.
   }
 
   async #primeUploadTransfer(
@@ -796,6 +802,9 @@ export class RealBackend implements RunnerBackend {
       // Download-only experimental chunked mode (ignored by the upload worker).
       chunk: this.#chunkDownload,
     });
+    if (this.#measuring && this.#dir === "down") {
+      w.postMessage({ type: "measure", seq: this.#downloadMeasureSeq });
+    }
     this.#workers[i] = w;
   }
 
@@ -892,10 +901,14 @@ export class RealBackend implements RunnerBackend {
     // away the warmed congestion window). Just open the measurement window:
     // discard whatever accrued during warmup and start aggregating.
     this.#measuring = true;
-    this.#pendingBytes = 0;
-    this.#lastAggAt = performance.now();
+    this.#pendingLaneBytes = Array(this.#laneCount).fill(0);
+    this.#pendingLaneElapsedSec = Array(this.#laneCount).fill(0);
+    if (this.#dir === "down") {
+      this.#downloadMeasureSeq++;
+      for (const w of this.#workers) w?.postMessage({ type: "measure", seq: this.#downloadMeasureSeq });
+    }
     this.#dbgWinBytes = 0;
-    this.#dbgLastLog = this.#lastAggAt;
+    this.#dbgLastLog = performance.now();
     // Anchor the server-authoritative window at measure-start so warmup bytes are
     // excluded from both the live curve delta and the totals-based headline. The
     // start (startN/startT) is captured on the first measured server byte.
@@ -905,17 +918,26 @@ export class RealBackend implements RunnerBackend {
   }
 
   /** Aggregation tick: sum the byte deltas all workers reported since the last
-   *  tick into one real sample tagged with the active direction. Pushes nothing
-   *  on an empty window — dead air is never a synthesized sample (principle 1);
-   *  the core's stall watchdog covers a genuine gap. */
+   *  tick into one real sample tagged with the active direction. For download,
+   *  each lane contributes bytes / that lane's own receive interval, then the
+   *  lane rates are summed. Pushes nothing on an empty window — dead air is
+   *  never a synthesized sample (principle 1); the core's stall watchdog covers
+   *  a genuine gap. */
   #aggregate(): void {
     const now = performance.now();
-    const delta = this.#pendingBytes;
-    this.#pendingBytes = 0;
-    const elapsedSec = (now - this.#lastAggAt) / 1000;
-    this.#lastAggAt = now;
-    if (delta > 0 && elapsedSec > 0) {
-      this.#host!.ingestThroughput(this.#dir, delta / elapsedSec, delta);
+    let delta = 0;
+    let bytesPerSec = 0;
+    for (let i = 0; i < this.#pendingLaneBytes.length; i++) {
+      const laneBytes = this.#pendingLaneBytes[i] ?? 0;
+      const laneSec = this.#pendingLaneElapsedSec[i] ?? 0;
+      this.#pendingLaneBytes[i] = 0;
+      this.#pendingLaneElapsedSec[i] = 0;
+      if (laneBytes <= 0 || laneSec <= 0) continue;
+      delta += laneBytes;
+      bytesPerSec += laneBytes / laneSec;
+    }
+    if (delta > 0 && bytesPerSec > 0) {
+      this.#host!.ingestThroughput(this.#dir, bytesPerSec, delta);
     }
     // Verbose: the pool's combined raw rate, 1 Hz. This is the sum the core
     // then smooths (see core:throughput) — comparing this to the per-worker
@@ -928,7 +950,7 @@ export class RealBackend implements RunnerBackend {
         const active = this.#workers.reduce((n, w) => n + (w ? 1 : 0), 0);
         dlog("realrunner:aggregate", `${this.#dir} pool`, {
           rate: fmtRate(this.#dbgWinBytes / (dt / 1000)),
-          tick: fmtRate(elapsedSec > 0 ? delta / elapsedSec : 0),
+          tick: fmtRate(bytesPerSec),
           window: fmtBytes(this.#dbgWinBytes),
           streams: active,
           dt: fmtMs(dt),
@@ -949,14 +971,23 @@ export class RealBackend implements RunnerBackend {
    *   • `error` → stall + restart that single lane (#onWorkerError). */
   #onWorkerMessage(
     msg:
-      | { type: "progress"; bytes: number }
+      | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
       | { type: "alive" }
       | { type: "error"; recoverable: boolean; detail: string },
     i: number,
   ): void {
     if (msg.type === "progress") {
+      if (
+        this.#dir === "down" &&
+        ("seq" in msg ? msg.seq !== this.#downloadMeasureSeq || msg.seq <= 0 : true)
+      ) {
+        return;
+      }
       this.#laneRetry[i] = 0; // a real send proves this lane recovered
-      this.#pendingBytes += msg.bytes;
+      const elapsedMs = msg.elapsedMs ?? THROUGHPUT_CADENCE_MS;
+      this.#pendingLaneBytes[i] = (this.#pendingLaneBytes[i] ?? 0) + msg.bytes;
+      this.#pendingLaneElapsedSec[i] =
+        (this.#pendingLaneElapsedSec[i] ?? 0) + elapsedMs / 1000;
       if (this.#stalled) {
         this.#host!.resume();
         this.#stalled = false;
@@ -1119,7 +1150,8 @@ export class RealBackend implements RunnerBackend {
     this.#laneRetry = [];
     this.#laneTimers = [];
     this.#measuring = false;
-    this.#pendingBytes = 0;
+    this.#pendingLaneBytes = [];
+    this.#pendingLaneElapsedSec = [];
   }
 
   /** Begin measuring on the already-open ping channel (opened in

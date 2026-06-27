@@ -60,10 +60,13 @@ import { nextTransferBytes, type SizerCfg } from "./autosize";
  *  request adaptively-sized `&bytes=N` chunks closed-loop to a wall-target (see
  *  autosize.ts), re-fetching on the SAME keep-alive connection so cwnd is preserved
  *  (no per-chunk slow-start). Default off; for A/B-ing ramp responsiveness. */
-type InMsg = { type: "start"; url: string; debug?: boolean; id?: number; chunk?: boolean } | { type: "stop" };
+type InMsg =
+  | { type: "start"; url: string; debug?: boolean; id?: number; chunk?: boolean }
+  | { type: "measure"; seq: number }
+  | { type: "stop" };
 /** Worker → main. */
 type OutMsg =
-  | { type: "progress"; bytes: number }
+  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "error"; recoverable: boolean; detail: string };
 
 // Narrow `self` to the dedicated-worker scope so postMessage/onmessage type
@@ -97,6 +100,9 @@ let stopped = false;
 let chunk = false;
 let nextBytes = CHUNK_SIZER.minBytes;
 let rateEwma = 0;
+let measureSeq = 0;
+let acc = 0;
+let accStart = 0;
 
 /** Stream index, only used to tag debug lines (`dl-worker#<id>`). */
 let streamId = 0;
@@ -117,10 +123,15 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     chunk = msg.chunk ?? false;
     nextBytes = CHUNK_SIZER.minBytes;
     rateEwma = 0;
+    measureSeq = 0;
+    resetProgressWindow();
     dbgWinBytes = 0;
     dbgTotal = 0;
     dbgWinStart = performance.now();
     void run(msg.url);
+  } else if (msg.type === "measure") {
+    measureSeq = msg.seq;
+    resetProgressWindow();
   } else if (msg.type === "stop") {
     stopped = true;
     abort?.abort();
@@ -129,12 +140,27 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
 
 const post = (m: OutMsg) => ctx.postMessage(m);
 
+function resetProgressWindow(): void {
+  acc = 0;
+  accStart = performance.now();
+}
+
+function flushProgress(now = performance.now()): void {
+  if (acc <= 0) {
+    accStart = now;
+    return;
+  }
+  const elapsedMs = now - accStart;
+  if (elapsedMs > 0) post({ type: "progress", bytes: acc, elapsedMs, seq: measureSeq });
+  acc = 0;
+  accStart = now;
+}
+
 async function run(url: string): Promise<void> {
   // Re-fetch loop: keep the lane busy for the whole measured window even if a
   // single request reaches its Content-Length.
   while (!stopped) {
     abort = new AbortController();
-    let acc = 0;
     let lastPost = performance.now();
     // Count a chunk's bytes (the chunk itself is dropped): batch deltas to the
     // main thread (~50 ms) and, when verbose, log the raw 1 Hz receive rate —
@@ -143,8 +169,7 @@ async function run(url: string): Promise<void> {
       acc += n;
       const now = performance.now();
       if (now - lastPost >= POST_INTERVAL_MS) {
-        post({ type: "progress", bytes: acc });
-        acc = 0;
+        flushProgress(now);
         lastPost = now;
       }
       if (debugEnabled()) {
@@ -175,7 +200,7 @@ async function run(url: string): Promise<void> {
         return;
       }
       await readBody(res.body, count);
-      if (acc > 0) post({ type: "progress", bytes: acc }); // flush tail
+      flushProgress(); // flush tail
       if (chunk) {
         ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
           sentBytes,
@@ -186,7 +211,7 @@ async function run(url: string): Promise<void> {
       }
     } catch (err) {
       if (stopped) return; // aborted by stop() — a clean teardown, not an error
-      if (acc > 0) post({ type: "progress", bytes: acc });
+      flushProgress();
       post({ type: "error", recoverable: true, detail: String(err) });
       return; // the main thread decides whether to restart this lane
     }
