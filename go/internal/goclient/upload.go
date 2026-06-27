@@ -44,6 +44,9 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
+			if !staggerSleep(laneCtx, lane) {
+				return
+			}
 			r.uploadLane(laneCtx, id, lane, bodyBlock)
 		}(i)
 	}

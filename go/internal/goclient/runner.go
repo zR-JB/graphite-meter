@@ -67,6 +67,45 @@ type runner struct {
 	http      *http.Client
 	preflight wire.Preflight
 	emit      func(Event)
+	// Idle RTT captured from the latency stage; used to stretch later stages'
+	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
+	idleRTT time.Duration
+}
+
+// laneStagger spreads lane starts so their congestion windows don't ramp in
+// lockstep (synchronised overshoot → synchronised loss/backoff).
+const laneStagger = 75 * time.Millisecond
+
+// adaptiveWarmup stretches a stage's warmup to ~10 RTTs (the configured value as
+// floor, capped) so slow-start finishes before the measured window opens. rtt <= 0
+// (latency stage not yet run / disabled) ⇒ the configured value.
+func adaptiveWarmup(base, rtt time.Duration) time.Duration {
+	const slowStartRTTs = 10
+	const ceil = 4 * time.Second
+	w := slowStartRTTs * rtt
+	if w < base {
+		w = base
+	}
+	if w > ceil {
+		w = ceil
+	}
+	return w
+}
+
+// staggerSleep delays lane `lane` by lane*laneStagger (lane 0 is immediate),
+// returning false if the context is cancelled during the wait.
+func staggerSleep(ctx context.Context, lane int) bool {
+	if lane <= 0 {
+		return true
+	}
+	t := time.NewTimer(time.Duration(lane) * laneStagger)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 func (r *runner) fail(err error) error {
@@ -85,6 +124,10 @@ func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bo
 	stats, err := r.measureLatency(ctx, stage, underLoad, duration, start)
 	if err != nil {
 		return err
+	}
+	// Capture idle RTT so the later throughput stages' warmup can scale to it.
+	if !underLoad && stats.P50 > 0 {
+		r.idleRTT = stats.P50
 	}
 	res := Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}
 	r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: &res})
@@ -170,14 +213,15 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 
 func (r *runner) warmupGate(ctx context.Context, stage string) (<-chan struct{}, error) {
 	start := make(chan struct{})
-	if r.cfg.Warmup <= 0 {
+	warmup := adaptiveWarmup(r.cfg.Warmup, r.idleRTT)
+	if warmup <= 0 {
 		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "measure"})
 		close(start)
 		return start, nil
 	}
 	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "warmup"})
 	go func() {
-		timer := time.NewTimer(r.cfg.Warmup)
+		timer := time.NewTimer(warmup)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():

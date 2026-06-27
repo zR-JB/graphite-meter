@@ -32,6 +32,9 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
+			if !staggerSleep(laneCtx, lane) {
+				return
+			}
 			r.downloadLane(laneCtx, base, lane, &total)
 		}(i)
 	}
