@@ -13,6 +13,7 @@
   import TestSetupPanel from "./TestSetupPanel.svelte";
   import InfrastructurePanel from "./InfrastructurePanel.svelte";
   import DeveloperPanel from "./DeveloperPanel.svelte";
+  import { tooltip } from "../../actions/tooltip";
 
   interface Props {
     open?: boolean;
@@ -60,6 +61,39 @@
   width="min(560px, 94vw)"
 >
   {#snippet toolbar()}
+    <div class="display-controls" aria-label="Display units">
+      <!-- Display-only; persisted. Drives every rate label, gauge/chart tick,
+           and result card without changing the measured raw bytes/sec. -->
+      <div class="unit-seg" role="group" aria-label="Rate unit">
+        <button
+          type="button"
+          class:active={store.unitKind === "bits"}
+          aria-pressed={store.unitKind === "bits"}
+          use:tooltip={"Show rates in bits per second (Mbit/s, Gbit/s)"}
+          onclick={() => (store.unitKind = "bits")}>Bit</button>
+        <button
+          type="button"
+          class:active={store.unitKind === "bytes"}
+          aria-pressed={store.unitKind === "bytes"}
+          use:tooltip={"Show rates in bytes per second (MB/s, GB/s)"}
+          onclick={() => (store.unitKind = "bytes")}>Byte</button>
+      </div>
+      <div class="unit-seg" role="group" aria-label="Unit base">
+        <button
+          type="button"
+          class:active={store.unitBase === "base10"}
+          aria-pressed={store.unitBase === "base10"}
+          use:tooltip={"Base-10 / SI prefixes (1 k = 1000) — Mbit/s, Gbit/s"}
+          onclick={() => (store.unitBase = "base10")}>BASE10</button>
+        <button
+          type="button"
+          class:active={store.unitBase === "base2"}
+          aria-pressed={store.unitBase === "base2"}
+          use:tooltip={"Base-2 / IEC prefixes (1 Ki = 1024) — Mibit/s, Gibit/s"}
+          onclick={() => (store.unitBase = "base2")}>BASE2</button>
+      </div>
+    </div>
+
     <div class="tabs" role="tablist" aria-label="Settings sections">
       {#each TABS as t (t.key)}
         <button
@@ -86,6 +120,53 @@
 </SidePanel>
 
 <style>
+  .display-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+    min-width: 0;
+  }
+
+  .unit-seg {
+    display: flex;
+    gap: 2px;
+    min-width: 0;
+    height: 36px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-recess);
+  }
+  .unit-seg button {
+    flex: 1;
+    min-width: 0;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: calc(var(--r-chrome) - 2px);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 800;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+      background var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  .unit-seg button:hover {
+    color: var(--text);
+  }
+  .unit-seg button.active {
+    background: var(--brand-soft);
+    box-shadow: var(--elev-tile);
+    color: var(--brand-strong);
+  }
+
   /* Tab switcher — a recessed segmented track with the active tab
      lifted as a milled tile. */
   .tabs {
@@ -123,5 +204,11 @@
     background: var(--brand-soft);
     box-shadow: var(--elev-tile);
     color: var(--brand-strong);
+  }
+
+  @media (max-width: 420px) {
+    .display-controls {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

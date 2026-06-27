@@ -182,36 +182,6 @@
     >
     <ConnectivityIndicator />
     <div class="flex-1"></div>
-    <!-- Unit toggles (display-only; persisted). Drive every rate label, the
-         gauge/chart ticks, and the result cards. -->
-    <div class="unit-seg" role="group" aria-label="Rate unit">
-      <button
-        type="button"
-        class:active={store.unitKind === "bits"}
-        aria-pressed={store.unitKind === "bits"}
-        use:tooltip={"Show rates in bits per second (Mbit/s, Gbit/s)"}
-        onclick={() => (store.unitKind = "bits")}>bit/s</button>
-      <button
-        type="button"
-        class:active={store.unitKind === "bytes"}
-        aria-pressed={store.unitKind === "bytes"}
-        use:tooltip={"Show rates in bytes per second (MB/s, GB/s)"}
-        onclick={() => (store.unitKind = "bytes")}>B/s</button>
-    </div>
-    <div class="unit-seg" role="group" aria-label="Unit base">
-      <button
-        type="button"
-        class:active={store.unitBase === "base10"}
-        aria-pressed={store.unitBase === "base10"}
-        use:tooltip={"Base-10 / SI prefixes (1 k = 1000) — Mbit/s, Gbit/s"}
-        onclick={() => (store.unitBase = "base10")}>1000</button>
-      <button
-        type="button"
-        class:active={store.unitBase === "base2"}
-        aria-pressed={store.unitBase === "base2"}
-        use:tooltip={"Base-2 / IEC prefixes (1 Ki = 1024) — Mibit/s, Gibit/s"}
-        onclick={() => (store.unitBase = "base2")}>1024</button>
-    </div>
     <button
       class="ghost-btn"
       aria-label="Toggle light or dark theme"
@@ -372,40 +342,6 @@
   .icon-btn :global(svg) {
     width: 16px;
     height: 16px;
-  }
-
-  /* Compact unit toggles in the topbar (bit/s ⇄ B/s, base-10 ⇄ base-2). */
-  .unit-seg {
-    display: flex;
-    gap: 2px;
-    height: 32px;
-    padding: 2px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: inset 0 1px 0 var(--edge-light);
-  }
-  .unit-seg button {
-    min-width: 34px;
-    padding: 0 8px;
-    border: 0;
-    border-radius: calc(var(--r-chrome) - 2px);
-    background: transparent;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .unit-seg button:hover {
-    color: var(--text);
-  }
-  .unit-seg button.active {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
   }
 
   /* < 760: the whole document scrolls instead of the stage. The stage must
