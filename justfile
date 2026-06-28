@@ -1,6 +1,16 @@
 # Graphite Meter — monorepo task runner.
 # Requires: bun 1.4+, go 1.26+. (https://github.com/casey/just)
 
+# Default shell for Linux/macOS
+set shell := ["sh", "-c"]
+
+# Fallback shell used automatically only when running on Windows (Requires PowerShell 7+)
+set windows-shell := ["pwsh", "-NoProfile", "-Command"]
+
+# CRITICAL: Automatically exports all just variables as environment variables 
+# to the underlying shell. This eliminates inline "KEY=VALUE command" breaking on Windows.
+set export := true
+
 # --- Production build knobs (override via env or `just prod label=… engine=…`) ---
 # These feed the client's Vite `define` (see client/vite.config.ts) and the
 # server's version ldflag. The `prod` recipe builds a real-only, dev-tooling-free
@@ -8,9 +18,14 @@
 engine      := env("GM_CLIENT_ENGINE", "real")
 allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
 dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
-label       := env("GM_CLIENT_BUILD_LABEL", `git rev-parse --short HEAD 2>/dev/null || echo prod`)
+
+# Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS
+label       := env("GM_CLIENT_BUILD_LABEL", if os() == "windows" { `cmd.exe /c "git rev-parse --short HEAD 2>nul || echo prod"` } else { `git rev-parse --short HEAD 2>/dev/null || echo prod` })
 version     := env("VERSION", label)
-go_cache    := env("GOCACHE", "/tmp/graphite-meter-go-build")
+
+# Set OS-specific path for the Go build cache to remain fully cross-platform
+GOCACHE     := env("GOCACHE", if os() == "windows" { env("TEMP") / "graphite-meter-go-build" } else { "/tmp/graphite-meter-go-build" })
+CGO_ENABLED := "0"
 
 # List available recipes
 default:
@@ -25,7 +40,7 @@ default:
 
 # Run the Rust generator's byte-exact conformance test (vs api/rng.testvectors.txt)
 test-rng:
-    cd crates/rng && PATH="$HOME/.cargo/bin:$PATH" cargo test
+    cd crates/rng && cargo test
 
 # --- Client (Svelte/Vite, bun) ---
 
@@ -48,30 +63,29 @@ gen-types:
 
 # --- Go module (server + native client) ---
 
-# Copy the built browser client into the Go module so //go:embed picks it up
+# Handled cross-platform via Bun filesystem API to avoid rm/cp syntax differences
 _stage-client: build-client
-    rm -rf go/internal/static/dist
-    cp -r client/dist go/internal/static/dist
+    bun -e "import fs from 'fs'; fs.rmSync('go/internal/static/dist', { recursive: true, force: true }); fs.cpSync('client/dist', 'go/internal/static/dist', { recursive: true })"
 
 # Build the Go server binary (embeds the built client)
 build-server: _stage-client
-    cd go && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter ./cmd/graphite-meter
+    cd go && go build -ldflags="-s -w" -trimpath -o graphite-meter ./cmd/graphite-meter
 
 # Build only the native Go Bubble Tea client. Does not build or stage the Svelte app.
 build-go-client:
-    cd go && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build -ldflags="-s -w" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
+    cd go && go build -ldflags="-s -w" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
 
 # Run the native Go client against a running Graphite Meter server.
 go-client:
-    cd go && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter-client
+    cd go && go run ./cmd/graphite-meter-client
 
 # Run the server locally; serves the built client + /preflight on :8080
 dev: _stage-client
-    cd go && GOCACHE="{{go_cache}}" go run ./cmd/graphite-meter
+    cd go && go run ./cmd/graphite-meter
 
 # Run server tests (includes the preflight schema conformance test)
 test-server:
-    cd go && GOCACHE="{{go_cache}}" go test ./...
+    cd go && go test ./...
 
 # --- Production ---
 
@@ -79,21 +93,16 @@ test-server:
 # keep their dev defaults. Defaults: real-only engine, no dev tools, git-hash label.
 # Build the client in production mode (real-only, dev tooling stripped)
 prod-client:
-    cd client && bun install && \
-      GM_CLIENT_ENGINE="{{engine}}" \
-      GM_CLIENT_ALLOW_DUMMY="{{allow_dummy}}" \
-      GM_CLIENT_DEV_TOOLS="{{dev_tools}}" \
-      GM_CLIENT_BUILD_LABEL="{{label}}" \
-      bun run build
+    cd client && bun install
+    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client' });"
 
 # Stage the prod browser client into the Go module so //go:embed picks it up
 _prod-stage-client: prod-client
-    rm -rf go/internal/static/dist
-    cp -r client/dist go/internal/static/dist
+    bun -e "import fs from 'fs'; fs.rmSync('go/internal/static/dist', { recursive: true, force: true }); fs.cpSync('client/dist', 'go/internal/static/dist', { recursive: true })"
 
 # Full production build: real-only client embedded in the versioned server binary
 prod: _prod-stage-client
-    cd go && GOCACHE="{{go_cache}}" CGO_ENABLED=0 go build \
+    cd go && go build \
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion={{version}}" \
       -trimpath -o graphite-meter ./cmd/graphite-meter
 
@@ -102,3 +111,4 @@ prod: _prod-stage-client
 # Build the production image (single static binary)
 image:
     docker build -f docker/Dockerfile -t graphite-meter:latest .
+    
