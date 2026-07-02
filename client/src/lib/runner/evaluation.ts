@@ -64,8 +64,7 @@ export class RunAccumulator {
   // ---- trailing contiguous stable-run trackers (§13.4) ----
   // Each holds the index into its phase's sample array where the *current*
   // stable run began (or -1 when not currently stable), plus the last stability
-  // score seen. Read at finish: still stable (≥0) → average the trailing window;
-  // lost it (-1) → full avg.
+  // score seen.
   #dlStableStart = -1;
   #ulStableStart = -1;
   #latStableStart = -1;
@@ -76,6 +75,22 @@ export class RunAccumulator {
   #ulFinalScore = 0;
   #latFinalScore = 0;
   #biFinalScore = 0;
+
+  // ---- early-stop arm points (§13.4) ----
+  // The sample index at the moment `shouldExitPhase` first armed the glide for
+  // that phase (-1 if early stop never armed this phase). Latched once per
+  // phase — it never moves once set, unlike the stable-run trackers above,
+  // which can re-open after a drop. Read at finish alongside the stable-run
+  // index: still on the SAME (or an earlier-starting) stable run as when armed
+  // (`stableStart >= 0 && stableStart <= earlyStopStart`) → the entire
+  // early-stopping phase held stable, so average from the arm point to the
+  // end. Otherwise stability broke at some point after arming (dropped and
+  // never recovered, or dropped and re-latched on a LATER run) → average the
+  // entire measurement phase instead, never just the smaller trailing window.
+  #dlEarlyStopStart = -1;
+  #ulEarlyStopStart = -1;
+  #latEarlyStopStart = -1;
+  #biEarlyStopStart = -1;
 
   /** Reset all run state — call at the start of each run. */
   reset(): void {
@@ -100,6 +115,10 @@ export class RunAccumulator {
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
     this.#biFinalScore = 0;
+    this.#dlEarlyStopStart = -1;
+    this.#ulEarlyStopStart = -1;
+    this.#latEarlyStopStart = -1;
+    this.#biEarlyStopStart = -1;
     this.beginPhase();
   }
 
@@ -181,27 +200,20 @@ export class RunAccumulator {
    *  at finish a ≥0 index means "still on a stable plateau". */
   trackStableRun(phase: StagePhase, score: number, cfg: RunnerConfig["adaptive"]): boolean {
     let start: number;
-    let arrLen: number;
     if (phase === "download") {
       this.#dlFinalScore = score;
       start = this.#dlStableStart;
-      arrLen = this.#dl.bytesPerSecValues.length;
     } else if (phase === "upload") {
       this.#ulFinalScore = score;
       start = this.#ulStableStart;
-      arrLen = this.#ul.bytesPerSecValues.length;
     } else if (phase === "bidirectional") {
-      // The stable-run index is into the COMBINED-rate confidence window (the
-      // single signal), not either lane — so the trailing window slices both
-      // lanes consistently at result time.
       this.#biFinalScore = score;
       start = this.#biStableStart;
-      arrLen = this.#phaseBytesPerSec.length;
     } else {
       this.#latFinalScore = score;
       start = this.#latStableStart;
-      arrLen = this.#idleRtts.length;
     }
+    const arrLen = this.#sampleArrLen(phase);
 
     const wasStable = start >= 0;
     const nowStable = isStillStable(wasStable, score, cfg);
@@ -216,20 +228,49 @@ export class RunAccumulator {
     return nowStable;
   }
 
+  /** Latch the sample index at which `shouldExitPhase` first armed the
+   *  early-finish glide for this phase. Idempotent — only the FIRST call per
+   *  phase sets it (the core only arms a glide once per phase anyway, but this
+   *  guards against ever moving an already-latched arm point). */
+  noteEarlyStop(phase: StagePhase): void {
+    const arrLen = this.#sampleArrLen(phase);
+    const start = Math.max(0, arrLen - 1);
+    if (phase === "download") {
+      if (this.#dlEarlyStopStart < 0) this.#dlEarlyStopStart = start;
+    } else if (phase === "upload") {
+      if (this.#ulEarlyStopStart < 0) this.#ulEarlyStopStart = start;
+    } else if (phase === "bidirectional") {
+      if (this.#biEarlyStopStart < 0) this.#biEarlyStopStart = start;
+    } else {
+      if (this.#latEarlyStopStart < 0) this.#latEarlyStopStart = start;
+    }
+  }
+
+  /** The sample count so far for a phase's own confidence-window array — the
+   *  same index space `trackStableRun`/`noteEarlyStop` latch their indices
+   *  into. Bidi uses the COMBINED-rate array (the single stability signal),
+   *  not either lane; the lanes are pushed in lock-step so the index still
+   *  applies to each lane's own array at result time. */
+  #sampleArrLen(phase: StagePhase): number {
+    if (phase === "download") return this.#dl.bytesPerSecValues.length;
+    if (phase === "upload") return this.#ul.bytesPerSecValues.length;
+    if (phase === "bidirectional") return this.#phaseBytesPerSec.length;
+    return this.#idleRtts.length;
+  }
+
   /* ================= RESULT REDUCTION ================= */
 
   /**
-   * Reduce a transfer phase's samples to its headline value. When adaptive is
-   * on and the phase was still on a stable plateau at finish (`stableStart ≥ 0`)
-   * the headline is the mean over that trailing window — the steady plateau,
-   * not the ramp-up-diluted whole. Otherwise (adaptive off, or stability lost
-   * before the end) it falls back to the full-phase average (§13.4).
+   * Reduce a transfer phase's samples to its headline value. See
+   * {@link #windowStart} for which window (early-stopping phase, full
+   * measurement phase, or trailing stable run) backs the headline (§13.4).
    */
   throughputResult(phase: "download" | "upload", cfg: RunnerConfig): ThroughputResult {
     const a = phase === "download" ? this.#dl : this.#ul;
     const stableStart = phase === "download" ? this.#dlStableStart : this.#ulStableStart;
+    const earlyStopStart = phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart;
     const finalScore = phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
-    return this.#reduceTransfer(a, stableStart, finalScore, cfg, this.#loadedLossPct());
+    return this.#reduceTransfer(a, stableStart, earlyStopStart, finalScore, cfg, this.#loadedLossPct());
   }
 
   /** Under-load packet-loss % over the whole run — the loss signal the transfer
@@ -248,18 +289,58 @@ export class RunAccumulator {
   bidirectionalResult(cfg: RunnerConfig): { down: ThroughputResult; up: ThroughputResult } {
     const lossPct = this.#loadedLossPct();
     return {
-      down: this.#reduceTransfer(this.#biDown, this.#biStableStart, this.#biFinalScore, cfg, lossPct),
-      up: this.#reduceTransfer(this.#biUp, this.#biStableStart, this.#biFinalScore, cfg, lossPct),
+      down: this.#reduceTransfer(
+        this.#biDown,
+        this.#biStableStart,
+        this.#biEarlyStopStart,
+        this.#biFinalScore,
+        cfg,
+        lossPct,
+      ),
+      up: this.#reduceTransfer(
+        this.#biUp,
+        this.#biStableStart,
+        this.#biEarlyStopStart,
+        this.#biFinalScore,
+        cfg,
+        lossPct,
+      ),
     };
   }
 
+  /** Resolve which window backs a phase's headline (§13.4):
+   *   - Early stop armed for this phase (`earlyStopStart ≥ 0`) AND the phase
+   *     never dropped off its stable run since arming (`stableStart` is still
+   *     the SAME or an earlier-starting run) → average the entire
+   *     early-stopping phase, from the arm point to the end.
+   *   - Early stop armed but stability broke at some point after arming
+   *     (lost it entirely, or lost-then-regained on a LATER run) → average
+   *     the entire measurement phase — never just the smaller trailing window
+   *     a re-latched run would otherwise produce.
+   *   - Early stop never armed (adaptive off, or the phase ran to its natural
+   *     end without ever qualifying) → the pre-existing rule: the trailing
+   *     stable-run window if still stable at finish, else the full average.
+   *  Returns -1 for "use the full array", else the slice start index. */
+  #windowStart(
+    stableStart: number,
+    earlyStopStart: number,
+    adaptiveEnabled: boolean,
+    arrLen: number,
+  ): number {
+    if (!adaptiveEnabled) return -1;
+    if (earlyStopStart >= 0 && earlyStopStart < arrLen) {
+      const stableThroughStop = stableStart >= 0 && stableStart <= earlyStopStart;
+      return stableThroughStop ? earlyStopStart : -1;
+    }
+    return stableStart >= 0 && stableStart < arrLen ? stableStart : -1;
+  }
+
   /** Shared transfer-phase reducer: turn a lane's sample buffer + its latched
-   *  stable-run index into a {@link ThroughputResult}. The headline is the mean
-   *  over the trailing stable window when adaptive is on and the lane was still
-   *  stable at finish, else the full-phase average (§13.4). */
+   *  stable-run/early-stop indices into a {@link ThroughputResult} (§13.4). */
   #reduceTransfer(
     a: PhaseAccum,
     stableStart: number,
+    earlyStopStart: number,
     finalScore: number,
     cfg: RunnerConfig,
     packetLossPct: number,
@@ -286,8 +367,9 @@ export class RunAccumulator {
     const cv = full > 0 ? Math.sqrt(variance) / full : 0;
     const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
 
-    const useWindow = cfg.adaptive.enabled && stableStart >= 0 && stableStart < v.length;
-    const window = useWindow ? v.slice(stableStart) : v;
+    const windowStart = this.#windowStart(stableStart, earlyStopStart, cfg.adaptive.enabled, v.length);
+    const useWindow = windowStart >= 0;
+    const window = useWindow ? v.slice(windowStart) : v;
     const reported = window.reduce((s, x) => s + x, 0) / window.length;
 
     return {
@@ -308,13 +390,15 @@ export class RunAccumulator {
    *  headline only when there are no usable samples at all. */
   latencyResult(cfg: RunnerConfig, idleFallbackMs: number): LatencyResult {
     const stableStart = this.#latStableStart;
+    const earlyStopStart = this.#latEarlyStopStart;
     const finalScore = this.#latFinalScore;
     const all = this.#allRtts;
     const idle = this.#idleRtts;
-    const useWindow = cfg.adaptive.enabled && stableStart >= 0 && stableStart < idle.length;
-    // Headline (median unloaded) follows the same stable-window vs full rule;
-    // min/p50/p95/jitter/loss stay whole-run distribution descriptors.
-    const idleWindow = useWindow ? idle.slice(stableStart) : idle;
+    // Headline (median unloaded) follows the same window rule as throughput
+    // (see #windowStart); min/p50/p95/jitter/loss stay whole-run descriptors.
+    const windowStart = this.#windowStart(stableStart, earlyStopStart, cfg.adaptive.enabled, idle.length);
+    const useWindow = windowStart >= 0;
+    const idleWindow = useWindow ? idle.slice(windowStart) : idle;
     const idleMs = median(idleWindow.length ? idleWindow : all) || idleFallbackMs;
     return {
       idleMs,

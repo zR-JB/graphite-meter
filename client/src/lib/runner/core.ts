@@ -730,6 +730,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   ) {
     const cfg = this.#cfg!;
     if (!cfg.adaptive.enabled) return;
+    if (seg.phase === "warmup") return; // never called this way, but narrows seg.phase below
     if (this.#glideArmedForSeg >= 0) return; // already gliding this phase
 
     const kind: "latency" | "transfer" = seg.phase === "latency" ? "latency" : "transfer";
@@ -746,6 +747,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#glideStartReal = performance.now();
     this.#glideFromMeasured = elapsed;
     this.#glideTargetMeasured = seg.end;
+    // Latch the sample index the early-stopping phase began at, so result
+    // reduction can distinguish "stable the whole early-stopping phase" from
+    // "stability broke after arming" (§13.4, evaluation.ts#windowStart).
+    this.#accum.noteEarlyStop(seg.phase);
   }
 
   /** Drive the measured-time clock along the armed glide's eased curve. */
