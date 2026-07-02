@@ -78,9 +78,9 @@ export class GaugeEngine implements CanvasEngine {
 
   // Resolved theme colors (re-read on theme/resize via invalidateTheme).
   #accent = "#888";
-  #track = "#2a2f36";
-  #tick = "#454b54";
-  #label = "#726d83";
+  #track = "#23262b";
+  #tick = "#4a5058";
+  #label = "#6a717a";
 
   #lastPhase: Phase | null = null;
   #lastNow = 0; // timestamp of the last drawn frame (reused for resize repaints)

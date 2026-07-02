@@ -170,7 +170,21 @@
       class="brand-btn font-mono text-sm font-bold tracking-tight"
       aria-label="Graphite Meter — return to a fresh, blank test"
       use:tooltip={"Return to a fresh, blank test"}
-      onclick={returnToStart}>Graphite&nbsp;Meter</button
+      onclick={returnToStart}
+      ><svg class="brand-glyph" viewBox="0 0 24 24" aria-hidden="true"
+        ><path
+          d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z"
+          fill="none"
+          stroke="var(--brand)"
+          stroke-width="2"
+          stroke-linejoin="round"
+        /><path
+          d="M12 12 18.6 8.2"
+          stroke="currentColor"
+          stroke-width="2.2"
+          stroke-linecap="round"
+        /><circle cx="12" cy="12" r="2.1" fill="currentColor" /></svg
+      >Graphite&nbsp;Meter</button
     >
     <button
       class="ghost-btn icon-btn"
@@ -300,6 +314,9 @@
   /* The logo doubles as a "home" action — reads as the wordmark, with just a
      hover/focus affordance to signal it's clickable. */
   .brand-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     padding: 4px 6px;
     margin-left: -6px;
     border: 0;
@@ -308,6 +325,14 @@
     color: var(--text);
     cursor: pointer;
     transition: color var(--dur-hover) var(--ease-out);
+  }
+  /* The lattice-needle glyph (see public/favicon.svg): hexagon in the brand
+     accent, needle in the current text color so hover tints it with the
+     wordmark. */
+  .brand-btn .brand-glyph {
+    width: 18px;
+    height: 18px;
+    flex: none;
   }
   .brand-btn:hover {
     color: var(--brand-strong);

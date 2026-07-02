@@ -136,20 +136,20 @@ export class ChartEngine implements CanvasEngine {
   #p95Cache = { len: -1, tMin: 0, v: 0 };
 
   #c: ThemeColors = {
-    download: "#6f9c7c",
-    downloadRgb: { r: 111, g: 156, b: 124 },
-    upload: "#cf4520",
-    uploadRgb: { r: 207, g: 69, b: 32 },
-    warmup: "#7c7870",
-    signal: "#4f86ab",
-    warn: "#c98a3a",
-    warnSoft: "rgba(201,138,58,0.14)",
-    grid: "rgba(222,216,201,0.045)",
-    gridMajor: "rgba(222,216,201,0.09)",
-    textSoft: "#6d685c",
-    text: "#eae6da",
-    panel: "#202225",
-    brand: "#cf4520",
+    download: "#6db0b8",
+    downloadRgb: { r: 109, g: 176, b: 184 },
+    upload: "#bda36c",
+    uploadRgb: { r: 189, g: 163, b: 108 },
+    warmup: "#858c94",
+    signal: "#8ba3ba",
+    warn: "#c4a568",
+    warnSoft: "rgba(196,165,104,0.14)",
+    grid: "rgba(211,219,227,0.05)",
+    gridMajor: "rgba(211,219,227,0.1)",
+    textSoft: "#6a717a",
+    text: "#d9dce0",
+    panel: "#1c1f23",
+    brand: "#6db0b8",
   };
 
   constructor(get: () => ChartData, fmt: ChartFormatters) {
@@ -316,23 +316,23 @@ export class ChartEngine implements CanvasEngine {
   #resolveColors(): void {
     const cs = getComputedStyle(document.documentElement);
     const g = (v: string, fb: string) => cs.getPropertyValue(v).trim() || fb;
-    const download = g("--phase-download", "#6f9c7c");
-    const upload = g("--phase-upload", "#cf4520");
+    const download = g("--phase-download", "#6db0b8");
+    const upload = g("--phase-upload", "#bda36c");
     this.#c = {
       download,
       downloadRgb: hexToRgb(download),
       upload,
       uploadRgb: hexToRgb(upload),
-      warmup: g("--phase-warmup", "#7c7870"),
-      signal: g("--signal", "#4f86ab"),
-      warn: g("--warn", "#c98a3a"),
-      warnSoft: g("--warn-soft", "rgba(201,138,58,0.14)"),
-      grid: g("--grid-line", "rgba(222,216,201,0.045)"),
-      gridMajor: g("--grid-line-major", "rgba(222,216,201,0.09)"),
-      textSoft: g("--text-soft", "#6d685c"),
-      text: g("--text", "#eae6da"),
-      panel: g("--surface-1", "#202225"),
-      brand: g("--brand", "#cf4520"),
+      warmup: g("--phase-warmup", "#858c94"),
+      signal: g("--signal", "#8ba3ba"),
+      warn: g("--warn", "#c4a568"),
+      warnSoft: g("--warn-soft", "rgba(196,165,104,0.14)"),
+      grid: g("--grid-line", "rgba(211,219,227,0.05)"),
+      gridMajor: g("--grid-line-major", "rgba(211,219,227,0.1)"),
+      textSoft: g("--text-soft", "#6a717a"),
+      text: g("--text", "#d9dce0"),
+      panel: g("--surface-1", "#1c1f23"),
+      brand: g("--brand", "#6db0b8"),
     };
     this.#gradH = -1; // colors changed → rebuild cached gradients on next draw
   }

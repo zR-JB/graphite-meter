@@ -1,18 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  /* Display — Archivo: an engineering grotesque, used sparingly for the hero
-     number, the Engage label, and panel titles. Distinct in character from
-     the small-caps mono data face below, so the one big typographic moment
-     doesn't blend into the instrument readouts around it. */
-  --font-display: "Archivo", "Inter Tight", system-ui, sans-serif;
-  --font-sans: "Public Sans", "Inter Tight", "Inter", "Segoe UI", system-ui,
-    sans-serif;
-  /* JetBrains Mono — true tabular figures for every live readout: the gauge
+  /* Instrument Sans carries both display and body (CARBON direction): a
+     geometric grotesque used heavy for the hero number / Engage / panel
+     titles and regular for prose, so the UI reads as one machined object. */
+  --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
+  --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+  /* Spline Sans Mono — tabular figures for every live readout: the gauge
      value, chart ticks, ETA, telemetry. One consistent "instrument digits"
      face wherever a number can change under your eye. */
-  --font-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", Consolas,
-    "Liberation Mono", monospace;
+  --font-mono: "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular",
+    Consolas, "Liberation Mono", monospace;
 }
 
 :root {
@@ -55,11 +53,11 @@
   --dur-slide: 180ms;
   --dur-graph: 280ms;
 
-  /* ============ DRAFTING TABLE — FORM CONTROL PANEL ============
-     Three master knobs still drive the whole feel — but the target is no
-     longer a milled instrument bezel, it's a sheet of vellum pinned to a
-     drafting table: flatter, crisper-cornered, depth read from a hairline
-     rule + a faint cast shadow rather than an engraved bevel.
+  /* ============ CARBON — FORM CONTROL PANEL ============
+     Three master knobs drive the whole feel. The target is graphite as
+     engineered material: near-monochrome cool greys with a clear metallic
+     step between surfaces, depth read from a hairline rim light + a faint
+     cast shadow rather than an engraved bevel.
 
        --feel-radius   0 = sharp panel   · 0.6 = default · 1.6 = soft
        --feel-density  0.85 = compact    · 1 = default · 1.2 = airy
@@ -83,9 +81,9 @@
   --r-chrome: calc(8px * var(--feel-radius)); /* flat chrome: buttons, chips, panels */
   --r-pill: calc(12px * var(--feel-radius)); /* the Engage master action */
 
-  /* Type scale — Archivo (display) / JetBrains Mono (data) / Public Sans
-     (body). --type-hero is the live number: the one typographic moment.
-     --track-wide is pulled from a drafting title block's lettering. */
+  /* Type scale — Instrument Sans (display + body) / Spline Sans Mono (data).
+     --type-hero is the live number: the one typographic moment.
+     --track-wide is for small-caps instrument labels. */
   --type-hero: clamp(40px, 6vw, 76px);
   --type-xl: 22px;
   --type-lg: 17px;
@@ -95,20 +93,20 @@
   --track-tight: -0.02em;
   --track-wide: 0.1em;
 
-  /* ---- Surface texture (DARK): a sheet under a desk lamp, not a lit bevel ----
-     Depth reads from a hairline border + a shallow cast shadow. The signature
-     contrast is --elev-inset (a pinned-down sheet, set slightly below the
-     table) vs --elev-raised (a loose sheet resting on top). Mode-specific
+  /* ---- Surface texture (DARK): machined plates, not paper ----
+     Depth reads from a hairline top edge (light catching a milled rim) + a
+     shallow cast shadow. The signature contrast is --elev-inset (a recessed
+     well) vs --elev-raised (a plate resting on top). Mode-specific
      primitives below are overridden in [data-theme="light"]; the recipes
      themselves are written once. */
-  --edge-light: rgba(234, 229, 216, calc(0.05 * var(--feel-edge)));
+  --edge-light: rgba(211, 219, 227, calc(0.07 * var(--feel-edge)));
   --edge-shade: rgba(0, 0, 0, calc(0.4 * var(--feel-edge)));
-  --shadow-ink: 9, 8, 7; /* rgb triple composed into shadows */
-  --well-depth: 0.35; /* inner-shadow strength for a pinned-down sheet */
-  --raise-depth: 0.28; /* drop-shadow strength for a resting sheet */
+  --shadow-ink: 5, 7, 9; /* rgb triple composed into shadows (cool, near-black) */
+  --well-depth: 0.35; /* inner-shadow strength for a recessed well */
+  --raise-depth: 0.28; /* drop-shadow strength for a resting plate */
 
-  /* A pinned sheet: shallow, even inner shadow (no dramatic top-lit bevel —
-     paper doesn't have one), plus the crisp border that reads as its edge. */
+  /* A recessed well: shallow, even inner shadow plus the crisp border that
+     reads as its machined edge. */
   --elev-inset: inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8)),
     inset 0 6px 14px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.45));
   --elev-raised: 0 1px 0 var(--edge-light),
@@ -116,135 +114,135 @@
   --elev-flat: 0 0 0 transparent;
   /* Shallower recess for secondary screens (chart canvas, mini readouts). */
   --elev-recess: inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.4));
-  /* Flat tile: a hairline top edge only — reads as a sheet resting on the
-     table, quieter than a pinned well. */
+  /* Flat tile: a hairline top edge only — reads as a plate resting on the
+     chassis, quieter than a recessed well. */
   --elev-tile: inset 0 1px 0 var(--edge-light);
 
-  /* ===== DARK: Night Table — graphite pencil on vellum, after hours =====
-     A neutral, warm-cool-balanced charcoal (never purple, never pure black —
-     the colour of the mineral itself). Two accents carry the whole UI: a red
-     pencil mark for anything live/active, and a blueprint-cyanotype blue for
-     anything at rest or reference. */
+  /* ===== DARK: CARBON — graphite as engineered material =====
+     Near-monochrome cool neutral greys (never warm, never purple, never pure
+     black — the mineral's own metallic cast). One accent carries everything
+     live: a muted "conductive" teal. Cold steel blue marks reference and
+     at-rest states. The data provides the rest of the color. */
   /* --canvas is duplicated as a literal hex in index.html's pre-paint <style>
      (the bundle, and thus this file, loads too late to own the first frame).
      If you change this dark value, change index.html's `html { background }`
      too — and the light value below mirrors index.html's [data-theme=light]. */
-  --canvas: #17181a;
-  --bg: #1b1d20;
-  --bg-elevated: #202225;
+  --canvas: #131518;
+  --bg: #17191c;
+  --bg-elevated: #1c1f23;
 
-  --surface-1: #202225;
-  --surface-2: #262930;
-  --surface-3: #2e323a;
-  --surface-inset: #131416;
+  --surface-1: #1c1f23;
+  --surface-2: #23262b;
+  --surface-3: #2c3037;
+  --surface-inset: #0f1012;
 
-  --border-subtle: rgba(222, 216, 201, 0.055);
-  --border: rgba(222, 216, 201, 0.09);
-  --border-strong: rgba(222, 216, 201, 0.16);
+  --border-subtle: rgba(211, 219, 227, 0.07);
+  --border: rgba(211, 219, 227, 0.11);
+  --border-strong: rgba(211, 219, 227, 0.2);
 
-  --text: #eae6da; /* vellum */
-  --text-muted: #a29c8d;
-  --text-soft: #6d685c;
-  --text-inverse: #17181a;
+  --text: #d9dce0; /* silver */
+  --text-muted: #9ba2aa;
+  --text-soft: #6a717a;
+  --text-inverse: #111315;
 
-  --brand: #cf4520; /* red pencil */
-  --brand-strong: #e2673f;
-  --brand-muted: #9c5136;
-  --brand-soft: rgba(207, 69, 32, 0.16);
+  --brand: #6db0b8; /* conductive teal */
+  --brand-strong: #93cdd4;
+  --brand-muted: #47787e;
+  --brand-soft: rgba(109, 176, 184, 0.14);
 
-  --signal: #4f86ab; /* blueprint blue */
-  --signal-strong: #78a8c8;
-  --signal-soft: rgba(79, 134, 171, 0.16);
+  --signal: #8ba3ba; /* cold steel — reference / at-rest */
+  --signal-strong: #adc0d4;
+  --signal-soft: rgba(139, 163, 186, 0.14);
 
-  /* Phase identity tints — a drafting-table spectrum: graphite (no data yet),
-     blueprint blue, patina green, red pencil, highlighter ochre. */
-  --phase-warmup: #7c7870; /* graphite pencil mark — indeterminate */
-  --phase-latency: #4f86ab; /* blueprint blue */
-  --phase-download: #6f9c7c; /* patina green — graphite conducts */
-  --phase-upload: #cf4520; /* red pencil */
-  --phase-bidirectional: #c98a3a; /* ochre — highlighter tape */
-  --phase-complete: #3c6e8f; /* blueprint, settled */
+  /* Phase identity tints — a cool mineral spectrum: pewter (no data yet),
+     steel blue, conductive teal, muted brass, heather. */
+  --phase-warmup: #858c94; /* pewter — indeterminate */
+  --phase-latency: #8ba3ba; /* steel blue */
+  --phase-download: #6db0b8; /* conductive teal */
+  --phase-upload: #bda36c; /* muted brass — the one warm member */
+  --phase-bidirectional: #a695c8; /* heather */
+  --phase-complete: #7590a5; /* steel, settled */
 
   /* Status tones */
-  --ok: #6f9c7c;
-  --ok-soft: rgba(111, 156, 124, 0.16);
-  --warn: #c98a3a;
-  --warn-soft: rgba(201, 138, 58, 0.16);
-  --err: #d1454f; /* alarm crimson — distinct from the red-pencil accent */
-  --err-soft: rgba(209, 69, 79, 0.16);
-  --info: #4f86ab;
-  --info-soft: rgba(79, 134, 171, 0.16);
+  --ok: #79ad91;
+  --ok-soft: rgba(121, 173, 145, 0.14);
+  --warn: #c4a568;
+  --warn-soft: rgba(196, 165, 104, 0.14);
+  --err: #d89393; /* muted alarm — distinct from every phase tint */
+  --err-soft: rgba(216, 147, 147, 0.15);
+  --info: #8ba3ba;
+  --info-soft: rgba(139, 163, 186, 0.14);
 
-  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.28), 0 10px 28px rgba(10, 9, 7, 0.4);
-  --shadow-float: 0 18px 60px rgba(10, 9, 7, 0.5);
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(5, 7, 9, 0.4);
+  --shadow-float: 0 18px 60px rgba(4, 6, 8, 0.55);
 
   /* Graph-specific */
-  --grid-line: rgba(222, 216, 201, 0.045);
-  --grid-line-major: rgba(222, 216, 201, 0.09);
+  --grid-line: rgba(211, 219, 227, 0.05);
+  --grid-line-major: rgba(211, 219, 227, 0.1);
 }
 
 [data-theme="light"] {
-  /* ===== LIGHT: Drafting Paper — the same instrument, printed =====
-     A muted, cool-grey vellum (deliberately not a bright warm cream) with
-     graphite-black ink. Same accent family as dark mode, darkened for
-     contrast on a bright ground. */
+  /* ===== LIGHT: CARBON — the same instrument in daylight =====
+     Cool paper-grey (deliberately not a warm cream) with near-black ink.
+     Same accent anchors as dark mode, darkened for contrast on a bright
+     ground, so the two modes read as siblings. */
   color-scheme: light;
 
-  --canvas: #e7e3d8;
-  --bg: #ece8dd;
-  --bg-elevated: #f2efe6;
+  --canvas: #e9e9e4;
+  --bg: #eeeee9;
+  --bg-elevated: #f6f5f1;
 
-  --surface-1: #f5f2ea;
-  --surface-2: #ece7db;
-  --surface-3: #e2dccb;
-  --surface-inset: #ded8c8;
+  --surface-1: #f6f5f1;
+  --surface-2: #eaeae4;
+  --surface-3: #dedcd4;
+  --surface-inset: #d8d6ce;
 
-  --border-subtle: rgba(40, 36, 26, 0.07);
-  --border: rgba(40, 36, 26, 0.12);
-  --border-strong: rgba(40, 36, 26, 0.2);
+  --border-subtle: rgba(43, 44, 40, 0.08);
+  --border: rgba(43, 44, 40, 0.13);
+  --border-strong: rgba(43, 44, 40, 0.22);
 
-  --text: #262420;
-  --text-muted: #5c584c;
-  --text-soft: #8b8676;
-  --text-inverse: #faf8f2;
+  --text: #26272a;
+  --text-muted: #575c5f;
+  --text-soft: #85898d;
+  --text-inverse: #f6f5f1;
 
-  --brand: #b23a1c;
-  --brand-strong: #8f2e15;
-  --brand-muted: #a06952;
-  --brand-soft: rgba(178, 58, 28, 0.12);
+  --brand: #2f717a;
+  --brand-strong: #235257;
+  --brand-muted: #5f8f96;
+  --brand-soft: rgba(47, 113, 122, 0.12);
 
-  --signal: #2f6386;
-  --signal-strong: #234b68;
-  --signal-soft: rgba(47, 99, 134, 0.12);
+  --signal: #4b6076;
+  --signal-strong: #364a5c;
+  --signal-soft: rgba(75, 96, 118, 0.12);
 
-  --phase-warmup: #837d6d;
-  --phase-latency: #2f6386;
-  --phase-download: #4d7a5a;
-  --phase-upload: #b23a1c;
-  --phase-bidirectional: #a06a1e;
-  --phase-complete: #1f4c68;
+  --phase-warmup: #70767d;
+  --phase-latency: #4b6076;
+  --phase-download: #2f717a;
+  --phase-upload: #85683a;
+  --phase-bidirectional: #6d5e94;
+  --phase-complete: #445f79;
 
-  --ok: #4d7a5a;
-  --ok-soft: rgba(77, 122, 90, 0.13);
-  --warn: #a06a1e;
-  --warn-soft: rgba(160, 106, 30, 0.13);
-  --err: #a8323f;
-  --err-soft: rgba(168, 50, 63, 0.14);
-  --info: #2f6386;
-  --info-soft: rgba(47, 99, 134, 0.13);
+  --ok: #326350;
+  --ok-soft: rgba(50, 99, 80, 0.13);
+  --warn: #6f5426;
+  --warn-soft: rgba(111, 84, 38, 0.13);
+  --err: #a04a4a;
+  --err-soft: rgba(160, 74, 74, 0.13);
+  --info: #4b6076;
+  --info-soft: rgba(75, 96, 118, 0.13);
 
-  --shadow-card: 0 1px 1px rgba(40, 36, 26, 0.06), 0 8px 24px rgba(40, 36, 26, 0.08);
-  --shadow-float: 0 16px 50px rgba(40, 36, 26, 0.16);
+  --shadow-card: 0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
+  --shadow-float: 0 16px 50px rgba(43, 44, 40, 0.16);
 
-  --grid-line: rgba(40, 36, 26, 0.05);
-  --grid-line-major: rgba(40, 36, 26, 0.1);
+  --grid-line: rgba(43, 44, 40, 0.06);
+  --grid-line-major: rgba(43, 44, 40, 0.12);
 
   /* ---- Surface texture (LIGHT) — only the primitives change; the
-     --elev-* recipes above recompute. A light sheet reads inset via a bright
+     --elev-* recipes above recompute. A light plate reads inset via a bright
      top highlight + a faint ink-toned inner shadow (never heavy darkness). */
   --edge-light: rgba(255, 255, 255, calc(0.6 * var(--feel-edge)));
-  --edge-shade: rgba(40, 36, 26, calc(0.12 * var(--feel-edge)));
-  --shadow-ink: 40, 36, 26;
+  --edge-shade: rgba(43, 44, 40, calc(0.12 * var(--feel-edge)));
+  --shadow-ink: 43, 44, 40;
   --well-depth: 0.14;
   --raise-depth: 0.1;
 }
@@ -315,25 +313,8 @@ body {
   outline-offset: 2px;
 }
 
-/* ---- Paper grain (signature texture) ----
-   A single tiled noise tile, blended over the whole console at very low
-   opacity — the one deliberate risk in this pass: it's what makes "graphite
-   on vellum" felt rather than just described in copy. Fixed + a small tile
-   means the browser rasterizes it once; static, so no per-frame cost. Purely
-   decorative (pointer-events: none). */
 #console {
   position: relative;
-}
-#console::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  opacity: 0.035;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 140px 140px;
 }
 
 /* ---- Status / phase tone driver (§4.4) ----
