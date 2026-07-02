@@ -12,20 +12,20 @@
          Keep the hexes in sync with --canvas in src/app.css (dark/light). -->
     <style>
       :root { color-scheme: dark; }
-      html { background: #0b0a10; }            /* --canvas (dark) */
-      html[data-theme="light"] { color-scheme: light; background: #e7e5f1; } /* --canvas (light) */
+      html { background: #17181a; }            /* --canvas (dark) */
+      html[data-theme="light"] { color-scheme: light; background: #e7e3d8; } /* --canvas (light) */
       body {
         margin: 0;
         min-height: 100vh;
-        background: #0b0a10;
-        color: #ecebf3;
-        font-family: "IBM Plex Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+        background: #17181a;
+        color: #eae6da;
+        font-family: "Public Sans", "Inter", "Segoe UI", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
       }
       html[data-theme="light"] body {
-        background: #e7e5f1;
-        color: #221d30;
+        background: #e7e3d8;
+        color: #262420;
       }
       .noscript-shell {
         box-sizing: border-box;
@@ -37,48 +37,48 @@
       .noscript-panel {
         box-sizing: border-box;
         width: min(100%, 520px);
-        border: 1px solid rgba(196, 186, 232, 0.14);
-        border-radius: 8px;
-        background: #15131d;
-        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.32), 0 12px 34px rgba(7, 5, 16, 0.46);
+        border: 1px solid rgba(222, 216, 201, 0.14);
+        border-radius: 6px;
+        background: #202225;
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.28), 0 10px 28px rgba(10, 9, 7, 0.4);
         padding: 24px;
       }
       .noscript-kicker {
         margin: 0 0 10px;
-        color: #b6a6e6;
-        font: 600 12px/1.2 "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
-        letter-spacing: 0.08em;
+        color: #cf4520;
+        font: 600 12px/1.2 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
       }
       .noscript-panel h1 {
         margin: 0 0 12px;
-        font: 600 28px/1.05 "Space Grotesk", "Inter", system-ui, sans-serif;
+        font: 600 28px/1.05 "Archivo", "Inter", system-ui, sans-serif;
       }
       .noscript-panel p {
         margin: 0;
-        color: #a8a2bb;
+        color: #a29c8d;
         font-size: 15px;
         line-height: 1.55;
       }
       @media (prefers-color-scheme: light) {
         html:not([data-theme]) {
           color-scheme: light;
-          background: #e7e5f1;
+          background: #e7e3d8;
         }
         html:not([data-theme]) body {
-          background: #e7e5f1;
-          color: #221d30;
+          background: #e7e3d8;
+          color: #262420;
         }
         html:not([data-theme]) .noscript-panel {
-          border-color: rgba(58, 48, 90, 0.12);
-          background: #f6f5fc;
-          box-shadow: 0 1px 1px rgba(46, 36, 80, 0.07), 0 10px 32px rgba(46, 36, 80, 0.1);
+          border-color: rgba(40, 36, 26, 0.12);
+          background: #f5f2ea;
+          box-shadow: 0 1px 1px rgba(40, 36, 26, 0.06), 0 8px 24px rgba(40, 36, 26, 0.08);
         }
         html:not([data-theme]) .noscript-kicker {
-          color: #6d5bb0;
+          color: #b23a1c;
         }
         html:not([data-theme]) .noscript-panel p {
-          color: #5d5773;
+          color: #5c584c;
         }
       }
     </style>
@@ -103,7 +103,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <title>The Graphite Meter</title>

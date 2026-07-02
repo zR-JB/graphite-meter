@@ -297,22 +297,17 @@ export class GaugeEngine implements CanvasEngine {
       ctx.restore();
     }
 
-    // Value arc — the live sweep, phase-tinted, with a soft glow. Stays live
-    // (its length changes every frame, so it can't be a static sprite).
+    // Value arc — the live sweep, phase-tinted. Flat and crisp, like a ruled
+    // ink line traced over the pencil construction arc beneath it — no glow.
     if (sweep > 0.002) {
-      if (!this.#reduced) {
-        ctx.shadowColor = this.#accent;
-        ctx.shadowBlur = 14;
-      }
       ctx.strokeStyle = this.#accent;
       ctx.lineWidth = arcW;
       ctx.beginPath();
       ctx.arc(cx, cy, r, ARC_START, valueEnd);
       ctx.stroke();
-      ctx.shadowBlur = 0;
 
-      // Glowing head at the leading edge — blitted from the cached sprite so
-      // its shadowBlur is computed once per (accent, size), never per frame.
+      // Marker at the leading edge — blitted from the cached sprite (a flat
+      // pin, not a glow) so it's computed once per (accent, size).
       const hx = cx + Math.cos(valueEnd) * r;
       const hy = cy + Math.sin(valueEnd) * r;
       this.#ensureHead(arcW);
@@ -358,12 +353,30 @@ export class GaugeEngine implements CanvasEngine {
     bx.clearRect(0, 0, this.#w, this.#h);
     bx.lineCap = "round";
 
-    // Background track (the full 270° groove).
+    // Background track — a pencil construction arc, not a lit metal groove:
+    // a thin dashed line at the dial's true radius (the value arc, drawn
+    // live and full-width, reads as the ink traced over it).
     bx.strokeStyle = this.#track;
-    bx.lineWidth = arcW;
+    bx.lineWidth = 1.5;
+    bx.setLineDash([2, 5]);
     bx.beginPath();
     bx.arc(cx, cy, r, ARC_START, ARC_START + ARC_SWEEP);
     bx.stroke();
+    bx.setLineDash([]);
+
+    // Compass pivot point at the hub — the centre every construction arc on
+    // this dial is drawn from.
+    bx.fillStyle = this.#tick;
+    bx.beginPath();
+    bx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    bx.fill();
+    bx.strokeStyle = this.#tick;
+    bx.globalAlpha = 0.5;
+    bx.lineWidth = 1;
+    bx.beginPath();
+    bx.arc(cx, cy, 5.5, 0, Math.PI * 2);
+    bx.stroke();
+    bx.globalAlpha = 1;
 
     // Tick marks just outside the groove.
     bx.strokeStyle = this.#tick;
@@ -385,7 +398,7 @@ export class GaugeEngine implements CanvasEngine {
     // Quarter scale labels (0 … full scale) — recessive, radially aligned.
     // Skipped during phases where the scale has no meaning.
     if (showLabels) {
-      bx.font = '600 8.5px "IBM Plex Mono", monospace';
+      bx.font = '600 8.5px "JetBrains Mono", monospace';
       bx.fillStyle = this.#label;
       bx.globalAlpha = 0.5;
       const lr = tOut + 7;
@@ -401,14 +414,15 @@ export class GaugeEngine implements CanvasEngine {
     }
   }
 
-  /** (Re)render the glowing-head sprite when accent/size/dpr change. The sprite
-   *  is a filled circle + shadowBlur, centered, with a blur-width margin. */
+  /** (Re)render the leading-edge marker sprite when accent/size/dpr change. A
+   *  flat filled pin with a thin panel-toned ring — like a drafting-compass
+   *  pencil point — never a blurred glow. */
   #ensureHead(arcW: number): void {
-    const headR = arcW * 0.62;
-    const blur = this.#reduced ? 0 : 16;
-    const half = headR + blur + 2; // css px; includes blur bleed margin
+    const headR = arcW * 0.55;
+    const ringW = Math.max(1, headR * 0.22);
+    const half = headR + ringW + 2; // css px; includes ring margin
     this.#headHalf = half;
-    const sig = `${this.#accent}|${arcW}|${this.#reduced ? 1 : 0}|${this.#dpr}`;
+    const sig = `${this.#accent}|${arcW}|${this.#dpr}`;
     if (sig === this.#headSig && this.#head) return;
     this.#headSig = sig;
 
@@ -425,12 +439,13 @@ export class GaugeEngine implements CanvasEngine {
     hx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     hx.clearRect(0, 0, side / this.#dpr, side / this.#dpr);
     hx.fillStyle = this.#accent;
-    if (blur) {
-      hx.shadowColor = this.#accent;
-      hx.shadowBlur = blur;
-    }
     hx.beginPath();
     hx.arc(half, half, headR, 0, Math.PI * 2);
     hx.fill();
+    hx.strokeStyle = this.#track;
+    hx.lineWidth = ringW;
+    hx.beginPath();
+    hx.arc(half, half, headR + ringW * 0.5, 0, Math.PI * 2);
+    hx.stroke();
   }
 }

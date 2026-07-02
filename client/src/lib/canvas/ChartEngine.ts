@@ -135,20 +135,20 @@ export class ChartEngine implements CanvasEngine {
   #hasThroughputScale = false;
 
   #c: ThemeColors = {
-    download: "#93c49a",
-    downloadRgb: { r: 147, g: 196, b: 154 },
-    upload: "#b6a6e6",
-    uploadRgb: { r: 182, g: 166, b: 230 },
-    warmup: "#8e95d4",
-    signal: "#84c5c0",
-    warn: "#d8b57e",
-    warnSoft: "rgba(216,181,126,0.14)",
-    grid: "rgba(196,186,232,0.05)",
-    gridMajor: "rgba(196,186,232,0.09)",
-    textSoft: "#726d83",
-    text: "#ecebf3",
-    panel: "#191622",
-    brand: "#b6a6e6",
+    download: "#6f9c7c",
+    downloadRgb: { r: 111, g: 156, b: 124 },
+    upload: "#cf4520",
+    uploadRgb: { r: 207, g: 69, b: 32 },
+    warmup: "#7c7870",
+    signal: "#4f86ab",
+    warn: "#c98a3a",
+    warnSoft: "rgba(201,138,58,0.14)",
+    grid: "rgba(222,216,201,0.045)",
+    gridMajor: "rgba(222,216,201,0.09)",
+    textSoft: "#6d685c",
+    text: "#eae6da",
+    panel: "#202225",
+    brand: "#cf4520",
   };
 
   constructor(get: () => ChartData, fmt: ChartFormatters) {
@@ -314,23 +314,23 @@ export class ChartEngine implements CanvasEngine {
   #resolveColors(): void {
     const cs = getComputedStyle(document.documentElement);
     const g = (v: string, fb: string) => cs.getPropertyValue(v).trim() || fb;
-    const download = g("--phase-download", "#6fa77a");
-    const upload = g("--phase-upload", "#d7a84f");
+    const download = g("--phase-download", "#6f9c7c");
+    const upload = g("--phase-upload", "#cf4520");
     this.#c = {
       download,
       downloadRgb: hexToRgb(download),
       upload,
       uploadRgb: hexToRgb(upload),
-      warmup: g("--phase-warmup", "#8e95d4"),
-      signal: g("--signal", "#7ea7a6"),
-      warn: g("--warn", "#d7a84f"),
-      warnSoft: g("--warn-soft", "rgba(215,168,79,0.14)"),
-      grid: g("--grid-line", "rgba(255,255,255,0.05)"),
-      gridMajor: g("--grid-line-major", "rgba(255,255,255,0.09)"),
-      textSoft: g("--text-soft", "#737b76"),
-      text: g("--text", "#e7ece9"),
-      panel: g("--surface-1", "#1b211e"),
-      brand: g("--brand", "#d7a84f"),
+      warmup: g("--phase-warmup", "#7c7870"),
+      signal: g("--signal", "#4f86ab"),
+      warn: g("--warn", "#c98a3a"),
+      warnSoft: g("--warn-soft", "rgba(201,138,58,0.14)"),
+      grid: g("--grid-line", "rgba(222,216,201,0.045)"),
+      gridMajor: g("--grid-line-major", "rgba(222,216,201,0.09)"),
+      textSoft: g("--text-soft", "#6d685c"),
+      text: g("--text", "#eae6da"),
+      panel: g("--surface-1", "#202225"),
+      brand: g("--brand", "#cf4520"),
     };
     this.#gradH = -1; // colors changed → rebuild cached gradients on next draw
   }
@@ -555,7 +555,7 @@ export class ChartEngine implements CanvasEngine {
       // avg pill on a solid chip so the label never blends into the line it
       // sits on. Faceplate-styled: panel fill + hairline in the phase colour.
       const label = `avg ${this.#fmt.throughput(stat.avg)}`;
-      ctx.font = '700 9px "IBM Plex Mono", monospace';
+      ctx.font = '700 9px "JetBrains Mono", monospace';
       ctx.textAlign = "left";
       ctx.textBaseline = "alphabetic";
       const padX = 5;
@@ -642,7 +642,7 @@ export class ChartEngine implements CanvasEngine {
       const isRepeatWarmup = s.phase === "warmup" && warmupLabelled;
       if (this.#result && w > 56 && !isRepeatWarmup) {
         ctx.globalAlpha = 0.62;
-        ctx.font = '700 9px "IBM Plex Mono", monospace';
+        ctx.font = '700 9px "JetBrains Mono", monospace';
         ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
         ctx.fillText(this.#PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
@@ -662,18 +662,44 @@ export class ChartEngine implements CanvasEngine {
   #drawGrid(ctx: CanvasRenderingContext2D): void {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
-    // Vertical time grid — one clean, labelled line per nice step (no dense
-    // 1s minor clutter on a compact chart).
+    const left = PAD_L;
+    const right = this.#w - PAD_R;
     const step = this.#niceTimeStep((this.#vp.tMax - this.#vp.tMin) / 5);
     const startT = Math.ceil(this.#vp.tMin / step) * step;
+
+    // Quad-ruled minor grid — a faint 4-division subdivision of each major
+    // cell, underneath the labelled lines. Graph paper, not a chrome track.
     ctx.lineWidth = 1;
     ctx.strokeStyle = this.#c.grid;
+    ctx.globalAlpha = 0.55;
+    const minorStep = step / 4;
+    const minorStartT = Math.ceil(this.#vp.tMin / minorStep) * minorStep;
+    for (let t = minorStartT; t <= this.#vp.tMax; t += minorStep) {
+      const x = Math.round(this.#x(t)) + 0.5;
+      if (x < left || x > right) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bot);
+      ctx.stroke();
+    }
+    for (let i = 1; i < 16; i++) {
+      if (i % 4 === 0) continue; // major line, drawn below
+      const y = Math.round(top + ((bot - top) * i) / 16) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Vertical time grid — one clean, labelled line per nice step.
+    ctx.strokeStyle = this.#c.grid;
     ctx.fillStyle = this.#c.textSoft;
-    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = "center";
     for (let t = startT; t <= this.#vp.tMax; t += step) {
       const x = Math.round(this.#x(t)) + 0.5;
-      if (x < PAD_L || x > this.#w - PAD_R) continue;
+      if (x < left || x > right) continue;
       ctx.beginPath();
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
@@ -686,8 +712,8 @@ export class ChartEngine implements CanvasEngine {
     for (let i = 1; i <= 3; i++) {
       const y = Math.round(top + ((bot - top) * i) / 4) + 0.5;
       ctx.beginPath();
-      ctx.moveTo(PAD_L, y);
-      ctx.lineTo(this.#w - PAD_R, y);
+      ctx.moveTo(left, y);
+      ctx.lineTo(right, y);
       ctx.stroke();
     }
   }
@@ -778,7 +804,7 @@ export class ChartEngine implements CanvasEngine {
   #drawAxesLabels(ctx: CanvasRenderingContext2D, latencyEnabled: boolean): void {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
-    ctx.font = '10px "IBM Plex Mono", monospace';
+    ctx.font = '10px "JetBrains Mono", monospace';
     ctx.fillStyle = this.#c.textSoft;
     // Left: throughput. Right: latency (omitted when latency is disabled).
     for (let i = 0; i <= 2; i++) {
