@@ -12,6 +12,7 @@
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
+  import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { tooltip } from "../actions/tooltip";
 
@@ -20,6 +21,18 @@
   // reset and a page reload land on the same view: panel shown when latency is
   // enabled (even on the blank idle gauge), hidden when it isn't.
   const showLatency = $derived(store.latencyEnabled);
+
+  // ---- Instrument / results tri-state ----
+  // idle/running shows just the dial; once a run is underway a compact
+  // one-line-per-stage strip appears; on completion it swaps to the full
+  // result-card grid. The slot below the gauge is ALWAYS mounted (reserved at
+  // its compact-strip height outside the final state) so the gauge height is
+  // identical at page load, mid-run, and after a return to the idle view.
+  const resultsView = $derived.by<"none" | "partial" | "final">(() => {
+    if (store.phase === "complete") return "final";
+    if (store.phase === "idle") return "none";
+    return "partial";
+  });
 
   // Total run ETA (read-only here; duration is edited only in Settings, §14.2).
   // Backed by the shared scheduler via store.totalEtaMs so it can't drift from
@@ -125,6 +138,12 @@
     // finishes and the loop has parked (the ticks read store.toUnit live).
     void store.unitBase;
     void store.unitKind;
+    // unitLabel changes whenever the shared prefix index (k/M/G/T) moves —
+    // that can happen from the raw peak alone, independent of
+    // displayScaleBytesPerSec (which tracks the DWELL-FILTERED sustained
+    // peak, a different signal). Without this, a prefix change while the
+    // loop is parked would leave the canvas-drawn tick labels stale.
+    void store.unitLabel;
     engine?.wake();
   });
 
@@ -227,11 +246,29 @@
 </script>
 
 <section class="gauge-panel">
-  <!-- Gauge and latency profile are peer containers on the same layer (§14.2):
-       a wrapping flex row so they resize together on wide layouts and the
-       latency panel breaks free below the gauge when space gets tight. The
-       latency panel only joins the row once a run has produced data. -->
-  <div class="viz">
+  <!-- Hero instrument — gauge, Engage, the stage selector, and (optionally)
+       the latency profile are all placed via ONE named-area CSS Grid inside
+       a single container-query context (§14.2 update). Their arrangement
+       flips ATOMICALLY at one breakpoint (see .instrument's @container rule
+       below) instead of several independent thresholds, and the shared
+       gauge+latency row gets an explicit, content-independent track size so
+       toggling the latency panel on/off can never change the gauge's height:
+         Desktop (wide): gauge+latency side by side, Engage below them,
+           Test Stages at the very bottom (matches the original layout —
+           keeping the space below the gauge from looking empty).
+         Mobile (narrow/stacked): Test Stages at the very top, then gauge,
+           then Engage, then the latency panel below. -->
+  <div class="instrument">
+    <div class="stage-head">
+      <div class="controls-head">
+        <span class="controls-title">Test stages</span>
+        <span class="eta" use:tooltip={"Estimated run time at the saved duration"}>
+          ~{(etaMs / 1000).toFixed(0)}s
+        </span>
+      </div>
+      <StageTrack />
+    </div>
+
     <div class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       <div class="metric-wrap">
@@ -242,6 +279,8 @@
       <output class="sr-only" aria-live="polite">{a11y}</output>
     </div>
 
+    <div class="engage-slot"><RunButton /></div>
+
     {#if showLatency}
       <div class="latency-panel">
         <LatencyProfile bare />
@@ -249,21 +288,13 @@
     {/if}
   </div>
 
-  <!-- Hero controls — gauge + number + combined stage track + Engage read as
-       one instrument (§14.2). The StageTrack is BOTH the stage selector and the
-       live phase-progress indicator (no standalone warmup/✓ segments). Duration
-       is Settings-only; the run uses the saved duration and shows its ETA. -->
-  <div class="controls">
-    <div class="controls-head">
-      <span class="controls-title">Test stages</span>
-      <span class="eta" use:tooltip={"Estimated run time at the saved duration"}>
-        ~{(etaMs / 1000).toFixed(0)}s
-      </span>
-    </div>
-    <StageTrack />
-    <RunButton />
+  <div class="results-slot">
+    {#if resultsView === "partial"}
+      <ResultCards compact />
+    {:else if resultsView === "final"}
+      <ResultCards />
+    {/if}
   </div>
-
 </section>
 
 <style>
@@ -277,25 +308,63 @@
     gap: var(--space-3);
     padding: 0;
     background: transparent;
+    /* Container for .instrument's @container rule below — docked side panels
+       can shrink this column independent of viewport width. Must live here,
+       not on .instrument: a container query can only restyle descendants of
+       the containment context, never the element itself. */
+    container-type: inline-size;
+    container-name: viz;
   }
-  /* Peer row: gauge + latency panel are equal-importance siblings. They share
-     an identical flex basis + min-width + min-height and align-items:stretch,
-     so side-by-side they are always exactly equal in both dimensions; when the
-     row can't hold both at their floor they wrap and stack cleanly. min-width
-     is a modest wrap-trigger (well under any mobile width) so a single panel
-     can never overflow horizontally. */
-  .viz {
-    display: flex;
-    flex: 1 1 auto;
-    flex-wrap: wrap;
-    align-items: stretch;
+  /* ---- The instrument grid ----
+     One named-area grid places stage-head, gauge, Engage, and the optional
+     latency panel, so the arrangement flips at a single breakpoint. The
+     gauge+latency row is `minmax(220px, 1fr)` — a content-independent track,
+     so the latency panel's content (which scrolls via its own overflow:auto)
+     can never stretch the gauge's height. */
+  .instrument {
+    display: grid;
     gap: var(--space-3);
+    flex: 1 1 auto;
     min-height: 0;
+    grid-template:
+      "stagehead" auto
+      "gauge" minmax(220px, 1fr)
+      "engage" auto
+      "latency" auto
+      / 1fr;
+  }
+  /* No latency panel at all: drop its row entirely (rather than leaving an
+     empty track) at any width. */
+  .instrument:not(:has(.latency-panel)) {
+    grid-template:
+      "stagehead" auto
+      "gauge" minmax(220px, 1fr)
+      "engage" auto
+      / 1fr;
+  }
+  /* Wide: gauge + latency side-by-side (each min-width:240px + gap ≈ 492px;
+     520px leaves a safety margin over the columns' min-width floor). One
+     query moves Engage, the latency panel, and Test Stages together. */
+  @container viz (min-width: 520px) {
+    .instrument {
+      grid-template:
+        "gauge latency" minmax(220px, 1fr)
+        "engage engage" auto
+        "stagehead stagehead" auto
+        / minmax(240px, 1fr) minmax(240px, 1fr);
+    }
+    .instrument:not(:has(.latency-panel)) {
+      grid-template:
+        "gauge" minmax(220px, 1fr)
+        "engage" auto
+        "stagehead" auto
+        / 1fr;
+    }
   }
   /* The gauge well — the deepest recess on the faceplate, the signature. */
   .stage {
+    grid-area: gauge;
     position: relative;
-    flex: 1 1 300px;
     min-width: 240px;
     min-height: 220px;
     border: 1px solid var(--border);
@@ -309,11 +378,19 @@
        width); cqmin keeps the number proportional to the ring at any aspect. */
     container-type: size;
   }
+  /* Engage's slot — RunButton centers itself (width:100%/max-width:320px/
+     align-self:center); this slot only needs to be a flex row so that
+     self-centering applies. */
+  .engage-slot {
+    grid-area: engage;
+    display: flex;
+    justify-content: center;
+  }
   /* Latency profile — a matching engraved well; identical sizing to the gauge
      so the pair always reads as one balanced instrument. Its content scrolls
      within the shared height rather than forcing the row taller. */
   .latency-panel {
-    flex: 1 1 300px;
+    grid-area: latency;
     min-width: 240px;
     min-height: 220px;
     padding: var(--space-2);
@@ -383,20 +460,19 @@
     color: var(--text-muted);
   }
 
-  /* Hero controls block — stage track + the master Engage action, sitting
-     directly under the gauge so the three read as one instrument. */
-  /* The controls group (stage header + track + Engage) reads as one
-     instrument cluster. Capped to a comfortable measure and centered so the
-     stage track spans the full width only when the viewport is genuinely
-     narrow (mobile) and never stretches absurdly wide on desktop. */
-  .controls {
+  /* Stage-head block — Test Stages header + track. Placed by the instrument
+     grid above (top on mobile, bottom on desktop — see .instrument). Capped
+     to a comfortable measure and centered within its (possibly full-width,
+     two-column-spanning) grid area so it never stretches absurdly wide on
+     desktop. */
+  .stage-head {
+    grid-area: stagehead;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    padding-top: 0;
     width: 100%;
     max-width: 600px;
-    align-self: center;
+    justify-self: center;
   }
   .controls-head {
     display: flex;
@@ -416,5 +492,16 @@
     font-weight: 700;
     color: var(--text-muted);
     letter-spacing: 0;
+  }
+
+  /* Results slot — empty at idle, compact strip while a run is in progress,
+     the full card grid once complete. The min-height reserve applies in EVERY
+     state so the gauge above is the same size at page load, mid-run, at
+     results, and back home. */
+  .results-slot {
+    width: 100%;
+    max-width: 600px;
+    align-self: center;
+    min-height: 108px;
   }
 </style>

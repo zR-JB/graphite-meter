@@ -27,6 +27,17 @@
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
 
+  /** Compact mode renders the same `cards` view-models as a slim one-line-per-
+   *  stage strip (icon + number, no chrome/wire-estimate/pip) instead of the
+   *  full card grid — used by <GaugePanel> to show earlier-phase results
+   *  while a later phase is still running, without the "too large on mobile"
+   *  footprint of a full result card. Same single `cards` derivation feeds
+   *  both renderings — one source of truth, two snippets. */
+  interface Props {
+    compact?: boolean;
+  }
+  let { compact = false }: Props = $props();
+
   const dash = "—";
 
   // Honour the user's motion preference once (the count-up tween is decorative).
@@ -433,15 +444,34 @@
   </article>
 {/snippet}
 
-<div class="result-cards" class:reserve={store.phase !== "idle"}>
-  {#each cards as c (c.key)}
-    {@render resultCard(c)}
-  {/each}
-</div>
+{#snippet resultChip(c: CardVM)}
+  <div class="result-chip" class:active={c.active}>
+    <span class="ico {c.ico}">{@html c.icon}</span>
+    <span class="chip-label">{c.label}</span>
+    <span class="chip-val">
+      <span class="num">{c.num}</span>
+      <span class="unit">{c.unit}</span>
+    </span>
+  </div>
+{/snippet}
 
-<!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
-{#if guidance}
-  <p class="metric-guidance">{guidance}</p>
+{#if compact}
+  <div class="result-chips">
+    {#each cards as c (c.key)}
+      {@render resultChip(c)}
+    {/each}
+  </div>
+{:else}
+  <div class="result-cards" class:reserve={store.phase !== "idle"}>
+    {#each cards as c (c.key)}
+      {@render resultCard(c)}
+    {/each}
+  </div>
+
+  <!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
+  {#if guidance}
+    <p class="metric-guidance">{guidance}</p>
+  {/if}
 {/if}
 
 <style>
@@ -458,20 +488,22 @@
   /* Reserve one card-row of height for the whole run (from warmup on) so the
      progressive reveal of cards doesn't resize the gauge above it — the dial
      stays put from warmup through testing instead of snapping smaller when the
-     first card appears. */
+     first card appears. Kept in lockstep with .result-card's own min-height
+     below and GaugePanel.svelte's .results-slot.reserve — all three must
+     shrink/grow together or a mid-run layout jump reappears. */
   .result-cards.reserve {
-    min-height: 92px;
+    min-height: 64px;
   }
-  /* Stack into a single column on the narrow single-column shell (<760px).
-     In the column the cards must size to their content (header + value +
-     optional estimate) — flex:1 1 0 with the min-height floor would otherwise
-     let a card shrink below its content and clip the bottom padding. */
-  @media (max-width: 759px) {
+  /* auto-fit lands on a natural 2-up grid at typical phone content widths
+     (~330-400px after stage/panel padding, gap 12px) while still collapsing
+     to a single full-width track when only one card is visible — no manual
+     odd-card-spanning needed. */
+  @media (max-width: 759px) { /* bp: stacked */
     .result-cards {
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     }
     .result-card {
-      flex: 0 0 auto;
       min-width: 0;
     }
   }
@@ -481,9 +513,9 @@
     min-width: 150px;
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    min-height: 92px;
-    padding: var(--space-3);
+    gap: 6px;
+    min-height: 64px;
+    padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
@@ -543,15 +575,15 @@
   .ico {
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 22px;
+    height: 22px;
     border-radius: var(--r-well);
     border: 1px solid var(--border);
     background: var(--surface-2);
   }
   .ico :global(svg) {
-    width: 15px;
-    height: 15px;
+    width: 13px;
+    height: 13px;
   }
   .ico.dl {
     color: var(--phase-download);
@@ -682,4 +714,69 @@
     color: var(--text-soft);
   }
 
+  /* ---- Compact strip (mobile-first "see earlier stages while the next one
+     runs") ---- One slim row per finished/active stage: icon + label + number,
+     no card chrome, no pip, no wire-estimate line. Deliberately smaller by
+     construction rather than a breakpoint-shrunk full card. */
+  .result-chips {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .result-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 28px;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-1);
+  }
+  .result-chip.active {
+    border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
+  }
+  .result-chip .ico {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--r-well);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    flex: none;
+  }
+  .result-chip .ico :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  .chip-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--type-xs);
+    font-weight: 700;
+    color: var(--text-soft);
+  }
+  .chip-val {
+    flex: none;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .chip-val .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--type-sm);
+    font-weight: 700;
+    color: var(--text);
+  }
+  .chip-val .unit {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-soft);
+  }
 </style>

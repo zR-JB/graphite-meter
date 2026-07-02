@@ -190,12 +190,20 @@
     }
   }
 
-  @media (max-width: 759px) {
+  @media (max-width: 759px) { /* bp: stacked */
     .phase-toast {
       right: 12px;
       left: 12px;
       bottom: 40px;
       min-width: 0;
+    }
+    /* Routine per-phase-transition toasts duplicate what StatusBar already
+       shows textually in the footer, and fire ~5-6 times per run — on a
+       phone that reads as the notification obstructing the experience.
+       The stall/error/aborted (.alert) toast is the one case nothing else
+       on screen surfaces, so it stays visible here. */
+    .phase-toast:not(.alert) {
+      display: none;
     }
   }
 </style>

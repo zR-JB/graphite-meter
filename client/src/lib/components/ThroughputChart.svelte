@@ -29,6 +29,11 @@
     // post-run toggle would never re-wake the loop and the ticks would freeze.
     void store.unitBase;
     void store.unitKind;
+    // unitLabel changes whenever the shared prefix index (k/M/G/T) moves —
+    // that can happen from the raw peak alone, independent of
+    // displayScaleBytesPerSec (the DWELL-FILTERED sustained peak, a
+    // different signal) — so track it directly too.
+    void store.unitLabel;
     engine?.wake();
   });
 

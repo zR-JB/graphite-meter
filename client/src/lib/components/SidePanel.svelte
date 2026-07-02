@@ -116,6 +116,38 @@
     const grow = side === "left" ? step : -step;
     onResize?.(clamp(panelEl.offsetWidth + grow));
   }
+
+  // ---- Mobile bottom-sheet drag-to-dismiss. Same pointer-capture pattern as
+  // the docked resize handle, but tracking vertical delta and closing past a
+  // threshold. The handle is only visible in the mobile flyout (.sheet-handle). ----
+  const DISMISS_THRESHOLD_PX = 80;
+  function startDismissDrag(e: PointerEvent) {
+    if (docked || !panelEl) return;
+    const handle = e.currentTarget as HTMLElement;
+    const startY = e.clientY;
+    handle.setPointerCapture(e.pointerId);
+    // Live-follow the finger with no easing lag; restored on release so the
+    // snap-back (or the rest of the way to closed) animates normally.
+    panelEl.style.transition = "none";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      const delta = Math.max(0, ev.clientY - startY); // down only
+      panelEl!.style.transform = `translateY(${delta}px)`;
+    };
+    const finish = (ev: PointerEvent) => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", finish);
+      handle.removeEventListener("pointercancel", finish);
+      document.body.style.userSelect = "";
+      panelEl!.style.transition = "";
+      panelEl!.style.transform = "";
+      if (Math.max(0, ev.clientY - startY) > DISMISS_THRESHOLD_PX) close();
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  }
 </script>
 
 <div class="panel-layer" class:open class:docked class:raised aria-hidden={!open}>
@@ -159,6 +191,13 @@
         ondblclick={() => onResetWidth?.()}
       ></div>
     {/if}
+    <!-- Mobile bottom-sheet grab handle — only visible in the mobile flyout
+         media query (see .sheet-handle). A tap closes it (native button
+         click); a drag past the threshold also closes it (startDismissDrag). -->
+    <button class="sheet-handle" aria-label={`Drag down, or press Enter, to close ${title}`}
+      onpointerdown={startDismissDrag} onclick={close}>
+      <span class="sheet-grip" aria-hidden="true"></span>
+    </button>
     <header class="panel-head">
       <div class="title">
         {#if kicker}<span class="kicker">{kicker}</span>{/if}
@@ -309,10 +348,66 @@
     display: none;
   }
 
+  /* Mobile: a bottom sheet — slides up from the bottom edge with a drag
+     handle to dismiss. Docking never triggers below this width (--bp-dock is
+     1200px); :not(.docked) is defensive, and it also lifts specificity to
+     (0,3,0) so this overrides the side-specific left/right/translateX rules
+     above without !important. */
+  @media (max-width: 759px) { /* bp: stacked */
+    .panel-layer:not(.docked) .panel {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      /* Fixed height, not max-height: switching tabs changes the content
+         height, and the sheet must not jump — the body scrolls instead. */
+      height: 88dvh;
+      border-radius: var(--r-well) var(--r-well) 0 0;
+      padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+      transform: translateY(100%);
+    }
+    .panel-layer.open:not(.docked) .panel {
+      transform: translateY(0);
+    }
+    /* Unlike the old full-screen flyout, a bottom sheet leaves real page
+       exposed above it — keep the backdrop so that area still dims. */
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .panel,
     .backdrop {
       transition: none;
+    }
+  }
+
+  /* Grab handle — hidden by default (docked sidebar / desktop flyout have no
+     use for it); shown only for the mobile bottom sheet below. */
+  .sheet-handle {
+    display: none;
+    flex: 0 0 auto;
+    width: 100%;
+    padding: 10px 0 2px;
+    border: 0;
+    background: transparent;
+    cursor: grab;
+    touch-action: none; /* let pointer drag own the vertical gesture, not page scroll */
+  }
+  .sheet-handle:active {
+    cursor: grabbing;
+  }
+  .sheet-grip {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0 auto;
+    border-radius: 999px;
+    background: var(--border-strong);
+  }
+  @media (max-width: 759px) { /* bp: stacked */
+    .panel-layer:not(.docked) .sheet-handle {
+      display: flex;
+      justify-content: center;
     }
   }
 

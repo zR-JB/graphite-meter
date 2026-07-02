@@ -24,6 +24,21 @@
   --inspector-w: 380px;
   --gap: 16px;
 
+  /* ---- Responsive scale ----
+     Three named breakpoints; every @media must use one of these literal
+     values (custom properties can't be read inside @media) — tag each with a
+     "bp: stacked/compact/dock" comment so drift is greppable. Use viewport
+     queries only for shell-level decisions; inside `.stage` or a side panel
+     use container-intrinsic sizing/queries, since docked panels shrink that
+     column independent of viewport width.
+
+     --bp-compact  430px — phone-in-hand ceiling (compact controls/labels)
+     --bp-stacked  759px — single-column shell threshold
+     --bp-dock    1200px — side-panel dock/flyout threshold */
+  --bp-compact: 430px;
+  --bp-stacked: 759px;
+  --bp-dock: 1200px;
+
   /* Legacy radii — now derived from --feel-radius so they respond to the knob
      too (identical values at --feel-radius:1). Prefer the semantic --r-* below
      for new work; these stay for components not yet migrated. */
@@ -264,8 +279,25 @@ html,
 body {
   height: 100%;
   /* Off-canvas drawers (rail/inspector) live just past the viewport edges;
-     clip horizontally so they never add a left/right scrollbar. */
-  overflow-x: hidden;
+     clip horizontally so they never add a left/right scrollbar. Must be
+     `clip`, NOT `hidden`: `overflow-x: hidden` computes overflow-y to `auto`,
+     which turns html/body into scroll containers the browser may silently
+     scroll (e.g. focus-reveal on a settings toggle shifted the whole shell up
+     with no way back). `clip` forbids scrolling on the axis entirely and
+     leaves overflow-y: visible, so document scrolling stays on the viewport. */
+  overflow-x: clip;
+}
+
+/* Desktop shell: #console is exactly 100dvh, so the document must never
+   scroll vertically either — clip it so a stray overflowing box (or a
+   focus-reveal chasing one) can only ever scroll a container inside the
+   shell, never shift the whole UI out of view. Below the stacked breakpoint
+   the document is the intended scroller and stays untouched. */
+@media (min-width: 760px) { /* bp: stacked (complement) */
+  html,
+  body {
+    overflow-y: clip;
+  }
 }
 
 body {

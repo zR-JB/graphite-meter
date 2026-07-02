@@ -27,7 +27,7 @@
  * cleartext h1.1 origin) and is unimplemented in Firefox. That path is NEVER used
  * here. A `fetch` whose body is a *fixed Blob* has a known Content-Length and is
  * an ordinary h1.1 request that works in every target browser — exactly like the
- * XHR repeated-Blob POST it replaces, but with the cleaner fetch/AbortController
+ * XHR repeated-Blob POST it replaces, but with the fetch/AbortController
  * ergonomics the download worker already uses (same abort + re-loop shape) and a
  * real `res.ok`/`res.status` so a 4xx/5xx is handled instead of blindly re-POSTed.
  *

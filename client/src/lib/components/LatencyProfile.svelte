@@ -40,16 +40,23 @@
     current: "Latest",
   };
 
-  // Enabled lanes. Empty lanes are kept (they show "waiting") — matching the
-  // original info-drawer behavior; no empty-suppression.
-  const lanes = $derived(
-    store.latencyLanes.filter((l) => store.config.stages[l.key]),
-  );
+  // All three lanes always render (never filtered out) — matching the
+  // original info-drawer's "empty lanes are kept" behavior, extended to
+  // disabled stages too: a lane whose stage is toggled off is muted
+  // (data-enabled="false" below), not removed, so toggling a stage never
+  // changes this panel's row count/height and never reflows the gauge/
+  // controls next to it (§ StageTrack already keeps a disabled segment
+  // mounted-but-muted for the same reason).
+  const lanes = $derived(store.latencyLanes);
+
+  // Domain is still driven by ENABLED lanes only, so a muted lane's stale
+  // range doesn't stretch the shared axis scale for the ones still measuring.
+  const enabledLanes = $derived(lanes.filter((l) => store.config.stages[l.key]));
 
   // Shared centered, snapped latency domain across every enabled lane.
   const domain = $derived.by(() => {
     const values: number[] = [];
-    for (const lane of lanes) {
+    for (const lane of enabledLanes) {
       if (lane.min != null) values.push(lane.min);
       if (lane.max != null) values.push(lane.max);
     }
@@ -169,7 +176,12 @@
   <div class="lanes" role="img" aria-label="Latency, jitter and loss by phase">
     {#each lanes as lane (lane.key)}
       {@const meta = LANE_META[lane.key]}
-      <div class="lane" data-tone={meta.tone} data-active={lane.active}>
+      <div
+        class="lane"
+        data-tone={meta.tone}
+        data-active={lane.active}
+        data-enabled={store.config.stages[lane.key]}
+      >
         <div class="lane-meta">
           <span>{meta.label}</span>
           <strong>{lane.average == null ? "waiting" : `avg ${fmtMs(lane.average)}`}</strong>
@@ -300,6 +312,11 @@
   .lane[data-active="true"] {
     border-color: color-mix(in srgb, var(--signal) 44%, var(--border));
     background: color-mix(in srgb, var(--signal-soft) 70%, var(--surface-inset));
+  }
+  /* Muted, not removed — toggling a stage must never change this panel's
+     row count/height (mirrors StageTrack's disabled segment treatment). */
+  .lane[data-enabled="false"] {
+    opacity: 0.5;
   }
 
   .lane-meta {
@@ -562,7 +579,7 @@
     color: var(--err);
   }
 
-  @media (max-width: 680px) {
+  @media (max-width: 759px) { /* bp: stacked */
     .card-head p {
       display: none;
     }

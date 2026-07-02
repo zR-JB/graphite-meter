@@ -108,12 +108,10 @@ const NOT_IMPL = (method: string) =>
 const THROUGHPUT_CADENCE_MS = 60;
 
 /** Bytes requested per download stream. Sized so ONE request outlasts any
- *  reasonable stage even on a fast link: at ~1 GB/s/stream an 8 GiB request ran
- *  out in ~8 s and the worker re-fetched mid-stage, churning the connection
- *  (a visible throughput dip + reconnect). 64 GiB (the server's clamp ceiling)
- *  lasts ~60 s/stream, so a normal stage completes on a single connection; the
- *  worker still re-fetches if a stream genuinely ends early, and we abort at
- *  stage end. */
+ *  reasonable stage even on a fast link (64 GiB — the server's clamp ceiling —
+ *  lasts ~60 s/stream at 1 GB/s), so a stage never churns connections
+ *  mid-measurement; the worker still re-fetches if a stream genuinely ends
+ *  early, and we abort at stage end. */
 const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024; // 64 GiB
 
 /** Backoff before re-opening a dropped lane, so a persistently-failing stream
@@ -181,14 +179,20 @@ const PING_LOSS_K = 4;
  *  estimator has a sample; the adaptive term takes over after the first pong. */
 const PING_LOSS_FLOOR_MS = 250;
 
-/* ---------- Pre-test probe pings (idle sparkline, REAL_RUNNER item 2) ---------- */
-/** How many idle samples to collect for the pre-test sparkline. */
-const PROBE_PING_COUNT = 5;
-/** Pacer interval for the probe burst — brisk so the sparkline fills fast. */
+/* ---------- Idle keepalive (connectivity indicator + preflight ping) ----------
+ * ONE persistent, low-rate ping worker covers everything outside a run: it
+ * starts during preflight at a brisk burst cadence (to fill the sparkline and
+ * derive the pre-test ping median quickly), then settles to 1 ping/s. It is
+ * stopped for the duration of an actual test (the stage-owned ping channel
+ * takes over latency duties then) and restarted the instant it ends. Its
+ * samples are tagged phase "idle" and NEVER enter run buffers (the store
+ * routes them to its own small ring). /ws/ping is a stateless echo, so
+ * holding it open indefinitely costs nothing extra server-side. */
+const IDLE_PING_INTERVAL_MS = 1000;
+/** Preflight burst: cadence + how many samples the pre-test median wants. */
 const PROBE_PING_INTERVAL_MS = 120;
-/** x-spacing of the emitted pre-test samples (their `t` ramps negative → 0). */
-const PROBE_PING_T_STEP_MS = 120;
-/** Hard cap on the whole probe burst, so a slow/dead bus never delays the run. */
+const PROBE_PING_COUNT = 5;
+/** Hard cap on the probe burst, so a slow/dead bus never delays preflight. */
 const PROBE_PING_TIMEOUT_MS = 1500;
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
@@ -307,6 +311,18 @@ export class RealBackend implements RunnerBackend {
    *  stage's loaded latency). Set when #measureLatency flips reporting on. */
   #latencyUnderLoad = false;
 
+  /* ---- idle keepalive (connectivity indicator + preflight ping) ----
+   * Separate from the stage-scoped #pingWorker/#pingActive above; never
+   * active at the same time (stopped in onRunStart, restarted on run end). */
+  #idleWorker: Worker | null = null;
+  #idleActive = false;
+  /** Set while probe() is harvesting the keepalive's first RTTs; `finish`
+   *  resolves the preflight median wait (idempotent). */
+  #probeCollect: { rtts: number[]; finish: () => void } | null = null;
+  /** True after the keepalive reported a stall, so "connected" is emitted only
+   *  on the offline→online edge instead of once per sample. */
+  #idleOffline = false;
+
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
   }
@@ -353,10 +369,10 @@ export class RealBackend implements RunnerBackend {
     const pf = (await res.json()) as Preflight;
     this.#capabilities = pf.capabilities;
 
-    // Pre-test idle pings over /ws/ping: emit a few sparkline samples and use
-    // their median as the pre-test ping (the server sends 0 — RTT is client-
-    // measured). Best-effort: a probe-ping failure must never fail preflight.
-    const probeRtts = await this.#probePings(endpoint).catch(() => [] as number[]);
+    // Start the persistent idle keepalive (briskly at first) and use its first
+    // few RTTs as the pre-test ping median (the server sends 0 — RTT is
+    // client-measured). Best-effort: a ping failure must never fail preflight.
+    const probeRtts = await this.#collectIdleRtts(endpoint);
 
     return {
       clientIp: pf.clientIp,
@@ -372,65 +388,24 @@ export class RealBackend implements RunnerBackend {
     };
   }
 
-  /** Pre-test idle latency burst for the sparkline (REAL_RUNNER checklist item 2).
-   *  Reuses the ping worker so the timestamping methodology is identical to the
-   *  run, but fully isolated from run state (its own local worker + handler).
-   *  Emits each sample via host.emit (underLoad:false, phase "idle", negative t)
-   *  and resolves with the collected RTTs (median → preTestPingMs). Best-effort:
-   *  resolves to whatever it gathered, never rejects. */
-  #probePings(endpoint: RunnerConfig["endpoint"]): Promise<number[]> {
-    if (!this.#capabilities?.transports.websocket) return Promise.resolve([]);
-    const url = this.#resolveWsBase(endpoint) + (this.#capabilities.endpoints.wsPing ?? "/ws/ping");
-    const rtts: number[] = [];
-
+  /** Start the idle keepalive at the brisk probe cadence and resolve with its
+   *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
+   *  worker to the 1/s idle cadence. Best-effort: resolves with whatever it
+   *  gathered by the timeout, never rejects. */
+  #collectIdleRtts(endpoint: RunnerConfig["endpoint"]): Promise<number[]> {
+    this.#startIdleKeepalive(endpoint, PROBE_PING_INTERVAL_MS);
+    if (!this.#idleWorker) return Promise.resolve([]);
     return new Promise<number[]>((resolve) => {
-      let worker: Worker | null = null;
-      let done = false;
       const finish = (): void => {
-        if (done) return;
-        done = true;
+        if (!this.#probeCollect) return;
         clearTimeout(timer);
-        if (worker) {
-          worker.postMessage({ type: "stop" });
-          worker.terminate();
-        }
+        const rtts = this.#probeCollect.rtts;
+        this.#probeCollect = null;
+        this.#idleWorker?.postMessage({ type: "measure", intervalMs: IDLE_PING_INTERVAL_MS });
         resolve(rtts);
       };
       const timer = setTimeout(finish, PROBE_PING_TIMEOUT_MS);
-
-      try {
-        worker = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), { type: "module" });
-      } catch {
-        finish();
-        return;
-      }
-      worker.onerror = (): void => finish();
-      worker.onmessage = (e: MessageEvent<PingOutMsg>): void => {
-        const msg = e.data;
-        if (msg.type !== "samples") return; // stall/resume/open: ignore for a pre-test hint
-        for (const s of msg.samples) {
-          if (s.lost || rtts.length >= PROBE_PING_COUNT) continue;
-          rtts.push(s.rtt);
-          // x ramps from negative toward 0 so the sparkline reads left→right.
-          const t = -(PROBE_PING_COUNT - rtts.length + 1) * PROBE_PING_T_STEP_MS;
-          this.#host!.emit({
-            type: "latency",
-            sample: { t, rttMs: s.rtt, underLoad: false, lost: false, phase: "idle" },
-          });
-        }
-        if (rtts.length >= PROBE_PING_COUNT) finish();
-      };
-      worker.postMessage({
-        type: "start",
-        url,
-        intervalMs: PROBE_PING_INTERVAL_MS,
-        maxInFlight: 4,
-        minGapMs: PING_MIN_GAP_MS,
-        reportGapMs: 0, // collect every probe sample — only 5, at a slow cadence
-        lossK: PING_LOSS_K,
-        lossFloorMs: PING_LOSS_FLOOR_MS,
-      });
-      worker.postMessage({ type: "measure" }); // report immediately — no warmup window for a hint
+      this.#probeCollect = { rtts: [], finish };
     });
   }
 
@@ -447,6 +422,10 @@ export class RealBackend implements RunnerBackend {
    * that happens per stage in onStageBegin.
    */
   onRunStart(config: RunnerConfig): void {
+    // Pause the idle keepalive — the stage-owned ping channel takes over
+    // latency duties for the duration of the run (resumed in #closeAll on
+    // completion/abort).
+    this.#stopIdleKeepalive();
     void this.#resolveEndpoint(config.endpoint);
     this.#abort = new AbortController();
     this.#activeTransport = null;
@@ -890,6 +869,89 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
+  /* ================= IDLE KEEPALIVE (connectivity indicator) ================= */
+  /** Start the persistent idle ping at `intervalMs` (default 1/s). Safe to
+   *  call repeatedly — no-ops if already running or if websocket isn't
+   *  available. Started by probe() (at the brisk preflight cadence) and again
+   *  after every run ends (via #closeAll, from onComplete/onAbort), so the
+   *  connectivity pill stays live whenever the app isn't mid-test. The
+   *  on-receive chain is OFF and the in-flight window tiny: the pacer alone
+   *  drives sends, so this can never ping (or update the UI) faster than
+   *  once per interval. */
+  #startIdleKeepalive(
+    endpoint?: RunnerConfig["endpoint"],
+    intervalMs = IDLE_PING_INTERVAL_MS,
+  ): void {
+    if (this.#idleActive || !this.#capabilities?.transports.websocket) return;
+    const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
+    const url = this.#resolveWsBase(endpoint) + wsPing;
+    this.#idleActive = true;
+    const w = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), { type: "module" });
+    w.onmessage = (e: MessageEvent<PingOutMsg>): void => this.#onIdlePingMessage(e.data);
+    w.onerror = (e: ErrorEvent): void =>
+      this.#onIdlePingMessage({ type: "stall", detail: e.message || "idle ping worker error" });
+    w.postMessage({
+      type: "start",
+      url,
+      intervalMs,
+      maxInFlight: 2,
+      minGapMs: PING_MIN_GAP_MS,
+      reportGapMs: 0, // paced sends are already sparse — report every sample
+      lossK: PING_LOSS_K,
+      lossFloorMs: PING_LOSS_FLOOR_MS,
+    });
+    // Report immediately (no warmup window), pacer-driven only — the
+    // on-receive chain would otherwise ping at ~1 kHz.
+    w.postMessage({ type: "measure", chainOnReceive: false });
+    this.#idleWorker = w;
+  }
+
+  /** Stop the idle keepalive — a real run is starting (onRunStart), or the
+   *  app is tearing down. Idempotent. */
+  #stopIdleKeepalive(): void {
+    this.#idleActive = false;
+    this.#probeCollect?.finish();
+    if (this.#idleWorker) {
+      this.#idleWorker.postMessage({ type: "stop" });
+      this.#idleWorker.terminate();
+      this.#idleWorker = null;
+    }
+  }
+
+  /** Handle a message from the idle ping worker. Idle samples never reach
+   *  `host.ingestLatency` (run accumulation) — they are emitted as raw
+   *  `latency` events tagged phase "idle", which the store routes to its
+   *  keepalive-only buffer; the `connectivity` event is the hard override
+   *  effectiveConnectivity respects (stall()/resume() no-op outside a run). */
+  #onIdlePingMessage(msg: PingOutMsg): void {
+    if (!this.#idleActive) return;
+    switch (msg.type) {
+      case "samples":
+        for (const s of msg.samples) {
+          if (this.#probeCollect && !s.lost) {
+            this.#probeCollect.rtts.push(s.rtt);
+            if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT) this.#probeCollect.finish();
+          }
+          this.#host!.emit({
+            type: "latency",
+            sample: { t: 0, rttMs: s.rtt, underLoad: false, lost: s.lost, phase: "idle" },
+          });
+        }
+        if (this.#idleOffline) {
+          this.#idleOffline = false;
+          this.#host!.emit({ type: "connectivity", state: "connected" });
+        }
+        break;
+      case "stall":
+        this.#idleOffline = true;
+        this.#host!.emit({ type: "connectivity", state: "offline" });
+        break;
+      case "resume":
+      case "open":
+        break;
+    }
+  }
+
   /* ================= MEASURE — push real samples on the primed connections ====== */
   /** Begin measuring the already-open transfer stream(s) for `dir` (opened in
    *  #primeTransfer — NEVER reopen). Per #readLoop, sum received/sent bytes/sec
@@ -1084,17 +1146,12 @@ export class RealBackend implements RunnerBackend {
       this.#srvPrevN = this.#srvN;
       this.#srvPrevT = srvT;
     }
-    // Server bytes drive the live curve DIRECTLY from the server stream — never via
-    // the local #aggregate tick. Each sample is the real byte delta between two
-    // server frames divided by the server ACTIVE-time between those same two frames,
-    // so numerator and denominator span the identical interval and the rate is correct
-    // at any tick/frame cadence. (Routing this through #aggregate's fixed 60 ms tick
-    // was the bug: a 100 ms server frame's bytes got divided by a 60 ms tick while
-    // the empty ticks in between were dropped rather than averaged in as idle time,
-    // inflating the live curve ~1.6× over the true rate the totals headline reports.)
-    // A reconnect gap self-heals here too: the server folds no dead-zone time into
-    // active-time, so the backlog delta over the active-time gap is exactly the true
-    // average rate the server drained — never diluted by the outage.
+    // Server bytes drive the live curve directly from the server stream — never
+    // via the local #aggregate tick (whose fixed cadence would skew the rate).
+    // Each sample is the byte delta between two server frames divided by the
+    // server ACTIVE-time between those same frames, so the rate is correct at
+    // any tick/frame cadence, and a reconnect gap self-heals: no dead-zone time
+    // enters active-time, so the backlog delta over the gap is the true rate.
     const delta = this.#srvN - this.#srvPrevN;
     if (delta > 0) {
       const frameSec = (srvT - this.#srvPrevT) / 1e9;
@@ -1210,5 +1267,9 @@ export class RealBackend implements RunnerBackend {
       this.#abort = null;
     }
     this.#activeTransport = null;
+    // The run (or abort) just ended — resume the idle keepalive so the
+    // connectivity pill stays live again instead of freezing at its
+    // last-known state until the next probe/run.
+    this.#startIdleKeepalive();
   }
 }

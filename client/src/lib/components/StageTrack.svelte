@@ -131,9 +131,14 @@
     if (p === "bidirectional") return { state: "active", fill: store.phaseFraction * 100 };
     return { state: "pending", fill: 0 };
   });
+
+  // 3 stages share one row; with the optional 4th (bidirectional) segment the
+  // track wraps to 2×2 only below the compact width (see .quad's @container).
+  const totalSegs = $derived(segs.length + (bidi ? 1 : 0));
+  const quad = $derived(totalSegs >= 4);
 </script>
 
-<fieldset class="stage-track">
+<fieldset class="stage-track" class:quad>
   <legend class="sr-only">Test stages — tap to enable or disable</legend>
   {#each segs as s (s.key)}
     <button
@@ -166,8 +171,10 @@
         {/if}
       </div>
       <span class="seg-row">
-        <span class="seg-ico">{@html s.icon}</span>
-        <span class="seg-label">{s.label}</span>
+        <span class="seg-main">
+          <span class="seg-ico">{@html s.icon}</span>
+          <span class="seg-label">{s.label}</span>
+        </span>
         {#if s.reason}
           <span class="seg-tag">{s.reason}</span>
         {:else if s.state === "done"}
@@ -197,8 +204,10 @@
         {/if}
       </div>
       <span class="seg-row">
-        <span class="seg-ico">{@html ICON.bidirectional}</span>
-        <span class="seg-label">Bi-dir</span>
+        <span class="seg-main">
+          <span class="seg-ico">{@html ICON.bidirectional}</span>
+          <span class="seg-label">Bi-dir</span>
+        </span>
         {#if bidi.state === "done"}
           <span class="seg-ico seg-check">{@html ICON.check}</span>
         {/if}
@@ -208,15 +217,25 @@
 </fieldset>
 
 <style>
-  /* Auto-fit so the segments re-split (3 → 2 → 1) on actual available width —
-     a narrow stage (docked panels) no longer crams 3 across and clips labels. */
+  /* 3 segments share one row; 4 (.quad) wrap to 2×2 only below the compact
+     width. A narrow docked-panel stage degrades via .seg-label's ellipsis. */
   .stage-track {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--space-2);
     margin: 0;
     padding: 0;
     border: 0;
+  }
+  .stage-track.quad {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  /* Queries the nearest ancestor container (GaugePanel's viz container).
+     430px mirrors --bp-compact (app.css). */
+  @container (max-width: 430px) {
+    .stage-track.quad {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   /* Each segment is the chip AND the progress lane. */
@@ -347,11 +366,20 @@
     }
   }
 
+  /* Single line always: the label ellipsizes (.seg-label) rather than the
+     tag/check wrapping to a second row, so every segment keeps one height. */
   .seg-row {
     display: flex;
     align-items: center;
     gap: 7px;
     min-width: 0;
+  }
+  .seg-main {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex: 1 1 auto;
   }
   .seg-ico {
     display: grid;
@@ -373,7 +401,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* Settled done glyph — subtle, replaces the retired standalone ✓ segment. */
+  /* Settled done glyph — the auto margin right-aligns it on whichever flex
+     line it lands on. */
   .seg-check {
     margin-left: auto;
     color: var(--ok);

@@ -62,7 +62,7 @@
 
   /* The 28px status zone has no room for keycaps on a phone; the
      visible ShortcutHints strip is a desktop affordance. */
-  @media (max-width: 759px) {
+  @media (max-width: 759px) { /* bp: stacked */
     .command-hints {
       display: none;
     }

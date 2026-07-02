@@ -130,6 +130,8 @@ export const DURATION_PRESETS = {
 } as const;
 
 const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered
+/** Idle-keepalive ring — only feeds the connectivity pulse, so it stays small. */
+const MAX_IDLE_SAMPLES = 60;
 
 /** How far past a unit boundary the peak must reach before the display steps
  *  up to the larger prefix. 1.2 → we stay in Mbit/s until ~1200 Mbit/s, then
@@ -138,9 +140,14 @@ const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered
 const UNIT_STEP_UP_HEADROOM = 1.2;
 
 class AppStore {
-  /* ---- raw ingest (ring buffers) ---- */
+  /* ---- raw ingest (ring buffers) ----
+   * `latency` holds ONLY run samples (phase latency/download/upload/…) — the
+   * box plots, chart and result stats read it. Idle-keepalive pings (phase
+   * "idle", including the preflight burst) land in `idleLatency` instead, so
+   * they can never displace or dilute a run's samples. */
   throughput = $state<ThroughputSample[]>([]);
   latency = $state<LatencySample[]>([]);
+  idleLatency = $state<LatencySample[]>([]);
 
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
@@ -306,22 +313,30 @@ class AppStore {
     return { down, up };
   });
 
+  /** The samples the connectivity pulse (dot, sparkline, live ping, loss/
+   *  jitter) reads: run samples while a test is in flight, the idle keepalive
+   *  otherwise (it is stopped during a run, so its buffer would be stale). */
+  pulseLatency = $derived.by<LatencySample[]>(() => {
+    if (this.isRunning) return this.latency;
+    return this.idleLatency.length ? this.idleLatency : this.latency;
+  });
+
   /** Most recent rtt for the connectivity pulse + live ping. */
   liveRtt = $derived(
-    this.latency.length
-      ? this.latency.at(-1)!.rttMs
+    this.pulseLatency.length
+      ? this.pulseLatency.at(-1)!.rttMs
       : (this.infra?.preTestPingMs ?? 0),
   );
 
   /** Rolling packet loss over last 20 latency samples (for pulse state). */
   rollingLossPct = $derived.by(() => {
-    const w = this.latency.slice(-20);
+    const w = this.pulseLatency.slice(-20);
     if (!w.length) return 0;
     return (w.filter((s) => s.lost).length / w.length) * 100;
   });
 
   jitterMs = $derived.by(() => {
-    const w = this.latency.slice(-30).filter((s) => !s.lost);
+    const w = this.pulseLatency.slice(-30).filter((s) => !s.lost);
     if (w.length < 2) return 0;
     let acc = 0;
     for (let i = 1; i < w.length; i++) acc += Math.abs(w[i].rttMs - w[i - 1].rttMs);
@@ -588,8 +603,13 @@ class AppStore {
         if (this.throughput.length > MAX_SAMPLES) this.throughput.shift();
         break;
       case "latency":
-        this.latency.push(e.sample);
-        if (this.latency.length > MAX_SAMPLES) this.latency.shift();
+        if (e.sample.phase === "idle") {
+          this.idleLatency.push(e.sample);
+          if (this.idleLatency.length > MAX_IDLE_SAMPLES) this.idleLatency.shift();
+        } else {
+          this.latency.push(e.sample);
+          if (this.latency.length > MAX_SAMPLES) this.latency.shift();
+        }
         break;
       case "connectivity":
         this.connectivity = e.state;

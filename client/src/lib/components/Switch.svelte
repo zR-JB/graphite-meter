@@ -4,6 +4,8 @@
    * Track + knob, brand accent when on. Native checkbox kept
    * for accessibility (visually hidden, focusable).
    * ============================================================ */
+  import { tooltip } from "../actions/tooltip";
+
   interface Props {
     checked?: boolean;
     label?: string;
@@ -13,6 +15,9 @@
      *  the toggle is vetoable (e.g. live-toggle constraints) and `checked`
      *  is treated as a one-way input rather than a bound value. */
     onToggle?: (next: boolean) => void;
+    /** Optional jargon-tooltip text for the label (mirrors bare-span usage
+     *  this replaces, e.g. JARGON.wireRate). */
+    tooltip?: string;
   }
   let {
     checked = $bindable(false),
@@ -20,6 +25,7 @@
     disabled = false,
     id,
     onToggle,
+    tooltip: tooltipText = "",
   }: Props = $props();
 
   function handleChange(e: Event) {
@@ -37,11 +43,26 @@
 <label class="switch" class:disabled>
   <input type="checkbox" {checked} {disabled} {id} onchange={handleChange} />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
-  {#if label}<span class="label">{label}</span>{/if}
+  {#if label}
+    {#if tooltipText}
+      <!-- Only wired with the tooltip action when there's actually text to
+           show — the action makes its node focusable, which would add a
+           pointless extra tab stop to every plain (no-tooltip) switch. -->
+      <span class="label" use:tooltip={tooltipText}>{label}</span>
+    {:else}
+      <span class="label">{label}</span>
+    {/if}
+  {/if}
 </label>
 
 <style>
   .switch {
+    /* Containing block for the visually-hidden absolute checkbox below. Without
+       this the input resolves against the next positioned ancestor (e.g. a
+       docked side panel), escapes the panel body's scroll clipping, and its
+       stray off-screen box makes the document scrollable — clicking the switch
+       then focus-scrolls the whole page out of view. */
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -106,6 +127,8 @@
   }
 
   .label {
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 13px;
     color: var(--text);
   }

@@ -265,7 +265,12 @@ export class GaugeEngine implements CanvasEngine {
 
     const cx = this.#w / 2;
     const cy = this.#h / 2;
-    const r = Math.max(36, Math.min(this.#w, this.#h) * 0.37);
+    // Radius: 0.37 of the smaller dimension, capped so the dial's FULL extent
+    // fits the canvas — beyond r there is half the arc width (0.065r), the
+    // tick (3px gap + 0.08r), the label gap (7px) and the label text (~10px);
+    // without the cap the top tick label clips on short containers.
+    const m = Math.min(this.#w, this.#h);
+    const r = Math.max(36, Math.min(m * 0.37, (m / 2 - 20) / 1.145));
     const arcW = Math.max(6, r * 0.13);
     const sweep = this.#reduced ? this.#fill : this.#ema;
     const valueEnd = ARC_START + ARC_SWEEP * Math.min(1, Math.max(0, sweep));
@@ -364,19 +369,31 @@ export class GaugeEngine implements CanvasEngine {
     bx.stroke();
     bx.setLineDash([]);
 
-    // Compass pivot point at the hub — the centre every construction arc on
-    // this dial is drawn from.
-    bx.fillStyle = this.#tick;
-    bx.beginPath();
-    bx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-    bx.fill();
+    // Registration-mark hub at dial centre (thin crosshair + faint ring).
+    // Butt caps keep the hairlines crisp; restored to round below.
+    const hubGap = 2; // px gap from centre before each tick starts
+    const hubTick = 4; // px length of each tick
+    const hubRing = 6; // px radius of the faint outer ring
+    bx.lineCap = "butt";
     bx.strokeStyle = this.#tick;
-    bx.globalAlpha = 0.5;
     bx.lineWidth = 1;
+    bx.globalAlpha = 0.5;
     bx.beginPath();
-    bx.arc(cx, cy, 5.5, 0, Math.PI * 2);
+    bx.moveTo(cx, cy - hubGap);
+    bx.lineTo(cx, cy - hubGap - hubTick);
+    bx.moveTo(cx, cy + hubGap);
+    bx.lineTo(cx, cy + hubGap + hubTick);
+    bx.moveTo(cx - hubGap, cy);
+    bx.lineTo(cx - hubGap - hubTick, cy);
+    bx.moveTo(cx + hubGap, cy);
+    bx.lineTo(cx + hubGap + hubTick, cy);
+    bx.stroke();
+    bx.globalAlpha = 0.25;
+    bx.beginPath();
+    bx.arc(cx, cy, hubRing, 0, Math.PI * 2);
     bx.stroke();
     bx.globalAlpha = 1;
+    bx.lineCap = "round"; // the major-tick loop below depends on the round cap
 
     // Tick marks just outside the groove.
     bx.strokeStyle = this.#tick;

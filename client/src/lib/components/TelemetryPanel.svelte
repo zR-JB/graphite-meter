@@ -38,9 +38,9 @@
   {onResize}
   {onResetWidth}
   side="right"
-  title="Connection & telemetry"
+  title="Telemetry"
   kicker="Live"
-  label="Connection and telemetry info"
+  label="Telemetry"
   width="min(440px, 92vw)"
 >
   <InfraCard />

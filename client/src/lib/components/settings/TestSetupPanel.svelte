@@ -17,6 +17,7 @@
   } from "../../runner/contract";
   import { applyConnectionProfile } from "../../compensation";
   import { tooltip, JARGON } from "../../actions/tooltip";
+  import Switch from "../Switch.svelte";
 
   interface Props {
     /** Mirrors store.isRunning — locks mid-run-unsafe inputs. */
@@ -64,6 +65,20 @@
     { key: "uploadMs", label: "Upload ms" },
   ] as const;
 
+  /** A named preset's per-stage durations, for the read-only summary grid
+   *  shown instead of the manual field grid (which only appears for Custom). */
+  const presetCells = $derived.by<{ label: string; value: string }[]>(() => {
+    if (durationMode === "custom") return [];
+    const d = DURATION_PRESETS[durationMode];
+    const s = (ms: number) => `${+(ms / 1000).toFixed(1)}s`;
+    return [
+      { label: "Warmup", value: s(d.warmupMs) },
+      { label: "Latency", value: s(d.latencyMs) },
+      { label: "Download", value: s(d.downloadMs) },
+      { label: "Upload", value: s(d.uploadMs) },
+    ];
+  });
+
   /* ---------- Visualization throughput max ----------
    * Stored as bytesPerSec (or "auto"); edited in the active display unit. */
   const vizAuto = $derived(store.config.visualization.throughputMaxBytesPerSec === "auto");
@@ -81,9 +96,13 @@
     if (auto) {
       store.config.visualization.throughputMaxBytesPerSec = "auto";
     } else {
-      // Seed a sane manual ceiling from the current display value (or 1000 unit).
-      const seed = vizAuto ? 1000 : vizDisplay;
-      store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(seed);
+      // Seed the manual ceiling from the current effective scale (raw bytes/s;
+      // has a sane idle default) — never round-trip through the display unit,
+      // whose prefix index is degenerate before any throughput data exists.
+      store.config.visualization.throughputMaxBytesPerSec = Math.max(
+        1,
+        Math.round(store.displayScaleBytesPerSec),
+      );
     }
   }
   function onVizInput(e: Event) {
@@ -163,9 +182,12 @@
 </script>
 
 <div class="setup-grid">
+  <!-- "Run" tier: settings a user plausibly changes every session. -->
+  <h2 class="tier-label">Run</h2>
+
   <!-- Duration -->
   <section class="panel">
-    <h3>Duration Strategy</h3>
+    <h3>Duration</h3>
     <div class="seg" role="tablist" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
         <button
@@ -179,35 +201,121 @@
         </button>
       {/each}
     </div>
-    <div class="two">
-      {#each DUR_FIELDS as f (f.key)}
-        <label>
-          <span>{f.label}</span>
-          <input
-            type="number"
-            min="0"
-            step="500"
-            disabled={running}
-            oninput={onDurationEdit}
-            bind:value={store.config.duration[f.key]}
-          />
-        </label>
-      {/each}
-    </div>
-    <p class="hint">Pick a preset, or edit any field to switch to Custom.</p>
+    {#if durationMode === "custom"}
+      <div class="two">
+        {#each DUR_FIELDS as f (f.key)}
+          <label>
+            <span>{f.label}</span>
+            <input
+              type="number"
+              min="0"
+              step="500"
+              disabled={running}
+              oninput={onDurationEdit}
+              bind:value={store.config.duration[f.key]}
+            />
+          </label>
+        {/each}
+      </div>
+      <p class="hint">Set each stage's duration in milliseconds.</p>
+    {:else}
+      <div class="dur-summary">
+        {#each presetCells as c (c.label)}
+          <div class="dur-cell">
+            <span>{c.label}</span>
+            <strong>{c.value}</strong>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </section>
 
-  <!-- Adaptive -->
+  <!-- Bidirectional -->
   <section class="panel">
-    <h3>Adaptive Measurement</h3>
-    <label class="check-row">
+    <h3>Bidirectional</h3>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.stages.bidirectional}
+      label="Bidirectional (concurrent down + up)"
+    />
+    <label>
+      <span>Bidirectional duration (ms)</span>
       <input
-        type="checkbox"
-        disabled={running}
-        bind:checked={store.config.adaptive.enabled}
+        type="number"
+        min="0"
+        step="500"
+        disabled={running || !store.config.stages.bidirectional}
+        bind:value={store.config.duration.bidirectionalMs}
       />
-      <span>Enable adaptive early phase completion</span>
     </label>
+    <p class="hint">Adds a combined down+up phase for real-world two-way load.</p>
+  </section>
+
+  <!-- Gauge Scale -->
+  <section class="panel">
+    <h3>Gauge Scale</h3>
+    <Switch checked={vizAuto} onToggle={setVizAuto} label="Auto throughput ceiling" />
+    <label>
+      <span>Throughput max {store.unitLabel}</span>
+      <input type="number" min="1" step="1" disabled={vizAuto}
+        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))} oninput={onVizInput} />
+    </label>
+    <p class="hint">Manual Y-axis ceiling for the gauge and chart; auto self-scales to the peak.</p>
+  </section>
+
+  <!-- Display Units -->
+  <section class="panel">
+    <h3>Display Units</h3>
+    <div class="two">
+      <div class="field">
+        <span>Rate unit</span>
+        <div class="seg" role="group" aria-label="Rate unit">
+          <button
+            type="button"
+            class:active={store.unitKind === "bits"}
+            aria-pressed={store.unitKind === "bits"}
+            use:tooltip={"Bits per second — Mbit/s, Gbit/s"}
+            onclick={() => (store.unitKind = "bits")}>Bits</button>
+          <button
+            type="button"
+            class:active={store.unitKind === "bytes"}
+            aria-pressed={store.unitKind === "bytes"}
+            use:tooltip={"Bytes per second — MB/s, GB/s"}
+            onclick={() => (store.unitKind = "bytes")}>Bytes</button>
+        </div>
+      </div>
+      <div class="field">
+        <span>Prefix scale</span>
+        <div class="seg" role="group" aria-label="Prefix scale">
+          <button
+            type="button"
+            class:active={store.unitBase === "base10"}
+            aria-pressed={store.unitBase === "base10"}
+            use:tooltip={"SI prefixes, 1000 per step — Mbit/s, Gbit/s"}
+            onclick={() => (store.unitBase = "base10")}>Decimal</button>
+          <button
+            type="button"
+            class:active={store.unitBase === "base2"}
+            aria-pressed={store.unitBase === "base2"}
+            use:tooltip={"IEC prefixes, 1024 per step — Mibit/s, Gibit/s"}
+            onclick={() => (store.unitBase = "base2")}>Binary</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Applies to every rate shown; the measurement itself is unchanged.</p>
+  </section>
+
+  <!-- "Tuning" tier: set once, rarely revisited. -->
+  <h2 class="tier-label">Tuning</h2>
+
+  <!-- Early Finish -->
+  <section class="panel">
+    <h3>Early Finish</h3>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.adaptive.enabled}
+      label="Enable adaptive early phase completion"
+    />
     <div class="two">
       <label>
         <span>Min coverage</span>
@@ -225,58 +333,23 @@
           bind:value={store.config.adaptive.glideMs} />
       </label>
     </div>
-    <p class="hint">Once stable, the marker accelerates and glides to the phase end — the test finishes sooner while still measuring. Off → every phase runs full and reports its whole-phase average.</p>
+    <p class="hint">Finishes early once the reading stabilizes, instead of running full duration.</p>
   </section>
 
-  <!-- Advanced stages -->
+  <!-- Download Engine -->
   <section class="panel">
-    <h3>Advanced Stages</h3>
-    <label class="check-row">
-      <input
-        type="checkbox"
-        disabled={running}
-        bind:checked={store.config.stages.bidirectional}
-      />
-      <span>Bidirectional (concurrent down + up)</span>
-    </label>
-    <label>
-      <span>Bidirectional duration (ms)</span>
-      <input
-        type="number"
-        min="0"
-        step="500"
-        disabled={running || !store.config.stages.bidirectional}
-        bind:value={store.config.duration.bidirectionalMs}
-      />
-    </label>
-    <p class="hint">
-      Appends a final phase that saturates download and upload at once — a truer
-      test of a link under simultaneous two-way load. The result card reports the
-      combined and per-direction rates. Off by default.
-    </p>
+    <h3>Download Engine</h3>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.experimentalChunkedDownload}
+      label="Chunked download (experimental)"
+    />
+    <p class="hint">Uses adaptively-sized chunks instead of one long stream per lane (experimental).</p>
   </section>
 
-  <!-- Engine -->
+  <!-- Connections & Timing -->
   <section class="panel">
-    <h3>Engine</h3>
-    <label class="check-row">
-      <input
-        type="checkbox"
-        disabled={running}
-        bind:checked={store.config.experimentalChunkedDownload}
-      />
-      <span>Chunked download (experimental)</span>
-    </label>
-    <p class="hint">
-      Request adaptively-sized download chunks instead of one long stream per
-      lane — both target ~350&nbsp;ms on the same keep-alive connection. A/B
-      against the default to compare ramp responsiveness on a real line.
-    </p>
-  </section>
-
-  <!-- Timing / streams -->
-  <section class="panel">
-    <h3>Timing / Streams</h3>
+    <h3>Connections &amp; Timing</h3>
     <label>
       <span>Ping velocity</span>
       <select disabled={running} bind:value={store.config.pingConcurrency}>
@@ -291,116 +364,103 @@
         bind:value={store.config.parallelStreams} />
     </label>
     <p class="hint">Lanes are chosen automatically per phase; this only caps the maximum.</p>
-    <label class="check-row">
-      <input
-        type="checkbox"
-        disabled={running}
-        bind:checked={store.config.skipLoadedLatencyWhenStageOff}
-      />
-      <span>Skip loaded-latency when the latency stage is off</span>
-    </label>
-    <p class="hint">
-      Turning the latency stage off also drops the under-load pings during
-      download/upload — no latency profile or chart line. Off keeps measuring
-      bufferbloat even with the idle latency stage disabled.
-    </p>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      label="Skip loaded-latency when the latency stage is off"
+    />
+    <p class="hint">Also skips under-load pings when the latency stage itself is off.</p>
   </section>
 
-  <!-- Visualizer -->
-  <section class="panel">
-    <h3>Visualizer</h3>
-    <label class="check-row">
-      <input type="checkbox" checked={vizAuto} onchange={(e) => setVizAuto((e.currentTarget as HTMLInputElement).checked)} />
-      <span>Auto throughput ceiling</span>
-    </label>
-    <label>
-      <span>Throughput max {store.unitLabel}</span>
-      <input type="number" min="1" step="1" disabled={vizAuto}
-        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))} oninput={onVizInput} />
-    </label>
-    <p class="hint">Manual Y-axis ceiling for the gauge and chart; auto self-scales to the peak.</p>
-  </section>
-
-  <!-- Overhead compensation (wide) -->
+  <!-- Wire-Rate Estimates (wide) -->
   <section class="panel wide">
-    <h3>Overhead Compensation</h3>
-    <label class="check-row">
-      <input type="checkbox" bind:checked={store.showWireEstimates} />
-      <span use:tooltip={JARGON.wireRate}>Include wire-rate estimates in result cards</span>
-    </label>
-    <label class="check-row">
-      <input type="checkbox" disabled={running} bind:checked={store.config.compensation.enabled} />
-      <span use:tooltip={JARGON.overheadCompensation}>Show estimated wire-rate compensation</span>
-    </label>
-    <!-- Connection profile + transport presets: seed the factors/params below. -->
-    <div class="two">
-      <label>
-        <span use:tooltip={JARGON.compProfile}>Connection profile</span>
-        <select
-          disabled={running || !store.config.compensation.enabled}
-          bind:value={store.config.compensation.profile}
-          onchange={reseedProfile}
-        >
-          {#each PROFILE_OPTIONS as o (o.value)}
-            <option value={o.value}>{o.label}</option>
-          {/each}
-        </select>
-      </label>
-      <label>
-        <span use:tooltip={JARGON.compTransport}>Transport &amp; security</span>
-        <select
-          disabled={running || !store.config.compensation.enabled}
-          bind:value={store.config.compensation.transport}
-          onchange={reseedProfile}
-        >
-          {#each TRANSPORT_OPTIONS as o (o.value)}
-            <option value={o.value}>{o.label}</option>
-          {/each}
-        </select>
-      </label>
-    </div>
-    <div class="toggle-groups">
-      {#each COMP_GROUPS as g (g.label)}
-        <div class="toggle-group">
-          <strong use:tooltip={g.tip}>{g.label}</strong>
-          {#each g.toggles as t (t.key)}
-            <label class="check-row">
-              <input
-                type="checkbox"
-                disabled={running || !store.config.compensation.enabled}
-                bind:checked={store.config.compensation.factors[t.key]}
-              />
-              <span>{t.label}</span>
-            </label>
+    <h3>Wire-Rate Estimates</h3>
+    <Switch
+      bind:checked={store.showWireEstimates}
+      label="Include wire-rate estimates in result cards"
+      tooltip={JARGON.wireRate}
+    />
+    <p class="hint">Estimates the real wire-rate under measured protocol overhead.</p>
+
+    <details class="advanced top-level">
+      <summary>Customize the compensation model</summary>
+      <div class="disclosure-body">
+        <Switch
+          disabled={running}
+          bind:checked={store.config.compensation.enabled}
+          label="Enable overhead compensation model"
+          tooltip={JARGON.overheadCompensation}
+        />
+        <!-- Connection profile + transport presets: seed the factors/params below. -->
+        <div class="two">
+          <label>
+            <span use:tooltip={JARGON.compProfile}>Connection profile</span>
+            <select
+              disabled={running || !store.config.compensation.enabled}
+              bind:value={store.config.compensation.profile}
+              onchange={reseedProfile}
+            >
+              {#each PROFILE_OPTIONS as o (o.value)}
+                <option value={o.value}>{o.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            <span use:tooltip={JARGON.compTransport}>Transport &amp; security</span>
+            <select
+              disabled={running || !store.config.compensation.enabled}
+              bind:value={store.config.compensation.transport}
+              onchange={reseedProfile}
+            >
+              {#each TRANSPORT_OPTIONS as o (o.value)}
+                <option value={o.value}>{o.label}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+        <div class="toggle-groups">
+          {#each COMP_GROUPS as g (g.label)}
+            <div class="toggle-group">
+              <strong use:tooltip={g.tip}>{g.label}</strong>
+              {#each g.toggles as t (t.key)}
+                <Switch
+                  disabled={running || !store.config.compensation.enabled}
+                  bind:checked={store.config.compensation.factors[t.key]}
+                  label={t.label}
+                />
+              {/each}
+            </div>
           {/each}
         </div>
-      {/each}
-    </div>
-    <details class="advanced">
-      <summary>Advanced — raw byte accounting</summary>
-      <p class="hint">
-        Sane defaults come from the profile + transport above; tweak these only to
-        match a non-standard MTU, jumbo frames, or a custom tunnel/record size.
-      </p>
-      <div class="two">
-        <label>
-          <span>IP version</span>
-          <select disabled={running} bind:value={store.config.compensation.params.ipVersion}>
-            <option value={4}>IPv4</option>
-            <option value={6}>IPv6</option>
-          </select>
-        </label>
-        {#each COMP_NUMS as n (n.key)}
-          <label>
-            <span>{n.label}</span>
-            <input type="number" min={n.min} max={n.max} step={n.step} disabled={running}
-              bind:value={store.config.compensation.params[n.key]} />
-          </label>
-        {/each}
-        <label class="check-row spanned">
-          <input type="checkbox" disabled={running} bind:checked={store.config.compensation.params.vlanTagged} />
-          <span>VLAN tagged (+4B/frame)</span>
-        </label>
+        <details class="advanced">
+          <summary>Advanced — raw byte accounting</summary>
+          <p class="hint">
+            Defaults come from the profile/transport above — tweak only for a nonstandard MTU or tunnel.
+          </p>
+          <div class="two">
+            <label>
+              <span>IP version</span>
+              <select disabled={running} bind:value={store.config.compensation.params.ipVersion}>
+                <option value={4}>IPv4</option>
+                <option value={6}>IPv6</option>
+              </select>
+            </label>
+            {#each COMP_NUMS as n (n.key)}
+              <label>
+                <span>{n.label}</span>
+                <input type="number" min={n.min} max={n.max} step={n.step} disabled={running}
+                  bind:value={store.config.compensation.params[n.key]} />
+              </label>
+            {/each}
+            <div class="spanned">
+              <Switch
+                disabled={running}
+                bind:checked={store.config.compensation.params.vlanTagged}
+                label="VLAN tagged (+4B/frame)"
+              />
+            </div>
+          </div>
+        </details>
       </div>
     </details>
   </section>
@@ -429,6 +489,23 @@
     grid-column: 1 / -1;
   }
 
+  /* Tier separators — "Run" (touched every session) vs. "Tuning" (set once,
+     rarely revisited). Plain heading + reorder, not a nested tab: this is
+     still one scrollable screen, just with a visual hierarchy the flat
+     7-section list didn't have before. */
+  .tier-label {
+    grid-column: 1 / -1;
+    margin: 4px 0 -4px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .tier-label:first-child {
+    margin-top: 0;
+  }
+
   h3 {
     margin: 0;
     color: var(--text-soft);
@@ -438,12 +515,14 @@
     text-transform: uppercase;
   }
 
-  label {
+  label,
+  .field {
     display: grid;
     gap: 6px;
     min-width: 0;
   }
-  label span {
+  label span,
+  .field > span {
     color: var(--text-soft);
     font-size: 10px;
     font-weight: 800;
@@ -520,54 +599,9 @@
     cursor: not-allowed;
   }
 
-  /* Checkbox rows */
-  .check-row {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr);
-    align-items: center;
-    gap: 9px;
-  }
-  .check-row.spanned {
+  /* Bare span used to make a single grid child span both .two columns. */
+  .spanned {
     grid-column: 1 / -1;
-  }
-  .check-row input[type="checkbox"] {
-    appearance: none;
-    -webkit-appearance: none;
-    display: grid;
-    place-items: center;
-    width: 16px;
-    height: 16px;
-    border: 1px solid var(--border-strong);
-    border-radius: 999px;
-    background: var(--surface-1);
-    padding: 0;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
-  }
-  .check-row input[type="checkbox"]:checked {
-    border-color: color-mix(in srgb, var(--brand) 72%, var(--border-strong));
-    background:
-      radial-gradient(circle at center, var(--brand-strong) 0 42%, transparent 45%),
-      var(--surface-1);
-    box-shadow: 0 0 0 3px var(--brand-soft);
-  }
-  .check-row input[type="checkbox"]:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
-    outline-offset: 2px;
-  }
-  .check-row input[type="checkbox"]:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .check-row span {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-transform: none;
   }
 
   .toggle-groups {
@@ -601,7 +635,41 @@
     line-height: 1.55;
   }
 
-  /* Advanced disclosure — keeps the raw byte knobs out of the way until needed. */
+  /* Read-only per-stage durations for a named preset. */
+  .dur-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+    gap: 6px;
+  }
+  .dur-cell {
+    display: grid;
+    gap: 2px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+    min-width: 0;
+  }
+  .dur-cell span {
+    overflow: hidden;
+    color: var(--text-soft);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .dur-cell strong {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Advanced disclosure — keeps the raw byte knobs (and, at the top level,
+     the whole compensation model) out of the way until needed. */
   .advanced {
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -626,5 +694,23 @@
   }
   .advanced > :not(summary) {
     margin: 10px;
+  }
+
+  /* Top-level compensation disclosure has no chrome of its own (the section
+     it sits in already provides that) — just the summary's own bottom rule
+     when open, so it doesn't visually double-box around the nested "raw byte
+     accounting" disclosure it now contains. */
+  .advanced.top-level {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 0;
+  }
+  .advanced.top-level > :not(summary) {
+    margin: 12px 0 0;
+  }
+  .disclosure-body {
+    display: grid;
+    gap: 12px;
   }
 </style>

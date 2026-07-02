@@ -44,17 +44,15 @@ import { encode, decode } from "../real/wire";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
  *  reporting on for the SAME warmed socket AND swaps the live cadence to the
- *  phase's mode (idle = tight, loaded = sparse); `stop` closes everything.
+ *  phase's mode; `stop` closes everything.
  *
- *  ── Why the cadence is mode-dependent (the real-line fix) ──
- *  The idle latency stage wants the tightest possible sampling (on-receive chain,
- *  a full in-flight window) to find the true min RTT with zero handshakes. But
- *  DURING a transfer that same chain sprays hundreds of tiny PING frames/sec
- *  UPSTREAM, and on a typical asymmetric line that congests the thin uplink and
- *  starves the download's ACKs — the pings actively slow the very throughput we
- *  measure. A loaded-latency *distribution* needs only a handful of samples/sec,
- *  so under load we kill the chain and pace a tiny in-flight window. The cadence
- *  fields are optional: omitted (the warmup `start`) keeps the `start` tuning. */
+ *  The cadence is mode-dependent: the idle latency stage wants the tightest
+ *  sampling (on-receive chain, full in-flight window) to find the true min
+ *  RTT, but during a transfer that chain sprays hundreds of tiny PINGs/sec
+ *  upstream and starves the download's ACKs on an asymmetric line — a loaded
+ *  distribution needs only a few samples/sec, so under load the chain is off
+ *  and a sparse pacer drives sends. Each cadence field is optional: omitted
+ *  (the warmup `start`) keeps the `start` tuning. */
 type InMsg =
   | {
       type: "start";
@@ -347,16 +345,19 @@ function lossTimeout(): number {
 function sweep(): void {
   const now = performance.now();
   const timeout = lossTimeout();
+  let evicted = false;
   for (const [id, sent] of pending) {
     if (now - sent > timeout) {
       pending.delete(id);
       rememberEvicted(id, sent);
+      evicted = true;
       if (measuring) outbox.push({ rtt: now - sent, lost: true });
     }
   }
-  // Freeing slots may have unblocked the cap — nudge so a stalled window recovers
-  // without waiting a full pacer interval.
-  maybeSend(now);
+  // Nudge ONLY when an eviction freed a slot the cap was blocking on. An
+  // unconditional nudge would add a send per sweep tick on top of the pacer,
+  // breaking the paced (chain-off) modes' send rate.
+  if (evicted) maybeSend(now);
 }
 
 /** Stash an evicted id so a late pong can still teach the estimator. Bounded

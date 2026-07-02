@@ -12,8 +12,9 @@
 
   let canvasEl = $state<HTMLCanvasElement>();
 
-  // Last 16 RTT samples drive the sparkline.
-  const spark = $derived(store.latency.slice(-16).map((s) => s.rttMs));
+  // Last 16 RTT samples drive the sparkline (idle keepalive when no run is
+  // in flight, run samples during one — see store.pulseLatency).
+  const spark = $derived(store.pulseLatency.slice(-16).map((s) => s.rttMs));
 
   // Cached stroke color — resolved once and on theme change, NOT per draw
   // (draw runs on every latency sample, ~16Hz; getComputedStyle there was hot).

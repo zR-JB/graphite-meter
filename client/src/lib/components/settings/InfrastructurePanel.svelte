@@ -50,7 +50,7 @@
 
 <section class="infra">
   <div class="head">
-    <h3>Infrastructure</h3>
+    <h3>Endpoint</h3>
     <p>Client, endpoint, and transport metadata from the pre-test probe.</p>
   </div>
 

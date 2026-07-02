@@ -12,7 +12,6 @@
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
-  import ResultCards from "./ResultCards.svelte";
   import StatusBar from "./StatusBar.svelte";
   import SettingsPanel from "./settings/SettingsPanel.svelte";
   import TelemetryPanel from "./TelemetryPanel.svelte";
@@ -22,27 +21,34 @@
   import { engage, returnToStart } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
+  import { mediaQuery } from "../actions/mediaQuery.svelte";
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
 
   // The two auxiliary panels. Both closed by default (progressive disclosure):
   // the gauge owns the default view; Settings/telemetry are summoned from the
-  // topbar or via the W / D shortcuts. On wide screens (`wide`) an open panel
-  // docks as an in-flow column that pushes the stage; below that it's a flyout
-  // overlay. Same shared <SidePanel> either way.
+  // topbar or via the W / D shortcuts. On wide screens an open panel docks as
+  // an in-flow column that pushes the stage; below that it's a flyout overlay.
+  // Same shared <SidePanel> either way.
   let telemetryOpen = $state(false);
   let settingsOpen = $state(false);
-  let wide = $state(false);
+  const dockQuery = mediaQuery(`(min-width: 1200px)`); // bp: dock
 
-  // When both flyout drawers are open on a narrow screen they overlap. Track
-  // which one opened most recently so it stacks on top — without this, DOM
-  // order (left then right) would always bury the left drawer. Captures any
-  // open transition regardless of source (topbar button, W/D key, bind).
+  // Track which drawer opened most recently: it stacks on top when both are
+  // docked, and in flyout mode (not docked) opening one closes the other —
+  // overlapping flyouts/bottom sheets would bury whichever is beneath.
+  // Captures any open transition regardless of source (button, W/D key, bind).
   let lastOpened = $state<"left" | "right">("right");
   let prevSettingsOpen = false;
   let prevTelemetryOpen = false;
   $effect(() => {
-    if (settingsOpen && !prevSettingsOpen) lastOpened = "left";
-    if (telemetryOpen && !prevTelemetryOpen) lastOpened = "right";
+    if (settingsOpen && !prevSettingsOpen) {
+      lastOpened = "left";
+      if (!dockQuery.matches) telemetryOpen = false;
+    }
+    if (telemetryOpen && !prevTelemetryOpen) {
+      lastOpened = "right";
+      if (!dockQuery.matches) settingsOpen = false;
+    }
     prevSettingsOpen = settingsOpen;
     prevTelemetryOpen = telemetryOpen;
   });
@@ -56,8 +62,8 @@
   // Docked-panel widths (persisted). The reserved grid column is the saved
   // width only while that panel is docked + open, else 0 (column collapses).
   // The grid template also CSS-clamps to 46vw so a stale large value is safe.
-  const dockLeft = $derived(wide && settingsOpen ? store.dockWidth.left : 0);
-  const dockRight = $derived(wide && telemetryOpen ? store.dockWidth.right : 0);
+  const dockLeft = $derived(dockQuery.matches && settingsOpen ? store.dockWidth.left : 0);
+  const dockRight = $derived(dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0);
 
   function setDockWidth(side: "left" | "right", px: number) {
     store.dockWidth = { ...store.dockWidth, [side]: px };
@@ -141,17 +147,10 @@
   }
 
   onMount(() => {
-    // Dock the panels once there's room; flyout below this width.
-    const mq = window.matchMedia("(min-width: 1200px)");
-    const applyWide = () => (wide = mq.matches);
-    applyWide();
-    mq.addEventListener("change", applyWide);
-
     window.addEventListener("keydown", onKeydown);
     void bootRunner();
 
     return () => {
-      mq.removeEventListener("change", applyWide);
       window.removeEventListener("keydown", onKeydown);
       teardownRunner();
     };
@@ -177,7 +176,7 @@
       class="ghost-btn icon-btn"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
-      use:tooltip={"Settings — test setup, infrastructure, developer (W)"}
+      use:tooltip={"Settings — setup, endpoint, developer (W)"}
       onclick={() => (settingsOpen = !settingsOpen)}>{@html ICON.settings}</button
     >
     <ConnectivityIndicator />
@@ -190,20 +189,23 @@
     >
     <button
       class="ghost-btn icon-btn"
-      aria-label="Toggle connection & telemetry info"
+      aria-label="Toggle telemetry"
       aria-expanded={telemetryOpen}
-      use:tooltip={"Connection & telemetry info (D)"}
+      use:tooltip={"Telemetry (D)"}
       onclick={() => (telemetryOpen = !telemetryOpen)}>{@html ICON.info}</button
     >
   </header>
 
   <!-- CENTER STAGE — height-bounded flex column (§14.2). The gauge hero is the
-       focal point and takes the lion's share; chart + chips are secondary and
-       compact so the simple default fits the viewport without vertical scroll. -->
+       focal point and takes the lion's share; the chart is secondary and
+       compact so the simple default fits the viewport without vertical scroll.
+       Results now live INSIDE GaugePanel (the instrument cluster morphs
+       between live/partial-results/final-grid states) rather than as a
+       separate flex sibling here, so toggling a stage or advancing a phase
+       never resizes anything in this section. -->
   <section class="zone stage min-w-0 overflow-y-auto flex flex-col">
     <GaugePanel />
     <ThroughputChart />
-    <ResultCards />
   </section>
 
   <!-- STATUS BAR -->
@@ -217,7 +219,7 @@
        resizable from their inner edge (persisted via store.dockWidth). -->
   <SettingsPanel
     bind:open={settingsOpen}
-    docked={wide}
+    docked={dockQuery.matches}
     raised={lastOpened === "left"}
     dockWidth={store.dockWidth.left}
     onResize={(px) => setDockWidth("left", px)}
@@ -225,7 +227,7 @@
   />
   <TelemetryPanel
     bind:open={telemetryOpen}
-    docked={wide}
+    docked={dockQuery.matches}
     raised={lastOpened === "right"}
     dockWidth={store.dockWidth.right}
     onResize={(px) => setDockWidth("right", px)}
@@ -283,9 +285,7 @@
   .stage > :global(.gauge-panel) {
     flex: 1 1 auto;
   }
-  .stage > :global(.chart),
-  .stage > :global(.result-cards),
-  .stage > :global(.metric-guidance) {
+  .stage > :global(.chart) {
     flex: 0 0 auto;
   }
   .status {
@@ -350,7 +350,7 @@
      scroll internally, refuses to chain them out to the document (the page
      becomes unscrollable from the center, breaking phone usability). Letting
      it overflow visibly returns scroll control to the document. */
-  @media (max-width: 759px) {
+  @media (max-width: 759px) { /* bp: stacked */
     #console {
       height: auto;
       min-height: 100dvh;
