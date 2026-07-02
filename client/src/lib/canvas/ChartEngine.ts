@@ -9,7 +9,7 @@
 
 import type { Phase, ThroughputSample, LatencySample } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
-import { niceCeil, niceDomain } from "../format";
+import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -132,6 +132,7 @@ export class ChartEngine implements CanvasEngine {
   #hoverX: number | null = null;
   #result = false; // frozen post-run result mode
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
+  #hasThroughputScale = false;
 
   #c: ThemeColors = {
     download: "#93c49a",
@@ -328,6 +329,7 @@ export class ChartEngine implements CanvasEngine {
     this.#lastPhase = null;
     this.#vpInit = false;
     this.#result = false;
+    this.#hasThroughputScale = false;
   }
 
   #update(): void {
@@ -368,6 +370,7 @@ export class ChartEngine implements CanvasEngine {
     // Throughput axis ceiling: follow the gauge's shared scale verbatim so the
     // two instruments are identically scaled (dwell-filtered + tiered upstream).
     const bytesPerSecMax = d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
+    this.#hasThroughputScale = d.scaleBytesPerSec !== sharedThroughputScale(0) || d.throughput.length > 0;
 
     // Latency axis. Live → simple 0-based nice ceiling (stable while scrolling).
     // Result → centered, weighted, nice-step domain (shared `niceDomain`), so
@@ -677,49 +680,38 @@ export class ChartEngine implements CanvasEngine {
   #drawLatency(ctx: CanvasRenderingContext2D, all: LatencySample[]): void {
     if (all.length < 2) return;
     ctx.lineWidth = 1;
-    // Plot a ~100 ms bucketed MEAN, not every raw ping, so the line is readable
-    // and doesn't redraw per sample. Only the STROKE is bucketed — the axis
-    // ceiling (#p95In), time extent and hover all read the raw `all`, so a
-    // bufferbloat spike still scales the axis. A bucket breaks on a lost ping
-    // (line gap) and on an underLoad transition (so colour + the loaded seam stay
-    // exact instead of averaging idle+loaded RTTs into one mis-tagged point).
-    const BUCKET_MS = 100;
-    let prev: { t: number; rttMs: number; underLoad: boolean } | null = null;
-    let bStart = -Infinity;
-    let sum = 0;
-    let n = 0;
-    let bUnderLoad = false;
-    let bT = 0;
-    const flush = (): void => {
-      if (n === 0) return;
-      const cur = { t: bT, rttMs: sum / n, underLoad: bUnderLoad };
-      if (prev) {
-        ctx.strokeStyle = cur.underLoad || prev.underLoad ? this.#c.warn : this.#c.signal;
-        ctx.beginPath();
-        ctx.moveTo(this.#x(prev.t), this.#yR(prev.rttMs));
-        ctx.lineTo(this.#x(cur.t), this.#yR(cur.rttMs));
-        ctx.stroke();
+    // Use raw latency points and mild smoothing so the curve is continuous
+    // without hiding the point measurements. Break on a lost ping, phase
+    // boundary, or under-load colour transition.
+    let prevPhase: Phase | null = null;
+    const segment: Array<{ t: number; rttMs: number; underLoad: boolean }> = [];
+    const drawSegment = (): void => {
+      if (segment.length < 2) {
+        segment.length = 0;
+        return;
       }
-      prev = cur;
-      sum = 0;
-      n = 0;
+      const pts = segment.map((p) => ({ x: this.#x(p.t), y: this.#yR(p.rttMs) }));
+      ctx.strokeStyle = segment[0].underLoad ? this.#c.warn : this.#c.signal;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      this.#smoothTo(ctx, pts);
+      ctx.stroke();
+      segment.length = 0;
     };
     for (const s of all) {
+      if (s.lost || (prevPhase !== null && s.phase !== prevPhase) || (segment.length > 0 && s.underLoad !== segment[segment.length - 1].underLoad)) {
+        drawSegment();
+        prevPhase = null;
+      }
       if (s.lost) {
-        flush();
-        prev = null; // break the line across a lost ping
         continue;
       }
-      if (s.t - bStart >= BUCKET_MS || (n > 0 && s.underLoad !== bUnderLoad)) {
-        flush();
-        bStart = s.t;
-      }
-      sum += s.rttMs;
-      n++;
-      bUnderLoad = s.underLoad;
-      bT = s.t;
+      segment.push({ t: s.t, rttMs: s.rttMs, underLoad: s.underLoad });
+      prevPhase = s.phase;
     }
-    flush();
+    drawSegment();
   }
 
   #drawAxesLabels(ctx: CanvasRenderingContext2D, latencyEnabled: boolean): void {
@@ -733,7 +725,9 @@ export class ChartEngine implements CanvasEngine {
       const y = top + (bot - top) * frac;
       const bytesPerSec = this.#vp.bytesPerSecMax * (1 - frac);
       ctx.textAlign = "left";
-      ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
+      if (this.#hasThroughputScale) {
+        ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
+      }
       if (latencyEnabled) {
         const rtt = this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
         ctx.textAlign = "right";
