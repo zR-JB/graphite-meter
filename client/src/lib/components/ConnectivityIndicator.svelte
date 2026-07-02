@@ -29,7 +29,7 @@
     if (!c) return;
     const ctx = c.getContext("2d");
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = 36;
     const h = 16;
     c.width = Math.round(w * dpr);
@@ -127,18 +127,20 @@
     animation: blink 2.4s steps(1, end) infinite;
   }
 
+  /* transform + opacity only — stays on the compositor; an animated filter
+     would re-rasterize the dot every frame for the app's whole lifetime. */
   @keyframes pulse {
     0% {
       transform: scale(0.92);
-      filter: brightness(1);
+      opacity: 0.85;
     }
     50% {
       transform: scale(1.08);
-      filter: brightness(1.25);
+      opacity: 1;
     }
     100% {
       transform: scale(0.92);
-      filter: brightness(1);
+      opacity: 0.85;
     }
   }
   @keyframes blink {

@@ -133,6 +133,7 @@ export class ChartEngine implements CanvasEngine {
   #result = false; // frozen post-run result mode
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
   #hasThroughputScale = false;
+  #p95Cache = { len: -1, tMin: 0, v: 0 };
 
   #c: ThemeColors = {
     download: "#6f9c7c",
@@ -188,7 +189,8 @@ export class ChartEngine implements CanvasEngine {
 
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
-    this.#dpr = window.devicePixelRatio || 1;
+    // Cap at 2 — same rationale as the gauge: raster cost, not fidelity.
+    this.#dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = this.#canvas.getBoundingClientRect();
     this.#w = Math.max(1, rect.width);
     this.#h = Math.max(1, rect.height);
@@ -391,6 +393,7 @@ export class ChartEngine implements CanvasEngine {
     this.#vpInit = false;
     this.#result = false;
     this.#hasThroughputScale = false;
+    this.#p95Cache = { len: -1, tMin: 0, v: 0 };
   }
 
   #update(): void {
@@ -447,8 +450,15 @@ export class ChartEngine implements CanvasEngine {
       rttMin = dom.min;
       rttMax = dom.max;
     } else {
-      const p95 = this.#p95In(d.latency, tMin, tMax);
-      rttMax = niceCeil(Math.max(p95 * 1.3, 20));
+      // Cached: the sort in #p95In only reruns when a sample lands or the
+      // window has drifted meaningfully — not on all 60 camera frames/s.
+      if (
+        d.latency.length !== this.#p95Cache.len ||
+        Math.abs(tMin - this.#p95Cache.tMin) > 500
+      ) {
+        this.#p95Cache = { len: d.latency.length, tMin, v: this.#p95In(d.latency, tMin, tMax) };
+      }
+      rttMax = niceCeil(Math.max(this.#p95Cache.v * 1.3, 20));
     }
 
     const target: Viewport = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
@@ -669,53 +679,48 @@ export class ChartEngine implements CanvasEngine {
 
     // Quad-ruled minor grid — a faint 4-division subdivision of each major
     // cell, underneath the labelled lines. Graph paper, not a chrome track.
+    // All minor lines share one path/stroke (one raster pass, not ~40).
     ctx.lineWidth = 1;
     ctx.strokeStyle = this.#c.grid;
     ctx.globalAlpha = 0.55;
     const minorStep = step / 4;
     const minorStartT = Math.ceil(this.#vp.tMin / minorStep) * minorStep;
+    ctx.beginPath();
     for (let t = minorStartT; t <= this.#vp.tMax; t += minorStep) {
       const x = Math.round(this.#x(t)) + 0.5;
       if (x < left || x > right) continue;
-      ctx.beginPath();
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
-      ctx.stroke();
     }
     for (let i = 1; i < 16; i++) {
       if (i % 4 === 0) continue; // major line, drawn below
       const y = Math.round(top + ((bot - top) * i) / 16) + 0.5;
-      ctx.beginPath();
       ctx.moveTo(left, y);
       ctx.lineTo(right, y);
-      ctx.stroke();
     }
+    ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Vertical time grid — one clean, labelled line per nice step.
+    // Labelled major lines — one batched path, labels filled alongside.
     ctx.strokeStyle = this.#c.grid;
     ctx.fillStyle = this.#c.textSoft;
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = "center";
+    ctx.beginPath();
     for (let t = startT; t <= this.#vp.tMax; t += step) {
       const x = Math.round(this.#x(t)) + 0.5;
       if (x < left || x > right) continue;
-      ctx.beginPath();
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
-      ctx.stroke();
       const s = t / 1000;
       ctx.fillText(Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`, x, this.#h - 5);
     }
-    // Horizontal gridlines (quarters).
-    ctx.strokeStyle = this.#c.grid;
     for (let i = 1; i <= 3; i++) {
       const y = Math.round(top + ((bot - top) * i) / 4) + 0.5;
-      ctx.beginPath();
       ctx.moveTo(left, y);
       ctx.lineTo(right, y);
-      ctx.stroke();
     }
+    ctx.stroke();
   }
 
   /** Trace a smoothed path through `pts` from the current point. Midpoint-
@@ -734,13 +739,27 @@ export class ChartEngine implements CanvasEngine {
   #drawThroughput(ctx: CanvasRenderingContext2D, all: ThroughputSample[]): void {
     if (!all.length) return;
     const bot = this.#h - PAD_B;
-    // Group by the sample's phase tag. Download/upload each run once, so a
-    // straight filter yields each phase's contiguous, time-ordered run.
+    const tMin = this.#vp.tMin;
+    const tMax = this.#vp.tMax;
+    // Group by the sample's phase tag (download/upload each run once, so each
+    // yields a contiguous, time-ordered run). Samples outside the viewport are
+    // culled, keeping one bridging sample per edge for path continuity — while
+    // the live camera tracks the current phase, earlier phases cost nothing.
     for (const phase of ["download", "upload"] as const) {
-      const seg = all.filter((s) => s.phase === phase);
-      if (seg.length < 2) continue;
       const stroke = phase === "download" ? this.#c.download : this.#c.upload;
-      const pts = seg.map((s) => ({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) }));
+      const pts: { x: number; y: number }[] = [];
+      let leftEdge: ThroughputSample | null = null;
+      for (const s of all) {
+        if (s.phase !== phase) continue;
+        if (s.t < tMin) {
+          leftEdge = s;
+          continue;
+        }
+        if (!pts.length && leftEdge) pts.push({ x: this.#x(leftEdge.t), y: this.#yL(leftEdge.bytesPerSec) });
+        pts.push({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) });
+        if (s.t > tMax) break;
+      }
+      if (pts.length < 2) continue;
 
       // Filled area under a smoothed top edge, soft vertical gradient (cached).
       ctx.fillStyle = this.#areaGrad(ctx, phase);
@@ -767,6 +786,14 @@ export class ChartEngine implements CanvasEngine {
   #drawLatency(ctx: CanvasRenderingContext2D, all: LatencySample[]): void {
     if (all.length < 2) return;
     ctx.lineWidth = 1;
+    // Cull to the viewport (plus one bridging sample per edge) — the segment
+    // logic below then only walks what is actually visible.
+    let lo = 0;
+    while (lo < all.length && all[lo].t < this.#vp.tMin) lo++;
+    if (lo > 0) lo--;
+    let hi = lo;
+    while (hi < all.length && all[hi].t <= this.#vp.tMax) hi++;
+    if (hi < all.length) hi++;
     // Use raw latency points and mild smoothing so the curve is continuous
     // without hiding the point measurements. Break on a lost ping, phase
     // boundary, or under-load colour transition.
@@ -787,7 +814,8 @@ export class ChartEngine implements CanvasEngine {
       ctx.stroke();
       segment.length = 0;
     };
-    for (const s of all) {
+    for (let i = lo; i < hi; i++) {
+      const s = all[i];
       if (s.lost || (prevPhase !== null && s.phase !== prevPhase) || (segment.length > 0 && s.underLoad !== segment[segment.length - 1].underLoad)) {
         drawSegment();
         prevPhase = null;

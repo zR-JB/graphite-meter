@@ -149,10 +149,12 @@ export class GaugeEngine implements CanvasEngine {
     this.#headCtx = null;
   }
 
-  /** Re-resolve DPR + theme colors; resize the backing store crisply. */
+  /** Re-resolve DPR + theme colors; resize the backing store crisply. DPR is
+   *  capped at 2: beyond that the extra raster pixels are indistinguishable on
+   *  a dial but quadruple the per-frame fill cost on an iGPU. */
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
-    this.#dpr = window.devicePixelRatio || 1;
+    this.#dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = this.#canvas.getBoundingClientRect();
     this.#w = Math.max(1, rect.width);
     this.#h = Math.max(1, rect.height);
