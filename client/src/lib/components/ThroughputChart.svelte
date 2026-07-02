@@ -36,6 +36,7 @@
     if (!engine) return;
     engine.setHover(e.offsetX);
     hover = engine.hoverInfo();
+    if (hover && hover.bytesPerSec == null && hover.rtt == null) hover = null;
   }
   function onLeave() {
     engine?.setHover(null);

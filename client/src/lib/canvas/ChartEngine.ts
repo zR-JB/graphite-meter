@@ -218,26 +218,50 @@ export class ChartEngine implements CanvasEngine {
     const frac = (x - PAD_L) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
+    const bytesPerSec = this.#hoverValue(data.throughput, t, (s) => s.bytesPerSec);
+    const rtt = this.#hoverValue(
+      data.latency.filter((s) => !s.lost),
+      t,
+      (s) => s.rttMs,
+    );
+    if (bytesPerSec == null && rtt == null) return null;
     return {
       x,
       t,
-      bytesPerSec: this.#interp(data.throughput, t, (s) => s.bytesPerSec),
-      rtt: this.#interp(
-        data.latency.filter((s) => !s.lost),
-        t,
-        (s) => s.rttMs,
-      ),
+      bytesPerSec,
+      rtt,
     };
   }
 
-  /** Value at time `t` linearly interpolated between the bracketing samples.
-   *  Clamps to the endpoints outside the sampled range; null if empty. */
-  #interp<T extends { t: number }>(arr: T[], t: number, pick: (s: T) => number): number | null {
+  #hoverValue<T extends { t: number; phase: Phase }>(
+    arr: T[],
+    t: number,
+    pick: (s: T) => number,
+  ): number | null {
     if (!arr.length) return null;
-    if (t <= arr[0].t) return pick(arr[0]);
+    const span = this.#spanAt(t);
+    if (span) {
+      const phaseSamples = arr.filter((s) => s.phase === span.phase);
+      const value = this.#interpInRange(phaseSamples, t, pick);
+      if (value != null) return value;
+      return null;
+    }
+
+    const nearestPhase = this.#nearestPhaseWithSamples(arr, t);
+    if (nearestPhase) {
+      const firstSample = arr.find((s) => s.phase === nearestPhase);
+      if (firstSample) return pick(firstSample);
+    }
+
+    return pick(this.#closestSample(arr, t));
+  }
+
+  #interpInRange<T extends { t: number }>(arr: T[], t: number, pick: (s: T) => number): number | null {
+    if (!arr.length) return null;
+    if (t < arr[0].t || t > arr[arr.length - 1].t) return null;
+    if (t === arr[0].t) return pick(arr[0]);
     const last = arr[arr.length - 1];
-    if (t >= last.t) return pick(last);
-    // arr is time-ordered (push order); linear scan + neighbour blend.
+    if (t === last.t) return pick(last);
     for (let i = 1; i < arr.length; i++) {
       const b = arr[i];
       if (b.t >= t) {
@@ -247,7 +271,44 @@ export class ChartEngine implements CanvasEngine {
         return pick(a) * (1 - w) + pick(b) * w;
       }
     }
-    return pick(last);
+    return null;
+  }
+
+  #spanAt(t: number): PhaseSpan | null {
+    for (const span of this.#spans) {
+      if (t >= span.t0 && t <= span.t1) return span;
+    }
+    return null;
+  }
+
+  #nearestPhaseWithSamples<T extends { phase: Phase }>(arr: T[], t: number): Phase | null {
+    if (!this.#spans.length) return null;
+    const availablePhases = new Set(arr.map((s) => s.phase));
+    let nearest: Phase | null = null;
+    let nearestDist = Infinity;
+    for (const span of this.#spans) {
+      if (!availablePhases.has(span.phase)) continue;
+      const dist = t < span.t0 ? span.t0 - t : t > span.t1 ? t - span.t1 : 0;
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = span.phase;
+      }
+    }
+    return nearest;
+  }
+
+  #closestSample<T extends { t: number }>(arr: T[], t: number): T {
+    let closest = arr[0];
+    let closestDist = Math.abs(arr[0].t - t);
+    for (let i = 1; i < arr.length; i++) {
+      const sample = arr[i];
+      const dist = Math.abs(sample.t - t);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closest = sample;
+      }
+    }
+    return closest;
   }
 
   #resolveColors(): void {
