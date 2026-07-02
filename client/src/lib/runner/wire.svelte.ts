@@ -115,7 +115,29 @@ export function engage() {
     ...cfg.duration,
     warmupMs: adaptiveWarmupMs(cfg.duration.warmupMs, store.infra?.preTestPingMs ?? 0),
   };
-  getRunner().start(cfg);
+  if (store.infra) {
+    getRunner().start(cfg);
+    return;
+  }
+  // No successful preflight yet (server was down at boot?) — re-check the
+  // server's capabilities before running instead of failing every stage.
+  getRunner()
+    .probe(cfg.endpoint)
+    .then((info) => {
+      store.ingest({ type: "infra", info });
+      getRunner().start(cfg);
+    })
+    .catch((cause) => {
+      store.ingest({
+        type: "error",
+        error: {
+          reason: "preflight-failed",
+          message: "Couldn't reach the server",
+          phase: "idle",
+          cause,
+        },
+      });
+    });
 }
 
 /**

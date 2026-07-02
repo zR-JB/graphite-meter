@@ -12,12 +12,25 @@
    * Tokens only. Reduced-motion: the slide/scale is dropped (handled
    * by the global §4.5 guard) so it just fades / appears.
    * ============================================================ */
+  import { untrack } from "svelte";
   import type { TerminationReason } from "../runner/contract";
   import { store } from "../state/store.svelte";
 
   let visible = $state(false);
   let prevPhase = store.phase;
   let timer: ReturnType<typeof setTimeout> | null = null;
+
+  // A skipped stage takes over the toast briefly (err-tinted): it usually
+  // coincides with the next stage's phase transition, so it gets priority
+  // over the routine phase message until its timer clears it.
+  let skipMsg = $state<string | null>(null);
+  let prevFailCount = 0;
+  const STAGE_LABEL: Record<string, string> = {
+    latency: "Latency",
+    download: "Download",
+    upload: "Upload",
+    bidirectional: "Bi-dir",
+  };
 
   // A stall (connection lost) takes over the toast for as long as it lasts —
   // it is not a phase transition, so it has its own sticky visibility. The
@@ -106,12 +119,32 @@
 
     visible = true;
     if (timer) clearTimeout(timer);
-    // Linger longer on the terminal "complete" state; otherwise a brisk peek.
-    timer = setTimeout(() => (visible = false), phase === "complete" ? 2200 : 1350);
+    // Linger longer on the terminal "complete" state (or while a skip notice
+    // holds the toast); otherwise a brisk peek.
+    const linger = untrack(() => skipMsg) ? 3200 : phase === "complete" ? 2200 : 1350;
+    timer = setTimeout(() => {
+      visible = false;
+      skipMsg = null;
+    }, linger);
 
     return () => {
       if (timer) clearTimeout(timer);
     };
+  });
+
+  $effect(() => {
+    const fails = Object.values(store.stageFailures);
+    if (fails.length > prevFailCount) {
+      const f = fails[fails.length - 1];
+      skipMsg = `${STAGE_LABEL[f.stage]} skipped — ${f.message}`;
+      visible = true;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        visible = false;
+        skipMsg = null;
+      }, 3200);
+    }
+    prevFailCount = fails.length;
   });
 
   // While stalled the toast is sticky (no auto-dismiss): it stays up for the
@@ -125,9 +158,15 @@
   });
 </script>
 
-<div class="phase-toast" class:visible={visible || stalled} class:alert={stalled} role="status" aria-live="polite">
-  <span class="kicker">{stalled ? "Link" : kicker(store.phase)}</span>
-  <strong>{stalled ? stallMessage : message(store.phase)}</strong>
+<div
+  class="phase-toast"
+  class:visible={visible || stalled}
+  class:alert={stalled || (visible && skipMsg != null)}
+  role="status"
+  aria-live="polite"
+>
+  <span class="kicker">{stalled ? "Link" : skipMsg ? "Skipped" : kicker(store.phase)}</span>
+  <strong>{stalled ? stallMessage : (skipMsg ?? message(store.phase))}</strong>
 </div>
 
 <style>

@@ -120,6 +120,17 @@ const LANE_RESTART_BACKOFF_MS = 300;
 /** Give up a lane after this many consecutive restarts (≈12 s at the backoff);
  *  the core's max-stall timeout also bounds total patience. */
 const LANE_MAX_RESTARTS = 40;
+/** If a stage has NEVER moved a byte, give up much sooner: a lane failing this
+ *  many times in a row means the connection can't be established at all, so the
+ *  stage is skipped (failStage) instead of stalling toward max-stall. */
+const EARLY_FAIL_RESTARTS = 3;
+/** How long the ping channel gets to deliver its first pong before the latency
+ *  stage is skipped as unreachable. */
+const PING_ESTABLISH_TIMEOUT_MS = 3500;
+/** Deadline for the upload-session mint. Without it a hung request (e.g. the
+ *  connection pool still draining the download lanes) neither resolves nor
+ *  rejects, and the upload stage rides silently into the 20 s max-stall. */
+const UPLOAD_SESSION_TIMEOUT_MS = 3000;
 /** Per-lane spawn delay so the lanes' TCP slow-starts don't ramp in lockstep
  *  (synchronised overshoot → synchronised loss → synchronised backoff). At ≤4
  *  staggered lanes this is ≤300 ms, comfortably inside the warmup window. */
@@ -273,6 +284,9 @@ export class RealBackend implements RunnerBackend {
   #measuring = false;
   /** True while a stall is open (so a recovering sample resumes exactly once). */
   #stalled = false;
+  /** True once the active transfer stage has moved at least one byte — gates
+   *  the never-established early fail (see EARLY_FAIL_RESTARTS). */
+  #stageSawBytes = false;
   /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
   #cbSeed = "";
 
@@ -307,6 +321,9 @@ export class RealBackend implements RunnerBackend {
   /** True from #primeLatencyChannel to #teardownLatency — gates late worker
    *  messages after teardown. */
   #pingActive = false;
+  /** Armed for the idle latency stage only: fires failStage("latency") when no
+   *  pong ever arrives. Cleared by the first sample / teardown. */
+  #pingEstablishTimer: ReturnType<typeof setTimeout> | null = null;
   /** The underLoad tag stamped on forwarded samples (true during a transfer
    *  stage's loaded latency). Set when #measureLatency flips reporting on. */
   #latencyUnderLoad = false;
@@ -459,12 +476,28 @@ export class RealBackend implements RunnerBackend {
     // #activeTransport ends as the transfer kind for the lanes' stall reporting.
     if (this.#needsPings(activity)) {
       const pingKind = this.#negotiateTransport("latency");
-      if (!pingKind) return; // negotiation already raised host.fail(...)
-      this.#primeLatencyChannel(pingKind);
+      if (pingKind) {
+        this.#primeLatencyChannel(pingKind, activity.stage === "latency");
+      } else if (activity.stage === "latency") {
+        this.#host!.failStage(
+          "latency",
+          "transport-unavailable",
+          "server offers no supported ping transport",
+        );
+        return;
+      }
+      // Loaded latency without a transport: run the transfer without pings.
     }
     if (activity.transfer.length > 0) {
       const kind = this.#negotiateTransport(activity.stage);
-      if (!kind) return; // negotiation already raised host.fail("transport-unavailable")
+      if (!kind) {
+        this.#host!.failStage(
+          activity.stage,
+          "transport-unavailable",
+          "server offers no supported transfer transport",
+        );
+        return;
+      }
       for (const dir of activity.transfer) this.#primeTransfer(kind, dir, activity);
     }
   }
@@ -494,6 +527,7 @@ export class RealBackend implements RunnerBackend {
     // a transfer stage's loaded-latency pings) the ping worker + its socket.
     this.#teardownTransfer();
     this.#teardownLatency();
+    this.#stalled = false; // a stale latch must not swallow the next stage's stall
   }
 
   /** Whether a stage runs a ping channel: the idle latency stage, or a transfer
@@ -523,8 +557,8 @@ export class RealBackend implements RunnerBackend {
    *   negotiating → attempting this kind;
    *   established → connected — return the kind so the caller opens its I/O;
    *   failed      → this kind didn't connect — try the next.
-   * If EVERY kind fails, raise the terminal host.fail("transport-unavailable",
-   * …) and return null (the caller must NOT open anything).
+   * If EVERY kind fails, return null — the caller decides whether that skips
+   * the stage (failStage) or is survivable (loaded latency).
    *
    * Order is fixed (see #transportOrder): latency roles try webtransport then
    * websocket; transfer/bidi roles try webtransport then xhr-stream. The sketch
@@ -546,7 +580,6 @@ export class RealBackend implements RunnerBackend {
       }
       host.reportTransport({ kind, role, status: "failed", detail: "not advertised by server" });
     }
-    host.fail("transport-unavailable", `No transport could be established for ${role}`);
     return null;
   }
 
@@ -646,6 +679,7 @@ export class RealBackend implements RunnerBackend {
     this.#laneRetry = [];
     this.#laneTimers = [];
     this.#transferActive = true;
+    this.#stageSawBytes = false;
     this.#testId = null;
 
     if (dir === "up") {
@@ -674,7 +708,8 @@ export class RealBackend implements RunnerBackend {
       id = await this.#mintUploadSession(base);
     } catch (cause) {
       if (!this.#transferActive) return; // aborted/teardown while the warmup request was in flight
-      this.#host!.fail("protocol-error", "Upload session request failed", cause);
+      void cause;
+      this.#host!.failStage("upload", "protocol-error", "upload session request failed");
       return;
     }
     if (!this.#transferActive || this.#dir !== "up") return;
@@ -690,20 +725,31 @@ export class RealBackend implements RunnerBackend {
 
   async #mintUploadSession(base: string): Promise<string> {
     const path = this.#capabilities?.endpoints.uploadSession ?? "/upload/session";
-    const res = await fetch(`${base}${path}`, {
-      method: "POST",
-      cache: "no-store",
-      signal: this.#abort?.signal,
-      headers: this.#opts.authToken
-        ? { authorization: `Bearer ${this.#opts.authToken}` }
-        : undefined,
-    });
-    if (!res.ok) throw new Error(`upload session returned HTTP ${res.status}`);
-    const body = (await res.json()) as { uploadId?: unknown };
-    if (typeof body.uploadId !== "string" || body.uploadId === "") {
-      throw new Error("upload session returned no uploadId");
+    // Own deadline + the run's abort: fetch must reject within the timeout even
+    // when the request hangs, so the stage skips instead of max-stalling.
+    const ctl = new AbortController();
+    const onRunAbort = (): void => ctl.abort();
+    this.#abort?.signal.addEventListener("abort", onRunAbort, { once: true });
+    const deadline = setTimeout(() => ctl.abort(), UPLOAD_SESSION_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: "POST",
+        cache: "no-store",
+        signal: ctl.signal,
+        headers: this.#opts.authToken
+          ? { authorization: `Bearer ${this.#opts.authToken}` }
+          : undefined,
+      });
+      if (!res.ok) throw new Error(`upload session returned HTTP ${res.status}`);
+      const body = (await res.json()) as { uploadId?: unknown };
+      if (typeof body.uploadId !== "string" || body.uploadId === "") {
+        throw new Error("upload session returned no uploadId");
+      }
+      return body.uploadId;
+    } finally {
+      clearTimeout(deadline);
+      this.#abort?.signal.removeEventListener("abort", onRunAbort);
     }
-    return body.uploadId;
   }
 
   /** Spawn the /ws/upload progress worker for the up stage. Resets the server
@@ -721,7 +767,15 @@ export class RealBackend implements RunnerBackend {
     this.#srvHaveStart = false;
 
     const caps = this.#capabilities;
-    if (!this.#testId || !caps?.transports.websocket) return; // → no upload measurement (fail-clean)
+    if (!this.#testId) return; // session mint already skipped the stage
+    if (!caps?.transports.websocket) {
+      this.#host!.failStage(
+        "upload",
+        "transport-unavailable",
+        "server offers no WebSocket progress bus — upload can't be measured",
+      );
+      return;
+    }
 
     const wsUpload = caps.endpoints.wsUpload ?? "/ws/upload";
     const url =
@@ -791,7 +845,7 @@ export class RealBackend implements RunnerBackend {
    *  dedicated ping worker (which owns the WebSocket + the whole ping algorithm),
    *  hands it the tuning, and lets it send warmup pings — pushing NOTHING into
    *  the core. #measureLatency flips reporting on over the SAME warmed socket. */
-  #primeLatencyChannel(kind: TransportKind): void {
+  #primeLatencyChannel(kind: TransportKind, isLatencyStage = false): void {
     if (kind !== "websocket") throw NOT_IMPL(`primeLatencyChannel:${kind}`); // wt = Stage 5
 
     const cfg = this.#host!.config!;
@@ -801,6 +855,14 @@ export class RealBackend implements RunnerBackend {
 
     this.#latencyUnderLoad = false;
     this.#pingActive = true;
+    // The idle latency stage has no byte lanes to prove the link — bound how
+    // long the channel gets to deliver its first pong before the stage skips.
+    if (isLatencyStage) {
+      this.#pingEstablishTimer = setTimeout(() => {
+        this.#pingEstablishTimer = null;
+        this.#host!.failStage("latency", "connection-lost", "ping connection could not be established");
+      }, PING_ESTABLISH_TIMEOUT_MS);
+    }
     const w = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), { type: "module" });
     w.onmessage = (e: MessageEvent<PingOutMsg>): void => this.#onPingMessage(e.data);
     w.onerror = (e: ErrorEvent): void => this.#onPingMessage({ type: "stall", detail: e.message || "ping worker error" });
@@ -838,6 +900,7 @@ export class RealBackend implements RunnerBackend {
     if (!this.#pingActive) return; // late message after teardown
     switch (msg.type) {
       case "samples":
+        this.#clearPingEstablishTimer(); // a pong proves the channel works
         for (const s of msg.samples) {
           this.#host!.ingestLatency(s.rtt, this.#latencyUnderLoad, s.lost);
         }
@@ -859,9 +922,17 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
+  #clearPingEstablishTimer(): void {
+    if (this.#pingEstablishTimer) {
+      clearTimeout(this.#pingEstablishTimer);
+      this.#pingEstablishTimer = null;
+    }
+  }
+
   /** Stop + terminate the ping worker (closes its WebSocket). Idempotent. */
   #teardownLatency(): void {
     this.#pingActive = false;
+    this.#clearPingEstablishTimer();
     if (this.#pingWorker) {
       this.#pingWorker.postMessage({ type: "stop" });
       this.#pingWorker.terminate();
@@ -1046,6 +1117,7 @@ export class RealBackend implements RunnerBackend {
         return;
       }
       this.#laneRetry[i] = 0; // a real send proves this lane recovered
+      this.#stageSawBytes = true;
       const elapsedMs = msg.elapsedMs ?? THROUGHPUT_CADENCE_MS;
       this.#pendingLaneBytes[i] = (this.#pendingLaneBytes[i] ?? 0) + msg.bytes;
       this.#pendingLaneElapsedSec[i] =
@@ -1056,6 +1128,7 @@ export class RealBackend implements RunnerBackend {
       }
     } else if (msg.type === "alive") {
       this.#laneRetry[i] = 0; // a completed POST proves this upload lane recovered
+      this.#stageSawBytes = true;
     } else {
       this.#onWorkerError(i, msg.detail, msg.recoverable);
     }
@@ -1085,7 +1158,15 @@ export class RealBackend implements RunnerBackend {
     // exhausts its restarts — the core's max-stall timeout also bounds patience.
     this.#workers[i]?.terminate();
     this.#workers[i] = null;
-    if ((this.#laneRetry[i] = (this.#laneRetry[i] ?? 0) + 1) > LANE_MAX_RESTARTS) {
+    this.#laneRetry[i] = (this.#laneRetry[i] ?? 0) + 1;
+    // Never moved a byte this stage + repeated instant failures ⇒ the endpoint
+    // is unreachable/unsupported. Skip the stage instead of stalling for 20 s.
+    if (!this.#stageSawBytes && this.#laneRetry[i] > EARLY_FAIL_RESTARTS) {
+      const stage = this.#dir === "down" ? "download" : "upload";
+      this.#host!.failStage(stage, "connection-lost", `${this.#dir}link connection could not be established`);
+      return;
+    }
+    if (this.#laneRetry[i] > LANE_MAX_RESTARTS) {
       this.#host!.fail("connection-lost", `${this.#dir} stream ${i} kept dropping: ${detail}`, detail);
       return;
     }
@@ -1136,7 +1217,10 @@ export class RealBackend implements RunnerBackend {
     // headline can be skewed by local tick cadence, event-loop lag, arrival jitter,
     // or an idle gap (establishment, reconnect, stall) — the server already excised it.
     const srvT = msg.t;
-    if (msg.n > this.#srvN) this.#srvN = msg.n; // cumulative + monotonic guard
+    if (msg.n > this.#srvN) {
+      this.#srvN = msg.n; // cumulative + monotonic guard
+      this.#stageSawBytes = true;
+    }
     if (!this.#measuring) return; // warmup bytes are excluded from the window
 
     if (!this.#srvHaveStart) {

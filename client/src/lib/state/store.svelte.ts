@@ -20,6 +20,8 @@ import type {
   LatencyResult,
   StallInfo,
   TransportAttempt,
+  TransportRole,
+  StageFailure,
 } from "../runner/contract";
 import {
   estimateLiveCompensation,
@@ -207,6 +209,10 @@ class AppStore {
    *  the reason, the failed phase, and any partial results (§ structured
    *  termination). User aborts are NOT errors — they are the "aborted" phase. */
   error = $state<RunnerError | null>(null);
+  /** Stages skipped this run because they couldn't run (capability missing /
+   *  connection never established). The run continues; the gauge explains a
+   *  skipped transfer, the latency profile a skipped latency stage. */
+  stageFailures = $state<Partial<Record<TransportRole, StageFailure>>>({});
   startEpoch = $state(0);
 
   /* ---- config + display prefs (hydrated from localStorage, §14.1) ----
@@ -371,6 +377,16 @@ class AppStore {
   isRunning = $derived(
     !["idle", "complete", "aborted", "error"].includes(this.phase),
   );
+
+  /** Skipped TRANSFER stages, in run order — the gauge explains these. */
+  transferFailures = $derived.by<StageFailure[]>(() => {
+    const out: StageFailure[] = [];
+    for (const k of ["download", "upload", "bidirectional"] as const) {
+      const f = this.stageFailures[k];
+      if (f) out.push(f);
+    }
+    return out;
+  });
 
   /* ============================================================
    * Stage selection (§13.4)
@@ -591,6 +607,9 @@ class AppStore {
         this.currentTransport = e.attempt;
         this.transportLog.push(e.attempt);
         break;
+      case "stageSkipped":
+        this.stageFailures = { ...this.stageFailures, [e.failure.stage]: e.failure };
+        break;
       case "stability":
         this.liveStability[e.snapshot.phase] = e.snapshot;
         break;
@@ -649,6 +668,7 @@ class AppStore {
     this.transportLog = [];
     this.liveStability = { latency: null, download: null, upload: null };
     this.stageResults = { download: null, upload: null, latency: null };
+    this.stageFailures = {};
     this.result = null;
     this.error = null;
     this.startEpoch = 0;

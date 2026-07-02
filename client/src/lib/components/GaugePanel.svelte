@@ -80,6 +80,19 @@
     return LATENCY_SCALE_LADDER.find((s) => s >= target) ?? LATENCY_SCALE_LADDER.at(-1)!;
   });
 
+  // Quarter tick labels for the dial, memoized so the engine's 60 Hz pull
+  // doesn't re-format ten strings per frame — this only recomputes when the
+  // phase, scale, or display unit actually changes.
+  const msTicksActive = $derived(
+    store.phase === "latency" ||
+      (store.phase === "complete" && store.finalMetric?.kind === "latency"),
+  );
+  const gaugeTicks = $derived.by(() => {
+    if (msTicksActive) return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f));
+    const scale = store.displayScaleBytesPerSec;
+    return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtSpeed(store.toUnit(scale * f)));
+  });
+
   // The single big number, per phase (§3.1 behavior table).
   const display = $derived.by(() => {
     const p = store.phase;
@@ -102,6 +115,17 @@
     // snaps back on resume.
     return { value: fmtSpeed(store.toUnit(decayedBytesPerSec)), unit: store.unitLabel };
   });
+
+  // Skipped transfer stages — the gauge explains why throughput is missing.
+  const STAGE_NAME: Record<string, string> = {
+    latency: "Latency",
+    download: "Download",
+    upload: "Upload",
+    bidirectional: "Bidirectional",
+  };
+  const failNotes = $derived(
+    store.transferFailures.map((f) => `${STAGE_NAME[f.stage]} skipped — ${f.message}`),
+  );
 
   // Guided idle / empty + transient states (§14.3) — never a dead, bare dash.
   // Shown as soft copy beneath the big metric so a newcomer always knows what
@@ -192,13 +216,11 @@
       // right (needle and labels match, instead of an RTT needle under speed
       // labels). -1 elsewhere → the per-phase live logic drives the dial.
       let resolvedFraction = -1;
-      let msTicks = p === "latency";
       if (p === "complete" && fm) {
         if (fm.kind === "speed") {
           resolvedFraction = scale > 0 ? Math.min(1, Math.max(0, fm.bytesPerSec / scale)) : 0;
         } else {
           resolvedFraction = latencyScaleMs > 0 ? Math.min(1, Math.max(0, fm.ms / latencyScaleMs)) : 0;
-          msTicks = true;
         }
       }
       return {
@@ -209,11 +231,9 @@
         scaleBytesPerSec: scale,
         latencyScaleMs,
         resolvedFraction,
-        // Five quarter labels (0 … full scale): ms during the latency phase or
-        // a latency-resolved end state, otherwise throughput in the active unit.
-        ticks: msTicks
-          ? [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f))
-          : [0, 0.25, 0.5, 0.75, 1].map((f) => fmtSpeed(store.toUnit(scale * f))),
+        // Five quarter labels (0 … full scale) — memoized above: ms during the
+        // latency phase or a latency-resolved end state, else throughput.
+        ticks: gaugeTicks,
         rtt: store.liveRtt,
         pingCount: store.latency.length,
       };
@@ -274,7 +294,12 @@
       <div class="metric-wrap">
         <span class="gauge-value">{display.value}</span>
         {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
-        {#if hint}<span class="gauge-hint">{hint}</span>{/if}
+        {#if hint || failNotes.length}
+          <div class="gauge-notes">
+            {#each failNotes as note (note)}<span class="gauge-fail">{note}</span>{/each}
+            {#if hint}<span class="gauge-hint">{hint}</span>{/if}
+          </div>
+        {/if}
       </div>
       <output class="sr-only" aria-live="polite">{a11y}</output>
     </div>
@@ -444,20 +469,31 @@
     color: var(--text-soft);
     /* No uppercase — unit symbols are case-significant (Mbit/s, kB/s, MiB/s). */
   }
-  /* Guided idle / empty-state copy (§14.3) — replaces the dead bare dash so the
-     gauge always invites action or explains what's happening. Sits centered
-     beneath the big metric; doesn't affect the metric's zero-shift baseline. */
-  .gauge-hint {
+  /* Notes zone at the dial's foot: guided idle/transient copy (§14.3) and
+     skipped-stage explanations. Centered beneath the big metric; doesn't affect
+     the metric's zero-shift baseline. */
+  .gauge-notes {
     position: absolute;
     bottom: 18px;
     left: 50%;
     transform: translateX(-50%);
-    max-width: 86%;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 86%;
     text-align: center;
+  }
+  .gauge-hint {
     font-size: 12.5px;
     font-weight: 600;
     line-height: 1.35;
     color: var(--text-muted);
+  }
+  .gauge-fail {
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--err);
   }
 
   /* Stage-head block — Test Stages header + track. Placed by the instrument

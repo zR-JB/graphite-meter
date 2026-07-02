@@ -173,6 +173,12 @@
     <p>Range / avg / loss</p>
   </header>
 
+  {#if store.stageFailures.latency}
+    <p class="lane-fail" role="alert">
+      Latency skipped — {store.stageFailures.latency.message}
+    </p>
+  {/if}
+
   <div class="lanes" role="img" aria-label="Latency, jitter and loss by phase">
     {#each lanes as lane (lane.key)}
       {@const meta = LANE_META[lane.key]}
@@ -298,6 +304,22 @@
     gap: 10px;
     padding: 14px;
     min-width: 0;
+  }
+
+  /* Skipped-stage banner — why the lanes below stay empty. */
+  .lane-fail {
+    margin: 14px 14px 0;
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
+    border-radius: var(--radius-sm);
+    background: var(--err-soft);
+    color: var(--err);
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .bare .lane-fail {
+    margin: 0 0 8px;
   }
 
   .lane {

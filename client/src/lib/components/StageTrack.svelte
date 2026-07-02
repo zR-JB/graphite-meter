@@ -41,6 +41,7 @@
     | "warmup" // first enabled stage during lead-in (indeterminate)
     | "active" // currently running — fills by phaseFraction
     | "done" // finished this run — settled fill
+    | "failed" // skipped — couldn't run (see store.stageFailures)
     | "pending"; // enabled, not yet reached
 
   function onToggle(stage: StageKey) {
@@ -74,10 +75,13 @@
     const curI = ORDER.indexOf(cur as StageKey); // -1 unless running a stage
     return STAGES.map((s) => {
       const enabled = store.config.stages[s.key];
+      const failure = store.stageFailures[s.key];
       // Tag: enabled stages keep the running/done/upcoming logic; a deselected
       // stage reads "skipped" once a run has started, no tag while idle (§14.x).
       const reason = enabled
-        ? lockReason(s.key)
+        ? failure
+          ? "failed"
+          : lockReason(s.key)
         : store.phase !== "idle"
           ? "skipped"
           : null;
@@ -88,6 +92,8 @@
       let fill = 0;
       if (!enabled) {
         state = "disabled";
+      } else if (failure) {
+        state = "failed";
       } else if (cur === "complete") {
         state = "done";
         fill = 100;
@@ -111,13 +117,15 @@
         } else if (stI === curI) {
           // Active phase: while stalled the fill freezes (phaseFraction is
           // frozen in the core) and pulses to signal the link is down.
+          // Quantized to 0.5% so the 50 Hz progress stream doesn't restyle
+          // the bar every tick.
           state = "active";
-          fill = store.phaseFraction * 100;
+          fill = Math.round(store.phaseFraction * 200) / 2;
         } else {
           state = "pending";
         }
       }
-      return { ...s, enabled, reason, locked, state, fill };
+      return { ...s, enabled, reason, locked, state, fill, failure };
     });
   });
 
@@ -126,9 +134,11 @@
   // last, so its state is simply pending → active (during its phase) → done.
   const bidi = $derived.by<{ state: SegState; fill: number } | null>(() => {
     if (!store.config.stages.bidirectional) return null;
+    if (store.stageFailures.bidirectional) return { state: "failed", fill: 0 };
     const p = store.phase;
     if (p === "complete") return { state: "done", fill: 100 };
-    if (p === "bidirectional") return { state: "active", fill: store.phaseFraction * 100 };
+    if (p === "bidirectional")
+      return { state: "active", fill: Math.round(store.phaseFraction * 200) / 2 };
     return { state: "pending", fill: 0 };
   });
 
@@ -148,19 +158,23 @@
       role="switch"
       aria-checked={s.enabled}
       aria-label="{s.label} stage{s.reason ? ` (${s.reason})` : ''}"
-      use:tooltip={s.reason
-        ? s.reason === "skipped" && !s.locked
-          ? `${s.label} — skipped, tap to include`
-          : `${s.label} — ${s.reason}`
-        : s.enabled
-          ? `${s.label} — tap to skip`
-          : `${s.label} — tap to include`}
+      use:tooltip={s.failure
+        ? `${s.label} — ${s.failure.message}`
+        : s.reason
+          ? s.reason === "skipped" && !s.locked
+            ? `${s.label} — skipped, tap to include`
+            : `${s.label} — ${s.reason}`
+          : s.enabled
+            ? `${s.label} — tap to skip`
+            : `${s.label} — tap to include`}
       disabled={s.locked}
       onclick={() => onToggle(s.key)}
     >
       <div class="seg-bar" aria-hidden="true">
         {#if s.state === "warmup"}
           <span class="seg-fill seg-fill--warmup"></span>
+        {:else if s.state === "failed"}
+          <span class="seg-fill seg-fill--failed"></span>
         {:else if s.state === "active" || s.state === "done"}
           <span
             class="seg-fill seg-fill--{s.key}"
@@ -190,11 +204,15 @@
       role="switch"
       aria-checked="true"
       aria-label="Bidirectional stage (configured in Settings)"
-      use:tooltip={"Bidirectional — concurrent down + up. Toggle in Settings."}
+      use:tooltip={store.stageFailures.bidirectional
+        ? `Bi-dir — ${store.stageFailures.bidirectional.message}`
+        : "Bidirectional — concurrent down + up. Toggle in Settings."}
       disabled
     >
       <div class="seg-bar" aria-hidden="true">
-        {#if bidi.state === "active" || bidi.state === "done"}
+        {#if bidi.state === "failed"}
+          <span class="seg-fill seg-fill--failed"></span>
+        {:else if bidi.state === "active" || bidi.state === "done"}
           <span
             class="seg-fill seg-fill--bidirectional"
             class:is-done={bidi.state === "done"}
@@ -319,6 +337,12 @@
   .seg-fill.is-done {
     background: var(--ok);
   }
+  /* Skipped stage — a muted full err band, steady (nothing is in flight). */
+  .seg-fill--failed {
+    width: 100%;
+    background: var(--err);
+    opacity: 0.45;
+  }
   /* Stalled (link dropped mid-phase): the fill is frozen — pulse it in an error
      tint so a stuck progress bar reads as "paused, reconnecting", not hung. */
   .seg-fill.is-stalled {
@@ -421,5 +445,9 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+  .seg--failed .seg-tag {
+    border-color: color-mix(in srgb, var(--err) 35%, var(--border-subtle));
+    color: var(--err);
   }
 </style>

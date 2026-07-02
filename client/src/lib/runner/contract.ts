@@ -292,10 +292,20 @@ export type TransportRole = Extract<
   "latency" | "download" | "upload" | "bidirectional"
 >;
 
+/** A stage that could not run: the server lacks the capability, no transport
+ *  could be negotiated, or the connection never established. NON-terminal —
+ *  the run continues with the remaining stages; the UI explains the gap in
+ *  that stage's instrument (gauge for transfers, profile for latency). */
+export interface StageFailure {
+  stage: TransportRole;
+  reason: Exclude<TerminationReason, "user-abort">;
+  message: string;
+}
+
 /** One step in negotiating a transport for a phase's I/O. A backend reports a
  *  `negotiating` attempt, then either `established` (success — measuring can
  *  begin) or `failed` (try the next kind). When every kind fails the backend
- *  raises a terminal `transport-unavailable` failure (see TerminationReason). */
+ *  skips the stage via failStage (or fails the run when nothing else can run). */
 export interface TransportAttempt {
   kind: TransportKind;
   role: TransportRole;
@@ -401,6 +411,9 @@ export type RunnerEvent =
   // a phase, and whether it's negotiating / established / failed. Re-emitted
   // verbatim by the core; the store records it (UI surface deferred — §9).
   | { type: "transport"; attempt: TransportAttempt }
+  // A stage was skipped because it couldn't run (see StageFailure). The rest of
+  // the run continues; the UI surfaces the reason in the stage's instrument.
+  | { type: "stageSkipped"; failure: StageFailure }
   // Per-stage final result, emitted the instant each measured phase ends — so a
   // finished stage shows its real result while later stages still run. Stages
   // are independent: each carries its own headline/method/band (§13.4).

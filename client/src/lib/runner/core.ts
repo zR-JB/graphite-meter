@@ -36,6 +36,8 @@ import type {
   StallInfo,
   FlowDirection,
   TransportAttempt,
+  TransportRole,
+  StageFailure,
   PhaseActivity,
 } from "./contract";
 import {
@@ -149,6 +151,12 @@ export interface CoreHost {
    *  the category, a human message, and (optionally) the original thrown value.
    *  `user-abort` is NOT a failure — call abort() for that. */
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
+  /** Report that ONE stage cannot run (capability missing / transport failed /
+   *  connection never established). The core closes the stage's I/O, skips its
+   *  remaining timeline, emits `stageSkipped`, and continues with the next
+   *  stage. Escalates to fail() only when nothing was measured and nothing is
+   *  left to run. */
+  failStage(stage: TransportRole, reason: StageFailure["reason"], message: string): void;
   /** The active config, or null when idle. */
   readonly config: RunnerConfig | null;
   /** The current lifecycle phase. */
@@ -265,6 +273,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
    *  comparison logs at a readable cadence rather than every ~16 Hz sample. */
   #dbgTpLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
+  // ---- per-stage failures (stage skipped, run continues) ----
+  #stageFailures = new Map<TransportRole, StageFailure>();
+
   // ---- evaluation + result bookkeeping ----
   #accum = new RunAccumulator();
   #dlResult: ThroughputResult | null = null;
@@ -340,6 +351,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#activeSeg = null;
     this.#lastStabilityAt = -Infinity;
     this.#bytesCumulative = 0;
+    this.#stageFailures.clear();
     this.#accum.reset();
     this.#dlResult = null;
     this.#ulResult = null;
@@ -454,13 +466,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#beginAdaptivePhase();
 
       if (sameStage) {
-        // Warmup window elapsed — measure on the connections already primed.
-        this.#backend.onStageMeasure(seg.activity);
+        // Warmup window elapsed — measure on the connections already primed
+        // (unless the stage failed during priming and is being skipped).
+        if (!this.#stageFailures.has(seg.activity.stage)) this.#backend.onStageMeasure(seg.activity);
       } else {
         // New stage — open + prime its connection(s). When no warmup window
         // precedes it (warmupMs<=0), begin measuring immediately on the same.
         this.#backend.onStageBegin(seg.activity);
-        if (seg.phase !== "warmup") this.#backend.onStageMeasure(seg.activity);
+        if (seg.phase !== "warmup" && !this.#stageFailures.has(seg.activity.stage)) {
+          this.#backend.onStageMeasure(seg.activity);
+        }
       }
     }
 
@@ -695,11 +710,40 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     return phase === "latency" || phase === "download" || phase === "upload";
   }
 
+  failStage(stage: TransportRole, reason: StageFailure["reason"], message: string): void {
+    if (!this.#tickTimer || this.#stageFailures.has(stage)) return;
+    const failure: StageFailure = { stage, reason, message };
+    this.#stageFailures.set(stage, failure);
+
+    // Close the stage's I/O and jump measured-time past its remaining timeline
+    // so the next tick lands on the following stage (or the finish).
+    if (this.#activeSeg?.activity.stage === stage) {
+      this.#backend.onStageEnd(this.#activeSeg.activity);
+      this.#activeSeg = null;
+    }
+    this.resume();
+    this.#glideArmedForSeg = -1;
+    let end = this.#measuredElapsed;
+    for (const s of this.#segments) if (s.activity.stage === stage && s.end > end) end = s.end;
+    this.#measuredElapsed = end;
+    this.emit({ type: "stageSkipped", failure });
+
+    // Nothing measured and nothing left to run → the whole run failed.
+    const anyResult = this.#dlResult ?? this.#ulResult ?? this.#latResult;
+    if (!anyResult && !segmentAt(this.#segments, this.#measuredElapsed)) {
+      this.fail(reason, message);
+    }
+  }
+
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
+    if (this.#phase === "error") return;
     if (this.#tickTimer) {
       clearInterval(this.#tickTimer);
       this.#tickTimer = null;
     }
+    // Cancel the backend's in-flight I/O (and let it restart its idle
+    // keepalive) — an errored run must not leave lanes streaming.
+    this.#backend.onAbort();
     const error: RunnerError = {
       reason,
       message,
@@ -778,6 +822,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
    *  stages. */
   #finalizeStage(phase: Phase) {
     const cfg = this.#cfg!;
+    if (this.#stageFailures.has(phase as TransportRole)) return; // skipped — no result
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
       this.#dlResult = this.#accum.throughputResult("download", cfg);
       this.emit({ type: "stageResult", stage: "download", result: this.#dlResult });
@@ -819,9 +864,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const actualMs = Math.max(0, performance.now() - this.#t0);
     // Bidirectional has no per-stage event (it resolves at completion); reduce its
     // two lanes here when the stage ran, else null.
-    const bidirectional = cfg.stages.bidirectional
-      ? this.#accum.bidirectionalResult(cfg)
-      : null;
+    const bidirectional =
+      cfg.stages.bidirectional && !this.#stageFailures.has("bidirectional")
+        ? this.#accum.bidirectionalResult(cfg)
+        : null;
     const result = {
       download: this.#dlResult,
       upload: this.#ulResult,
