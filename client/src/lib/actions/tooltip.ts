@@ -22,6 +22,11 @@ export interface TooltipOptions {
   placement?: "top" | "bottom";
   /** Disable without removing the action. */
   disabled?: boolean;
+  /** Skip the hover-intent delay — for tooltips tied to pointer position over
+   * a chart/plot (e.g. a hovered data point), where the tooltip should track
+   * the cursor immediately rather than wait. Basic UI elements (buttons,
+   * labels, jargon terms) keep the delay. Default false. */
+  instant?: boolean;
 }
 
 type TooltipParam = string | TooltipOptions;
@@ -38,6 +43,9 @@ coarseQuery?.addEventListener("change", (e) => (coarsePointer = e.matches));
 
 let uid = 0;
 const STYLE_ID = "gm-tooltip-styles";
+/** Hover-intent delay — avoids flashing a tooltip for every element the
+ * pointer merely passes over while moving across the UI. */
+const HOVER_DELAY_MS = 350;
 
 /** Inject the tooltip stylesheet once (tokens only — no hardcoded hex). */
 function ensureStyles() {
@@ -149,6 +157,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   // that dismiss it — tap-outside and scroll — added only while it's open.
   let tapOpen = false;
   let autoDismissTimer = 0;
+  let hoverTimer = 0;
+
+  function clearHoverTimer() {
+    if (hoverTimer) {
+      clearTimeout(hoverTimer);
+      hoverTimer = 0;
+    }
+  }
 
   function onOutsideTap(e: PointerEvent) {
     const target = e.target as Node | null;
@@ -160,6 +176,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   }
 
   function hide() {
+    clearHoverTimer();
     if (autoDismissTimer) {
       clearTimeout(autoDismissTimer);
       autoDismissTimer = 0;
@@ -181,13 +198,23 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     }
   }
 
-  // ---- Fine pointer (mouse/trackpad): unchanged hover/focus behavior. ----
+  // ---- Fine pointer (mouse/trackpad): hover-intent delay, unless `instant`
+  // (chart/plot tooltips that should track the cursor immediately). ----
   function onPointerEnter(e: PointerEvent) {
     if (e.pointerType === "touch") return; // handled by the tap path below
-    show();
+    if (opts.instant) {
+      show();
+      return;
+    }
+    clearHoverTimer();
+    hoverTimer = window.setTimeout(() => {
+      hoverTimer = 0;
+      show();
+    }, HOVER_DELAY_MS);
   }
   function onPointerLeave(e: PointerEvent) {
     if (e.pointerType === "touch") return;
+    clearHoverTimer();
     hide();
   }
   function onFocus() {

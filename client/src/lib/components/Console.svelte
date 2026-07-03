@@ -223,9 +223,9 @@
     >
     <button
       class="ghost-btn icon-btn"
-      aria-label="Toggle telemetry"
+      aria-label="Toggle endpoint info"
       aria-expanded={telemetryOpen}
-      use:tooltip={"Telemetry"}
+      use:tooltip={"Endpoint info"}
       onclick={() => (telemetryOpen = !telemetryOpen)}>{@html ICON.info}</button
     >
   </header>
