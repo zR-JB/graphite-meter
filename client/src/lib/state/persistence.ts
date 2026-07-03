@@ -23,7 +23,7 @@ import { DEFAULT_CONFIG } from "./store.svelte";
 export const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
-export type ThemePref = "dark" | "light";
+export type ThemePref = "dark" | "light" | "auto";
 
 /** Default docked side-panel widths (px). Applied widths are clamped to a
  *  sane range on use, so a stale/large saved value can never eat the screen. */
@@ -50,22 +50,23 @@ export interface PersistedState {
   debugLogging: boolean;
 }
 
-/** System-preference default for theme when nothing is saved yet. */
-export function systemThemeDefault(): ThemePref {
+/** Resolves the OS-level `prefers-color-scheme` to a concrete theme, used
+ *  when `theme` is `"auto"`. Defaults to dark if the media query is unavailable. */
+export function systemThemeDefault(): "dark" | "light" {
   if (typeof window === "undefined" || !window.matchMedia) return "dark";
   return window.matchMedia("(prefers-color-scheme: light)").matches
     ? "light"
     : "dark";
 }
 
-/** The defaults the persisted blob merges OVER. Theme defaults to the
- *  system preference; everything else to the store/config defaults. */
+/** The defaults the persisted blob merges OVER. Theme defaults to "auto"
+ *  (follow system preference); everything else to the store/config defaults. */
 export function defaultPersisted(): PersistedState {
   return {
     config: structuredClone(DEFAULT_CONFIG),
     unitBase: "base10",
     unitKind: "bits",
-    theme: systemThemeDefault(),
+    theme: "auto",
     showWireEstimates: false,
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
     settingsTab: "setup",

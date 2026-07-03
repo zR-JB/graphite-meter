@@ -33,6 +33,7 @@ import { buildSegments } from "../runner/schedule";
 import {
   loadPersisted,
   savePersisted,
+  systemThemeDefault,
   type ThemePref,
   type SettingsTab,
 } from "./persistence";
@@ -218,8 +219,9 @@ class AppStore {
   /* ---- config + display prefs (hydrated from localStorage, §14.1) ----
    * `loadPersisted()` deep-merges the saved blob over the defaults so a
    * missing/extra/corrupt field never crashes; first-ever load → defaults
-   * (theme from system `prefers-color-scheme`). A module-scope $effect
-   * (see bottom of file) writes any change back, debounced ~250ms. */
+   * (theme defaults to "auto", i.e. system `prefers-color-scheme`). A
+   * module-scope $effect (see bottom of file) writes any change back,
+   * debounced ~250ms. */
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
 
   /* ---- display preferences ---- */
@@ -227,8 +229,9 @@ class AppStore {
   unitKind = $state<"bits" | "bytes">("bits");
 
   /* ---- persisted UI prefs (single source of truth) ---- */
-  /** Active theme. Applied to `document.documentElement[data-theme]` by an
-   *  $effect below — the ONLY place the attribute is set at runtime. */
+  /** Active theme preference — "dark" | "light" | "auto" (follows OS). Resolved
+   *  to a concrete "dark"/"light" and applied to `document.documentElement[data-theme]`
+   *  by an $effect below — the ONLY place the attribute is set at runtime. */
   theme = $state<ThemePref>("dark");
   /** Whether result cards surface the compensated wire-rate estimate (§14.2). */
   showWireEstimates = $state(false);
@@ -747,10 +750,12 @@ export const store = new AppStore();
  * Persistence side-effects (§14.1, Batch H) — browser only.
  *
  * A single module-scope `$effect.root` owns two effects:
- *   1. THEME APPLY — writes `store.theme` to the documentElement
+ *   1. THEME APPLY — resolves `store.theme` ("dark" | "light" | "auto") to a
+ *      concrete "dark"/"light" and writes it to the documentElement
  *      `data-theme` attribute. This is the single runtime source of
  *      truth for the attribute (the boot script in main.ts only seeds
- *      it pre-paint to avoid a flash; this effect keeps it in sync).
+ *      it pre-paint to avoid a flash; this effect keeps it in sync — and,
+ *      for "auto", keeps re-resolving live as the OS preference changes).
  *   2. DEBOUNCED SAVE — reads every persisted field (so any change to
  *      config / prefs re-runs it) and writes a `$state.snapshot` of the
  *      whole blob to localStorage ~250ms after the last change.
@@ -761,10 +766,24 @@ export const store = new AppStore();
 const SAVE_DEBOUNCE_MS = 250;
 
 if (typeof window !== "undefined") {
+  // Live OS theme preference, for resolving `theme === "auto"`. Read once for
+  // the initial value; the `change` listener below keeps it current so a
+  // live OS toggle repaints the app immediately while in auto mode.
+  let systemPrefersLight = $state(systemThemeDefault() === "light");
+  if (window.matchMedia) {
+    window
+      .matchMedia("(prefers-color-scheme: light)")
+      .addEventListener("change", (e) => {
+        systemPrefersLight = e.matches;
+      });
+  }
+
   $effect.root(() => {
-    // 1. Apply theme → <html data-theme>.
+    // 1. Apply theme → <html data-theme>, resolving "auto" to the live OS preference.
     $effect(() => {
-      document.documentElement.setAttribute("data-theme", store.theme);
+      const resolved =
+        store.theme === "auto" ? (systemPrefersLight ? "light" : "dark") : store.theme;
+      document.documentElement.setAttribute("data-theme", resolved);
     });
 
     // 2. Debounced write-through of all persisted fields.

@@ -53,10 +53,24 @@
     prevTelemetryOpen = telemetryOpen;
   });
 
+  const THEME_CYCLE = ["light", "dark", "auto"] as const;
+  const THEME_ICON: Record<(typeof THEME_CYCLE)[number], string> = {
+    light: "☀",
+    dark: "☾",
+    auto: "◐",
+  };
+  const THEME_LABEL: Record<(typeof THEME_CYCLE)[number], string> = {
+    light: "Light",
+    dark: "Dark",
+    auto: "Auto",
+  };
+
   function toggleTheme() {
-    // Flip the persisted pref; the store's $effect applies it to
-    // <html data-theme> and the debounced save persists it (§14.1).
-    store.theme = store.theme === "light" ? "dark" : "light";
+    // Cycle the persisted pref; the store's $effect resolves "auto" against
+    // the live OS preference and applies it to <html data-theme>, and the
+    // debounced save persists it (§14.1).
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
+    store.theme = next;
   }
 
   // Docked-panel widths (persisted). The reserved grid column is the saved
@@ -203,9 +217,9 @@
     <div class="flex-1"></div>
     <button
       class="ghost-btn"
-      aria-label="Toggle light or dark theme"
-      use:tooltip={"Toggle light / dark theme (T)"}
-      onclick={toggleTheme}>◐</button
+      aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
+      use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
+      onclick={toggleTheme}>{THEME_ICON[store.theme]}</button
     >
     <button
       class="ghost-btn icon-btn"
