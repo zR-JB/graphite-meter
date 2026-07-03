@@ -1,23 +1,19 @@
-# Quadlet .container unit — the default deployment. Pulls the published
-# release image; nothing is built locally. Versions (server binary + web
-# client) are stamped into the image at release time, so there is only runtime
-# config here. Install: see ./README.md.
-#
-# To build from source instead, use graphite-meter-source.container +
-# graphite-meter.build.
+# Quadlet .container unit — build-from-source variant (developers / custom
+# builds, e.g. with the dummy engine or dev tools compiled in). The image is
+# produced by the sibling graphite-meter.build unit (Image=*.build → builds
+# first, then runs). For a normal deployment use graphite-meter.container,
+# which pulls the published image instead. Install: see ./README.md.
 #
 # Docs: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
 
 [Unit]
-Description=Graphite Meter speed-test server
+Description=Graphite Meter speed-test server (built from source)
 
 [Container]
 ContainerName=graphite-meter
-# Pin a release for reproducible deploys, e.g. ...:0.1.0 or ...:0.1
-Image=ghcr.io/zr-jb/graphite-meter:latest
-# Pull new releases automatically via podman-auto-update.timer (only sensible
-# together with the :latest tag above):
-# AutoUpdate=registry
+# Reference the .build unit by filename — Quadlet builds it on demand and adds a
+# dependency on graphite-meter-build.service.
+Image=graphite-meter.build
 
 # HTTP/1.1 (default). TLS + HTTP/3 (WebTransport) land in a later stage.
 PublishPort=8765:8765
@@ -32,8 +28,8 @@ PublishPort=8765:8765
 # running behind a reverse proxy so /preflight advertises reachable URLs.
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
-# Environment=GM_H1_ADDR=:8765
 # Environment=PUBLIC_H1_ORIGIN=http://speed.example:8765
+# Environment=GM_ADVERTISE_H3=0
 # Environment=GM_VERBOSE=1
 
 [Service]

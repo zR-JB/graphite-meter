@@ -139,14 +139,14 @@ goclient-run:
 # Both build the client (in their own profile) and embed it, then `go run` the
 # server (in the same profile) — same shape, only the profile differs.
 
-# Dev: build + embed the dev-profile client, then `go run` the server on :8080
+# Dev: build + embed the dev-profile client, then `go run` the server on :8765
 dev: client-build-dev _embed-client
     cd go && go run ./cmd/graphite-meter
 
 # Override the GM_CLIENT_* knobs inline exactly like client-build-prod, e.g.
 # `just prod allow_dummy=1 dev_tools=1 label=0.2.0`. For a persisted binary
 # instead of a live run, use `server-build-prod`.
-# Prod: build + embed the prod-profile client, then `go run` the version-stamped server on :8080.
+# Prod: build + embed the prod-profile client, then `go run` the version-stamped server on :8765.
 prod: client-build-prod _embed-client
     cd go && go run \
       -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion={{version}}" \

@@ -3,7 +3,7 @@
   "server": {
     "name": "graphite-meter",
     "host": "speed.example",
-    "port": 8080,
+    "port": 8765,
     "location": "fra"
   },
   "preTestPingMs": 0,
@@ -11,7 +11,7 @@
   "protocolNegotiated": "http/1.1",
   "capabilities": {
     "origins": {
-      "h1": "http://speed.example:8080",
+      "h1": "http://speed.example:8765",
       "tls": null,
       "h3": null
     },

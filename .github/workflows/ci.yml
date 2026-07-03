@@ -85,18 +85,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Run container
-        run: docker run -d --name gm -p 8080:8080 graphite-meter:smoke
+        run: docker run -d --name gm -p 8765:8765 graphite-meter:smoke
       - name: Wait for ready
         run: |
           for i in $(seq 1 30); do
-            curl -fsS -o /dev/null http://localhost:8080/preflight && exit 0
+            curl -fsS -o /dev/null http://localhost:8765/preflight && exit 0
             sleep 1
           done
           echo "::error::server never became ready"
           exit 1
       - name: Smoke /preflight
         run: |
-          curl -fsS http://localhost:8080/preflight | tee /tmp/preflight.json
+          curl -fsS http://localhost:8765/preflight | tee /tmp/preflight.json
           jq -e '
             .engineVersion == "0.0.0-ci"
             and .capabilities.transports.websocket == true
@@ -105,7 +105,7 @@ jobs:
           ' /tmp/preflight.json
       - name: Smoke SPA index
         run: |
-          curl -fsS http://localhost:8080/ | grep -qi '<script' || {
+          curl -fsS http://localhost:8765/ | grep -qi '<script' || {
             echo "::error::/ did not return the built SPA"
             exit 1
           }
