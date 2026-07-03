@@ -1,5 +1,7 @@
-# Graphite Meter — local/production compose.
-#   docker compose -f container/docker-compose.yml up --build
+# Graphite Meter — build-from-source compose (developers / custom builds).
+# For a normal deployment use the sibling docker-compose.yml, which pulls the
+# published image instead of building.
+#   docker compose -f container/docker-compose.build.yml up --build
 services:
   graphite-meter:
     build:
@@ -15,7 +17,7 @@ services:
         # GM_CLIENT_ENGINE: "real"        # default runner when multiple are built in
         # GM_CLIENT_BUILD_LABEL: "0.1.0"  # status-bar + client-version label (default "prod")
     ports:
-      - "8080:8080" # HTTP/1.1 (default)
+      - "8765:8765" # HTTP/1.1 (default)
       # - "8443:8443/tcp"  # TLS + HTTP/1.1/h2 (Stage 5)
       # - "8443:8443/udp"  # HTTP/3 + WebTransport (Stage 5)
     environment:
@@ -23,6 +25,6 @@ services:
       # running behind a reverse proxy so /preflight advertises reachable URLs.
       GM_SERVER_NAME: "graphite-meter"
       # GM_SERVER_LOCATION: "fra"
-      # PUBLIC_H1_ORIGIN: "http://speed.example:8080"
+      # PUBLIC_H1_ORIGIN: "http://speed.example:8765"
       # GM_ADVERTISE_H3: "0"
     restart: unless-stopped
