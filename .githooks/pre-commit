@@ -1,10 +1,46 @@
 #!/bin/sh
-# Mirrors the CI gates (ci.yml) on whatever is staged, so a commit that passes
-# here passes the PR checks. Enable once per clone with: just hooks
-# Bypass a single commit with: git commit --no-verify
+# Mirrors the CI gates (ci.yml) on whatever is staged, plus local-only safety
+# nets (secrets, conflict markers, accidental branch/large-file commits), so
+# a commit that passes here passes the PR checks. Enable once per clone with:
+# just hooks. Bypass a single commit with: git commit --no-verify
 set -e
 
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo HEAD)
+if [ "$branch" = "main" ]; then
+    echo "pre-commit: refusing to commit directly to main — branch first (git checkout -b ...)"
+    exit 1
+fi
+
+if git diff --cached -U0 --diff-filter=ACMR | grep -qE '^\+(<{7}|={7}|>{7})'; then
+    echo "pre-commit: unresolved merge conflict markers in staged changes"
+    exit 1
+fi
+
+max_kb=1024
+big=""
+for f in $staged; do
+    kb=$(( $(git cat-file -s ":$f" 2>/dev/null || echo 0) / 1024 ))
+    if [ "$kb" -gt "$max_kb" ]; then
+        big="$big
+$f (${kb}KB)"
+    fi
+done
+if [ -n "$big" ]; then
+    echo "pre-commit: staged file(s) over ${max_kb}KB — check this isn't a build artifact:$big"
+    exit 1
+fi
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not found — required for secret scanning."
+    echo "  install (Fedora): sudo dnf install -y gitleaks"
+    echo "  install (other):  go install github.com/gitleaks/gitleaks/v8@latest"
+    exit 1
+fi
+echo "pre-commit: gitleaks (secret scan)"
+gitleaks protect --staged --redact -v
 
 if echo "$staged" | grep -q '^go/'; then
     echo "pre-commit: go (gofmt, vet, test)"
