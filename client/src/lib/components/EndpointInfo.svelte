@@ -80,7 +80,9 @@
   </div>
 
   {#if !infra}
-    <p class="hint">Probe pending — values populate once the handshake resolves.</p>
+    <p class="hint">
+      Probe pending — values populate once the handshake resolves.
+    </p>
   {/if}
 </section>
 
@@ -104,7 +106,8 @@
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background: linear-gradient(180deg, var(--surface-2), transparent),
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent),
       var(--surface-inset);
     box-shadow: var(--elev-recess);
     padding: var(--space-3);

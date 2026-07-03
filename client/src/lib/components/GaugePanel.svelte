@@ -64,7 +64,9 @@
   // are ALREADY de-aliased at the single smoothing point in RunnerCore, so both
   // the big number and the needle (via the engine's 60Hz interpolation EMA) read
   // from that one smoothed source — no extra UI-layer smoothing here.
-  const decayedBytesPerSec = $derived(store.liveTransferBytesPerSec * stallDecay);
+  const decayedBytesPerSec = $derived(
+    store.liveTransferBytesPerSec * stallDecay,
+  );
 
   // Nice-ceiling ladder (ms) for the latency dial. 1-2-5 steps so the five
   // quarter labels (0 … scale) always land on clean values (5/10/25/50…).
@@ -75,9 +77,13 @@
   // position reads as a real RTT and the tick labels stay round.
   const latencyScaleMs = $derived.by(() => {
     let peak = store.infra?.preTestPingMs ?? 0;
-    for (const s of store.latency) if (!s.lost && s.rttMs > peak) peak = s.rttMs;
+    for (const s of store.latency)
+      if (!s.lost && s.rttMs > peak) peak = s.rttMs;
     const target = peak * 1.1; // a touch of headroom so the peak isn't pegged
-    return LATENCY_SCALE_LADDER.find((s) => s >= target) ?? LATENCY_SCALE_LADDER.at(-1)!;
+    return (
+      LATENCY_SCALE_LADDER.find((s) => s >= target) ??
+      LATENCY_SCALE_LADDER.at(-1)!
+    );
   });
 
   // Quarter tick labels for the dial, memoized so the engine's 60 Hz pull
@@ -88,9 +94,12 @@
       (store.phase === "complete" && store.finalMetric?.kind === "latency"),
   );
   const gaugeTicks = $derived.by(() => {
-    if (msTicksActive) return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f));
+    if (msTicksActive)
+      return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f));
     const scale = store.displayScaleBytesPerSec;
-    return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtSpeed(store.toUnit(scale * f)));
+    return [0, 0.25, 0.5, 0.75, 1].map((f) =>
+      fmtSpeed(store.toUnit(scale * f)),
+    );
   });
 
   // The single big number, per phase.
@@ -106,14 +115,20 @@
       // — never assume download exists.
       const fm = store.finalMetric;
       if (fm?.kind === "speed")
-        return { value: fmtSpeed(store.toUnit(fm.bytesPerSec)), unit: store.unitLabel };
+        return {
+          value: fmtSpeed(store.toUnit(fm.bytesPerSec)),
+          unit: store.unitLabel,
+        };
       if (fm?.kind === "latency") return { value: fmtMs(fm.ms), unit: "ms" };
       return { value: "—", unit: "" };
     }
     // Live download/upload/bidirectional speed (already de-aliased upstream).
     // While stalled it eases to 0 over ~800ms (presentation only — principle 2);
     // snaps back on resume.
-    return { value: fmtSpeed(store.toUnit(decayedBytesPerSec)), unit: store.unitLabel };
+    return {
+      value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
+      unit: store.unitLabel,
+    };
   });
 
   // Skipped transfer stages — the gauge explains why throughput is missing.
@@ -124,7 +139,9 @@
     bidirectional: "Bidirectional",
   };
   const failNotes = $derived(
-    store.transferFailures.map((f) => `${STAGE_NAME[f.stage]} skipped — ${f.message}`),
+    store.transferFailures.map(
+      (f) => `${STAGE_NAME[f.stage]} skipped — ${f.message}`,
+    ),
   );
 
   // Guided idle / empty + transient states — never a dead, bare dash.
@@ -148,11 +165,17 @@
   const status = $derived.by(() => {
     switch (store.phase) {
       case "aborted":
-        return { tone: "aborted", headline: "Test aborted", action: "Press Run Again to restart" };
+        return {
+          tone: "aborted",
+          headline: "Test aborted",
+          action: "Press Run Again to restart",
+        };
       case "error":
         return {
           tone: "error",
-          headline: store.error ? reasonLabel(store.error.reason) : "Something went wrong",
+          headline: store.error
+            ? reasonLabel(store.error.reason)
+            : "Something went wrong",
           action: "Press Run Again to retry",
         };
       default:
@@ -162,7 +185,9 @@
 
   // One string for the screen-reader mirror: the status (when terminal) or
   // the guided hint (idle/warmup); empty mid-run (the live value speaks).
-  const statusText = $derived(status ? `${status.headline} — ${status.action}` : hint);
+  const statusText = $derived(
+    status ? `${status.headline} — ${status.action}` : hint,
+  );
 
   // Wake the (self-parking) gauge loop whenever the live state it draws from
   // changes. During a run the loop sustains itself; this re-arms it on the
@@ -220,7 +245,9 @@
   $effect(() => {
     const s = statusText; // track phase-driven copy + phase changes; not the live value
     void store.phase;
-    a11y = s ? s : untrack(() => `${display.value} ${display.unit}, phase ${store.phase}`);
+    a11y = s
+      ? s
+      : untrack(() => `${display.value} ${display.unit}, phase ${store.phase}`);
   });
 
   onMount(() => {
@@ -235,9 +262,13 @@
       let resolvedFraction = -1;
       if (p === "complete" && fm) {
         if (fm.kind === "speed") {
-          resolvedFraction = scale > 0 ? Math.min(1, Math.max(0, fm.bytesPerSec / scale)) : 0;
+          resolvedFraction =
+            scale > 0 ? Math.min(1, Math.max(0, fm.bytesPerSec / scale)) : 0;
         } else {
-          resolvedFraction = latencyScaleMs > 0 ? Math.min(1, Math.max(0, fm.ms / latencyScaleMs)) : 0;
+          resolvedFraction =
+            latencyScaleMs > 0
+              ? Math.min(1, Math.max(0, fm.ms / latencyScaleMs))
+              : 0;
         }
       }
       return {
@@ -260,7 +291,10 @@
 
     // invalidateTheme repaints synchronously, so theme/resize need no wake().
     const mo = new MutationObserver(() => engine.invalidateTheme());
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
 
     const ro = new ResizeObserver(() => engine.invalidateTheme());
     ro.observe(canvasEl!);
@@ -299,7 +333,10 @@
     <div class="stage-head">
       <div class="controls-head">
         <span class="controls-title">Test stages</span>
-        <span class="eta" use:tooltip={"Estimated run time at the saved duration"}>
+        <span
+          class="eta"
+          use:tooltip={"Estimated run time at the saved duration"}
+        >
           ~{(etaMs / 1000).toFixed(0)}s
         </span>
       </div>
@@ -313,7 +350,9 @@
         {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
         {#if hint || status || failNotes.length}
           <div class="gauge-notes">
-            {#each failNotes as note (note)}<span class="gauge-fail">{note}</span>{/each}
+            {#each failNotes as note (note)}<span class="gauge-fail"
+                >{note}</span
+              >{/each}
             {#if status}
               <span class="gauge-status" class:error={status.tone === "error"}>
                 {status.headline}
@@ -579,7 +618,8 @@
   /* Stacked/mobile: the document scrolls, so the anti-layout-shift reserve
      buys nothing and just reads as dead space between the controls and the
      chart. Collapse it — results push the chart down when they appear. */
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .results-slot {
       min-height: 0;
     }

@@ -135,7 +135,12 @@ export interface StabilitySnapshot {
 export interface RunnerConfig {
   /** Enabled measured stages. `bidirectional` (concurrent down+up) defaults
    *  off; when on it runs after upload with its own warmup. */
-  stages: { latency: boolean; download: boolean; upload: boolean; bidirectional: boolean };
+  stages: {
+    latency: boolean;
+    download: boolean;
+    upload: boolean;
+    bidirectional: boolean;
+  };
   /** When the latency stage is off, also skip the under-load latency pings
    *  taken during download/upload — so latency is fully off (no measurement,
    *  no profile, no chart line) rather than just dropping the idle phase. */
@@ -438,7 +443,11 @@ export type RunnerEvent =
   // Per-stage final result, emitted the instant each measured phase ends — so a
   // finished stage shows its real result while later stages still run. Stages
   // are independent: each carries its own headline/method/band.
-  | { type: "stageResult"; stage: "download" | "upload"; result: ThroughputResult }
+  | {
+      type: "stageResult";
+      stage: "download" | "upload";
+      result: ThroughputResult;
+    }
   | { type: "stageResult"; stage: "latency"; result: LatencyResult }
   | { type: "complete"; result: RunResult }
   // Abnormal end (not user-abort, which is the "aborted" phase). Structured so

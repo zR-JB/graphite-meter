@@ -69,15 +69,20 @@
     // Cycle the persisted pref; the store's $effect resolves "auto" against
     // the live OS preference and applies it to <html data-theme>, and the
     // debounced save persists it.
-    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
+    const next =
+      THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
     store.theme = next;
   }
 
   // Docked-panel widths (persisted). The reserved grid column is the saved
   // width only while that panel is docked + open, else 0 (column collapses).
   // The grid template also CSS-clamps to 46vw so a stale large value is safe.
-  const dockLeft = $derived(dockQuery.matches && settingsOpen ? store.dockWidth.left : 0);
-  const dockRight = $derived(dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0);
+  const dockLeft = $derived(
+    dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
+  );
+  const dockRight = $derived(
+    dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0,
+  );
 
   function setDockWidth(side: "left" | "right", px: number) {
     store.dockWidth = { ...store.dockWidth, [side]: px };
@@ -131,7 +136,12 @@
       const t = e.target;
       if (t instanceof HTMLElement) {
         const tag = t.tagName;
-        if (tag === "BUTTON" || tag === "A" || t.getAttribute("role") === "button") return;
+        if (
+          tag === "BUTTON" ||
+          tag === "A" ||
+          t.getAttribute("role") === "button"
+        )
+          return;
       }
       engage();
       e.preventDefault();
@@ -184,7 +194,9 @@
   class="bg-bg text-text"
 >
   <!-- TOPBAR -->
-  <header class="zone topbar flex items-center gap-3 px-4 border-b border-border">
+  <header
+    class="zone topbar flex items-center gap-3 px-4 border-b border-border"
+  >
     <button
       type="button"
       class="brand-btn font-mono text-sm font-bold tracking-tight"
@@ -211,7 +223,8 @@
       aria-label="Open settings"
       aria-expanded={settingsOpen}
       use:tooltip={"Settings — setup, endpoint, developer"}
-      onclick={() => (settingsOpen = !settingsOpen)}>{@html ICON.settings}</button
+      onclick={() => (settingsOpen = !settingsOpen)}
+      >{@html ICON.settings}</button
     >
     <ConnectivityIndicator />
     <div class="flex-1"></div>
@@ -241,7 +254,9 @@
   </section>
 
   <!-- STATUS BAR -->
-  <footer class="zone status flex items-center gap-4 px-4 border-t border-border bg-surface-1 font-mono text-soft">
+  <footer
+    class="zone status flex items-center gap-4 px-4 border-t border-border bg-surface-1 font-mono text-soft"
+  >
     <StatusBar />
     <ShortcutHints />
   </footer>
@@ -400,7 +415,8 @@
      scroll internally, refuses to chain them out to the document (the page
      becomes unscrollable from the center, breaking phone usability). Letting
      it overflow visibly returns scroll control to the document. */
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     #console {
       height: auto;
       min-height: 100dvh;

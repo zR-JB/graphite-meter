@@ -88,7 +88,10 @@ const THROUGHPUT_DISPLAY_TAU_MS = 700;
 const THROUGHPUT_STABILITY_TAU_MS = 1800;
 
 /** Per-direction dt-aware EMA state (one store per smoothing purpose). */
-type TpEma = { down: { v: number; t: number } | null; up: { v: number; t: number } | null };
+type TpEma = {
+  down: { v: number; t: number } | null;
+  up: { v: number; t: number } | null;
+};
 
 /** Per-tick context handed to a pull-style backend so it can synthesize the
  *  samples due this tick. `realNow` lets a backend gate sample cadence on real
@@ -116,7 +119,11 @@ export interface CoreHost {
    *  travels WITH the sample (no phase-inference), so the bidirectional phase
    *  can carry concurrent down + up samples. The core stamps elapsed,
    *  accumulates it into the matching lane, and emits the throughput event. */
-  ingestThroughput(dir: FlowDirection, bytesPerSec: number, bytesDelta: number): void;
+  ingestThroughput(
+    dir: FlowDirection,
+    bytesPerSec: number,
+    bytesDelta: number,
+  ): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
   /** Upload only: report the SERVER-measured headline rate (bytes/sec) computed
@@ -150,7 +157,11 @@ export interface CoreHost {
    *  remaining timeline, emits `stageSkipped`, and continues with the next
    *  stage. Escalates to fail() only when nothing was measured and nothing is
    *  left to run. */
-  failStage(stage: TransportRole, reason: StageFailure["reason"], message: string): void;
+  failStage(
+    stage: TransportRole,
+    reason: StageFailure["reason"],
+    message: string,
+  ): void;
   /** The active config, or null when idle. */
   readonly config: RunnerConfig | null;
   /** The current lifecycle phase. */
@@ -398,7 +409,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#tickTimer || !this.#cfg) return;
     this.#cfg = { ...this.#cfg, stages };
 
-    const { segments, totalMs } = rebuildTail(this.#segments, this.#measuredElapsed, this.#cfg);
+    const { segments, totalMs } = rebuildTail(
+      this.#segments,
+      this.#measuredElapsed,
+      this.#cfg,
+    );
     this.#segments = segments;
     this.#totalMs = totalMs;
     // Segment indices shifted under us — drop any armed glide so it re-arms
@@ -446,7 +461,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       // seam: keep the primed connections and just start measuring on them.
       // Otherwise we are crossing a STAGE boundary: end the old stage's I/O and
       // begin (open + prime) the new stage's.
-      const sameStage = prev !== null && prev.activity.stage === seg.activity.stage;
+      const sameStage =
+        prev !== null && prev.activity.stage === seg.activity.stage;
 
       // The phase we're leaving has just finished — emit its final per-stage
       // result before announcing the transition, so its card resolves now; and
@@ -468,12 +484,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       if (sameStage) {
         // Warmup window elapsed — measure on the connections already primed
         // (unless the stage failed during priming and is being skipped).
-        if (!this.#stageFailures.has(seg.activity.stage)) this.#backend.onStageMeasure(seg.activity);
+        if (!this.#stageFailures.has(seg.activity.stage))
+          this.#backend.onStageMeasure(seg.activity);
       } else {
         // New stage — open + prime its connection(s). When no warmup window
         // precedes it (warmupMs<=0), begin measuring immediately on the same.
         this.#backend.onStageBegin(seg.activity);
-        if (seg.phase !== "warmup" && !this.#stageFailures.has(seg.activity.stage)) {
+        if (
+          seg.phase !== "warmup" &&
+          !this.#stageFailures.has(seg.activity.stage)
+        ) {
           this.#backend.onStageMeasure(seg.activity);
         }
       }
@@ -518,11 +538,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       seg.phase === "upload" ||
       seg.phase === "bidirectional"
     ) {
-      const conf: ConfidenceScore | LatencyConfidenceScore = this.#accum.confidence(seg.phase);
+      const conf: ConfidenceScore | LatencyConfidenceScore =
+        this.#accum.confidence(seg.phase);
       // Track the trailing stable run FIRST so the emitted band reflects the
       // hysteretic latched state (entering stable takes a higher bar than
       // leaving — the pip and the stable window don't flicker).
-      const stable = this.#accum.trackStableRun(seg.phase, conf.score, this.#cfg!.adaptive);
+      const stable = this.#accum.trackStableRun(
+        seg.phase,
+        conf.score,
+        this.#cfg!.adaptive,
+      );
       // The `stability` snapshot only models the three single-lane stages; the
       // bidirectional phase still drives the early-stop glide off the combined
       // rate but emits no live pip (it has no single-lane stability signal).
@@ -548,14 +573,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   /* ================= SAMPLE INGEST (CoreHost) ================= */
-  ingestThroughput(dir: FlowDirection, bytesPerSec: number, bytesDelta: number): void {
+  ingestThroughput(
+    dir: FlowDirection,
+    bytesPerSec: number,
+    bytesDelta: number,
+  ): void {
     const cfg = this.#cfg;
     if (!cfg) return;
     const phase = this.#phase;
     // Direction now travels with the sample, so the bidirectional phase can
     // carry concurrent down + up samples (no phase-inference). Stray samples
     // outside a transfer/bidi phase are ignored.
-    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional") return;
+    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
+      return;
     // A real byte sample proves delivery: refresh the watchdog + auto-resume.
     this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
@@ -567,8 +597,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#tpEmaStable.down = this.#tpEmaStable.up = null;
       this.#tpEmaPhase = this.#phase;
     }
-    const display = this.#emaStep(this.#tpEma, dir, bytesPerSec, THROUGHPUT_DISPLAY_TAU_MS);
-    const stable = this.#emaStep(this.#tpEmaStable, dir, bytesPerSec, THROUGHPUT_STABILITY_TAU_MS);
+    const display = this.#emaStep(
+      this.#tpEma,
+      dir,
+      bytesPerSec,
+      THROUGHPUT_DISPLAY_TAU_MS,
+    );
+    const stable = this.#emaStep(
+      this.#tpEmaStable,
+      dir,
+      bytesPerSec,
+      THROUGHPUT_STABILITY_TAU_MS,
+    );
     this.#accum.pushThroughput(phase, dir, stable, bytesDelta);
     if (debugEnabled()) {
       const now = performance.now();
@@ -632,7 +672,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#accum.pushLatency(rttMs, underLoad, lost);
     this.emit({
       type: "latency",
-      sample: { t: this.#measuredElapsed, rttMs, underLoad, lost, phase: this.#phase },
+      sample: {
+        t: this.#measuredElapsed,
+        rttMs,
+        underLoad,
+        lost,
+        phase: this.#phase,
+      },
     });
   }
 
@@ -686,7 +732,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#measuring) {
       // Watchdog only inside a measured phase — warmup primes connections and
       // legitimately produces no samples, so it must not trip the watchdog.
-      if (this.#isMeasuredPhase(this.#phase) && now - this.#lastSampleWall > STALL_WATCHDOG_MS) {
+      if (
+        this.#isMeasuredPhase(this.#phase) &&
+        now - this.#lastSampleWall > STALL_WATCHDOG_MS
+      ) {
         this.stall({ reason: "connection-lost", detail: "no data" });
       }
       return false;
@@ -697,7 +746,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       // A stall never carries user-abort (that's the abort() path), but the type
       // is the broad TerminationReason; narrow to a failure reason for fail().
       const r = this.#stallInfo?.reason;
-      const reason: RunnerError["reason"] = r && r !== "user-abort" ? r : "connection-lost";
+      const reason: RunnerError["reason"] =
+        r && r !== "user-abort" ? r : "connection-lost";
       this.fail(reason, "Connection lost — gave up after max-stall timeout");
       return true;
     }
@@ -710,7 +760,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     return phase === "latency" || phase === "download" || phase === "upload";
   }
 
-  failStage(stage: TransportRole, reason: StageFailure["reason"], message: string): void {
+  failStage(
+    stage: TransportRole,
+    reason: StageFailure["reason"],
+    message: string,
+  ): void {
     if (!this.#tickTimer || this.#stageFailures.has(stage)) return;
     const failure: StageFailure = { stage, reason, message };
     this.#stageFailures.set(stage, failure);
@@ -724,7 +778,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.resume();
     this.#glideArmedForSeg = -1;
     let end = this.#measuredElapsed;
-    for (const s of this.#segments) if (s.activity.stage === stage && s.end > end) end = s.end;
+    for (const s of this.#segments)
+      if (s.activity.stage === stage && s.end > end) end = s.end;
     this.#measuredElapsed = end;
     this.emit({ type: "stageSkipped", failure });
 
@@ -777,7 +832,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (seg.phase === "warmup") return; // never called this way, but narrows seg.phase below
     if (this.#glideArmedForSeg >= 0) return; // already gliding this phase
 
-    const kind: "latency" | "transfer" = seg.phase === "latency" ? "latency" : "transfer";
+    const kind: "latency" | "transfer" =
+      seg.phase === "latency" ? "latency" : "transfer";
     const exit = shouldExitPhase({
       kind,
       elapsedMs: elapsed - seg.start,
@@ -803,7 +859,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const p = Math.min(1, Math.max(0, (now - this.#glideStartReal) / glideMs));
     const eased = easeInOutCubic(p);
     const target =
-      this.#glideFromMeasured + (this.#glideTargetMeasured - this.#glideFromMeasured) * eased;
+      this.#glideFromMeasured +
+      (this.#glideTargetMeasured - this.#glideFromMeasured) * eased;
     // Monotonic: a jittery tick must never rewind the marker.
     this.#measuredElapsed = Math.max(this.#measuredElapsed, target);
   }
@@ -825,7 +882,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#stageFailures.has(phase as TransportRole)) return; // skipped — no result
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
       this.#dlResult = this.#accum.throughputResult("download", cfg);
-      this.emit({ type: "stageResult", stage: "download", result: this.#dlResult });
+      this.emit({
+        type: "stageResult",
+        stage: "download",
+        result: this.#dlResult,
+      });
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
       const r = this.#accum.throughputResult("upload", cfg);
       // Server-authoritative headline: substitute the totals-based server rate
@@ -837,10 +898,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         r.serverAuthoritative = true;
       }
       this.#ulResult = r;
-      this.emit({ type: "stageResult", stage: "upload", result: this.#ulResult });
+      this.emit({
+        type: "stageResult",
+        stage: "upload",
+        result: this.#ulResult,
+      });
     } else if (phase === "latency" && cfg.stages.latency && !this.#latResult) {
       this.#latResult = this.#accum.latencyResult(cfg, this.#idleHint());
-      this.emit({ type: "stageResult", stage: "latency", result: this.#latResult });
+      this.emit({
+        type: "stageResult",
+        stage: "latency",
+        result: this.#latResult,
+      });
     }
   }
 
@@ -875,7 +944,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       // Latency is always present in the aggregate: when the latency STAGE ran it
       // was finalized as a stage result; otherwise compute it here from any
       // under-load pings (bufferbloat still needs it).
-      latency: this.#latResult ?? this.#accum.latencyResult(cfg, this.#idleHint()),
+      latency:
+        this.#latResult ?? this.#accum.latencyResult(cfg, this.#idleHint()),
       bufferbloat: this.#accum.bufferbloatGrade(this.#idleHint()),
       startedAt: Date.now() - actualMs,
       durationMs: actualMs,

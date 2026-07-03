@@ -60,7 +60,13 @@ export function dlog(
 
 /** Bytes/sec → an auto-scaled SI bit-rate string, e.g. "9.31 Gbit/s". */
 export function fmtRate(bytesPerSec: number): string {
-  const [v, u] = scale(bytesPerSec * 8, ["bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"]);
+  const [v, u] = scale(bytesPerSec * 8, [
+    "bit/s",
+    "kbit/s",
+    "Mbit/s",
+    "Gbit/s",
+    "Tbit/s",
+  ]);
   return `${v} ${u}`;
 }
 

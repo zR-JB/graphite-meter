@@ -188,7 +188,11 @@ export class RunAccumulator {
    *  result selection all read. */
   confidence(phase: StagePhase): ConfidenceScore | LatencyConfidenceScore {
     return phase === "latency"
-      ? latencyConfidence(this.#phaseRtts, this.#phasePings, this.#phasePingsLost)
+      ? latencyConfidence(
+          this.#phaseRtts,
+          this.#phasePings,
+          this.#phasePingsLost,
+        )
       : transferConfidence(this.#phaseBytesPerSec);
   }
 
@@ -198,7 +202,11 @@ export class RunAccumulator {
    *  below `stabilityThreshold − STABILITY_HYSTERESIS` — so a score hovering at
    *  the boundary doesn't toggle the stable state. Returns the latched state;
    *  at finish a ≥0 index means "still on a stable plateau". */
-  trackStableRun(phase: StagePhase, score: number, cfg: RunnerConfig["adaptive"]): boolean {
+  trackStableRun(
+    phase: StagePhase,
+    score: number,
+    cfg: RunnerConfig["adaptive"],
+  ): boolean {
     let start: number;
     if (phase === "download") {
       this.#dlFinalScore = score;
@@ -265,12 +273,25 @@ export class RunAccumulator {
    * {@link #windowStart} for which window (early-stopping phase, full
    * measurement phase, or trailing stable run) backs the headline.
    */
-  throughputResult(phase: "download" | "upload", cfg: RunnerConfig): ThroughputResult {
+  throughputResult(
+    phase: "download" | "upload",
+    cfg: RunnerConfig,
+  ): ThroughputResult {
     const a = phase === "download" ? this.#dl : this.#ul;
-    const stableStart = phase === "download" ? this.#dlStableStart : this.#ulStableStart;
-    const earlyStopStart = phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart;
-    const finalScore = phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
-    return this.#reduceTransfer(a, stableStart, earlyStopStart, finalScore, cfg, this.#loadedLossPct());
+    const stableStart =
+      phase === "download" ? this.#dlStableStart : this.#ulStableStart;
+    const earlyStopStart =
+      phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart;
+    const finalScore =
+      phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
+    return this.#reduceTransfer(
+      a,
+      stableStart,
+      earlyStopStart,
+      finalScore,
+      cfg,
+      this.#loadedLossPct(),
+    );
   }
 
   /** Under-load packet-loss % over the whole run — the loss signal the transfer
@@ -278,7 +299,9 @@ export class RunAccumulator {
    *  property, so the same figure is stamped on both transfer results. 0 when no
    *  loaded pings ran. */
   #loadedLossPct(): number {
-    return this.#loadedPings ? (this.#loadedPingsLost / this.#loadedPings) * 100 : 0;
+    return this.#loadedPings
+      ? (this.#loadedPingsLost / this.#loadedPings) * 100
+      : 0;
   }
 
   /** Reduce the bidirectional phase's two lanes to a {down, up} result pair —
@@ -286,7 +309,10 @@ export class RunAccumulator {
    *  share the phase's single stable-run index (computed over the combined-rate
    *  window), so the trailing stable window is the same span of samples in each
    *  lane (the lanes are pushed in lock-step, so their array indices align). */
-  bidirectionalResult(cfg: RunnerConfig): { down: ThroughputResult; up: ThroughputResult } {
+  bidirectionalResult(cfg: RunnerConfig): {
+    down: ThroughputResult;
+    up: ThroughputResult;
+  } {
     const lossPct = this.#loadedLossPct();
     return {
       down: this.#reduceTransfer(
@@ -329,7 +355,8 @@ export class RunAccumulator {
   ): number {
     if (!adaptiveEnabled) return -1;
     if (earlyStopStart >= 0 && earlyStopStart < arrLen) {
-      const stableThroughStop = stableStart >= 0 && stableStart <= earlyStopStart;
+      const stableThroughStop =
+        stableStart >= 0 && stableStart <= earlyStopStart;
       return stableThroughStop ? earlyStopStart : -1;
     }
     return stableStart >= 0 && stableStart < arrLen ? stableStart : -1;
@@ -367,7 +394,12 @@ export class RunAccumulator {
     const cv = full > 0 ? Math.sqrt(variance) / full : 0;
     const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
 
-    const windowStart = this.#windowStart(stableStart, earlyStopStart, cfg.adaptive.enabled, v.length);
+    const windowStart = this.#windowStart(
+      stableStart,
+      earlyStopStart,
+      cfg.adaptive.enabled,
+      v.length,
+    );
     const useWindow = windowStart >= 0;
     const window = useWindow ? v.slice(windowStart) : v;
     const reported = window.reduce((s, x) => s + x, 0) / window.length;
@@ -396,17 +428,25 @@ export class RunAccumulator {
     const idle = this.#idleRtts;
     // Headline (median unloaded) follows the same window rule as throughput
     // (see #windowStart); min/p50/p95/jitter/loss stay whole-run descriptors.
-    const windowStart = this.#windowStart(stableStart, earlyStopStart, cfg.adaptive.enabled, idle.length);
+    const windowStart = this.#windowStart(
+      stableStart,
+      earlyStopStart,
+      cfg.adaptive.enabled,
+      idle.length,
+    );
     const useWindow = windowStart >= 0;
     const idleWindow = useWindow ? idle.slice(windowStart) : idle;
-    const idleMs = median(idleWindow.length ? idleWindow : all) || idleFallbackMs;
+    const idleMs =
+      median(idleWindow.length ? idleWindow : all) || idleFallbackMs;
     return {
       idleMs,
       minMs: all.length ? Math.min(...all) : 0,
       p50Ms: percentile(all, 50),
       p95Ms: percentile(all, 95),
       jitterMs: meanAbsDeviation(all),
-      packetLossPct: this.#pingsTotal ? (this.#pingsLost / this.#pingsTotal) * 100 : 0,
+      packetLossPct: this.#pingsTotal
+        ? (this.#pingsLost / this.#pingsTotal) * 100
+        : 0,
       reportedMs: idleMs,
       method: useWindow ? "stable-window" : "full-average",
       stabilityScore: finalScore,
@@ -417,8 +457,12 @@ export class RunAccumulator {
   /** Bufferbloat grade from the idle-vs-loaded RTT delta. `idleFallbackMs` is
    *  used only when no idle samples exist. */
   bufferbloatGrade(idleFallbackMs: number): BufferbloatGrade {
-    const idleMs = median(this.#idleRtts.length ? this.#idleRtts : this.#allRtts) || idleFallbackMs;
-    const loadedMs = this.#loadedRtts.length ? median(this.#loadedRtts) : idleMs;
+    const idleMs =
+      median(this.#idleRtts.length ? this.#idleRtts : this.#allRtts) ||
+      idleFallbackMs;
+    const loadedMs = this.#loadedRtts.length
+      ? median(this.#loadedRtts)
+      : idleMs;
     const increaseMs = Math.max(0, loadedMs - idleMs);
     let grade: BufferbloatGrade["grade"];
     if (increaseMs <= 5) grade = "A";

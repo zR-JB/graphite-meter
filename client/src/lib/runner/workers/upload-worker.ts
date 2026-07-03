@@ -60,19 +60,31 @@
  * rebuild a Blob per POST.
  * ============================================================ */
 
-import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
+import {
+  setDebugLogging,
+  debugEnabled,
+  dlog,
+  fmtRate,
+  fmtBytes,
+  fmtMs,
+} from "../../debug";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** `debug`/`id` drive verbose per-stream logging only. `streams` is the active
  *  parallel-stream count, used to split UPLOAD_TOTAL_BUF_BYTES per worker. */
 type InMsg =
-  | { type: "start"; url: string; debug?: boolean; id?: number; streams?: number }
+  | {
+      type: "start";
+      url: string;
+      debug?: boolean;
+      id?: number;
+      streams?: number;
+    }
   | { type: "stop" };
 /** `alive` = one POST drained by the server (lane is live; NO byte count — the
  *  /ws/upload socket carries the authoritative count). `error` drives lane restart. */
 type OutMsg =
-  | { type: "alive" }
-  | { type: "error"; recoverable: boolean; detail: string };
+  { type: "alive" } | { type: "error"; recoverable: boolean; detail: string };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
@@ -137,7 +149,12 @@ function uploadTotalBudget(): number {
  *  terminal for this run — re-POSTing just hammers a server that won't take it.
  *  Everything else (incl. 500 and any network/abort error) is treated transient. */
 function recoverableStatus(status: number): boolean {
-  return !(status === 429 || status === 413 || status === 503 || status === 410);
+  return !(
+    status === 429 ||
+    status === 413 ||
+    status === 503 ||
+    status === 410
+  );
 }
 
 let stopped = false;
@@ -204,7 +221,9 @@ function incompressibleBlock(): Uint8Array<ArrayBuffer> {
   if (fillBlock) return fillBlock;
   const b = new Uint8Array(new ArrayBuffer(FILL_BLOCK_BYTES));
   for (let off = 0; off < b.length; off += RNG_CHUNK_BYTES) {
-    crypto.getRandomValues(b.subarray(off, Math.min(off + RNG_CHUNK_BYTES, b.length)));
+    crypto.getRandomValues(
+      b.subarray(off, Math.min(off + RNG_CHUNK_BYTES, b.length)),
+    );
   }
   fillBlock = b;
   return b;
@@ -227,7 +246,6 @@ function buildPool(): void {
   pool = new Blob(parts, { type: "application/octet-stream" });
   poolBytes = bufBytes;
 }
-
 
 /** POST adaptively-sized slices of the pool in a loop to keep the lane saturated
  *  for the whole stage. Mirrors download-worker.ts's re-fetch loop: a fresh
@@ -254,7 +272,11 @@ async function run(url: string): Promise<void> {
       // next POST (an unread body can pin the connection and stall the lane).
       await res.arrayBuffer().catch(() => {});
       if (!res.ok) {
-        post({ type: "error", recoverable: recoverableStatus(res.status), detail: `HTTP ${res.status}` });
+        post({
+          type: "error",
+          recoverable: recoverableStatus(res.status),
+          detail: `HTTP ${res.status}`,
+        });
         return; // RealBackend decides whether to restart this lane
       }
       // One full slice was drained by the server: the lane is alive. NO bytes — the

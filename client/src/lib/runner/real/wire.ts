@@ -94,7 +94,8 @@ function countTime(rest: string, op: string): [bigint, bigint] {
   const n = u64(rest.slice(0, s), `${op} n`);
   const tail = rest.slice(s + 1);
   const tc = tail.indexOf(",");
-  if (tc === -1 || tail.slice(0, tc) !== "TIME") throw new DecodeError(ErrBadArgs, `${op} TIME`);
+  if (tc === -1 || tail.slice(0, tc) !== "TIME")
+    throw new DecodeError(ErrBadArgs, `${op} TIME`);
   return [n, u64(tail.slice(tc + 1), `${op} nanos`)];
 }
 
@@ -121,7 +122,8 @@ export function decode(msg: string): Frame {
       const id = u32(rest.slice(0, s), "PONG id");
       const tail = rest.slice(s + 1);
       const tc = tail.indexOf(",");
-      if (tc === -1 || tail.slice(0, tc) !== "TIME") throw new DecodeError(ErrBadArgs, "PONG TIME");
+      if (tc === -1 || tail.slice(0, tc) !== "TIME")
+        throw new DecodeError(ErrBadArgs, "PONG TIME");
       const nanos = u64(tail.slice(tc + 1), "PONG nanos");
       return { op: "PONG", id, nanos };
     }

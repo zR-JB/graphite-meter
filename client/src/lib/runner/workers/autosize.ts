@@ -34,8 +34,15 @@ export function nextTransferBytes(
 ): { bytes: number; ewma: number } {
   if (elapsedMs <= 0) return { bytes: prevBytes, ewma: prevEwma };
   const observed = (prevBytes / elapsedMs) * 1000; // bytes/sec
-  const ewma = prevEwma === 0 ? observed : c.alpha * observed + (1 - c.alpha) * prevEwma;
+  const ewma =
+    prevEwma === 0 ? observed : c.alpha * observed + (1 - c.alpha) * prevEwma;
   const want = (ewma * c.targetMs) / 1000;
-  const stepped = Math.min(prevBytes * c.stepUp, Math.max(prevBytes * c.stepDown, want));
-  return { bytes: Math.floor(Math.min(c.maxBytes, Math.max(c.minBytes, stepped))), ewma };
+  const stepped = Math.min(
+    prevBytes * c.stepUp,
+    Math.max(prevBytes * c.stepDown, want),
+  );
+  return {
+    bytes: Math.floor(Math.min(c.maxBytes, Math.max(c.minBytes, stepped))),
+    ewma,
+  };
 }

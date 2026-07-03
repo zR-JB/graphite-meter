@@ -61,7 +61,10 @@
       };
     }
     const res = store.stageResults[phase];
-    const comp = phase === "download" ? store.downloadCompensation : store.uploadCompensation;
+    const comp =
+      phase === "download"
+        ? store.downloadCompensation
+        : store.uploadCompensation;
     return {
       measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
@@ -200,7 +203,11 @@
       return;
     }
     dlCancel = untrack(() =>
-      tweenTo(dlFrozen ?? dl.measuredBytesPerSec, r.reportedBytesPerSec, (v) => (dlSnap = v)),
+      tweenTo(
+        dlFrozen ?? dl.measuredBytesPerSec,
+        r.reportedBytesPerSec,
+        (v) => (dlSnap = v),
+      ),
     );
     return () => {
       dlCancel?.();
@@ -217,7 +224,11 @@
       return;
     }
     ulCancel = untrack(() =>
-      tweenTo(ulFrozen ?? ul.measuredBytesPerSec, r.reportedBytesPerSec, (v) => (ulSnap = v)),
+      tweenTo(
+        ulFrozen ?? ul.measuredBytesPerSec,
+        r.reportedBytesPerSec,
+        (v) => (ulSnap = v),
+      ),
     );
     return () => {
       ulCancel?.();
@@ -233,7 +244,9 @@
       pingSnap = null;
       return;
     }
-    pingCancel = untrack(() => tweenTo(pingFrozen ?? ping.ms, r.reportedMs, (v) => (pingSnap = v)));
+    pingCancel = untrack(() =>
+      tweenTo(pingFrozen ?? ping.ms, r.reportedMs, (v) => (pingSnap = v)),
+    );
     return () => {
       pingCancel?.();
       pingCancel = null;
@@ -252,7 +265,11 @@
     }
     const finalCombined = r.down.reportedBytesPerSec + r.up.reportedBytesPerSec;
     bidiCancel = untrack(() =>
-      tweenTo(bidiFrozen ?? bidi.combined, finalCombined, (v) => (bidiSnap = v)),
+      tweenTo(
+        bidiFrozen ?? bidi.combined,
+        finalCombined,
+        (v) => (bidiSnap = v),
+      ),
     );
     return () => {
       bidiCancel?.();
@@ -282,7 +299,8 @@
   // Visibility (reveal & keep): a card shows once its enabled stage is live,
   // has been frozen (finished), or has a final result. Disabled stages never show.
   const pingShow = $derived(
-    store.config.stages.latency && (ping.active || pingFrozen != null || ping.has),
+    store.config.stages.latency &&
+      (ping.active || pingFrozen != null || ping.has),
   );
   const dlShow = $derived(
     store.config.stages.download && (dl.active || dlFrozen != null || dl.has),
@@ -291,15 +309,20 @@
     store.config.stages.upload && (ul.active || ulFrozen != null || ul.has),
   );
   const bidiShow = $derived(
-    store.config.stages.bidirectional && (bidi.active || bidiFrozen != null || bidi.has),
+    store.config.stages.bidirectional &&
+      (bidi.active || bidiFrozen != null || bidi.has),
   );
 
   // Does the card have a real number to print (vs a dash)? While live, dash
   // until the first sample; once frozen/resolved, the kept/final value.
-  const pingHasVal = $derived(ping.active ? ping.has : ping.has || pingFrozen != null);
+  const pingHasVal = $derived(
+    ping.active ? ping.has : ping.has || pingFrozen != null,
+  );
   const dlHasVal = $derived(dl.active ? dl.has : dl.has || dlFrozen != null);
   const ulHasVal = $derived(ul.active ? ul.has : ul.has || ulFrozen != null);
-  const bidiHasVal = $derived(bidi.active ? bidi.has : bidi.has || bidiFrozen != null);
+  const bidiHasVal = $derived(
+    bidi.active ? bidi.has : bidi.has || bidiFrozen != null,
+  );
 
   // The number each card actually renders: the tweened snap when present, else
   // the live value while active, else the frozen (kept) value for a finished stage.
@@ -307,14 +330,28 @@
   // unit here — the single, last-pass conversion — so flipping base/kind in the
   // settings drawer reactively re-renders every card, live or finished.
   const dlShown = $derived(
-    store.toUnit(dlSnap ?? (dl.active ? dl.measuredBytesPerSec : dlFrozen ?? dl.measuredBytesPerSec)),
+    store.toUnit(
+      dlSnap ??
+        (dl.active
+          ? dl.measuredBytesPerSec
+          : (dlFrozen ?? dl.measuredBytesPerSec)),
+    ),
   );
   const ulShown = $derived(
-    store.toUnit(ulSnap ?? (ul.active ? ul.measuredBytesPerSec : ulFrozen ?? ul.measuredBytesPerSec)),
+    store.toUnit(
+      ulSnap ??
+        (ul.active
+          ? ul.measuredBytesPerSec
+          : (ulFrozen ?? ul.measuredBytesPerSec)),
+    ),
   );
-  const pingShown = $derived(pingSnap ?? (ping.active ? ping.ms : pingFrozen ?? ping.ms));
+  const pingShown = $derived(
+    pingSnap ?? (ping.active ? ping.ms : (pingFrozen ?? ping.ms)),
+  );
   const bidiShown = $derived(
-    store.toUnit(bidiSnap ?? (bidi.active ? bidi.combined : bidiFrozen ?? bidi.combined)),
+    store.toUnit(
+      bidiSnap ?? (bidi.active ? bidi.combined : (bidiFrozen ?? bidi.combined)),
+    ),
   );
 
   /* ---- Progressive disclosure of the wire-rate estimate ----
@@ -348,10 +385,18 @@
 
   /** Wire-rate estimate line for a transfer card (null when the user hasn't
    *  opted in). Mirrors the old inline lift/flat branch. */
-  function wireFor(m: { has: boolean; multiplier: number; estimatedBytesPerSec: number }): CardWire {
+  function wireFor(m: {
+    has: boolean;
+    multiplier: number;
+    estimatedBytesPerSec: number;
+  }): CardWire {
     if (!showWire) return null;
     if (m.has && lifted(m.multiplier))
-      return { kind: "lift", num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)), pct: pctLift(m.multiplier) };
+      return {
+        kind: "lift",
+        num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
+        pct: pctLift(m.multiplier),
+      };
     return { kind: "flat", text: m.has ? "no overhead applied" : "" };
   }
 
@@ -359,23 +404,51 @@
     const out: CardVM[] = [];
     if (dlShow)
       out.push({
-        key: "download", icon: ICON.download, ico: "dl", label: "Download", term: false,
-        active: dl.active, hasVal: dlHasVal, showPip: dlHasVal, band: dl.band, score: dl.score,
-        num: dlHasVal ? fmtSpeed(dlShown) : dash, unit: store.unitLabel, wire: wireFor(dl),
+        key: "download",
+        icon: ICON.download,
+        ico: "dl",
+        label: "Download",
+        term: false,
+        active: dl.active,
+        hasVal: dlHasVal,
+        showPip: dlHasVal,
+        band: dl.band,
+        score: dl.score,
+        num: dlHasVal ? fmtSpeed(dlShown) : dash,
+        unit: store.unitLabel,
+        wire: wireFor(dl),
       });
     if (ulShow)
       out.push({
-        key: "upload", icon: ICON.upload, ico: "ul", label: "Upload", term: false,
-        active: ul.active, hasVal: ulHasVal, showPip: ulHasVal, band: ul.band, score: ul.score,
-        num: ulHasVal ? fmtSpeed(ulShown) : dash, unit: store.unitLabel, wire: wireFor(ul),
+        key: "upload",
+        icon: ICON.upload,
+        ico: "ul",
+        label: "Upload",
+        term: false,
+        active: ul.active,
+        hasVal: ulHasVal,
+        showPip: ulHasVal,
+        band: ul.band,
+        score: ul.score,
+        num: ulHasVal ? fmtSpeed(ulShown) : dash,
+        unit: store.unitLabel,
+        wire: wireFor(ul),
       });
     if (bidiShow)
       out.push({
-        key: "bidirectional", icon: ICON.bidirectional, ico: "bd", label: "Bi-dir", term: false,
-        active: bidi.active, hasVal: bidiHasVal,
+        key: "bidirectional",
+        icon: ICON.bidirectional,
+        ico: "bd",
+        label: "Bi-dir",
+        term: false,
+        active: bidi.active,
+        hasVal: bidiHasVal,
         // No live stability for bidi — show the pip only once resolved.
-        showPip: bidiHasVal && !bidi.active, band: bidi.band, score: bidi.score,
-        num: bidiHasVal ? fmtSpeed(bidiShown) : dash, unit: store.unitLabel,
+        showPip: bidiHasVal && !bidi.active,
+        band: bidi.band,
+        score: bidi.score,
+        num: bidiHasVal ? fmtSpeed(bidiShown) : dash,
+        unit: store.unitLabel,
         sub: bidiHasVal
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
           : undefined,
@@ -383,10 +456,21 @@
       });
     if (pingShow)
       out.push({
-        key: "latency", icon: ICON.ping, ico: "pg", label: "Ping", term: true,
-        active: ping.active, hasVal: pingHasVal, showPip: pingHasVal, band: ping.band, score: ping.score,
-        num: pingHasVal ? fmtMs(pingShown) : dash, unit: "ms",
-        wire: showWire ? { kind: "flat", text: "latency — uncompensated" } : null,
+        key: "latency",
+        icon: ICON.ping,
+        ico: "pg",
+        label: "Ping",
+        term: true,
+        active: ping.active,
+        hasVal: pingHasVal,
+        showPip: pingHasVal,
+        band: ping.band,
+        score: ping.score,
+        num: pingHasVal ? fmtMs(pingShown) : dash,
+        unit: "ms",
+        wire: showWire
+          ? { kind: "flat", text: "latency — uncompensated" }
+          : null,
       });
     return out;
   });
@@ -395,7 +479,8 @@
   // invite action instead of leaving dashes unexplained. Only the idle
   // pointer lives here — warmup "checking connection" is shown below the gauge.
   const guidance = $derived.by(() => {
-    if (store.phase === "idle") return "Your results appear here once you press Engage.";
+    if (store.phase === "idle")
+      return "Your results appear here once you press Engage.";
     return "";
   });
 </script>
@@ -412,7 +497,8 @@
       {#if c.showPip}
         <span
           class="pip pip-{c.band}"
-          use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}>{c.band}</span
+          use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
+          >{c.band}</span
         >
       {/if}
     </header>
@@ -428,7 +514,9 @@
         {#if c.wire.kind === "lift"}
           <span class="est-arrow">→</span>
           <span class="est-num">{c.wire.num}</span>
-          <span class="est-tag" use:tooltip={JARGON.wireRate}>wire {c.wire.pct}</span>
+          <span class="est-tag" use:tooltip={JARGON.wireRate}
+            >wire {c.wire.pct}</span
+          >
         {:else}
           <span class="est-flat">{c.wire.text}</span>
         {/if}
@@ -491,7 +579,8 @@
      (~330-400px after stage/panel padding, gap 12px) while still collapsing
      to a single full-width track when only one card is visible — no manual
      odd-card-spanning needed. */
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .result-cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -592,7 +681,11 @@
   }
   .ico.bd {
     color: var(--phase-bidirectional);
-    border-color: color-mix(in srgb, var(--phase-bidirectional) 34%, var(--border));
+    border-color: color-mix(
+      in srgb,
+      var(--phase-bidirectional) 34%,
+      var(--border)
+    );
   }
   .label {
     font-size: var(--type-sm);
@@ -603,7 +696,8 @@
   /* Jargon-term affordance — dotted underline cues a hover/focus tooltip. */
   .label.term {
     cursor: help;
-    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-decoration: underline dotted
+      color-mix(in srgb, var(--text-soft) 70%, transparent);
     text-underline-offset: 3px;
   }
   .label.term:focus-visible {

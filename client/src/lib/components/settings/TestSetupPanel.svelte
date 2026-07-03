@@ -6,10 +6,7 @@
    * gauge, chart, and unit labels. Inputs that are unsafe to
    * change mid-run are disabled while `running`.
    * ============================================================ */
-  import {
-    store,
-    DURATION_PRESETS,
-  } from "../../state/store.svelte";
+  import { store, DURATION_PRESETS } from "../../state/store.svelte";
   import type {
     RunnerConfig,
     ConnectionProfile,
@@ -81,10 +78,16 @@
 
   /* ---------- Visualization throughput max ----------
    * Stored as bytesPerSec (or "auto"); edited in the active display unit. */
-  const vizAuto = $derived(store.config.visualization.throughputMaxBytesPerSec === "auto");
+  const vizAuto = $derived(
+    store.config.visualization.throughputMaxBytesPerSec === "auto",
+  );
   // Display value = bytesPerSec → active unit (matches the gauge/chart label).
   const vizDisplay = $derived(
-    vizAuto ? 0 : store.toUnit(store.config.visualization.throughputMaxBytesPerSec as number),
+    vizAuto
+      ? 0
+      : store.toUnit(
+          store.config.visualization.throughputMaxBytesPerSec as number,
+        ),
   );
   // Inverse of vizDisplay: a value typed in the active unit → raw bytes/s. Uses
   // store.fromUnit so it tracks the same dynamic prefix the field displays in
@@ -138,7 +141,11 @@
 
   /* ---------- Compensation factor groups (de-magicked labels) ---------- */
   type FactorKey = keyof RunnerConfig["compensation"]["factors"];
-  const COMP_GROUPS: { label: string; tip: string; toggles: { key: FactorKey; label: string }[] }[] = [
+  const COMP_GROUPS: {
+    label: string;
+    tip: string;
+    toggles: { key: FactorKey; label: string }[];
+  }[] = [
     {
       label: "Protocol bytes",
       tip: JARGON.compProtocol,
@@ -171,13 +178,37 @@
   /* ---------- Compensation numeric params (Advanced) ---------- */
   const COMP_NUMS = [
     { key: "mtuBytes", label: "MTU bytes", min: 576, max: 65536, step: 1 },
-    { key: "tcpOptionsBytes", label: "TCP options B", min: 0, max: 40, step: 4 },
-    { key: "encapsulationBytes", label: "Encapsulation B", min: 0, max: 128, step: 1 },
-    { key: "framePayloadBytes", label: "Frame payload B", min: 256, max: 65536, step: 256 },
+    {
+      key: "tcpOptionsBytes",
+      label: "TCP options B",
+      min: 0,
+      max: 40,
+      step: 4,
+    },
+    {
+      key: "encapsulationBytes",
+      label: "Encapsulation B",
+      min: 0,
+      max: 128,
+      step: 1,
+    },
+    {
+      key: "framePayloadBytes",
+      label: "Frame payload B",
+      min: 256,
+      max: 65536,
+      step: 256,
+    },
     { key: "tlsRecordBytes", label: "TLS record B", min: 0, max: 64, step: 1 },
     { key: "aeadTagBytes", label: "AEAD tag B", min: 0, max: 255, step: 1 },
     { key: "quicConnIdBytes", label: "QUIC CID B", min: 0, max: 20, step: 1 },
-    { key: "maxLossRatio", label: "Max loss ratio", min: 0, max: 1, step: 0.01 },
+    {
+      key: "maxLossRatio",
+      label: "Max loss ratio",
+      min: 0,
+      max: 1,
+      step: 0.01,
+    },
   ] as const;
 </script>
 
@@ -248,19 +279,34 @@
         bind:value={store.config.duration.bidirectionalMs}
       />
     </label>
-    <p class="hint">Adds a combined down+up phase for real-world two-way load.</p>
+    <p class="hint">
+      Adds a combined down+up phase for real-world two-way load.
+    </p>
   </section>
 
   <!-- Gauge Scale -->
   <section class="panel">
     <h3>Gauge Scale</h3>
-    <Switch checked={vizAuto} onToggle={setVizAuto} label="Auto throughput ceiling" />
+    <Switch
+      checked={vizAuto}
+      onToggle={setVizAuto}
+      label="Auto throughput ceiling"
+    />
     <label>
       <span>Throughput max {store.unitLabel}</span>
-      <input type="number" min="1" step="1" disabled={vizAuto}
-        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))} oninput={onVizInput} />
+      <input
+        type="number"
+        min="1"
+        step="1"
+        disabled={vizAuto}
+        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))}
+        oninput={onVizInput}
+      />
     </label>
-    <p class="hint">Manual Y-axis ceiling for the gauge and chart; auto self-scales to the peak.</p>
+    <p class="hint">
+      Manual Y-axis ceiling for the gauge and chart; auto self-scales to the
+      peak.
+    </p>
   </section>
 
   <!-- Display Units -->
@@ -275,13 +321,15 @@
             class:active={store.unitKind === "bits"}
             aria-pressed={store.unitKind === "bits"}
             use:tooltip={"Bits per second — Mbit/s, Gbit/s"}
-            onclick={() => (store.unitKind = "bits")}>Bits</button>
+            onclick={() => (store.unitKind = "bits")}>Bits</button
+          >
           <button
             type="button"
             class:active={store.unitKind === "bytes"}
             aria-pressed={store.unitKind === "bytes"}
             use:tooltip={"Bytes per second — MB/s, GB/s"}
-            onclick={() => (store.unitKind = "bytes")}>Bytes</button>
+            onclick={() => (store.unitKind = "bytes")}>Bytes</button
+          >
         </div>
       </div>
       <div class="field">
@@ -292,17 +340,21 @@
             class:active={store.unitBase === "base10"}
             aria-pressed={store.unitBase === "base10"}
             use:tooltip={"SI prefixes, 1000 per step — Mbit/s, Gbit/s"}
-            onclick={() => (store.unitBase = "base10")}>Decimal</button>
+            onclick={() => (store.unitBase = "base10")}>Decimal</button
+          >
           <button
             type="button"
             class:active={store.unitBase === "base2"}
             aria-pressed={store.unitBase === "base2"}
             use:tooltip={"IEC prefixes, 1024 per step — Mibit/s, Gibit/s"}
-            onclick={() => (store.unitBase = "base2")}>Binary</button>
+            onclick={() => (store.unitBase = "base2")}>Binary</button
+          >
         </div>
       </div>
     </div>
-    <p class="hint">Applies to every rate shown; the measurement itself is unchanged.</p>
+    <p class="hint">
+      Applies to every rate shown; the measurement itself is unchanged.
+    </p>
   </section>
 
   <!-- "Tuning" tier: set once, rarely revisited. -->
@@ -319,21 +371,42 @@
     <div class="two">
       <label>
         <span>Min coverage</span>
-        <input type="number" min="0.25" max="1" step="0.01" disabled={running}
-          bind:value={store.config.adaptive.minCoverageRatio} />
+        <input
+          type="number"
+          min="0.25"
+          max="1"
+          step="0.01"
+          disabled={running}
+          bind:value={store.config.adaptive.minCoverageRatio}
+        />
       </label>
       <label>
         <span use:tooltip={JARGON.stability}>Stability</span>
-        <input type="number" min="0.5" max="0.99" step="0.01" disabled={running}
-          bind:value={store.config.adaptive.stabilityThreshold} />
+        <input
+          type="number"
+          min="0.5"
+          max="0.99"
+          step="0.01"
+          disabled={running}
+          bind:value={store.config.adaptive.stabilityThreshold}
+        />
       </label>
       <label>
         <span>Glide (ms)</span>
-        <input type="number" min="300" max="1500" step="50" disabled={running}
-          bind:value={store.config.adaptive.glideMs} />
+        <input
+          type="number"
+          min="300"
+          max="1500"
+          step="50"
+          disabled={running}
+          bind:value={store.config.adaptive.glideMs}
+        />
       </label>
     </div>
-    <p class="hint">Finishes early once the reading stabilizes, instead of running full duration.</p>
+    <p class="hint">
+      Finishes early once the reading stabilizes, instead of running full
+      duration.
+    </p>
   </section>
 
   <!-- Download Engine -->
@@ -344,7 +417,10 @@
       bind:checked={store.config.experimentalChunkedDownload}
       label="Chunked download (experimental)"
     />
-    <p class="hint">Uses adaptively-sized chunks instead of one long stream per lane (experimental).</p>
+    <p class="hint">
+      Uses adaptively-sized chunks instead of one long stream per lane
+      (experimental).
+    </p>
   </section>
 
   <!-- Connections & Timing -->
@@ -360,16 +436,26 @@
     </label>
     <label>
       <span>Max parallel streams</span>
-      <input type="number" min="1" max="6" step="1" disabled={running}
-        bind:value={store.config.parallelStreams} />
+      <input
+        type="number"
+        min="1"
+        max="6"
+        step="1"
+        disabled={running}
+        bind:value={store.config.parallelStreams}
+      />
     </label>
-    <p class="hint">Lanes are chosen automatically per phase; this only caps the maximum.</p>
+    <p class="hint">
+      Lanes are chosen automatically per phase; this only caps the maximum.
+    </p>
     <Switch
       disabled={running}
       bind:checked={store.config.skipLoadedLatencyWhenStageOff}
       label="Skip loaded-latency when the latency stage is off"
     />
-    <p class="hint">Also skips under-load pings when the latency stage itself is off.</p>
+    <p class="hint">
+      Also skips under-load pings when the latency stage itself is off.
+    </p>
   </section>
 
   <!-- Wire-Rate Estimates (wide) -->
@@ -380,7 +466,9 @@
       label="Include wire-rate estimates in result cards"
       tooltip={JARGON.wireRate}
     />
-    <p class="hint">Estimates the real wire-rate under measured protocol overhead.</p>
+    <p class="hint">
+      Estimates the real wire-rate under measured protocol overhead.
+    </p>
 
     <details class="advanced top-level">
       <summary>Customize the compensation model</summary>
@@ -406,7 +494,9 @@
             </select>
           </label>
           <label>
-            <span use:tooltip={JARGON.compTransport}>Transport &amp; security</span>
+            <span use:tooltip={JARGON.compTransport}
+              >Transport &amp; security</span
+            >
             <select
               disabled={running || !store.config.compensation.enabled}
               bind:value={store.config.compensation.transport}
@@ -435,12 +525,16 @@
         <details class="advanced">
           <summary>Advanced — raw byte accounting</summary>
           <p class="hint">
-            Defaults come from the profile/transport above — tweak only for a nonstandard MTU or tunnel.
+            Defaults come from the profile/transport above — tweak only for a
+            nonstandard MTU or tunnel.
           </p>
           <div class="two">
             <label>
               <span>IP version</span>
-              <select disabled={running} bind:value={store.config.compensation.params.ipVersion}>
+              <select
+                disabled={running}
+                bind:value={store.config.compensation.params.ipVersion}
+              >
                 <option value={4}>IPv4</option>
                 <option value={6}>IPv6</option>
               </select>
@@ -448,8 +542,14 @@
             {#each COMP_NUMS as n (n.key)}
               <label>
                 <span>{n.label}</span>
-                <input type="number" min={n.min} max={n.max} step={n.step} disabled={running}
-                  bind:value={store.config.compensation.params[n.key]} />
+                <input
+                  type="number"
+                  min={n.min}
+                  max={n.max}
+                  step={n.step}
+                  disabled={running}
+                  bind:value={store.config.compensation.params[n.key]}
+                />
               </label>
             {/each}
             <div class="spanned">
@@ -464,7 +564,6 @@
       </div>
     </details>
   </section>
-
 </div>
 
 <style>
@@ -480,7 +579,8 @@
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background: linear-gradient(180deg, var(--surface-2), transparent),
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent),
       var(--surface-inset);
     padding: var(--space-3);
     box-shadow: var(--elev-recess);

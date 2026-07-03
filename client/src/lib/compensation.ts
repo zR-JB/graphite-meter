@@ -170,7 +170,10 @@ export function estimateResultCompensation(
   // surfaces on ThroughputResult (loaded-ping loss). Capped by maxLossRatio;
   // contributes nothing when no loss was observed.
   if (config.factors.lossRetransmission) {
-    pushFactor(factors, lossRetransmissionFactor(result.packetLossPct / 100, config));
+    pushFactor(
+      factors,
+      lossRetransmissionFactor(result.packetLossPct / 100, config),
+    );
   }
 
   // Sample-derived factors, reconstructed from aggregate stats.
@@ -321,7 +324,8 @@ function pushFactor(
   factors: CompensationFactor[],
   factor: CompensationFactor | null,
 ): void {
-  if (!factor || factor.multiplier <= COMPENSATION_DEFAULTS.pushFactorEpsilon) return;
+  if (!factor || factor.multiplier <= COMPENSATION_DEFAULTS.pushFactorEpsilon)
+    return;
   factors.push(factor);
 }
 
@@ -434,7 +438,8 @@ function ethernetFramingFactor(
 ): CompensationFactor {
   const C = COMPENSATION_DEFAULTS;
   const mtuBytes = positive(config.params.mtuBytes);
-  const ipBytes = config.params.ipVersion === 6 ? C.ipv6HeaderBytes : C.ipv4HeaderBytes;
+  const ipBytes =
+    config.params.ipVersion === 6 ? C.ipv6HeaderBytes : C.ipv4HeaderBytes;
   const transportBytes = isQuic(config)
     ? C.udpHeaderBytes
     : C.tcpBaseHeaderBytes + Math.max(0, config.params.tcpOptionsBytes);
@@ -524,7 +529,8 @@ function receiverBiasFactor(
   if (phase !== "download") return null;
   const C = COMPENSATION_DEFAULTS;
   const r = Math.max(0, rate);
-  const lift = (C.receiverBiasCeilRatio * r) / (r + C.receiverBiasHalfRateBytes);
+  const lift =
+    (C.receiverBiasCeilRatio * r) / (r + C.receiverBiasHalfRateBytes);
   if (lift <= C.receiverBiasMinLift) return null;
   return factor(
     "receiver-bias",
@@ -571,13 +577,18 @@ function steadyStateRampFactor(
   result: ThroughputResult,
 ): CompensationFactor | null {
   const C = COMPENSATION_DEFAULTS;
-  if (result.meanBytesPerSec <= 0 || result.peakBytesPerSec <= result.meanBytesPerSec) return null;
+  if (
+    result.meanBytesPerSec <= 0 ||
+    result.peakBytesPerSec <= result.meanBytesPerSec
+  )
+    return null;
 
   // Blend mean→peak by the plateau percentile: the "plateau" sits between
   // the average and the peak, approximated at the p65 fraction of that span.
   const plateau =
     result.meanBytesPerSec +
-    (result.peakBytesPerSec - result.meanBytesPerSec) * C.steadyStatePlateauPercentile;
+    (result.peakBytesPerSec - result.meanBytesPerSec) *
+      C.steadyStatePlateauPercentile;
   const rawLift = plateau / result.meanBytesPerSec - 1;
   const lift = Math.min(Math.max(0, rawLift), maxLift(result));
   if (lift <= C.steadyStateMinLift) return null;

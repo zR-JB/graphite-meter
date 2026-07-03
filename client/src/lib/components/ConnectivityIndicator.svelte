@@ -21,7 +21,9 @@
   let sparkColor = "#888";
   function resolveColor() {
     sparkColor =
-      getComputedStyle(document.documentElement).getPropertyValue("--text-soft").trim() || "#888";
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--text-soft")
+        .trim() || "#888";
   }
 
   function draw() {
@@ -70,7 +72,10 @@
       resolveColor();
       draw();
     });
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     return () => mo.disconnect();
   });
 </script>
@@ -82,7 +87,13 @@
   use:tooltip={`Connection: ${store.effectiveConnectivity}`}
 >
   <span class="dot" data-state={store.effectiveConnectivity}></span>
-  <canvas bind:this={canvasEl} class="spark" width="36" height="16" aria-hidden="true"></canvas>
+  <canvas
+    bind:this={canvasEl}
+    class="spark"
+    width="36"
+    height="16"
+    aria-hidden="true"
+  ></canvas>
 </div>
 
 <style>

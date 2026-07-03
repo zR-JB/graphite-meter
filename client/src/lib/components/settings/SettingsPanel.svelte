@@ -42,7 +42,9 @@
   // Setup then the only tab, the tab bar itself is not rendered.
   const TABS: { key: Tab; label: string }[] = [
     { key: "setup", label: "Setup" },
-    ...(__GM_DEV_TOOLS__ ? [{ key: "developer" as Tab, label: "Developer" }] : []),
+    ...(__GM_DEV_TOOLS__
+      ? [{ key: "developer" as Tab, label: "Developer" }]
+      : []),
   ];
 </script>
 
@@ -123,5 +125,4 @@
     box-shadow: var(--elev-tile);
     color: var(--brand-strong);
   }
-
 </style>
