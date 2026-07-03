@@ -79,7 +79,7 @@ func TestStructMarshalsToValidSchema(t *testing.T) {
 		ProtocolNegotiated: "http/1.1",
 		Capabilities: Capabilities{
 			Origins:    Origins{H1: &h1, TLS: nil, H3: nil},
-			Transports: Transports{XHRStream: false, WebSocket: false, WebTransport: false},
+			Transports: Transports{FetchStream: false, WebSocket: false, WebTransport: false},
 			Endpoints:  DefaultEndpoints(),
 		},
 	}

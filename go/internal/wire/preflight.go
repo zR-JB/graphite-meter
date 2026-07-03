@@ -42,7 +42,7 @@ type Origins struct {
 // Transports flags which client-side transports the server can service. Honest
 // per build stage.
 type Transports struct {
-	XHRStream    bool `json:"xhrStream"`
+	FetchStream  bool `json:"fetchStream"`
 	WebSocket    bool `json:"websocket"`
 	WebTransport bool `json:"webtransport"`
 }

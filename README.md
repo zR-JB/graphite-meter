@@ -197,7 +197,7 @@ A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage l
 *same* primed connection, `onStageEnd`). Two backends exist:
 
 - **`RealBackend`** (`src/lib/runner/RealRunner.ts`) — the production engine, always used in a
-  release build. Negotiates a transport per stage (today this always resolves to `fetch`/XHR
+  release build. Negotiates a transport per stage (today this always resolves to `fetch`
   streaming for transfer and WebSocket for latency, since the server never advertises
   `webtransport`), spawns one Web Worker per parallel stream, and keeps an idle keepalive ping
   running between runs for the connectivity indicator.
@@ -514,7 +514,7 @@ implemented yet unless a section above says otherwise.
    advertises. When HTTP/3 is selected, latency and throughput are planned to be configurable
    *separately*, each independently able to choose WebTransport unreliable datagrams (for
    loss-tolerant, minimal-overhead probing) instead of the existing reliable channel (WebSocket for
-   latency, fetch/XHR streams for throughput). Two seams for this already exist: the Settings
+   latency, fetch streams for throughput). Two seams for this already exist: the Settings
    "Transport & security" preset (HTTP/1.1 / HTTPS / HTTP/2 / HTTP/3), which today only feeds the
    overhead-compensation byte math, and the runner contract's `EngineInfo` (`runner.describe()`),
    which carries per-role supported-transport lists (latency vs throughput) rendered in the

@@ -63,9 +63,9 @@
           "type": "object",
           "additionalProperties": false,
           "description": "Which client-side transports this server can currently service. Honest per build stage.",
-          "required": ["xhrStream", "websocket", "webtransport"],
+          "required": ["fetchStream", "websocket", "webtransport"],
           "properties": {
-            "xhrStream": { "type": "boolean", "description": "fetch/XHR streaming download+upload." },
+            "fetchStream": { "type": "boolean", "description": "fetch streaming download+upload." },
             "websocket": { "type": "boolean", "description": "WebSocket latency bus (/ws/ping)." },
             "webtransport": { "type": "boolean", "description": "WebTransport datagrams + uni-streams." }
           }

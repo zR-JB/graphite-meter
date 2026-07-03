@@ -60,9 +60,9 @@ export interface Preflight {
      */
     transports: {
       /**
-       * fetch/XHR streaming download+upload.
+       * fetch streaming download+upload.
        */
-      xhrStream: boolean;
+      fetchStream: boolean;
       /**
        * WebSocket latency bus (/ws/ping).
        */

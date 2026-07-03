@@ -387,7 +387,7 @@ function applicationFramingFactor(
     );
   }
 
-  // TCP transfer backend (xhr-stream) → HTTP/2 DATA frames.
+  // TCP transfer backend (fetch-stream) → HTTP/2 DATA frames.
   return factor(
     "application-framing",
     "HTTP/2 DATA frames",
