@@ -1,0 +1,28 @@
+#!/bin/sh
+# Mirrors the CI gates (ci.yml) on whatever is staged, so a commit that passes
+# here passes the PR checks. Enable once per clone with: just hooks
+# Bypass a single commit with: git commit --no-verify
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+
+if echo "$staged" | grep -q '^go/'; then
+    echo "pre-commit: go (gofmt, vet, test)"
+    unformatted=$(cd go && gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        echo "gofmt violations (fix with: gofmt -w go/):"
+        echo "$unformatted"
+        exit 1
+    fi
+    (cd go && go vet ./... && go test ./...)
+fi
+
+if echo "$staged" | grep -q '^client/'; then
+    echo "pre-commit: client (prettier, svelte-check, test)"
+    if ! (cd client && bun run format:check >/dev/null 2>&1); then
+        echo "prettier violations (fix with: cd client && bun run format):"
+        (cd client && bun run format:check) || true
+        exit 1
+    fi
+    (cd client && bun run check && bun test)
+fi

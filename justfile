@@ -45,6 +45,10 @@ CGO_ENABLED := "0"
 default:
     @just --list
 
+# Point git at the tracked hooks (one-time per clone); pre-commit mirrors the CI gates
+hooks:
+    git config core.hooksPath .githooks
+
 # --- RNG (Rust generator, crates/rng) ---
 # The client no longer bundles a WASM build of this: upload-worker.ts fills its
 # payload with crypto.getRandomValues (the buffer is generated once and reused, so
@@ -87,7 +91,7 @@ client-gen-types:
 # Handled cross-platform via Bun's filesystem API to avoid rm/cp syntax differences.
 # Profile-agnostic: run this after whichever of client-build-dev/client-build-prod ran.
 _embed-client:
-    bun -e "import fs from 'fs'; fs.rmSync('go/internal/static/dist', { recursive: true, force: true }); fs.cpSync('client/dist', 'go/internal/static/dist', { recursive: true })"
+    bun -e "import fs from 'fs'; fs.rmSync('go/internal/static/dist', { recursive: true, force: true }); fs.cpSync('client/dist', 'go/internal/static/dist', { recursive: true }); fs.writeFileSync('go/internal/static/dist/.gitkeep', '')"
 
 # --- Go server ---
 # build-* recipes produce a standalone binary and stop (nothing runs it) — that's
