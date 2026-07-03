@@ -39,7 +39,13 @@ export interface ChartFormatters {
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
+  /** The single lane's rate during download/upload; null during bidirectional
+   *  (which reports its two lanes separately below) or where there's no
+   *  throughput data under the cursor at all. */
   bytesPerSec: number | null;
+  /** Bidirectional's two concurrent lanes; null outside that phase. */
+  downBytesPerSec: number | null;
+  upBytesPerSec: number | null;
   rtt: number | null;
 }
 
@@ -79,6 +85,7 @@ interface ThemeColors {
   downloadRgb: { r: number; g: number; b: number };
   upload: string;
   uploadRgb: { r: number; g: number; b: number };
+  bidirectional: string;
   warmup: string;
   signal: string;
   warn: string;
@@ -156,6 +163,7 @@ export class ChartEngine implements CanvasEngine {
     downloadRgb: { r: 109, g: 176, b: 184 },
     upload: "#bda36c",
     uploadRgb: { r: 189, g: 163, b: 108 },
+    bidirectional: "#a695c8",
     warmup: "#858c94",
     signal: "#8ba3ba",
     warn: "#c4a568",
@@ -236,21 +244,47 @@ export class ChartEngine implements CanvasEngine {
     const frac = (x - PAD_L) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
-    const bytesPerSec = this.#hoverValue(
-      data.throughput,
-      t,
-      (s) => s.bytesPerSec,
-    );
+    // Bidirectional carries two concurrent lanes (down + up) under one phase
+    // tag — mixing them into a single series would interpolate BETWEEN a down
+    // sample and an up sample as if they were the same line (they don't even
+    // share a cadence: download ticks locally, upload ticks off the server
+    // channel), so split by `dir` and report each lane separately instead.
+    const bidi = this.#spanAt(t)?.phase === "bidirectional";
+    const bytesPerSec = bidi
+      ? null
+      : this.#hoverValue(data.throughput, t, (s) => s.bytesPerSec);
+    const downBytesPerSec = bidi
+      ? this.#hoverValue(
+          data.throughput.filter((s) => s.dir === "down"),
+          t,
+          (s) => s.bytesPerSec,
+        )
+      : null;
+    const upBytesPerSec = bidi
+      ? this.#hoverValue(
+          data.throughput.filter((s) => s.dir === "up"),
+          t,
+          (s) => s.bytesPerSec,
+        )
+      : null;
     const rtt = this.#hoverValue(
       data.latency.filter((s) => !s.lost),
       t,
       (s) => s.rttMs,
     );
-    if (bytesPerSec == null && rtt == null) return null;
+    if (
+      bytesPerSec == null &&
+      downBytesPerSec == null &&
+      upBytesPerSec == null &&
+      rtt == null
+    )
+      return null;
     return {
       x,
       t,
       bytesPerSec,
+      downBytesPerSec,
+      upBytesPerSec,
       rtt,
     };
   }
@@ -350,6 +384,7 @@ export class ChartEngine implements CanvasEngine {
       downloadRgb: hexToRgb(download),
       upload,
       uploadRgb: hexToRgb(upload),
+      bidirectional: g("--phase-bidirectional", "#a695c8"),
       warmup: g("--phase-warmup", "#858c94"),
       signal: g("--signal", "#8ba3ba"),
       warn: g("--warn", "#c4a568"),
@@ -408,7 +443,13 @@ export class ChartEngine implements CanvasEngine {
    *  lerp settles, then the loop parks. */
   #animating(): boolean {
     const p = this.#lastPhase;
-    if (p === "warmup" || p === "latency" || p === "download" || p === "upload")
+    if (
+      p === "warmup" ||
+      p === "latency" ||
+      p === "download" ||
+      p === "upload" ||
+      p === "bidirectional"
+    )
       return true;
     return !this.#vpSettled;
   }
@@ -580,6 +621,7 @@ export class ChartEngine implements CanvasEngine {
     if (phase === "latency") return this.#c.signal;
     if (phase === "download") return this.#c.download;
     if (phase === "upload") return this.#c.upload;
+    if (phase === "bidirectional") return this.#c.bidirectional;
     return null;
   }
 
@@ -644,25 +686,60 @@ export class ChartEngine implements CanvasEngine {
     for (const phase of ["download", "upload"] as const) {
       const seg = all.filter((s) => s.phase === phase);
       if (seg.length < 2) continue;
-      let min = Infinity;
-      let max = 0;
-      let sum = 0;
-      for (const s of seg) {
-        if (s.bytesPerSec < min) min = s.bytesPerSec;
-        if (s.bytesPerSec > max) max = s.bytesPerSec;
-        sum += s.bytesPerSec;
-      }
-      out.push({
-        phase,
-        t0: seg[0].t,
-        t1: seg[seg.length - 1].t,
-        min,
-        max,
-        avg: sum / seg.length,
-        stroke: phase === "download" ? this.#c.download : this.#c.upload,
-      });
+      out.push(
+        this.#reduceStat(
+          phase,
+          seg,
+          phase === "download" ? this.#c.download : this.#c.upload,
+        ),
+      );
+    }
+    // Bidirectional carries two concurrent lanes tagged by `dir`, not `phase` —
+    // split them so each still gets its own min/max/avg overlay, drawn in the
+    // existing download/upload colors (matches #drawThroughput's two-line
+    // rendering for this phase, rather than one combined line).
+    for (const dir of ["down", "up"] as const) {
+      const seg = all.filter(
+        (s) => s.phase === "bidirectional" && s.dir === dir,
+      );
+      if (seg.length < 2) continue;
+      out.push(
+        this.#reduceStat(
+          "bidirectional",
+          seg,
+          dir === "down" ? this.#c.download : this.#c.upload,
+        ),
+      );
     }
     return out;
+  }
+
+  /** Reduce a sample subset to its {@link PhaseStat} (min/max/avg over the
+   *  segment's time span), tagged with the color it draws in. Shared by both
+   *  the single-lane (download/upload) and split-lane (bidirectional down/up)
+   *  cases in #phaseStats. */
+  #reduceStat(
+    phase: Phase,
+    seg: ThroughputSample[],
+    stroke: string,
+  ): PhaseStat {
+    let min = Infinity;
+    let max = 0;
+    let sum = 0;
+    for (const s of seg) {
+      if (s.bytesPerSec < min) min = s.bytesPerSec;
+      if (s.bytesPerSec > max) max = s.bytesPerSec;
+      sum += s.bytesPerSec;
+    }
+    return {
+      phase,
+      t0: seg[0].t,
+      t1: seg[seg.length - 1].t,
+      min,
+      max,
+      avg: sum / seg.length,
+      stroke,
+    };
   }
 
   /** Phase ribbon — a thin colour-coded strip in the bottom gutter mapping the
@@ -674,6 +751,7 @@ export class ChartEngine implements CanvasEngine {
     latency: "PING",
     download: "DOWNLOAD",
     upload: "UPLOAD",
+    bidirectional: "BI-DIR",
   };
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
@@ -793,6 +871,29 @@ export class ChartEngine implements CanvasEngine {
     ctx.lineTo(last.x, last.y);
   }
 
+  /** The samples + styling for one drawn curve. Bidirectional carries two
+   *  concurrent lanes under one phase tag, so it's split by `dir` and drawn
+   *  with the SAME download/upload colors as the standalone phases — two
+   *  lines, not one combined line — for visual consistency across the chart
+   *  (this was a confirmed design decision for issue #11). */
+  #throughputLanes(): {
+    match: (s: ThroughputSample) => boolean;
+    area: "download" | "upload";
+  }[] {
+    return [
+      { match: (s) => s.phase === "download", area: "download" },
+      { match: (s) => s.phase === "upload", area: "upload" },
+      {
+        match: (s) => s.phase === "bidirectional" && s.dir === "down",
+        area: "download",
+      },
+      {
+        match: (s) => s.phase === "bidirectional" && s.dir === "up",
+        area: "upload",
+      },
+    ];
+  }
+
   #drawThroughput(
     ctx: CanvasRenderingContext2D,
     all: ThroughputSample[],
@@ -801,16 +902,19 @@ export class ChartEngine implements CanvasEngine {
     const bot = this.#h - PAD_B;
     const tMin = this.#vp.tMin;
     const tMax = this.#vp.tMax;
-    // Group by the sample's phase tag (download/upload each run once, so each
-    // yields a contiguous, time-ordered run). Samples outside the viewport are
-    // culled, keeping one bridging sample per edge for path continuity — while
-    // the live camera tracks the current phase, earlier phases cost nothing.
-    for (const phase of ["download", "upload"] as const) {
-      const stroke = phase === "download" ? this.#c.download : this.#c.upload;
+    // Each lane's samples run contiguous and time-ordered (download/upload
+    // each run once per phase; bidirectional's down/up subsets likewise, since
+    // both directions are pushed for the same single phase span). Samples
+    // outside the viewport are culled, keeping one bridging sample per edge
+    // for path continuity — while the live camera tracks the current phase,
+    // earlier phases cost nothing.
+    for (const lane of this.#throughputLanes()) {
+      const stroke =
+        lane.area === "download" ? this.#c.download : this.#c.upload;
       const pts: { x: number; y: number }[] = [];
       let leftEdge: ThroughputSample | null = null;
       for (const s of all) {
-        if (s.phase !== phase) continue;
+        if (!lane.match(s)) continue;
         if (s.t < tMin) {
           leftEdge = s;
           continue;
@@ -826,7 +930,7 @@ export class ChartEngine implements CanvasEngine {
       if (pts.length < 2) continue;
 
       // Filled area under a smoothed top edge, soft vertical gradient (cached).
-      ctx.fillStyle = this.#areaGrad(ctx, phase);
+      ctx.fillStyle = this.#areaGrad(ctx, lane.area);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, bot);
       ctx.lineTo(pts[0].x, pts[0].y);
@@ -943,10 +1047,23 @@ export class ChartEngine implements CanvasEngine {
     const info = this.hoverInfo();
     if (!info) return;
     // Dots ride the interpolated value (matches the chip + the drawn line).
-    ctx.fillStyle = this.#c.brand;
     if (info.bytesPerSec != null) {
+      ctx.fillStyle = this.#c.brand;
       ctx.beginPath();
       ctx.arc(x, this.#yL(info.bytesPerSec), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Bidirectional: one dot per lane, tinted to match its drawn line.
+    if (info.downBytesPerSec != null) {
+      ctx.fillStyle = this.#c.download;
+      ctx.beginPath();
+      ctx.arc(x, this.#yL(info.downBytesPerSec), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (info.upBytesPerSec != null) {
+      ctx.fillStyle = this.#c.upload;
+      ctx.beginPath();
+      ctx.arc(x, this.#yL(info.upBytesPerSec), 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
     if (info.rtt != null) {

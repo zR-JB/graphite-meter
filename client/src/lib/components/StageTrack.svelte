@@ -126,9 +126,13 @@
     });
   });
 
-  // Bidirectional is the advanced 4th stage — toggled in Settings, not here, so
-  // it renders as a display-only progress segment when enabled. It always runs
-  // last, so its state is simply pending → active (during its phase) → done.
+  // Bidirectional is the advanced 4th stage — can only be ENABLED in Settings
+  // (it renders here only once Settings has turned it on), but CAN be disabled
+  // from this track: clicking it flips the config off, which makes this block
+  // return null next render and the segment disappears — re-enabling is
+  // Settings-only again (see canDisableBidirectional/disableBidirectional in
+  // store.svelte.ts). It always runs last, so its state is simply
+  // pending → active (during its phase) → done.
   const bidi = $derived.by<{ state: SegState; fill: number } | null>(() => {
     if (!store.config.stages.bidirectional) return null;
     if (store.stageFailures.bidirectional) return { state: "failed", fill: 0 };
@@ -203,11 +207,18 @@
       class="seg seg--{bidi.state} on"
       role="switch"
       aria-checked="true"
-      aria-label="Bidirectional stage (configured in Settings)"
+      aria-label="Bidirectional stage{store.canDisableBidirectional()
+        ? ' — tap to exclude'
+        : ' (running)'}"
       use:tooltip={store.stageFailures.bidirectional
         ? `Bi-dir — ${store.stageFailures.bidirectional.message}`
-        : "Bidirectional — concurrent down + up. Toggle in Settings."}
-      disabled
+        : store.canDisableBidirectional()
+          ? "Bidirectional — concurrent down + up. Tap to exclude (re-enable in Settings)."
+          : "Bidirectional — running."}
+      disabled={!store.canDisableBidirectional()}
+      onclick={() => {
+        if (store.disableBidirectional()) applyStageChange();
+      }}
     >
       <div class="seg-bar" aria-hidden="true">
         {#if bidi.state === "failed"}

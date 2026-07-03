@@ -205,7 +205,13 @@ export class GaugeEngine implements CanvasEngine {
    *  the followers settle on their target, then the loop parks. */
   #animating(): boolean {
     const p = this.#lastPhase;
-    if (p === "warmup" || p === "latency" || p === "download" || p === "upload")
+    if (
+      p === "warmup" ||
+      p === "latency" ||
+      p === "download" ||
+      p === "upload" ||
+      p === "bidirectional"
+    )
       return true;
     if (!this.#reduced && this.#ripples.length) return true;
     const sweep = this.#reduced ? this.#fill : this.#ema;
@@ -226,9 +232,16 @@ export class GaugeEngine implements CanvasEngine {
     }
 
     // Normalize the sweep target to 0–1 against the ABSOLUTE scale so the
-    // dial position means the same thing across download + upload (and runs).
+    // dial position means the same thing across download + upload + the
+    // combined bidirectional rate (and runs). The store already sums the
+    // live down+up samples into valueBytesPerSec for the bidirectional
+    // phase (see liveTransferBytesPerSec), so this is the same formula.
     let target = 0;
-    if (s.phase === "download" || s.phase === "upload") {
+    if (
+      s.phase === "download" ||
+      s.phase === "upload" ||
+      s.phase === "bidirectional"
+    ) {
       target = Math.min(1, Math.max(0, s.valueBytesPerSec / this.#scale));
     } else if (s.phase === "warmup") {
       target = 0.3; // indeterminate — connection probe, no meaningful rate yet
@@ -343,6 +356,7 @@ export class GaugeEngine implements CanvasEngine {
     const scaleMeaningful =
       this.#lastPhase === "download" ||
       this.#lastPhase === "upload" ||
+      this.#lastPhase === "bidirectional" ||
       this.#lastPhase === "complete" ||
       this.#lastPhase === "latency";
     const showLabels = scaleMeaningful && this.#ticks.length >= 2;
