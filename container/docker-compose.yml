@@ -1,10 +1,10 @@
 # Graphite Meter — local/production compose.
-#   docker compose -f docker/docker-compose.yml up --build
+#   docker compose -f container/docker-compose.yml up --build
 services:
   graphite-meter:
     build:
       context: ..
-      dockerfile: docker/Dockerfile
+      dockerfile: container/Dockerfile
       args:
         VERSION: "0.1.0"
         SERVER_IMPL: "go" # reserved: "rust" -> server-rs (future swap)

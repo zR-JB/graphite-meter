@@ -27,8 +27,8 @@ api/                          Cross-language contract, source of truth for clien
                                  wire.md / wire.testvectors.txt                — WS/WT message protocol
                                  rng.testvectors.txt                           — byte-exact RNG corpus
 crates/rng/                   Legacy/reference Rust port of the RNG (see "About crates/rng" below).
-docker/                       Multi-stage image (bun client build + Go server -> one static binary),
-                               docker-compose.yml, and docker/quadlet/ (Podman systemd units).
+container/                    Multi-stage image (bun client build + Go server -> one static binary),
+                               docker-compose.yml, and container/quadlet/ (Podman systemd units).
 webtransport-reference-demos/ Standalone pre-integration browser demos (download/ping/upload) kept
                                as implementation references; not part of the built app.
 ```
@@ -370,7 +370,7 @@ includes the dummy runner (`?engine=dummy`) and the Developer settings tab by de
 | `just test-server` | `go test ./...` — includes the `/preflight` schema-conformance test. |
 | `just prod-client` | Builds the client in production mode (real engine, no dev tooling, by default). |
 | `just prod` | Full production build: real-only client embedded in a versioned, stripped (`-s -w -trimpath`), ldflags-versioned server binary. |
-| `just image` | `docker build -f docker/Dockerfile -t graphite-meter:latest .` |
+| `just image` | `docker build -f container/Dockerfile -t graphite-meter:latest .` |
 | `just test-rng` | Runs the legacy Rust RNG crate's own conformance test. Optional — see below; requires a Rust toolchain only if you run it. |
 
 `just prod` accepts the `GM_CLIENT_*` knobs inline to produce a configurable build instead of the
@@ -416,7 +416,7 @@ podman run -d --name gm --replace -p 8080:8080 graphite-meter:latest
 # open http://localhost:8080 ; stop with: podman rm -f gm
 ```
 
-`docker/Dockerfile` stages:
+`container/Dockerfile` stages:
 
 1. **`client`** (`oven/bun:canary`) — installs client deps, builds the Svelte app. Build args
    `GM_CLIENT_ENGINE`/`GM_CLIENT_ALLOW_DUMMY`/`GM_CLIENT_DEV_TOOLS`/`GM_CLIENT_BUILD_LABEL` default
@@ -432,26 +432,26 @@ podman run -d --name gm --replace -p 8080:8080 graphite-meter:latest
 To bake a configurable (non-prod-default) image, pass `--build-arg` for any client knob:
 
 ```sh
-podman build -f docker/Dockerfile -t graphite-meter:dev \
+podman build -f container/Dockerfile -t graphite-meter:dev \
   --build-arg GM_CLIENT_ALLOW_DUMMY=1 --build-arg GM_CLIENT_DEV_TOOLS=1 .
 ```
 
-`docker/docker-compose.yml` wraps the same build (context = repo root, `dockerfile:
-docker/Dockerfile`) with the server env vars pre-wired and commented-out slots for the future TLS/
+`container/docker-compose.yml` wraps the same build (context = repo root, `dockerfile:
+container/Dockerfile`) with the server env vars pre-wired and commented-out slots for the future TLS/
 HTTP/3 ports and the client build knobs.
 
 ### Quadlet (Podman + systemd)
 
-`docker/quadlet/` has two units: `graphite-meter.build` (a Podman 5.0+ `.build` unit that builds
+`container/quadlet/` has two units: `graphite-meter.build` (a Podman 5.0+ `.build` unit that builds
 the image, `Arch=arm64` by default — e.g. for a Raspberry Pi, change or drop for amd64) and
 `graphite-meter.container` (runs it, referencing the build unit via `Image=graphite-meter.build`,
-so a start always builds-then-runs). See `docker/quadlet/README.md` for the full walkthrough;
+so a start always builds-then-runs). See `container/quadlet/README.md` for the full walkthrough;
 summary:
 
 ```sh
 # edit graphite-meter.build first: SetWorkingDirectory=/absolute/path/to/your/checkout
 mkdir -p ~/.config/containers/systemd
-cp docker/quadlet/graphite-meter.build docker/quadlet/graphite-meter.container \
+cp container/quadlet/graphite-meter.build container/quadlet/graphite-meter.container \
    ~/.config/containers/systemd/
 loginctl enable-linger "$USER"   # start at boot without an active login session
 systemctl --user daemon-reload
@@ -462,7 +462,7 @@ Operate with `systemctl --user status|restart graphite-meter.service` and
 `journalctl --user -u graphite-meter.service -f`. A restart only rebuilds the image if the
 `.build` unit's inputs changed.
 
-> Note: rootless Podman user-mode containers may use pasta for networking, which can significantly slow down throughput. To avoid this overhead, enable host networking in `docker/quadlet/graphite-meter.container` with `Network=host`.
+> Note: rootless Podman user-mode containers may use pasta for networking, which can significantly slow down throughput. To avoid this overhead, enable host networking in `container/quadlet/graphite-meter.container` with `Network=host`.
 
 ---
 

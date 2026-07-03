@@ -3,7 +3,7 @@
 # client embedded, then ship a single static binary on scratch.
 #
 # Build from the REPO ROOT:
-#   docker build -f docker/Dockerfile -t graphite-meter:latest .
+#   docker build -f container/Dockerfile -t graphite-meter:latest .
 #
 # Reserved for a future Go->Rust server swap:
 ARG SERVER_IMPL=go

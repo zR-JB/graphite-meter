@@ -110,5 +110,5 @@ prod: _prod-stage-client
 
 # Build the production image (single static binary)
 image:
-    docker build -f docker/Dockerfile -t graphite-meter:latest .
+    docker build -f container/Dockerfile -t graphite-meter:latest .
     

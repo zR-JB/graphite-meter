@@ -17,7 +17,7 @@ ImageTag=localhost/graphite-meter:latest
 #   ▸ Set SetWorkingDirectory to the ABSOLUTE path of your checkout on this host
 #     (quadlet units live in a systemd search dir, not in the repo — see README).
 SetWorkingDirectory=/path/to/graphite-meter
-File=docker/Dockerfile
+File=container/Dockerfile
 
 # Build natively for arm64 (e.g. on a Raspberry Pi). Drop or change for amd64.
 Arch=arm64

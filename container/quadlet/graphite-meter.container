@@ -1,5 +1,5 @@
 # Quadlet .container unit — runs the Graphite Meter server.
-# Mirrors docker/docker-compose.yml. The image is produced by the sibling
+# Mirrors container/docker-compose.yml. The image is produced by the sibling
 # graphite-meter.build unit (Image=*.build → builds first, then runs).
 # Install: see ./README.md.
 #

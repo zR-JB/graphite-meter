@@ -20,7 +20,7 @@ absolute path in `graphite-meter.build`:
 SetWorkingDirectory=/home/youruser/source/graphite-meter
 ```
 
-(Keep `File=docker/Dockerfile` — it's relative to that context.)
+(Keep `File=container/Dockerfile` — it's relative to that context.)
 
 ## 2. Install the units
 
