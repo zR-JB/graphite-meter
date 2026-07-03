@@ -190,7 +190,7 @@
       class="ghost-btn icon-btn"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
-      use:tooltip={"Settings — setup, endpoint, developer (W)"}
+      use:tooltip={"Settings — setup, endpoint, developer"}
       onclick={() => (settingsOpen = !settingsOpen)}>{@html ICON.settings}</button
     >
     <ConnectivityIndicator />
@@ -205,7 +205,7 @@
       class="ghost-btn icon-btn"
       aria-label="Toggle telemetry"
       aria-expanded={telemetryOpen}
-      use:tooltip={"Telemetry (D)"}
+      use:tooltip={"Telemetry"}
       onclick={() => (telemetryOpen = !telemetryOpen)}>{@html ICON.info}</button
     >
   </header>
