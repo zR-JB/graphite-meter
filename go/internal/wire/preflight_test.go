@@ -65,13 +65,13 @@ func TestGoldenMatchesSchema(t *testing.T) {
 func TestStructMarshalsToValidSchema(t *testing.T) {
 	sch := compileSchema(t)
 
-	h1 := "http://speed.example:8080"
+	h1 := "http://speed.example:8765"
 	p := Preflight{
 		ClientIP: "198.51.100.4",
 		Server: ServerInfo{
 			Name:     "graphite-meter",
 			Host:     "speed.example",
-			Port:     8080,
+			Port:     8765,
 			Location: "ams",
 		},
 		PreTestPingMs:      0,

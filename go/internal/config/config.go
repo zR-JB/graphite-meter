@@ -1,6 +1,6 @@
 // Package config loads server configuration from flags + environment.
 //
-// Defaults favor the "just works" path: plain HTTP/1.1 on :8080, no TLS, no
+// Defaults favor the "just works" path: plain HTTP/1.1 on :8765, no TLS, no
 // HTTP/3 / Alt-Svc. The TLS/h3 fields are reserved for Stage 5; AdvertiseH3
 // stays false so an h1.1 throughput test is never auto-migrated onto QUIC.
 package config
@@ -55,7 +55,7 @@ type Config struct {
 // Default returns a Config with the baseline defaults.
 func Default() Config {
 	return Config{
-		H1Addr:        ":8080",
+		H1Addr:        ":8765",
 		H3Addr:        ":8443",
 		AdvertiseH3:   false,
 		ServerName:    "graphite-meter",

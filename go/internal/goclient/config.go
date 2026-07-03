@@ -30,7 +30,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		BaseURL:                "http://127.0.0.1:8080",
+		BaseURL:                "http://127.0.0.1:8765",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
 		LatencyDuration:        4 * time.Second,
@@ -50,7 +50,7 @@ func DefaultConfig() Config {
 
 func (c Config) normalized() Config {
 	if c.BaseURL == "" {
-		c.BaseURL = "http://127.0.0.1:8080"
+		c.BaseURL = "http://127.0.0.1:8765"
 	}
 	if c.Warmup < 0 {
 		c.Warmup = 0

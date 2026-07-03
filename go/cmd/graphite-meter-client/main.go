@@ -122,9 +122,9 @@ type serverPreset struct {
 }
 
 var serverPresets = []serverPreset{
-	{name: "Local dev", url: "http://127.0.0.1:8080", note: "default HTTP listener"},
+	{name: "Local dev", url: "http://127.0.0.1:8765", note: "default HTTP listener"},
 	{name: "Local TLS", url: "https://127.0.0.1:8443", note: "local HTTPS listener"},
-	{name: "LAN host", url: "http://graphite-meter.local:8080", note: "mDNS or local DNS"},
+	{name: "LAN host", url: "http://graphite-meter.local:8765", note: "mDNS or local DNS"},
 }
 
 type model struct {

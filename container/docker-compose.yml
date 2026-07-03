@@ -1,21 +1,16 @@
-# Graphite Meter — local/production compose.
-#   docker compose -f container/docker-compose.yml up --build
+# Graphite Meter — default compose. Pulls the published release image; nothing
+# is built locally. Versions (server binary + web client) are stamped into the
+# image at release time, so there are no build args here — only runtime config.
+#   docker compose -f container/docker-compose.yml up -d
+#
+# To build from source instead (developers / custom client builds), use
+# container/docker-compose.build.yml.
 services:
   graphite-meter:
-    build:
-      context: ..
-      dockerfile: container/Dockerfile
-      args:
-        VERSION: "0.1.0"
-        SERVER_IMPL: "go" # reserved: "rust" -> server-rs (future swap)
-        # Client build knobs (defaults = prod: real-only, no dev tooling).
-        # Uncomment to build a configurable multi-engine image with dev tools:
-        # GM_CLIENT_ALLOW_DUMMY: "1"
-        # GM_CLIENT_DEV_TOOLS: "1"
-        # GM_CLIENT_ENGINE: "real"        # default runner when multiple are built in
-        # GM_CLIENT_BUILD_LABEL: "0.1.0"  # status-bar + client-version label (default "prod")
+    # Pin a release for reproducible deploys, e.g. ...:0.1.0 or ...:0.1
+    image: ghcr.io/zr-jb/graphite-meter:latest
     ports:
-      - "8080:8080" # HTTP/1.1 (default)
+      - "8765:8765" # HTTP/1.1 (default)
       # - "8443:8443/tcp"  # TLS + HTTP/1.1/h2 (Stage 5)
       # - "8443:8443/udp"  # HTTP/3 + WebTransport (Stage 5)
     environment:
@@ -23,6 +18,7 @@ services:
       # running behind a reverse proxy so /preflight advertises reachable URLs.
       GM_SERVER_NAME: "graphite-meter"
       # GM_SERVER_LOCATION: "fra"
-      # PUBLIC_H1_ORIGIN: "http://speed.example:8080"
-      # GM_ADVERTISE_H3: "0"
+      # GM_H1_ADDR: ":8765"              # listen address inside the container
+      # PUBLIC_H1_ORIGIN: "http://speed.example:8765"
+      # GM_VERBOSE: "1"                  # per-second server-side throughput log
     restart: unless-stopped
