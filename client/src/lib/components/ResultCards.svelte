@@ -556,14 +556,20 @@
 {/if}
 
 <style>
-  /* Flex so only the currently-visible cards share the width (progressive
-     reveal): one card spans full width, two split in half, three in thirds. */
-  /* Wrap on actual available width (not a viewport breakpoint): when the stage
-     is narrow — e.g. panels docked — the cards re-split 3 → 2 → 1 instead of
-     squeezing past their content. */
+  /* Grid so only the currently-visible cards share the width (progressive
+     reveal): one card spans full width, two split evenly in half, three in
+     even thirds — auto-fit collapses empty tracks and stretches the ones that
+     exist via 1fr, so N cards always divide the row evenly instead of a flex
+     row wrapping unevenly (e.g. 3-then-1) once a 4th card appears. Reacts to
+     actual available width (not a viewport breakpoint): when the stage is
+     narrow — e.g. panels docked — the cards re-split 3 → 2 → 1 instead of
+     squeezing past their content. Applies at every width; auto-fit already
+     lands on a natural 2-up grid at typical phone content widths (~330-400px
+     after stage/panel padding, gap 12px) while still collapsing to a single
+     full-width track when only one card is visible. */
   .result-cards {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
   }
   /* Reserve one card-row of height for the whole run (from warmup on) so the
@@ -575,24 +581,9 @@
   .result-cards.reserve {
     min-height: 64px;
   }
-  /* auto-fit lands on a natural 2-up grid at typical phone content widths
-     (~330-400px after stage/panel padding, gap 12px) while still collapsing
-     to a single full-width track when only one card is visible — no manual
-     odd-card-spanning needed. */
-  @media (max-width: 759px) {
-    /* bp: stacked */
-    .result-cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    }
-    .result-card {
-      min-width: 0;
-    }
-  }
 
   .result-card {
-    flex: 1 1 180px;
-    min-width: 150px;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
