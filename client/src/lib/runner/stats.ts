@@ -17,7 +17,10 @@ export function median(xs: number[]): number {
 export function percentile(xs: number[], p: number): number {
   if (!xs.length) return 0;
   const s = [...xs].sort((a, b) => a - b);
-  const idx = Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1));
+  const idx = Math.min(
+    s.length - 1,
+    Math.max(0, Math.ceil((p / 100) * s.length) - 1),
+  );
   return s[idx];
 }
 

@@ -47,7 +47,9 @@
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
 
-<span class="label" role="status" aria-live="polite">{PHASE_LABEL[store.phase]}</span>
+<span class="label" role="status" aria-live="polite"
+  >{PHASE_LABEL[store.phase]}</span
+>
 <span class="sep">·</span>
 <span>elapsed {fmtElapsed(elapsedMs)}</span>
 {#if showRemaining}

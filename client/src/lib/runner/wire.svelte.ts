@@ -80,7 +80,9 @@ export function getRunner(): NetworkRunner {
     if (__GM_ALLOW_DUMMY__ && resolveEngine() === "dummy") {
       runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
     } else {
-      runner = new RunnerCore(new RealBackend({ endpoint: store.config.endpoint }));
+      runner = new RunnerCore(
+        new RealBackend({ endpoint: store.config.endpoint }),
+      );
     }
   }
   return runner;
@@ -97,7 +99,12 @@ export async function bootRunner() {
   } catch (cause) {
     store.ingest({
       type: "error",
-      error: { reason: "preflight-failed", message: "Probe failed", phase: "idle", cause },
+      error: {
+        reason: "preflight-failed",
+        message: "Probe failed",
+        phase: "idle",
+        cause,
+      },
     });
   }
 }
@@ -114,7 +121,10 @@ export function engage() {
   const cfg = $state.snapshot(store.config);
   cfg.duration = {
     ...cfg.duration,
-    warmupMs: adaptiveWarmupMs(cfg.duration.warmupMs, store.infra?.preTestPingMs ?? 0),
+    warmupMs: adaptiveWarmupMs(
+      cfg.duration.warmupMs,
+      store.infra?.preTestPingMs ?? 0,
+    ),
   };
   if (store.infra) {
     getRunner().start(cfg);

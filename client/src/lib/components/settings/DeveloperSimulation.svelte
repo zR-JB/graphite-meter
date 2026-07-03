@@ -61,12 +61,17 @@
 
 <div class="head">
   <h3>Developer Simulation</h3>
-  <p>Dev-only anomaly injection. Live perturbations fire into the active run.</p>
+  <p>
+    Dev-only anomaly injection. Live perturbations fire into the active run.
+  </p>
   <span class="badge">DEV ONLY</span>
 </div>
 
 {#if !running}
-  <p class="hint">Start a run to enable injection — anomalies fire relative to the current phase.</p>
+  <p class="hint">
+    Start a run to enable injection — anomalies fire relative to the current
+    phase.
+  </p>
 {/if}
 
 <div class="grid">
@@ -132,7 +137,8 @@
     min-height: 150px;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background: linear-gradient(180deg, var(--surface-2), transparent),
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent),
       var(--surface-inset);
     box-shadow: var(--elev-recess);
     padding: var(--space-3);

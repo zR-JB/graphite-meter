@@ -20,10 +20,17 @@ function parseCorpus(text: string): Row[] {
     const line = lines[i].trim();
     if (line === "" || line.startsWith("#")) continue;
     const parts = line.split("|");
-    if (parts.length !== 3) throw new Error(`line ${i + 1}: want 3 fields: ${line}`);
+    if (parts.length !== 3)
+      throw new Error(`line ${i + 1}: want 3 fields: ${line}`);
     const dir = parts[0].trim();
-    if (dir !== "encode" && dir !== "decode") throw new Error(`line ${i + 1}: bad dir ${dir}`);
-    rows.push({ line: i + 1, dir, input: parts[1].trim(), expected: parts[2].trim() });
+    if (dir !== "encode" && dir !== "decode")
+      throw new Error(`line ${i + 1}: bad dir ${dir}`);
+    rows.push({
+      line: i + 1,
+      dir,
+      input: parts[1].trim(),
+      expected: parts[2].trim(),
+    });
   }
   if (rows.length === 0) throw new Error("corpus is empty");
   return rows;
@@ -70,15 +77,27 @@ function parseCanonical(spec: string): Frame {
     case "PING":
       return { op: "PING", id: Number(m.get("id")) };
     case "PONG":
-      return { op: "PONG", id: Number(m.get("id")), nanos: BigInt(m.get("nanos")!) };
+      return {
+        op: "PONG",
+        id: Number(m.get("id")),
+        nanos: BigInt(m.get("nanos")!),
+      };
     case "SIZE":
       return { op: "SIZE", bytes: BigInt(m.get("bytes")!) };
     case "HI":
       return { op: "HI", proto: m.get("proto")! };
     case "BYTES_RECEIVED":
-      return { op: "BYTES_RECEIVED", n: BigInt(m.get("n")!), nanos: BigInt(m.get("nanos")!) };
+      return {
+        op: "BYTES_RECEIVED",
+        n: BigInt(m.get("n")!),
+        nanos: BigInt(m.get("nanos")!),
+      };
     case "UPLOAD_COMPLETE":
-      return { op: "UPLOAD_COMPLETE", n: BigInt(m.get("n")!), nanos: BigInt(m.get("nanos")!) };
+      return {
+        op: "UPLOAD_COMPLETE",
+        n: BigInt(m.get("n")!),
+        nanos: BigInt(m.get("nanos")!),
+      };
     case "ERR":
       return { op: "ERR", code: m.get("code")!, text: m.get("text") ?? "" };
     default:
@@ -91,7 +110,9 @@ const rows = parseCorpus(await Bun.file(corpusPath).text());
 for (const r of rows) {
   test(`${r.dir} L${r.line}: ${r.input}`, () => {
     if (r.dir === "decode") {
-      const wantErr = r.expected.startsWith("ERR:") ? r.expected.slice(4) : null;
+      const wantErr = r.expected.startsWith("ERR:")
+        ? r.expected.slice(4)
+        : null;
       if (wantErr !== null) {
         let thrown: unknown;
         try {

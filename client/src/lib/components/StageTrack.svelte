@@ -20,10 +20,7 @@
    * state. Deselected stages still render (muted) so they can be
    * re-enabled.
    * ============================================================ */
-  import {
-    store,
-    type StageKey,
-  } from "../state/store.svelte";
+  import { store, type StageKey } from "../state/store.svelte";
   import { applyStageChange } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
@@ -138,7 +135,10 @@
     const p = store.phase;
     if (p === "complete") return { state: "done", fill: 100 };
     if (p === "bidirectional")
-      return { state: "active", fill: Math.round(store.phaseFraction * 200) / 2 };
+      return {
+        state: "active",
+        fill: Math.round(store.phaseFraction * 200) / 2,
+      };
     return { state: "pending", fill: 0 };
   });
 

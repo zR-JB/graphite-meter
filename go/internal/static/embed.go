@@ -1,6 +1,6 @@
 // Package static embeds and serves the built Svelte client. The real client
 // build (client/dist) is staged into ./dist at build time (justfile
-// `_stage-client` / the Docker build); a tracked placeholder keeps //go:embed
+// `_embed-client` / the Docker build); a tracked placeholder keeps //go:embed
 // and `go build`/`go test` working without a client build present.
 package static
 

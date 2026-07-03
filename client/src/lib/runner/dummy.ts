@@ -50,11 +50,46 @@ interface ProfileSpec {
 // Throughput is bytes/sec (browser-native). Link rates are conventionally
 // quoted in bits/sec, so the trailing comment notes the familiar bit-rate.
 const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
-  fiber: { downBytesPerSec: 117.5e6, upBytesPerSec: 110e6, idleRttMs: 6, loadedDeltaMs: 4, lossBase: 0.0, jitter: 0.04 }, // ~940/880 Mbit/s
-  cable: { downBytesPerSec: 40e6, upBytesPerSec: 2.75e6, idleRttMs: 16, loadedDeltaMs: 34, lossBase: 0.002, jitter: 0.05 }, // ~320/22 Mbit/s
-  lte: { downBytesPerSec: 8e6, upBytesPerSec: 3e6, idleRttMs: 38, loadedDeltaMs: 62, lossBase: 0.01, jitter: 0.09 }, // ~64/24 Mbit/s
-  satellite: { downBytesPerSec: 13.75e6, upBytesPerSec: 1.75e6, idleRttMs: 600, loadedDeltaMs: 180, lossBase: 0.015, jitter: 0.11 }, // ~110/14 Mbit/s
-  throttled: { downBytesPerSec: 1.1875e6, upBytesPerSec: 0.5625e6, idleRttMs: 28, loadedDeltaMs: 48, lossBase: 0.005, jitter: 0.05 }, // ~9.5/4.5 Mbit/s
+  fiber: {
+    downBytesPerSec: 117.5e6,
+    upBytesPerSec: 110e6,
+    idleRttMs: 6,
+    loadedDeltaMs: 4,
+    lossBase: 0.0,
+    jitter: 0.04,
+  }, // ~940/880 Mbit/s
+  cable: {
+    downBytesPerSec: 40e6,
+    upBytesPerSec: 2.75e6,
+    idleRttMs: 16,
+    loadedDeltaMs: 34,
+    lossBase: 0.002,
+    jitter: 0.05,
+  }, // ~320/22 Mbit/s
+  lte: {
+    downBytesPerSec: 8e6,
+    upBytesPerSec: 3e6,
+    idleRttMs: 38,
+    loadedDeltaMs: 62,
+    lossBase: 0.01,
+    jitter: 0.09,
+  }, // ~64/24 Mbit/s
+  satellite: {
+    downBytesPerSec: 13.75e6,
+    upBytesPerSec: 1.75e6,
+    idleRttMs: 600,
+    loadedDeltaMs: 180,
+    lossBase: 0.015,
+    jitter: 0.11,
+  }, // ~110/14 Mbit/s
+  throttled: {
+    downBytesPerSec: 1.1875e6,
+    upBytesPerSec: 0.5625e6,
+    idleRttMs: 28,
+    loadedDeltaMs: 48,
+    lossBase: 0.005,
+    jitter: 0.05,
+  }, // ~9.5/4.5 Mbit/s
 };
 
 const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
@@ -150,11 +185,18 @@ export class DummyBackend implements RunnerBackend {
         type: "latency",
         // Pre-test idle pings: phase "idle" (negative t), so the LatencyProfile's
         // idle lane (phase==="latency") excludes them while the sparkline shows them.
-        sample: { t: -interval * (pings - i), rttMs: rtt, underLoad: false, lost: false, phase: "idle" },
+        sample: {
+          t: -interval * (pings - i),
+          rttMs: rtt,
+          underLoad: false,
+          lost: false,
+          phase: "idle",
+        },
       });
     }
 
-    const host = endpoint.host === "auto" ? "edge-fra-03.graphite.net" : endpoint.host;
+    const host =
+      endpoint.host === "auto" ? "edge-fra-03.graphite.net" : endpoint.host;
     const octet = () => Math.floor(this.#rand() * 254) + 1;
     return {
       clientIp: `${octet()}.${octet()}.${octet()}.${octet()}`,
@@ -235,7 +277,10 @@ export class DummyBackend implements RunnerBackend {
     // lanes for bidirectional). Cadence gated on REAL time so the early-finish
     // glide stays smooth — measured-time races ahead, and gating on it would
     // dump the tail's samples into the canvas at once.
-    if (activity.transfer.length > 0 && realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS) {
+    if (
+      activity.transfer.length > 0 &&
+      realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
+    ) {
       this.#lastThroughputAt = realNow;
       for (const dir of activity.transfer) {
         this.#synthThroughput(dir, elapsed, segStart, segEnd);
@@ -247,7 +292,8 @@ export class DummyBackend implements RunnerBackend {
     // latency when the latency stage is off" rule — resolved once by the
     // scheduler, never re-derived from config here.
     const pingActive =
-      activity.stage === "latency" || (activity.transfer.length > 0 && activity.loadedLatency);
+      activity.stage === "latency" ||
+      (activity.transfer.length > 0 && activity.loadedLatency);
     const pingInterval = PING_INTERVAL[cfg.pingConcurrency];
     if (pingActive && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
@@ -258,10 +304,16 @@ export class DummyBackend implements RunnerBackend {
   /* ---------- Throughput sample synthesis ---------- */
   // `dir` (not the phase) picks the rate, so the bidirectional phase synthesizes
   // a down lane and an up lane from the same profile per tick.
-  #synthThroughput(dir: FlowDirection, elapsed: number, segStart: number, segEnd: number) {
+  #synthThroughput(
+    dir: FlowDirection,
+    elapsed: number,
+    segStart: number,
+    segEnd: number,
+  ) {
     const tp = elapsed - segStart; // ms into this phase
     const phaseLen = segEnd - segStart;
-    const mean = dir === "down" ? this.#spec.downBytesPerSec : this.#spec.upBytesPerSec;
+    const mean =
+      dir === "down" ? this.#spec.downBytesPerSec : this.#spec.upBytesPerSec;
 
     // Logistic ramp-up over the first ~1.2s.
     const ramp = 1 / (1 + Math.exp(-(tp - 600) / 150));
@@ -292,7 +344,12 @@ export class DummyBackend implements RunnerBackend {
   /* ---------- Latency sample synthesis ---------- */
   // `activity.transfer` (not the phase) decides under-load: a stage that moves
   // bytes produces loaded (bufferbloat) pings; the latency stage produces idle.
-  #synthLatency(activity: PhaseActivity, elapsed: number, segStart: number, segEnd: number) {
+  #synthLatency(
+    activity: PhaseActivity,
+    elapsed: number,
+    segStart: number,
+    segEnd: number,
+  ) {
     const tp = elapsed - segStart;
     const phaseLen = segEnd - segStart;
     const frac = tp / phaseLen;
@@ -343,7 +400,8 @@ export class DummyBackend implements RunnerBackend {
     // the core NOW (freezing measured-time) and open a real-time dead-air window
     // that onTick lifts with resume(). No magnitude — it's a full drop.
     if (a.kind === "connection-drop") {
-      const durationMs = a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;
+      const durationMs =
+        a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;
       this.#dropEndReal = performance.now() + durationMs;
       host.stall({ reason: "connection-lost", detail: "injected drop" });
       return;
@@ -369,7 +427,10 @@ export class DummyBackend implements RunnerBackend {
 
   /** The currently-active live anomaly of a given kind, if any. Also prunes
    *  windows that have fully elapsed so the list stays bounded. */
-  #activeAnomaly(kind: RunnerAnomaly["kind"], elapsed: number): LiveAnomaly | null {
+  #activeAnomaly(
+    kind: RunnerAnomaly["kind"],
+    elapsed: number,
+  ): LiveAnomaly | null {
     if (this.#liveAnomalies.length) {
       this.#liveAnomalies = this.#liveAnomalies.filter((x) => elapsed < x.end);
     }

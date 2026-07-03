@@ -80,7 +80,10 @@ function connect(): void {
     }
     post({ type: "open" });
     trySend(encode({ op: "HI", proto: "ws" }));
-    keepalive ??= setInterval(() => trySend(encode({ op: "HI", proto: "ws" })), KEEPALIVE_MS);
+    keepalive ??= setInterval(
+      () => trySend(encode({ op: "HI", proto: "ws" })),
+      KEEPALIVE_MS,
+    );
   };
   ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
   // onerror is always followed by onclose for WebSocket — reconnect once, in onclose.
@@ -123,7 +126,8 @@ function scheduleReconnect(detail: string): void {
     post({ type: "stall", detail });
     stalledOut = true;
   }
-  backoff = backoff === 0 ? RECONNECT_MIN_MS : Math.min(backoff * 2, RECONNECT_MAX_MS);
+  backoff =
+    backoff === 0 ? RECONNECT_MIN_MS : Math.min(backoff * 2, RECONNECT_MAX_MS);
   reconnectTimer = setTimeout(connect, backoff);
 }
 

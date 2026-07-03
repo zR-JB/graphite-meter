@@ -17,7 +17,11 @@
       store.phase === "error",
   );
   const label = $derived(
-    store.isRunning ? "Abort test" : resolved ? "Run the test again" : "Start the speed test",
+    store.isRunning
+      ? "Abort test"
+      : resolved
+        ? "Run the test again"
+        : "Start the speed test",
   );
 </script>
 

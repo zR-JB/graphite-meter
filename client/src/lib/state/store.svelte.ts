@@ -29,7 +29,14 @@ import {
   estimateResultCompensation,
   type CompensationEstimate,
 } from "../compensation";
-import { quantile, sharedThroughputScale, rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import {
+  quantile,
+  sharedThroughputScale,
+  rateScaleIndex,
+  rateUnit,
+  rateValueAt,
+  rawRateFrom,
+} from "../format";
 import { buildSegments } from "../runner/schedule";
 import {
   loadPersisted,
@@ -77,7 +84,13 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   // it appends a concurrent down+up phase (combined gauge + a result card).
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
-  duration: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000, bidirectionalMs: 10000 },
+  duration: {
+    warmupMs: 800,
+    latencyMs: 4000,
+    downloadMs: 10000,
+    uploadMs: 10000,
+    bidirectionalMs: 10000,
+  },
   pingConcurrency: "medium",
   // Advanced ceiling only — lanes are derived per-phase (RealRunner #laneBudget);
   // 6 = the full per-origin budget, so by default the auto policy is unconstrained.
@@ -131,9 +144,27 @@ export const DEFAULT_CONFIG: RunnerConfig = {
 };
 
 export const DURATION_PRESETS = {
-  short: { warmupMs: 600, latencyMs: 2500, downloadMs: 5000, uploadMs: 5000, bidirectionalMs: 5000 },
-  medium: { warmupMs: 800, latencyMs: 4000, downloadMs: 10000, uploadMs: 10000, bidirectionalMs: 10000 },
-  long: { warmupMs: 1200, latencyMs: 6000, downloadMs: 20000, uploadMs: 20000, bidirectionalMs: 20000 },
+  short: {
+    warmupMs: 600,
+    latencyMs: 2500,
+    downloadMs: 5000,
+    uploadMs: 5000,
+    bidirectionalMs: 5000,
+  },
+  medium: {
+    warmupMs: 800,
+    latencyMs: 4000,
+    downloadMs: 10000,
+    uploadMs: 10000,
+    bidirectionalMs: 10000,
+  },
+  long: {
+    warmupMs: 1200,
+    latencyMs: 6000,
+    downloadMs: 20000,
+    uploadMs: 20000,
+    bidirectionalMs: 20000,
+  },
 } as const;
 
 const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered
@@ -242,7 +273,10 @@ class AppStore {
   /** Whether result cards surface the compensated wire-rate estimate. */
   showWireEstimates = $state(false);
   /** User-resized docked side-panel widths (px), per side. Persisted. */
-  dockWidth = $state<{ left: number; right: number }>({ left: 400, right: 400 });
+  dockWidth = $state<{ left: number; right: number }>({
+    left: 400,
+    right: 400,
+  });
   /** Last-viewed Settings tab — persisted so the panel reopens where the user
    *  left it. */
   settingsTab = $state<SettingsTab>("setup");
@@ -279,14 +313,22 @@ class AppStore {
    *  latency-only, upload-only, or bidirectional-only run all resolve to a
    *  sensible final reading instead of a stale/misread value. */
   finalMetric = $derived.by<
-    { kind: "speed"; bytesPerSec: number } | { kind: "latency"; ms: number } | null
+    | { kind: "speed"; bytesPerSec: number }
+    | { kind: "latency"; ms: number }
+    | null
   >(() => {
     const r = this.stageResults;
-    if (r.download) return { kind: "speed", bytesPerSec: r.download.reportedBytesPerSec };
-    if (r.upload) return { kind: "speed", bytesPerSec: r.upload.reportedBytesPerSec };
+    if (r.download)
+      return { kind: "speed", bytesPerSec: r.download.reportedBytesPerSec };
+    if (r.upload)
+      return { kind: "speed", bytesPerSec: r.upload.reportedBytesPerSec };
     const bidi = this.result?.bidirectional;
     if (bidi)
-      return { kind: "speed", bytesPerSec: bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec };
+      return {
+        kind: "speed",
+        bytesPerSec:
+          bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec,
+      };
     if (r.latency) return { kind: "latency", ms: r.latency.reportedMs };
     return null;
   });
@@ -353,7 +395,8 @@ class AppStore {
     const w = this.pulseLatency.slice(-30).filter((s) => !s.lost);
     if (w.length < 2) return 0;
     let acc = 0;
-    for (let i = 1; i < w.length; i++) acc += Math.abs(w[i].rttMs - w[i - 1].rttMs);
+    for (let i = 1; i < w.length; i++)
+      acc += Math.abs(w[i].rttMs - w[i - 1].rttMs);
     return acc / (w.length - 1);
   });
 
@@ -381,7 +424,9 @@ class AppStore {
   /** Test-time remaining in the active phase (budget − measured elapsed). Goes
    *  to 0 at the budget and STOPS shrinking while stalled (both inputs freeze),
    *  so a connection drop visibly pushes the run end out. */
-  phaseRemainingMs = $derived(Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs));
+  phaseRemainingMs = $derived(
+    Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs),
+  );
 
   bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
 
@@ -498,7 +543,8 @@ class AppStore {
    *  per run, so derivations off it ratchet and never jitter down mid-run. */
   #peakBytesPerSec = $derived.by(() => {
     let peak = 0;
-    for (const s of this.throughput) if (s.bytesPerSec > peak) peak = s.bytesPerSec;
+    for (const s of this.throughput)
+      if (s.bytesPerSec > peak) peak = s.bytesPerSec;
     return peak;
   });
 
@@ -556,10 +602,12 @@ class AppStore {
   #unitIndex = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     // Pinned scale: track the user's fixed ceiling. Otherwise the live peak.
-    const refBytesPerSec = typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
+    const refBytesPerSec =
+      typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
     // Express the raw byte rate in the active display kind's base units (bits
     // when showing bit/s), then pick the prefix with headroom baked in.
-    const baseUnits = this.unitKind === "bytes" ? refBytesPerSec : refBytesPerSec * 8;
+    const baseUnits =
+      this.unitKind === "bytes" ? refBytesPerSec : refBytesPerSec * 8;
     return rateScaleIndex(baseUnits, this.unitBase, UNIT_STEP_UP_HEADROOM);
   });
 
@@ -568,14 +616,24 @@ class AppStore {
   }
 
   toUnit(bytesPerSec: number): number {
-    return rateValueAt(bytesPerSec, this.unitBase, this.unitKind, this.#unitIndex);
+    return rateValueAt(
+      bytesPerSec,
+      this.unitBase,
+      this.unitKind,
+      this.#unitIndex,
+    );
   }
 
   /** Inverse of `toUnit`: a value the user typed in the active display unit →
    *  raw bytes/s for storage in the (bytes-native) config. Uses the same prefix
    *  index as `toUnit`, so editing a pinned ceiling round-trips losslessly. */
   fromUnit(displayValue: number): number {
-    return rawRateFrom(displayValue, this.unitBase, this.unitKind, this.#unitIndex);
+    return rawRateFrom(
+      displayValue,
+      this.unitBase,
+      this.unitKind,
+      this.#unitIndex,
+    );
   }
 
   /* ================= INGEST ================= */
@@ -619,7 +677,10 @@ class AppStore {
         this.transportLog.push(e.attempt);
         break;
       case "stageSkipped":
-        this.stageFailures = { ...this.stageFailures, [e.failure.stage]: e.failure };
+        this.stageFailures = {
+          ...this.stageFailures,
+          [e.failure.stage]: e.failure,
+        };
         break;
       case "stability":
         this.liveStability[e.snapshot.phase] = e.snapshot;
@@ -635,7 +696,8 @@ class AppStore {
       case "latency":
         if (e.sample.phase === "idle") {
           this.idleLatency.push(e.sample);
-          if (this.idleLatency.length > MAX_IDLE_SAMPLES) this.idleLatency.shift();
+          if (this.idleLatency.length > MAX_IDLE_SAMPLES)
+            this.idleLatency.shift();
         } else {
           this.latency.push(e.sample);
           if (this.latency.length > MAX_SAMPLES) this.latency.shift();
@@ -719,7 +781,9 @@ class AppStore {
       // Bucket strictly by the sample's stamped phase: idle = latency-phase
       // pings; loaded = under-load pings tagged with the matching transfer phase.
       const laneSamples = this.latency.filter((s) =>
-        key === "latency" ? s.phase === "latency" : s.underLoad && s.phase === key,
+        key === "latency"
+          ? s.phase === "latency"
+          : s.underLoad && s.phase === key,
       );
       const valid = laneSamples.filter((s) => !s.lost);
       const sorted = valid.map((s) => s.rttMs).sort((a, b) => a - b);
@@ -728,7 +792,8 @@ class AppStore {
         : null;
       const jitter =
         avg != null && valid.length >= 2
-          ? valid.reduce((sum, s) => sum + Math.abs(s.rttMs - avg), 0) / valid.length
+          ? valid.reduce((sum, s) => sum + Math.abs(s.rttMs - avg), 0) /
+            valid.length
           : null;
       const lossRatio = laneSamples.length
         ? laneSamples.filter((s) => s.lost).length / laneSamples.length
@@ -792,7 +857,11 @@ if (typeof window !== "undefined") {
     // 1. Apply theme → <html data-theme>, resolving "auto" to the live OS preference.
     $effect(() => {
       const resolved =
-        store.theme === "auto" ? (systemPrefersLight ? "light" : "dark") : store.theme;
+        store.theme === "auto"
+          ? systemPrefersLight
+            ? "light"
+            : "dark"
+          : store.theme;
       document.documentElement.setAttribute("data-theme", resolved);
     });
 

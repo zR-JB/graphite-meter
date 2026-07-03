@@ -94,7 +94,8 @@ export function mean(values: number[]): number {
 export function standardDeviation(values: number[]): number {
   if (values.length < 2) return 0;
   const avg = mean(values);
-  const variance = values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
+  const variance =
+    values.reduce((s, v) => s + (v - avg) ** 2, 0) / values.length;
   return Math.sqrt(variance);
 }
 
@@ -111,7 +112,10 @@ export interface ConfidenceScore {
   sampleCount: number;
 }
 
-export interface LatencyConfidenceScore extends Omit<ConfidenceScore, "slopeRatio"> {
+export interface LatencyConfidenceScore extends Omit<
+  ConfidenceScore,
+  "slopeRatio"
+> {
   /** fraction of the windowed pings that were lost. */
   lossRatio: number;
 }
@@ -121,16 +125,26 @@ export interface LatencyConfidenceScore extends Omit<ConfidenceScore, "slopeRati
  * Stability falls as the plateau gets noisier (variance) or keeps drifting
  * up/down (slope). Returns score 0 when there is not enough signal yet.
  */
-export function transferConfidence(bytesPerSecValues: number[]): ConfidenceScore {
+export function transferConfidence(
+  bytesPerSecValues: number[],
+): ConfidenceScore {
   const values = bytesPerSecValues.slice(-CONFIDENCE_WINDOW);
   if (values.length < 2) {
-    return { score: 0, varianceRatio: 1, slopeRatio: 1, sampleCount: values.length };
+    return {
+      score: 0,
+      varianceRatio: 1,
+      slopeRatio: 1,
+      sampleCount: values.length,
+    };
   }
 
   const avg = mean(values);
   const varianceRatio = avg > 0 ? standardDeviation(values) / avg : 1;
 
-  const segmentSize = Math.max(MIN_SLOPE_SEGMENT, Math.ceil(values.length / SLOPE_SEGMENTS));
+  const segmentSize = Math.max(
+    MIN_SLOPE_SEGMENT,
+    Math.ceil(values.length / SLOPE_SEGMENTS),
+  );
   const first = mean(values.slice(0, segmentSize));
   const last = mean(values.slice(-segmentSize));
   const slopeRatio = avg > 0 ? Math.abs(last - first) / avg : 1;
@@ -155,12 +169,18 @@ export function latencyConfidence(
 ): LatencyConfidenceScore {
   const values = rttValues.slice(-CONFIDENCE_WINDOW);
   if (values.length < 2) {
-    return { score: 0, varianceRatio: 1, lossRatio: 1, sampleCount: values.length };
+    return {
+      score: 0,
+      varianceRatio: 1,
+      lossRatio: 1,
+      sampleCount: values.length,
+    };
   }
 
   const avg = mean(values);
   const varianceRatio = avg > 0 ? standardDeviation(values) / avg : 1;
-  const lossRatio = windowSampleCount > 0 ? lostInWindow / windowSampleCount : 0;
+  const lossRatio =
+    windowSampleCount > 0 ? lostInWindow / windowSampleCount : 0;
 
   const score = clamp(
     1 - varianceRatio * LATENCY_VARIANCE_K - lossRatio * LATENCY_LOSS_K,
@@ -203,11 +223,15 @@ export function shouldExitPhase(input: ExitDecisionInput): boolean {
 
   // Coverage floor: honour BOTH minCoverageRatio and the max-reduction cap,
   // so a phase is never shortened past (1 − maxPhaseReductionRatio).
-  const requiredCoverage = Math.max(cfg.minCoverageRatio, 1 - cfg.maxPhaseReductionRatio);
+  const requiredCoverage = Math.max(
+    cfg.minCoverageRatio,
+    1 - cfg.maxPhaseReductionRatio,
+  );
   if (elapsedMs / durationMs < requiredCoverage) return false;
 
   if (confidence.score < cfg.stabilityThreshold) return false;
 
-  const floor = kind === "latency" ? cfg.minLatencySamples : cfg.minTransferSamples;
+  const floor =
+    kind === "latency" ? cfg.minLatencySamples : cfg.minTransferSamples;
   return confidence.sampleCount >= floor;
 }

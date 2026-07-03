@@ -53,7 +53,10 @@ export function fmtMs(ms: number): string {
 export function fmtBytes(b: number, base: "base10" | "base2"): string {
   const k = base === "base10" ? 1000 : 1024;
   // Official notation: SI decimal uses lowercase k (kB); IEC binary uses KiB.
-  const u = base === "base10" ? ["B", "kB", "MB", "GB", "TB"] : ["B", "KiB", "MiB", "GiB", "TiB"];
+  const u =
+    base === "base10"
+      ? ["B", "kB", "MB", "GB", "TB"]
+      : ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
   let n = b;
   while (n >= k && i < u.length - 1) {
@@ -96,14 +99,26 @@ function unitDivisor(base: UnitBase, idx: number): number {
  *  is that factor past the boundary — so the unit only changes once we're
  *  comfortably above the threshold (e.g. ≥1.2 Gbit/s rather than at 1.0), never
  *  landing on a 0.xx reading of the larger unit. */
-export function rateScaleIndex(baseUnits: number, base: UnitBase, headroom = 1): number {
+export function rateScaleIndex(
+  baseUnits: number,
+  base: UnitBase,
+  headroom = 1,
+): number {
   const k = base === "base10" ? 1000 : 1024;
   if (baseUnits < headroom) return 0;
-  return Math.max(0, Math.min(4, Math.floor(Math.log(baseUnits / headroom) / Math.log(k))));
+  return Math.max(
+    0,
+    Math.min(4, Math.floor(Math.log(baseUnits / headroom) / Math.log(k))),
+  );
 }
 
 /** Convert raw bytes/s → display value at an explicit prefix index. */
-export function rateValueAt(bytesPerSec: number, base: UnitBase, kind: UnitKind, idx: number): number {
+export function rateValueAt(
+  bytesPerSec: number,
+  base: UnitBase,
+  kind: UnitKind,
+  idx: number,
+): number {
   const baseUnits = kind === "bytes" ? bytesPerSec : bytesPerSec * 8;
   return baseUnits / unitDivisor(base, idx);
 }
@@ -111,7 +126,12 @@ export function rateValueAt(bytesPerSec: number, base: UnitBase, kind: UnitKind,
 /** Inverse of `rateValueAt`: a display value in the active unit → raw bytes/s.
  *  Used when the UI writes a user-entered ceiling back into the (bytes-native)
  *  config, so the round-trip is lossless at the current prefix. */
-export function rawRateFrom(displayValue: number, base: UnitBase, kind: UnitKind, idx: number): number {
+export function rawRateFrom(
+  displayValue: number,
+  base: UnitBase,
+  kind: UnitKind,
+  idx: number,
+): number {
   const baseUnits = displayValue * unitDivisor(base, idx);
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
@@ -191,9 +211,19 @@ export interface NiceDomain {
  *  latency axis and the latency profile so they scale identically. */
 export function niceDomain(
   values: number[],
-  opts: { widen?: number; minSpanRatio?: number; floor?: number; clampMinZero?: boolean } = {},
+  opts: {
+    widen?: number;
+    minSpanRatio?: number;
+    floor?: number;
+    clampMinZero?: boolean;
+  } = {},
 ): NiceDomain {
-  const { widen = 1.35, minSpanRatio = 0.16, floor = 12, clampMinZero = true } = opts;
+  const {
+    widen = 1.35,
+    minSpanRatio = 0.16,
+    floor = 12,
+    clampMinZero = true,
+  } = opts;
   if (!values.length) return { min: 0, max: floor, span: floor };
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);

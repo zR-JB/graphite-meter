@@ -51,7 +51,14 @@
  * flag is on), so it still bundles cleanly as a Vite module worker.
  * ============================================================ */
 
-import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";
+import {
+  setDebugLogging,
+  debugEnabled,
+  dlog,
+  fmtRate,
+  fmtBytes,
+  fmtMs,
+} from "../../debug";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
@@ -60,7 +67,13 @@ import { nextTransferBytes, type SizerCfg } from "./autosize";
  *  autosize.ts), re-fetching on the SAME keep-alive connection so cwnd is preserved
  *  (no per-chunk slow-start). Default off; for A/B-ing ramp responsiveness. */
 type InMsg =
-  | { type: "start"; url: string; debug?: boolean; id?: number; chunk?: boolean }
+  | {
+      type: "start";
+      url: string;
+      debug?: boolean;
+      id?: number;
+      chunk?: boolean;
+    }
   | { type: "measure"; seq: number }
   | { type: "stop" };
 /** Worker → main. */
@@ -150,7 +163,8 @@ function flushProgress(now = performance.now()): void {
     return;
   }
   const elapsedMs = now - accStart;
-  if (elapsedMs > 0) post({ type: "progress", bytes: acc, elapsedMs, seq: measureSeq });
+  if (elapsedMs > 0)
+    post({ type: "progress", bytes: acc, elapsedMs, seq: measureSeq });
   acc = 0;
   accStart = now;
 }
@@ -193,9 +207,16 @@ async function run(url: string): Promise<void> {
     const reqUrl = chunk ? `${url}&bytes=${sentBytes}` : url;
     const fetchStart = performance.now();
     try {
-      const res = await fetch(reqUrl, { signal: abort.signal, cache: "no-store" });
+      const res = await fetch(reqUrl, {
+        signal: abort.signal,
+        cache: "no-store",
+      });
       if (!res.ok || !res.body) {
-        post({ type: "error", recoverable: true, detail: `HTTP ${res.status}` });
+        post({
+          type: "error",
+          recoverable: true,
+          detail: `HTTP ${res.status}`,
+        });
         return;
       }
       await readBody(res.body, count);

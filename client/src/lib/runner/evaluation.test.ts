@@ -72,7 +72,10 @@ test("early stop stable throughout → averages the entire early-stopping phase"
   // Sanity: the early-stopping-phase average must differ from the full
   // measurement-phase average (the ramp drags the latter down) — otherwise
   // this test couldn't distinguish the fixed behavior from the old bug.
-  expect(result.meanBytesPerSec).not.toBeCloseTo(result.fullAverageBytesPerSec, 0);
+  expect(result.meanBytesPerSec).not.toBeCloseTo(
+    result.fullAverageBytesPerSec,
+    0,
+  );
 });
 
 test("early stop destabilizes after arming → averages the entire measurement phase", () => {
@@ -135,5 +138,8 @@ test("no early stop, still stable at finish → falls back to the trailing stabl
 
   expect(result.method).toBe("stable-window");
   expect(result.meanBytesPerSec).toBeCloseTo(1000, 6);
-  expect(result.meanBytesPerSec).not.toBeCloseTo(result.fullAverageBytesPerSec, 0);
+  expect(result.meanBytesPerSec).not.toBeCloseTo(
+    result.fullAverageBytesPerSec,
+    0,
+  );
 });
