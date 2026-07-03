@@ -171,15 +171,16 @@ export class DummyBackend implements RunnerBackend {
     };
   }
 
-  /** Synthetic capabilities: the dummy "supports" everything, exercising the
-   *  full capability surface the UI will render for the one-big-real-engine
-   *  future (per-role transport lists). Everything here is simulated. */
+  /** Synthetic capabilities: the dummy "supports" every per-role transport,
+   *  exercising the full capability surface the UI renders. Everything here is
+   *  simulated. WebSocket appears only under latency — it is the ping bus,
+   *  never a byte-transfer lane. */
   describe(): EngineInfo {
     return {
       name: "dummy",
       version: BUILD.clientVersion,
       latencyTransports: ["webtransport", "websocket"],
-      throughputTransports: ["webtransport", "fetch-streams", "websocket"],
+      throughputTransports: ["webtransport", "fetch-streams"],
     };
   }
 

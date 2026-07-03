@@ -349,11 +349,13 @@ export interface RunnerError {
 
 /* ---------- Engine identity & capabilities (§transport-selection seam) ----------
  *  Static self-description of a runner backend. The long-term model is ONE real
- *  engine that can drive many transports (h1.1 / h2 / h3 / websocket /
- *  webtransport / fetch), with the user picking per-role (latency vs
- *  throughput) from these lists — so capabilities live on the ENGINE, not one
- *  runner per protocol. No selection UI yet; the Endpoint info renders the
- *  lists so the seam is visible. */
+ *  engine that can drive many transports, with the user picking per role from
+ *  these lists — so capabilities live on the ENGINE, not one runner per
+ *  protocol. The roles differ: latency runs on a message bus (websocket,
+ *  webtransport datagrams), throughput on byte lanes (fetch streams over
+ *  h1.1/h2/h3, webtransport streams) — websocket is never a throughput
+ *  transport. No selection UI yet; the Endpoint info renders the lists so the
+ *  seam is visible. */
 export interface EngineInfo {
   /** Engine id, e.g. "real" | "dummy". */
   name: string;
