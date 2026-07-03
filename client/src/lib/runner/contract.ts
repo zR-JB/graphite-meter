@@ -284,7 +284,7 @@ export type TerminationReason =
 /** The connection method a backend may negotiate for a phase's I/O. A real
  *  engine tries these in preference order; each can fail to establish, and a
  *  failure of one is non-fatal as long as another succeeds. */
-export type TransportKind = "webtransport" | "websocket" | "xhr-stream";
+export type TransportKind = "webtransport" | "websocket" | "fetch-stream";
 
 /** The stage a transport is being negotiated for. A backend negotiates a
  *  stage's transport ONCE, at stage begin — the warmup primes it and the
