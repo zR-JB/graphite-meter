@@ -54,7 +54,7 @@
           "description": "Externally-reachable origins the client should target per transport. Env-driven so the values are correct behind a reverse proxy. `null` means that origin is not enabled.",
           "required": ["h1", "tls", "h3"],
           "properties": {
-            "h1": { "type": ["string", "null"], "description": "HTTP/1.1 cleartext origin (default, e.g. http://host:8080)." },
+            "h1": { "type": ["string", "null"], "description": "HTTP/1.1 cleartext origin (default, e.g. http://host:8765)." },
             "tls": { "type": ["string", "null"], "description": "HTTP/1.1+TLS origin (e.g. https://host:8443); null until enabled." },
             "h3": { "type": ["string", "null"], "description": "HTTP/3 + WebTransport origin (e.g. https://host:8443); null until enabled." }
           }

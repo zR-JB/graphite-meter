@@ -43,7 +43,7 @@ export interface Preflight {
      */
     origins: {
       /**
-       * HTTP/1.1 cleartext origin (default, e.g. http://host:8080).
+       * HTTP/1.1 cleartext origin (default, e.g. http://host:8765).
        */
       h1: string | null;
       /**

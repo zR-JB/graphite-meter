@@ -54,7 +54,7 @@ func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 // websocketSession exposing the message bus. Cross-origin upgrades are allowed
 // (InsecureSkipVerify) to mirror the permissive Access-Control-Allow-Origin: *
 // the HTTP endpoints already set — this is a public, auth-less, cookie-less
-// measurement bus (app on :8080 measuring against :8443), so there is no session
+// measurement bus (app on :8765 measuring against :8443), so there is no session
 // state for a forged origin to abuse.
 func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +100,7 @@ func httpAdapter(e Endpoint) http.Handler {
 }
 
 // setCommonHeaders applies permissive CORS and Timing-Allow-Origin so the
-// client can measure cross-origin (app on :8080, measuring against :8443) with
+// client can measure cross-origin (app on :8765, measuring against :8443) with
 // accurate Resource Timing.
 func setCommonHeaders(w http.ResponseWriter) {
 	h := w.Header()
