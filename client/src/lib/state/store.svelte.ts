@@ -99,8 +99,8 @@ export const DEFAULT_CONFIG: RunnerConfig = {
       applicationFraming: false, // HTTP/1.1 has no per-DATA-frame header
       reversePathControl: true,
       lossRetransmission: true,
-      receiverBias: true, // download-only browser receive-cost correction
-      steadyStateRamp: true,
+      receiverBias: false, // download-only browser receive-cost correction
+      steadyStateRamp: false,
       browserRuntime: true,
     },
     params: {
@@ -243,7 +243,7 @@ class AppStore {
   /** Whether result cards surface the compensated wire-rate estimate (§14.2). */
   showWireEstimates = $state(false);
   /** User-resized docked side-panel widths (px), per side. Persisted. */
-  dockWidth = $state<{ left: number; right: number }>({ left: 520, right: 420 });
+  dockWidth = $state<{ left: number; right: number }>({ left: 400, right: 400 });
   /** Last-viewed Settings tab — persisted so the panel reopens where the user
    *  left it. */
   settingsTab = $state<SettingsTab>("setup");

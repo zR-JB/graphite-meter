@@ -27,7 +27,7 @@ export type ThemePref = "dark" | "light" | "auto";
 
 /** Default docked side-panel widths (px). Applied widths are clamped to a
  *  sane range on use, so a stale/large saved value can never eat the screen. */
-export const DEFAULT_DOCK_WIDTH = { left: 520, right: 420 };
+export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
 
 /** The full persisted snapshot. Display prefs + the entire RunnerConfig. */
 /** Which Settings tab was last viewed (restored when the panel reopens). */
