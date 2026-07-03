@@ -39,6 +39,10 @@ import {
 } from "../format";
 import { buildSegments } from "../runner/schedule";
 import {
+  canDisableBidirectional as canDisableBidirectionalPure,
+  latestBidirectionalLanes,
+} from "./stageGuards";
+import {
   loadPersisted,
   savePersisted,
   systemThemeDefault,
@@ -339,15 +343,7 @@ class AppStore {
    *  and number show the aggregate the phase is actually moving. */
   liveTransferBytesPerSec = $derived.by(() => {
     if (this.phase === "bidirectional") {
-      let down = 0;
-      let up = 0;
-      for (let i = this.throughput.length - 1; i >= 0; i--) {
-        const s = this.throughput[i];
-        if (s.phase !== "bidirectional") break;
-        if (s.dir === "down" && down === 0) down = s.bytesPerSec;
-        else if (s.dir === "up" && up === 0) up = s.bytesPerSec;
-        if (down > 0 && up > 0) break;
-      }
+      const { down, up } = latestBidirectionalLanes(this.throughput);
       return down + up;
     }
     return this.throughput.at(-1)?.bytesPerSec ?? 0;
@@ -357,16 +353,7 @@ class AppStore {
    *  result card while the phase runs. Null outside the bidirectional phase. */
   liveBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
     if (this.phase !== "bidirectional") return null;
-    let down = 0;
-    let up = 0;
-    for (let i = this.throughput.length - 1; i >= 0; i--) {
-      const s = this.throughput[i];
-      if (s.phase !== "bidirectional") break;
-      if (s.dir === "down" && down === 0) down = s.bytesPerSec;
-      else if (s.dir === "up" && up === 0) up = s.bytesPerSec;
-      if (down > 0 && up > 0) break;
-    }
-    return { down, up };
+    return latestBidirectionalLanes(this.throughput);
   });
 
   /** The samples the connectivity pulse (dot, sparkline, live ping, loss/
@@ -485,6 +472,24 @@ class AppStore {
     if (currentlyEnabled && enabledCount <= 1) return false;
 
     this.config.stages[stage] = !currentlyEnabled;
+    return true;
+  }
+
+  /** Whether the bidirectional segment can be disabled from the stage track
+   *  right now. Kept separate from canToggleStage/STAGE_ORDER: bidirectional is
+   *  deliberately outside the ≥1-enabled-floor set those govern, and this
+   *  direction (off only — re-enabling is Settings-only) has no symmetric
+   *  "toggle on" case to support. See stageGuards.ts for the rule itself. */
+  canDisableBidirectional(): boolean {
+    return canDisableBidirectionalPure(this.phase, this.isRunning);
+  }
+
+  /** Disable bidirectional from the stage track. No-op (returns false) when
+   *  already off or currently locked (see canDisableBidirectional). */
+  disableBidirectional(): boolean {
+    if (!this.config.stages.bidirectional) return false;
+    if (!this.canDisableBidirectional()) return false;
+    this.config.stages.bidirectional = false;
     return true;
   }
 

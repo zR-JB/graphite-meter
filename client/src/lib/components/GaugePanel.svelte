@@ -608,10 +608,15 @@
   /* Results slot — empty at idle, compact strip while a run is in progress,
      the full card grid once complete. The min-height reserve applies in EVERY
      state so the gauge above is the same size at page load, mid-run, at
-     results, and back home. */
+     results, and back home. Wider than .stage-head/.controls-head above it
+     (deliberately — this is the one element in the instrument allowed to
+     outgrow that 600px measure): at up to 4 visible cards (download, upload,
+     bidirectional, ping), a 600px cap forces an uneven 3-then-1 wrap; 760px
+     comfortably fits all 4 in one row (4×~181px + 3×12px gap) while still
+     reading fine at 1-3 cards, where the grid just stretches wider. */
   .results-slot {
     width: 100%;
-    max-width: 600px;
+    max-width: 760px;
     align-self: center;
     min-height: 108px;
   }

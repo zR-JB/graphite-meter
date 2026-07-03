@@ -224,9 +224,11 @@ A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage l
   reports lane liveness, and a separate dedicated `/ws/upload` connection
   (`upload-progress-worker.ts`) is the sole source of the byte count and rate, exactly mirroring
   the server's active-time clock described above.
-- **Bidirectional** — modeled throughout the schedule/contract/dummy engine, but `RealBackend`
-  currently throws on it (a stage can't yet open a second direction on the same connection pool)
-  — see Experimental features below.
+- **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
+  own worker pool, aggregation cadence, and stall tracking. The browser's per-origin connection
+  budget is split between the two directions (after reserving buses for the ping/upload-progress
+  channels), with the user's ceiling applied per direction exactly as it is for a standalone
+  download or upload stage.
 
 ### Settings
 
@@ -307,10 +309,6 @@ dummy-stripped build, so it can't be re-enabled by URL trickery in a production 
   sequence of adaptively-sized chunks on one connection instead of one long stream. Implemented
   and usable today; explicitly labeled experimental because it's newer and less exercised than
   the default long-stream path.
-- **Bidirectional in the browser client** — modeled throughout the schedule, contract, and dummy
-  engine, and fully working in the native Go TUI client (which just runs its existing
-  download+upload lanes concurrently). In the browser's real backend it is not usable yet — a
-  stage can't currently open a second direction on the same connection pool.
 - **WebTransport** — modeled as a transport option throughout the client's negotiation logic and
   the `/preflight` capability schema (server and client both), but not implemented on either end:
   the server never opens an HTTP/3 listener and always advertises `webtransport: false`; the
