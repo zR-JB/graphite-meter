@@ -462,6 +462,8 @@ Operate with `systemctl --user status|restart graphite-meter.service` and
 `journalctl --user -u graphite-meter.service -f`. A restart only rebuilds the image if the
 `.build` unit's inputs changed.
 
+> Note: rootless Podman user-mode containers may use pasta for networking, which can significantly slow down throughput. To avoid this overhead, enable host networking in `docker/quadlet/graphite-meter.container` with `Network=host`.
+
 ---
 
 ## About `crates/rng`

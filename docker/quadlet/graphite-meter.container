@@ -19,6 +19,10 @@ PublishPort=8080:8080
 # PublishPort=8443:8443/tcp
 # PublishPort=8443:8443/udp
 
+# On rootless Podman, user-mode networking can use pasta and
+# significantly reduce throughput. For better performance, uncomment:
+# Network=host
+
 # All optional; sensible defaults are baked in. Set the PUBLIC_* origins when
 # running behind a reverse proxy so /preflight advertises reachable URLs.
 Environment=GM_SERVER_NAME=graphite-meter
