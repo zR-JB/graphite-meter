@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="The Graphite Meter — open-source network speed test" />
     <meta name="color-scheme" content="dark light" />
+    <link
+      rel="preload"
+      href="/fonts/instrument-sans-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/spline-sans-mono-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <!-- Pre-paint canvas + theme (§14.1). This MUST live inline in <head>:
          the real colors live in app.css, which is imported from the JS
          bundle and so only applies AFTER the module graph loads. The browser
@@ -100,12 +114,6 @@
         /* corrupt/blocked storage → leave the dark default */
       }
     </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#131518" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#e9e9e4" />
