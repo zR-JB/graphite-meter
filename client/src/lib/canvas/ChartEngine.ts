@@ -7,7 +7,11 @@
  * each frame via its own rAF loop.
  * ============================================================ */
 
-import type { Phase, ThroughputSample, LatencySample } from "../runner/contract";
+import type {
+  Phase,
+  ThroughputSample,
+  LatencySample,
+} from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
 
@@ -89,7 +93,13 @@ interface ThemeColors {
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace("#", "").trim();
-  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  const full =
+    h.length === 3
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : h;
   const n = parseInt(full || "888888", 16);
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
@@ -112,7 +122,13 @@ export class ChartEngine implements CanvasEngine {
   #w = 0;
   #h = 0;
 
-  #vp: Viewport = { tMin: 0, tMax: 6000, bytesPerSecMax: 125_000, rttMin: 0, rttMax: 50 };
+  #vp: Viewport = {
+    tMin: 0,
+    tMax: 6000,
+    bytesPerSecMax: 125_000,
+    rttMin: 0,
+    rttMax: 50,
+  };
   #vpInit = false;
   #vpSettled = false; // true once the camera lerp has converged on its target
 
@@ -220,7 +236,11 @@ export class ChartEngine implements CanvasEngine {
     const frac = (x - PAD_L) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
-    const bytesPerSec = this.#hoverValue(data.throughput, t, (s) => s.bytesPerSec);
+    const bytesPerSec = this.#hoverValue(
+      data.throughput,
+      t,
+      (s) => s.bytesPerSec,
+    );
     const rtt = this.#hoverValue(
       data.latency.filter((s) => !s.lost),
       t,
@@ -258,7 +278,11 @@ export class ChartEngine implements CanvasEngine {
     return pick(this.#closestSample(arr, t));
   }
 
-  #interpInRange<T extends { t: number }>(arr: T[], t: number, pick: (s: T) => number): number | null {
+  #interpInRange<T extends { t: number }>(
+    arr: T[],
+    t: number,
+    pick: (s: T) => number,
+  ): number | null {
     if (!arr.length) return null;
     if (t < arr[0].t || t > arr[arr.length - 1].t) return null;
     if (t === arr[0].t) return pick(arr[0]);
@@ -283,7 +307,10 @@ export class ChartEngine implements CanvasEngine {
     return null;
   }
 
-  #nearestPhaseWithSamples<T extends { phase: Phase }>(arr: T[], t: number): Phase | null {
+  #nearestPhaseWithSamples<T extends { phase: Phase }>(
+    arr: T[],
+    t: number,
+  ): Phase | null {
     if (!this.#spans.length) return null;
     const availablePhases = new Set(arr.map((s) => s.phase));
     let nearest: Phase | null = null;
@@ -339,10 +366,17 @@ export class ChartEngine implements CanvasEngine {
 
   /** Cached vertical area-fill gradient for a transfer phase. Rebuilt only when
    *  the plot height changes or the theme is re-resolved (#gradH reset). */
-  #areaGrad(ctx: CanvasRenderingContext2D, phase: "download" | "upload"): CanvasGradient {
+  #areaGrad(
+    ctx: CanvasRenderingContext2D,
+    phase: "download" | "upload",
+  ): CanvasGradient {
     if (this.#gradH !== this.#h) {
       const bot = this.#h - PAD_B;
-      const make = (rgb: { r: number; g: number; b: number }): CanvasGradient => {
+      const make = (rgb: {
+        r: number;
+        g: number;
+        b: number;
+      }): CanvasGradient => {
         const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
         grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
         grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
@@ -374,7 +408,8 @@ export class ChartEngine implements CanvasEngine {
    *  lerp settles, then the loop parks. */
   #animating(): boolean {
     const p = this.#lastPhase;
-    if (p === "warmup" || p === "latency" || p === "download" || p === "upload") return true;
+    if (p === "warmup" || p === "latency" || p === "download" || p === "upload")
+      return true;
     return !this.#vpSettled;
   }
 
@@ -414,7 +449,8 @@ export class ChartEngine implements CanvasEngine {
     }
 
     const latest = this.#latestT(d);
-    const complete = d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
+    const complete =
+      d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
     this.#result = complete;
 
     // Target viewport.
@@ -433,8 +469,11 @@ export class ChartEngine implements CanvasEngine {
 
     // Throughput axis ceiling: follow the gauge's shared scale verbatim so the
     // two instruments are identically scaled (dwell-filtered + tiered upstream).
-    const bytesPerSecMax = d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
-    this.#hasThroughputScale = d.scaleBytesPerSec !== sharedThroughputScale(0) || d.throughput.length > 0;
+    const bytesPerSecMax =
+      d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
+    this.#hasThroughputScale =
+      d.scaleBytesPerSec !== sharedThroughputScale(0) ||
+      d.throughput.length > 0;
 
     // Latency axis. Live → simple 0-based nice ceiling (stable while scrolling).
     // Result → centered, weighted, nice-step domain (shared `niceDomain`), so
@@ -456,7 +495,11 @@ export class ChartEngine implements CanvasEngine {
         d.latency.length !== this.#p95Cache.len ||
         Math.abs(tMin - this.#p95Cache.tMin) > 500
       ) {
-        this.#p95Cache = { len: d.latency.length, tMin, v: this.#p95In(d.latency, tMin, tMax) };
+        this.#p95Cache = {
+          len: d.latency.length,
+          tMin,
+          v: this.#p95In(d.latency, tMin, tMax),
+        };
       }
       rttMax = niceCeil(Math.max(this.#p95Cache.v * 1.3, 20));
     }
@@ -490,7 +533,6 @@ export class ChartEngine implements CanvasEngine {
     }
   }
 
-
   #p95In(arr: LatencySample[], t0: number, t1: number): number {
     const v: number[] = [];
     for (const s of arr) if (!s.lost && s.t >= t0 && s.t <= t1) v.push(s.rttMs);
@@ -502,7 +544,9 @@ export class ChartEngine implements CanvasEngine {
   /* ---------- coordinate maps ---------- */
   #x(t: number): number {
     const plotW = this.#w - PAD_L - PAD_R;
-    return PAD_L + ((t - this.#vp.tMin) / (this.#vp.tMax - this.#vp.tMin)) * plotW;
+    return (
+      PAD_L + ((t - this.#vp.tMin) / (this.#vp.tMax - this.#vp.tMin)) * plotW
+    );
   }
   #yL(bytesPerSec: number): number {
     const plotH = this.#h - PAD_T - PAD_B;
@@ -543,7 +587,10 @@ export class ChartEngine implements CanvasEngine {
    *  result view. A faint min→max band per transfer phase plus a dashed
    *  average rule and a small "avg" tag. Ports linerate's per-series
    *  average-line + peak summary onto the canvas. */
-  #drawPhaseStats(ctx: CanvasRenderingContext2D, all: ThroughputSample[]): void {
+  #drawPhaseStats(
+    ctx: CanvasRenderingContext2D,
+    all: ThroughputSample[],
+  ): void {
     for (const stat of this.#phaseStats(all)) {
       const x0 = Math.max(PAD_L, this.#x(stat.t0));
       const x1 = Math.min(this.#w - PAD_R, this.#x(stat.t1));
@@ -638,7 +685,10 @@ export class ChartEngine implements CanvasEngine {
       const color = this.#phaseColor(s.phase);
       if (!color) continue;
       const x0 = Math.max(PAD_L, this.#x(s.t0));
-      const x1 = Math.min(this.#w - PAD_R, this.#x(s.t1 === Infinity ? this.#vp.tMax : s.t1));
+      const x1 = Math.min(
+        this.#w - PAD_R,
+        this.#x(s.t1 === Infinity ? this.#vp.tMax : s.t1),
+      );
       const w = x1 - x0 - 2;
       if (w < 3) continue;
 
@@ -713,7 +763,11 @@ export class ChartEngine implements CanvasEngine {
       ctx.moveTo(x, top);
       ctx.lineTo(x, bot);
       const s = t / 1000;
-      ctx.fillText(Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`, x, this.#h - 5);
+      ctx.fillText(
+        Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`,
+        x,
+        this.#h - 5,
+      );
     }
     for (let i = 1; i <= 3; i++) {
       const y = Math.round(top + ((bot - top) * i) / 4) + 0.5;
@@ -726,7 +780,10 @@ export class ChartEngine implements CanvasEngine {
   /** Trace a smoothed path through `pts` from the current point. Midpoint-
    *  quadratic: each sample is a control point and the curve passes through
    *  the segment midpoints — smooth, overshoot-free, cheap. */
-  #smoothTo(ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[]): void {
+  #smoothTo(
+    ctx: CanvasRenderingContext2D,
+    pts: { x: number; y: number }[],
+  ): void {
     for (let i = 0; i < pts.length - 1; i++) {
       const xc = (pts[i].x + pts[i + 1].x) / 2;
       const yc = (pts[i].y + pts[i + 1].y) / 2;
@@ -736,7 +793,10 @@ export class ChartEngine implements CanvasEngine {
     ctx.lineTo(last.x, last.y);
   }
 
-  #drawThroughput(ctx: CanvasRenderingContext2D, all: ThroughputSample[]): void {
+  #drawThroughput(
+    ctx: CanvasRenderingContext2D,
+    all: ThroughputSample[],
+  ): void {
     if (!all.length) return;
     const bot = this.#h - PAD_B;
     const tMin = this.#vp.tMin;
@@ -755,7 +815,11 @@ export class ChartEngine implements CanvasEngine {
           leftEdge = s;
           continue;
         }
-        if (!pts.length && leftEdge) pts.push({ x: this.#x(leftEdge.t), y: this.#yL(leftEdge.bytesPerSec) });
+        if (!pts.length && leftEdge)
+          pts.push({
+            x: this.#x(leftEdge.t),
+            y: this.#yL(leftEdge.bytesPerSec),
+          });
         pts.push({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) });
         if (s.t > tMax) break;
       }
@@ -804,7 +868,10 @@ export class ChartEngine implements CanvasEngine {
         segment.length = 0;
         return;
       }
-      const pts = segment.map((p) => ({ x: this.#x(p.t), y: this.#yR(p.rttMs) }));
+      const pts = segment.map((p) => ({
+        x: this.#x(p.t),
+        y: this.#yR(p.rttMs),
+      }));
       ctx.strokeStyle = segment[0].underLoad ? this.#c.warn : this.#c.signal;
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
@@ -816,7 +883,12 @@ export class ChartEngine implements CanvasEngine {
     };
     for (let i = lo; i < hi; i++) {
       const s = all[i];
-      if (s.lost || (prevPhase !== null && s.phase !== prevPhase) || (segment.length > 0 && s.underLoad !== segment[segment.length - 1].underLoad)) {
+      if (
+        s.lost ||
+        (prevPhase !== null && s.phase !== prevPhase) ||
+        (segment.length > 0 &&
+          s.underLoad !== segment[segment.length - 1].underLoad)
+      ) {
         drawSegment();
         prevPhase = null;
       }
@@ -829,7 +901,10 @@ export class ChartEngine implements CanvasEngine {
     drawSegment();
   }
 
-  #drawAxesLabels(ctx: CanvasRenderingContext2D, latencyEnabled: boolean): void {
+  #drawAxesLabels(
+    ctx: CanvasRenderingContext2D,
+    latencyEnabled: boolean,
+  ): void {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
     ctx.font = '10px "JetBrains Mono", monospace';
@@ -844,7 +919,8 @@ export class ChartEngine implements CanvasEngine {
         ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
       }
       if (latencyEnabled) {
-        const rtt = this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
+        const rtt =
+          this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
         ctx.textAlign = "right";
         ctx.fillText(this.#fmt.latency(rtt), this.#w - 4, y + 3);
       }

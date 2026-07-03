@@ -9,7 +9,11 @@
    * uses the single `quantile()` in format.ts); the domain is the
    * shared `niceDomain()` so it scales like the result chart's axis.
    * ============================================================ */
-  import { store, type LatencyLane, type StageKey } from "../state/store.svelte";
+  import {
+    store,
+    type LatencyLane,
+    type StageKey,
+  } from "../state/store.svelte";
   import { fmtMs, niceDomain } from "../format";
   import { tooltip, JARGON } from "../actions/tooltip";
 
@@ -51,7 +55,9 @@
 
   // Domain is still driven by ENABLED lanes only, so a muted lane's stale
   // range doesn't stretch the shared axis scale for the ones still measuring.
-  const enabledLanes = $derived(lanes.filter((l) => store.config.stages[l.key]));
+  const enabledLanes = $derived(
+    lanes.filter((l) => store.config.stages[l.key]),
+  );
 
   // Shared centered, snapped latency domain across every enabled lane.
   const domain = $derived.by(() => {
@@ -74,11 +80,18 @@
   // `anchorPct` is the snapped marker's position (0–100) within the track;
   // `trackW` is that track's pixel width at hover time. The card is placed
   // relative to the ANCHOR (not the mouse) and clamped to the track below.
-  let hover = $state<{ key: StageKey; metric: MetricKey; anchorPct: number; trackW: number } | null>(null);
+  let hover = $state<{
+    key: StageKey;
+    metric: MetricKey;
+    anchorPct: number;
+    trackW: number;
+  } | null>(null);
   // Measured live so we can clamp the card inside the track (no edge cutoff).
   let cardW = $state(0);
 
-  const hoverLane = $derived(hover ? (lanes.find((l) => l.key === hover!.key) ?? null) : null);
+  const hoverLane = $derived(
+    hover ? (lanes.find((l) => l.key === hover!.key) ?? null) : null,
+  );
   const hoverValue = $derived(
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
@@ -92,14 +105,19 @@
     if (!hover) return 0;
     const anchorPx = (hover.anchorPct / 100) * hover.trackW;
     const preferRight = hover.anchorPct <= 50;
-    const desired = preferRight ? anchorPx + CARD_GAP : anchorPx - cardW - CARD_GAP;
+    const desired = preferRight
+      ? anchorPx + CARD_GAP
+      : anchorPx - cardW - CARD_GAP;
     const maxLeft = Math.max(CARD_PAD, hover.trackW - cardW - CARD_PAD);
     return Math.min(Math.max(CARD_PAD, desired), maxLeft);
   });
 
   function pos(value: number | null): number {
     if (value == null) return 0;
-    return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
+    return Math.min(
+      100,
+      Math.max(0, ((value - domain.min) / domain.span) * 100),
+    );
   }
   function rangeWidth(min: number | null, max: number | null): number {
     if (min == null || max == null) return 0;
@@ -127,7 +145,9 @@
     return entries(lane).reduce<MetricKey | null>((best, e) => {
       if (!best) return e.metric;
       const bv = metricValue(lane, best)!;
-      return Math.abs(e.value - target) < Math.abs(bv - target) ? e.metric : best;
+      return Math.abs(e.value - target) < Math.abs(bv - target)
+        ? e.metric
+        : best;
     }, null);
   }
   function hoverContext(lane: LatencyLane, metric: MetricKey): string {
@@ -149,7 +169,10 @@
     const lane = lanes.find((l) => l.key === key);
     if (!lane) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const ratio = Math.min(
+      1,
+      Math.max(0, (e.clientX - rect.left) / rect.width),
+    );
     const metric = nearestMetric(lane, domain.min + ratio * domain.span);
     if (!metric) {
       hover = null;
@@ -190,9 +213,15 @@
       >
         <div class="lane-meta">
           <span>{meta.label}</span>
-          <strong>{lane.average == null ? "waiting" : `avg ${fmtMs(lane.average)}`}</strong>
+          <strong
+            >{lane.average == null
+              ? "waiting"
+              : `avg ${fmtMs(lane.average)}`}</strong
+          >
           {#if lane.jitter != null}
-            <em class="jit" use:tooltip={JARGON.jitter}>± {fmtMs(lane.jitter)} jit</em>
+            <em class="jit" use:tooltip={JARGON.jitter}
+              >± {fmtMs(lane.jitter)} jit</em
+            >
           {/if}
           <em>
             {lane.min == null || lane.max == null
@@ -216,16 +245,35 @@
             onpointerleave={clearHover}
           >
             {#if lane.min != null && lane.max != null}
-              <span class="range" style="left:{pos(lane.min)}%;width:{rangeWidth(lane.min, lane.max)}%"></span>
+              <span
+                class="range"
+                style="left:{pos(lane.min)}%;width:{rangeWidth(
+                  lane.min,
+                  lane.max,
+                )}%"
+              ></span>
             {/if}
             {#if lane.p10 != null && lane.p90 != null}
-              <span class="band" style="left:{pos(lane.p10)}%;width:{rangeWidth(lane.p10, lane.p90)}%"></span>
+              <span
+                class="band"
+                style="left:{pos(lane.p10)}%;width:{rangeWidth(
+                  lane.p10,
+                  lane.p90,
+                )}%"
+              ></span>
             {/if}
             {#if lane.average != null}
               <i class="avg-marker" style="left:{pos(lane.average)}%"></i>
             {/if}
             {#if lane.current != null}
-              <i class="cur-marker" use:tooltip={{ text: `Latest ${fmtMs(lane.current)} ms`, instant: true }} style="left:{pos(lane.current)}%"></i>
+              <i
+                class="cur-marker"
+                use:tooltip={{
+                  text: `Latest ${fmtMs(lane.current)} ms`,
+                  instant: true,
+                }}
+                style="left:{pos(lane.current)}%"
+              ></i>
             {/if}
             {#if lane.lossRatio > 0}
               <i
@@ -237,11 +285,21 @@
 
             {#if hover?.key === lane.key && hoverValue != null}
               <span class="guide" style="left:{pos(hoverValue)}%"></span>
-              <span class="pin" class:avg={hover.metric === "average"} style="left:{pos(hoverValue)}%"></span>
-              <div class="hover-card" bind:clientWidth={cardW} style="left:{cardLeft}px">
+              <span
+                class="pin"
+                class:avg={hover.metric === "average"}
+                style="left:{pos(hoverValue)}%"
+              ></span>
+              <div
+                class="hover-card"
+                bind:clientWidth={cardW}
+                style="left:{cardLeft}px"
+              >
                 <div class="hc-head">
                   <span>{meta.label}</span>
-                  <strong>{METRIC_LABELS[hover.metric]} {fmtMs(hoverValue)}</strong>
+                  <strong
+                    >{METRIC_LABELS[hover.metric]} {fmtMs(hoverValue)}</strong
+                  >
                 </div>
                 {#if hoverContext(lane, hover.metric)}
                   <p>{hoverContext(lane, hover.metric)}</p>
@@ -284,7 +342,8 @@
   /* Jargon-term affordance on the profile heading. */
   .card-head h3.term {
     cursor: help;
-    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-decoration: underline dotted
+      color-mix(in srgb, var(--text-soft) 70%, transparent);
     text-underline-offset: 3px;
   }
   .card-head h3.term:focus-visible {
@@ -336,7 +395,11 @@
   }
   .lane[data-active="true"] {
     border-color: color-mix(in srgb, var(--signal) 44%, var(--border));
-    background: color-mix(in srgb, var(--signal-soft) 70%, var(--surface-inset));
+    background: color-mix(
+      in srgb,
+      var(--signal-soft) 70%,
+      var(--surface-inset)
+    );
   }
   /* Muted, not removed — toggling a stage must never change this panel's
      row count/height (mirrors StageTrack's disabled segment treatment). */
@@ -379,7 +442,8 @@
   }
   .lane-meta .jit {
     cursor: help;
-    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-decoration: underline dotted
+      color-mix(in srgb, var(--text-soft) 70%, transparent);
     text-underline-offset: 2px;
   }
 
@@ -418,7 +482,8 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background:
-      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px) 0 0 / 25% 100%,
+      linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px) 0 0 /
+        25% 100%,
       var(--surface-2);
     cursor: crosshair;
     isolation: isolate;
@@ -458,15 +523,18 @@
     min-width: 8px;
     border-radius: 999px;
     background: color-mix(in srgb, var(--signal) 28%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal-strong) 22%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--signal-strong) 22%, transparent);
   }
   .lane[data-tone="download"] .band {
     background: color-mix(in srgb, var(--phase-download) 28%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--phase-download) 30%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--phase-download) 30%, transparent);
   }
   .lane[data-tone="upload"] .band {
     background: color-mix(in srgb, var(--phase-upload) 28%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--phase-upload) 30%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--phase-upload) 30%, transparent);
   }
 
   .avg-marker,
@@ -492,11 +560,13 @@
   }
   .lane[data-tone="download"] .cur-marker {
     background: var(--phase-download);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--phase-download) 22%, transparent);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--phase-download) 22%, transparent);
   }
   .lane[data-tone="upload"] .cur-marker {
     background: var(--phase-upload);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--phase-upload) 22%, transparent);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--phase-upload) 22%, transparent);
   }
 
   .loss-marker {
@@ -546,11 +616,13 @@
   }
   .lane[data-tone="download"] .pin {
     background: var(--phase-download);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--phase-download) 22%, transparent);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--phase-download) 22%, transparent);
   }
   .lane[data-tone="upload"] .pin {
     background: var(--phase-upload);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--phase-upload) 22%, transparent);
+    box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--phase-upload) 22%, transparent);
   }
 
   .hover-card {
@@ -609,7 +681,8 @@
     color: var(--err);
   }
 
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .card-head p {
       display: none;
     }

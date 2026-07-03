@@ -40,7 +40,8 @@
   const stallMessage = $derived.by(() => {
     const info = store.stallInfo;
     // Prefer the backend's human detail; else the friendly reason phrase.
-    const tail = info?.detail ?? (info ? reasonLabel(info.reason) : "the link dropped");
+    const tail =
+      info?.detail ?? (info ? reasonLabel(info.reason) : "the link dropped");
     return `Connection lost — ${tail}`;
   });
 
@@ -86,7 +87,9 @@
       case "aborted":
         return "Sequence stopped";
       case "error":
-        return store.error ? reasonLabel(store.error.reason) : "Runner needs attention";
+        return store.error
+          ? reasonLabel(store.error.reason)
+          : "Runner needs attention";
       default:
         return "Ready";
     }
@@ -149,11 +152,16 @@
   class="phase-toast"
   class:visible={visible || stalled}
   class:alert={stalled ||
-    (visible && (skipMsg != null || store.phase === "error" || store.phase === "aborted"))}
+    (visible &&
+      (skipMsg != null ||
+        store.phase === "error" ||
+        store.phase === "aborted"))}
   role="status"
   aria-live="polite"
 >
-  <span class="kicker">{stalled ? "Link" : skipMsg ? "Skipped" : kicker(store.phase)}</span>
+  <span class="kicker"
+    >{stalled ? "Link" : skipMsg ? "Skipped" : kicker(store.phase)}</span
+  >
   <strong>{stalled ? stallMessage : (skipMsg ?? message(store.phase))}</strong>
 </div>
 
@@ -217,7 +225,8 @@
     }
   }
 
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .phase-toast {
       right: 12px;
       left: 12px;

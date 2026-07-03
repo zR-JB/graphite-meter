@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - name: gofmt
+        working-directory: go
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt violations:"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+      - name: go vet
+        working-directory: go
+        run: go vet ./...
+      - name: go test
+        working-directory: go
+        run: go test -race ./...
+
+  client:
+    name: Client
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Prettier
+        run: bun run format:check
+      - name: svelte-check
+        run: bun run check
+      - name: Tests
+        run: bun test
+
+  smoke:
+    name: Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: container/Dockerfile
+          load: true
+          tags: graphite-meter:smoke
+          build-args: |
+            VERSION=0.0.0-ci
+            GM_CLIENT_BUILD_LABEL=ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run container
+        run: docker run -d --name gm -p 8080:8080 graphite-meter:smoke
+      - name: Wait for ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://localhost:8080/preflight && exit 0
+            sleep 1
+          done
+          echo "::error::server never became ready"
+          exit 1
+      - name: Smoke /preflight
+        run: |
+          curl -fsS http://localhost:8080/preflight | tee /tmp/preflight.json
+          jq -e '
+            .engineVersion == "0.0.0-ci"
+            and .capabilities.transports.websocket == true
+            and .capabilities.endpoints.download == "/download"
+            and (.server.port | type == "number")
+          ' /tmp/preflight.json
+      - name: Smoke SPA index
+        run: |
+          curl -fsS http://localhost:8080/ | grep -qi '<script' || {
+            echo "::error::/ did not return the built SPA"
+            exit 1
+          }
+      - name: Dump logs on failure
+        if: failure()
+        run: docker logs gm || true

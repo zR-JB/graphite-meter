@@ -68,7 +68,10 @@
 
     // invalidateTheme repaints synchronously, so theme/resize need no wake().
     const mo = new MutationObserver(() => engine.invalidateTheme());
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
     const ro = new ResizeObserver(() => engine.invalidateTheme());
     ro.observe(canvasEl!);
 
@@ -96,14 +99,20 @@
         style="left:{hover.x}px"
         class:flip={canvasEl && hover.x > canvasEl.clientWidth - 130}
       >
-        <div class="chip-row"><span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b></div>
+        <div class="chip-row">
+          <span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b>
+        </div>
         {#if hover.bytesPerSec != null}
           <div class="chip-row">
-            <span>rate</span><b>{fmtSpeed(store.toUnit(hover.bytesPerSec))} {store.unitLabel}</b>
+            <span>rate</span><b
+              >{fmtSpeed(store.toUnit(hover.bytesPerSec))} {store.unitLabel}</b
+            >
           </div>
         {/if}
         {#if hover.rtt != null}
-          <div class="chip-row"><span>rtt</span><b>{fmtMs(hover.rtt)} ms</b></div>
+          <div class="chip-row">
+            <span>rtt</span><b>{fmtMs(hover.rtt)} ms</b>
+          </div>
         {/if}
       </div>
     {/if}

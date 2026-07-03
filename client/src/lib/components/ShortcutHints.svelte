@@ -12,9 +12,13 @@
   // Mirror RunButton's label exactly (Engage → Abort → Run again) so the hint
   // never names an action the button doesn't show.
   const resolved = $derived(
-    store.phase === "complete" || store.phase === "aborted" || store.phase === "error",
+    store.phase === "complete" ||
+      store.phase === "aborted" ||
+      store.phase === "error",
   );
-  const primary = $derived(store.isRunning ? "Abort" : resolved ? "Run again" : "Engage");
+  const primary = $derived(
+    store.isRunning ? "Abort" : resolved ? "Run again" : "Engage",
+  );
 </script>
 
 <div class="command-hints" aria-label="Keyboard shortcuts">
@@ -67,7 +71,8 @@
 
   /* The 28px status zone has no room for keycaps on a phone; the
      visible ShortcutHints strip is a desktop affordance. */
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .command-hints {
       display: none;
     }

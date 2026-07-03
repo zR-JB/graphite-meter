@@ -122,13 +122,18 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     const margin = 8;
     const cx = r.left + r.width / 2;
     let top =
-      opts.placement === "bottom" ? r.bottom + margin : r.top - b.height - margin;
+      opts.placement === "bottom"
+        ? r.bottom + margin
+        : r.top - b.height - margin;
     // Flip if it would clip the viewport top/bottom.
     if (top < margin) top = r.bottom + margin;
     if (top + b.height > window.innerHeight - margin)
       top = r.top - b.height - margin;
     let left = cx - b.width / 2;
-    left = Math.max(margin, Math.min(left, window.innerWidth - b.width - margin));
+    left = Math.max(
+      margin,
+      Math.min(left, window.innerWidth - b.width - margin),
+    );
     bubble.style.top = `${Math.max(margin, top)}px`;
     bubble.style.left = `${left}px`;
   }

@@ -150,7 +150,13 @@
   }
 </script>
 
-<div class="panel-layer" class:open class:docked class:raised aria-hidden={!open}>
+<div
+  class="panel-layer"
+  class:open
+  class:docked
+  class:raised
+  aria-hidden={!open}
+>
   <button
     class="backdrop"
     aria-label={`Close ${title}`}
@@ -194,8 +200,12 @@
     <!-- Mobile bottom-sheet grab handle — only visible in the mobile flyout
          media query (see .sheet-handle). A tap closes it (native button
          click); a drag past the threshold also closes it (startDismissDrag). -->
-    <button class="sheet-handle" aria-label={`Drag down, or press Enter, to close ${title}`}
-      onpointerdown={startDismissDrag} onclick={close}>
+    <button
+      class="sheet-handle"
+      aria-label={`Drag down, or press Enter, to close ${title}`}
+      onpointerdown={startDismissDrag}
+      onclick={close}
+    >
       <span class="sheet-grip" aria-hidden="true"></span>
     </button>
     <header class="panel-head">
@@ -260,7 +270,8 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%),
+    background:
+      linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%),
       var(--surface-1);
     box-shadow: var(--shadow-float);
     padding: var(--space-4);
@@ -353,7 +364,8 @@
      1200px); :not(.docked) is defensive, and it also lifts specificity to
      (0,3,0) so this overrides the side-specific left/right/translateX rules
      above without !important. */
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .panel-layer:not(.docked) .panel {
       top: auto;
       left: 0;
@@ -404,7 +416,8 @@
     border-radius: 999px;
     background: var(--border-strong);
   }
-  @media (max-width: 759px) { /* bp: stacked */
+  @media (max-width: 759px) {
+    /* bp: stacked */
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
       justify-content: center;

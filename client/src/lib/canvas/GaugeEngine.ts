@@ -112,7 +112,9 @@ export class GaugeEngine implements CanvasEngine {
 
   constructor(get: () => GaugeState) {
     this.#get = get;
-    this.#reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.#reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
   }
 
   attach(canvas: HTMLCanvasElement): void {
@@ -170,7 +172,9 @@ export class GaugeEngine implements CanvasEngine {
   }
 
   #cssVar(name: string, fallback: string): string {
-    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue(name)
+      .trim();
     return v || fallback;
   }
 
@@ -201,7 +205,8 @@ export class GaugeEngine implements CanvasEngine {
    *  the followers settle on their target, then the loop parks. */
   #animating(): boolean {
     const p = this.#lastPhase;
-    if (p === "warmup" || p === "latency" || p === "download" || p === "upload") return true;
+    if (p === "warmup" || p === "latency" || p === "download" || p === "upload")
+      return true;
     if (!this.#reduced && this.#ripples.length) return true;
     const sweep = this.#reduced ? this.#fill : this.#ema;
     return Math.abs(this.#target - sweep) > 0.0005;

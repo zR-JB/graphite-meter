@@ -91,7 +91,8 @@ function deepMergeOverDefaults<T>(base: T, source: unknown): T {
     // Scalar / array leaf: accept the saved value only if its broad type
     // matches the default's, else keep the default.
     if (source === undefined) return base;
-    if (Array.isArray(base)) return (Array.isArray(source) ? source : base) as T;
+    if (Array.isArray(base))
+      return (Array.isArray(source) ? source : base) as T;
     return (typeof source === typeof base ? source : base) as T;
   }
   if (!isPlainObject(source)) return base; // saved a non-object → ignore it
