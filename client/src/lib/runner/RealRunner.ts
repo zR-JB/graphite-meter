@@ -12,7 +12,7 @@
  *
  * ── What the backend is responsible for ─────────────────────
  *  • probe()         — the preflight handshake (+ a few pre-test pings).
- *  • transport       — negotiate webtransport / websocket / xhr-stream per
+ *  • transport       — negotiate webtransport / websocket / fetch-stream per
  *                    phase; report each attempt with host.reportTransport; if
  *                    every kind fails, host.fail("transport-unavailable", …).
  *  • connection lifecycle — a STAGE owns its connection(s) across its whole
@@ -503,7 +503,7 @@ export class RealBackend implements RunnerBackend {
   onStageBegin(activity: PhaseActivity): void {
     // The ping channel is ALWAYS a latency-role transport (websocket today) — it
     // runs on its OWN socket, never on the stage's transfer transport. Negotiate
-    // it separately (and first) so a loaded transfer stage's xhr-stream kind can
+    // it separately (and first) so a loaded transfer stage's fetch-stream kind can
     // never reach #primeLatencyChannel (which only services websocket), and so
     // #activeTransport ends as the transfer kind for the lanes' stall reporting.
     if (this.#needsPings(activity)) {
@@ -586,7 +586,7 @@ export class RealBackend implements RunnerBackend {
   /* ================= TRANSPORT NEGOTIATION ================= */
   /**
    * Negotiate a transport for `role`, trying the configured kinds in preference
-   * order (webtransport first, then the config's websocket/xhr-stream fallback).
+   * order (webtransport first, then the config's websocket/fetch-stream fallback).
    * Report EACH step with host.reportTransport({kind, role, status}):
    *   negotiating → attempting this kind;
    *   established → connected — return the kind so the caller opens its I/O;
@@ -595,14 +595,14 @@ export class RealBackend implements RunnerBackend {
    * the stage (failStage) or is survivable (loaded latency).
    *
    * Order is fixed (see #transportOrder): latency roles try webtransport then
-   * websocket; transfer/bidi roles try webtransport then xhr-stream. The sketch
+   * websocket; transfer/bidi roles try webtransport then fetch-stream. The sketch
    * below shows the control flow a real implementation fills in.
    */
   #negotiateTransport(role: TransportRole): TransportKind | null {
     const host = this.#host!;
     for (const kind of this.#transportOrder(role)) {
       host.reportTransport({ kind, role, status: "negotiating" });
-      // xhr-stream "establishes" the moment the server advertises it — the real
+      // fetch-stream "establishes" the moment the server advertises it — the real
       // TCP connect happens when #primeTransfer opens the fetch, and a connect
       // failure there surfaces as a stream error (handled in #onWorkerError).
       // webtransport/websocket are not serviced yet (Stage 4–5), so they fail
@@ -627,8 +627,8 @@ export class RealBackend implements RunnerBackend {
     const t = this.#capabilities?.transports;
     if (!t) return false;
     switch (kind) {
-      case "xhr-stream":
-        return t.xhrStream;
+      case "fetch-stream":
+        return t.fetchStream;
       case "websocket":
         return t.websocket;
       case "webtransport":
@@ -638,14 +638,14 @@ export class RealBackend implements RunnerBackend {
 
   /** The transport kinds to try for a role, most-preferred first. Webtransport
    *  is always attempted first when the server advertises it (Stage 4–5), then
-   *  the serviced fallback: websocket for latency roles, xhr-stream for transfer
+   *  the serviced fallback: websocket for latency roles, fetch-stream for transfer
    *  and bidirectional roles. Until webtransport lands it fails negotiation and
    *  we fall through to the fallback — the path the engine actually runs today
-   *  (websocket latency + fetch/xhr-stream transfer). */
+   *  (websocket latency + fetch-stream transfer). */
   #transportOrder(role: TransportRole): TransportKind[] {
     return role === "latency"
       ? ["webtransport", "websocket"]
-      : ["webtransport", "xhr-stream"];
+      : ["webtransport", "fetch-stream"];
   }
 
   /* ================= PRIME (warmup window) — open, don't measure ================= */
@@ -661,7 +661,7 @@ export class RealBackend implements RunnerBackend {
    *  congestion window, so extra lanes buy no throughput — cap low. The configured
    *  `parallelStreams` is only an upper ceiling (#laneCeiling), never a target. */
   #laneBudget(activity: PhaseActivity, kind: TransportKind): number {
-    if (kind !== "xhr-stream") return Math.min(2, this.#laneCeiling()); // multiplexed: one fat conn
+    if (kind !== "fetch-stream") return Math.min(2, this.#laneCeiling()); // multiplexed: one fat conn
     const buses =
       (this.#needsPings(activity) ? 1 : 0) +
       (activity.transfer.includes("up") ? 1 : 0);
@@ -681,7 +681,7 @@ export class RealBackend implements RunnerBackend {
     dir: FlowDirection,
     activity: PhaseActivity,
   ): void {
-    if (kind !== "xhr-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
+    if (kind !== "fetch-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
 
     // A stage that names both lanes (bidirectional) would call this twice; the
     // single pool can't serve two directions at once — that's Stage 6.

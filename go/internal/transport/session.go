@@ -52,7 +52,7 @@ type Session interface {
 	Proto() Proto
 
 	// HTTP exposes the underlying writer/request for request/response endpoints
-	// (preflight, and later the XHR download/upload). ok is false for non-HTTP
+	// (preflight, and later the fetch-based download/upload). ok is false for non-HTTP
 	// sessions (WebTransport/WebSocket).
 	HTTP() (w http.ResponseWriter, r *http.Request, ok bool)
 

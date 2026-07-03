@@ -77,10 +77,10 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 		Capabilities: wire.Capabilities{
 			Origins: origins,
 			Transports: wire.Transports{
-				// Honest per stage: Stage 2–3 light up the xhr-stream download/
+				// Honest per stage: Stage 2–3 light up the fetch-stream download/
 				// upload; Stage 4 adds the WebSocket latency bus (/ws/ping).
 				// WebTransport lands in Stage 5.
-				XHRStream:    true,
+				FetchStream:  true,
 				WebSocket:    true,
 				WebTransport: false,
 			},
