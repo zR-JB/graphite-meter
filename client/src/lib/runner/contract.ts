@@ -1,13 +1,13 @@
 /* ============================================================
- * The Graphite Meter — Runner Contract (§2.1)
- * Types only. The UI is engine-agnostic: it consumes events
- * from any object implementing `NetworkRunner`.
+ * Runner Contract — types only
+ * The UI is engine-agnostic: it consumes events from any
+ * object implementing `NetworkRunner`.
  * ============================================================ */
 
 /* ---------- Lifecycle ---------- */
 /* Phase sequence: every enabled stage is preceded by its own self-contained
  * `warmup` window, e.g. all stages on →
- *   idle → warmup → latency → warmup → download → warmup → upload → complete
+ *   idle → warmup → latency → warmup → download → warmup → upload → warmup → complete
  * A warmup is omitted when its stage is off or `duration.warmupMs <= 0`. There
  * is no standalone global warmup: each warmup primes only the stage that
  * follows it, so stages carry no cross-dependencies. See the warmup-contract
@@ -57,11 +57,10 @@ export type ConnectivityState =
   | "unstable" // significant loss
   | "offline";
 
-/* ---------- Overhead compensation (§13.3) ---------- */
+/* ---------- Overhead compensation ---------- */
 /** Estimates true wire-rate from measured browser throughput. Each factor is
  *  independently toggleable; the numeric params feed the protocol accounting.
- *  Carried here as of Batch A but inert until the estimator lands in Batch C —
- *  `enabled: false` (or all factors off) yields a 1.0 multiplier. */
+ *  Currently inert; `enabled: false` (or all factors off) yields a 1.0 multiplier. */
 /** Path the transfer takes — picks which overheads physically apply. Driven by
  *  the UI "Connection profile" preset; loopback has no link layer, a tunnel adds
  *  outer encapsulation, etc. (see applyConnectionProfile in compensation.ts). */
@@ -106,9 +105,9 @@ export interface OverheadCompensationConfig {
   };
 }
 
-/* ---------- Adaptive duration (§13.4) ---------- */
-/** Confidence-based early phase exit. `enabled: false` by default so fixed
- *  durations behave exactly as the base build until Batch D wires it. */
+/* ---------- Adaptive duration ---------- */
+/** Confidence-based early phase exit. `enabled: false` by default, preserving
+ *  fixed-duration behavior. */
 export interface AdaptiveDurationConfig {
   enabled: boolean;
   minCoverageRatio: number; // require ≥ this fraction of nominal duration first
@@ -119,7 +118,7 @@ export interface AdaptiveDurationConfig {
   glideMs: number; // real-time duration of the early-finish acceleration glide
 }
 
-/* ---------- Live measurement stability (§13.4) ---------- */
+/* ---------- Live measurement stability ---------- */
 /** Coarse band of the 0–1 stability score, surfaced as the result-card pip. */
 export type StabilityBand = "low" | "medium" | "high";
 
@@ -141,7 +140,7 @@ export interface RunnerConfig {
    *  taken during download/upload — so latency is fully off (no measurement,
    *  no profile, no chart line) rather than just dropping the idle phase. */
   skipLoadedLatencyWhenStageOff: boolean;
-  /** Per-phase durations. Every measured `*Ms` is a TEST-TIME BUDGET (§4) — the
+  /** Per-phase durations. Every measured `*Ms` is a TEST-TIME BUDGET — the
    *  phase runs until that much VALID measurement time is consumed, so dead air
    *  pushes its wall-clock end out. `warmupMs` stays plain wall-clock priming. */
   duration: {
@@ -157,9 +156,9 @@ export interface RunnerConfig {
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
   endpoint: { host: string; port: number };
-  /** Wire-rate estimation (§13.3). */
+  /** Wire-rate estimation. */
   compensation: OverheadCompensationConfig;
-  /** Confidence-based early exit (§13.4). */
+  /** Confidence-based early exit. */
   adaptive: AdaptiveDurationConfig;
   /** Manual Y-axis ceiling for the gauge/chart; "auto" lets it self-scale. */
   visualization: { throughputMaxBytesPerSec: number | "auto" };
@@ -274,9 +273,9 @@ export type TerminationReason =
   | "timeout" // a request/stream stalled past its deadline
   | "protocol-error" // malformed/unexpected response or close handshake
   | "internal-error" // a bug in the engine itself
-  | "transport-unavailable"; // every negotiated transport failed to establish (§transport)
+  | "transport-unavailable"; // every negotiated transport failed to establish
 
-/* ---------- Transport negotiation (§transport) ---------- */
+/* ---------- Transport negotiation ---------- */
 /** The connection method a backend may negotiate for a phase's I/O. A real
  *  engine tries these in preference order; each can fail to establish, and a
  *  failure of one is non-fatal as long as another succeeds. */
@@ -313,7 +312,7 @@ export interface TransportAttempt {
   detail?: string;
 }
 
-/* ---------- Transient link health (§stall) ---------- */
+/* ---------- Transient link health ---------- */
 /** A NON-terminal stall: the link went quiet mid-phase and the run is waiting
  *  to reconnect. Carried on the `stall` event; the core freezes measured-time
  *  accrual until a matching `resume`. `transport` (when known) names which
@@ -347,7 +346,7 @@ export interface RunnerError {
   cause?: unknown;
 }
 
-/* ---------- Engine identity & capabilities (§transport-selection seam) ----------
+/* ---------- Engine identity & capabilities ----------
  *  Static self-description of a runner backend. The long-term model is ONE real
  *  engine that can drive many transports, with the user picking per role from
  *  these lists — so capabilities live on the ENGINE, not one runner per
@@ -431,14 +430,14 @@ export type RunnerEvent =
   | { type: "resume" }
   // Transport negotiation telemetry: which connection method is being tried for
   // a phase, and whether it's negotiating / established / failed. Re-emitted
-  // verbatim by the core; the store records it (UI surface deferred — §9).
+  // verbatim by the core; the store records it (UI surface deferred).
   | { type: "transport"; attempt: TransportAttempt }
   // A stage was skipped because it couldn't run (see StageFailure). The rest of
   // the run continues; the UI surfaces the reason in the stage's instrument.
   | { type: "stageSkipped"; failure: StageFailure }
   // Per-stage final result, emitted the instant each measured phase ends — so a
   // finished stage shows its real result while later stages still run. Stages
-  // are independent: each carries its own headline/method/band (§13.4).
+  // are independent: each carries its own headline/method/band.
   | { type: "stageResult"; stage: "download" | "upload"; result: ThroughputResult }
   | { type: "stageResult"; stage: "latency"; result: LatencyResult }
   | { type: "complete"; result: RunResult }
@@ -447,7 +446,7 @@ export type RunnerEvent =
   // partial results — see RunnerError.
   | { type: "error"; error: RunnerError };
 
-/* ---------- Runtime anomaly injection (§13.6 — Developer panel) ---------- */
+/* ---------- Runtime anomaly injection — Developer panel ---------- */
 /** A live, dev-only perturbation fired into a *running* engine. Unlike the
  *  construction-time `DummyOptions.anomalies` (phase fractions), these fire
  *  relative to the current moment in the active phase — the Settings
@@ -458,7 +457,7 @@ export type RunnerAnomaly =
   | { kind: "throughput-drop"; magnitude?: number; durationMs?: number } // bytesPerSec ×(1−magnitude)
   // A full connection drop (dead air): the backend host.stall()s now and
   // host.resume()s after durationMs. Makes the whole stall/grind-to-zero
-  // scenario visually testable with the dummy (§drop UX).
+  // scenario visually testable with the dummy.
   | { kind: "connection-drop"; durationMs?: number };
 
 /* ---------- The contract ---------- */
@@ -478,7 +477,7 @@ export interface NetworkRunner {
   /** OPTIONAL — list the measurement endpoints this runner can target, for a
    *  future server-selection UI. Single-backend runners omit it. */
   listServers?(): Promise<ServerCandidate[]>;
-  /** OPTIONAL — fire a live anomaly into an in-flight run (§13.6). Kept
+  /** OPTIONAL — fire a live anomaly into an in-flight run. Kept
    *  optional so a minimal real engine need not implement it. */
   injectAnomaly?(a: RunnerAnomaly): void;
   readonly phase: Phase;

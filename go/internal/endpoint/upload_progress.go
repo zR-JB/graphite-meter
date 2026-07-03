@@ -8,8 +8,8 @@ import (
 )
 
 // UploadProgress is the WebSocket upload-progress bus (/ws/upload). It is the
-// server→client half of server-authoritative upload (docs/UPLOAD_ARCHITECTURE.md
-// §4): for the test named by ?id= it pushes the running SERVER-measured drained
+// server→client half of server-authoritative upload: for the test named by ?id=
+// it pushes the running SERVER-measured drained
 // byte count — aggregated across that test's separate POST /upload lanes via the
 // shared UploadStore — every uploadProgressTick as BYTES_RECEIVED,<n>, and emits
 // exactly one UPLOAD_COMPLETE,<n> when the client sends BYE (after it has stopped

@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <LatencyProfile> — native latency distribution lanes (§13.5)
+   * <LatencyProfile> — native latency distribution lanes
    * Ports linerate's SVG LatencyProfile to token-styled DOM — NO
    * <svg>. Three lanes (idle / loaded-down / loaded-up), each with
    * a min–max range bar, a P10–P90 band, an average marker, a
@@ -45,7 +45,7 @@
   // disabled stages too: a lane whose stage is toggled off is muted
   // (data-enabled="false" below), not removed, so toggling a stage never
   // changes this panel's row count/height and never reflows the gauge/
-  // controls next to it (§ StageTrack already keeps a disabled segment
+  // controls next to it (StageTrack already keeps a disabled segment
   // mounted-but-muted for the same reason).
   const lanes = $derived(store.latencyLanes);
 
@@ -281,7 +281,7 @@
     font-weight: 820;
     letter-spacing: -0.02em;
   }
-  /* Jargon-term affordance on the profile heading (§14.3). */
+  /* Jargon-term affordance on the profile heading. */
   .card-head h3.term {
     cursor: help;
     text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);

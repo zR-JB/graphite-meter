@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { RunAccumulator } from "./evaluation";
 import type { AdaptiveDurationConfig, RunnerConfig } from "./contract";
 
-// §13.4 regression coverage: once early stopping actually arms for a phase,
+// Regression coverage: once early stopping actually arms for a phase,
 // the reported headline must be either
 //   (a) the average of the ENTIRE early-stopping phase (arm point → end) when
 //       stability holds the whole way through, or

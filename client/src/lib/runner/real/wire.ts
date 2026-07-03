@@ -1,8 +1,7 @@
 /**
- * Message-bus wire codec (api/wire.md) — the TS half of the cross-language pin;
- * the Go half is go/internal/wire/{opcodes,frame}.go. Both encoders/decoders
- * assert byte-for-byte against the shared corpus api/wire.testvectors.txt
- * (wire.test.ts here, frame_test.go there).
+ * Message-bus wire codec — the TS half of the cross-language pin.
+ * The Go half is go/internal/wire/{opcodes,frame}.go. Both encoders/decoders
+ * assert byte-for-byte identity across versions (wire.test.ts, frame_test.go).
  *
  * Framing is message-delimited ASCII — one logical message per WS frame / WT
  * datagram, parsed by indexOf(',') slicing, never JSON, never regex. This module
@@ -10,8 +9,8 @@
  * touches frames.
  */
 
-/** Opcode keyword table — the literal uppercase keywords from api/wire.md
- *  §Opcodes, pinned here as the TS mirror of go/internal/wire/opcodes.go. */
+/** Opcode keyword table — uppercase keywords, pinned as the TS mirror of
+ *  go/internal/wire/opcodes.go. */
 export const Op = {
   HI: "HI",
   READY: "READY",

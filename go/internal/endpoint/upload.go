@@ -12,7 +12,7 @@ import (
 
 // Upload sinks the client's streamed bytes for the upload measurement: it drains
 // the request body to io.Discard through a pooled scratch buffer, counting but
-// never accumulating (docs/ARCHITECTURE.md §7, docs/UPLOAD_ARCHITECTURE.md §3).
+// never accumulating (zero allocation, no buffering).
 //
 // When the request carries a server-minted ?id=, each drained chunk is also added
 // to that test's shared per-id aggregate (across all its parallel POST lanes), so
@@ -85,7 +85,7 @@ func (u *Upload) Handle(s transport.Session) error {
 	// returns nil for an empty/unissued id or over the live cap — then this POST
 	// is drained-and-counted as before, just not server-authoritatively. posts is
 	// a live-lane gauge only (diagnostics); the TTL sweeper, never a refcount, owns
-	// deletion (docs/UPLOAD_ARCHITECTURE.md §3).
+	// deletion (TTL sweeper-owned).
 	var agg *uploadAgg
 	if u.store != nil {
 		if a, ok := u.store.getOrCreate(s.Query().Get("id")); ok {

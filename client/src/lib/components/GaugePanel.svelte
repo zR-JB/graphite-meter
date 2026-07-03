@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <GaugePanel> — the signature visualization (§3.1)
+   * <GaugePanel> — the signature visualization
    * Thin wrapper: instantiates GaugeEngine on mount, feeds it a
    * pull-callback, and reacts to theme/resize. The live primary
    * metric is plain DOM (zero layout shift via tabular-nums +
@@ -34,7 +34,7 @@
     return "partial";
   });
 
-  // Total run ETA (read-only here; duration is edited only in Settings, §14.2).
+  // Total run ETA (read-only here; duration is edited only in Settings).
   // Backed by the shared scheduler via store.totalEtaMs so it can't drift from
   // the real timeline (and counts bidirectional when on). Shown so a newcomer
   // knows roughly how long Engage will take.
@@ -93,7 +93,7 @@
     return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtSpeed(store.toUnit(scale * f)));
   });
 
-  // The single big number, per phase (§3.1 behavior table).
+  // The single big number, per phase.
   const display = $derived.by(() => {
     const p = store.phase;
     if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
@@ -127,7 +127,7 @@
     store.transferFailures.map((f) => `${STAGE_NAME[f.stage]} skipped — ${f.message}`),
   );
 
-  // Guided idle / empty + transient states (§14.3) — never a dead, bare dash.
+  // Guided idle / empty + transient states — never a dead, bare dash.
   // Shown as soft copy beneath the big metric so a newcomer always knows what
   // to do (idle) or what is happening (warmup probing).
   const hint = $derived.by(() => {
@@ -213,7 +213,7 @@
     };
   });
 
-  // Screen-reader mirror (§7): the live value is refreshed on a 1Hz tick (below)
+  // Screen-reader mirror: the live value is refreshed on a 1Hz tick (below)
   // so a 16Hz number doesn't flood the live region, but phase/hint changes — the
   // semantic events — are announced immediately via this effect.
   let a11y = $state("");
@@ -267,7 +267,7 @@
 
     const tick = setInterval(() => {
       // Prefer the guided copy when there's no live number (idle/warmup/error),
-      // otherwise announce the measured metric (factual only — no verdict §14.3).
+      // otherwise announce the measured metric (factual only — no verdict).
       a11y = statusText
         ? statusText
         : `${display.value} ${display.unit}, phase ${store.phase}`;
@@ -285,11 +285,11 @@
 <section class="gauge-panel">
   <!-- Hero instrument — gauge, Engage, the stage selector, and (optionally)
        the latency profile are all placed via ONE named-area CSS Grid inside
-       a single container-query context (§14.2 update). Their arrangement
-       flips ATOMICALLY at one breakpoint (see .instrument's @container rule
-       below) instead of several independent thresholds, and the shared
-       gauge+latency row gets an explicit, content-independent track size so
-       toggling the latency panel on/off can never change the gauge's height:
+       a single container-query context. Their arrangement flips ATOMICALLY at
+       one breakpoint (see .instrument's @container rule below) instead of
+       several independent thresholds, and the shared gauge+latency row gets an
+       explicit, content-independent track size so toggling the latency panel
+       on/off can never change the gauge's height:
          Desktop (wide): gauge+latency side by side, Engage below them,
            Test Stages at the very bottom (keeps the space below the
            gauge from looking empty).
@@ -491,7 +491,7 @@
     color: var(--text-soft);
     /* No uppercase — unit symbols are case-significant (Mbit/s, kB/s, MiB/s). */
   }
-  /* Notes zone at the dial's foot: guided idle/transient copy (§14.3) and
+  /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect
      the metric's zero-shift baseline. */
   .gauge-notes {

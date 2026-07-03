@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <Switch> — toggle control (inherited component, §3.5)
+   * <Switch> — toggle control
    * Track + knob, brand accent when on. Native checkbox kept
    * for accessibility (visually hidden, focusable).
    * ============================================================ */

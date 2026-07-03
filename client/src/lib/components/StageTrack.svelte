@@ -1,12 +1,12 @@
 <script lang="ts">
   /* ============================================================
-   * <StageTrack> — selection + progress in one element (§14.2)
+   * <StageTrack> — selection + progress in one element
    * The single combined stage control: Latency / Download / Upload
    * each render as ONE segment that is simultaneously
    *   (a) a selectable switch — toggle enable/disable, routed through
    *       the store's guarded `toggleStage`/`canToggleStage` +
    *       `applyStageChange`, keeping the ≥1-enabled floor and the
-   *       future-only rule while a run is in flight (§13.4); and
+   *       future-only rule while a run is in flight; and
    *   (b) a live progress indicator — the active stage fills by
    *       `phaseFraction`, completed stages settle into a done state,
    *       pending enabled stages stay neutral.
@@ -76,8 +76,8 @@
     return STAGES.map((s) => {
       const enabled = store.config.stages[s.key];
       const failure = store.stageFailures[s.key];
-      // Tag: enabled stages keep the running/done/upcoming logic; a deselected
-      // stage reads "skipped" once a run has started, no tag while idle (§14.x).
+      // Enabled stages keep the running/done/upcoming logic; deselected stages
+      // read "skipped" once a run has started, no tag while idle.
       const reason = enabled
         ? failure
           ? "failed"

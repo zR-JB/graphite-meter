@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <TelemetryPanel> — the info drawer (§3.7)
+   * <TelemetryPanel> — the info drawer
    * Mirror of <SettingsPanel>: a thin wrapper over the shared
    * <SidePanel> (right side), so the two auxiliary panels are visually
    * and behaviourally identical. Hosts the Endpoint info card grid

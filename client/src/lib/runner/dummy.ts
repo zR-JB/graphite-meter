@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Dummy Backend (§2.2)
+ * Dummy Backend — test harness, simulation, live anomaly injection
  * Deterministic-seedable development sample source. It implements
  * only the engine-specific part of a run — producing synthetic
  * throughput/latency samples — and pushes them into the shared
@@ -65,7 +65,7 @@ const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
 
 const THROUGHPUT_CADENCE_MS = 60; // ≈16Hz
 
-/* ---------- Live anomaly defaults (§13.6) ----------
+/* ---------- Live anomaly defaults ----------
  * Construction-time anomalies (DummyOptions.anomalies) fire at phase fractions.
  * These are the defaults for RUNTIME anomalies injected mid-run via
  * `injectAnomaly` — each occupies an absolute [start,end) window measured in
@@ -109,7 +109,7 @@ export class DummyBackend implements RunnerBackend {
   #lastThroughputAt = -Infinity;
   #lastPingAt = -Infinity;
 
-  // Live, dev-injected anomalies (§13.6). Each is an absolute [start,end) window
+  // Live, dev-injected anomalies. Each is an absolute [start,end) window
   // on the effective timeline; the synthesis hooks read this list.
   #liveAnomalies: LiveAnomaly[] = [];
 
@@ -216,7 +216,7 @@ export class DummyBackend implements RunnerBackend {
     // Active connection-drop: true dead air — push NOTHING (so the core watchdog
     // doesn't auto-resume us), and lift the stall once wall-clock passes the
     // window end. Measured-time is frozen meanwhile, so the run end recedes by
-    // exactly this real duration — the visible push-out (§4 / §drop UX).
+    // exactly this real duration — the visible push-out.
     if (this.#dropEndReal > 0) {
       if (realNow < this.#dropEndReal) return;
       this.#dropEndReal = 0;
@@ -234,7 +234,7 @@ export class DummyBackend implements RunnerBackend {
     // Throughput on the stage's transfer lanes (none for the latency stage; both
     // lanes for bidirectional). Cadence gated on REAL time so the early-finish
     // glide stays smooth — measured-time races ahead, and gating on it would
-    // dump the tail's samples into the canvas at once (§13.4).
+    // dump the tail's samples into the canvas at once.
     if (activity.transfer.length > 0 && realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS) {
       this.#lastThroughputAt = realNow;
       for (const dir of activity.transfer) {
@@ -275,7 +275,7 @@ export class DummyBackend implements RunnerBackend {
       if (tp >= center && tp < center + 400) bytesPerSec *= 0.6;
     }
 
-    // Live throughput-drop anomaly (§13.6): reduce bytesPerSec by `magnitude`
+    // Live throughput-drop anomaly: reduce bytesPerSec by `magnitude`
     // over its window. Fired relative to the current moment, not a fraction.
     const drop = this.#activeAnomaly("throughput-drop", elapsed);
     if (drop) bytesPerSec *= Math.max(0, 1 - drop.magnitude);
@@ -311,7 +311,7 @@ export class DummyBackend implements RunnerBackend {
       if (Math.abs(frac - f) < 0.02) rtt *= 3;
     }
 
-    // Live latency-spike anomaly (§13.6): scale rtt by `magnitude` in-window.
+    // Live latency-spike anomaly: scale rtt by `magnitude` in-window.
     const spike = this.#activeAnomaly("latency-spike", elapsed);
     if (spike) rtt *= spike.magnitude;
 
@@ -320,7 +320,7 @@ export class DummyBackend implements RunnerBackend {
     for (const f of this.#opts.anomalies?.packetDropAt ?? []) {
       if (Math.abs(frac - f) < 0.03) lossProb = 0.6;
     }
-    // Live packet-loss anomaly (§13.6): raise loss probability in-window.
+    // Live packet-loss anomaly: raise loss probability in-window.
     const drop = this.#activeAnomaly("packet-loss", elapsed);
     if (drop) lossProb = Math.max(lossProb, drop.magnitude);
     const lost = this.#rand() < lossProb;
@@ -328,7 +328,7 @@ export class DummyBackend implements RunnerBackend {
     this.#host!.ingestLatency(rtt, underLoad, lost);
   }
 
-  /* ================= LIVE ANOMALY INJECTION (§13.6) ================= */
+  /* ================= LIVE ANOMALY INJECTION ================= */
   /**
    * Fire a dev-only anomaly into the in-flight run. It opens an absolute window
    * starting at the current elapsed and is consumed by the synthesis hooks.

@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <ConnectivityIndicator> — ambient awareness, topbar (§3.4)
+   * <ConnectivityIndicator> — ambient awareness, topbar
    * A 9px state dot (pulse keyed to effectiveConnectivity) + a
    * 36px micro-sparkline of the last 16 RTT samples. Decorative
    * canvas (aria-hidden); the wrapper carries role=status so the
@@ -105,7 +105,7 @@
     opacity: 0.85;
   }
 
-  /* State tones + pulse cadence (§3.4). */
+  /* State tones + pulse cadence. */
   .dot[data-state="connected"] {
     background: var(--ok);
     box-shadow: 0 0 0 4px var(--ok-soft);

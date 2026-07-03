@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <EndpointInfo> — Info drawer › Endpoint (§3.7)
+   * <EndpointInfo> — Info drawer › Endpoint
    * Read-only card grid: client identity (IP + build version), the
    * wired engine (per-runner version + supported transports per
    * role), the probed server, and the active transport setup.

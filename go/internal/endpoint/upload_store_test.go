@@ -8,7 +8,7 @@ import (
 )
 
 // TestUploadStoreRejectsUnissuedID guards the abuse defence: an id the server never
-// minted at /upload/session cannot create an aggregate (§3, §9).
+// minted at /upload/session cannot create an aggregate.
 func TestUploadStoreRejectsUnissuedID(t *testing.T) {
 	s := NewUploadStore()
 	if agg, ok := s.getOrCreate("never-minted"); ok || agg != nil {

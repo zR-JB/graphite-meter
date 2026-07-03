@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — ChartEngine (§3.2)
+ * The Graphite Meter — ChartEngine
  * Dual-axis timeseries: throughput area (left axis, phase-tinted)
  * + latency line (right axis, signal/warn-for-loaded). Live
  * scrolling viewport, eased zoom-out on complete, time grid,

@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <RunButton> — the master action (label: "Engage") (§3.5)
+   * <RunButton> — the master action (label: "Engage")
    * Toggles engage/abort against the runner via the wire seam.
    * ============================================================ */
   import { store } from "../state/store.svelte";
@@ -9,9 +9,8 @@
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
-  // Once a run has resolved, the master action re-runs the test. Surfacing
-  // "Run again" (vs a bare repeat of "Engage") makes that affordance obvious
-  // (§14.3) — pairs with the R key + the ShortcutHints strip.
+  // Once complete, show "Run again" instead of "Engage" to make re-running
+  // obvious. Pairs with R key + the ShortcutHints strip.
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||
@@ -74,7 +73,7 @@
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
-  /* Pointer-follow shimmer (§13.7): a soft radial highlight centered on the
+  /* Pointer-follow shimmer: a soft radial highlight centered on the
      cursor via pointerIntent's --intent-x/--intent-y. Defaults to the button
      center (50%/50%) until the pointer arrives, fades in on hover. Purely
      decorative — disabled under reduced motion. */

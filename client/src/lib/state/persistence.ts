@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Persistence Layer (§14.1, Batch H)
+ * Persistence Layer — localStorage hydration + save for the store
  *
  * Versioned, merge-tolerant localStorage hydration + save for the
  * console store. Pure helpers only — the store wires the debounced

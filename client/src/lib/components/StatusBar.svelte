@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <StatusBar> — bottom status zone (§1.2)
+   * <StatusBar> — bottom status zone
    * State-machine label, elapsed, bytes transferred, build hash.
    * Owns a local ticker so elapsed advances continuously (off a
    * wall clock) rather than only when a sample lands.

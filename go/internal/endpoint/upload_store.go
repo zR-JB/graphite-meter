@@ -11,7 +11,7 @@ import (
 )
 
 // UploadStore holds the per-test shared state that makes the SERVER-side drained
-// byte count the authoritative upload result (docs/UPLOAD_ARCHITECTURE.md §3).
+// byte count the authoritative upload result.
 // The upload's HTTP POST lanes and its /ws/upload progress socket are SEPARATE
 // TCP connections; both carry the same ?id= and meet here. Each POST drains into
 // the same per-id uploadAgg (counting), and the progress bus reads that aggregate
@@ -21,7 +21,7 @@ import (
 // on a single lock: the add itself is a lockless atomic on the *uploadAgg; only
 // the rare first-touch create / sweep delete take a shard mutex.
 //
-// Lifecycle is deliberately simple and race-free (§3, §9): an aggregate is created
+// Lifecycle is deliberately simple and race-free: an aggregate is created
 // on FIRST TOUCH by whichever of the POST or the WS arrives first (order-free), and
 // the TTL sweeper is the ONLY deleter — there is no refcount fast-path delete (that
 // raced a slow straggler lane into a fresh zero-byte aggregate whose bytes were
@@ -31,7 +31,7 @@ import (
 // Aggregate creation is gated to ids the server MINTED at /upload/session (markIssued):
 // a flood of forged ids on this auth-less bus then creates no state, which both
 // stops cross-tab reads of a victim's progress stream and defuses the
-// maxLiveUploads-amplified DoS/lockout vector (§9).
+// maxLiveUploads-amplified DoS/lockout vector.
 type UploadStore struct {
 	shards [uploadShardCount]uploadShard
 	issued sync.Map     // id (string) -> issue time (mono ns); only minted ids may create an agg
@@ -53,7 +53,7 @@ type uploadShard struct {
 // /ws/upload bus ships it in the ;TIME field beside `bytes`, both sampled at the one
 // drain point, so the client derives the upload rate as Δbytes / ΔactiveNanos — the
 // upload mirror of the download worker, where the client already measures bytes and
-// time together at the single read point (docs/UPLOAD_ARCHITECTURE.md §5). It is NOT
+// time together at the single read point. It is NOT
 // the wall span between the first and last frame, so a stall/reconnect/early-finish
 // can never stretch the denominator with idle time.
 type uploadAgg struct {
@@ -130,7 +130,7 @@ const (
 	// handshake) sits well above it — clean separation that neither clips a healthy
 	// transfer nor counts a stall. (A request-buffering proxy can defeat this by
 	// releasing the body in bursts; that topology is already declared UNTRUSTED —
-	// docs/UPLOAD_ARCHITECTURE.md §8 — and is detectable by comparing activeNanos
+	// detectable by comparing activeNanos
 	// against the wall span, since a spool collapses the two.)
 	activeGapCap = 250 * time.Millisecond
 )
@@ -159,7 +159,7 @@ func (s *UploadStore) shard(id string) *uploadShard {
 // Mint generates a fresh opaque upload-session token (128 bits of crypto entropy,
 // URL-safe so it rides ?id= without escaping), records it as issued, and returns
 // it. /upload/session calls this once per upload stage; only minted tokens can create an
-// aggregate, which is the store's primary abuse defence (§9).
+// aggregate, which is the store's primary abuse defence.
 func (s *UploadStore) Mint() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -274,7 +274,7 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 // RunSweeper reaps idle aggregates until ctx is cancelled. Start it once per store
 // in its own goroutine (like Meter.Run). It reaps map STATE only — goroutine
 // lifetimes on the /ws/upload bus are bounded separately by that handler's idle
-// read deadline (docs/UPLOAD_ARCHITECTURE.md §4).
+// read deadline (10s timeout on /ws/upload bus handler).
 func (s *UploadStore) RunSweeper(ctx context.Context) {
 	ticker := time.NewTicker(uploadSweepInterval)
 	defer ticker.Stop()

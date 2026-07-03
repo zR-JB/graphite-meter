@@ -60,8 +60,7 @@ type Endpoints struct {
 	WTUpload      string `json:"wtUpload"`
 }
 
-// DefaultEndpoints returns the canonical endpoint paths (see docs/ARCHITECTURE.md
-// §2 and api/preflight.schema.json).
+// DefaultEndpoints returns the canonical endpoint paths.
 func DefaultEndpoints() Endpoints {
 	return Endpoints{
 		Download:      "/download",

@@ -1,28 +1,18 @@
 /* ============================================================
- * The Graphite Meter — Upload progress worker (server-authoritative upload)
- * ============================================================
+ * Upload progress worker — server-authoritative upload relay
+ * Owns /ws/upload WebSocket on its own thread (never co-located
+ * with saturated upload worker to avoid UI lag). Carries test's
+ * server-minted ?id= and relays SERVER-measured drained byte count.
  *
- * Owns the /ws/upload WebSocket bus on its OWN thread — NEVER co-located in a
- * saturated upload worker, whose XHR send loop + onprogress dispatch would
- * interleave behind BYTES_RECEIVED decode and lag the UI. It carries the test's
- * server-minted ?id= (so the server correlates this socket with the separate POST
- * /upload lanes) and relays the SERVER-measured drained byte count — the
- * authoritative upload figure — back to the main thread.
+ * Protocol (message-delimited ASCII via real/wire.ts):
+ *   on open    → HI,ws; server replies READY (ignored)
+ *   every 3s   → HI keepalive (server's 10s idle deadline)
+ *   push       → BYTES_RECEIVED,<n> (~10 Hz, cumulative)
+ *   on stop    → BYE; server replies UPLOAD_COMPLETE,<n>, close
  *
- * Protocol (api/wire.md, message-delimited ASCII via real/wire.ts):
- *   on open      → HI,ws (warmup + read-side keepalive); server replies READY (ignored)
- *   every ~Ns    → re-send HI as a keepalive so the server's idle read deadline
- *                  (10 s) never faults a healthy, mostly-silent progress socket
- *   server push  → BYTES_RECEIVED,<n>  (cumulative; ~10 Hz) → { type:"bytes", n }
- *   on stop      → BYE (sent by RealRunner AFTER all POST lanes stopped) →
- *                  server replies UPLOAD_COMPLETE,<n> → { type:"complete", n }, close
- *
- * Counts are CUMULATIVE and self-healing: a dropped frame loses nothing (the next
- * carries the corrected running total); a non-monotonic value is ignored.
- *
- * A dropped socket is NON-FATAL (server-authoritative upload is an enhancement):
- * the worker reconnects with backoff and brackets the gap with stall/resume; the
- * main thread keeps the live needle on xhr.upload.onprogress until it recovers.
+ * Counts cumulative & self-healing: dropped frame loses nothing
+ * (next has corrected total). Dropped socket non-fatal: reconnects
+ * with backoff; main thread keeps live needle until recovery.
  * ============================================================ */
 
 import { encode, decode } from "../real/wire";

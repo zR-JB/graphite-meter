@@ -1,7 +1,6 @@
 /* ============================================================
- * The Graphite Meter — Format Utilities (§10)
- * Guarantee the "zero layout shift" mandate. All numeric
- * renders pass through here.
+ * Format Utilities — guarantee zero layout shift
+ * All numeric renders pass through here.
  * ============================================================ */
 
 import type { TerminationReason } from "./runner/contract";

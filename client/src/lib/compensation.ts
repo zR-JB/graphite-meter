@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Overhead Compensation Engine (§13.3)
+ * The Graphite Meter — Overhead Compensation Engine
  * ------------------------------------------------------------
  * Pure TypeScript, no Svelte. Estimates the TRUE WIRE-RATE that
  * a measured browser throughput implies, by accounting for the
@@ -9,9 +9,9 @@
  * reverse-path control (ACKs), loss/retransmission tax, the
  * ramp toward steady-state plateau, and browser-runtime jitter.
  *
- * Ported from linerate-atelier's 7-factor estimator (§13.0:
- * lift the math, not the SvelteKit structure). Two structural
- * adaptations for this repo:
+ * Ported from linerate-atelier's 7-factor estimator: lift the
+ * math, not the SvelteKit structure. Two structural adaptations
+ * for this repo:
  *   1. CANONICAL UNIT IS bytes/sec (browser-native), not bits/sec — the
  *      store stays bytes-canonical, so every estimate is bytes/sec in,
  *      bytes/sec out. Multipliers are unitless, so the byte-accounting
@@ -21,13 +21,12 @@
  *      the endpoint is assumed TLS (port 443). Tunable byte counts
  *      live in `config.compensation.params`.
  *
- * De-magic mandate (§13.0/§13.3): every coefficient linerate
- * scattered inline becomes a named, commented entry in
- * COMPENSATION_DEFAULTS below. The factor functions contain NO
- * bare magic numbers.
+ * De-magic mandate: every coefficient linerate scattered inline
+ * becomes a named, commented entry in COMPENSATION_DEFAULTS
+ * below. The factor functions contain NO bare magic numbers.
  *
- * Hot-path note (§13.3): `estimateResultCompensation` is the
- * full, sample-array-walking estimate (run once on `complete`).
+ * Hot-path note: `estimateResultCompensation` is the full,
+ * sample-array-walking estimate (run once on `complete`).
  * `estimateLiveCompensation` is the O(1) live path — it applies
  * ONLY the protocol/config multipliers and NEVER iterates the
  * sample arrays, fixing linerate's per-sample recompute.
@@ -186,7 +185,7 @@ export function estimateResultCompensation(
 }
 
 /**
- * CHEAP, O(1) live estimate (§13.3). Applies ONLY the protocol/config
+ * CHEAP, O(1) live estimate. Applies ONLY the protocol/config
  * multipliers (ethernet framing, TLS records, application framing,
  * reverse-path control) to a single instantaneous bytesPerSec value. Skips
  * every sample-array-heavy factor (steady-state ramp, browser-runtime)

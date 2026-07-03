@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — GaugeEngine (§13.2, supersedes §3.1)
+ * The Graphite Meter — GaugeEngine
  * The signature visualization: a 270° radial gauge. Industrial,
  * not gamified — a precision instrument dial. Driven by its own
  * rAF loop, pulling a GaugeState snapshot each frame and self-

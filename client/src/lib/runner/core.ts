@@ -1,24 +1,17 @@
 /* ============================================================
- * The Graphite Meter — Runner Core (§2.1 / §13.4)
- * The engine-agnostic orchestrator. Owns EVERYTHING that is not
- * network I/O: the phase timeline, phase sequencing + live
- * reconfiguration, the run clock (incl. the early-finish glide),
- * sample accumulation, stability detection, the early-stop
- * decision, result reduction, and the entire RunnerEvent stream.
+ * Runner Core — phase scheduling, measurement, early finish, stalls
+ * Engine-agnostic orchestrator: phase timeline, sequencing, live
+ * reconfiguration, run clock, sample accumulation, stability,
+ * early-stop, result reduction, RunnerEvent stream.
  *
- * A `RunnerBackend` plugs in the ONLY engine-specific part — the
- * samples. The dummy synthesizes them; a real engine measures them
- * off the wire. Both push raw samples into the core, so identical
- * samples always yield identical results.
+ * A RunnerBackend plugs in the ONLY engine-specific part: samples.
+ * Dummy synthesizes them; real engine measures off wire. Both push
+ * raw samples, so identical samples yield identical results.
  *
- * Lifecycle (core → backend), so the backend only reacts:
- *   onRunStart → per stage: onStageBegin → onStageMeasure → onStageEnd
- *   → onComplete (or onAbort). A stage's warmup window lives BETWEEN
- *   onStageBegin and onStageMeasure, so the connection it primes is the
- *   one the measurement reuses (no cold reconnect at the seam). A
- *   pull-style backend may implement onTick to synthesize per tick; a
- *   push-style (network) backend leaves it off and calls host.ingest*
- *   from its own I/O callbacks.
+ * Lifecycle (core → backend): onRunStart → per stage: onStageBegin
+ * → onStageMeasure → onStageEnd → onComplete/onAbort. A warmup
+ * window BETWEEN onStageBegin and onStageMeasure primes the same
+ * connection the measurement reuses.
  * ============================================================ */
 
 import type {
@@ -59,7 +52,7 @@ import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 const TICK_MS = 20; // master loop resolution
 const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs every tick)
 
-/* ---------- Stall watchdog / max-stall (§4 — measured-time model) ----------
+/* ---------- Stall watchdog / max-stall — measured-time model ----------
  * The backend SHOULD bracket dead air with explicit host.stall()/resume(), but
  * a push backend can also simply go silent on a drop. The watchdog is the
  * fallback: in a MEASURED phase, if no real sample has arrived for longer than
@@ -207,7 +200,7 @@ export interface RunnerBackend {
   /** OPTIONAL — fallback idle RTT, used only when a run yields no usable latency
    *  samples (e.g. the profile/preflight ping). */
   idleHintMs?(): number;
-  /** OPTIONAL — fire a live dev anomaly (§13.6); real engines may omit it. */
+  /** OPTIONAL — fire a live dev anomaly; real engines may omit it. */
   injectAnomaly?(a: RunnerAnomaly): void;
   /** OPTIONAL — the measurement endpoints this backend can target (server
    *  selection seam). Single-backend engines omit it. */
@@ -235,7 +228,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #lastStabilityAt = -Infinity;
   #bytesCumulative = 0;
 
-  // ---- measured test-time clock + early-finish glide (§4 / §13.4) ----
+  // ---- measured test-time clock + early-finish glide ----
   // The tick loop advances MEASURED TEST-TIME each tick. Unlike a plain
   // wall-clock it accrues ONLY while `#measuring` — so a connection drop (dead
   // air) does NOT count: the phase end recedes by the stall duration (a 5s drop
@@ -254,7 +247,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #glideFromMeasured = 0;
   #glideTargetMeasured = 0;
 
-  // ---- measuring / stall gate (§4 — three unbraided quantities) ----
+  // ---- measuring / stall gate — three unbraided quantities ----
   // `#measuring` gates measured-time accrual; it flips false on stall (explicit
   // host.stall or the watchdog) and true on resume (explicit or a real sample).
   // `#lastSampleWall` is the wall-clock of the last real sample, read by the
@@ -393,7 +386,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  /* ================= LIVE STAGE RECONFIGURE (§13.4) ================= */
+  /* ================= LIVE STAGE RECONFIGURE ================= */
   /**
    * Apply a live change to the enabled stage set mid-run. Only FUTURE segments
    * (those starting after the current elapsed) are rebuilt; the current and past
@@ -420,7 +413,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // while measuring; a stall freezes it (dead air must not count), so the
     // phase end recedes by exactly the stall duration. While an early-finish
     // glide is armed the position is then driven further along an eased curve
-    // toward the current phase's end (§13.4).
+    // toward the current phase's end.
     const now = performance.now();
     const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
@@ -518,7 +511,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
     // Stability is computed ONCE per tick for the active measured phase and
     // drives BOTH the live pip (emitted, throttled) and the early-finish glide
-    // — one signal, no second meaning to reconcile (§13.4).
+    // — one signal, no second meaning to reconcile.
     if (
       seg.phase === "latency" ||
       seg.phase === "download" ||
@@ -528,7 +521,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const conf: ConfidenceScore | LatencyConfidenceScore = this.#accum.confidence(seg.phase);
       // Track the trailing stable run FIRST so the emitted band reflects the
       // hysteretic latched state (entering stable takes a higher bar than
-      // leaving — the pip and the stable window don't flicker). (§13.4)
+      // leaving — the pip and the stable window don't flicker).
       const stable = this.#accum.trackStableRun(seg.phase, conf.score, this.#cfg!.adaptive);
       // The `stability` snapshot only models the three single-lane stages; the
       // bidirectional phase still drives the early-stop glide off the combined
@@ -549,7 +542,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         });
       }
       // Adaptive early finish: once confidently stable, arm a glide that
-      // accelerates measured-time to the segment boundary (§13.4).
+      // accelerates measured-time to the segment boundary.
       this.#maybeArmGlide(seg, elapsed, conf);
     }
   }
@@ -800,7 +793,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#glideTargetMeasured = seg.end;
     // Latch the sample index the early-stopping phase began at, so result
     // reduction can distinguish "stable the whole early-stopping phase" from
-    // "stability broke after arming" (§13.4, evaluation.ts#windowStart).
+    // "stability broke after arming" (evaluation.ts#windowStart).
     this.#accum.noteEarlyStop(seg.phase);
   }
 
@@ -866,8 +859,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#finalizeStage(this.#lastEmittedPhase);
     if (this.#activeSeg) this.#backend.onStageEnd(this.#activeSeg.activity);
     // Actual wall-clock length — shorter than the nominal #totalMs whenever an
-    // adaptive glide accelerated one or more phases to an early finish (§13.4),
-    // and LONGER whenever a stall padded it with dead air (§4).
+    // adaptive glide accelerated one or more phases to an early finish,
+    // and LONGER whenever a stall padded it with dead air.
     const actualMs = Math.max(0, performance.now() - this.#t0);
     // Bidirectional has no per-stage event (it resolves at completion); reduce its
     // two lanes here when the stage ran, else null.

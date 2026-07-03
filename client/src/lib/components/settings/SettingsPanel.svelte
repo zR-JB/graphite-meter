@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <SettingsPanel> — advanced settings surface (§13.6)
+   * <SettingsPanel> — advanced settings surface
    * A thin wrapper over the shared <SidePanel> (left side) so it
    * looks and behaves exactly like the Connection & telemetry panel.
    * Owns only the tab switcher + which sub-panel is shown; the shell,

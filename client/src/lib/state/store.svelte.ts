@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Reactive Store (§2.3 + §2.4)
+ * Reactive Store — application state, derived, and side-effects
  * Single source of truth. The UI binds to derived display
  * values, never to raw event streams directly. Ring buffers
  * cap memory and feed the canvas (read via rAF — NOT $effect).
@@ -39,7 +39,7 @@ import {
   type SettingsTab,
 } from "./persistence";
 
-/* ================= STAGE SELECTION (§13.4) ================= */
+/* ================= STAGE SELECTION ================= */
 
 /** Dwell window (ms) a throughput level must be held before it can lift the
  *  gauge/chart scale to the next tier. Filters brief transient spikes out of the
@@ -50,7 +50,7 @@ const SCALE_DWELL_MS = 700;
 /** The three user-selectable measured stages. */
 export type StageKey = "latency" | "download" | "upload";
 
-/** One distribution lane of the native LatencyProfile (§13.5). */
+/** One distribution lane of the native LatencyProfile. */
 export interface LatencyLane {
   key: StageKey;
   min: number | null;
@@ -70,7 +70,7 @@ export interface LatencyLane {
 /** Execution order — used by the future-only live-toggle constraint. */
 const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
 
-/* ================= DEFAULTS (§2.4) ================= */
+/* ================= DEFAULTS ================= */
 
 export const DEFAULT_CONFIG: RunnerConfig = {
   // bidirectional defaults OFF — an advanced stage toggled in Settings; enabling
@@ -84,7 +84,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   parallelStreams: 6,
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
-  // ----- Ported config surface (§13.1); inert until Batches C/D consume it -----
+  // ----- Ported config surface; inert until future batches consume it -----
   compensation: {
     enabled: true,
     // Default profile matches the common self-host case: a real LAN NIC, cleartext
@@ -118,7 +118,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   },
   adaptive: {
     // On by default: the "smart" stable-window result needs it; when off, every
-    // phase runs full and reports its whole-phase average (§13.4).
+    // phase runs full and reports its whole-phase average.
     enabled: true,
     minCoverageRatio: 0.52,
     stabilityThreshold: 0.86,
@@ -159,13 +159,13 @@ class AppStore {
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
   phaseFraction = $state(0); // 0–1 within current phase (of the test-time budget)
-  /* Measured test-time accrual for the active phase (§4). `phaseElapsedMs` is
+  /* Measured test-time accrual for the active phase. `phaseElapsedMs` is
    * the budget consumed; `phaseBudgetMs` is the phase's test-time budget. Both
    * freeze while stalled, so the derived `phaseRemainingMs` (budget − elapsed)
    * stops shrinking during dead air — the visible push-out of the run end. */
   phaseElapsedMs = $state(0);
   phaseBudgetMs = $state(0);
-  /* Link health (§4 — presentation-only, principle 2). `measuring` is the
+  /* Link health — presentation-only. `measuring` is the
    * core's measured-time gate: false while a stall has frozen accrual. The
    * grind-to-zero gauge/number decay keys off `stalledSince` (wall-clock epoch
    * ms the stall began, 0 = live) + the last REAL sample — it stores/emits
@@ -179,10 +179,9 @@ class AppStore {
    * the value freezes at its last reading instead of easing to 0. */
   stalledSince = $state(0);
   stallInfo = $state<StallInfo | null>(null);
-  /* Transport negotiation telemetry (§transport). `currentTransport` is the
-   * latest attempt (which method, what status); `transportLog` is the running
-   * history for a future negotiation inspector. UI surface is deferred (§9) —
-   * these are store-only for now. Both cleared on reset(). */
+  /* Transport negotiation telemetry. `currentTransport` is the latest attempt
+   * (which method, what status); `transportLog` is the running history. UI
+   * surface deferred — these are store-only for now. Both cleared on reset(). */
   currentTransport = $state<TransportAttempt | null>(null);
   transportLog = $state<TransportAttempt[]>([]);
   /* Live measurement stability per measured phase — the single signal behind
@@ -214,7 +213,7 @@ class AppStore {
     latency: LatencyResult | null;
   }>({ download: null, upload: null, latency: null });
   /** Structured failure for the last run (null unless phase is "error"). Carries
-   *  the reason, the failed phase, and any partial results (§ structured
+   *  the reason, the failed phase, and any partial results (structured
    *  termination). User aborts are NOT errors — they are the "aborted" phase. */
   error = $state<RunnerError | null>(null);
   /** Stages skipped this run because they couldn't run (capability missing /
@@ -223,7 +222,7 @@ class AppStore {
   stageFailures = $state<Partial<Record<TransportRole, StageFailure>>>({});
   startEpoch = $state(0);
 
-  /* ---- config + display prefs (hydrated from localStorage, §14.1) ----
+  /* ---- config + display prefs (hydrated from localStorage) ----
    * `loadPersisted()` deep-merges the saved blob over the defaults so a
    * missing/extra/corrupt field never crashes; first-ever load → defaults
    * (theme defaults to "auto", i.e. system `prefers-color-scheme`). A
@@ -240,7 +239,7 @@ class AppStore {
    *  to a concrete "dark"/"light" and applied to `document.documentElement[data-theme]`
    *  by an $effect below — the ONLY place the attribute is set at runtime. */
   theme = $state<ThemePref>("dark");
-  /** Whether result cards surface the compensated wire-rate estimate (§14.2). */
+  /** Whether result cards surface the compensated wire-rate estimate. */
   showWireEstimates = $state(false);
   /** User-resized docked side-panel widths (px), per side. Persisted. */
   dockWidth = $state<{ left: number; right: number }>({ left: 400, right: 400 });
@@ -381,7 +380,7 @@ class AppStore {
 
   /** Test-time remaining in the active phase (budget − measured elapsed). Goes
    *  to 0 at the budget and STOPS shrinking while stalled (both inputs freeze),
-   *  so a connection drop visibly pushes the run end out (§4). */
+   *  so a connection drop visibly pushes the run end out. */
   phaseRemainingMs = $derived(Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs));
 
   bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
@@ -401,7 +400,7 @@ class AppStore {
   });
 
   /* ============================================================
-   * Stage selection (§13.4)
+   * Stage selection
    * Live stage toggling with linerate's constraints: ≥1 stage must
    * always stay enabled, and while a run is in flight only FUTURE
    * stages (after the current phase in order latency→download→upload)
@@ -453,7 +452,7 @@ class AppStore {
   );
 
   /* ============================================================
-   * Overhead compensation (§13.3)
+   * Overhead compensation
    * The store stays bytesPerSec-canonical: estimates are bytesPerSec in / bytesPerSec out;
    * conversion to display units happens at the UI layer via toUnit.
    * ============================================================ */
@@ -463,7 +462,7 @@ class AppStore {
    * current instantaneous bytesPerSec. This is a $derived (not $derived.by walking
    * samples) so it recomputes only when the latest sample's bytesPerSec or the
    * compensation config changes — never per-sample-iteration. Fixes
-   * linerate's per-sample recompute hot-path (§13.3).
+   * linerate's per-sample recompute hot-path.
    */
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
@@ -615,7 +614,7 @@ class AppStore {
         this.stallInfo = null;
         break;
       case "transport":
-        // Store-only for now (no visible transport indicator yet — §9).
+        // Store-only for now (no visible transport indicator yet).
         this.currentTransport = e.attempt;
         this.transportLog.push(e.attempt);
         break;
@@ -706,7 +705,7 @@ class AppStore {
   }
 
   /* ============================================================
-   * Latency lanes (§13.5 — LatencyProfile)
+   * Latency lanes (LatencyProfile)
    * Bucket every latency sample into one of three lanes by the
    * sample's own `phase` tag: idle (the `latency` phase), loaded-down
    * (pings during `download`), loaded-up (pings during `upload`). Each
@@ -758,7 +757,7 @@ class AppStore {
 export const store = new AppStore();
 
 /* ============================================================
- * Persistence side-effects (§14.1, Batch H) — browser only.
+ * Persistence side-effects — browser only.
  *
  * A single module-scope `$effect.root` owns two effects:
  *   1. THEME APPLY — resolves `store.theme` ("dark" | "light" | "auto") to a

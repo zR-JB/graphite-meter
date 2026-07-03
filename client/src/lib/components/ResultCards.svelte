@@ -1,17 +1,13 @@
 <script lang="ts">
   /* ============================================================
-   * <ResultCards> — live measured-vs-estimated cards (§13.3)
-   * Replaces the Download/Upload/Ping placeholder grid in the
-   * center stage. Per metric it shows the MEASURED browser value
-   * and, beneath it, the COMPENSATED wire-rate estimate. A small
-   * stability pip (low/medium/high) — sourced from the runner's live
-   * `liveStability` / the result's `band`, NOT the overhead estimate —
-   * climbs as the connection settles. Each visible stage becomes a card via
-   * one shared {#snippet} fed a typed CardVM (download, upload, bidirectional,
-   * ping). Ping has no wire-rate compensation; bidirectional shows a combined
-   * headline with a per-direction subline and no live pip.
+   * <ResultCards> — live measured-vs-estimated cards
+   * Per metric: MEASURED browser value and COMPENSATED wire-rate estimate.
+   * A stability pip (low/medium/high) climbs as the connection settles.
+   * Each visible stage becomes a card via a typed CardVM.
+   * Ping has no wire-rate compensation; bidirectional shows a combined
+   * headline with per-direction subline.
    *
-   * Reactivity (§13.3): the live cards read the store's O(1)
+   * Reactivity: the live cards read the store's O(1)
    * `liveCompensation` derived (protocol/config multipliers on the
    * latest bytesPerSec); the post-run cards read `downloadCompensation` /
    * `uploadCompensation`, which recompute only when `result`
@@ -143,11 +139,10 @@
     return `+${((multiplier - 1) * 100).toFixed(1)}%`;
   }
 
-  /* ---- Count-up snaps on complete (§13.7) ----
+  /* ---- Count-up snaps on complete ----
      Each card's MEASURED value tweens from its live reading to the final
-     aggregate when a run resolves (220ms ease-out via the shared `countUp`).
-     The override holds the in-flight number; while it's null the templates
-     fall back to the derived live value, so during a run nothing is intercepted.
+     aggregate when a run resolves (220ms ease-out). The override holds the
+     in-flight number; while null, templates fall back to the derived value.
      Reduced motion skips the tween (the override is set instantly).
 
      UNIT CONTRACT: the transfer snaps (dl/ul/bidi) carry RAW bytesPerSec, never
@@ -322,10 +317,9 @@
     store.toUnit(bidiSnap ?? (bidi.active ? bidi.combined : bidiFrozen ?? bidi.combined)),
   );
 
-  /* ---- Progressive disclosure of the wire-rate estimate (§14.2) ----
-     The headline numbers are always the plainly MEASURED values. The
-     compensated wire-rate is a refinement, surfaced on the result cards only
-     when the user opts in via the persisted Settings switch. */
+  /* ---- Progressive disclosure of the wire-rate estimate ----
+     Headline numbers are MEASURED values. Wire-rate is a refinement,
+     surfaced only when the user opts in via Settings. */
   const showWire = $derived(store.showWireEstimates);
 
   /* ---- Card view-models ----
@@ -397,10 +391,9 @@
     return out;
   });
 
-  // Guided empty state (§14.3): before the first run there's nothing measured,
-  // so invite action instead of leaving three bare dashes unexplained. Only the
-  // idle pointer lives here — the warmup "checking your connection" status is
-  // already shown below the gauge, so we don't duplicate it above the footer.
+  // Guided empty state: before the first run there's nothing measured, so
+  // invite action instead of leaving dashes unexplained. Only the idle
+  // pointer lives here — warmup "checking connection" is shown below the gauge.
   const guidance = $derived.by(() => {
     if (store.phase === "idle") return "Your results appear here once you press Engage.";
     return "";
@@ -468,7 +461,7 @@
     {/each}
   </div>
 
-  <!-- Guided empty state (§14.3) — a quiet invitation while there's no data. -->
+  <!-- Guided empty state — a quiet invitation while there's no data. -->
   {#if guidance}
     <p class="metric-guidance">{guidance}</p>
   {/if}
@@ -529,9 +522,9 @@
     border-color: var(--border-strong);
   }
 
-  /* Staggered enter (§13.7): the three cards fade/rise in sequence (0–120ms)
-     on mount. Decorative — gated on no-preference so reduced-motion users get
-     them instantly (and the global §4.5 guard further neutralizes it). */
+  /* Staggered enter: cards fade/rise in sequence (0–120ms) on mount.
+     Decorative — gated on no-preference so reduced-motion users get them
+     instantly. */
   @media (prefers-reduced-motion: no-preference) {
     .result-card {
       animation: card-enter 220ms var(--ease-out) both;
@@ -559,7 +552,7 @@
       transform: translateY(0);
     }
   }
-  /* The live/active metric gains a faint brand ring (mirrors §3.8). */
+  /* The live/active metric gains a faint brand ring. */
   .result-card.active {
     border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
     box-shadow:
@@ -607,7 +600,7 @@
     letter-spacing: -0.01em;
     color: var(--text);
   }
-  /* Jargon-term affordance (§14.3) — dotted underline cues a hover/focus tooltip. */
+  /* Jargon-term affordance — dotted underline cues a hover/focus tooltip. */
   .label.term {
     cursor: help;
     text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
@@ -705,7 +698,7 @@
     font-size: 11px;
   }
 
-  /* Guided empty-state line (§14.3) — quiet invitation while there's no data. */
+  /* Guided empty-state line — quiet invitation while there's no data. */
   .metric-guidance {
     margin: 8px 0 0;
     text-align: center;

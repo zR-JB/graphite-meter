@@ -1,5 +1,5 @@
 /* ============================================================
- * tooltip — Svelte action (§14.3, Batch J)
+ * tooltip — Svelte action
  * A small, reusable jargon-tooltip mechanism. Attach to any
  * element carrying a technical term; on BOTH hover and keyboard
  * focus it surfaces a plain-language definition in a token-styled
@@ -9,7 +9,7 @@
  * SvelteKit — mirrors the focusTrap / pointerIntent action style.
  *
  * Reduced-motion safe: the fade-in is gated on no-preference via
- * the injected stylesheet (the global §4.5 guard also neutralizes
+ * the injected stylesheet (the global guard also neutralizes
  * any residual transition).
  *
  * Usage:  <span use:tooltip={"P95: 95% of pings were at or below this."}>P95</span>
@@ -311,7 +311,7 @@ export const JARGON = {
     "Stability: how steady the speed held during the test. Higher means a flat, consistent line; lower means it fluctuated.",
   ping: "Ping: the round-trip time for a small message to reach the server and come back. Lower feels snappier.",
   overheadCompensation:
-    "Overhead compensation: estimates your true wire-rate by adding back the bytes the browser never sees but your link still carries — Ethernet/IP/TCP framing, TLS records, HTTP framing, and return-path ACKs. Shown as the “wire” figure on the result cards; your measured speed is unchanged. At a 1500-byte MTU the exact protocol factors add roughly +3–8% combined; the heuristic factors add a few % more when on. How much depends on MTU, TCP/TLS/frame sizes and the transport, plus (for the heuristics) measured loss, stability and peak-vs-average.",
+    "Overhead compensation: estimates your true wire-rate by adding back the bytes the browser never sees but your link still carries — Ethernet/IP/TCP framing, TLS records, HTTP framing, and return-path ACKs. Shown as the 'wire' figure on the result cards; your measured speed is unchanged. At a 1500-byte MTU the exact protocol factors add roughly +3–8% combined; the heuristic factors add a few % more when on. How much depends on MTU, TCP/TLS/frame sizes and the transport, plus (for the heuristics) measured loss, stability and peak-vs-average.",
   compProtocol:
     "Protocol bytes — exact, fixed byte accounting from the protocol headers (high confidence). Adds the framing every packet carries at your MTU; typically a few percent each.",
   compPath:

@@ -61,7 +61,7 @@ export class RunAccumulator {
   #phasePings = 0;
   #phasePingsLost = 0;
 
-  // ---- trailing contiguous stable-run trackers (§13.4) ----
+  // ---- trailing contiguous stable-run trackers ----
   // Each holds the index into its phase's sample array where the *current*
   // stable run began (or -1 when not currently stable), plus the last stability
   // score seen.
@@ -76,7 +76,7 @@ export class RunAccumulator {
   #latFinalScore = 0;
   #biFinalScore = 0;
 
-  // ---- early-stop arm points (§13.4) ----
+  // ---- early-stop arm points ----
   // The sample index at the moment `shouldExitPhase` first armed the glide for
   // that phase (-1 if early stop never armed this phase). Latched once per
   // phase — it never moves once set, unlike the stable-run trackers above,
@@ -263,7 +263,7 @@ export class RunAccumulator {
   /**
    * Reduce a transfer phase's samples to its headline value. See
    * {@link #windowStart} for which window (early-stopping phase, full
-   * measurement phase, or trailing stable run) backs the headline (§13.4).
+   * measurement phase, or trailing stable run) backs the headline.
    */
   throughputResult(phase: "download" | "upload", cfg: RunnerConfig): ThroughputResult {
     const a = phase === "download" ? this.#dl : this.#ul;
@@ -308,7 +308,7 @@ export class RunAccumulator {
     };
   }
 
-  /** Resolve which window backs a phase's headline (§13.4):
+  /** Resolve which window backs a phase's headline:
    *   - Early stop armed for this phase (`earlyStopStart ≥ 0`) AND the phase
    *     never dropped off its stable run since arming (`stableStart` is still
    *     the SAME or an earlier-starting run) → average the entire
@@ -336,7 +336,7 @@ export class RunAccumulator {
   }
 
   /** Shared transfer-phase reducer: turn a lane's sample buffer + its latched
-   *  stable-run/early-stop indices into a {@link ThroughputResult} (§13.4). */
+   *  stable-run/early-stop indices into a {@link ThroughputResult}. */
   #reduceTransfer(
     a: PhaseAccum,
     stableStart: number,

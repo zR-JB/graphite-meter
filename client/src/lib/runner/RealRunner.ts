@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Real Backend SKELETON (§14.4 / §transport)
+ * Real Backend — HTTP client skeleton, transport negotiation, preflight
  * ============================================================
  *
  * A compile-clean stub implementing `RunnerBackend` (core.ts) so a
@@ -51,7 +51,7 @@
  *      runner = new RunnerCore(new RealBackend({ endpoint: ... }));
  *  Nothing else in the app changes.
  *
- * ── Units rule (§14.0 / §14.4) ──────────────────────────────
+ * ── Units rule ──────────────────────────────
  *  Raw on the wire: the server serves/sinks BYTES; the client derives
  *  bytes/sec. Push raw instantaneous bytes/sec + the bytes moved over the
  *  interval into host.ingestThroughput. NO bits / base-2/10 / unit
@@ -95,10 +95,10 @@ function httpToWs(origin: string): string {
  *  preflight hands back (e.g. a session token). All optional so the class is
  *  trivial to drop into wire.svelte.ts. */
 export interface RealBackendOptions {
-  /** Backend base the API paths in §14.4 are relative to. Falls back to the
+  /** Backend base the API paths are relative to. Falls back to the
    *  `config.endpoint` passed into start()/probe() when omitted. */
   endpoint?: RunnerConfig["endpoint"];
-  /** Optional bearer/session token from a prior preflight (§14.4 auth). */
+  /** Optional bearer/session token from a prior preflight. */
   authToken?: string;
 }
 
@@ -369,7 +369,7 @@ export class RealBackend implements RunnerBackend {
 
   /* ================= PROBE ================= */
   /**
-   * TARGET: `GET {base}/preflight` (a.k.a. /config) — §14.4.
+   * TARGET: `GET {base}/preflight` (a.k.a. /config).
    * Resolve `InfraInfo` (client public IP, server identity, negotiated
    * protocol, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
    * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
@@ -576,7 +576,7 @@ export class RealBackend implements RunnerBackend {
     this.#closeAll();
   }
 
-  /* ================= TRANSPORT NEGOTIATION (§transport) ================= */
+  /* ================= TRANSPORT NEGOTIATION ================= */
   /**
    * Negotiate a transport for `role`, trying the configured kinds in preference
    * order (webtransport first, then the config's websocket/xhr-stream fallback).
@@ -1375,7 +1375,7 @@ export class RealBackend implements RunnerBackend {
   /* ================= OPTIONAL SEAMS ================= */
   /**
    * OPTIONAL — list the endpoints this backend can target, for a future
-   * server-selection UI (TARGET: `GET {path}/servers`, §14.4). Remove the method
+   * server-selection UI (TARGET: `GET {path}/servers`). Remove the method
    * to drop it from the surface; the core then reports an empty list.
    */
   async listServers(): Promise<ServerCandidate[]> {

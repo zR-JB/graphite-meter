@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Runner Wiring Helper (§6)
+ * Runner Wiring Helper — integration seam, backend swap
  * The single integration seam. The shared RunnerCore owns the
  * engine logic; only the backend (sample source) is swapped here.
  * Going live touches ONLY this file.
@@ -154,7 +154,7 @@ export function returnToStart() {
 
 /**
  * Push the live enabled-stage set into the running engine so a mid-run
- * future-stage toggle actually shortens the run (§13.4). No-op when idle or
+ * future-stage toggle actually shortens the run. No-op when idle or
  * when the active engine doesn't support live reconfigure.
  */
 export function applyStageChange() {
@@ -163,7 +163,7 @@ export function applyStageChange() {
 }
 
 /**
- * Pass a live dev anomaly through to the active engine (§13.6). Optional on
+ * Pass a live dev anomaly through to the active engine. Optional on
  * the contract, so this is a no-op when the engine doesn't implement it or
  * when nothing is running (the runner itself guards on its tick timer).
  */

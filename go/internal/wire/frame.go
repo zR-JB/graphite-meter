@@ -29,7 +29,7 @@ type Frame struct {
 const timeField = "TIME"
 
 // Decode error codes — the <code> token a receiver echoes back as ERR,<code>,…
-// when it rejects a frame (api/wire.md §Framing). Stable, cross-language.
+// when it rejects a frame. Stable, cross-language.
 const (
 	ErrBadOp   = "bad_op"   // unknown opcode keyword
 	ErrBadArgs = "bad_args" // opcode known, args missing/malformed

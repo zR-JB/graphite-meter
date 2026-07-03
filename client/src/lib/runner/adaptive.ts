@@ -1,11 +1,11 @@
 /* ============================================================
- * The Graphite Meter — Adaptive Duration helper (§13.4)
+ * The Graphite Meter — Adaptive Duration helper
  * Runner-agnostic confidence math for confidence-based early
  * phase exit. Pure TypeScript, zero Svelte / DOM deps so a real
  * engine can reuse it verbatim. Ported (de-magicked) from
  * linerate's DummyRunner.transferConfidence / latencyConfidence /
- * shouldAdvanceEarly logic; every coefficient below is named and
- * commented per §13.0 ("de-magic on the way in").
+ * shouldAdvanceEarly logic; every coefficient is clearly named
+ * and explained.
  * ============================================================ */
 
 import type { AdaptiveDurationConfig, StabilityBand } from "./contract";

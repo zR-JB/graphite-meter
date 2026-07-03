@@ -1,11 +1,11 @@
 <script lang="ts">
   /* ============================================================
-   * <Console> — the Control Console shell (§1.1 + §4.2)
+   * <Console> — the Control Console shell
    * A single gauge-first stage between the topbar and status bar.
    * Two auxiliary surfaces — Settings (left) and the
    * Connection & telemetry inspector (right) — are identical flyout
    * panels built on the shared <SidePanel>; both are closed by default
-   * so the default view stays focused on the instrument (§14.2).
+   * so the default view stays focused on the instrument.
    * ============================================================ */
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
@@ -68,7 +68,7 @@
   function toggleTheme() {
     // Cycle the persisted pref; the store's $effect resolves "auto" against
     // the live OS preference and applies it to <html data-theme>, and the
-    // debounced save persists it (§14.1).
+    // debounced save persists it.
     const next = THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
     store.theme = next;
   }
@@ -86,7 +86,7 @@
     store.dockWidth = { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] };
   }
 
-  /* ---- Global keyboard map (§7, extended by Batch G §13.7) ----
+  /* ---- Global keyboard map ----
      | Key            | Action                                          |
      | Space / Enter  | Engage / Abort (wire.engage toggle)             |
      | Esc            | Abort if running, else close any open panel     |
@@ -230,13 +230,11 @@
     >
   </header>
 
-  <!-- CENTER STAGE — height-bounded flex column (§14.2). The gauge hero is the
+  <!-- CENTER STAGE — height-bounded flex column. The gauge hero is the
        focal point and takes the lion's share; the chart is secondary and
        compact so the simple default fits the viewport without vertical scroll.
-       Results now live INSIDE GaugePanel (the instrument cluster morphs
-       between live/partial-results/final-grid states) rather than as a
-       separate flex sibling here, so toggling a stage or advancing a phase
-       never resizes anything in this section. -->
+       The instrument cluster morphs between live/partial-results/final-grid
+       states; advancing a phase never resizes this section. -->
   <section class="zone stage min-w-0 overflow-y-auto flex flex-col">
     <GaugePanel />
     <ThroughputChart />
@@ -268,12 +266,12 @@
     onResetWidth={() => resetDockWidth("right")}
   />
 
-  <!-- Transient phase-change toast (§13.7) — fixed, bottom-right -->
+  <!-- Transient phase-change toast — fixed, bottom-right -->
   <PhaseToast />
 </main>
 
 <style>
-  /* ===== Console grid (§1.1) =====
+  /* ===== Console grid =====
      The stage owns the middle; the left/right dock columns are 0-width until a
      panel docks (wide screens), at which point the matching .dock-* class
      reserves space and the panel (a <SidePanel> grid child via display:contents)

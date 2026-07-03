@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Canvas Engine Lifecycle Contract (§11)
+ * The Graphite Meter — Canvas Engine Lifecycle Contract
  * Each canvas engine follows this framework-agnostic lifecycle
  * so Svelte components stay thin wrappers (mount/destroy only,
  * no per-frame Svelte reactivity). Engines PULL from the store's

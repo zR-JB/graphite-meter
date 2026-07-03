@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <ThroughputChart> — dual-axis canvas chart (§3.2)
+   * <ThroughputChart> — dual-axis canvas chart
    * Thin wrapper around ChartEngine. Owns hover scrub: feeds the
    * cursor x to the engine (which draws the guideline) and renders
    * a floating mono readout chip in DOM.

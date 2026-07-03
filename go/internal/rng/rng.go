@@ -1,9 +1,8 @@
-// Package rng is the canonical scrambled-counter xorshift64* generator (API
-// Surface C, docs/ARCHITECTURE.md §5). It produces incompressible bytes for the
-// download path and is pinned byte-for-byte by api/rng.testvectors.txt so the
-// server's Go generator and a future Rust/WASM port emit identical streams.
+// Package rng is the canonical scrambled-counter xorshift64* generator.
+// It produces incompressible bytes for the download path and maintains
+// byte-for-byte identity across the server's Go implementation and any future port.
 //
-// Generator (see api/rng.testvectors.txt header):
+// Generator:
 //
 //	next:  old = state; state = old + inc; return scramble(old)
 //	scramble(x): x ^= x>>12; x ^= x<<25; x ^= x>>27; return x * 0x2545F4914F6CDD1D
@@ -19,14 +18,12 @@ const scrambleMul = 0x2545F4914F6CDD1D
 
 // Canonical download-block parameters. Arbitrary-but-fixed: BlockSeed is the
 // 64-bit golden-ratio constant and BlockInc is an odd increment (so the additive
-// counter has full period). These MUST match the first pair in
-// api/rng.testvectors.txt and any future Rust port.
+// counter has full period). These MUST match any future port.
 const (
 	BlockSeed uint64 = 0x9E3779B97F4A7C15
 	BlockInc  uint64 = 0x2545F4914F6CDD1D
-	// BlockSize is the shared immutable download block size (256 KiB — the low
-	// end of ARCHITECTURE §7's 256 KiB–1 MiB range, enough to defeat transport
-	// compression while staying L2-cache friendly under load).
+	// BlockSize is the shared immutable download block size (256 KiB — large
+	// enough to defeat transport compression while staying L2-cache friendly).
 	BlockSize = 256 * 1024
 )
 
@@ -67,7 +64,7 @@ func Fill(dst []byte, seed, inc uint64) { New(seed, inc).Fill(dst) }
 
 // NewBlock returns a freshly generated immutable block of size bytes, filled from
 // the canonical download-block parameters. Generated once at startup; the
-// download endpoint serves slices of it without ever regenerating (§7).
+// download endpoint serves slices of it without ever regenerating.
 func NewBlock(size int) []byte {
 	b := make([]byte, size)
 	Fill(b, BlockSeed, BlockInc)

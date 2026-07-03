@@ -19,7 +19,7 @@
       type="font/woff2"
       crossorigin
     />
-    <!-- Pre-paint canvas + theme (§14.1). This MUST live inline in <head>:
+    <!-- Pre-paint canvas + theme. This MUST live inline in <head>:
          the real colors live in app.css, which is imported from the JS
          bundle and so only applies AFTER the module graph loads. The browser
          paints the empty <body> before then — without this it paints white.

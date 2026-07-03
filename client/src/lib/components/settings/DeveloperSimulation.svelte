@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <DeveloperSimulation> — Settings › Developer › Simulation (§13.6)
+   * <DeveloperSimulation> — Settings › Developer › Simulation
    * Dev-only affordance: injects LIVE anomalies into the running
    * engine via wire.injectAnomaly. Each fires relative to the
    * current moment in the active phase, so the buttons are only

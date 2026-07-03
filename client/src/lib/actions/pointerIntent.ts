@@ -1,5 +1,5 @@
 /* ============================================================
- * pointerIntent — Svelte action (§13.6)
+ * pointerIntent — Svelte action
  * Sets `--intent-x` / `--intent-y` CSS custom properties to the
  * pointer's position within the node on pointermove, enabling
  * radial hover effects. Pure DOM, no SvelteKit. Ported from

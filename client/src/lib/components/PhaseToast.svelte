@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <PhaseToast> — transient phase-change announcer (§13.7)
+   * <PhaseToast> — transient phase-change announcer
    * A fixed, bottom-right toast that surfaces a contextual message
    * each time `store.phase` changes, then auto-dismisses (~1.35s,
    * ~2.2s on complete). role="status" + aria-live="polite" gives
@@ -9,8 +9,8 @@
    *
    * Reactivity: a single `$effect` watches `store.phase`; the kicker
    * (eyebrow) and message are pure functions of the current phase.
-   * Tokens only. Reduced-motion: the slide/scale is dropped (handled
-   * by the global §4.5 guard) so it just fades / appears.
+   * Tokens only. Reduced-motion: the slide/scale is dropped and
+   * it just fades / appears.
    * ============================================================ */
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -206,8 +206,8 @@
     font-weight: 700;
   }
 
-  /* Reduced motion: no slide/scale; the global §4.5 guard collapses the
-     transition, but pin the resting transform so it never animates in. */
+  /* Reduced motion: no slide/scale; pin the resting transform so it
+     never animates in. */
   @media (prefers-reduced-motion: reduce) {
     .phase-toast {
       transform: none;

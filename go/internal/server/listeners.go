@@ -31,7 +31,7 @@ func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
 // gracefully.
 func Run(ctx context.Context, cfg *config.Config) error {
 	// One shared immutable RNG block, generated once: every download serves
-	// slices of it, never regenerating per request (ARCHITECTURE §7).
+	// slices of it, never regenerating per request.
 	block := rng.NewBlock(rng.BlockSize)
 
 	// Verbose mode: one per-direction throughput logger, each draining its own
@@ -66,7 +66,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		Addr:              cfg.H1Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		// TCP_NODELAY on every accepted conn (ARCHITECTURE §7): a single ping
+		// TCP_NODELAY on every accepted conn: a single ping
 		// frame on the /ws/ping latency bus must not sit in Nagle's buffer waiting
 		// to coalesce. Go's net package already defaults NoDelay=true; we set it
 		// explicitly because it is normative for accurate sub-ms latency.

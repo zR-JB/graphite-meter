@@ -14,8 +14,8 @@ var startMono = time.Now()
 
 // Ping is the WebSocket latency bus (/ws/ping). It is a pure stateless echo: for
 // each PING,<id> it replies PONG,<id>;TIME,<nanos> with the id copied verbatim and
-// zero per-ping state (no map, no allocation, no overflow possible server-side —
-// api/wire.md §Ids). RTT is measured entirely client-side; the server only mirrors
+// zero per-ping state (no map, no allocation, no overflow possible server-side).
+// RTT is measured entirely client-side; the server only mirrors
 // the id and stamps a server-monotonic ns for diagnostics.
 type Ping struct{}
 
@@ -28,7 +28,7 @@ func (p *Ping) Capabilities() Capabilities { return Capabilities{WebSocket: true
 // Handle runs the echo loop on the session's message bus: Recv → decode → reply.
 // A read error (client closed the socket / context cancelled) ends the loop
 // quietly — a disconnect is normal, not a server error. A single malformed frame
-// is answered with ERR,<code>,<text> and the bus stays up (api/wire.md §Framing).
+// is answered with ERR,<code>,<text> and the bus stays up.
 func (p *Ping) Handle(s transport.Session) error {
 	bus, ok := s.Bus()
 	if !ok {

@@ -1,6 +1,6 @@
 <script lang="ts">
   /* ============================================================
-   * <DeveloperPanel> — Settings › Developer (§13.6)
+   * <DeveloperPanel> — Settings › Developer
    * Hosts the debug-logging toggle and (when the build includes
    * the dummy runner) the live anomaly-injection simulation.
    *

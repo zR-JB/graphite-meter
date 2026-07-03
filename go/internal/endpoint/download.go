@@ -9,8 +9,7 @@ import (
 // Download streams incompressible random bytes for the client's download
 // measurement. It serves slices of one shared immutable RNG block (built once at
 // startup) so a request does no per-request allocation and never regenerates
-// bytes (docs/ARCHITECTURE.md §7). The client derives all rates; the server only
-// sinks bytes.
+// bytes. The client derives all rates; the server only sinks bytes.
 type Download struct {
 	block []byte
 	meter *Meter // optional verbose per-second logger; nil unless -verbose
