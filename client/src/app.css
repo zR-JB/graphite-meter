@@ -9,9 +9,10 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/instrument-sans-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
-    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
   font-family: "Instrument Sans";
@@ -19,10 +20,10 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/instrument-sans-latin-ext.woff2") format("woff2");
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
-    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
-    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-    U+A720-A7FF;
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 @font-face {
   font-family: "Spline Sans Mono";
@@ -30,9 +31,10 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/spline-sans-mono-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
-    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
   font-family: "Spline Sans Mono";
@@ -40,10 +42,10 @@
   font-weight: 400 700;
   font-display: swap;
   src: url("/fonts/spline-sans-mono-latin-ext.woff2") format("woff2");
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
-    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
-    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-    U+A720-A7FF;
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
 @theme {
@@ -55,8 +57,9 @@
   /* Spline Sans Mono — tabular figures for every live readout: the gauge
      value, chart ticks, ETA, telemetry. One consistent "instrument digits"
      face wherever a number can change under your eye. */
-  --font-mono: "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular",
-    Consolas, "Liberation Mono", monospace;
+  --font-mono:
+    "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
+    "Liberation Mono", monospace;
 }
 
 :root {
@@ -124,7 +127,9 @@
 
   /* Semantic radii — instrument-crisp, all driven by --feel-radius */
   --r-well: calc(6px * var(--feel-radius)); /* recessed data wells */
-  --r-chrome: calc(8px * var(--feel-radius)); /* flat chrome: buttons, chips, panels */
+  --r-chrome: calc(
+    8px * var(--feel-radius)
+  ); /* flat chrome: buttons, chips, panels */
   --r-pill: calc(12px * var(--feel-radius)); /* the Engage master action */
 
   /* Type scale — Instrument Sans (display + body) / Spline Sans Mono (data).
@@ -147,19 +152,23 @@
      themselves are written once. */
   --edge-light: rgba(211, 219, 227, calc(0.07 * var(--feel-edge)));
   --edge-shade: rgba(0, 0, 0, calc(0.4 * var(--feel-edge)));
-  --shadow-ink: 5, 7, 9; /* rgb triple composed into shadows (cool, near-black) */
+  --shadow-ink:
+    5, 7, 9; /* rgb triple composed into shadows (cool, near-black) */
   --well-depth: 0.35; /* inner-shadow strength for a recessed well */
   --raise-depth: 0.28; /* drop-shadow strength for a resting plate */
 
   /* A recessed well: shallow, even inner shadow plus the crisp border that
      reads as its machined edge. */
-  --elev-inset: inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8)),
+  --elev-inset:
+    inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8)),
     inset 0 6px 14px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.45));
-  --elev-raised: 0 1px 0 var(--edge-light),
+  --elev-raised:
+    0 1px 0 var(--edge-light),
     0 4px 14px rgba(var(--shadow-ink), var(--raise-depth));
   --elev-flat: 0 0 0 transparent;
   /* Shallower recess for secondary screens (chart canvas, mini readouts). */
-  --elev-recess: inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.4));
+  --elev-recess: inset 0 1px 2px
+    rgba(var(--shadow-ink), calc(var(--well-depth) * 0.4));
   /* Flat tile: a hairline top edge only — reads as a plate resting on the
      chassis, quieter than a recessed well. */
   --elev-tile: inset 0 1px 0 var(--edge-light);
@@ -277,7 +286,8 @@
   --info: #4b6076;
   --info-soft: rgba(75, 96, 118, 0.13);
 
-  --shadow-card: 0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
+  --shadow-card:
+    0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
   --shadow-float: 0 16px 50px rgba(43, 44, 40, 0.16);
 
   --grid-line: rgba(43, 44, 40, 0.06);
@@ -337,7 +347,8 @@ body {
    focus-reveal chasing one) can only ever scroll a container inside the
    shell, never shift the whole UI out of view. Below the stacked breakpoint
    the document is the intended scroller and stays untouched. */
-@media (min-width: 760px) { /* bp: stacked (complement) */
+@media (min-width: 760px) {
+  /* bp: stacked (complement) */
   html,
   body {
     overflow-y: clip;
@@ -401,4 +412,3 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
-</content>
