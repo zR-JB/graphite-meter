@@ -18,6 +18,9 @@ FROM docker.io/oven/bun:canary AS client
 # Build-time client config (override with --build-arg). Defaults = production:
 # real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
 # reaches `bun run build`'s process.env, where vite.config.ts reads it.
+# GM_CLIENT_BUILD_LABEL is the status-bar label AND the label half of the
+# client version <semver>+<label> (Endpoint info drawer, dist/version.json,
+# preflight ?client_version=).
 ARG GM_CLIENT_ENGINE=real
 ARG GM_CLIENT_ALLOW_DUMMY=0
 ARG GM_CLIENT_DEV_TOOLS=0

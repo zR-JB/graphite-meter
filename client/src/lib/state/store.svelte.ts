@@ -10,6 +10,7 @@ import type {
   Phase,
   ConnectivityState,
   InfraInfo,
+  EngineInfo,
   RunResult,
   RunnerConfig,
   RunnerError,
@@ -58,6 +59,9 @@ export interface LatencyLane {
   p90: number | null;
   average: number | null;
   current: number | null;
+  /** Mean absolute deviation from the lane average (ms) — same measure as
+   *  LatencyResult.jitterMs, per lane. Null until ≥2 valid samples. */
+  jitter: number | null;
   lossRatio: number;
   count: number;
   active: boolean;
@@ -196,6 +200,9 @@ class AppStore {
 
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
+  /** Static identity + transport capabilities of the wired engine (set once by
+   *  bootRunner from runner.describe(); no I/O involved). */
+  engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
   /* Per-stage final results, each landing the instant its phase ends (before
    * the aggregate `result` on complete). The single source of truth for a
@@ -237,10 +244,9 @@ class AppStore {
   showWireEstimates = $state(false);
   /** User-resized docked side-panel widths (px), per side. Persisted. */
   dockWidth = $state<{ left: number; right: number }>({ left: 520, right: 420 });
-  /** Last-viewed Settings tab + telemetry disclosure state — persisted so a
-   *  panel reopens where the user left it. */
+  /** Last-viewed Settings tab — persisted so the panel reopens where the user
+   *  left it. */
   settingsTab = $state<SettingsTab>("setup");
-  telemetryExpanded = $state(false);
   /** Dev diagnostic toggle (Settings › Developer). When on, the runner/core/
    *  workers emit verbose console logs; wire.svelte.ts mirrors it into the
    *  debug logger. Persisted so it survives reloads during a debugging session. */
@@ -254,8 +260,8 @@ class AppStore {
     this.theme = p.theme;
     this.showWireEstimates = p.showWireEstimates;
     this.dockWidth = p.dockWidth;
-    this.settingsTab = p.settingsTab;
-    this.telemetryExpanded = p.telemetryExpanded;
+    // Only known tabs; anything else falls back to Setup.
+    this.settingsTab = p.settingsTab === "developer" ? "developer" : "setup";
     this.debugLogging = p.debugLogging;
   }
 
@@ -721,6 +727,10 @@ class AppStore {
       const avg = valid.length
         ? valid.reduce((sum, s) => sum + s.rttMs, 0) / valid.length
         : null;
+      const jitter =
+        avg != null && valid.length >= 2
+          ? valid.reduce((sum, s) => sum + Math.abs(s.rttMs - avg), 0) / valid.length
+          : null;
       const lossRatio = laneSamples.length
         ? laneSamples.filter((s) => s.lost).length / laneSamples.length
         : 0;
@@ -732,6 +742,7 @@ class AppStore {
         p90: quantile(sorted, 0.9),
         average: avg,
         current: valid.at(-1)?.rttMs ?? null,
+        jitter,
         lossRatio,
         count: laneSamples.length,
         active: this.phase === key,
@@ -798,7 +809,6 @@ if (typeof window !== "undefined") {
         showWireEstimates: store.showWireEstimates,
         dockWidth: $state.snapshot(store.dockWidth),
         settingsTab: store.settingsTab,
-        telemetryExpanded: store.telemetryExpanded,
         debugLogging: store.debugLogging,
       };
       clearTimeout(timer);

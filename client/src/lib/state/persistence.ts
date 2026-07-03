@@ -31,7 +31,7 @@ export const DEFAULT_DOCK_WIDTH = { left: 520, right: 420 };
 
 /** The full persisted snapshot. Display prefs + the entire RunnerConfig. */
 /** Which Settings tab was last viewed (restored when the panel reopens). */
-export type SettingsTab = "setup" | "infrastructure" | "developer";
+export type SettingsTab = "setup" | "developer";
 
 export interface PersistedState {
   config: RunnerConfig;
@@ -41,10 +41,8 @@ export interface PersistedState {
   showWireEstimates: boolean;
   /** User-resized docked panel widths (px), per side. */
   dockWidth: { left: number; right: number };
-  /** Last-viewed Settings tab + whether the telemetry disclosure was expanded,
-   *  so reopening a panel restores the view instead of resetting it. */
+  /** Last-viewed Settings tab, so reopening the panel restores the view. */
   settingsTab: SettingsTab;
-  telemetryExpanded: boolean;
   /** Dev diagnostic: when on, the runner/core/workers emit verbose,
    *  component-tagged console logs (Settings › Developer). Off by default. */
   debugLogging: boolean;
@@ -70,7 +68,6 @@ export function defaultPersisted(): PersistedState {
     showWireEstimates: false,
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
     settingsTab: "setup",
-    telemetryExpanded: false,
     debugLogging: false,
   };
 }
@@ -83,7 +80,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * Recursively merge `source` OVER `base`, key-by-key, keyed off the shape of
  * `base` (the defaults). This makes the merge tolerant in both directions:
  *   - a key absent from `source` keeps the default;
- *   - a key present in `source` but NOT in `base` (an unknown/legacy field)
+ *   - a key present in `source` but NOT in `base` (an unknown field)
  *     is dropped — we only ever walk keys that exist in the defaults;
  *   - a type mismatch (e.g. saved a string where a number is expected, or an
  *     object where a scalar is expected) is rejected, keeping the default.

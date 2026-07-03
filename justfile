@@ -31,7 +31,9 @@ engine      := env("GM_CLIENT_ENGINE", "real")
 allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
 dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
 
-# Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS
+# Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS.
+# `label` is the status-bar label and the label half of the client version
+# <semver>+<label> (Endpoint info drawer, dist/version.json, preflight query).
 label       := env("GM_CLIENT_BUILD_LABEL", if os() == "windows" { `cmd.exe /c "git rev-parse --short HEAD 2>nul || echo prod"` } else { `git rev-parse --short HEAD 2>/dev/null || echo prod` })
 version     := env("VERSION", label)
 

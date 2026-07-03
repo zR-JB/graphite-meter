@@ -230,7 +230,8 @@ A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage l
 
 ### Settings
 
-Settings live in a docked panel with up to three tabs (the third only in dev-tooling builds).
+Settings live in a docked panel with up to two tabs — Setup, plus Developer in dev-tooling
+builds. A production build has only Setup, so no tab bar is rendered at all.
 
 **Setup — Run tier**
 
@@ -253,22 +254,21 @@ Settings live in a docked panel with up to three tabs (the third only in dev-too
 | Skip loaded latency when latency stage is off | on | |
 | Include wire-rate estimates in result cards | off | Opt-in overhead-compensation display, expandable into a nested model: connection profile (LAN / Loopback / VPN tunnel / Internet), a transport & security preset (HTTP/1.1 cleartext / HTTPS / HTTP/2 / HTTP/3 — see Roadmap), per-layer framing toggles (Ethernet/IP/transport, VPN encapsulation, TLS records, HTTP/WS/QUIC framing), path-behavior toggles (ACK/control traffic, loss/retransmission), and an advanced raw byte-accounting section (MTU, TCP options, TLS record size, AEAD tag size, QUIC connection-ID length, max loss ratio, VLAN tagging). |
 
-**Endpoint tab** — read-only: the `GET /preflight` result (client IP, server name/host/port/
-location, negotiated protocol, pre-test ping) and the transport/stream-count summary the run will
-use.
-
 **Developer tab** (only in dev-tooling builds) — a debug-logging switch (verbose per-worker
 console diagnostics, meant to pair with the server's `-verbose`/`GM_VERBOSE` logging) and, when
 the dummy engine is also compiled in, four live anomaly-injection controls usable mid-run: latency
 spike, packet loss, throughput drop, and connection drop (a full stall-then-resume).
 
-### Feature/capability display
+### The Endpoint info drawer
 
-There is no single dedicated "capabilities" page; the closest equivalent is the Endpoint settings
-tab plus the compact infrastructure card in the results view, both populated from `/preflight`.
-The `capabilities` object the server advertises (per-transport availability booleans, per-transport
-origin URLs, and every stable endpoint path) is richer than what's currently rendered — it's
-consumed internally for transport negotiation but not yet shown as a full matrix in the UI.
+The right-side drawer is a read-only card grid: **Client** (public IP from `/preflight`, client
+build version), **Engine** (the wired runner's name, per-runner version, and its supported
+transports per role — latency vs throughput, from `runner.describe()`), **Server** (name/host/
+port/location, server build version, negotiated protocol — all from `/preflight`), and
+**Transport** (the active transfer/latency transports, stream ceiling, pre-test ping). The
+`capabilities` object the server advertises (per-transport availability booleans, per-transport
+origin URLs, and every stable endpoint path) is richer than what's rendered — it's consumed
+internally for transport negotiation but not yet shown as a full matrix in the UI.
 
 ### Web Workers
 
@@ -293,7 +293,7 @@ a runtime flag.
 | `GM_CLIENT_ENGINE` | `real` / `dummy` | `real` | `real` | Default runner when more than one is compiled in. |
 | `GM_CLIENT_ALLOW_DUMMY` | `0` / `1` | `1` | `0` | Compile in the dummy runner and the Developer-tab anomaly-injection cards. |
 | `GM_CLIENT_DEV_TOOLS` | `0` / `1` | `1` | `0` | Compile in the whole Developer settings tab (including debug logging). |
-| `GM_CLIENT_BUILD_LABEL` | string | `dev` | git short hash | Text shown after `build` in the status bar. |
+| `GM_CLIENT_BUILD_LABEL` | string | `dev` | git short hash | Text shown after `build` in the status bar. Also the label half of the client version `<package.json semver>+<label>`, which is shown in the Endpoint info drawer, written to `dist/version.json`, and sent to the server on preflight as `?client=web&client_version=…`. |
 
 At runtime, when the dummy runner is compiled in, `?engine=dummy` on the URL (or a previously
 persisted choice in `localStorage`) switches to it; this check itself compiles away in a
@@ -514,9 +514,11 @@ implemented yet unless a section above says otherwise.
    advertises. When HTTP/3 is selected, latency and throughput are planned to be configurable
    *separately*, each independently able to choose WebTransport unreliable datagrams (for
    loss-tolerant, minimal-overhead probing) instead of the existing reliable channel (WebSocket for
-   latency, fetch/XHR streams for throughput). The Settings UI already has a "Transport &
-   security" preset (HTTP/1.1 / HTTPS / HTTP/2 / HTTP/3) as a seam for this; today it only feeds
-   the overhead-compensation byte math, not a live negotiated transport.
+   latency, fetch/XHR streams for throughput). Two seams for this already exist: the Settings
+   "Transport & security" preset (HTTP/1.1 / HTTPS / HTTP/2 / HTTP/3), which today only feeds the
+   overhead-compensation byte math, and the runner contract's `EngineInfo` (`runner.describe()`),
+   which carries per-role supported-transport lists (latency vs throughput) rendered in the
+   Endpoint info drawer — the selection UI will offer exactly those lists.
 3. **A server-selection UI.** Planned so the primary server — the one that serves the web page —
    can be configured, via a TOML file or environment variables, with a list of other Graphite
    Meter server instances running elsewhere. The browser client would then let the user pick which

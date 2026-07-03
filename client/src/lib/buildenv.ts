@@ -20,4 +20,7 @@ export const BUILD = {
   devTools: __GM_DEV_TOOLS__,
   /** Identity shown in the status bar (`build …`). */
   buildLabel: __GM_BUILD_LABEL__,
+  /** Canonical client version, `<semver>+<label>` (e.g. "0.0.0+abc1234").
+   *  Shown in the Endpoint info, sent on preflight, mirrored in version.json. */
+  clientVersion: __GM_CLIENT_VERSION__,
 } as const;

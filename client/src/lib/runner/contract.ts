@@ -347,6 +347,26 @@ export interface RunnerError {
   cause?: unknown;
 }
 
+/* ---------- Engine identity & capabilities (§transport-selection seam) ----------
+ *  Static self-description of a runner backend. The long-term model is ONE real
+ *  engine that can drive many transports (h1.1 / h2 / h3 / websocket /
+ *  webtransport / fetch), with the user picking per-role (latency vs
+ *  throughput) from these lists — so capabilities live on the ENGINE, not one
+ *  runner per protocol. No selection UI yet; the Endpoint info renders the
+ *  lists so the seam is visible. */
+export interface EngineInfo {
+  /** Engine id, e.g. "real" | "dummy". */
+  name: string;
+  /** Per-engine version. Both built-ins are versioned with the client build
+   *  today (same build phase); the field exists so a future pluggable engine
+   *  can version independently. */
+  version: string;
+  /** Transports this engine can drive for latency probing, preference order. */
+  latencyTransports: string[];
+  /** Transports this engine can drive for throughput transfer, preference order. */
+  throughputTransports: string[];
+}
+
 /* ---------- Pre-test handshake info ---------- */
 export interface InfraInfo {
   clientIp: string;
@@ -445,6 +465,8 @@ export interface NetworkRunner {
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
   probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo>;
+  /** Static engine identity + transport capabilities (no I/O). */
+  describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
   /** Apply a live change to the enabled stage set mid-run — only future
    *  (not-yet-started) stages are affected, so toggling one off shortens the
@@ -475,7 +497,7 @@ export interface NetworkRunner {
  *                               or run end); close the stage's connection(s).
  *  Because begin/measure/end bracket ONE connection set, the warmup genuinely
  *  warms the wire the measurement runs over — there is no cold reconnect at the
- *  warmup→measure seam (the original purpose of a warmup). Each enabled stage is
+ *  warmup→measure seam (the point of a warmup). Each enabled stage is
  *  still preceded by exactly one `"warmup"` window of `duration.warmupMs`
  *  (omitted when <= 0), emitted to the UI as the generic `"warmup"` phase; the
  *  stage split is backend-only. The single `warmupMs` setting governs every

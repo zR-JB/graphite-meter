@@ -14,6 +14,9 @@ import (
 // Preflight serves GET /preflight: server identity, advertised origins, and
 // per-stage capability flags. Request/response JSON (no wire protocol). Upload
 // correlation tokens are minted later by /upload/session during upload warmup.
+// The web client identifies itself via query params (?client=web&
+// client_version=<semver>+<label>) — read them here when version-gated
+// feature/compat decisions are needed.
 type Preflight struct {
 	cfg *config.Config
 }

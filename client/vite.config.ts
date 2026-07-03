@@ -1,6 +1,7 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import pkg from "./package.json";
 
 // --- Build-time client configuration (see src/lib/buildenv.ts) -------------
 // Driven by GM_CLIENT_* env vars (the justfile `prod` recipe / `docker build
@@ -24,12 +25,31 @@ const devTools = !off(env.GM_CLIENT_DEV_TOOLS);
 
 const buildLabel = env.GM_CLIENT_BUILD_LABEL ?? "dev";
 
+// Canonical client version: package.json semver + the build label (git short
+// hash in prod, "dev" otherwise) — e.g. "0.0.0+abc1234". Shown in the Endpoint
+// info, sent to the server on preflight, and written to dist/version.json so
+// whatever server hosts the static files can identify the bundle.
+const clientVersion = `${pkg.version}+${buildLabel}`;
+
+// Emit dist/version.json alongside the bundle (build only; dev serves no dist).
+const versionFile = (): Plugin => ({
+  name: "gm-version-file",
+  generateBundle() {
+    this.emitFile({
+      type: "asset",
+      fileName: "version.json",
+      source: JSON.stringify({ version: clientVersion, label: buildLabel }),
+    });
+  },
+});
+
 export default defineConfig({
-  plugins: [svelte(), tailwindcss()],
+  plugins: [svelte(), tailwindcss(), versionFile()],
   define: {
     __GM_DEFAULT_ENGINE__: JSON.stringify(defaultEngine), // "real" | "dummy"
     __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy), // bare true | false
     __GM_DEV_TOOLS__: JSON.stringify(devTools), // bare true | false
     __GM_BUILD_LABEL__: JSON.stringify(buildLabel), // "abc1234"
+    __GM_CLIENT_VERSION__: JSON.stringify(clientVersion), // "0.0.0+abc1234"
   },
 });

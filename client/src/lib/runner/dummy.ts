@@ -12,10 +12,12 @@ import type {
   RunnerConfig,
   RunnerAnomaly,
   InfraInfo,
+  EngineInfo,
   FlowDirection,
   PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend, TickContext } from "./core";
+import { BUILD } from "../buildenv";
 
 export interface DummyOptions {
   seed?: number;
@@ -169,6 +171,18 @@ export class DummyBackend implements RunnerBackend {
     };
   }
 
+  /** Synthetic capabilities: the dummy "supports" everything, exercising the
+   *  full capability surface the UI will render for the one-big-real-engine
+   *  future (per-role transport lists). Everything here is simulated. */
+  describe(): EngineInfo {
+    return {
+      name: "dummy",
+      version: BUILD.clientVersion,
+      latencyTransports: ["webtransport", "websocket"],
+      throughputTransports: ["webtransport", "fetch-streams", "websocket"],
+    };
+  }
+
   /* ================= LIFECYCLE (core → backend) ================= */
   onRunStart(_config: RunnerConfig): void {
     // Reset per-run synthesis state. The core owns the timeline + clock.
@@ -269,7 +283,7 @@ export class DummyBackend implements RunnerBackend {
 
     // Bytes transferred over the cadence window (rate is bytes/sec). The core
     // accumulates this and tracks the cumulative total. Direction travels with
-    // the sample (the core no longer infers it from the phase).
+    // the sample (the core never infers it from the phase).
     const bytes = bytesPerSec * (THROUGHPUT_CADENCE_MS / 1000);
     this.#host!.ingestThroughput(dir, bytesPerSec, bytes);
   }

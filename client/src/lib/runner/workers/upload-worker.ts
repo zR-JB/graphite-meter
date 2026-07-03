@@ -17,43 +17,39 @@
  * wall-target from THIS lane's own observed rate (an EWMA) — purely per-worker, so
  * lanes never synchronise into oscillation. There are NO preemptive kills: the
  * current POST always finishes; only the NEXT one is resized (a step-clamp is the
- * hysteresis). The size rides between MIN_POST_BYTES and the pool size; the pool is
- * the old fixed reservoir (TOTAL/streams), so the fast end is unchanged and only
- * the slow end gains the smaller, more responsive POSTs.
+ * hysteresis). The size rides between MIN_POST_BYTES and the pool size (a fixed
+ * TOTAL/streams reservoir).
  *
  * ── Why a fixed-Blob `fetch` (and NOT a streaming fetch) ──
  * A `fetch` whose body is a *ReadableStream* (`duplex:'half'`) is the streaming
  * upload primitive — and it requires HTTP/2 in Chrome (→ ALPN failure on our
  * cleartext h1.1 origin) and is unimplemented in Firefox. That path is NEVER used
  * here. A `fetch` whose body is a *fixed Blob* has a known Content-Length and is
- * an ordinary h1.1 request that works in every target browser — exactly like the
- * XHR repeated-Blob POST it replaces, but with the fetch/AbortController
- * ergonomics the download worker already uses (same abort + re-loop shape) and a
- * real `res.ok`/`res.status` so a 4xx/5xx is handled instead of blindly re-POSTed.
+ * an ordinary h1.1 request that works in every target browser, with the same
+ * abort + re-loop shape as the download worker and a real `res.ok`/`res.status`
+ * so a 4xx/5xx is handled instead of blindly re-POSTed.
  *
  * ── Why no progress events (server-authoritative) ──
- * `fetch` has no upload-progress events at all, and we no longer want them: the
- * upload figure is the SERVER's drained byte count (the only count downstream of
- * every browser/proxy send buffer — it can lag the wire but never lead it). So
- * this worker reports only lane liveness: one `{type:'alive'}` per completed POST
+ * `fetch` has no upload-progress events, and none are needed: the upload figure
+ * is the SERVER's drained byte count (the only count downstream of every
+ * browser/proxy send buffer — it can lag the wire but never lead it). So this
+ * worker reports only lane liveness: one `{type:'alive'}` per completed POST
  * (proving the lane recovered, for the restart logic) and `{type:'error'}` on a
  * failed POST. It NEVER reports bytes — the /ws/upload count is the sole source.
- * (The old `upload.onprogress` byte counting is gone, along with its watchdog
- * keepalive — the 100 ms server frames are the heartbeat now; a dropped progress
- * socket freezes measured-time via the progress worker's stall/resume.)
+ * The 100 ms server frames are the heartbeat; a dropped progress socket freezes
+ * measured-time via the progress worker's stall/resume.
  *
  * ── Why fetch here mirrors download-worker.ts ──
  * Download = fetch + body.getReader(): read-and-DISCARD a streamed RESPONSE at
  * O(1) memory. Upload = fetch + fixed Blob body: stream a generated REQUEST from
  * one Blob and read nothing back (a tiny JSON echo, drained to free the keep-alive
- * connection). Same fetch/abort/re-loop skeleton both directions; the platform no
- * longer forces XHR on the upload side now that we don't need onprogress.
+ * connection). Same fetch/abort/re-loop skeleton both directions.
  *
  * Message protocol (RealBackend's pool drives both directions):
  *   in:  { type: 'start', url, debug?, id?, streams? } | { type: 'stop' }
  *   out: { type: 'alive' } | { type: 'error', recoverable, detail }
  *
- * ── Why a Blob pool + slice and not a per-POST ArrayBuffer (the memory fix) ──
+ * ── Why a Blob pool + slice and not a per-POST ArrayBuffer ──
  * `fetch(body: arrayBuffer)` (like `xhr.send`) COPIES the body bytes every call, so
  * looping POSTs of a freshly-built multi-MiB body churn a copy per request — on a
  * fast (loopback) link that copied at gigabytes/sec, faster than GC reclaimed it,
@@ -61,7 +57,7 @@
  * `pool.slice(0, n)` per POST: a Blob slice REFERENCES the pool's backing store (a
  * view with an offset/length — no byte copy), and fetch streams from it straight to
  * the socket. The footprint stays flat regardless of how the size adapts. NEVER
- * rebuild a Blob per POST. See docs/THROUGHPUT_MEASUREMENT.md.
+ * rebuild a Blob per POST.
  * ============================================================ */
 
 import { setDebugLogging, debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../../debug";

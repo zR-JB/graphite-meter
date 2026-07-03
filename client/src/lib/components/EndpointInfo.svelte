@@ -1,23 +1,42 @@
 <script lang="ts">
   /* ============================================================
-   * <InfrastructurePanel> — Settings › Infrastructure (§13.6)
-   * Read-only display of the probe metadata (`console.infra`,
-   * an InfraInfo) plus the negotiated transport/streams config.
-   * Uses pointerIntent for a subtle radial hover on each card.
+   * <EndpointInfo> — Info drawer › Endpoint (§3.7)
+   * Read-only card grid: client identity (IP + build version), the
+   * wired engine (per-runner version + supported transports per
+   * role), the probed server, and the active transport setup.
+   * Client/Engine facts are build-static; Server/Transport rows
+   * fall back to "—" until the pre-test probe resolves.
    * ============================================================ */
-  import { store } from "../../state/store.svelte";
-  import { pointerIntent } from "../../actions/pointerIntent";
-  import { fmtMs } from "../../format";
+  import { store } from "../state/store.svelte";
+  import { pointerIntent } from "../actions/pointerIntent";
+  import { fmtMs } from "../format";
+  import { BUILD } from "../buildenv";
 
   const infra = $derived(store.infra);
+  const engine = $derived(store.engineInfo);
 
-  // Grouped definition lists. Values fall back to "—" until probe resolves.
   const cards = $derived.by(() => {
     const i = infra;
+    const e = engine;
     return [
       {
         title: "Client",
-        rows: [["IP", i?.clientIp ?? "—"]],
+        rows: [
+          ["IP", i?.clientIp ?? "—"],
+          ["Version", BUILD.clientVersion],
+        ] as [string, string][],
+      },
+      {
+        // The engine ships with (and is versioned by) the client build today;
+        // the per-role transport lists are its capabilities — a future UI lets
+        // the user pick latency/throughput transports from exactly these.
+        title: "Engine",
+        rows: [
+          ["Runner", e?.name ?? "—"],
+          ["Version", e?.version ?? "—"],
+          ["Latency", e ? e.latencyTransports.join(", ") : "—"],
+          ["Transfer", e ? e.throughputTransports.join(", ") : "—"],
+        ] as [string, string][],
       },
       {
         title: "Server",
@@ -26,6 +45,8 @@
           ["Host", i?.server.host ?? store.config.endpoint.host],
           ["Port", String(i?.server.port ?? store.config.endpoint.port)],
           ["Location", i?.server.location ?? "—"],
+          ["Version", i?.engineVersion ?? "—"],
+          ["Protocol", i?.protocolNegotiated ?? "—"],
         ] as [string, string][],
       },
       {
@@ -37,23 +58,11 @@
           ["Pre-test ping", i ? `${fmtMs(i.preTestPingMs)} ms` : "—"],
         ] as [string, string][],
       },
-      {
-        title: "Runtime",
-        rows: [
-          ["Engine", i?.engineVersion ?? "—"],
-          ["Protocol", i?.protocolNegotiated ?? "—"],
-        ] as [string, string][],
-      },
     ];
   });
 </script>
 
 <section class="infra">
-  <div class="head">
-    <h3>Endpoint</h3>
-    <p>Client, endpoint, and transport metadata from the pre-test probe.</p>
-  </div>
-
   <div class="grid">
     {#each cards as c (c.title)}
       <article class="card" use:pointerIntent>
@@ -80,23 +89,10 @@
     display: grid;
     gap: 14px;
   }
-  .head h3 {
-    margin: 0;
-    color: var(--text);
-    font-size: 16px;
-    font-weight: 850;
-    letter-spacing: -0.03em;
-  }
-  .head p {
-    margin: 3px 0 0;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
-  }
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
   }
 
@@ -170,12 +166,10 @@
   dd {
     margin: 0;
     min-width: 0;
-    overflow: hidden;
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere; /* transport lists / long hosts wrap, not clip */
   }
 
   .hint {

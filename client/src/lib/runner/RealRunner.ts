@@ -62,6 +62,7 @@ import type {
   RunnerConfig,
   RunnerAnomaly,
   InfraInfo,
+  EngineInfo,
   ServerCandidate,
   TransportKind,
   TransportRole,
@@ -71,6 +72,7 @@ import type {
 import type { CoreHost, RunnerBackend } from "./core";
 import type { Preflight } from "../api/preflight";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
+import { BUILD } from "../buildenv";
 
 /** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
  *  same-origin (relative requests) — the Stage-1 case where the Go server serves
@@ -101,7 +103,7 @@ export interface RealBackendOptions {
 }
 
 const NOT_IMPL = (method: string) =>
-  new Error(`RealBackend.${method} not implemented — see docs/REAL_RUNNER.md`);
+  new Error(`RealBackend.${method} not implemented`);
 
 /** Throughput push cadence: aggregate worker deltas and push ~16 Hz (mirrors
  *  the dummy's THROUGHPUT_CADENCE_MS so both engines feel identical). */
@@ -379,7 +381,11 @@ export class RealBackend implements RunnerBackend {
     const base = resolveBase(this.#resolveEndpoint(endpoint));
     let res: Response;
     try {
-      res = await fetch(`${base}/preflight`, {
+      // Identify the client to the server (version negotiation seam): a future
+      // server can key feature/compat decisions off these. Query params (not a
+      // custom header) so a cross-origin preflight GET stays a simple request.
+      const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
+      res = await fetch(`${base}/preflight${ident}`, {
         method: "GET",
         headers: this.#opts.authToken
           ? { authorization: `Bearer ${this.#opts.authToken}` }
@@ -440,6 +446,17 @@ export class RealBackend implements RunnerBackend {
    *  before probing). Consumed by later-stage transport negotiation. */
   get capabilities(): Preflight["capabilities"] | null {
     return this.#capabilities;
+  }
+
+  /** What THIS engine can drive today: WebSocket pings + fetch-stream transfer.
+   *  Grows as webtransport/h3 land; a future per-role selection UI reads it. */
+  describe(): EngineInfo {
+    return {
+      name: "real",
+      version: BUILD.clientVersion, // built with the client; pluggable later
+      latencyTransports: ["websocket"],
+      throughputTransports: ["fetch-streams"],
+    };
   }
 
   /* ================= LIFECYCLE (core → backend) ================= */

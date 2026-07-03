@@ -5,13 +5,13 @@
    * looks and behaves exactly like the Connection & telemetry panel.
    * Owns only the tab switcher + which sub-panel is shown; the shell,
    * header, backdrop, slide, focus trap and Esc all live in SidePanel.
-   * The controls live in three tabs: Test Setup / Infrastructure /
-   * Developer. All Test-Setup controls two-way bind to store.config.
+   * Two tabs: Test Setup / Developer (dev builds only — a prod build
+   * is Setup-only, so the tab bar itself disappears). All Test-Setup
+   * controls two-way bind to store.config.
    * ============================================================ */
   import SidePanel from "../SidePanel.svelte";
   import { store } from "../../state/store.svelte";
   import TestSetupPanel from "./TestSetupPanel.svelte";
-  import InfrastructurePanel from "./InfrastructurePanel.svelte";
   import DeveloperPanel from "./DeveloperPanel.svelte";
 
   interface Props {
@@ -33,18 +33,34 @@
 
   // The active tab lives in the store (persisted), so reopening Settings lands
   // on the last-viewed section rather than resetting to Test Setup.
-  type Tab = "setup" | "infrastructure" | "developer";
+  type Tab = "setup" | "developer";
 
   // The Developer tab only exists when the build includes dev tools
   // (GM_CLIENT_DEV_TOOLS). The `...(false ? [...] : [])` spread folds to nothing
   // in a prod build, and the gated render branch below drops the import — so the
-  // whole DeveloperPanel (debug logging + simulation) leaves the bundle.
+  // whole DeveloperPanel (debug logging + simulation) leaves the bundle. With
+  // Setup then the only tab, the tab bar itself is not rendered.
   const TABS: { key: Tab; label: string }[] = [
     { key: "setup", label: "Setup" },
-    { key: "infrastructure", label: "Endpoint" },
     ...(__GM_DEV_TOOLS__ ? [{ key: "developer" as Tab, label: "Developer" }] : []),
   ];
 </script>
+
+{#snippet tabs()}
+  <div class="tabs" role="tablist" aria-label="Settings sections">
+    {#each TABS as t (t.key)}
+      <button
+        class="tab"
+        role="tab"
+        class:active={store.settingsTab === t.key}
+        aria-selected={store.settingsTab === t.key}
+        onclick={() => (store.settingsTab = t.key)}
+      >
+        {t.label}
+      </button>
+    {/each}
+  </div>
+{/snippet}
 
 <SidePanel
   bind:open
@@ -58,26 +74,9 @@
   kicker="Setup & Tuning"
   label="Settings"
   width="min(560px, 94vw)"
+  toolbar={TABS.length > 1 ? tabs : undefined}
 >
-  {#snippet toolbar()}
-    <div class="tabs" role="tablist" aria-label="Settings sections">
-      {#each TABS as t (t.key)}
-        <button
-          class="tab"
-          role="tab"
-          class:active={store.settingsTab === t.key}
-          aria-selected={store.settingsTab === t.key}
-          onclick={() => (store.settingsTab = t.key)}
-        >
-          {t.label}
-        </button>
-      {/each}
-    </div>
-  {/snippet}
-
-  {#if store.settingsTab === "infrastructure"}
-    <InfrastructurePanel />
-  {:else if __GM_DEV_TOOLS__ && store.settingsTab === "developer"}
+  {#if __GM_DEV_TOOLS__ && store.settingsTab === "developer"}
     <DeveloperPanel running={store.isRunning} />
   {:else}
     <!-- Default + fallback (also when a persisted "developer" tab was stripped). -->

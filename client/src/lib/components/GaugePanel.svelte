@@ -291,8 +291,8 @@
        gauge+latency row gets an explicit, content-independent track size so
        toggling the latency panel on/off can never change the gauge's height:
          Desktop (wide): gauge+latency side by side, Engage below them,
-           Test Stages at the very bottom (matches the original layout —
-           keeping the space below the gauge from looking empty).
+           Test Stages at the very bottom (keeps the space below the
+           gauge from looking empty).
          Mobile (narrow/stacked): Test Stages at the very top, then gauge,
            then Engage, then the latency panel below. -->
   <div class="instrument">

@@ -14,9 +14,9 @@
  * `stop` aborts the in-flight fetch. A recoverable failure is reported so
  * the main thread can stall + restart this single lane.
  *
- * ── fetch both ways now; the asymmetry is the body, not the API ──
- * Both directions use `fetch` (see upload-worker.ts), since the upload no longer
- * needs `upload.onprogress` — the server's /ws/upload count is authoritative there.
+ * ── fetch both ways; the asymmetry is the body, not the API ──
+ * Both directions use `fetch` (see upload-worker.ts) — the upload needs no
+ * progress events; the server's /ws/upload count is authoritative there.
  * What still differs is which side streams:
  *   • Download = fetch + body.getReader(): the only way to read-and-DISCARD a
  *     streamed RESPONSE at O(1) memory. XHR buffers the whole response
@@ -45,8 +45,7 @@
  * (one reused BYOB buffer; we only read as fast as we count), so there is no JS
  * lever left. It only manifests when the BROWSER is the bottleneck; on any real
  * internet path the LINE is the bottleneck, the reader keeps up, and the gap
- * never appears. Chrome buffers far less and does not show it. See
- * docs/THROUGHPUT_MEASUREMENT.md.
+ * never appears. Chrome buffers far less and does not show it.
  *
  * Only dependency is the shared debug logger (gated; silent unless the dev
  * flag is on), so it still bundles cleanly as a Vite module worker.

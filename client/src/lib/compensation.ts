@@ -78,8 +78,8 @@ export interface CompensationEstimate {
 }
 
 /* ============================================================
- * COMPENSATION_DEFAULTS — every previously-magic coefficient,
- * named and commented. User-tunable protocol params live in
+ * COMPENSATION_DEFAULTS — every coefficient, named and
+ * commented. User-tunable protocol params live in
  * `config.compensation.params`; the fixed protocol constants
  * (header sizes etc.) and heuristic weights live here.
  * ============================================================ */

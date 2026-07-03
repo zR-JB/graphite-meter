@@ -24,6 +24,9 @@ Arch=arm64
 
 # The Dockerfile defaults already produce a real-only prod image. Uncomment to
 # override the client build knobs or stamp a version (equivalent to --build-arg).
+# VERSION stamps the server binary (ldflags); GM_CLIENT_BUILD_LABEL stamps the
+# client (status bar + client version <semver>+<label>). ExecStartPre below
+# sets both to the git revision via the build-arg file.
 # BuildArg=VERSION=0.1.0
 # BuildArg=GM_CLIENT_BUILD_LABEL=0.1.0
 # BuildArg=GM_CLIENT_ALLOW_DUMMY=1

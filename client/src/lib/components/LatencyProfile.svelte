@@ -11,7 +11,7 @@
    * ============================================================ */
   import { store, type LatencyLane, type StageKey } from "../state/store.svelte";
   import { fmtMs, niceDomain } from "../format";
-  import { tooltip } from "../actions/tooltip";
+  import { tooltip, JARGON } from "../actions/tooltip";
 
   // Bare mode: drop the outer card chrome (border/background/shadow + header)
   // so the component sits cleanly inside a host panel — used when it's a peer
@@ -170,7 +170,7 @@
 <section class="card" class:bare aria-label="Latency distribution">
   <header class="card-head">
     <h3 class="term" use:tooltip={PROFILE_HELP}>Latency Profile</h3>
-    <p>Range / avg / loss</p>
+    <p>Range / avg / jitter / loss</p>
   </header>
 
   {#if store.stageFailures.latency}
@@ -191,6 +191,9 @@
         <div class="lane-meta">
           <span>{meta.label}</span>
           <strong>{lane.average == null ? "waiting" : `avg ${fmtMs(lane.average)}`}</strong>
+          {#if lane.jitter != null}
+            <em class="jit" use:tooltip={JARGON.jitter}>± {fmtMs(lane.jitter)} jit</em>
+          {/if}
           <em>
             {lane.min == null || lane.max == null
               ? "range —"
@@ -222,12 +225,12 @@
               <i class="avg-marker" style="left:{pos(lane.average)}%"></i>
             {/if}
             {#if lane.current != null}
-              <i class="cur-marker" use:tooltip={`Latest ${fmtMs(lane.current)} ms`} style="left:{pos(lane.current)}%"></i>
+              <i class="cur-marker" use:tooltip={{ text: `Latest ${fmtMs(lane.current)} ms`, instant: true }} style="left:{pos(lane.current)}%"></i>
             {/if}
             {#if lane.lossRatio > 0}
               <i
                 class="loss-marker"
-                use:tooltip={lossLabel(lane.lossRatio)}
+                use:tooltip={{ text: lossLabel(lane.lossRatio), instant: true }}
                 style="width:{Math.min(34, Math.max(8, lane.lossRatio * 100))}%"
               ></i>
             {/if}
@@ -373,6 +376,11 @@
     font-size: 10px;
     font-style: normal;
     font-variant-numeric: tabular-nums;
+  }
+  .lane-meta .jit {
+    cursor: help;
+    text-decoration: underline dotted color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-underline-offset: 2px;
   }
 
   .strip {

@@ -70,7 +70,7 @@ function resolveEngine(): EngineKind {
 
 export function getRunner(): NetworkRunner {
   // The single integration seam. The core/UI/store are engine-agnostic; only
-  // the backend (sample source) is selected here. See docs/REAL_RUNNER.md.
+  // the backend (sample source) is selected here.
   //
   // The dummy branch is gated on the raw `__GM_ALLOW_DUMMY__` literal so that a
   // prod build (GM_CLIENT_ALLOW_DUMMY=0) folds it away and tree-shakes the
@@ -89,6 +89,7 @@ export function getRunner(): NetworkRunner {
 /** Call once on app mount. Probes infra, subscribes store to events. */
 export async function bootRunner() {
   const r = getRunner();
+  store.engineInfo = r.describe();
   unsub = r.on((e) => store.ingest(e));
   try {
     const info = await r.probe(store.config.endpoint);
@@ -158,7 +159,6 @@ export function returnToStart() {
  */
 export function applyStageChange() {
   if (!store.isRunning) return;
-  // `reconfigureStages` is now a first-class (optional) contract method.
   getRunner().reconfigureStages?.($state.snapshot(store.config.stages));
 }
 
