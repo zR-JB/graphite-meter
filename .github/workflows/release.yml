@@ -18,6 +18,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Branch protection on main doesn't cover tags — anyone can push a tag
+      # pointing at an unreviewed commit. Refuse to publish unless the tagged
+      # commit actually merged to main, so the image always matches a
+      # CI-green, reviewed state.
+      - name: Verify tag is reachable from main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "::error::Tag ${{ github.ref_name }} (commit ${{ github.sha }}) is not reachable from main — refusing to publish. Tag from an up-to-date main."
+            exit 1
+          fi
       - uses: actions/setup-go@v6
         with:
           go-version-file: go/go.mod

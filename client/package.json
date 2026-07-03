@@ -1,6 +1,7 @@
 {
   "name": "graphite-meter",
   "private": true,
+  "//version": "Frozen fallback sentinel, never bump by hand — only read by vite.config.ts when VERSION isn't set (raw `bun run build`, bypassing just/Docker/CI). Real versions come from the git tag via release.yml; see go/internal/config.EngineVersion for the server's equivalent sentinel.",
   "version": "0.0.0",
   "type": "module",
   "license": "AGPL-3.0-or-later",
