@@ -13,8 +13,8 @@
    * by the global §4.5 guard) so it just fades / appears.
    * ============================================================ */
   import { untrack } from "svelte";
-  import type { TerminationReason } from "../runner/contract";
   import { store } from "../state/store.svelte";
+  import { reasonLabel } from "../format";
 
   let visible = $state(false);
   let prevPhase = store.phase;
@@ -68,26 +68,6 @@
     }
   }
 
-  /** Friendly phrasing for a structured failure / stall reason. */
-  function reasonLabel(reason: TerminationReason): string {
-    switch (reason) {
-      case "preflight-failed":
-        return "Couldn't reach the server";
-      case "connection-lost":
-        return "Connection lost";
-      case "timeout":
-        return "Connection timed out";
-      case "protocol-error":
-        return "Unexpected server response";
-      case "transport-unavailable":
-        return "Couldn't establish a connection";
-      case "user-abort":
-        return "Stopped";
-      case "internal-error":
-        return "Runner needs attention";
-    }
-  }
-
   /** Plain-language message for the active phase. */
   function message(p: typeof store.phase): string {
     switch (p) {
@@ -119,9 +99,16 @@
 
     visible = true;
     if (timer) clearTimeout(timer);
-    // Linger longer on the terminal "complete" state (or while a skip notice
-    // holds the toast); otherwise a brisk peek.
-    const linger = untrack(() => skipMsg) ? 3200 : phase === "complete" ? 2200 : 1350;
+    // Linger longer on terminal states — complete, and especially aborted/error
+    // (the run just ended unexpectedly; a 1.35s blink undersells that) — or
+    // while a skip notice holds the toast; otherwise a brisk peek.
+    const linger = untrack(() => skipMsg)
+      ? 3200
+      : phase === "aborted" || phase === "error"
+        ? 3200
+        : phase === "complete"
+          ? 2200
+          : 1350;
     timer = setTimeout(() => {
       visible = false;
       skipMsg = null;
@@ -161,7 +148,8 @@
 <div
   class="phase-toast"
   class:visible={visible || stalled}
-  class:alert={stalled || (visible && skipMsg != null)}
+  class:alert={stalled ||
+    (visible && (skipMsg != null || store.phase === "error" || store.phase === "aborted"))}
   role="status"
   aria-live="polite"
 >

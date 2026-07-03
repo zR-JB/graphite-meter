@@ -111,20 +111,26 @@
 </section>
 
 <style>
-  /* Flat milled tile on the faceplate (quieter than the gauge well). */
+  /* Flat milled tile on the faceplate (quieter than the gauge well). A flex
+     column so the plot can stretch when the console stage grants this section
+     extra height (desktop; see Console's .stage > .chart rule) while the
+     140px floor keeps it legible when it doesn't (mobile/stacked flow). */
   .chart {
+    display: flex;
+    flex-direction: column;
     padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
   }
-  /* Secondary, compact: a modest capped height keeps the chart legible while
-     leaving the gauge hero as the focal point and the stage scroll-free. The
-     plot screen is a shallow recess set into the tile. */
+  /* Secondary to the gauge hero: fills whatever height the tile is granted,
+     never less than the compact floor. The plot screen is a shallow recess
+     set into the tile. */
   .plot {
     position: relative;
-    height: 140px;
+    flex: 1 1 auto;
+    min-height: 140px;
     border-radius: var(--r-well);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);

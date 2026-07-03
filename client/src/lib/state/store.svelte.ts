@@ -351,7 +351,10 @@ class AppStore {
 
   /** UI computes connectivity if runner doesn't push it (defensive). */
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {
-    if (this.phase === "error") return "offline";
+    // NOTE: no hard "error phase ⇒ offline" pin here — the error ingest latches
+    // `connectivity = "offline"` once for connection failures, and the idle
+    // keepalive (restarted by the backend after every run) is then free to
+    // report recovery while the error view is still up.
     // A stall mid-run is dead air — the link is effectively offline until the
     // backend reconnects (resume clears `measuring`), so the pulse goes red.
     if (this.isRunning && !this.measuring) return "offline";
@@ -639,6 +642,24 @@ class AppStore {
         break;
       case "error": {
         this.error = e.error;
+        // The run is over — the stall (if one was open) is resolved into this
+        // terminal error, so clear its presentation state instead of leaving a
+        // stale "measuring=false" latch behind.
+        this.measuring = true;
+        this.stalledSince = 0;
+        this.stallInfo = null;
+        // Latch the pulse offline for connection-type failures (the link was
+        // demonstrably dead at this moment). The restarted idle keepalive
+        // pushes fresh `connectivity` events, so recovery un-latches this
+        // even while the error view is still showing.
+        if (
+          e.error.reason === "connection-lost" ||
+          e.error.reason === "timeout" ||
+          e.error.reason === "preflight-failed" ||
+          e.error.reason === "transport-unavailable"
+        ) {
+          this.connectivity = "offline";
+        }
         // Surface any partial results the failed run produced — stages that
         // finished before the failure already arrived as stageResult events,
         // but a backend may also attach them here.

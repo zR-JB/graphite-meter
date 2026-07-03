@@ -4,6 +4,31 @@
  * renders pass through here.
  * ============================================================ */
 
+import type { TerminationReason } from "./runner/contract";
+
+/** Friendly phrasing for a structured failure / stall reason — the single
+ *  source of user-facing copy for a TerminationReason (gauge status, toast).
+ *  Backend `error.message` strings are engineering detail (stream indices,
+ *  timeout names) and must never reach the UI verbatim. */
+export function reasonLabel(reason: TerminationReason): string {
+  switch (reason) {
+    case "preflight-failed":
+      return "Couldn't reach the server";
+    case "connection-lost":
+      return "Connection lost";
+    case "timeout":
+      return "Connection timed out";
+    case "protocol-error":
+      return "Unexpected server response";
+    case "transport-unavailable":
+      return "Couldn't establish a connection";
+    case "user-abort":
+      return "Stopped";
+    case "internal-error":
+      return "Runner needs attention";
+  }
+}
+
 /** Convert raw bytesPerSec → display value in active unit (mirrors store.toUnit). */
 export function toDisplaySpeed(
   bytesPerSec: number,

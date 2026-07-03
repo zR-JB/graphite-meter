@@ -9,14 +9,19 @@
    * ============================================================ */
   import { store } from "../state/store.svelte";
 
-  const primary = $derived(store.isRunning ? "Abort" : "Engage");
+  // Mirror RunButton's label exactly (Engage → Abort → Run again) so the hint
+  // never names an action the button doesn't show.
+  const resolved = $derived(
+    store.phase === "complete" || store.phase === "aborted" || store.phase === "error",
+  );
+  const primary = $derived(store.isRunning ? "Abort" : resolved ? "Run again" : "Engage");
 </script>
 
 <div class="command-hints" aria-label="Keyboard shortcuts">
   <span><kbd>Space</kbd>{primary}</span>
   <span><kbd>W</kbd>Settings</span>
   <span><kbd>D</kbd>Details</span>
-  {#if store.phase === "complete"}
+  {#if resolved}
     <span><kbd>R</kbd>Run again</span>
   {/if}
 </div>

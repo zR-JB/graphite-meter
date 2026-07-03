@@ -30,7 +30,9 @@
   use:pointerIntent
   use:tooltip={store.isRunning
     ? "Stop the test (Space / Esc)"
-    : "Start the test (Space)"}
+    : resolved
+      ? "Run the test again (Space / R)"
+      : "Start the test (Space)"}
 >
   {#if store.isRunning}
     <span class="stop-sq"></span> ABORT

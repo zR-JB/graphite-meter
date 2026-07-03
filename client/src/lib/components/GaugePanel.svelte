@@ -13,7 +13,7 @@
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
-  import { fmtSpeed, fmtMs } from "../format";
+  import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
 
   // Gate the latency panel purely on whether latency is measured at all — the
@@ -129,23 +129,40 @@
 
   // Guided idle / empty + transient states (§14.3) — never a dead, bare dash.
   // Shown as soft copy beneath the big metric so a newcomer always knows what
-  // to do (idle) or what is happening (warmup probing / error / aborted).
+  // to do (idle) or what is happening (warmup probing).
   const hint = $derived.by(() => {
     switch (store.phase) {
       case "idle":
         return "Press Engage to start your speed test";
       case "warmup":
         return "Checking your connection…";
-      case "aborted":
-        return "Test stopped — press Engage to try again";
-      case "error":
-        return store.error
-          ? `${store.error.message} — press Engage to retry`
-          : "Something went wrong — press Engage to retry";
       default:
         return "";
     }
   });
+
+  // Terminal aborted/error states get a distinct two-line treatment: a
+  // headline naming WHAT happened (friendly reason copy via reasonLabel —
+  // never the backend's raw engineering message) and an action line that
+  // matches the button's actual label ("Run Again", not the old "Engage").
+  const status = $derived.by(() => {
+    switch (store.phase) {
+      case "aborted":
+        return { tone: "aborted", headline: "Test aborted", action: "Press Run Again to restart" };
+      case "error":
+        return {
+          tone: "error",
+          headline: store.error ? reasonLabel(store.error.reason) : "Something went wrong",
+          action: "Press Run Again to retry",
+        };
+      default:
+        return null;
+    }
+  });
+
+  // One string for the screen-reader mirror: the status (when terminal) or
+  // the guided hint (idle/warmup); empty mid-run (the live value speaks).
+  const statusText = $derived(status ? `${status.headline} — ${status.action}` : hint);
 
   // Wake the (self-parking) gauge loop whenever the live state it draws from
   // changes. During a run the loop sustains itself; this re-arms it on the
@@ -201,9 +218,9 @@
   // semantic events — are announced immediately via this effect.
   let a11y = $state("");
   $effect(() => {
-    const h = hint; // track phase-driven hint + phase changes; not the live value
+    const s = statusText; // track phase-driven copy + phase changes; not the live value
     void store.phase;
-    a11y = h ? h : untrack(() => `${display.value} ${display.unit}, phase ${store.phase}`);
+    a11y = s ? s : untrack(() => `${display.value} ${display.unit}, phase ${store.phase}`);
   });
 
   onMount(() => {
@@ -249,10 +266,10 @@
     ro.observe(canvasEl!);
 
     const tick = setInterval(() => {
-      // Prefer the guided hint when there's no live number (idle/warmup/error),
+      // Prefer the guided copy when there's no live number (idle/warmup/error),
       // otherwise announce the measured metric (factual only — no verdict §14.3).
-      a11y = hint
-        ? hint
+      a11y = statusText
+        ? statusText
         : `${display.value} ${display.unit}, phase ${store.phase}`;
     }, 1000);
 
@@ -294,10 +311,15 @@
       <div class="metric-wrap">
         <span class="gauge-value">{display.value}</span>
         {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
-        {#if hint || failNotes.length}
+        {#if hint || status || failNotes.length}
           <div class="gauge-notes">
             {#each failNotes as note (note)}<span class="gauge-fail">{note}</span>{/each}
-            {#if hint}<span class="gauge-hint">{hint}</span>{/if}
+            {#if status}
+              <span class="gauge-status" class:error={status.tone === "error"}>
+                {status.headline}
+              </span>
+              <span class="gauge-hint">{status.action}</span>
+            {:else if hint}<span class="gauge-hint">{hint}</span>{/if}
           </div>
         {/if}
       </div>
@@ -489,6 +511,20 @@
     line-height: 1.35;
     color: var(--text-muted);
   }
+  /* Terminal-state headline (aborted / error): the WHAT, above the softer
+     action line. Error is err-tinted; a user abort stays neutral (it isn't a
+     failure) but reads at full text strength so the state is unmissable. */
+  .gauge-status {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .gauge-status.error {
+    color: var(--err);
+  }
   .gauge-fail {
     font-size: 11.5px;
     font-weight: 600;
@@ -539,5 +575,13 @@
     max-width: 600px;
     align-self: center;
     min-height: 108px;
+  }
+  /* Stacked/mobile: the document scrolls, so the anti-layout-shift reserve
+     buys nothing and just reads as dead space between the controls and the
+     chart. Collapse it — results push the chart down when they appear. */
+  @media (max-width: 759px) { /* bp: stacked */
+    .results-slot {
+      min-height: 0;
+    }
   }
 </style>

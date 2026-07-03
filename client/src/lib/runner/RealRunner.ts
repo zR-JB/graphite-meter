@@ -205,6 +205,13 @@ const PROBE_PING_INTERVAL_MS = 120;
 const PROBE_PING_COUNT = 5;
 /** Hard cap on the probe burst, so a slow/dead bus never delays preflight. */
 const PROBE_PING_TIMEOUT_MS = 1500;
+/** Respawn cadence for a dead idle worker. The worker's OWN reconnect loop
+ *  handles a dropped socket, but it can't run if the worker script never
+ *  loaded — the same server that echoes pings also serves the bundle, so
+ *  restarting the keepalive while the server is down kills the Worker at
+ *  fetch time (`onerror`, no reconnect loop). Retry the spawn itself until
+ *  one sticks. Matches the worker's own RECONNECT_MAX_MS. */
+const IDLE_RESPAWN_MS = 2000;
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -339,6 +346,9 @@ export class RealBackend implements RunnerBackend {
   /** True after the keepalive reported a stall, so "connected" is emitted only
    *  on the offline→online edge instead of once per sample. */
   #idleOffline = false;
+  /** Pending respawn of a dead idle worker (script failed to load / crashed);
+   *  see IDLE_RESPAWN_MS. Cleared on stop. */
+  #idleRespawnTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -957,10 +967,23 @@ export class RealBackend implements RunnerBackend {
     const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
     const url = this.#resolveWsBase(endpoint) + wsPing;
     this.#idleActive = true;
+    // Treat connectivity as unknown until this (fresh) worker proves the link:
+    // its first samples then emit a "connected" edge. Crucial after a
+    // connection-lost failure — the store latched the pulse offline, and
+    // without this edge a link that recovered before the worker's first stall
+    // would never un-latch it.
+    this.#idleOffline = true;
     const w = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), { type: "module" });
     w.onmessage = (e: MessageEvent<PingOutMsg>): void => this.#onIdlePingMessage(e.data);
-    w.onerror = (e: ErrorEvent): void =>
+    w.onerror = (e: ErrorEvent): void => {
+      // Worker died without ever running its reconnect loop — most commonly the
+      // script fetch itself failed because the (bundle-serving) server is down,
+      // e.g. restarting the keepalive right after a connection-lost run. Report
+      // offline and retry the SPAWN until one sticks (the in-worker reconnect
+      // loop only exists once the script loads).
       this.#onIdlePingMessage({ type: "stall", detail: e.message || "idle ping worker error" });
+      this.#scheduleIdleRespawn(endpoint, intervalMs);
+    };
     w.postMessage({
       type: "start",
       url,
@@ -981,12 +1004,30 @@ export class RealBackend implements RunnerBackend {
    *  app is tearing down. Idempotent. */
   #stopIdleKeepalive(): void {
     this.#idleActive = false;
+    if (this.#idleRespawnTimer) {
+      clearTimeout(this.#idleRespawnTimer);
+      this.#idleRespawnTimer = null;
+    }
     this.#probeCollect?.finish();
     if (this.#idleWorker) {
       this.#idleWorker.postMessage({ type: "stop" });
       this.#idleWorker.terminate();
       this.#idleWorker = null;
     }
+  }
+
+  /** Re-spawn the idle worker after it died at load time (see the onerror
+   *  handler in #startIdleKeepalive). One timer at a time; each failed attempt
+   *  schedules the next, so the keepalive keeps knocking every IDLE_RESPAWN_MS
+   *  until the server is back to serve the script. */
+  #scheduleIdleRespawn(endpoint?: RunnerConfig["endpoint"], intervalMs?: number): void {
+    if (!this.#idleActive || this.#idleRespawnTimer) return;
+    this.#idleRespawnTimer = setTimeout(() => {
+      this.#idleRespawnTimer = null;
+      if (!this.#idleActive) return; // a run started (or teardown) meanwhile
+      this.#stopIdleKeepalive();
+      this.#startIdleKeepalive(endpoint, intervalMs);
+    }, IDLE_RESPAWN_MS);
   }
 
   /** Handle a message from the idle ping worker. Idle samples never reach

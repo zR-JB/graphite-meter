@@ -78,7 +78,7 @@
      | Esc            | Abort if running, else close any open panel     |
      | W              | Toggle Settings                                    |
      | D              | Toggle Connection & telemetry                   |
-     | R              | Re-run when phase is complete                   |
+     | R              | Re-run once resolved (complete/aborted/error)   |
      | T              | Cycle theme                                     |
      Guarded against text inputs / contentEditable so typing is never hijacked. */
   function inEditable(el: EventTarget | null): boolean {
@@ -134,7 +134,13 @@
         e.preventDefault();
         break;
       case "r":
-        if (store.phase === "complete") {
+        // Re-run from ANY resolved state (complete/aborted/error) — matches
+        // RunButton's "Run again" affordance and the ShortcutHints cap.
+        if (
+          store.phase === "complete" ||
+          store.phase === "aborted" ||
+          store.phase === "error"
+        ) {
           engage();
           e.preventDefault();
         }
@@ -290,17 +296,24 @@
     /* Keep stage scrolling from chaining out to the document (anchored bars). */
     overscroll-behavior: contain;
   }
-  /* The gauge hero is the focal point — it absorbs spare height (flex-grow) on
-     tall screens. Crucially it must NOT shrink below its own content: with
-     min-height:0 the gauge panel would under-shrink and its gauge/controls would
-     overflow and overlap the chart/chips. Keeping the content floor means the
-     stage column overflows and the stage (overflow-y:auto) scrolls instead —
-     correct when space is tight (e.g. both panels docked on a narrow stage). */
+  /* Spare height splits gauge-first: the hero gauge takes 3 shares, the chart
+     1 share (capped below), so the faceplate is always intentionally filled —
+     no dead band between the controls and the chart. Crucially neither may
+     shrink below its own content: with min-height:0 the gauge panel would
+     under-shrink and its gauge/controls would overflow and overlap the
+     chart/chips. Keeping the content floor means the stage column overflows
+     and the stage (overflow-y:auto) scrolls instead — correct when space is
+     tight (e.g. both panels docked on a narrow stage). */
   .stage > :global(.gauge-panel) {
-    flex: 1 1 auto;
+    flex: 3 1 auto;
   }
+  /* The chart grows into leftover height (its canvas re-rasterizes via its
+     ResizeObserver) but stays visibly secondary: capped so a very tall
+     viewport returns the excess to the gauge rather than growing a second
+     hero. Its content floor (140px plot) is the flex-basis. */
   .stage > :global(.chart) {
-    flex: 0 0 auto;
+    flex: 1 0 auto;
+    max-height: 340px;
   }
   .status {
     grid-area: status;
