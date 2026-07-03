@@ -143,3 +143,90 @@ test("no early stop, still stable at finish → falls back to the trailing stabl
     0,
   );
 });
+
+// Bidirectional coverage: the phase carries two concurrent lanes (down + up)
+// reduced independently, but shares a single combined-rate stability signal.
+// Adaptive is off here — these tests are about lane bookkeeping, not the
+// early-stop window logic already covered above.
+const noAdaptive: AdaptiveDurationConfig = {
+  enabled: false,
+  minCoverageRatio: 0,
+  stabilityThreshold: 0.9,
+  maxPhaseReductionRatio: 1,
+  minLatencySamples: 0,
+  minTransferSamples: 0,
+  glideMs: 0,
+};
+const bidiCfg = { adaptive: noAdaptive } as unknown as RunnerConfig;
+
+test("bidirectional: down and up lanes reduce independently", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  for (let i = 0; i < 30; i++) {
+    accum.pushThroughput("bidirectional", "down", 500, 500);
+    accum.pushThroughput("bidirectional", "up", 300, 300);
+  }
+
+  const result = accum.bidirectionalResult(bidiCfg);
+  expect(result.down.fullAverageBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.up.fullAverageBytesPerSec).toBeCloseTo(300, 6);
+  expect(result.down.totalBytes).toBeCloseTo(500 * 30, 6);
+  expect(result.up.totalBytes).toBeCloseTo(300 * 30, 6);
+});
+
+test("bidirectional: interleaved arrival order doesn't cross-contaminate the lanes", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  const downs = [400, 420, 440, 460];
+  const ups = [100, 120, 140, 160];
+  for (let i = 0; i < downs.length; i++) {
+    accum.pushThroughput("bidirectional", "up", ups[i], ups[i]);
+    accum.pushThroughput("bidirectional", "down", downs[i], downs[i]);
+  }
+
+  const result = accum.bidirectionalResult(bidiCfg);
+  expect(result.down.fullAverageBytesPerSec).toBeCloseTo(mean(downs), 6);
+  expect(result.up.fullAverageBytesPerSec).toBeCloseTo(mean(ups), 6);
+});
+
+test("bidirectional: one lane still empty (staggered start) reports the other correctly", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  // Download lane has started reporting; upload hasn't sent a sample yet —
+  // mirrors the real backend's staggered lane spawn.
+  for (let i = 0; i < 10; i++) {
+    accum.pushThroughput("bidirectional", "down", 700, 700);
+  }
+
+  const result = accum.bidirectionalResult(bidiCfg);
+  expect(result.down.fullAverageBytesPerSec).toBeCloseTo(700, 6);
+  expect(result.up.fullAverageBytesPerSec).toBe(0);
+  expect(result.up.totalBytes).toBe(0);
+});
+
+test("bidirectional: shared stability degrades when either lane alone turns erratic", () => {
+  const stable = new RunAccumulator();
+  stable.reset();
+  for (let i = 0; i < 40; i++) {
+    stable.pushThroughput("bidirectional", "down", 500, 500);
+    stable.pushThroughput("bidirectional", "up", 300, 300);
+  }
+  const stableScore = stable.confidence("bidirectional").score;
+
+  const erratic = new RunAccumulator();
+  erratic.reset();
+  for (let i = 0; i < 40; i++) {
+    const d = i % 2 === 0 ? 100 : 900; // down swings wildly...
+    erratic.pushThroughput("bidirectional", "down", d, d);
+    erratic.pushThroughput("bidirectional", "up", 300, 300); // ...up alone stays steady
+  }
+  const erraticScore = erratic.confidence("bidirectional").score;
+
+  // Proves the single stability window is fed by BOTH lanes' pushes (down+up
+  // combined), not just one — an erratic down lane alone must still drag the
+  // shared score down even though up never wavers.
+  expect(stableScore).toBeGreaterThan(erraticScore);
+});

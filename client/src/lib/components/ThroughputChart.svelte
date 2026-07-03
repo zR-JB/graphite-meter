@@ -41,7 +41,14 @@
     if (!engine) return;
     engine.setHover(e.offsetX);
     hover = engine.hoverInfo();
-    if (hover && hover.bytesPerSec == null && hover.rtt == null) hover = null;
+    if (
+      hover &&
+      hover.bytesPerSec == null &&
+      hover.downBytesPerSec == null &&
+      hover.upBytesPerSec == null &&
+      hover.rtt == null
+    )
+      hover = null;
   }
   function onLeave() {
     engine?.setHover(null);
@@ -106,6 +113,22 @@
           <div class="chip-row">
             <span>rate</span><b
               >{fmtSpeed(store.toUnit(hover.bytesPerSec))} {store.unitLabel}</b
+            >
+          </div>
+        {/if}
+        {#if hover.downBytesPerSec != null}
+          <div class="chip-row">
+            <span>down</span><b
+              >{fmtSpeed(store.toUnit(hover.downBytesPerSec))}
+              {store.unitLabel}</b
+            >
+          </div>
+        {/if}
+        {#if hover.upBytesPerSec != null}
+          <div class="chip-row">
+            <span>up</span><b
+              >{fmtSpeed(store.toUnit(hover.upBytesPerSec))}
+              {store.unitLabel}</b
             >
           </div>
         {/if}
