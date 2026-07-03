@@ -155,8 +155,8 @@ latency as min/mean/P50/P95 (linear-interpolated percentiles), jitter (mean abso
 and loss ratio.
 
 ```sh
-just build-go-client   # -> go/graphite-meter-client
-just go-client         # go run ./cmd/graphite-meter-client (against a running server)
+just goclient-build   # -> go/graphite-meter-client
+just goclient-run     # go run ./cmd/graphite-meter-client (against a running server)
 ```
 
 CLI flags (all editable again inside the TUI before a run starts):
@@ -288,7 +288,7 @@ as raw literal tokens (not strings), which is what lets Rollup constant-fold the
 `if (...)` branches and tree-shake the dead code entirely rather than leaving it reachable behind
 a runtime flag.
 
-| Variable | Values | `just dev`/`build-client` default | `just prod` default | What it does |
+| Variable | Values | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does |
 | --- | --- | --- | --- | --- |
 | `GM_CLIENT_ENGINE` | `real` / `dummy` | `real` | `real` | Default runner when more than one is compiled in. |
 | `GM_CLIENT_ALLOW_DUMMY` | `0` / `1` | `1` | `0` | Compile in the dummy runner and the Developer-tab anomaly-injection cards. |
@@ -347,34 +347,46 @@ cd graphite-meter
 ### Quick start (development)
 
 ```sh
-just dev          # build the client, embed it into the Go server, run it on :8080
+just dev          # build the client (dev profile), embed it into the Go server, run it on :8080
 ```
 
-Open `http://localhost:8080`. This rebuilds the Svelte client, stages it into
-`go/internal/static/dist` (picked up by `//go:embed`), and runs the Go server. A dev build
-includes the dummy runner (`?engine=dummy`) and the Developer settings tab by default.
+Open `http://localhost:8080`. `just dev` and `just prod` are the two "do everything" entrypoints
+and are deliberately symmetric: each builds the Svelte client in its own profile, stages it into
+`go/internal/static/dist` (picked up by `//go:embed`), and `go run`s the server — only the profile
+differs. `just dev` includes the dummy runner (`?engine=dummy`) and the Developer settings tab by
+default; `just prod` builds a real-only, dev-tooling-stripped, version-stamped run instead (see
+below).
+
+### Naming
+
+Recipes follow `<component>-<verb>`: `build` produces an artifact and stops there (a `client/dist`
+or a Go binary); `run` executes something already built; `test` runs a component's tests. `dev`
+and `prod` are the two config profiles a `-dev`/`-prod`-suffixed recipe can target. The two
+recipes with no component prefix, `dev` and `prod`, are the top-level entrypoints described above.
+Recipes starting with `_` are private helper steps, not meant to be run directly.
 
 ### Just command reference
 
 | Recipe | What it does |
 | --- | --- |
 | `just` (no args) | Lists every recipe. |
-| `just dev` | Stages the client, then `go run`s the server on `:8080`. |
-| `just dev-client` | Vite dev server only — hot reload, no Go server, no live measurement backend. |
-| `just check` | Type-checks the client (`svelte-check`). |
-| `just build-client` | `bun install` + `bun run build` -> `client/dist`. |
-| `just gen-types` | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth). |
-| `just build-server` | Stages the client, then builds `go/graphite-meter` (dev-tagged, unstripped version). |
-| `just build-go-client` | Builds only `go/graphite-meter-client` — does not touch the Svelte client. |
-| `just go-client` | `go run`s the native TUI client against a running server. |
-| `just test-server` | `go test ./...` — includes the `/preflight` schema-conformance test. |
-| `just prod-client` | Builds the client in production mode (real engine, no dev tooling, by default). |
-| `just prod` | Full production build: real-only client embedded in a versioned, stripped (`-s -w -trimpath`), ldflags-versioned server binary. |
-| `just image` | `docker build -f container/Dockerfile -t graphite-meter:latest .` |
+| `just dev` | Builds + embeds the dev-profile client, then `go run`s the server on `:8080`. |
+| `just prod` | Builds + embeds the prod-profile client, then `go run`s the version-stamped server on `:8080`. |
+| `just client-build-dev` | `bun install` + `bun run build` -> `client/dist`, dev profile (Vite's own defaults: dummy engine + dev tools included). |
+| `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below). |
+| `just client-watch` | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend. |
+| `just client-check` | Type-checks the client (`svelte-check`). |
+| `just client-gen-types` | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth). |
+| `just server-build-dev` | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
+| `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy. |
+| `just server-test` | `go test ./...` — includes the `/preflight` schema-conformance test. |
+| `just goclient-build` | Builds only `go/graphite-meter-client` — does not touch the Svelte client. |
+| `just goclient-run` | `go run`s the native TUI client against a running server. |
+| `just container-build` | `docker build -f container/Dockerfile -t graphite-meter:latest .` |
 | `just test-rng` | Runs the legacy Rust RNG crate's own conformance test. Optional — see below; requires a Rust toolchain only if you run it. |
 
-`just prod` accepts the `GM_CLIENT_*` knobs inline to produce a configurable build instead of the
-real-only default, e.g.:
+`just prod` and `just client-build-prod` accept the `GM_CLIENT_*` knobs inline to produce a
+configurable build instead of the real-only default, e.g.:
 
 ```sh
 just prod allow_dummy=1 dev_tools=1 label=0.2.0
@@ -411,7 +423,7 @@ ships a single static binary (no shell, no libc). Base images are fully qualifie
 `podman build` needs no extra config.
 
 ```sh
-just image
+just container-build
 podman run -d --name gm --replace -p 8080:8080 graphite-meter:latest
 # open http://localhost:8080 ; stop with: podman rm -f gm
 ```
