@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
+import * as esbuild from "esbuild";
 import pkg from "./package.json";
 
 // --- Build-time client configuration (see src/lib/buildenv.ts) -------------
@@ -43,8 +44,80 @@ const versionFile = (): Plugin => ({
   },
 });
 
+// String.replace has no async callback support; needed since esbuild.transform is async.
+async function replaceAsync(
+  str: string,
+  regex: RegExp,
+  fn: (...match: string[]) => Promise<string>,
+): Promise<string> {
+  const matches: string[][] = [];
+  str.replace(regex, (...args) => {
+    matches.push(args.slice(0, -2) as string[]); // drop offset + full string
+    return "";
+  });
+  const results = await Promise.all(matches.map((m) => fn(...m)));
+  let i = 0;
+  return str.replace(regex, () => results[i++]);
+}
+
+// index.html isn't run through Rollup, so Vite never minifies it (comments,
+// indentation, and the inline pre-paint <script>/<style> all ship as-authored).
+// Runs post-injection (order: "post") so it also compacts the asset tags Vite
+// writes in. Inline JS/CSS get real minification via esbuild; the rest is
+// comment stripping + collapsing whitespace between tags.
+const minifyHtml = (): Plugin => ({
+  name: "gm-minify-html",
+  apply: "build",
+  transformIndexHtml: {
+    order: "post",
+    handler: async (html) => {
+      const withMinifiedBlocks = await replaceAsync(
+        html,
+        /<(script|style)\b([^>]*)>([\s\S]*?)<\/\1>/gi,
+        async (_match, tag, attrs, inner) => {
+          const isInlineScript =
+            tag.toLowerCase() === "script" && !/\bsrc\s*=/i.test(attrs);
+          const isStyle = tag.toLowerCase() === "style";
+          const code =
+            inner.trim() && (isInlineScript || isStyle)
+              ? (
+                  await esbuild.transform(inner, {
+                    loader: isStyle ? "css" : "js",
+                    minify: true,
+                  })
+                ).code.trim()
+              : inner;
+          return `<${tag}${attrs}>${code}</${tag}>`;
+        },
+      );
+
+      // Placeholder swap keeps comment-stripping/whitespace-collapsing below
+      // from reaching into the already-minified script/style bodies.
+      const blocks: string[] = [];
+      const withPlaceholders = withMinifiedBlocks.replace(
+        /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,
+        (block) => {
+          blocks.push(block);
+          return "\u0000" + (blocks.length - 1) + "\u0000";
+        },
+      );
+
+      const compacted = withPlaceholders
+        .replace(/<!--[\s\S]*?-->/g, "")
+        .replace(/\s+/g, " ")
+        .replace(/>\s+</g, "><")
+        .trim();
+
+      return compacted.replace(
+        /\u0000(\d+)\u0000/g,
+        (_, i) => blocks[Number(i)],
+      );
+    },
+  },
+});
+
 export default defineConfig({
-  plugins: [svelte(), tailwindcss(), versionFile()],
+  plugins: [svelte(), tailwindcss(), versionFile(), minifyHtml()],
   define: {
     __GM_DEFAULT_ENGINE__: JSON.stringify(defaultEngine), // "real" | "dummy"
     __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy), // bare true | false
