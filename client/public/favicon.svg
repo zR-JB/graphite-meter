@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- Graphite Meter — "lattice needle": the hexagon is graphite's carbon
+  <!-- Graphite Meter, "lattice needle": the hexagon is graphite's carbon
        lattice and a pencil's cross-section; the needle makes it a meter.
        Colors adapt to the browser chrome via prefers-color-scheme; the
-       light-scheme values are the defaults. Keep in sync with --brand /
-       --text in src/app.css and the glyph in the app topbar. -->
+       light-scheme values are the defaults. Keep in sync with the brand and
+       text tokens in src/app.css and the glyph in the app topbar. -->
   <style>
     .hex { stroke: #2f717a; }
     .needle { stroke: #26272a; }
