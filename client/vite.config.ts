@@ -26,11 +26,15 @@ const devTools = !off(env.GM_CLIENT_DEV_TOOLS);
 
 const buildLabel = env.GM_CLIENT_BUILD_LABEL ?? "dev";
 
-// Canonical client version: package.json semver + the build label (git short
-// hash in prod, "dev" otherwise) — e.g. "0.0.0+abc1234". Shown in the Endpoint
-// info, sent to the server on preflight, and written to dist/version.json so
-// whatever server hosts the static files can identify the bundle.
-const clientVersion = `${pkg.version}+${buildLabel}`;
+// Canonical client version: the VERSION build-arg/env (same value the server
+// stamps into EngineVersion — see container/Dockerfile and justfile) plus the
+// build label (git short hash in prod, "dev" otherwise) — e.g. "0.1.0+abc1234".
+// Falls back to package.json's "version" only when VERSION isn't set (plain
+// `bun run build` outside just/Docker) — that field is a frozen "0.0.0"
+// sentinel, matching go/internal/config.EngineVersion's "0.0.0-dev" fallback.
+// Never bump it by hand: every real version comes from the git tag via
+// release.yml, so an untagged build has no version to reflect anyway.
+const clientVersion = `${env.VERSION ?? pkg.version}+${buildLabel}`;
 
 // Emit dist/version.json alongside the bundle (build only; dev serves no dist).
 const versionFile = (): Plugin => ({

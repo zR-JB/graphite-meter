@@ -12,7 +12,13 @@ import (
 // EngineVersion is overridable at build time via
 //
 //	-ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=1.2.3"
-var EngineVersion = "0.1.0-dev"
+//
+// The default below is a sentinel for "built without the VERSION build-arg"
+// (e.g. `go run`/`go build` invoked directly, bypassing just/Docker) — it is
+// never bumped by hand. Every real version comes from the git tag via
+// release.yml; see client/package.json's "version" field for the client's
+// equivalent frozen sentinel.
+var EngineVersion = "0.0.0-dev"
 
 // Config is the resolved server configuration.
 type Config struct {

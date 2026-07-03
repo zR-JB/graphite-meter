@@ -34,6 +34,16 @@ dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
 # Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS.
 # `label` is the status-bar label and the label half of the client version
 # <semver>+<label> (Endpoint info drawer, dist/version.json, preflight query).
+# `version` feeds BOTH the client build's VERSION env (see client-build-prod
+# below) and the Go ldflag, identically, so a `just` build always agrees with
+# itself. Three fallback tiers, low to high precedence:
+#   1. no VERSION, no `just` at all (raw `go build`/`bun run build`) — the
+#      compiled-in sentinels: go/internal/config.EngineVersion's "0.0.0-dev"
+#      and client/package.json's "0.0.0". Never bumped by hand.
+#   2. `just` run with no VERSION set — falls back to the git short hash
+#      (this line), a real build identity, distinct from tier 1's sentinel.
+#   3. `VERSION=x.y.z just ...` (or CI/release.yml, which always sets it from
+#      the git tag) — the authoritative release version.
 label       := env("GM_CLIENT_BUILD_LABEL", if os() == "windows" { `cmd.exe /c "git rev-parse --short HEAD 2>nul || echo prod"` } else { `git rev-parse --short HEAD 2>/dev/null || echo prod` })
 version     := env("VERSION", label)
 
@@ -70,7 +80,7 @@ client-build-dev:
 # Build the client in prod profile: real-only engine, dev tooling stripped by default.
 client-build-prod:
     cd client && bun install
-    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
 # Type-check the client
 client-check:
