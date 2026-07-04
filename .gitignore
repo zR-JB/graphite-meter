@@ -6,6 +6,11 @@ client/.vite
 # --- Go module (server + native client) ---
 go/graphite-meter
 go/graphite-meter-client
+# release cross-compile intermediates + archives; must stay ignored so
+# buildvcs stamps vcs.modified=false and release binaries reproduce
+# bit-for-bit from a clean checkout of the tag
+go/graphite-meter-client.exe
+go/dist/
 # embedded client build injected at Docker/build time (not committed);
 # keep the placeholder so //go:embed + go build/test work without a client build.
 go/internal/static/dist/*
