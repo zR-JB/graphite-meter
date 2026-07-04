@@ -20,6 +20,7 @@ func main() {
 	cfg := goclient.DefaultConfig()
 	var stages string
 	var ping string
+	var showVersion bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "server base URL")
 	flag.StringVar(&stages, "stages", "latency,download,upload", "comma-separated stages: latency,download,upload,bidirectional")
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
@@ -31,7 +32,13 @@ func main() {
 	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println("graphite-meter-client " + goclient.Version)
+		return
+	}
 
 	cfg.Stages = parseStages(stages)
 	cfg.PingInterval = parsePing(ping)
@@ -593,7 +600,7 @@ func (m model) header(w int) string {
 	if m.server != "" {
 		target = m.server
 	}
-	return line + "\n" + mutedStyle.Render("native go client") + "  " + accentStyle.Render(target)
+	return line + "\n" + mutedStyle.Render("native go client "+goclient.Version) + "  " + accentStyle.Render(target)
 }
 
 func (m model) configView(w int) string {
