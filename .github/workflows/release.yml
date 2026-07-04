@@ -59,6 +59,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: test
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -99,13 +101,51 @@ jobs:
   release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     needs: publish
     # Prerelease tags (v0.1.0-alpha.0 etc.) publish an image to test against
     # but deliberately don't cut a GitHub Release — that's reserved for the
-    # final tag once it's actually promoted.
+    # final tag once it's actually promoted. Same gate covers the native TUI
+    # client binaries below: no Release object, nowhere to attach them.
     if: ${{ !contains(github.ref_name, '-') }}
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      # Standalone downloads for the native Bubble Tea TUI client (connects to
+      # any running server; not embedded in the container image). Pure Go, no
+      # cgo, so it cross-compiles cleanly from one runner. Stamped with the
+      # same VERSION as the image (see go/internal/goclient.Version).
+      - name: Build native client binaries
+        working-directory: go
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=${VERSION}"
+          build() {
+            os="$1"; arch="$2"
+            bin="graphite-meter-client"
+            [ "$os" = "windows" ] && bin="graphite-meter-client.exe"
+            echo "building ${os}/${arch}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$bin" ./cmd/graphite-meter-client
+            if [ "$os" = "windows" ]; then
+              zip -j "dist/graphite-meter-client_${VERSION}_${os}_${arch}.zip" "$bin"
+            else
+              tar -czf "dist/graphite-meter-client_${VERSION}_${os}_${arch}.tar.gz" "$bin"
+            fi
+            rm -f "$bin"
+          }
+          build linux amd64
+          build linux arm64
+          build darwin amd64
+          build darwin arm64
+          build windows amd64
+          ( cd dist && sha256sum * > checksums.txt )
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          files: go/dist/*
