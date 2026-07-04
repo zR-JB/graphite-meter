@@ -1,8 +1,17 @@
 name: Release
 
+# Tag scheme (SemVer 2.0.0): vMAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N].
+#   v0.1.0-alpha.0, v0.1.0-alpha.1, ... -beta.0 ..., -rc.0 ... then v0.1.0.
+# Use dotted numeric prerelease identifiers (alpha.9 < alpha.10 compares
+# correctly; a bare "alpha10" would sort lexically wrong). A tag counts as
+# a prerelease iff its name contains "-" — every job below keys off that.
+# Prerelease tags: build + push the image (so you can pull and test the
+# exact release artifact) but never move the `latest`/`{{major}}.{{minor}}`
+# floating tags and never cut a GitHub Release. Final tags (no "-"): full
+# promotion, all floating tags move, GitHub Release is created.
 on:
   push:
-    tags: ["v*.*.*"]
+    tags: ["v*.*.*"] # glob `*` matches "-" too, so this already covers prereleases
 
 permissions:
   contents: write
@@ -65,9 +74,14 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
+          # latest=false disables the action's own implicit "latest" so it can't
+          # ever conflict with the explicit, prerelease-aware rule below.
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -87,6 +101,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: publish
+    # Prerelease tags (v0.1.0-alpha.0 etc.) publish an image to test against
+    # but deliberately don't cut a GitHub Release — that's reserved for the
+    # final tag once it's actually promoted.
+    if: ${{ !contains(github.ref_name, '-') }}
     steps:
       - uses: softprops/action-gh-release@v3
         with:
