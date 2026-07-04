@@ -128,8 +128,11 @@ server-test:
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.
 
 # Build only the native Go Bubble Tea client. Does not build or stage the Svelte app.
+# Stamped with the same `version` as server-build-prod (see the fallback tiers above).
 goclient-build:
-    cd go && go build -ldflags="-s -w" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
+    cd go && go build \
+      -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version={{version}}" \
+      -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
 
 # Run the native Go client against a running Graphite Meter server.
 goclient-run:
