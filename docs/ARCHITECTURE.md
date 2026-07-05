@@ -123,6 +123,10 @@ running over HTTP or a WebSocket bus. Today two concrete sessions exist — `htt
 request/response) and `websocketSession` (message bus). A WebTransport session is named in the
 interface's doc comments as the intended third implementation but does not exist yet.
 
+`internal/config`, `internal/transport`, `internal/server`, `internal/static`, and
+`internal/endpoint/registry.go` have unit tests alongside the rest of `internal/endpoint`,
+`internal/wire`, and `internal/rng` — run with `just server-test`.
+
 ---
 
 ## The native Go terminal client
@@ -159,6 +163,11 @@ Stages; Timing; Network — stream count and TLS verification; Run) and a live t
 `enter`/`space` to toggle or edit, `r` to run, `c`/`esc` to cancel, `q` to quit. CLI flags (all
 editable again inside the TUI before a run starts) are listed in
 [DEVELOPMENT.md](DEVELOPMENT.md#native-tui-client-flags).
+
+`internal/goclient` (stats, config normalization, preflight, the adaptive-warmup/lane-stagger
+runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model` state machine in
+`cmd/graphite-meter-client/main.go` have unit tests — also run with `just server-test` (one Go
+module covers both the server and the TUI client).
 
 ---
 
@@ -261,6 +270,18 @@ internally for transport negotiation but not yet shown as a full matrix in the U
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, over its own `/ws/upload` connection. |
 | `ping-worker.ts` | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread. |
 | `autosize.ts` | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by both the upload worker and the experimental chunked-download path. |
+
+### Testing
+
+Unit tests (`bun:test`, run via `just client-test`) cover pure `.ts` logic only — no component
+rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Covered so far:
+`compensation.ts`, `format.ts`, `runner/adaptive.ts`, `state/persistence.ts`,
+`runner/workers/autosize.ts`, `runner/real/laneBudget.ts`, `runner/real/wire.ts`,
+`runner/evaluation.ts`, `runner/schedule.ts`, `state/stageGuards.ts`, and the small pure URL/median
+helpers exported from `runner/RealRunner.ts`. Follow `state/stageGuards.test.ts` as the style
+model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing files the same way
+`stageGuards.ts` was extracted from `store.svelte.ts`, if it needs to be unit-tested outside the
+Svelte runtime.
 
 ---
 
