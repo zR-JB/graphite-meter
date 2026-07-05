@@ -9,9 +9,7 @@
  * reverse-path control (ACKs), loss/retransmission tax, the
  * ramp toward steady-state plateau, and browser-runtime jitter.
  *
- * Ported from linerate-atelier's 7-factor estimator: lift the
- * math, not the SvelteKit structure. Two structural adaptations
- * for this repo:
+ * A 7-factor estimator with two design choices:
  *   1. CANONICAL UNIT IS bytes/sec (browser-native), not bits/sec — the
  *      store stays bytes-canonical, so every estimate is bytes/sec in,
  *      bytes/sec out. Multipliers are unitless, so the byte-accounting
@@ -21,15 +19,14 @@
  *      the endpoint is assumed TLS (port 443). Tunable byte counts
  *      live in `config.compensation.params`.
  *
- * De-magic mandate: every coefficient linerate scattered inline
- * becomes a named, commented entry in COMPENSATION_DEFAULTS
- * below. The factor functions contain NO bare magic numbers.
+ * Every coefficient is a named, commented entry in COMPENSATION_DEFAULTS
+ * below — the factor functions contain NO bare magic numbers.
  *
  * Hot-path note: `estimateResultCompensation` is the full,
  * sample-array-walking estimate (run once on `complete`).
  * `estimateLiveCompensation` is the O(1) live path — it applies
- * ONLY the protocol/config multipliers and NEVER iterates the
- * sample arrays, fixing linerate's per-sample recompute.
+ * ONLY the protocol/config multipliers and NEVER iterates or
+ * recomputes per-sample, so it is safe on the live render cadence.
  * ============================================================ */
 
 import type {
@@ -109,10 +106,7 @@ export const COMPENSATION_DEFAULTS = {
   ackPacketsPerData: 2, // ACK ratio: one ACK acknowledges two data packets
   quicReversePathRatio: 0.015, // flat 1.5% bidirectional QUIC control estimate
   /* ---- Steady-state ramp heuristic ---- */
-  steadyStateWarmupTrim: 0.25, // drop the first 25% of samples (ramp-up region)
   steadyStatePlateauPercentile: 0.65, // average the top 35% (≥ p65) as the plateau
-  steadyStateMinSamples: 8, // need ≥ this many phase samples to estimate ramp
-  steadyStateMinTrimmedValues: 4, // need ≥ this many post-trim positive values
   steadyStateMinLift: 0.005, // ignore lifts under 0.5% (noise floor)
   /* ---- Browser-runtime tax heuristic ---- */
   runtimeVarianceWeight: 0.08, // map coefficient-of-variation → tax via this weight
@@ -567,11 +561,11 @@ export function lossRetransmissionFactor(
 
 /**
  * Steady-state ramp: early-test ramp-up drags the full-run AVERAGE below
- * the attainable PLATEAU. linerate trims the first 25% of samples and
- * averages the top 35% (≥ p65) vs the mean. `ThroughputResult` carries no
- * sample array, so we use the aggregate proxy peak-vs-mean, scaled by the
- * plateau percentile (a peak overstates the plateau, so we blend toward it
- * rather than taking the raw peak). Heuristic; low confidence.
+ * the attainable PLATEAU. `ThroughputResult` carries no sample array, so
+ * this approximates the plateau from the aggregate proxy peak-vs-mean,
+ * blended by the plateau percentile (a peak overstates the plateau, so we
+ * blend toward it rather than taking the raw peak). Heuristic; low
+ * confidence.
  */
 function steadyStateRampFactor(
   result: ThroughputResult,
@@ -611,9 +605,9 @@ function maxLift(result: ThroughputResult): number {
 
 /**
  * Browser-runtime tax: event-loop, stream-reader, GC, and rendering jitter
- * depress measured throughput below the network's. linerate maps the
- * sample coefficient-of-variation × 0.08 → tax. We derive CoV from
- * `stabilityPct` (a CoV-based 0–100 score; CoV ≈ 1 − stability/100).
+ * depress measured throughput below the network's. The tax is the sample
+ * coefficient-of-variation × 0.08 (`runtimeVarianceWeight`). We derive CoV
+ * from `stabilityPct` (a CoV-based 0–100 score; CoV ≈ 1 − stability/100).
  * Heuristic; low confidence.
  */
 function browserRuntimeFactor(
