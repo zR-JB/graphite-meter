@@ -99,7 +99,8 @@ environment variables, which take precedence over defaults.
 | `GM_SERVER_LOCATION` | `-location` | — | Location label advertised in `/preflight` (e.g. `fra`). |
 | `GM_VERBOSE` | `-verbose` | off | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)). |
 | `PUBLIC_H1_ORIGIN` | — | derived from request `Host` | Public HTTP/1.1 origin to advertise — set this behind a reverse proxy so the client targets the right URL. |
-| `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_TLS_ORIGIN`, `PUBLIC_H3_ORIGIN` | — | off / unset | Reserved for the TLS + HTTP/2 + HTTP/3 stage. Read at startup but no TLS/H3 listener exists yet, so these currently have no runtime effect. |
+| `PUBLIC_TLS_ORIGIN` | — | derived from request when forwarded as `https` | Public encrypted origin to advertise (`capabilities.origins.tls`) — the client prefers this for the WebSocket latency bus, mapped to `wss://`. Auto-derived from the request `Host` whenever the server sees `X-Forwarded-Proto: https` (the default from nginx/Caddy/Traefik terminating TLS in front); set explicitly only if that header isn't forwarded, or the public host/port differs from what the proxy sends upstream. This works even though the server itself has no TLS listener — it only affects what origin gets *advertised*. |
+| `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_H3_ORIGIN` | — | off / unset | Reserved for the HTTP/2 + HTTP/3 stage. Read at startup but no TLS/H3 listener exists yet, so these currently have no runtime effect. |
 
 ## Native TUI client flags
 

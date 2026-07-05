@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -48,7 +49,7 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 	host, port := hostPort(r)
 
 	// h1 origin: configured public origin, else derived from how the client
-	// reached us.
+	// reached us. Always cleartext — see requestIsTLS for the encrypted case.
 	h1 := cfg.PublicH1Origin
 	if h1 == "" {
 		h1 = "http://" + r.Host
@@ -56,6 +57,13 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 	origins := wire.Origins{H1: &h1}
 	if cfg.PublicTLSOrigin != "" {
 		v := cfg.PublicTLSOrigin
+		origins.TLS = &v
+	} else if requestIsTLS(r) {
+		// A reverse proxy terminated TLS in front of us (or we're somehow
+		// reached directly over TLS): derive the encrypted origin the same
+		// way h1 is derived, so the client has a real wss(-mappable) origin
+		// to prefer instead of falling back to h1's hardcoded http://.
+		v := "https://" + r.Host
 		origins.TLS = &v
 	}
 	if cfg.PublicH3Origin != "" {
@@ -102,4 +110,20 @@ func hostPort(r *http.Request) (string, int) {
 		return host, 80
 	}
 	return host, port
+}
+
+// requestIsTLS reports whether this request reached us encrypted: directly
+// (r.TLS set) or via a reverse proxy that terminated TLS and says so through
+// the de-facto standard X-Forwarded-Proto header (set by nginx/Caddy/Traefik
+// by default). Only the first hop is read — this server is meant to sit
+// directly behind the terminating proxy, not several hops deep.
+func requestIsTLS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	return strings.TrimSpace(proto) == "https"
 }
