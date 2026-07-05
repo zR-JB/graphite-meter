@@ -1,6 +1,7 @@
 package static
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +15,9 @@ import (
 // committed dist content.
 func testFS() fstest.MapFS {
 	return fstest.MapFS{
-		"index.html":    {Data: []byte("index page")},
-		"assets/app.js": {Data: []byte("console.log('app')")},
+		"index.html":             {Data: []byte("index page")},
+		"assets/app.js":          {Data: []byte("console.log('app')")},
+		"assets/sub/dir/file.js": {Data: []byte("console.log('nested')")},
 	}
 }
 
@@ -86,5 +88,129 @@ func TestHandlerMissingAssetWithExtensionIs404(t *testing.T) {
 	status, _ := get(t, srv, "/assets/missing.js")
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", status)
+	}
+}
+
+func TestHandlerServesNestedAssetPath(t *testing.T) {
+	srv := httptest.NewServer(handlerFor(testFS()))
+	defer srv.Close()
+
+	status, body := get(t, srv, "/assets/sub/dir/file.js")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if !strings.Contains(body, "console.log('nested')") {
+		t.Fatalf("body = %q, want the nested asset content", body)
+	}
+}
+
+func TestHandlerCleansPathTraversal(t *testing.T) {
+	srv := httptest.NewServer(handlerFor(testFS()))
+	defer srv.Close()
+
+	// path.Clean collapses "/assets/../index.html" to "/index.html" before the
+	// fs lookup, so a traversal attempt can only ever reach paths already
+	// inside the fs root — it must never escape it or 500.
+	status, body := get(t, srv, "/assets/../index.html")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if !strings.Contains(body, "index page") {
+		t.Fatalf("body = %q, want index.html content", body)
+	}
+}
+
+func TestHandlerDeepPathTraversalFallsBackToIndex(t *testing.T) {
+	srv := httptest.NewServer(handlerFor(testFS()))
+	defer srv.Close()
+
+	// Enough ".." segments to walk above the fs root collapse under
+	// path.Clean to a path outside the fixture, landing on the SPA fallback —
+	// not an escape from the embedded fs, and (regression check) not a
+	// redirect loop: disallow redirects so a loop fails the test instead of
+	// hanging until the client's redirect cap trips.
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("unexpected redirect to %s", req.URL)
+		},
+	}
+	resp, err := client.Get(srv.URL + "/../../../etc/passwd")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (SPA fallback)", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "index page") {
+		t.Fatalf("body = %q, want index.html content, not filesystem escape", body)
+	}
+}
+
+func TestHandlerSPAFallbackForTrailingSlashRouteDoesNotRedirectLoop(t *testing.T) {
+	srv := httptest.NewServer(handlerFor(testFS()))
+	defer srv.Close()
+
+	// A trailing-slash client route (e.g. "/settings/") is extensionless and
+	// missing from the fixture, so it hits the same SPA-fallback branch as
+	// "/results" above. Regression check: this shape used to redirect to
+	// "./" forever, because "./" resolved against a path already ending in
+	// "/" is a fixed point. Disallow redirects so a regression fails loudly.
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("unexpected redirect to %s", req.URL)
+		},
+	}
+	resp, err := client.Get(srv.URL + "/settings/")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (SPA fallback)", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "index page") {
+		t.Fatalf("body = %q, want index.html content", body)
+	}
+}
+
+func TestHandlerEmptyFSFallsBackTo404(t *testing.T) {
+	srv := httptest.NewServer(handlerFor(fstest.MapFS{}))
+	defer srv.Close()
+
+	// No index.html at all: root can't open, has no extension, so the SPA
+	// fallback itself 404s instead of looping or panicking.
+	status, _ := get(t, srv, "/")
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", status)
+	}
+}
+
+func TestHandlerHeadRequestMatchesGetHeaders(t *testing.T) {
+	srv := httptest.NewServer(handlerFor(testFS()))
+	defer srv.Close()
+
+	resp, err := http.Head(srv.URL + "/assets/app.js")
+	if err != nil {
+		t.Fatalf("HEAD /assets/app.js: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("HEAD body = %q, want empty", body)
+	}
+	if got := resp.Header.Get("Content-Length"); got != "18" {
+		t.Fatalf("Content-Length = %q, want %q (matching the GET body size)", got, "18")
 	}
 }
