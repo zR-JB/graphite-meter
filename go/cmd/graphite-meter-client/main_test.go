@@ -911,6 +911,90 @@ func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
 	}
 }
 
+func TestThroughputSmoothingAndScale(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	// First sample seeds the EWMA; a second pulls it toward the new value but
+	// not all the way (alpha 0.35), while peak/raw rate stay authoritative.
+	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
+	if m.smoothRate[goclient.Down] != 100 {
+		t.Fatalf("first sample should seed EWMA to 100, got %v", m.smoothRate[goclient.Down])
+	}
+	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 200}})
+	if got := m.smoothRate[goclient.Down]; got <= 100 || got >= 200 {
+		t.Errorf("EWMA should sit between old and new sample, got %v", got)
+	}
+	// rateScale is the larger peak across both directions.
+	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 50}})
+	if got := m.rateScale(); got != m.peaks[goclient.Down] {
+		t.Errorf("rateScale = %v, want the larger peak %v", got, m.peaks[goclient.Down])
+	}
+}
+
+func TestAnimateEasesAndSettles(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.smoothRate[goclient.Down] = 1000
+	// One frame moves partway (ease 0.2), not instantly to target.
+	m.animate()
+	if m.dispRate[goclient.Down] <= 0 || m.dispRate[goclient.Down] >= 1000 {
+		t.Fatalf("after one frame dispRate should be between 0 and target, got %v", m.dispRate[goclient.Down])
+	}
+	if m.frame != 1 {
+		t.Errorf("frame counter = %d, want 1", m.frame)
+	}
+	// Enough frames converge exactly to target, so settled() reports true.
+	for i := 0; i < 200 && !m.settled(); i++ {
+		m.animate()
+	}
+	if !m.settled() {
+		t.Fatalf("dispRate did not settle: disp=%v target=%v", m.dispRate[goclient.Down], m.smoothRate[goclient.Down])
+	}
+}
+
+func TestFrameMsgLoopStopsOutsideRun(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	_, cmd := m.Update(frameMsg(time.Now()))
+	if cmd == nil {
+		t.Error("frameMsg during a run should reschedule the next frame")
+	}
+	m.mode = modeConfigure
+	next, cmd := m.Update(frameMsg(time.Now()))
+	if cmd != nil {
+		t.Error("frameMsg outside a run should not reschedule")
+	}
+	if next.(model).animating {
+		t.Error("leaving run mode should clear the animating flag")
+	}
+}
+
+func TestResultsViewSharedScaleBars(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.results = []goclient.Result{
+		{Stage: "download", Direction: goclient.Down, MeanBps: 1000, PeakBps: 1000, TotalBytes: 10},
+		{Stage: "upload", Direction: goclient.Up, MeanBps: 500, PeakBps: 500, TotalBytes: 5, ServerAuth: true},
+	}
+	out := m.resultsView(120)
+	if !strings.Contains(out, "download") || !strings.Contains(out, "upload") {
+		t.Fatalf("results view missing stage rows:\n%s", out)
+	}
+	// Upload is half of download and shares the scale, so its bar must have fewer
+	// filled cells than download's.
+	down := strings.Count(firstLineContaining(out, "download"), "█")
+	up := strings.Count(firstLineContaining(out, "upload"), "█")
+	if !(down > up && up > 0) {
+		t.Errorf("expected upload bar shorter than download on a shared scale: down=%d up=%d", down, up)
+	}
+}
+
+func firstLineContaining(s, sub string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.Contains(line, sub) {
+			return line
+		}
+	}
+	return ""
+}
+
 func TestUpdate_WindowSize(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	got, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})

@@ -87,6 +87,22 @@ func parsePing(raw string) time.Duration {
 type eventMsg goclient.Event
 type doneMsg struct{ err error }
 
+// frameMsg drives the live-telemetry animation clock: while a run is active a
+// frameTick reschedules itself so the displayed rates ease toward their targets
+// at ~25 fps independent of the 100 ms throughput samples.
+type frameMsg time.Time
+
+// frameInterval is the animation cadence. ~25 fps is smooth in a terminal while
+// leaving the render cheap (identical frames are dropped by the renderer).
+const frameInterval = 40 * time.Millisecond
+
+func frameTick() tea.Cmd {
+	return tea.Tick(frameInterval, func(t time.Time) tea.Msg { return frameMsg(t) })
+}
+
+// spinnerFrames is the braille throbber shown next to the active stage.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 type mode int
 
 const (
@@ -159,15 +175,26 @@ type model struct {
 	peaks   map[goclient.Direction]float64
 	results []goclient.Result
 	latency goclient.LatencySample
+
+	// Display-only animation state (rates/peaks above stay authoritative).
+	// smoothRate is an EWMA of the raw samples — the easing target; dispRate is
+	// the per-frame eased value actually rendered, so both the bar and the number
+	// glide instead of stepping with each 100 ms sample.
+	smoothRate map[goclient.Direction]float64
+	dispRate   map[goclient.Direction]float64
+	frame      int  // animation frame counter (drives the spinner)
+	animating  bool // a frameTick loop is in flight
 }
 
 func newModel(cfg goclient.Config) model {
 	return model{
-		cfg:    cfg,
-		mode:   modeConfigure,
-		notice: "Choose a server, tune the profile, then press r to run.",
-		rates:  map[goclient.Direction]goclient.ThroughputSample{},
-		peaks:  map[goclient.Direction]float64{},
+		cfg:        cfg,
+		mode:       modeConfigure,
+		notice:     "Choose a server, tune the profile, then press r to run.",
+		rates:      map[goclient.Direction]goclient.ThroughputSample{},
+		peaks:      map[goclient.Direction]float64{},
+		smoothRate: map[goclient.Direction]float64{},
+		dispRate:   map[goclient.Direction]float64{},
 	}
 }
 
@@ -199,6 +226,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case frameMsg:
+		if m.mode != modeRun {
+			m.animating = false
+			return m, nil
+		}
+		m.animate()
+		// Once the run is done and the bars have settled, stop the clock; a rerun
+		// restarts it. Until then keep ticking so motion stays smooth.
+		if m.complete && m.settled() {
+			m.animating = false
+			return m, nil
+		}
+		return m, frameTick()
 	case eventMsg:
 		e := goclient.Event(msg)
 		m.apply(e)
@@ -460,10 +500,18 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.complete = false
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
 	m.peaks = map[goclient.Direction]float64{}
+	m.smoothRate = map[goclient.Direction]float64{}
+	m.dispRate = map[goclient.Direction]float64{}
+	m.frame = 0
 	m.results = nil
 	m.latency = goclient.LatencySample{}
 	m.notice = "Run started. Press c or esc to cancel."
-	return m, tea.Batch(waitEvent(events), waitDone(done))
+	cmds := []tea.Cmd{waitEvent(events), waitDone(done)}
+	if !m.animating {
+		m.animating = true
+		cmds = append(cmds, frameTick())
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m *model) apply(e goclient.Event) {
@@ -481,6 +529,14 @@ func (m *model) apply(e goclient.Event) {
 		if e.Throughput.BytesPerSec > m.peaks[e.Direction] {
 			m.peaks[e.Direction] = e.Throughput.BytesPerSec
 		}
+		// Fold the noisy 100 ms sample into an EWMA the animation eases toward, so
+		// the bar and number don't jump with every tick.
+		const alpha = 0.35
+		if prev := m.smoothRate[e.Direction]; prev > 0 {
+			m.smoothRate[e.Direction] = prev + alpha*(e.Throughput.BytesPerSec-prev)
+		} else {
+			m.smoothRate[e.Direction] = e.Throughput.BytesPerSec
+		}
 	case goclient.EventLatency:
 		m.latency = e.Latency
 	case goclient.EventResult:
@@ -494,6 +550,40 @@ func (m *model) apply(e goclient.Event) {
 		m.err = e.Err
 		m.status = "error"
 	}
+}
+
+// animate advances one animation frame: each direction's displayed rate eases a
+// fraction of the way toward its EWMA target, giving ~25 fps glide instead of
+// 100 ms steps. It touches only display state.
+func (m *model) animate() {
+	const ease = 0.2
+	m.frame++
+	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
+		target := m.smoothRate[dir]
+		cur := m.dispRate[dir]
+		next := cur + ease*(target-cur)
+		// Snap to the target once within 0.05% (or 1 B/s) so the value comes fully
+		// to rest — including a rate decaying toward zero — and settled() can fire.
+		d := target - next
+		if d < 0 {
+			d = -d
+		}
+		if d < 0.0005*target+1 {
+			next = target
+		}
+		m.dispRate[dir] = next
+	}
+}
+
+// settled reports whether every displayed rate has reached its target — the cue
+// to stop the animation clock after a run completes.
+func (m model) settled() bool {
+	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
+		if m.dispRate[dir] != m.smoothRate[dir] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m model) rowCount() int {
@@ -803,10 +893,17 @@ func (m model) summaryView(w int) string {
 	if server == "" {
 		server = "probing " + m.cfg.BaseURL
 	}
+	mark := ""
+	switch {
+	case m.complete:
+		mark = successStyle.Render("✓ ")
+	case m.stage != "":
+		mark = accentStyle.Render(spinnerFrames[m.frame%len(spinnerFrames)] + " ")
+	}
 	lines := []string{
 		accentStyle.Render("Session"),
 		labelStyle.Render("Target  ") + valueStyle.Render(server),
-		labelStyle.Render("Stage   ") + valueStyle.Render(emptyDash(m.stage)) + mutedStyle.Render(" / "+emptyDash(m.status)),
+		labelStyle.Render("Stage   ") + mark + valueStyle.Render(emptyDash(m.stage)) + mutedStyle.Render(" / "+emptyDash(m.status)),
 		labelStyle.Render("Profile ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
 		labelStyle.Render("Streams ") + valueStyle.Render(fmt.Sprintf("%d", m.cfg.ParallelStreams)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
 	}
@@ -817,33 +914,84 @@ func (m model) summaryView(w int) string {
 }
 
 func (m model) liveView(w int) string {
-	down := m.rates[goclient.Down]
-	up := m.rates[goclient.Up]
+	// One shared scale (the larger of the two session peaks) for both bars, so a
+	// glance at the fill compares download against upload directly instead of each
+	// bar being full against its own peak.
+	scale := m.rateScale()
 	lines := []string{
 		accentStyle.Render("Live Telemetry"),
-		rateLine("download", down.BytesPerSec, m.peaks[goclient.Down], w),
-		rateLine("upload  ", up.BytesPerSec, m.peaks[goclient.Up], w),
+		rateLine("download", m.dispRate[goclient.Down], scale, w),
+		rateLine("upload  ", m.dispRate[goclient.Up], scale, w),
 		latencyLine(m.latency),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+// rateScale is the shared bar denominator: the larger session peak across both
+// directions. Peaks only grow, so the scale is stable within a run.
+func (m model) rateScale() float64 {
+	s := m.peaks[goclient.Down]
+	if p := m.peaks[goclient.Up]; p > s {
+		s = p
+	}
+	return s
+}
+
 func (m model) resultsView(w int) string {
 	lines := []string{accentStyle.Render("Results")}
+
+	// One shared scale across every throughput row (both directions) so the mini
+	// bars are comparable at a glance — the same principle as the live bars.
+	var scale float64
 	for _, r := range m.results {
-		if r.Latency.Count > 0 || r.Stage == "latency" {
-			lines = append(lines, fmt.Sprintf("%-14s latency p50 %s  p95 %s  jitter %s  loss %.1f%%",
-				r.Stage, fmtMs(r.Latency.P50), fmtMs(r.Latency.P95), fmtMs(r.Latency.Jitter), r.Latency.Loss*100))
+		if !isLatencyResult(r) && r.PeakBps > scale {
+			scale = r.PeakBps
+		}
+	}
+	barW := clamp(w-56, 10, 30)
+
+	for _, r := range m.results {
+		if isLatencyResult(r) {
+			lines = append(lines, fmt.Sprintf("%s %s   p50 %s  p95 %s  %s",
+				mutedStyle.Render(fmt.Sprintf("%-13s", r.Stage)),
+				labelStyle.Render("latency"),
+				valueStyle.Render(fmtMs(r.Latency.P50)),
+				valueStyle.Render(fmtMs(r.Latency.P95)),
+				mutedStyle.Render(fmt.Sprintf("jitter %s  loss %.1f%%", fmtMs(r.Latency.Jitter), r.Latency.Loss*100)),
+			))
 			continue
+		}
+		n := 0
+		if scale > 0 {
+			n = int((r.MeanBps/scale)*float64(barW) + 0.5)
+		}
+		n = clamp(n, 0, barW)
+		bar := accentStyle.Render(strings.Repeat("█", n)) + mutedStyle.Render(strings.Repeat("░", barW-n))
+		dir := "down"
+		if r.Direction == goclient.Up {
+			dir = "up"
 		}
 		auth := ""
 		if r.ServerAuth {
-			auth = " server-clock"
+			auth = mutedStyle.Render(" server-clock")
 		}
-		lines = append(lines, fmt.Sprintf("%-14s %-4s avg %s  peak %s  total %s%s",
-			r.Stage, r.Direction, fmtRate(r.MeanBps), fmtRate(r.PeakBps), fmtBytes(r.TotalBytes), auth))
+		lines = append(lines, fmt.Sprintf("%s %s %s  %s  %s %s%s",
+			mutedStyle.Render(fmt.Sprintf("%-13s", r.Stage)),
+			accentStyle.Render(fmt.Sprintf("%-4s", dir)),
+			bar,
+			valueStyle.Render(fmt.Sprintf("%13s", fmtRate(r.MeanBps))),
+			mutedStyle.Render("peak "+fmtRate(r.PeakBps)),
+			mutedStyle.Render("total "+fmtBytes(r.TotalBytes)),
+			auth,
+		))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// isLatencyResult reports whether a result carries latency percentiles rather
+// than throughput figures.
+func isLatencyResult(r goclient.Result) bool {
+	return r.Latency.Count > 0 || r.Stage == "latency"
 }
 
 func (m model) helpView() string {
@@ -953,23 +1101,28 @@ func tlsLabel(insecure bool) string {
 	return "verified"
 }
 
-func rateLine(name string, bps, peak float64, w int) string {
+// rateLine renders one telemetry bar filled by rate/scale (a scale shared across
+// directions), with a brighter leading cell so motion reads at a glance and the
+// eased rate as the trailing figure.
+func rateLine(name string, rate, scale float64, w int) string {
 	barW := w - 34
 	if barW < 12 {
 		barW = 12
 	}
-	if peak < bps {
-		peak = bps
+	n := 0
+	if scale > 0 {
+		n = int((rate/scale)*float64(barW) + 0.5)
 	}
-	fill := 0
-	if peak > 0 {
-		fill = int((bps / peak) * float64(barW))
+	n = clamp(n, 0, barW)
+	var bar string
+	if n <= 0 {
+		bar = mutedStyle.Render(strings.Repeat("░", barW))
+	} else {
+		bar = accentStyle.Render(strings.Repeat("█", n-1)) +
+			valueStyle.Render("█") +
+			mutedStyle.Render(strings.Repeat("░", barW-n))
 	}
-	if fill > barW {
-		fill = barW
-	}
-	bar := strings.Repeat("█", fill) + mutedStyle.Render(strings.Repeat("░", barW-fill))
-	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), accentStyle.Render(bar), valueStyle.Render(fmtRate(bps)))
+	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
 }
 
 func latencyLine(s goclient.LatencySample) string {
