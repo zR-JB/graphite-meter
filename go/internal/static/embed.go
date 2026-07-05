@@ -24,14 +24,21 @@ func Handler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	fileServer := http.FileServer(http.FS(sub))
+	return handlerFor(sub)
+}
+
+// handlerFor builds the SPA-fallback handler over fsys. Split out from
+// Handler so tests can exercise the routing logic against an in-memory fs.FS
+// instead of the real embedded dist.
+func handlerFor(fsys fs.FS) http.Handler {
+	fileServer := http.FileServer(http.FS(fsys))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if name == "" {
 			name = "index.html"
 		}
-		if f, err := sub.Open(name); err == nil {
+		if f, err := fsys.Open(name); err == nil {
 			_ = f.Close()
 			fileServer.ServeHTTP(w, r)
 			return
