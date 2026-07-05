@@ -14,6 +14,7 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
+import { interpolateAt, closestSample } from "./hoverInterp";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -298,7 +299,7 @@ export class ChartEngine implements CanvasEngine {
     const span = this.#spanAt(t);
     if (span) {
       const phaseSamples = arr.filter((s) => s.phase === span.phase);
-      const value = this.#interpInRange(phaseSamples, t, pick);
+      const value = interpolateAt(phaseSamples, t, pick);
       if (value != null) return value;
       return null;
     }
@@ -309,29 +310,7 @@ export class ChartEngine implements CanvasEngine {
       if (firstSample) return pick(firstSample);
     }
 
-    return pick(this.#closestSample(arr, t));
-  }
-
-  #interpInRange<T extends { t: number }>(
-    arr: T[],
-    t: number,
-    pick: (s: T) => number,
-  ): number | null {
-    if (!arr.length) return null;
-    if (t < arr[0].t || t > arr[arr.length - 1].t) return null;
-    if (t === arr[0].t) return pick(arr[0]);
-    const last = arr[arr.length - 1];
-    if (t === last.t) return pick(last);
-    for (let i = 1; i < arr.length; i++) {
-      const b = arr[i];
-      if (b.t >= t) {
-        const a = arr[i - 1];
-        const span = b.t - a.t || 1;
-        const w = (t - a.t) / span;
-        return pick(a) * (1 - w) + pick(b) * w;
-      }
-    }
-    return null;
+    return pick(closestSample(arr, t));
   }
 
   #spanAt(t: number): PhaseSpan | null {
@@ -358,20 +337,6 @@ export class ChartEngine implements CanvasEngine {
       }
     }
     return nearest;
-  }
-
-  #closestSample<T extends { t: number }>(arr: T[], t: number): T {
-    let closest = arr[0];
-    let closestDist = Math.abs(arr[0].t - t);
-    for (let i = 1; i < arr.length; i++) {
-      const sample = arr[i];
-      const dist = Math.abs(sample.t - t);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = sample;
-      }
-    }
-    return closest;
   }
 
   #resolveColors(): void {
@@ -625,10 +590,8 @@ export class ChartEngine implements CanvasEngine {
     return null;
   }
 
-  /** Per-phase throughput min/max/avg overlays — drawn only in the frozen
-   *  result view. A faint min→max band per transfer phase plus a dashed
-   *  average rule and a small "avg" tag summarize each series' range and
-   *  mean for that phase. */
+  /** Per-phase throughput average overlay — drawn only in the frozen result
+   *  view: a dashed average rule plus a small "avg" tag per transfer phase. */
   #drawPhaseStats(
     ctx: CanvasRenderingContext2D,
     all: ThroughputSample[],
@@ -873,8 +836,7 @@ export class ChartEngine implements CanvasEngine {
   /** The samples + styling for one drawn curve. Bidirectional carries two
    *  concurrent lanes under one phase tag, so it's split by `dir` and drawn
    *  with the SAME download/upload colors as the standalone phases — two
-   *  lines, not one combined line — for visual consistency across the chart
-   *  (this was a confirmed design decision for issue #11). */
+   *  lines, not one combined line — for visual consistency across the chart. */
   #throughputLanes(): {
     match: (s: ThroughputSample) => boolean;
     area: "download" | "upload";
