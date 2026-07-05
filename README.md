@@ -90,6 +90,7 @@ Everything is optional; the defaults just work. The common knobs:
 | `GM_SERVER_NAME` | `graphite-meter` | Server name shown in the client. |
 | `GM_SERVER_LOCATION` | — | Location label shown in the client (e.g. `fra`). |
 | `PUBLIC_H1_ORIGIN` | derived from request | Public origin to advertise — set behind a reverse proxy. |
+| `PUBLIC_TLS_ORIGIN` | derived from `X-Forwarded-Proto: https` | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a typical TLS-terminating reverse proxy; set explicitly if not. |
 | `GM_VERBOSE` | off | Per-second server-side throughput/connection logging. |
 
 Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
