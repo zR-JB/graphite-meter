@@ -150,6 +150,45 @@ func TestUploadLaneDrainsBytes(t *testing.T) {
 	}
 }
 
+// newAbruptCloseUploadServer reads a little of each request's body then
+// aborts the handler, dropping the connection without ever sending a
+// response — simulating a server that vanishes mid-transfer rather than one
+// that responds cleanly or is merely slow.
+func newAbruptCloseUploadServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 8*1024)
+		_, _ = r.Body.Read(buf)
+		panic(http.ErrAbortHandler)
+	}))
+}
+
+// TestUploadLaneSurvivesAbruptConnectionDrop checks that a lane whose every
+// request is abruptly dropped mid-transfer keeps retrying without panicking
+// or hanging, and still joins promptly once cancelled.
+func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
+	srv := newAbruptCloseUploadServer()
+	defer srv.Close()
+
+	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
+	block := make([]byte, 64*1024)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.uploadLane(ctx, "test-id", 0, block)
+		close(done)
+	}()
+
+	// Let the lane hit and retry past several abrupt drops before cancelling.
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("uploadLane did not return after repeated abrupt connection drops plus cancellation")
+	}
+}
+
 // newFakeUploadServer wires up the three endpoints measureUpload depends on: a
 // session mint, an upload sink that counts drained bytes, and a /ws/upload bus
 // that reports that count back as server-authoritative BYTES_RECEIVED /

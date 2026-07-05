@@ -368,6 +368,81 @@ func TestHandleKey_RowNavigationClamped(t *testing.T) {
 	}
 }
 
+func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
+	cases := []struct {
+		name    string
+		section section
+		rows    int
+	}{
+		{"servers", sectionServers, len(serverPresets) + 1},
+		{"network", sectionNetwork, 3},
+		{"run (single row)", sectionRun, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			m.section = c.section
+
+			m.row = 0
+			next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+			m = next.(model)
+			if m.row != 0 {
+				t.Errorf("row after up at the first row = %d, want clamped to 0", m.row)
+			}
+
+			m.row = c.rows - 1
+			next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+			m = next.(model)
+			if m.row != c.rows-1 {
+				t.Errorf("row after down at the last row = %d, want clamped to %d (no wraparound)", m.row, c.rows-1)
+			}
+		})
+	}
+}
+
+func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionServers
+	m.row = len(serverPresets) // the "Custom URL" row
+
+	next, _ := m.activate()
+	m = next.(model)
+	if m.edit.kind != editURL {
+		t.Fatalf("edit.kind after starting an edit = %v, want editURL", m.edit.kind)
+	}
+	baseline := m.edit.value
+
+	next, _ = m.handleKey(keyRunes("x"))
+	m = next.(model)
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	if m.edit.kind != editNone {
+		t.Fatalf("edit.kind after cancel = %v, want editNone", m.edit.kind)
+	}
+	if m.cfg.BaseURL != baseline {
+		t.Errorf("BaseURL changed to %q after a cancelled edit, want unchanged %q", m.cfg.BaseURL, baseline)
+	}
+
+	// Re-entering the edit should reflect the still-unchanged config, not the
+	// cancelled "x" typed in the previous attempt.
+	next, _ = m.activate()
+	m = next.(model)
+	if m.edit.value != baseline {
+		t.Errorf("edit.value on re-entry = %q, want the unchanged BaseURL %q (not the cancelled edit)", m.edit.value, baseline)
+	}
+
+	next, _ = m.handleKey(keyRunes("y"))
+	m = next.(model)
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.edit.kind != editNone {
+		t.Errorf("edit.kind after commit = %v, want editNone", m.edit.kind)
+	}
+	if want := baseline + "y"; m.cfg.BaseURL != want {
+		t.Errorf("BaseURL after committing the re-edit = %q, want %q", m.cfg.BaseURL, want)
+	}
+}
+
 func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 	for _, key := range []tea.KeyMsg{{Type: tea.KeyCtrlC}, keyRunes("q")} {
 		called := false
@@ -785,12 +860,90 @@ func TestApply_Events(t *testing.T) {
 	}
 }
 
+// TestApply_DuplicateAndOutOfOrderEvents checks apply has no ordering guard:
+// a Result straggling in after Complete is still recorded, a duplicate
+// Complete/Error is a harmless no-op, and interleaved throughput samples for
+// both directions track independent rates and peaks.
+func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+
+	m.apply(goclient.Event{Kind: goclient.EventComplete})
+	if !m.complete {
+		t.Fatal("expected complete after EventComplete")
+	}
+
+	// A Result arriving after Complete (e.g. a straggling loaded-latency
+	// sample) is still appended; apply doesn't gate on run state.
+	m.apply(goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "download"}})
+	if len(m.results) != 1 {
+		t.Errorf("late-arriving Result after Complete should still be recorded, got %d results", len(m.results))
+	}
+
+	// A duplicate Complete is a no-op.
+	m.apply(goclient.Event{Kind: goclient.EventComplete})
+	if !m.complete || m.status != "complete" {
+		t.Errorf("duplicate EventComplete changed state unexpectedly: complete=%v status=%q", m.complete, m.status)
+	}
+
+	// A late Error still overwrites status/err; apply has no "already done"
+	// guard against post-completion events.
+	boom := errors.New("late boom")
+	m.apply(goclient.Event{Kind: goclient.EventError, Err: boom})
+	if m.err != boom || m.status != "error" {
+		t.Errorf("late EventError not applied: err=%v status=%q", m.err, m.status)
+	}
+
+	// Interleaved throughput samples for both directions must not clobber
+	// each other's rate or peak.
+	m2 := newModel(goclient.DefaultConfig())
+	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
+	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 40}})
+	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 30}})
+	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 90}})
+	if m2.peaks[goclient.Down] != 100 {
+		t.Errorf("down peak = %v, want 100 (unaffected by interleaved up samples)", m2.peaks[goclient.Down])
+	}
+	if m2.peaks[goclient.Up] != 90 {
+		t.Errorf("up peak = %v, want 90", m2.peaks[goclient.Up])
+	}
+	if m2.rates[goclient.Down].BytesPerSec != 30 || m2.rates[goclient.Up].BytesPerSec != 90 {
+		t.Errorf("rates = %+v, want the latest per-direction sample for each", m2.rates)
+	}
+}
+
 func TestUpdate_WindowSize(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	got, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	mm := got.(model)
 	if mm.width != 100 || mm.height != 40 {
 		t.Errorf("width=%d height=%d, want 100/40", mm.width, mm.height)
+	}
+}
+
+// TestUpdate_WindowSizeDuringRun checks a resize mid-run only updates the
+// layout dimensions, leaving the in-progress run's state (mode, stage,
+// status, results) untouched and producing no follow-up cmd.
+func TestUpdate_WindowSizeDuringRun(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.stage = "download"
+	m.status = "measure"
+	m.results = []goclient.Result{{Stage: "latency"}}
+	m.events = make(chan goclient.Event)
+
+	got, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 45})
+	mm := got.(model)
+	if mm.width != 120 || mm.height != 45 {
+		t.Errorf("width=%d height=%d, want 120/45", mm.width, mm.height)
+	}
+	if mm.mode != modeRun || mm.stage != "download" || mm.status != "measure" {
+		t.Errorf("resize disturbed run state: mode=%v stage=%q status=%q", mm.mode, mm.stage, mm.status)
+	}
+	if len(mm.results) != 1 {
+		t.Errorf("resize disturbed results, got %+v", mm.results)
+	}
+	if cmd != nil {
+		t.Error("WindowSizeMsg should not produce a follow-up cmd")
 	}
 }
 

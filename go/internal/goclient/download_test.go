@@ -137,6 +137,51 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	}
 }
 
+// newAbruptCloseDownloadServer sends headers plus partial bytes over chunked
+// encoding, then aborts the handler mid-response: the connection drops
+// without a clean terminating chunk, unlike a normal completed transfer or a
+// context-cancelled one.
+func newAbruptCloseDownloadServer(partial int) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(make([]byte, partial))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+}
+
+// TestDownloadLaneStopsOnAbruptConnectionDrop checks that a server closing
+// the connection mid-response (rather than a clean EOF) makes downloadLane
+// return promptly with only the bytes actually delivered counted, instead of
+// hanging or panicking on the broken stream.
+func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
+	const partial = 64 * 1024
+	srv := newAbruptCloseDownloadServer(partial)
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: partial * 4}.normalized()
+	r := &runner{cfg: cfg, http: srv.Client()}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var total atomic.Uint64
+	done := make(chan struct{})
+	go func() {
+		r.downloadLane(ctx, srv.URL, 0, &total)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("downloadLane hung after the server closed the connection abruptly mid-transfer")
+	}
+	if got := total.Load(); got == 0 || got > partial {
+		t.Errorf("total = %d, want > 0 and <= %d (only the bytes sent before the abrupt drop)", got, partial)
+	}
+}
+
 func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
 	srv := newBytesEchoDownloadServer()
 	defer srv.Close()
