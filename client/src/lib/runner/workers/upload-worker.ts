@@ -110,8 +110,7 @@ const MIN_POOL_BYTES = 2 * 1024 * 1024;
  *  where the sizer is below the pool ceiling; the default ≥3 interleaved lanes
  *  cover the rest (while one lane turns around, the others keep the clock advancing).
  *  Still short enough to bound in-flight + re-measure within ~½ s on a slow/dropping
- *  link. (On a fast link the POST clamps to the pool size and drains faster than this
- *  — unchanged from the old fixed-Blob behaviour.) */
+ *  link. (On a fast link the POST clamps to the pool size and drains faster than this.) */
 const TARGET_POST_MS = 500;
 /** Smallest POST. Below this the per-request HTTP overhead dominates; it is also
  *  the size a freshly-dropped link converges down to within a few POSTs. */
@@ -183,9 +182,9 @@ let rateEwma = 0;
 /** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
 let streamId = 0;
 /** Completed-POST debug window: bytes fully POSTed (server-drained) since the last
- *  1 Hz log + its start time + the running per-stream total. Coarser than the old
- *  onprogress raw-send window (one step per POST, not byte-granular), but it still
- *  shows whether the request→response turnaround is leaving the wire idle. */
+ *  1 Hz log + its start time + the running per-stream total. One step per POST,
+ *  not byte-granular, but it still shows whether the request→response
+ *  turnaround is leaving the wire idle. */
 let dbgWinBytes = 0;
 let dbgWinStart = 0;
 let dbgTotal = 0;

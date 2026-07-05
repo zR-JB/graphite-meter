@@ -234,8 +234,8 @@ export class ChartEngine implements CanvasEngine {
 
   /** Hover readout under the cursor (for the DOM chip). Snaps to the time
    *  under the pointer, then LINEARLY INTERPOLATES the series value between
-   *  the two bracketing samples (not nearest-only) — ports linerate's
-   *  `transferPointAt`/`latencyPointAt` weight-blend onto the time axis. */
+   *  the two bracketing samples (not nearest-only) so the readout tracks
+   *  the signal between sample ticks instead of stair-stepping. */
   hoverInfo(): HoverInfo | null {
     if (this.#hoverX == null) return null;
     const plotW = this.#w - PAD_L - PAD_R;
@@ -627,8 +627,8 @@ export class ChartEngine implements CanvasEngine {
 
   /** Per-phase throughput min/max/avg overlays — drawn only in the frozen
    *  result view. A faint min→max band per transfer phase plus a dashed
-   *  average rule and a small "avg" tag. Ports linerate's per-series
-   *  average-line + peak summary onto the canvas. */
+   *  average rule and a small "avg" tag summarize each series' range and
+   *  mean for that phase. */
   #drawPhaseStats(
     ctx: CanvasRenderingContext2D,
     all: ThroughputSample[],
@@ -744,8 +744,7 @@ export class ChartEngine implements CanvasEngine {
 
   /** Phase ribbon — a thin colour-coded strip in the bottom gutter mapping the
    *  timeline to its phases (colours match the throughput area), plus a small
-   *  phase label per segment in the frozen result view. Replaces the old flat
-   *  bufferbloat band: clear about what it shows, and on-brand. */
+   *  phase label per segment in the frozen result view. */
   #PHASE_NAME: Partial<Record<Phase, string>> = {
     warmup: "WARM-UP",
     latency: "PING",

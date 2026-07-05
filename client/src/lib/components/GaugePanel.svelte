@@ -161,7 +161,7 @@
   // Terminal aborted/error states get a distinct two-line treatment: a
   // headline naming WHAT happened (friendly reason copy via reasonLabel —
   // never the backend's raw engineering message) and an action line that
-  // matches the button's actual label ("Run Again", not the old "Engage").
+  // matches the button's actual label ("Run Again") — keep them in sync.
   const status = $derived.by(() => {
     switch (store.phase) {
       case "aborted":

@@ -41,8 +41,9 @@
     return "custom";
   }
   // Explicit mode (seeded from the loaded durations) so the Custom tab is
-  // directly selectable and editing any field switches to Custom — the old
-  // value-equality-only derivation left the Custom tab inert.
+  // directly selectable and editing any field switches to Custom — deriving
+  // the mode from value-equality alone would leave the Custom tab inert
+  // whenever the current durations happen to match a preset.
   let durationMode = $state<PresetKey>(presetFromDurations());
 
   function applyPreset(k: PresetKey) {
