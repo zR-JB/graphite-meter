@@ -1,8 +1,8 @@
 // Package config loads server configuration from flags + environment.
 //
 // Defaults favor the "just works" path: plain HTTP/1.1 on :8765, no TLS, no
-// HTTP/3 / Alt-Svc. The TLS/h3 fields are reserved for Stage 5; AdvertiseH3
-// stays false so an h1.1 throughput test is never auto-migrated onto QUIC.
+// HTTP/3 / Alt-Svc. TLS/h3 support is future work (docs/ARCHITECTURE.md#roadmap);
+// AdvertiseH3 stays false so an h1.1 throughput test is never auto-migrated onto QUIC.
 package config
 
 import (
@@ -25,7 +25,7 @@ type Config struct {
 	// HTTP/1.1 cleartext listen address (default, always on).
 	H1Addr string
 
-	// Reserved for Stage 5 (HTTP/3 + WebTransport over TLS). Unused today.
+	// Reserved for future TLS/HTTP-3 support — see docs/ARCHITECTURE.md#roadmap.
 	H3Addr      string
 	TLSCert     string
 	TLSKey      string
@@ -46,9 +46,8 @@ type Config struct {
 	EngineVersion string
 
 	// Verbose enables per-second throughput logging on the download/upload
-	// endpoints (the server-side counterpart to the client's debug logging), so
-	// server-sent / drained rates can be compared against the kernel interface
-	// counters and the browser's own figures. Off by default.
+	// endpoints, so server-observed rates can be compared against kernel
+	// counters or the browser's own figures. Off by default.
 	Verbose bool
 }
 

@@ -1,6 +1,6 @@
-// Package wire holds the cross-language contract types and (in later stages)
-// the message-bus protocol codec. These structs are the Go side of API Surface
-// A — the GET /preflight JSON body. They are hand-written and kept honest by a
+// Package wire holds the cross-language contract types: message-bus frames
+// (frame.go) and the structs below — the Go side of API Surface A, the GET
+// /preflight JSON body. They are hand-written and kept honest by a
 // conformance test against api/preflight.schema.json (preflight_test.go).
 package wire
 
