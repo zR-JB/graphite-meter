@@ -64,26 +64,24 @@ const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
 const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
 
 /* ---------- Throughput de-aliasing (single smoothing point) ----------
- * The backend pushes brutally honest per-tick samples, but their per-tick
- * variance is dominated by a MEASUREMENT ARTIFACT — worker→main postMessage
+ * Per-tick samples carry a MEASUREMENT ARTIFACT — worker→main postMessage
  * jitter aliasing the ~60ms aggregation tick — not real throughput variance.
- * The core low-passes that artifact ONCE here, at the single chokepoint every
- * consumer reads from (the stability accumulator AND the emitted sample the
- * store/gauge/chart read), so there is exactly one smoothed source of truth:
- * never in the backend (it stays honest), never duplicated per UI element.
- * Byte TOTALS stay exact (raw bytesDelta is untouched); only the RATE is
- * filtered, and an EMA preserves the mean so results don't shift.
+ * The core low-passes it ONCE here, at the single chokepoint every consumer
+ * reads from (the stability accumulator AND the emitted sample), so there is
+ * exactly one smoothed source of truth. Byte TOTALS stay exact (raw
+ * bytesDelta is untouched); only the RATE is filtered, via an EMA that
+ * preserves the mean.
  *
  * TWO smoothings, because the two consumers have opposite needs:
- *   • DISPLAY (gauge/chart) wants a SHORT tau so the curve tracks a real line's
- *     ramp — up and down — instead of trailing it; that lag was the bulk of the
- *     "always below the true max" complaint.
- *   • STABILITY (confidence / early-exit / stable-window headline) wants the
- *     ORIGINAL longer tau: its coefficients (TRANSFER_VARIANCE_K, stabilityThreshold)
- *     are tuned to that variance — a shorter tau ~doubles per-tick variance and the
- *     phase would stop early-exiting on a moderately noisy link.
- * The postMessage aliasing both filter lives well under 700 ms, so both still
- * remove the artifact. Byte totals stay raw either way. */
+ *   • DISPLAY (gauge/chart) uses a SHORT tau so the curve tracks a real
+ *     line's ramp — up and down — instead of trailing it.
+ *   • STABILITY (confidence / early-exit / stable-window headline) uses a
+ *     LONGER tau: its coefficients (TRANSFER_VARIANCE_K, stabilityThreshold)
+ *     are tuned to that variance — a shorter tau would roughly double
+ *     per-tick variance and the phase would stop early-exiting on a
+ *     moderately noisy link.
+ * Both taus stay well under the ~700ms postMessage-aliasing period, so both
+ * still remove the artifact; byte totals stay raw either way. */
 const THROUGHPUT_DISPLAY_TAU_MS = 700;
 const THROUGHPUT_STABILITY_TAU_MS = 1800;
 
