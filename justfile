@@ -59,17 +59,6 @@ default:
 hooks:
     git config core.hooksPath .githooks
 
-# --- RNG (Rust generator, crates/rng) ---
-# The client no longer bundles a WASM build of this: upload-worker.ts fills its
-# payload with crypto.getRandomValues (the buffer is generated once and reused, so
-# the RNG is never on the hot path). The crate is kept for the byte-exact
-# cross-language conformance pin (api/rng.testvectors.txt) and a possible future
-# WebTransport payload path. Legacy/reference only — not part of any other recipe.
-
-# Run the Rust generator's byte-exact conformance test (vs api/rng.testvectors.txt)
-test-rng:
-    cd crates/rng && cargo test
-
 # --- Client (Svelte/Vite, bun) ---
 
 # Build the client in dev profile (Vite's own defaults: real engine, dummy + dev tools included)

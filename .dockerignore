@@ -5,7 +5,6 @@ client/dist
 client/.vite
 server/graphite-meter
 server/internal/static/dist
-client/src/lib/wasm
 **/.DS_Store
 the-next-step-will-harmonic-harp.md
 .claude
