@@ -55,8 +55,8 @@ var scratchPool = sync.Pool{
 // It deliberately does NOT implement io.ReaderFrom, so io.CopyBuffer uses our
 // large pooled buffer instead of io.Discard's small internal one. When verbose,
 // it also feeds each drained chunk to the meter for live per-second logging; when
-// an aggregate is attached, it adds the chunk to the test's server-authoritative
-// per-id count and stamps first-byte / last-touch times.
+// an aggregate is attached, it folds the chunk into the test's server-
+// authoritative per-id count and active-time clock.
 type discardSink struct {
 	meter *Meter
 	agg   *uploadAgg // nil unless the POST carried a valid server-minted ?id=
@@ -81,11 +81,10 @@ func (u *Upload) Handle(s transport.Session) error {
 		return err
 	}
 
-	// Resolve the test's shared aggregate from a server-minted ?id=. getOrCreate
-	// returns nil for an empty/unissued id or over the live cap — then this POST
-	// is drained-and-counted as before, just not server-authoritatively. posts is
-	// a live-lane gauge only (diagnostics); the TTL sweeper, never a refcount, owns
-	// deletion (TTL sweeper-owned).
+	// Resolve the test's shared aggregate from a server-minted ?id=; nil for an
+	// empty/unissued id or over the live cap, in which case this POST still
+	// drains and counts, just not server-authoritatively. posts is a
+	// diagnostics gauge only — the TTL sweeper owns deletion.
 	var agg *uploadAgg
 	if u.store != nil {
 		if a, ok := u.store.getOrCreate(s.Query().Get("id")); ok {

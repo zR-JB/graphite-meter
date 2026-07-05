@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -86,5 +87,129 @@ func TestPreflightOriginsPublicTLSOriginWins(t *testing.T) {
 	body := pf.build(&fakeSession{}, req)
 	if got, want := *body.Capabilities.Origins.TLS, cfg.PublicTLSOrigin; got != want {
 		t.Errorf("tls origin = %q, want configured override %q", got, want)
+	}
+}
+
+// TestPreflightOriginsBaseline checks the no-config, no-proxy baseline: h1 is
+// derived from the request Host, and tls/h3 are both omitted.
+func TestPreflightOriginsBaseline(t *testing.T) {
+	cfg := config.Default()
+	pf := NewPreflight(&cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
+	req.Host = "speed.example:8765"
+	body := pf.build(&fakeSession{}, req)
+
+	if got, want := *body.Capabilities.Origins.H1, "http://speed.example:8765"; got != want {
+		t.Errorf("h1 origin = %q, want %q", got, want)
+	}
+	if body.Capabilities.Origins.TLS != nil {
+		t.Errorf("tls origin = %q, want nil with no config and no proxy header", *body.Capabilities.Origins.TLS)
+	}
+	if body.Capabilities.Origins.H3 != nil {
+		t.Errorf("h3 origin = %q, want nil without PUBLIC_H3_ORIGIN", *body.Capabilities.Origins.H3)
+	}
+}
+
+// TestPreflightOriginsH3WhenConfigured checks PublicH3Origin, unexercised by
+// the other origin tests, is surfaced verbatim.
+func TestPreflightOriginsH3WhenConfigured(t *testing.T) {
+	cfg := config.Default()
+	cfg.PublicH3Origin = "https://speed.example:443"
+	pf := NewPreflight(&cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
+	req.Host = "speed.example:8765"
+	body := pf.build(&fakeSession{}, req)
+
+	if body.Capabilities.Origins.H3 == nil {
+		t.Fatal("h3 origin = nil, want the configured PUBLIC_H3_ORIGIN")
+	}
+	if got, want := *body.Capabilities.Origins.H3, cfg.PublicH3Origin; got != want {
+		t.Errorf("h3 origin = %q, want %q", got, want)
+	}
+}
+
+// TestPreflightCapabilitiesTransportFlags locks the advertised transport
+// flags: fetch-stream and WebSocket are live, WebTransport is not yet mounted.
+func TestPreflightCapabilitiesTransportFlags(t *testing.T) {
+	cfg := config.Default()
+	pf := NewPreflight(&cfg)
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
+	body := pf.build(&fakeSession{}, req)
+
+	got := body.Capabilities.Transports
+	want := wire.Transports{FetchStream: true, WebSocket: true, WebTransport: false}
+	if got != want {
+		t.Errorf("Transports = %+v, want %+v", got, want)
+	}
+}
+
+// TestRequestIsTLSDirectConnection checks r.TLS set (a direct TLS
+// connection, no proxy involved) is honored independently of any header.
+func TestRequestIsTLSDirectConnection(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://speed.example/preflight", nil)
+	req.TLS = &tls.ConnectionState{}
+	if !requestIsTLS(req) {
+		t.Error("requestIsTLS = false with r.TLS set, want true")
+	}
+}
+
+// TestRequestIsTLSMultiHopTakesFirstEntry checks that a comma-separated
+// X-Forwarded-Proto (a chain of proxies) is read only at its first entry —
+// documented as "only the first hop is read" — regardless of what later
+// hops in the chain say.
+func TestRequestIsTLSMultiHopTakesFirstEntry(t *testing.T) {
+	cases := []struct {
+		name  string
+		proto string
+		want  bool
+	}{
+		{"first-hop-https", "https, http", true},
+		{"first-hop-http", "http, https", false},
+		{"single-https-with-space", " https ", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
+			req.Header.Set("X-Forwarded-Proto", tc.proto)
+			if got := requestIsTLS(req); got != tc.want {
+				t.Errorf("requestIsTLS(X-Forwarded-Proto=%q) = %v, want %v", tc.proto, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRequestIsTLSCaseSensitive documents current behavior: the comparison
+// against "https" is exact-case, so a proxy that sends an uppercase scheme
+// is not recognized as TLS. This locks the existing behavior rather than
+// changing it.
+func TestRequestIsTLSCaseSensitive(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
+	req.Header.Set("X-Forwarded-Proto", "HTTPS")
+	if requestIsTLS(req) {
+		t.Error("requestIsTLS = true for an uppercase X-Forwarded-Proto, want false (exact-case match only)")
+	}
+}
+
+// TestHostPortDefaultsWhenNoPort checks a bare hostname (no ":port") in Host
+// defaults to port 80 rather than erroring or leaving it zero.
+func TestHostPortDefaultsWhenNoPort(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
+	req.Host = "speed.example"
+	host, port := hostPort(req)
+	if host != "speed.example" || port != 80 {
+		t.Errorf("hostPort(%q) = (%q, %d), want (%q, 80)", req.Host, host, port, "speed.example")
+	}
+}
+
+// TestHostPortDefaultsOnMalformedPort checks a non-numeric port component
+// also defaults to 80 rather than propagating the parse error.
+func TestHostPortDefaultsOnMalformedPort(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
+	req.Host = "speed.example:notaport"
+	host, port := hostPort(req)
+	if host != "speed.example" || port != 80 {
+		t.Errorf("hostPort(%q) = (%q, %d), want (%q, 80)", req.Host, host, port, "speed.example")
 	}
 }

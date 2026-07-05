@@ -252,6 +252,78 @@ func TestWSAdapterHandleErrorClosesWithInternalError(t *testing.T) {
 	}
 }
 
+// TestHTTPAdapterOptionsIgnoresRequestHeaders checks the permissive-CORS
+// design point: a preflight OPTIONS carrying Origin, Access-Control-Request-
+// Method, and Access-Control-Request-Headers still gets the same wildcard
+// response regardless of what was requested — this is a public, cookie-less
+// measurement API, so nothing is reflected or validated per-request.
+func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
+	e := &countingEndpoint{}
+	srv := httptest.NewServer(httpAdapter(e))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodOptions, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Access-Control-Request-Method", "PUT")
+	req.Header.Set("Access-Control-Request-Headers", "X-Custom-Header, X-Another")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusNoContent {
+		t.Errorf("status = %d, want %d", res.StatusCode, http.StatusNoContent)
+	}
+	if got := res.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Access-Control-Allow-Origin = %q, want * regardless of Origin", got)
+	}
+	if got := res.Header.Get("Access-Control-Allow-Headers"); got != "*" {
+		t.Errorf("Access-Control-Allow-Headers = %q, want * regardless of the requested headers", got)
+	}
+	if n := e.calls.Load(); n != 0 {
+		t.Errorf("Handle called %d times for a preflight OPTIONS, want 0", n)
+	}
+}
+
+// TestMountLongestPathWins checks that registering a subtree ("/api/") and a
+// more specific literal path ("/api/specific") on the same registry resolves
+// through Go's ServeMux longest-match rule regardless of map iteration order
+// — Registry.Mount is a thin, order-independent wrapper and must not break
+// that precedence when paths overlap.
+func TestMountLongestPathWins(t *testing.T) {
+	reg := NewRegistry()
+	reg.RegisterHTTP("/api/", &echoEndpoint{id: "subtree"})
+	reg.RegisterHTTP("/api/specific", &echoEndpoint{id: "specific"})
+	mux := http.NewServeMux()
+	reg.Mount(context.Background(), mux)
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	check := func(path, want string) {
+		t.Helper()
+		res, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("get %s: %v", path, err)
+		}
+		defer res.Body.Close()
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatalf("read body for %s: %v", path, err)
+		}
+		if got := string(body); got != want {
+			t.Errorf("%s body = %q, want %q", path, got, want)
+		}
+	}
+	check("/api/specific", "specific")
+	check("/api/other", "subtree")
+}
+
 // TestMountShutdownCancelUnblocksWSHandler checks the context Mount is given
 // bounds every bus handler's lifetime: cancelling it while a handler is parked
 // on ctx.Done() (as conn.Read/Write would be) unblocks that handler promptly.

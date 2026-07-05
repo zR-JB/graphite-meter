@@ -7,14 +7,13 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// UploadProgress is the WebSocket upload-progress bus (/ws/upload). It is the
-// server→client half of server-authoritative upload: for the test named by ?id=
-// it pushes the running SERVER-measured drained
-// byte count — aggregated across that test's separate POST /upload lanes via the
-// shared UploadStore — every uploadProgressTick as BYTES_RECEIVED,<n>, and emits
-// exactly one UPLOAD_COMPLETE,<n> when the client sends BYE (after it has stopped
-// all its POST lanes). BYE is the SOLE authoritative finalizer: an idle/posts==0
-// auto-finalize would truncate the total during the gaps between repeated POSTs.
+// UploadProgress is the WebSocket upload-progress bus (/ws/upload): for the
+// test named by ?id= it pushes the running server-measured drained byte count
+// (aggregated across that test's POST /upload lanes via the shared
+// UploadStore) every uploadProgressTick as BYTES_RECEIVED,<n>, and emits
+// exactly one UPLOAD_COMPLETE,<n> on the client's BYE. BYE is the sole
+// authoritative finalizer — an idle/posts==0 auto-finalize would truncate the
+// total during the gaps between repeated POSTs.
 type UploadProgress struct {
 	store *UploadStore
 }
@@ -97,12 +96,9 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 				return nil // no keepalive for too long — client vanished silently
 			}
 			agg.lastTouchMono.Store(monoNanos()) // keep the id non-idle for the sweeper
-			// N and TIME are sampled together: the client divides Δn by Δtime, so they
-			// must describe the same instant. TIME is NOT the wall clock — it is the
-			// aggregate's ACTIVE measurement clock (ns bytes were actually flowing,
-			// dead zones excluded), the upload twin of the download read-side timing.
-			// Load bytes BEFORE active so a racing chunk can only make active outrun
-			// bytes (under-report), never the reverse (over-report).
+			// N and TIME describe the same instant (client divides Δn/Δtime).
+			// Load bytes before active so a race can only under-report, never
+			// over-report the rate.
 			n := uint64(agg.bytes.Load())
 			active := uint64(agg.activeNanos.Load())
 			if bus.Send(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})) != nil {
@@ -128,13 +124,9 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 					return nil
 				}
 			case wire.OpBYE:
-				// The sole authoritative finalizer: the client sends BYE only after
-				// every POST lane has stopped. Emit the final total exactly once,
-				// then release the test's state (TTL would otherwise reap it later).
+				// Sole authoritative finalizer, sent once every POST lane has
+				// stopped. Emit the final total exactly once, then release state.
 				if agg.done.CompareAndSwap(false, true) {
-					// Final total + final active measurement time, the same pair the live
-					// ticks carry — so the client's headline denominator is the server's
-					// own active clock, not a span across frame arrivals.
 					_ = bus.Send(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: uint64(agg.bytes.Load()), Nanos: uint64(agg.activeNanos.Load())}))
 				}
 				e.store.delete(id)

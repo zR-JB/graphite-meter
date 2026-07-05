@@ -10,28 +10,21 @@ import (
 	"time"
 )
 
-// UploadStore holds the per-test shared state that makes the SERVER-side drained
-// byte count the authoritative upload result.
-// The upload's HTTP POST lanes and its /ws/upload progress socket are SEPARATE
-// TCP connections; both carry the same ?id= and meet here. Each POST drains into
-// the same per-id uploadAgg (counting), and the progress bus reads that aggregate
-// to push BYTES_RECEIVED/UPLOAD_COMPLETE.
+// UploadStore holds per-test state shared between a POST /upload lane and its
+// /ws/upload progress socket — separate TCP connections joined by ?id= — so the
+// SERVER's drained byte count, not the browser's onprogress, is authoritative.
 //
-// The map is sharded so the hot path (a POST's per-chunk byte add) never contends
-// on a single lock: the add itself is a lockless atomic on the *uploadAgg; only
-// the rare first-touch create / sweep delete take a shard mutex.
+// The map is sharded so a POST's hot-path byte add never contends a lock: the
+// add is a lockless atomic on *uploadAgg; only first-touch create and sweep
+// delete take a shard mutex.
 //
-// Lifecycle is deliberately simple and race-free: an aggregate is created
-// on FIRST TOUCH by whichever of the POST or the WS arrives first (order-free), and
-// the TTL sweeper is the ONLY deleter — there is no refcount fast-path delete (that
-// raced a slow straggler lane into a fresh zero-byte aggregate whose bytes were
-// never reported). State lives from first-touch until uploadIDTTL idle, monotonic,
-// never resurrected mid-test.
+// An aggregate is created on first touch (POST or WS, whichever arrives first)
+// and reaped only by the TTL sweeper — a refcount fast-path delete once raced a
+// straggler lane into a fresh zero-byte aggregate that lost its bytes.
 //
-// Aggregate creation is gated to ids the server MINTED at /upload/session (markIssued):
-// a flood of forged ids on this auth-less bus then creates no state, which both
-// stops cross-tab reads of a victim's progress stream and defuses the
-// maxLiveUploads-amplified DoS/lockout vector.
+// Creation is gated to ids minted at /upload/session (markIssued): a flood of
+// forged ids on this auth-less bus creates no state, closing both the cross-tab
+// progress-read leak and the maxLiveUploads-amplified DoS vector.
 type UploadStore struct {
 	shards [uploadShardCount]uploadShard
 	issued sync.Map     // id (string) -> issue time (mono ns); only minted ids may create an agg
@@ -43,19 +36,14 @@ type uploadShard struct {
 	m  map[string]*uploadAgg
 }
 
-// uploadAgg is one test's cross-connection accumulator. Every field is an atomic
-// so the POST drain hot path (recordChunk per chunk) and the WS ticker (bytes.Load
-// every 100 ms) never share a lock.
+// uploadAgg is one test's cross-connection accumulator; every field is atomic so
+// the POST drain path (recordChunk) and the WS ticker (bytes.Load every 100 ms)
+// never share a lock.
 //
-// activeNanos is the heart of the measurement: it is the SERVER's own measurement
-// clock — wall time during which bytes were ACTUALLY being drained, with dead zones
-// (TCP/handshake establishment, a lane reconnect, an idle stall) excluded. The
-// /ws/upload bus ships it in the ;TIME field beside `bytes`, both sampled at the one
-// drain point, so the client derives the upload rate as Δbytes / ΔactiveNanos — the
-// upload mirror of the download worker, where the client already measures bytes and
-// time together at the single read point. It is NOT
-// the wall span between the first and last frame, so a stall/reconnect/early-finish
-// can never stretch the denominator with idle time.
+// activeNanos is the server's own rate denominator: wall time bytes were
+// actually flowing, with dead zones (handshake, reconnect, stall) excluded —
+// NOT the wall span between first and last frame, so a stall can never inflate
+// the rate by stretching a wall-clock denominator instead.
 type uploadAgg struct {
 	bytes         atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
 	activeNanos   atomic.Int64 // cumulative ACTIVE measurement time (ns): wall gaps between chunks, dead zones excluded
@@ -65,23 +53,17 @@ type uploadAgg struct {
 	done          atomic.Bool  // UPLOAD_COMPLETE already sent — idempotency guard for the WS finalizer
 }
 
-// recordChunk folds one drained chunk (n bytes, drained at monotonic time `now` ns)
-// into the aggregate. It always adds the bytes; it advances the active measurement
-// clock by the wall gap since the PREVIOUS chunk — but only when that gap is at most
-// activeGapCap. A larger gap is a dead zone (establishment, a lane reconnect after
-// the client's restart backoff, an idle stall) and is excluded, so activeNanos only
-// ever counts time bytes were really flowing.
+// recordChunk folds one drained chunk (n bytes at monotonic time now) into the
+// aggregate: bytes always add; the wall gap since the previous chunk adds to
+// activeNanos only when at most activeGapCap (a longer gap is a dead zone —
+// establishment, reconnect, stall — and is excluded).
 //
-// Concurrency-safe across a test's parallel POST lanes without a lock, via a
-// forward-only CAS on lastChunkMono: the clock never moves backward, so the per-chunk
-// gaps telescope across interleaved lanes into ONE monotonic per-id timeline
-// (= last chunk − first chunk − Σ dead-zone gaps), exactly the wall time at least one
-// lane was delivering data — and NEVER more (activeNanos ≤ wall span, always). A chunk
-// whose stamp lost the race and is now stale (now ≤ the latest) contributes no time
-// rather than rewinding the clock and inflating the next gap; the lane that advanced
-// the clock already covered that instant. This keeps the measurement conservative:
-// any residual skew can only lengthen the denominator (under-report), never inflate
-// the rate.
+// The forward-only CAS on lastChunkMono makes this safe across a test's
+// parallel POST lanes without a lock: the clock never rewinds, so gaps from
+// interleaved lanes telescope into one monotonic per-id timeline, never
+// exceeding the true wall span. A stale/reordered stamp (now <= the latest)
+// contributes no time rather than rewinding the clock — any residual skew can
+// only under-report the rate, never inflate it.
 func (a *uploadAgg) recordChunk(now int64, n int) {
 	for {
 		prev := a.lastChunkMono.Load()
@@ -103,35 +85,27 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 }
 
 const (
-	// uploadShardCount shards the aggregate map to spread first-touch/sweep lock
-	// contention across many concurrent tests. Power of two; fnv32 % count.
+	// uploadShardCount shards the map to spread first-touch/sweep lock contention
+	// across concurrent tests. Power of two; fnv32 % count.
 	uploadShardCount = 32
-	// maxLiveUploads bounds the aggregate map. Creation past this is refused, so a
-	// burst of (minted) ids can't grow memory without bound. Tests stay well under.
+	// maxLiveUploads bounds the aggregate map so a burst of minted ids can't grow
+	// memory without bound.
 	maxLiveUploads = 1000
-	// uploadIDTTL: an aggregate with no chunk and no WS tick for this long is reaped
-	// by the sweeper — the sole deleter. Covers abort, tab close, worker crash, a
-	// delayed RST, and an orphaned WS that never saw a POST.
+	// uploadIDTTL: an aggregate idle this long (no chunk, no WS tick) is reaped by
+	// the sweeper — covers abort, tab close, crash, or an orphaned WS with no POST.
 	uploadIDTTL = 30 * time.Second
-	// issuedIDTTL: a minted-but-unconsumed id is forgotten after this, so /upload/session
-	// minting can't grow `issued` forever. Far longer than a test's upload stage, and
-	// pruning it never breaks a running test (getOrCreate returns an EXISTING agg
-	// without re-checking issued; the gate only blocks the very first create).
+	// issuedIDTTL forgets a minted-but-unconsumed id after this long, so `issued`
+	// can't grow forever. Pruning it never breaks a running test — getOrCreate
+	// returns an existing aggregate without re-checking issued.
 	issuedIDTTL = 2 * time.Minute
 	// uploadSweepInterval is how often RunSweeper scans for idle aggregates.
 	uploadSweepInterval = 5 * time.Second
-	// activeGapCap bounds what counts as continuous transfer for the active
-	// measurement clock (recordChunk). The wall gap between two consecutive drained
-	// chunks (across all of a test's lanes) is folded into activeNanos only when it is
-	// at most this long; a longer gap is a dead zone and is excluded. On a saturated
-	// direct-origin link TCP delivers data continuously, so real inter-chunk gaps stay
-	// far below this even on slow links (Read returns per arriving segment, not per
-	// full buffer); a lane reconnect (≥ the client's ~300 ms restart backoff + a fresh
-	// handshake) sits well above it — clean separation that neither clips a healthy
-	// transfer nor counts a stall. (A request-buffering proxy can defeat this by
-	// releasing the body in bursts; that topology is already declared UNTRUSTED —
-	// detectable by comparing activeNanos
-	// against the wall span, since a spool collapses the two.)
+	// activeGapCap is the longest inter-chunk gap counted as continuous transfer
+	// (recordChunk); longer gaps are dead zones (handshake, reconnect, stall) and
+	// are excluded. A saturated link keeps real gaps far below this; a lane
+	// reconnect (client backoff + handshake) sits well above it. A request-
+	// buffering proxy can defeat this by releasing data in bursts — an untrusted
+	// topology, detectable by comparing activeNanos to the wall span.
 	activeGapCap = 250 * time.Millisecond
 )
 
