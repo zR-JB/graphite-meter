@@ -275,13 +275,18 @@ internally for transport negotiation but not yet shown as a full matrix in the U
 
 Unit tests (`bun:test`, run via `just client-test`) cover pure `.ts` logic only — no component
 rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Covered so far:
-`compensation.ts`, `format.ts`, `runner/adaptive.ts`, `state/persistence.ts`,
-`runner/workers/autosize.ts`, `runner/real/laneBudget.ts`, `runner/real/wire.ts`,
-`runner/evaluation.ts`, `runner/schedule.ts`, `state/stageGuards.ts`, and the small pure URL/median
-helpers exported from `runner/RealRunner.ts`. Follow `state/stageGuards.test.ts` as the style
-model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing files the same way
-`stageGuards.ts` was extracted from `store.svelte.ts`, if it needs to be unit-tested outside the
-Svelte runtime.
+`compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
+test double, exercising the full phase-lifecycle/stall/early-finish/EMA behavior without a real
+network or worker), `runner/dummy.ts`, `state/persistence.ts`, `runner/workers/autosize.ts`,
+`runner/workers/backoff.ts`, `runner/workers/rttEstimator.ts`, `runner/real/laneBudget.ts`,
+`runner/real/wire.ts`, `runner/real/backendPure.ts` (URL/median/ping-need/lane-stagger helpers
+split out of `RealRunner.ts`, mirroring `laneBudget.ts`, so they're testable without pulling in
+`RealRunner.ts`'s build-time `BUILD` defines), `canvas/hoverInterp.ts` and `canvas/gaugeSweep.ts`
+(pure interpolation/mapping math split out of `ChartEngine.ts`/`GaugeEngine.ts`), `runner/evaluation.ts`,
+`runner/schedule.ts`, and `state/stageGuards.ts`. Follow `state/stageGuards.test.ts` as the style
+model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing files or classes
+entangled with I/O the same way `stageGuards.ts`/`backendPure.ts`/`hoverInterp.ts` were extracted,
+if it needs to be unit-tested in isolation.
 
 ---
 
