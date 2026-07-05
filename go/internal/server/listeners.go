@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log"
 	"net"
@@ -13,9 +14,12 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
-	"github.com/zR-JB/graphite-meter/go/internal/rng"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
+
+// downloadBlockSize is the shared immutable download block: 256 KiB — large
+// enough to defeat transport compression while staying L2-cache friendly.
+const downloadBlockSize = 256 * 1024
 
 // BuildMux constructs the shared mux: registered endpoints + the static client
 // at "/". ctx is the server's run context, bounding every WebSocket bus
@@ -30,9 +34,12 @@ func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
 // Run starts the server and blocks until ctx is cancelled, then shuts down
 // gracefully.
 func Run(ctx context.Context, cfg *config.Config) error {
-	// One shared immutable RNG block, generated once: every download serves
-	// slices of it, never regenerating per request.
-	block := rng.NewBlock(rng.BlockSize)
+	// One shared immutable block of incompressible random bytes, filled once:
+	// every download serves slices of it, never regenerating per request.
+	block := make([]byte, downloadBlockSize)
+	if _, err := rand.Read(block); err != nil {
+		return err
+	}
 
 	// Verbose mode: one per-direction throughput logger, each draining its own
 	// 1 Hz goroutine for the run's lifetime. Nil when off — the endpoints'

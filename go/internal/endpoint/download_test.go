@@ -3,6 +3,7 @@ package endpoint
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,21 +11,34 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/zR-JB/graphite-meter/go/internal/rng"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
+
+// testBlockSize is a realistic download-block size for the wrap-around tests
+// (matches the server's 256 KiB block).
+const testBlockSize = 256 * 1024
+
+// randomBlock returns n incompressible random bytes, like the server's shared
+// download block.
+func randomBlock(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return b
+}
 
 // newDownloadServer mounts /download (over the same httpAdapter the real mux
 // uses) backed by a small block so block-wrap is easy to exercise.
 func newDownloadServer(blockSize int) (*httptest.Server, []byte) {
-	block := rng.NewBlock(blockSize)
+	block := randomBlock(blockSize)
 	mux := http.NewServeMux()
 	mux.Handle("/download", httpAdapter(NewDownload(block, nil)))
 	return httptest.NewServer(mux), block
 }
 
 func TestDownloadExactByteCount(t *testing.T) {
-	srv, _ := newDownloadServer(rng.BlockSize)
+	srv, _ := newDownloadServer(testBlockSize)
 	defer srv.Close()
 
 	const want = 1 << 20 // 1 MiB
@@ -53,7 +67,7 @@ func TestDownloadExactByteCount(t *testing.T) {
 }
 
 func TestDownloadDeterministicAndIncompressible(t *testing.T) {
-	srv, block := newDownloadServer(rng.BlockSize)
+	srv, block := newDownloadServer(testBlockSize)
 	defer srv.Close()
 
 	const want = 300 << 10 // 300 KiB > block, so it wraps
@@ -104,7 +118,7 @@ func TestDownloadDefaultsAndClamps(t *testing.T) {
 // TestDownloadContextCancel checks the stream stops promptly when the request
 // context is cancelled mid-flight, without trying to fulfil the full length.
 func TestDownloadContextCancel(t *testing.T) {
-	block := rng.NewBlock(4096)
+	block := randomBlock(4096)
 	dl := NewDownload(block, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
