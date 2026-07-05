@@ -94,6 +94,15 @@ function httpToWs(origin: string): string {
   return origin;
 }
 
+/** Upgrade a ws:// base to wss://, unchanged otherwise. Used to force the
+ *  latency bus encrypted when the page itself loaded over https, regardless
+ *  of what scheme the server-advertised origin guessed at. */
+function wsToWss(base: string): string {
+  return base.startsWith("ws://")
+    ? "wss://" + base.slice("ws://".length)
+    : base;
+}
+
 /** Construction options for a real engine: the endpoint to target plus anything
  *  preflight hands back (e.g. a session token). All optional so the class is
  *  trivial to drop into wire.svelte.ts. */
@@ -1010,13 +1019,27 @@ export class RealBackend implements RunnerBackend {
     this.#pingWorker = w;
   }
 
-  /** Resolve the ws(s):// base for the latency bus: prefer the advertised h1
-   *  origin, else the given endpoint base, else same-origin — each mapped
-   *  http→ws. Takes the endpoint explicitly so it is safe during probe(), before
-   *  the run config exists. */
+  /** Resolve the ws(s):// base for the latency bus: prefer the advertised tls
+   *  origin, else h1, else the given endpoint base, else same-origin — each
+   *  mapped http→ws. Takes the endpoint explicitly so it is safe during
+   *  probe(), before the run config exists.
+   *
+   *  h1 is frequently a guess, not a considered decision — the server derives
+   *  it as `http://<Host>` whenever PUBLIC_H1_ORIGIN isn't set, with zero
+   *  awareness of a TLS-terminating reverse proxy in front of it. The page we
+   *  are RUNNING IN already knows its own scheme with certainty (the browser
+   *  enforced it), so if the page loaded over https, never hand back a ws://
+   *  base sourced from that guess — the browser would block it as mixed
+   *  content anyway. Upgrade to wss:// instead. */
   #resolveWsBase(endpoint?: RunnerConfig["endpoint"]): string {
+    const tls = this.#capabilities?.origins.tls;
+    if (tls) return httpToWs(tls);
+    const pageIsSecure = location.protocol === "https:";
     const h1 = this.#capabilities?.origins.h1;
-    if (h1) return httpToWs(h1);
+    if (h1) {
+      const ws = httpToWs(h1);
+      return pageIsSecure ? wsToWss(ws) : ws;
+    }
     const base = resolveBase(this.#resolveEndpoint(endpoint));
     if (base) return httpToWs(base);
     return httpToWs(location.origin);
