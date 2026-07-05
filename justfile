@@ -86,6 +86,10 @@ client-build-prod:
 client-check:
     cd client && bun run check
 
+# Run the client's unit tests (bun:test)
+client-test:
+    cd client && bun test
+
 # Run the Vite dev server standalone (hot reload, no Go server, no embedding)
 client-watch:
     cd client && bun run dev
