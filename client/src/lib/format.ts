@@ -28,16 +28,6 @@ export function reasonLabel(reason: TerminationReason): string {
   }
 }
 
-/** Convert raw bytesPerSec → display value in active unit (mirrors store.toUnit). */
-export function toDisplaySpeed(
-  bytesPerSec: number,
-  base: "base10" | "base2",
-  kind: "bits" | "bytes",
-): number {
-  const div = base === "base10" ? 1e6 : 2 ** 20;
-  return kind === "bytes" ? bytesPerSec / div : (bytesPerSec * 8) / div;
-}
-
 /** Fixed-width formatting: always returns same char count for a magnitude band
  *  so tabular-nums + this guarantee zero reflow. */
 export function fmtSpeed(v: number): string {
@@ -173,9 +163,9 @@ export function niceCeil(v: number): number {
 }
 
 /** Linear-interpolated quantile (q∈0–1) over a SORTED ascending array.
- *  Single shared implementation — dedupes linerate's two copies (the
- *  `percentile`/`quantile` helpers it scattered across measurement +
- *  LatencyProfile). Returns null for an empty input. */
+ *  Single shared implementation used by both measurement and latency-profile
+ *  code, so percentile math can't drift between the two call sites. Returns
+ *  null for an empty input. */
 export function quantile(sorted: number[], q: number): number | null {
   if (!sorted.length) return null;
   if (sorted.length === 1) return sorted[0];
@@ -187,8 +177,8 @@ export function quantile(sorted: number[], q: number): number | null {
 }
 
 /** "Nice" step (1/2/5 × 10ⁿ) at-or-below `span` — the rung size for a
- *  centered, snapped axis domain. Mirrors linerate's `latencyDomainStep`
- *  but generalized to any magnitude instead of the hard-coded 10/5/2/1. */
+ *  centered, snapped axis domain. Generalized to any magnitude rather than
+ *  a fixed set of hard-coded steps. */
 export function niceStep(span: number): number {
   if (span <= 0) return 1;
   const exp = Math.floor(Math.log10(span));
@@ -205,10 +195,10 @@ export interface NiceDomain {
 }
 
 /** Smart centered, snapped domain for an auto-scaled axis (latency-style).
- *  Lifts linerate's weighted-span math: widen the raw min–max by 1.35×
- *  (and never less than 16% of the peak, nor a small absolute floor), center
- *  it, then snap the bounds out to a nice step. Used by both the chart's
- *  latency axis and the latency profile so they scale identically. */
+ *  Widen the raw min–max by 1.35× (and never less than 16% of the peak, nor
+ *  a small absolute floor) so small fluctuations don't make the axis feel
+ *  cramped, center it, then snap the bounds out to a nice step. Used by both
+ *  the chart's latency axis and the latency profile so they scale identically. */
 export function niceDomain(
   values: number[],
   opts: {
