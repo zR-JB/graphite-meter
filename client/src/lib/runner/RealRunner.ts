@@ -109,7 +109,7 @@ const THROUGHPUT_CADENCE_MS = 60;
 const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024; // 64 GiB
 
 /** Backoff before re-opening a dropped lane, so a persistently-failing stream
- *  can't spin a tight respawn loop (re-creating workers + re-fetching wasm). */
+ *  can't spin a tight respawn loop (re-creating workers). */
 const LANE_RESTART_BACKOFF_MS = 300;
 /** Give up a lane after this many consecutive restarts (≈12 s at the backoff);
  *  the core's max-stall timeout also bounds total patience. */
@@ -1329,8 +1329,8 @@ export class RealBackend implements RunnerBackend {
     }
     if (state.measuring) this.#setLaneStalled(dir, true, detail);
     // Tear the lane down now; re-open it after a backoff so a persistently-
-    // failing stream can't spin a tight respawn loop (re-creating workers +
-    // re-fetching wasm hundreds of times/sec). Give up the run once a lane
+    // failing stream can't spin a tight respawn loop (re-creating workers
+    // hundreds of times/sec). Give up the run once a lane
     // exhausts its restarts — the core's max-stall timeout also bounds patience.
     state.workers[i]?.terminate();
     state.workers[i] = null;

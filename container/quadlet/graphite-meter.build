@@ -11,9 +11,9 @@ Description=Build the Graphite Meter production image (arm64)
 [Build]
 ImageTag=localhost/graphite-meter:latest
 
-# Containerfile + build context. The Dockerfile COPYs client/, go/, api/
-# and crates/, so the context (SetWorkingDirectory) MUST be the repo root, and
-# File= is resolved relative to it.
+# Containerfile + build context. The Dockerfile COPYs client/, go/ and api/,
+# so the context (SetWorkingDirectory) MUST be the repo root, and File= is
+# resolved relative to it.
 #   ▸ Set SetWorkingDirectory to the ABSOLUTE path of your checkout on this host
 #     (quadlet units live in a systemd search dir, not in the repo — see README).
 SetWorkingDirectory=/path/to/graphite-meter

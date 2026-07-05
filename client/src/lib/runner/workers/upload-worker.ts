@@ -3,8 +3,8 @@
  * ============================================================
  *
  * One worker per parallel upload stream. It builds ONE incompressible Blob "pool"
- * with `crypto.getRandomValues` (no WASM — filled once; CSPRNG bytes are
- * indistinguishable from xorshift64* to gzip/br, so incompressibility holds) and
+ * with `crypto.getRandomValues` (filled once; CSPRNG bytes are incompressible to
+ * gzip/br, so incompressibility holds) and
  * POSTs a zero-copy `pool.slice(0, n)` of it in a loop over plain HTTP/1.1 via
  * `fetch`. The SERVER drains + counts the bytes and relays the authoritative count
  * over /ws/upload (see upload-progress-worker.ts); this worker just keeps the lane

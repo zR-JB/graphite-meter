@@ -16,12 +16,6 @@ go/dist/
 go/internal/static/dist/*
 !go/internal/static/dist/.gitkeep
 
-# --- Rust (crates/rng) ---
-crates/**/target
-
-# --- Generated WASM (crates/rng -> client) ---
-client/src/lib/wasm
-
 # --- General ---
 # (no bare `dist` rule — it would shadow the Go embed placeholder negation
 #  above; dist dirs are ignored explicitly per-package.)
