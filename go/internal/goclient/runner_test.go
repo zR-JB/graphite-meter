@@ -2,11 +2,14 @@ package goclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -366,6 +369,199 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 	}
 	if sawError {
 		t.Error("Run emitted EventError for a plain context cancellation")
+	}
+}
+
+// newBidirectionalServer wires up every endpoint the bidirectional stage
+// touches: preflight, a download echo, and the upload session/sink/progress
+// trio (mirroring newFakeUploadServer in upload_test.go).
+func newBidirectionalServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var uploaded atomic.Uint64
+	started := time.Now()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	})
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
+		if err != nil || n <= 0 {
+			n = 64 * 1024
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, n))
+	})
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "bidi-upload"})
+	})
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Body.Read(buf)
+			if n > 0 {
+				uploaded.Add(uint64(n))
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	mux.HandleFunc("/ws/upload", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		ctx := r.Context()
+		bye := make(chan struct{})
+		go func() {
+			for {
+				_, msg, err := conn.Read(ctx)
+				if err != nil {
+					close(bye)
+					return
+				}
+				if f, derr := wire.Decode(string(msg)); derr == nil && f.Op == wire.OpBYE {
+					close(bye)
+					return
+				}
+			}
+		}()
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-bye:
+				n, active := uploaded.Load(), uint64(time.Since(started))
+				_ = conn.Write(context.Background(), websocket.MessageText,
+					[]byte(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: n, Nanos: active})))
+				return
+			case <-ticker.C:
+				n, active := uploaded.Load(), uint64(time.Since(started))
+				_ = conn.Write(ctx, websocket.MessageText,
+					[]byte(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})))
+			}
+		}
+	})
+	return httptest.NewServer(mux)
+}
+
+// TestRunBidirectionalStageEndToEnd checks the download and upload lanes run
+// concurrently without interfering: each reports its own non-zero Result, at
+// both a single stream and the ParallelStreams clamp ceiling from
+// Config.normalized().
+func TestRunBidirectionalStageEndToEnd(t *testing.T) {
+	cases := []struct {
+		name    string
+		streams int
+	}{
+		{"single stream", 1},
+		{"clamped to the max of 128", 999},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := newBidirectionalServer(t)
+			defer srv.Close()
+
+			cfg := Config{
+				BaseURL:                srv.URL,
+				Stages:                 StageSet{Bidirectional: true},
+				Warmup:                 0,
+				BidirectionalDuration:  150 * time.Millisecond,
+				ParallelStreams:        c.streams,
+				DownloadBytesPerStream: 16 * 1024,
+				UploadProgressSettle:   20 * time.Millisecond,
+			}
+
+			var mu sync.Mutex
+			var results []Result
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := Run(ctx, cfg, func(e Event) {
+				if e.Kind == EventResult {
+					mu.Lock()
+					results = append(results, *e.Result)
+					mu.Unlock()
+				}
+			}); err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			var sawDown, sawUp bool
+			for _, res := range results {
+				if res.Stage != "bidirectional" {
+					t.Errorf("Result.Stage = %q, want bidirectional", res.Stage)
+				}
+				switch res.Direction {
+				case Down:
+					sawDown = true
+					if res.TotalBytes == 0 {
+						t.Error("download lane reported zero bytes")
+					}
+				case Up:
+					sawUp = true
+					if res.TotalBytes == 0 {
+						t.Error("upload lane reported zero bytes")
+					}
+				}
+			}
+			if !sawDown || !sawUp {
+				t.Fatalf("want both a download and an upload Result, got %+v", results)
+			}
+		})
+	}
+}
+
+// TestRunTransferStageFanInErrorCancelsSiblingLane checks that when one lane
+// of a transfer stage fails, its sibling — still actively transferring — is
+// cancelled promptly rather than left running until its own duration expires.
+func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
+	var downloadBytesServed atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
+		if err != nil || n <= 0 {
+			n = 64 * 1024
+		}
+		downloadBytesServed.Add(n)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, n))
+	})
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
+		// Give the download lane time to get well into transferring before
+		// the upload side fails, so the failure genuinely lands mid-transfer
+		// for its sibling rather than racing it at start-up.
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	begin := time.Now()
+	err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, 3*time.Second)
+	if err == nil {
+		t.Fatal("want an error surfaced from the failed upload session mint")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Errorf("err = %v, want it to mention the upload session's HTTP 500", err)
+	}
+	if elapsed := time.Since(begin); elapsed > 2*time.Second {
+		t.Errorf("runTransferStage took %v to return after a sibling lane errored, want prompt cancellation well under the 3s duration", elapsed)
+	}
+	if downloadBytesServed.Load() == 0 {
+		t.Error("download lane made no progress before the sibling upload lane's error; test didn't exercise a genuine mid-transfer cancellation")
 	}
 }
 
