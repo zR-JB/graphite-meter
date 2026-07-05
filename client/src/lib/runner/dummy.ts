@@ -152,7 +152,7 @@ export class DummyBackend implements RunnerBackend {
   // it the dummy pushes NO samples — true dead air — so the core's watchdog
   // doesn't immediately auto-resume us. We stall() on inject and resume() once
   // wall-clock passes the window's end. Real-time (not measured-time) because
-  // measured-time freezes during the stall, so it could never reach the end. */
+  // measured-time freezes during the stall, so it could never reach the end.
   #dropEndReal = 0; // performance.now() the drop lifts at, or 0 when not dropped
 
   constructor(opts: DummyOptions = {}) {
