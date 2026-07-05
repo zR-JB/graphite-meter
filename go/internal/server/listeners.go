@@ -1,6 +1,6 @@
 // Package server wires the registry + static handler into the shared mux and
-// runs the listeners. Stage 1 runs only the HTTP/1.1 listener; the TLS/h3
-// (WebTransport) listeners are added in Stage 5, gated by Config.AdvertiseH3.
+// runs the listener. Only HTTP/1.1 is served today; TLS/h3 (WebTransport) are
+// reserved for a later stage — see docs/ARCHITECTURE.md#roadmap.
 package server
 
 import (
@@ -18,8 +18,8 @@ import (
 )
 
 // BuildMux constructs the shared mux: registered endpoints + the static client
-// at "/". The same mux is reused by every listener (h1/h2/h3) in later stages.
-// ctx is the server's run context, bounding every WebSocket bus handler's lifetime.
+// at "/". ctx is the server's run context, bounding every WebSocket bus
+// handler's lifetime.
 func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
 	mux := http.NewServeMux()
 	reg.Mount(ctx, mux)
@@ -46,9 +46,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		log.Printf("[gm:server] verbose throughput logging enabled")
 	}
 
-	// Per-id upload aggregate store: correlates the upload's POST lanes with its
-	// /ws/upload progress socket (separate connections, same minted ?id=) into one
-	// server-authoritative drained-byte count. Its sweeper reaps idle test state.
+	// uploadStore correlates an upload's POST lanes with its /ws/upload progress
+	// socket (same minted ?id=, separate connections) into one authoritative
+	// drained-byte count; its sweeper reaps idle test state.
 	uploadStore := endpoint.NewUploadStore()
 	go uploadStore.RunSweeper(ctx)
 
@@ -63,19 +63,22 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	mux := BuildMux(ctx, reg)
 
 	srv := &http.Server{
-		Addr:              cfg.H1Addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		// TCP_NODELAY on every accepted conn: a single ping
-		// frame on the /ws/ping latency bus must not sit in Nagle's buffer waiting
-		// to coalesce. Go's net package already defaults NoDelay=true; we set it
-		// explicitly because it is normative for accurate sub-ms latency.
+		// Go already defaults NoDelay=true, but a /ws/ping latency frame must
+		// never sit in Nagle's buffer, so make TCP_NODELAY explicit rather than
+		// relying on the default.
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			if tc, ok := c.(*net.TCPConn); ok {
 				_ = tc.SetNoDelay(true)
 			}
 			return ctx
 		},
+	}
+
+	ln, err := net.Listen("tcp", cfg.H1Addr)
+	if err != nil {
+		return err
 	}
 
 	// Graceful shutdown on ctx cancel.
@@ -87,7 +90,14 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}()
 
 	log.Printf("graphite-meter %s listening on %s (http/1.1)", cfg.EngineVersion, cfg.H1Addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	return serve(ln, srv)
+}
+
+// serve runs srv over an already-created listener, so tests can drive it
+// against an ephemeral port. Mirrors ListenAndServe's error handling: a
+// listener close is the expected shutdown path, not a failure.
+func serve(ln net.Listener, srv *http.Server) error {
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

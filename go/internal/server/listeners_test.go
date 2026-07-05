@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -57,5 +60,44 @@ func TestBuildMuxFallsThroughToStaticAtRoot(t *testing.T) {
 	// decides to serve for "/" (that logic is embed_test.go's job).
 	if got := rec.Body.String(); got == "fake-endpoint-response" {
 		t.Fatalf("body = %q, want the static handler's response, not the endpoint's", got)
+	}
+}
+
+func TestServeHandlesRequestsOverAnExplicitListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "pong")
+	})
+	srv := &http.Server{Handler: mux}
+
+	done := make(chan error, 1)
+	go func() { done <- serve(ln, srv) }()
+
+	resp, err := http.Get("http://" + ln.Addr().String() + "/ping")
+	if err != nil {
+		t.Fatalf("GET /ping: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(body) != "pong" {
+		t.Fatalf("body = %q, want %q", body, "pong")
+	}
+
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("serve returned %v, want a closed-listener error", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serve did not return after the listener closed")
 	}
 }
