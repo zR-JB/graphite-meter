@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -29,6 +30,28 @@ func TestCyclingBodyWrapsDeterministically(t *testing.T) {
 	want := []byte{1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2}
 	if !bytes.Equal(buf, want) {
 		t.Errorf("Read = %v, want %v", buf, want)
+	}
+}
+
+func TestCyclingBodyStopsAtLimit(t *testing.T) {
+	// limit exercises the fixed-Content-Length path: the body emits exactly
+	// `limit` bytes (wrapping the block) and then reports io.EOF.
+	b := &cyclingBody{ctx: context.Background(), block: []byte{1, 2, 3}, limit: 7}
+	var got []byte
+	buf := make([]byte, 4)
+	for {
+		n, err := b.Read(buf)
+		got = append(got, buf[:n]...)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read: %v", err)
+		}
+	}
+	want := []byte{1, 2, 3, 1, 2, 3, 1}
+	if !bytes.Equal(got, want) {
+		t.Errorf("emitted %v, want %v (exactly limit bytes then EOF)", got, want)
 	}
 }
 

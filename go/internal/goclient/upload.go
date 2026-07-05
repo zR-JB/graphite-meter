@@ -125,13 +125,18 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		q.Set("lane", strconv.Itoa(lane))
 		q.Set("cb", strconv.FormatInt(time.Now().UnixNano(), 10))
 		u.RawQuery = q.Encode()
-		body := &cyclingBody{ctx: ctx, block: block}
+		// A fixed Content-Length body (mirroring the download's fixed-size GET),
+		// NOT a chunked stream: a chunked request forces the server to drain the
+		// body through its chunk-framing reader in small pieces, roughly halving
+		// upload throughput on a fast link. A known length lets the server read
+		// large slices straight from the socket, so up matches down.
+		body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
 		if err != nil {
 			return
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
-		req.ContentLength = -1
+		req.ContentLength = r.cfg.UploadBytesPerStream
 		res, err := r.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -144,15 +149,28 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 	}
 }
 
+// cyclingBody is a request body that repeats block until it has emitted limit
+// bytes, then returns io.EOF — so the POST carries an exact Content-Length. A
+// limit <= 0 cycles without end.
 type cyclingBody struct {
 	ctx   context.Context
 	block []byte
 	off   int
+	limit int64 // total bytes to emit before EOF; <= 0 means unbounded
+	sent  int64
 }
 
 func (b *cyclingBody) Read(p []byte) (int, error) {
 	if err := b.ctx.Err(); err != nil {
 		return 0, err
+	}
+	if b.limit > 0 {
+		if b.sent >= b.limit {
+			return 0, io.EOF
+		}
+		if rem := b.limit - b.sent; int64(len(p)) > rem {
+			p = p[:rem]
+		}
 	}
 	n := 0
 	for n < len(p) {
@@ -163,6 +181,7 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 			b.off = 0
 		}
 	}
+	b.sent += int64(n)
 	return n, nil
 }
 

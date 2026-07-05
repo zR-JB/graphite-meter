@@ -26,6 +26,11 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
 		ExpectContinueTimeout: cfg.ExpectContinueTimeout,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
+		// 256 KiB socket buffers (vs the 4 KiB default) so a saturated link moves
+		// each direction in large reads/writes instead of thousands of tiny
+		// syscalls — the upload write side felt this most (see uploadLane).
+		WriteBufferSize: 256 * 1024,
+		ReadBufferSize:  256 * 1024,
 	}
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr}
