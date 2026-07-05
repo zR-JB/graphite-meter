@@ -147,7 +147,7 @@ function uploadTotalBudget(): number {
  *  429 (rate-limited) / 413 (too large) / 503 (unavailable) / 410 (gone) are
  *  terminal for this run — re-POSTing just hammers a server that won't take it.
  *  Everything else (incl. 500 and any network/abort error) is treated transient. */
-function recoverableStatus(status: number): boolean {
+export function recoverableStatus(status: number): boolean {
   return !(
     status === 429 ||
     status === 413 ||

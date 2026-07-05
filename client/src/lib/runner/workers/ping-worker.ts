@@ -41,6 +41,13 @@
  * ============================================================ */
 
 import { encode, decode } from "../real/wire";
+import {
+  observeRtt,
+  lossTimeout,
+  INITIAL_RTT_ESTIMATE,
+  type RttEstimate,
+} from "./rttEstimator";
+import { nextBackoff } from "./backoff";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
  *  reporting on for the SAME warmed socket AND swaps the live cadence to the
@@ -125,10 +132,8 @@ let lastSendAt = 0;
 let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
 let outbox: { rtt: number; lost: boolean }[] = [];
 
-// Adaptive RTT estimator (RFC 6298, ms).
-let srtt = 0;
-let rttvar = 0;
-let haveRtt = false;
+// Adaptive RTT estimator (RFC 6298, ms) — see rttEstimator.ts.
+let rttEstimate: RttEstimate = INITIAL_RTT_ESTIMATE;
 
 // Connection state.
 let backoff = 0;
@@ -220,8 +225,7 @@ function scheduleReconnect(detail: string): void {
     post({ type: "stall", detail });
     stalledOut = true;
   }
-  backoff =
-    backoff === 0 ? RECONNECT_MIN_MS : Math.min(backoff * 2, RECONNECT_MAX_MS);
+  backoff = nextBackoff(backoff, RECONNECT_MIN_MS, RECONNECT_MAX_MS);
   reconnectTimer = setTimeout(connect, backoff);
 }
 
@@ -256,7 +260,7 @@ function onFrame(data: unknown): void {
   if (sent !== undefined) {
     pending.delete(f.id);
     const rtt = recv - sent;
-    observeRtt(rtt); // ALWAYS — keeps the loss-timeout estimator accurate
+    rttEstimate = observeRtt(rttEstimate, rtt); // ALWAYS — keeps the loss-timeout estimator accurate
     // Downsample the UI-bound stream: on a fast link the on-receive chain fires
     // far faster than any chart needs (~1 kHz on localhost), so report at most
     // one sample per reportGapMs. The pings stay fast (responsiveness + a full
@@ -278,7 +282,7 @@ function onFrame(data: unknown): void {
   const late = graveyard.get(f.id);
   if (late !== undefined) {
     graveyard.delete(f.id);
-    observeRtt(recv - late);
+    rttEstimate = observeRtt(rttEstimate, recv - late);
     maybeSend(recv);
   }
   // else: unknown / duplicate id — ignore.
@@ -323,29 +327,9 @@ function trySend(msg: string): void {
   }
 }
 
-/** Fold an RTT into the SRTT/RTTVAR estimator (RFC 6298, α=1/8, β=1/4). */
-function observeRtt(r: number): void {
-  if (!haveRtt) {
-    srtt = r;
-    rttvar = r / 2;
-    haveRtt = true;
-    return;
-  }
-  rttvar = 0.75 * rttvar + 0.25 * Math.abs(srtt - r);
-  srtt = 0.875 * srtt + 0.125 * r;
-}
-
-/** The adaptive loss timeout: RTO = SRTT + K·RTTVAR, clamped to [floor, ceil].
- *  Before the first sample the floor governs (cold start). */
-function lossTimeout(): number {
-  if (!haveRtt) return lossFloorMs;
-  const rto = srtt + lossK * Math.max(1, rttvar);
-  return Math.min(Math.max(rto, lossFloorMs), LOSS_CEIL_MS);
-}
-
 function sweep(): void {
   const now = performance.now();
-  const timeout = lossTimeout();
+  const timeout = lossTimeout(rttEstimate, lossK, lossFloorMs, LOSS_CEIL_MS);
   let evicted = false;
   for (const [id, sent] of pending) {
     if (now - sent > timeout) {

@@ -74,34 +74,14 @@ import type { Preflight } from "../api/preflight";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
 import { laneBudget, BROWSER_CONN_BUDGET } from "./real/laneBudget";
-
-/** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
- *  same-origin (relative requests) — the Stage-1 case where the Go server serves
- *  both the app and the API. A concrete host builds an absolute origin. */
-export function resolveBase(endpoint?: RunnerConfig["endpoint"]): string {
-  if (!endpoint || endpoint.host === "auto" || endpoint.host === "") return "";
-  const scheme = endpoint.port === 443 ? "https" : "http";
-  return `${scheme}://${endpoint.host}:${endpoint.port}`;
-}
-
-/** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything
- *  already ws(s):// (or relative) passes through unchanged. */
-export function httpToWs(origin: string): string {
-  if (origin.startsWith("https://"))
-    return "wss://" + origin.slice("https://".length);
-  if (origin.startsWith("http://"))
-    return "ws://" + origin.slice("http://".length);
-  return origin;
-}
-
-/** Upgrade a ws:// base to wss://, unchanged otherwise. Used to force the
- *  latency bus encrypted when the page itself loaded over https, regardless
- *  of what scheme the server-advertised origin guessed at. */
-export function wsToWss(base: string): string {
-  return base.startsWith("ws://")
-    ? "wss://" + base.slice("ws://".length)
-    : base;
-}
+import {
+  resolveBase,
+  httpToWs,
+  wsToWss,
+  median,
+  needsPings,
+  laneStaggerMs,
+} from "./real/backendPure";
 
 /** Construction options for a real engine: the endpoint to target plus anything
  *  preflight hands back (e.g. a session token). All optional so the class is
@@ -150,22 +130,9 @@ const UPLOAD_SESSION_TIMEOUT_MS = 3000;
  *  staggered lanes this is ≤300 ms, comfortably inside the warmup window. */
 const LANE_STAGGER_MS = 75;
 
-/** Connections kept free of POST lanes: ONLY the buses this phase needs
- *  (/ws/ping, /ws/upload) each take one. No extra reserve is held — the data
- *  lanes are keep-alive and reuse their connection on respawn, and the preflight
- *  OPTIONS completes before the transfer phase opens, so neither contends with a
- *  bus frame during measurement. Reserving a phantom slot here would silently
- *  drop every phase one lane below the requested budget. */
 /** Grace after BYE for the /ws/upload worker to flush + receive UPLOAD_COMPLETE
  *  before we terminate it (the client headline is already set, so we don't block). */
 const PROGRESS_BYE_GRACE_MS = 1000;
-
-/** Median of a non-empty number list (used for the pre-test ping). */
-export function median(xs: number[]): number {
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
 
 /* ---------- Latency (ping) tuning, handed to the ping worker ---------- */
 /** Pacer interval per pingConcurrency knob — the floor send rate that keeps
@@ -542,7 +509,7 @@ export class RealBackend implements RunnerBackend {
     // it separately (and first) so a loaded transfer stage's fetch-stream kind can
     // never reach #primeLatencyChannel (which only services websocket), and so
     // #activeTransport ends as the transfer kind for the lanes' stall reporting.
-    if (this.#needsPings(activity)) {
+    if (needsPings(activity)) {
       const pingKind = this.#negotiateTransport("latency");
       if (pingKind) {
         this.#primeLatencyChannel(pingKind, activity.stage === "latency");
@@ -583,7 +550,7 @@ export class RealBackend implements RunnerBackend {
   onStageMeasure(activity: PhaseActivity): void {
     const underLoad = activity.transfer.length > 0;
     for (const dir of activity.transfer) this.#measureTransfer(dir);
-    if (this.#needsPings(activity)) this.#measureLatency(underLoad);
+    if (needsPings(activity)) this.#measureLatency(underLoad);
   }
 
   /** A stage's measured window has ended (boundary, early finish, or run end).
@@ -597,15 +564,6 @@ export class RealBackend implements RunnerBackend {
     this.#teardownTransfer();
     this.#teardownLatency();
     this.#stalled = false; // a stale latch must not swallow the next stage's stall
-  }
-
-  /** Whether a stage runs a ping channel: the idle latency stage, or a transfer
-   *  stage with loaded latency (bufferbloat) active. */
-  #needsPings(activity: PhaseActivity): boolean {
-    return (
-      activity.stage === "latency" ||
-      (activity.transfer.length > 0 && activity.loadedLatency)
-    );
   }
 
   /** The run finished normally. Close anything still open. */
@@ -685,11 +643,6 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= PRIME (warmup window) — open, don't measure ================= */
-  /** Open `config.parallelStreams` transfer stream(s) for `dir` over `kind`
-   *  (`GET {path}/download?bytes=N` for "down", `POST {path}/upload` streamed body
-   *  for "up", or webtransport) and run priming bytes to warm the path (TCP
-   *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
-   *  stay open for #measureTransfer to start measuring on the SAME connection. */
   /** Parallel POST lanes for `dir` this stage, derived from (phase, direction,
    *  features, transport) — no manual count. On HTTP/1.1 each lane is its own
    *  TCP connection filling the BDP, so we carve them from the per-origin pool
@@ -708,7 +661,7 @@ export class RealBackend implements RunnerBackend {
       kind,
       transfer: activity.transfer,
       dir,
-      needsPing: this.#needsPings(activity),
+      needsPing: needsPings(activity),
       ceiling: this.#laneCeiling(),
     });
   }
@@ -720,6 +673,11 @@ export class RealBackend implements RunnerBackend {
     return max > 0 ? max : BROWSER_CONN_BUDGET;
   }
 
+  /** Open `config.parallelStreams` transfer stream(s) for `dir` over `kind`
+   *  (`GET {path}/download?bytes=N` for "down", `POST {path}/upload` streamed body
+   *  for "up", or webtransport) and run priming bytes to warm the path (TCP
+   *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
+   *  stay open for #measureTransfer to start measuring on the SAME connection. */
   #primeTransfer(
     kind: TransportKind,
     dir: FlowDirection,
@@ -739,13 +697,11 @@ export class RealBackend implements RunnerBackend {
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
     // half the warmup; 0 when there's no warmup (lanes spawn together rather than
     // bleeding into the measured window).
-    const laneStaggerMs =
-      streams > 1
-        ? Math.min(
-            LANE_STAGGER_MS,
-            Math.floor((cfg.duration.warmupMs * 0.5) / (streams - 1)),
-          )
-        : 0;
+    const staggerMs = laneStaggerMs(
+      streams,
+      cfg.duration.warmupMs,
+      LANE_STAGGER_MS,
+    );
     // Experimental: the download worker requests adaptive chunks itself, so omit the
     // baked-in ?bytes= and let it append &bytes=N per fetch (see download-worker.ts).
     const chunkDownload = dir === "down" && cfg.experimentalChunkedDownload;
@@ -755,7 +711,7 @@ export class RealBackend implements RunnerBackend {
       stage: activity.stage,
       laneCount,
       chunkDownload,
-      laneStaggerMs,
+      laneStaggerMs: staggerMs,
       workers: [],
       streamUrls: [],
       pendingLaneBytes: [],
@@ -1407,9 +1363,9 @@ export class RealBackend implements RunnerBackend {
    *  flag reported to the host. Bidirectional's two directions are combined
    *  with AND: the stage is stalled only once EVERY currently-primed direction
    *  is — one lane hiccuping while the other still moves bytes must not freeze
-   *  measured-time or surface a warning (confirmed UX decision). A
-   *  single-direction stage has exactly one entry in `#lanes`, so this reduces
-   *  to that lane's own stalled state — no behavior change there. */
+   *  measured-time or surface a warning. A single-direction stage has exactly
+   *  one entry in `#lanes`, so this reduces to that lane's own stalled state —
+   *  no behavior change there. */
   #setLaneStalled(dir: FlowDirection, stalled: boolean, detail?: string): void {
     const state = this.#lanes[dir];
     if (!state || state.stalled === stalled) return;

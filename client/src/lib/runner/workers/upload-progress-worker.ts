@@ -16,6 +16,7 @@
  * ============================================================ */
 
 import { encode, decode } from "../real/wire";
+import { nextBackoff } from "./backoff";
 
 type InMsg = { type: "start"; url: string } | { type: "stop" };
 // `t` is the server's ACTIVE measurement time (ns the server was actually draining
@@ -126,8 +127,7 @@ function scheduleReconnect(detail: string): void {
     post({ type: "stall", detail });
     stalledOut = true;
   }
-  backoff =
-    backoff === 0 ? RECONNECT_MIN_MS : Math.min(backoff * 2, RECONNECT_MAX_MS);
+  backoff = nextBackoff(backoff, RECONNECT_MIN_MS, RECONNECT_MAX_MS);
   reconnectTimer = setTimeout(connect, backoff);
 }
 
