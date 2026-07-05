@@ -15,9 +15,7 @@ ARG SERVER_IMPL=go
 ARG VERSION=0.1.0
 
 # ---------------------------------------------------------------------------
-# Stage: client — build the Svelte app with bun. (No WASM stage: upload-worker.ts
-# fills its payload with crypto.getRandomValues; crates/rng is kept in the repo
-# only for the conformance pin / a future WebTransport path, not the bundle.)
+# Stage: client — build the Svelte app with bun.
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:canary AS client
 # Build-time client config (override with --build-arg). Defaults = production:

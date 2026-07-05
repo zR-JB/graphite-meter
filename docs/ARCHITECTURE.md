@@ -21,13 +21,10 @@ go/                           Go module: the measurement server + a native Bubbl
   internal/transport/         The Session abstraction (HTTP vs WebSocket vs, later, WebTransport).
   internal/wire/              Shared wire-protocol types (frames, opcodes, preflight structs).
   internal/goclient/          The native TUI client's measurement engine (shares the wire protocol).
-  internal/rng/               The server's own RNG block generator (Go port, still load-bearing).
   internal/static/            //go:embed wrapper that serves the built Svelte client.
 api/                          Cross-language contract, source of truth for client/server agreement:
                                  preflight.schema.json / preflight.golden.json  — GET /preflight shape
                                  wire.md / wire.testvectors.txt                — WS/WT message protocol
-                                 rng.testvectors.txt                           — byte-exact RNG corpus
-crates/rng/                   Legacy/reference Rust port of the RNG (see "About crates/rng" below).
 container/                    Deployment: image-based docker-compose.yml + quadlet unit (default),
                                the multi-stage Dockerfile, and build-from-source variants.
 ```
@@ -53,7 +50,7 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 ## The Go measurement server
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
-builds one shared immutable 256 KiB RNG block at startup (`internal/rng`), wires every endpoint
+builds one shared immutable 256 KiB block of `crypto/rand` bytes at startup, wires every endpoint
 onto a `Registry`, and starts exactly one listener: plain HTTP/1.1 on `Config.H1Addr` (default
 `:8765`). `TCP_NODELAY` is forced on every accepted connection so a single ping frame never sits
 in Nagle's buffer waiting to coalesce.
@@ -63,7 +60,7 @@ in Nagle's buffer waiting to coalesce.
 | Path | Method | Transport | Purpose |
 | --- | --- | --- | --- |
 | `/preflight` | GET | HTTP/1.1, JSON | Server identity, negotiated protocol, and a `capabilities` block (advertised origins/transports/endpoint paths) the client negotiates against instead of hardcoding. |
-| `/download` | GET | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared RNG block — never regenerated per request. |
+| `/download` | GET | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request. |
 | `/upload/session` | POST | HTTP/1.1, JSON | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket. |
 | `/upload` | POST | HTTP/1.1, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below). |
 | `/ws/ping` | WS upgrade | WebSocket | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side. |
@@ -124,8 +121,8 @@ request/response) and `websocketSession` (message bus). A WebTransport session i
 interface's doc comments as the intended third implementation but does not exist yet.
 
 `internal/config`, `internal/transport`, `internal/server`, `internal/static`, and
-`internal/endpoint/registry.go` have unit tests alongside the rest of `internal/endpoint`,
-`internal/wire`, and `internal/rng` — run with `just server-test`.
+`internal/endpoint/registry.go` have unit tests alongside the rest of `internal/endpoint`
+and `internal/wire` — run with `just server-test`.
 
 ---
 
@@ -307,25 +304,6 @@ if it needs to be unit-tested in isolation.
   `GM_ADVERTISE_H3`, `PUBLIC_TLS_ORIGIN`, `PUBLIC_H3_ORIGIN` all exist in `internal/config` and
   are read at startup, but no TLS or HTTP/3 listener is ever started — setting them today has no
   effect.
-
----
-
-## About `crates/rng`
-
-`crates/rng` is a Rust port of the server's scrambled-counter xorshift64* generator, kept
-byte-exact against `api/rng.testvectors.txt` alongside the Go port in `go/internal/rng`. It
-predates the current upload path: the browser client used to fill its upload payload with a WASM
-build of this generator. It no longer does — `upload-worker.ts` now fills a reusable payload block
-with `crypto.getRandomValues` once and slices it, since a reused buffer is never regenerated on
-the hot path anyway, and CSPRNG bytes are just as incompressible as the xorshift output. The crate
-is kept in the repository purely as a reference and as the byte-exact conformance pin for the Go
-port (and as a possible starting point for a future WebTransport payload path — see Roadmap); it
-is not part of the client build, the Docker image, or any required dependency of the standard
-`just` workflow. `just test-rng` still runs its own conformance test if you have a Rust toolchain
-and want to check it, but nothing else in the repository depends on it.
-
-The Go server's own RNG package (`go/internal/rng`), by contrast, is not legacy — it generates the
-one shared immutable block every `/download` response is sliced from, at server startup.
 
 ---
 

@@ -10,9 +10,6 @@ image, see the [README quick start](../README.md#quick-start).
 - **[`just`](https://github.com/casey/just)** — every workflow in this repo goes through the
   `justfile`. Run `just` with no arguments to list every recipe.
 
-A Rust toolchain is **not** required for normal development, building, or running the app — see
-["About `crates/rng`"](ARCHITECTURE.md#about-cratesrng).
-
 ## Clone
 
 ```sh
@@ -60,7 +57,6 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just goclient-build` | Builds only `go/graphite-meter-client` — does not touch the Svelte client. |
 | `just goclient-run` | `go run`s the native TUI client against a running server. |
 | `just container-build` | `docker build -f container/Dockerfile -t graphite-meter:latest .` |
-| `just test-rng` | Runs the legacy Rust RNG crate's own conformance test. Optional; requires a Rust toolchain only if you run it. |
 
 `just prod` and `just client-build-prod` accept the `GM_CLIENT_*` knobs inline to produce a
 configurable build instead of the real-only default, e.g.:
