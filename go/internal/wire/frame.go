@@ -1,27 +1,29 @@
 package wire
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // Frame is a parsed message-bus frame (api/wire.md). It is a flat union: only
 // the fields relevant to Op are meaningful. Decode/Encode are byte-exact against
 // the shared corpus api/wire.testvectors.txt — the cross-language contract.
 type Frame struct {
-	Op    string // one of the Op* keyword constants (opcodes.go)
-	ID    uint32 // PING / PONG  — client-owned monotonic id, echoed verbatim
-	Nanos uint64 // PONG / BYTES_RECEIVED / UPLOAD_COMPLETE — ns in the TIME sub-field
-	Bytes uint64 // SIZE         — requested byte count
+	Op string // one of the Op* keyword constants (opcodes.go)
+	ID uint32 // PING / PONG — client-owned monotonic id, echoed verbatim
+	// Nanos is the TIME sub-field; meaning depends on Op:
+	//   • PONG: server's raw monotonic clock (ns), for the RTT echo.
+	//   • BYTES_RECEIVED / UPLOAD_COMPLETE: server's ACTIVE measurement clock (ns
+	//     bytes were actually flowing for this id, dead zones excluded), sampled
+	//     alongside N. The client derives upload rate as Δn/Δnanos over this
+	//     clock — never its own arrival clock — so stalls/reconnects can't skew
+	//     it (go/internal/endpoint/upload_store.go: activeNanos).
+	Nanos uint64
+	Bytes uint64 // SIZE — requested byte count
 	N     uint64 // BYTES_RECEIVED / UPLOAD_COMPLETE — server-measured byte total
-	// Nanos is the TIME sub-field, but its meaning differs by opcode:
-	//   • PONG: the server's raw monotonic clock (ns), for the RTT echo.
-	//   • BYTES_RECEIVED / UPLOAD_COMPLETE: the aggregate's ACTIVE measurement clock
-	//     (ns the server was actually draining bytes for this id, dead zones excluded),
-	//     sampled at the same instant as N. The client derives the upload rate as
-	//     Δn / Δnanos over this SERVER active clock — never its own arrival clock and
-	//     never a wall span across frames, so stalls/reconnects/early-finish can't
-	//     skew the denominator (go/internal/endpoint/upload_store.go: activeNanos).
-	Proto string // HI           — "ws" | "wt"
-	Code  string // ERR          — short error token
-	Text  string // ERR          — human detail
+	Proto string // HI — "ws" | "wt"
+	Code  string // ERR — short error token
+	Text  string // ERR — human detail
 }
 
 // timeField is the keyword that prefixes the nanos arg inside a PONG frame:
@@ -150,10 +152,8 @@ func Encode(f Frame) string {
 }
 
 // parseCountTime parses the "<n>;TIME,<nanos>" body shared by BYTES_RECEIVED and
-// UPLOAD_COMPLETE: a cumulative server byte total plus the server's ACTIVE
-// measurement time (ns bytes were actually flowing for this id, dead zones excluded)
-// at which it was sampled. The ;TIME sub-field reuses PONG's framing so the client
-// derives upload rate over server time. op names the frame for the error token.
+// UPLOAD_COMPLETE (see Frame.Nanos for what the TIME value measures). op names
+// the frame for the error token.
 func parseCountTime(rest, op string) (n, nanos uint64, err error) {
 	nStr, tail := cut(rest, ';')
 	if n, ok := parseU64(nStr); ok {
@@ -172,10 +172,8 @@ func parseCountTime(rest, op string) (n, nanos uint64, err error) {
 // cut splits s at the first occurrence of sep into (before, after). When sep is
 // absent, before is the whole string and after is empty.
 func cut(s string, sep byte) (before, after string) {
-	for i := 0; i < len(s); i++ {
-		if s[i] == sep {
-			return s[:i], s[i+1:]
-		}
+	if i := strings.IndexByte(s, sep); i >= 0 {
+		return s[:i], s[i+1:]
 	}
 	return s, ""
 }
