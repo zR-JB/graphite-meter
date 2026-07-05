@@ -299,7 +299,7 @@ export class GaugeEngine implements CanvasEngine {
 
     // Latency ripples: concentric rings expanding from the hub (skip in
     // reduced-motion — purely decorative). Drawn first so the track groove
-    // overdraws them, exactly as before.
+    // overdraws them.
     if (!this.#reduced) {
       for (const t of this.#ripples) {
         const age = (now - t) / RIPPLE_MS; // 0–1

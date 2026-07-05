@@ -382,8 +382,8 @@
     .panel-layer.open:not(.docked) .panel {
       transform: translateY(0);
     }
-    /* Unlike the old full-screen flyout, a bottom sheet leaves real page
-       exposed above it — keep the backdrop so that area still dims. */
+    /* A bottom sheet leaves real page exposed above it — keep the
+       backdrop so that area still dims. */
   }
 
   @media (prefers-reduced-motion: reduce) {

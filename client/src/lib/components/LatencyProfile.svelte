@@ -1,8 +1,9 @@
 <script lang="ts">
   /* ============================================================
    * <LatencyProfile> — native latency distribution lanes
-   * Ports linerate's SVG LatencyProfile to token-styled DOM — NO
-   * <svg>. Three lanes (idle / loaded-down / loaded-up), each with
+   * Renders the latency distribution as token-styled DOM — NO
+   * <svg> — so lane colors and typography track the design tokens
+   * directly. Three lanes (idle / loaded-down / loaded-up), each with
    * a min–max range bar, a P10–P90 band, an average marker, a
    * current marker, and a striped loss indicator + hover readout.
    * Stats come from the store's shared `latencyLanes` derived (which
