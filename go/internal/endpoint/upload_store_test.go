@@ -212,3 +212,203 @@ func TestUploadStoreDeleteIdempotent(t *testing.T) {
 		t.Errorf("live = %d after idempotent deletes, want 0", s.live.Load())
 	}
 }
+
+// TestUploadStoreSweepBoundary checks the sweeper's idle-cutoff comparison
+// near the TTL edge: an aggregate touched just inside the TTL survives, one
+// touched just past it is reaped. (An exact-nanosecond tie isn't asserted —
+// sweep's own monoNanos() call advances between statements, so a true tie is
+// inherently racy; a safe margin on both sides still pins down the same
+// "< cutoff" comparison sweep uses.)
+func TestUploadStoreSweepBoundary(t *testing.T) {
+	s := NewUploadStore()
+	const ttl = 200 * time.Millisecond
+	const margin = 50 * time.Millisecond
+	now := monoNanos()
+
+	s.markIssued("survivor")
+	survivor, _ := s.getOrCreate("survivor")
+	survivor.lastTouchMono.Store(now - int64(ttl) + int64(margin)) // idle age < ttl
+
+	s.markIssued("expired")
+	expired, _ := s.getOrCreate("expired")
+	expired.lastTouchMono.Store(now - int64(ttl) - int64(margin)) // idle age > ttl
+
+	s.sweep(ttl)
+
+	if _, ok := s.get("survivor"); !ok {
+		t.Error("aggregate just inside the TTL was reaped, want survival")
+	}
+	if _, ok := s.get("expired"); ok {
+		t.Error("aggregate just past the TTL survived, want reaping")
+	}
+}
+
+// TestUploadStoreIssuedPruneNeverStrandsExistingAggregate checks that pruning
+// a minted id from `issued` (issuedIDTTL) never affects an aggregate that
+// already exists for that id: getOrCreate returns the EXISTING aggregate
+// without re-checking issued, so a running test's later lanes are unaffected.
+func TestUploadStoreIssuedPruneNeverStrandsExistingAggregate(t *testing.T) {
+	s := NewUploadStore()
+	s.markIssued("running")
+	agg, ok := s.getOrCreate("running")
+	if !ok {
+		t.Fatal("initial create failed")
+	}
+
+	// Backdate the issued record past issuedIDTTL and prune it.
+	s.issued.Store("running", monoNanos()-int64(issuedIDTTL)-int64(time.Second))
+	s.sweep(uploadIDTTL)
+
+	if s.isIssued("running") {
+		t.Fatal("issued record was not pruned")
+	}
+	got, ok := s.get("running")
+	if !ok || got != agg {
+		t.Error("existing aggregate was stranded by issued pruning")
+	}
+	if _, ok := s.getOrCreate("running"); !ok {
+		t.Error("getOrCreate on a live id with a pruned issued record was refused")
+	}
+}
+
+// TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace checks the live cap is
+// rechecked on every first-touch create rather than latched permanently:
+// freeing a slot (delete or sweep) lets a new id through again.
+func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
+	s := NewUploadStore()
+	for i := 0; i < maxLiveUploads; i++ {
+		id := "id-" + strconv.Itoa(i)
+		s.markIssued(id)
+		if _, ok := s.getOrCreate(id); !ok {
+			t.Fatalf("create %d below the cap was refused", i)
+		}
+	}
+	s.markIssued("blocked")
+	if _, ok := s.getOrCreate("blocked"); ok {
+		t.Fatal("create at the cap unexpectedly succeeded")
+	}
+
+	s.delete("id-0")
+	if _, ok := s.getOrCreate("blocked"); !ok {
+		t.Error("create after a delete freed a slot was still refused")
+	}
+	if s.live.Load() != maxLiveUploads {
+		t.Errorf("live = %d, want %d after freeing and refilling one slot", s.live.Load(), maxLiveUploads)
+	}
+}
+
+// TestUploadStoreConcurrentGetAndSweep races get/getOrCreate against a
+// sweeper reaping a mix of already-expired and still-fresh aggregates — the
+// real shape of production traffic hitting the store while RunSweeper ticks.
+// The point is race-safety (run with -race) and that `live` never desyncs
+// from the actual shard contents.
+func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
+	s := NewUploadStore()
+	const n = 200
+	ids := make([]string, n)
+	for i := range ids {
+		id := "race-" + strconv.Itoa(i)
+		ids[i] = id
+		s.markIssued(id)
+		agg, _ := s.getOrCreate(id)
+		if i%2 == 0 {
+			// Half start already past the TTL so sweep can reap them
+			// immediately while readers are still hammering the store.
+			agg.lastTouchMono.Store(monoNanos() - int64(time.Second))
+		}
+	}
+
+	stop := make(chan struct{})
+	sweeperDone := make(chan struct{})
+	go func() {
+		defer close(sweeperDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				s.sweep(500 * time.Millisecond)
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				id := ids[i%n]
+				if agg, ok := s.get(id); ok {
+					agg.lastTouchMono.Store(monoNanos())
+				}
+				s.getOrCreate(id)
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	<-sweeperDone
+
+	if got := s.live.Load(); got < 0 {
+		t.Fatalf("live went negative: %d", got)
+	}
+	var counted int32
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.Lock()
+		counted += int32(len(sh.m))
+		sh.mu.Unlock()
+	}
+	if counted != s.live.Load() {
+		t.Errorf("live = %d, but shards contain %d aggregates", s.live.Load(), counted)
+	}
+}
+
+// TestUploadAggRecordChunkIgnoresStaleTimestamp checks recordChunk's
+// forward-only clock: an equal or smaller timestamp than the last recorded
+// chunk (a straggler lane's read landing out of order) contributes no active
+// time and never rewinds lastChunkMono, while its bytes still count.
+func TestUploadAggRecordChunkIgnoresStaleTimestamp(t *testing.T) {
+	var a uploadAgg
+	a.recordChunk(1000, 100) // first chunk, no time yet
+	a.recordChunk(1000, 100) // equal timestamp — stale, no time added
+	if got := a.activeNanos.Load(); got != 0 {
+		t.Fatalf("active after an equal-timestamp chunk = %d, want 0", got)
+	}
+	a.recordChunk(500, 100) // smaller timestamp — reordered, no time added
+	if got := a.activeNanos.Load(); got != 0 {
+		t.Fatalf("active after a reordered chunk = %d, want 0 (clock must not rewind)", got)
+	}
+	// The clock is still anchored at 1000, so the next real chunk measures
+	// from there, not from the stale/reordered stamps.
+	a.recordChunk(1100, 100)
+	if got := a.activeNanos.Load(); got != 100 {
+		t.Fatalf("active after resuming forward = %d, want 100", got)
+	}
+	if got := a.bytes.Load(); got != 400 {
+		t.Errorf("bytes = %d, want 400 (every chunk counts, stale or not)", got)
+	}
+}
+
+// TestUploadAggActiveTimeGapCapBoundary checks recordChunk's <= comparison at
+// the exact activeGapCap edge: a gap equal to the cap still counts as
+// continuous transfer; one nanosecond more is a dead zone and is excluded.
+func TestUploadAggActiveTimeGapCapBoundary(t *testing.T) {
+	gapCap := int64(activeGapCap)
+	const start = 1000 // nonzero anchor — 0 collides with lastChunkMono's zero value
+
+	var a uploadAgg
+	a.recordChunk(start, 10)
+	a.recordChunk(start+gapCap, 10) // gap == cap exactly: counted
+	if got := a.activeNanos.Load(); got != gapCap {
+		t.Fatalf("active after a gap == activeGapCap = %d, want %d (boundary inclusive)", got, gapCap)
+	}
+
+	var b uploadAgg
+	b.recordChunk(start, 10)
+	b.recordChunk(start+gapCap+1, 10) // gap == cap+1: dead zone, excluded
+	if got := b.activeNanos.Load(); got != 0 {
+		t.Fatalf("active after a gap == activeGapCap+1 = %d, want 0 (dead zone excluded)", got)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -107,6 +108,105 @@ func TestUploadStopsOnReadError(t *testing.T) {
 	}
 	if err := NewUpload(nil, nil).Handle(s); err != nil {
 		t.Fatalf("handle should swallow the abort, got: %v", err)
+	}
+}
+
+// TestUploadAbortKeepsPartialAggregateAndDecrementsPosts checks a mid-stream
+// abort on an id'd upload: bytes drained before the error are kept (never
+// rolled back), and posts is decremented via defer even on the error path —
+// the lane-count invariant must hold whether Handle returns via EOF or error.
+func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	s := &uploadSession{
+		fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id},
+		src:         &errReader{remaining: 4096},
+	}
+	if err := NewUpload(nil, store).Handle(s); err != nil {
+		t.Fatalf("handle should swallow the abort, got: %v", err)
+	}
+
+	agg, ok := store.get(id)
+	if !ok {
+		t.Fatal("aggregate missing after an aborted id'd upload")
+	}
+	if got := agg.bytes.Load(); got != 4096 {
+		t.Errorf("aggregate bytes = %d, want 4096 (bytes drained before the abort)", got)
+	}
+	if got := agg.posts.Load(); got != 0 {
+		t.Errorf("posts = %d after an aborted lane, want 0 (defer must run on the error path)", got)
+	}
+}
+
+// TestUploadOverCapIDStillDrainsWithoutAggregating checks the live-cap abuse
+// defense at the POST layer: an id minted (issued) but refused by
+// getOrCreate because the store is already at maxLiveUploads still drains
+// and echoes normally — it just isn't server-authoritatively counted.
+func TestUploadOverCapIDStillDrainsWithoutAggregating(t *testing.T) {
+	store := NewUploadStore()
+	for i := 0; i < maxLiveUploads; i++ {
+		id := "filler-" + strconv.Itoa(i)
+		store.markIssued(id)
+		if _, ok := store.getOrCreate(id); !ok {
+			t.Fatalf("filler create %d below the cap was refused", i)
+		}
+	}
+	id := store.Mint() // issued, but the store is already full
+
+	mux := http.NewServeMux()
+	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	const n = 4096
+	res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(make([]byte, n)))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer res.Body.Close()
+
+	var echo struct {
+		Bytes int64 `json:"bytes"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&echo); err != nil {
+		t.Fatalf("decode echo: %v", err)
+	}
+	if echo.Bytes != n {
+		t.Errorf("echoed %d bytes, want %d (upload must still work over the cap)", echo.Bytes, n)
+	}
+	if _, ok := store.get(id); ok {
+		t.Error("an over-cap issued id unexpectedly got an aggregate")
+	}
+}
+
+// TestUploadEmptyBodyIDCreatesZeroByteAggregate checks a zero-byte POST for
+// an id'd upload still creates an aggregate — the POST itself is the first
+// touch — reporting zero bytes, since a zero-length read never reaches
+// discardSink.Write and so never calls recordChunk.
+func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+
+	mux := http.NewServeMux()
+	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(nil))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer res.Body.Close()
+
+	agg, ok := store.get(id)
+	if !ok {
+		t.Fatal("aggregate missing after an empty-body id'd upload")
+	}
+	if got := agg.bytes.Load(); got != 0 {
+		t.Errorf("aggregate bytes = %d, want 0 for an empty body", got)
+	}
+	if got := agg.posts.Load(); got != 0 {
+		t.Errorf("posts = %d after the empty-body lane finished, want 0", got)
 	}
 }
 
