@@ -39,7 +39,41 @@ jobs:
         run: go vet ./...
       - name: go test
         working-directory: go
-        run: go test -race ./...
+        run: go test -race -shuffle=on ./...
+
+  goclient-cross-build:
+    name: TUI cross-build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      # Catches cross-compile breaks (e.g. an accidental cgo/platform-specific
+      # import) on every PR instead of only at release-tag time.
+      - name: Build
+        working-directory: go
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o /dev/null ./cmd/graphite-meter-client
 
   client:
     name: Client
