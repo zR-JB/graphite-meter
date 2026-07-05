@@ -83,6 +83,15 @@ import {
   laneStaggerMs,
 } from "./real/backendPure";
 
+/** Upgrade a ws:// base to wss://, unchanged otherwise. Used to force the
+ *  latency bus encrypted when the page itself loaded over https, regardless
+ *  of what scheme the server-advertised origin guessed at. */
+function wsToWss(base: string): string {
+  return base.startsWith("ws://")
+    ? "wss://" + base.slice("ws://".length)
+    : base;
+}
+
 /** Construction options for a real engine: the endpoint to target plus anything
  *  preflight hands back (e.g. a session token). All optional so the class is
  *  trivial to drop into wire.svelte.ts. */
