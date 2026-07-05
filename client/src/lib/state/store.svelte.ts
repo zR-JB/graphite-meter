@@ -101,7 +101,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   parallelStreams: 6,
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
-  // ----- Ported config surface; inert until future batches consume it -----
+  // ----- Config surface; inert until future batches consume it -----
   compensation: {
     enabled: true,
     // Default profile matches the common self-host case: a real LAN NIC, cleartext
@@ -433,10 +433,9 @@ class AppStore {
 
   /* ============================================================
    * Stage selection
-   * Live stage toggling with linerate's constraints: ≥1 stage must
-   * always stay enabled, and while a run is in flight only FUTURE
-   * stages (after the current phase in order latency→download→upload)
-   * may be toggled.
+   * Live stage toggling: ≥1 stage must always stay enabled, and while
+   * a run is in flight only FUTURE stages (after the current phase in
+   * order latency→download→upload) may be toggled.
    * ============================================================ */
 
   /** Enabled stages in execution order — drives the timeline + rail. */
@@ -511,8 +510,8 @@ class AppStore {
    * LIVE estimate — O(1) protocol/config-only multipliers applied to the
    * current instantaneous bytesPerSec. This is a $derived (not $derived.by walking
    * samples) so it recomputes only when the latest sample's bytesPerSec or the
-   * compensation config changes — never per-sample-iteration. Fixes
-   * linerate's per-sample recompute hot-path.
+   * compensation config changes — never per-sample-iteration, keeping the
+   * sample stream's hot path O(1) instead of a per-sample recompute.
    */
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(

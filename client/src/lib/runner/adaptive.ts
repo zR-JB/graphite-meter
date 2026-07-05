@@ -2,10 +2,8 @@
  * The Graphite Meter — Adaptive Duration helper
  * Runner-agnostic confidence math for confidence-based early
  * phase exit. Pure TypeScript, zero Svelte / DOM deps so a real
- * engine can reuse it verbatim. Ported (de-magicked) from
- * linerate's DummyRunner.transferConfidence / latencyConfidence /
- * shouldAdvanceEarly logic; every coefficient is clearly named
- * and explained.
+ * engine can reuse it verbatim. Every coefficient below is named
+ * and explained rather than left as a magic number.
  * ============================================================ */
 
 import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
@@ -14,8 +12,14 @@ import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
  * The stability score is  1 − (varianceRatio·K1 + slopeRatio·K2),
  * clamped to 0–1. Higher coefficients make the gate stricter
  * (a small amount of jitter/drift pulls the score down faster).
- * Lifted from linerate (variance ×2.2, slope ×1.4 for transfer;
- * variance ×2.4, loss ×3.6 for latency) and named here. */
+ * Transfer weighs variance (×2.2) over slope (×1.4): once a transfer
+ * has ramped up, a plateau that's merely noisy is common and mostly
+ * harmless, while a sustained drift up or down means it hasn't
+ * actually settled yet and is the stronger signal to withhold an
+ * early exit on. Latency weighs loss (×3.6) far above variance
+ * (×2.4): a single dropped ping in the window is a much stronger
+ * sign of an unstable link than ordinary RTT jitter, so it should
+ * dominate the score. */
 
 /** Transfer stability: how hard sample-to-mean variance is penalized. */
 const TRANSFER_VARIANCE_K = 2.2;
@@ -42,16 +46,6 @@ const MIN_SLOPE_SEGMENT = 2;
  *  gate (stabilityThreshold), so "green pip" and "ready to finish early"
  *  coincide — one signal, no second meaning to reconcile. */
 export const STABILITY_MED_BAND = 0.6;
-
-/** Map a 0–1 stability score to its coarse pip band (stateless). */
-export function stabilityBand(
-  score: number,
-  cfg: AdaptiveDurationConfig,
-): StabilityBand {
-  if (score >= cfg.stabilityThreshold) return "high";
-  if (score >= STABILITY_MED_BAND) return "medium";
-  return "low";
-}
 
 /** Hysteresis margin below `stabilityThreshold` for *leaving* the stable state.
  *  A connection becomes "stable" only at the full threshold, but stays stable

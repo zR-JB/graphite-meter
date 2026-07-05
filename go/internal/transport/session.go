@@ -1,8 +1,9 @@
 // Package transport defines the transport-agnostic Session abstraction that
-// measurement endpoints are written against. One Session implementation exists
-// per transport: httpSession (h1/h2/h3 request/response, this stage) and, in
-// later stages, a WebTransport session and a WebSocket bus. An Endpoint's logic
-// is written once and runs over whichever Session it is handed.
+// measurement endpoints are written against. Two Session implementations exist
+// today: httpSession (h1/h2/h3 request/response) and websocketSession (the ws
+// message bus, websocket_session.go). A WebTransport session is future work —
+// see docs/ARCHITECTURE.md#roadmap. An Endpoint's logic is written once and
+// runs over whichever Session it is handed.
 package transport
 
 import (
@@ -31,10 +32,10 @@ const (
 var ErrUnsupported = errors.New("transport: operation not supported on this session")
 
 // MessageBus is the message-delimited channel the wire protocol (api/wire.md)
-// runs over: a WebSocket connection or WebTransport datagrams. Declared now;
-// implemented in Stage 4 (ws) and Stage 5 (wt). Reliable() reports whether the
-// channel retransmits (true for ws/TCP, false for WT datagrams — the latter is
-// what makes packet loss measurable).
+// runs over: a WebSocket connection today, WebTransport datagrams once that
+// transport lands (see docs/ARCHITECTURE.md#roadmap). Reliable() reports
+// whether the channel retransmits (true for ws/TCP, false for WT datagrams —
+// the latter is what makes packet loss measurable).
 type MessageBus interface {
 	Recv() (string, error)
 	Send(msg string) error
@@ -56,15 +57,16 @@ type Session interface {
 	// sessions (WebTransport/WebSocket).
 	HTTP() (w http.ResponseWriter, r *http.Request, ok bool)
 
-	// OpenDownloadSink yields the byte sink to stream generated data into
-	// (ResponseWriter for HTTP, a uni SendStream for WebTransport). Stage 2+.
+	// OpenDownloadSink yields the byte sink to stream generated data into:
+	// the ResponseWriter for HTTP, a uni SendStream once WebTransport exists.
 	OpenDownloadSink() (io.Writer, FlushFunc, error)
 
-	// OpenUploadSource yields the byte source to drain and count
-	// (r.Body for HTTP, a uni RecvStream for WebTransport). Stage 3+.
+	// OpenUploadSource yields the byte source to drain and count: r.Body for
+	// HTTP, a uni RecvStream once WebTransport exists.
 	OpenUploadSource() (io.Reader, error)
 
-	// Bus yields the control-message channel, when the session has one. Stage 4+.
+	// Bus yields the control-message channel, when the session has one
+	// (websocketSession only, today).
 	Bus() (MessageBus, bool)
 }
 

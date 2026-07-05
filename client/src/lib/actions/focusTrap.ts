@@ -1,8 +1,7 @@
 /* ============================================================
  * focusTrap — Svelte action
  * Tab-cycles focus within an open drawer and focuses the first
- * focusable element on open. Pure DOM, no SvelteKit. Ported from
- * linerate-atelier/src/lib/actions/focusTrap.ts.
+ * focusable element on open. Pure DOM, no SvelteKit.
  * ============================================================ */
 
 const FOCUSABLE_SELECTOR = [

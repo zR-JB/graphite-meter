@@ -443,7 +443,7 @@
     color: var(--ok);
   }
 
-  /* Lock reason tag — mirrors the old rail .stage-reason. */
+  /* Lock reason tag. */
   .seg-tag {
     margin-left: auto;
     padding: 2px 6px;

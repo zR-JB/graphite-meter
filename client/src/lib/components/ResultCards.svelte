@@ -384,7 +384,8 @@
   }
 
   /** Wire-rate estimate line for a transfer card (null when the user hasn't
-   *  opted in). Mirrors the old inline lift/flat branch. */
+   *  opted in). Branches on whether the multiplier lifts the measured rate
+   *  or leaves it flat. */
   function wireFor(m: {
     has: boolean;
     multiplier: number;

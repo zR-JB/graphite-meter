@@ -30,10 +30,6 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	measureCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	type pendingPing struct {
-		id uint32
-		at time.Time
-	}
 	pending := make(map[uint32]time.Time)
 	var mu sync.Mutex
 	var nextID uint32

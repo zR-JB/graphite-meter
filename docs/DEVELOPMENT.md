@@ -52,6 +52,7 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below). |
 | `just client-watch` | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend. |
 | `just client-check` | Type-checks the client (`svelte-check`). |
+| `just client-test` | `bun test` — pure-`.ts`-logic unit tests (no component rendering). |
 | `just client-gen-types` | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth). |
 | `just server-build-dev` | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
 | `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy. |

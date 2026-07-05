@@ -229,6 +229,139 @@ func TestUploadProgressClientCloseReturns(t *testing.T) {
 	}
 }
 
+// TestUploadProgressBadFrameGetsErrAndBusStaysUp checks an undecodable frame
+// gets an ERR,bad_op reply and never tears the bus down: a subsequent valid
+// HI is still answered with READY on the same connection.
+func TestUploadProgressBadFrameGetsErrAndBusStaysUp(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	bus := newFakeBus()
+	defer close(bus.closed)
+	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
+
+	handleErr := make(chan error, 1)
+	go func() { handleErr <- NewUploadProgress(store).Handle(sess) }()
+	waitAgg(t, store, id)
+
+	bus.in <- "TOTAL_GARBAGE_OPCODE"
+	errFrame := readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpERR }, "ERR for a malformed frame")
+	if errFrame.Code != wire.ErrBadOp {
+		t.Errorf("ERR code = %q, want %q", errFrame.Code, wire.ErrBadOp)
+	}
+
+	// The bus must still be up: a valid HI still gets a READY.
+	bus.in <- wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})
+	readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY after a bad frame")
+
+	bus.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
+	select {
+	case err := <-handleErr:
+		if err != nil {
+			t.Errorf("Handle returned %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Handle did not return after BYE")
+	}
+}
+
+// TestUploadProgressMalformedArgsGetsErrBadArgs checks a known opcode with
+// missing/malformed arguments (HI with no proto) gets ERR,bad_args rather
+// than being silently dropped or tearing down the bus.
+func TestUploadProgressMalformedArgsGetsErrBadArgs(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	bus := newFakeBus()
+	defer close(bus.closed)
+	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
+
+	go func() { _ = NewUploadProgress(store).Handle(sess) }()
+	waitAgg(t, store, id)
+
+	bus.in <- "HI" // no proto argument
+	errFrame := readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpERR }, "ERR for malformed HI")
+	if errFrame.Code != wire.ErrBadArgs {
+		t.Errorf("ERR code = %q, want %q", errFrame.Code, wire.ErrBadArgs)
+	}
+}
+
+// TestUploadProgressUnexpectedOpcodeIgnored checks a syntactically valid but
+// unexpected opcode on this bus (e.g. a server→client frame echoed back) is
+// silently ignored per the wire "ignore and continue" rule, without a reply
+// and without disturbing later frames.
+func TestUploadProgressUnexpectedOpcodeIgnored(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	bus := newFakeBus()
+	defer close(bus.closed)
+	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
+
+	go func() { _ = NewUploadProgress(store).Handle(sess) }()
+	waitAgg(t, store, id)
+
+	bus.in <- wire.Encode(wire.Frame{Op: wire.OpREADY}) // server-only opcode, echoed back
+
+	// No ERR/REPLY should be produced for it specifically; confirm the bus is
+	// still responsive by following up with a real HI.
+	bus.in <- wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})
+	readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY after an ignored opcode")
+}
+
+// TestUploadProgressConcurrentBYEEmitsOneComplete checks the done idempotency
+// guard end-to-end: two independent /ws/upload handlers sharing the same id
+// (e.g. a client reconnect racing the original socket) each send BYE, but
+// only one UPLOAD_COMPLETE is ever emitted between them.
+func TestUploadProgressConcurrentBYEEmitsOneComplete(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	busA, busB := newFakeBus(), newFakeBus()
+	defer close(busA.closed)
+	defer close(busB.closed)
+	sessA := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: busA}
+	sessB := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: busB}
+
+	doneA := make(chan error, 1)
+	doneB := make(chan error, 1)
+	go func() { doneA <- NewUploadProgress(store).Handle(sessA) }()
+	go func() { doneB <- NewUploadProgress(store).Handle(sessB) }()
+
+	agg := waitAgg(t, store, id)
+	agg.bytes.Store(2048)
+
+	busA.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
+	busB.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
+
+	waitReturn := func(ch chan error) {
+		t.Helper()
+		select {
+		case err := <-ch:
+			if err != nil {
+				t.Errorf("Handle returned %v, want nil", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("handler did not return after BYE")
+		}
+	}
+	waitReturn(doneA)
+	waitReturn(doneB)
+
+	countComplete := func(b *fakeBus) int {
+		n := 0
+		for {
+			select {
+			case raw := <-b.out:
+				if f, err := wire.Decode(raw); err == nil && f.Op == wire.OpUploadComplete {
+					n++
+				}
+			default:
+				return n
+			}
+		}
+	}
+	if total := countComplete(busA) + countComplete(busB); total != 1 {
+		t.Errorf("total UPLOAD_COMPLETE frames across both handlers = %d, want 1", total)
+	}
+}
+
 // TestUploadProgressUnknownID checks an unissued id gets an ERR and the handler
 // closes (the client then falls back to its own client-side count).
 func TestUploadProgressUnknownID(t *testing.T) {

@@ -1,5 +1,6 @@
-// Command graphite-meter is the measurement server. Stage 1: serves the
-// embedded Svelte client and GET /preflight over HTTP/1.1.
+// Command graphite-meter is the measurement server: it serves the embedded
+// Svelte client and the registered HTTP/WebSocket measurement endpoints over
+// HTTP/1.1. See docs/ARCHITECTURE.md#roadmap for planned TLS/h2/h3 support.
 package main
 
 import (

@@ -16,15 +16,16 @@ on:
 permissions:
   contents: write
   packages: write
+  actions: read # guard job reads the CI run for the tagged commit
 
 concurrency:
   group: release-${{ github.ref }}
 
 jobs:
-  test:
-    name: Release tests
+  guard:
+    name: Release guard
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -40,25 +41,42 @@ jobs:
             echo "::error::Tag ${{ github.ref_name }} (commit ${{ github.sha }}) is not reachable from main — refusing to publish. Tag from an up-to-date main."
             exit 1
           fi
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - name: go test
-        working-directory: go
-        run: go test ./...
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Client tests
-        working-directory: client
+      # CI already ran the full test matrix when this commit was pushed to
+      # main — verify that run succeeded instead of re-running everything
+      # here. Waits out an in-flight run (tags often land right after the
+      # merge), fails on anything but a completed successful one.
+      - name: Verify CI succeeded on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          bun install --frozen-lockfile
-          bun test
+          runs_url="repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&event=push"
+          for i in $(seq 1 60); do
+            read -r status conclusion <<<"$(gh api "$runs_url" \
+              --jq '.workflow_runs | first // {} | "\(.status // "missing") \(.conclusion // "-")"')"
+            case "$status" in
+              completed)
+                [ "$conclusion" = "success" ] && exit 0
+                echo "::error::CI for ${{ github.sha }} concluded '$conclusion' — refusing to publish."
+                exit 1
+                ;;
+              missing)
+                echo "::error::No CI push run found for ${{ github.sha }} — tag a commit from main after CI has been triggered on it."
+                exit 1
+                ;;
+              *)
+                echo "CI run is '$status' — waiting ($i/60)"
+                sleep 15
+                ;;
+            esac
+          done
+          echo "::error::Timed out waiting for CI on ${{ github.sha }}."
+          exit 1
 
   publish:
     name: Publish image
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: test
+    needs: guard
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:

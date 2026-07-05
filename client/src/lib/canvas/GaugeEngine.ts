@@ -14,6 +14,7 @@
 
 import type { Phase } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
+import { sweepTarget, angleForFraction } from "./gaugeSweep";
 
 /** What the engine pulls each frame. The sweep is normalized against an
  *  ABSOLUTE scale (`scaleBytesPerSec`, shared by download + upload for comparability)
@@ -236,29 +237,15 @@ export class GaugeEngine implements CanvasEngine {
     // combined bidirectional rate (and runs). The store already sums the
     // live down+up samples into valueBytesPerSec for the bidirectional
     // phase (see liveTransferBytesPerSec), so this is the same formula.
-    let target = 0;
-    if (
-      s.phase === "download" ||
-      s.phase === "upload" ||
-      s.phase === "bidirectional"
-    ) {
-      target = Math.min(1, Math.max(0, s.valueBytesPerSec / this.#scale));
-    } else if (s.phase === "warmup") {
-      target = 0.3; // indeterminate — connection probe, no meaningful rate yet
-    } else if (s.phase === "latency") {
-      // Reads RTT during latency: linear against the fixed ms scale so the dial
-      // position (and its ms tick labels) read as a real round-trip time.
-      const scale = s.latencyScaleMs > 0 ? s.latencyScaleMs : 1;
-      target = Math.min(1, Math.max(0, s.rtt / scale));
-    } else if (s.phase === "idle") {
-      target = 0.1;
-    } else if (s.phase === "complete") {
-      // Ease to the resolved primary-stage position (phase-agnostic) when the
-      // store supplies one; otherwise hold where the last live phase ended.
-      target = s.resolvedFraction >= 0 ? s.resolvedFraction : this.#frozen;
-    } else {
-      target = 0.05; // aborted / error
-    }
+    const target = sweepTarget({
+      phase: s.phase,
+      valueBytesPerSec: s.valueBytesPerSec,
+      scaleBytesPerSec: this.#scale,
+      latencyScaleMs: s.latencyScaleMs,
+      rtt: s.rtt,
+      resolvedFraction: s.resolvedFraction,
+      frozenFraction: this.#frozen,
+    });
 
     this.#target = target;
     this.#ema += EMA_ALPHA * (target - this.#ema);
@@ -293,13 +280,13 @@ export class GaugeEngine implements CanvasEngine {
     const r = Math.max(36, Math.min(m * 0.37, (m / 2 - 20) / 1.145));
     const arcW = Math.max(6, r * 0.13);
     const sweep = this.#reduced ? this.#fill : this.#ema;
-    const valueEnd = ARC_START + ARC_SWEEP * Math.min(1, Math.max(0, sweep));
+    const valueEnd = angleForFraction(sweep, ARC_START, ARC_SWEEP);
 
     ctx.lineCap = "round";
 
     // Latency ripples: concentric rings expanding from the hub (skip in
     // reduced-motion — purely decorative). Drawn first so the track groove
-    // overdraws them, exactly as before.
+    // overdraws them.
     if (!this.#reduced) {
       for (const t of this.#ripples) {
         const age = (now - t) / RIPPLE_MS; // 0–1

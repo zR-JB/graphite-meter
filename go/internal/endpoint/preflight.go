@@ -79,15 +79,14 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 			Port:     port,
 			Location: cfg.ServerLocation,
 		},
-		PreTestPingMs:      0, // no ping endpoint yet (Stage 4)
+		PreTestPingMs:      0, // not computed server-side; the client measures RTT itself over /ws/ping
 		EngineVersion:      cfg.EngineVersion,
 		ProtocolNegotiated: string(s.Proto()),
 		Capabilities: wire.Capabilities{
 			Origins: origins,
 			Transports: wire.Transports{
-				// Honest per stage: Stage 2–3 light up the fetch-stream download/
-				// upload; Stage 4 adds the WebSocket latency bus (/ws/ping).
-				// WebTransport lands in Stage 5.
+				// FetchStream and WebSocket are live; WebTransport is reserved
+				// for Stage 5 — see docs/ARCHITECTURE.md#roadmap.
 				FetchStream:  true,
 				WebSocket:    true,
 				WebTransport: false,
