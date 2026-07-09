@@ -196,12 +196,120 @@ jobs:
             and .capabilities.endpoints.download == "/download"
             and (.server.port | type == "number")
           ' /tmp/preflight.json
-      - name: Smoke SPA index
+      - name: Smoke built client metadata
         run: |
-          curl -fsS http://localhost:8765/ | grep -qi '<script' || {
-            echo "::error::/ did not return the built SPA"
+          curl -fsS http://localhost:8765/version.json | tee /tmp/version.json
+          jq -e '
+            .version == "0.0.0-ci+ci-${{ github.sha }}"
+            and .label == "ci-${{ github.sha }}"
+          ' /tmp/version.json
+      - name: Smoke built client assets
+        run: |
+          set -euo pipefail
+          base=http://localhost:8765
+          curl -fsS "$base/" -o /tmp/index.html
+
+          grep -qi '<script[^>]*type="module"' /tmp/index.html || {
+            echo "::error::/ did not return a built module-based SPA index"
             exit 1
           }
+          if grep -q '/src/main.ts' /tmp/index.html; then
+            echo "::error::index.html still references the dev entrypoint"
+            exit 1
+          fi
+
+          python3 - <<'PY' > /tmp/client-assets.txt
+          from html.parser import HTMLParser
+
+          class AssetParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.urls = set()
+
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+                  for key in ("href", "src"):
+                      value = attrs.get(key)
+                      if value and value.startswith("/"):
+                          self.urls.add(value)
+
+          parser = AssetParser()
+          with open("/tmp/index.html", encoding="utf-8") as f:
+              parser.feed(f.read())
+          for url in sorted(parser.urls):
+              print(url)
+          PY
+
+          grep -Eq '^/assets/.+\.js$' /tmp/client-assets.txt || {
+            echo "::error::index.html does not reference a built JS asset"
+            cat /tmp/client-assets.txt
+            exit 1
+          }
+          grep -Eq '^/assets/.+\.css$' /tmp/client-assets.txt || {
+            echo "::error::index.html does not reference a built CSS asset"
+            cat /tmp/client-assets.txt
+            exit 1
+          }
+
+          while IFS= read -r path; do
+            headers=$(mktemp)
+            body=$(mktemp)
+            curl -fsS -D "$headers" -o "$body" "$base$path"
+            bytes=$(wc -c < "$body")
+            if [ "$bytes" -le 0 ]; then
+              echo "::error::$path was empty"
+              exit 1
+            fi
+            content_type=$(tr -d '\r' < "$headers" | awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { print $2; exit }')
+            case "$path" in
+              *.js)
+                echo "$content_type" | grep -Eqi 'javascript' || {
+                  echo "::error::$path content-type was $content_type, expected JavaScript"
+                  exit 1
+                }
+                ;;
+              *.css)
+                echo "$content_type" | grep -Eqi '^text/css' || {
+                  echo "::error::$path content-type was $content_type, expected CSS"
+                  exit 1
+                }
+                ;;
+              *.woff2)
+                echo "$content_type" | grep -Eqi 'font/woff2|application/octet-stream' || {
+                  echo "::error::$path content-type was $content_type, expected font/woff2"
+                  exit 1
+                }
+                ;;
+              *.svg)
+                echo "$content_type" | grep -Eqi 'image/svg\+xml|text/xml' || {
+                  echo "::error::$path content-type was $content_type, expected SVG"
+                  exit 1
+                }
+                ;;
+            esac
+            if grep -Eqi '<!doctype html|<html' "$body"; then
+              echo "::error::$path resolved to HTML instead of its asset body"
+              exit 1
+            fi
+          done < /tmp/client-assets.txt
+      - name: Smoke SPA routing
+        run: |
+          set -euo pipefail
+          base=http://localhost:8765
+          curl -fsS "$base/settings/" -o /tmp/spa-route.html
+          grep -qi '<div id="app"' /tmp/spa-route.html || {
+            echo "::error::extensionless SPA route did not fall back to index.html"
+            exit 1
+          }
+          status=$(curl -sS -o /tmp/missing-asset.txt -w '%{http_code}' "$base/assets/missing-${{ github.sha }}.js")
+          if [ "$status" != "404" ]; then
+            echo "::error::missing built asset returned HTTP $status, expected 404"
+            exit 1
+          fi
+          if grep -Eqi '<!doctype html|<html' /tmp/missing-asset.txt; then
+            echo "::error::missing built asset returned SPA HTML instead of a 404 body"
+            exit 1
+          fi
       - name: Dump logs on failure
         if: failure()
         run: docker logs gm || true
