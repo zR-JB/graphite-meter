@@ -1,15 +1,4 @@
 <script lang="ts">
-  /* ============================================================
-   * <LatencyProfile> — native latency distribution lanes
-   * Renders the latency distribution as token-styled DOM — NO
-   * <svg> — so lane colors and typography track the design tokens
-   * directly. Three lanes (idle / loaded-down / loaded-up), each with
-   * a min–max range bar, a P10–P90 band, an average marker, a
-   * current marker, and a striped loss indicator + hover readout.
-   * Stats come from the store's shared `latencyLanes` derived (which
-   * uses the single `quantile()` in format.ts); the domain is the
-   * shared `niceDomain()` so it scales like the result chart's axis.
-   * ============================================================ */
   import {
     store,
     type LatencyLane,
@@ -18,9 +7,6 @@
   import { fmtMs, niceDomain } from "../format";
   import { tooltip, JARGON } from "../actions/tooltip";
 
-  // Bare mode: drop the outer card chrome (border/background/shadow + header)
-  // so the component sits cleanly inside a host panel — used when it's a peer
-  // container next to the gauge. Lane internals keep their full sizing.
   interface Props {
     bare?: boolean;
   }
@@ -45,30 +31,18 @@
     current: "Latest",
   };
 
-  // All three lanes always render (never filtered out) — matching the
-  // original info-drawer's "empty lanes are kept" behavior, extended to
-  // disabled stages too: a lane whose stage is toggled off is muted
-  // (data-enabled="false" below), not removed, so toggling a stage never
-  // changes this panel's row count/height and never reflows the gauge/
-  // controls next to it (StageTrack already keeps a disabled segment
-  // mounted-but-muted for the same reason).
   const lanes = $derived(store.latencyLanes);
 
-  // Domain is still driven by ENABLED lanes only, so a muted lane's stale
-  // range doesn't stretch the shared axis scale for the ones still measuring.
   const enabledLanes = $derived(
     lanes.filter((l) => store.config.stages[l.key]),
   );
 
-  // Shared centered, snapped latency domain across every enabled lane.
   const domain = $derived.by(() => {
     const values: number[] = [];
     for (const lane of enabledLanes) {
       if (lane.min != null) values.push(lane.min);
       if (lane.max != null) values.push(lane.max);
     }
-    // floor:1 lets the axis scale all the way down to a 1 ms span (step 0.5/0.2
-    // ms) on a fast LAN/localhost, instead of bottoming out at a 20 ms step.
     return niceDomain(values, { floor: 1 });
   });
 
@@ -78,16 +52,12 @@
     domain.max,
   ]);
 
-  // `anchorPct` is the snapped marker's position (0–100) within the track;
-  // `trackW` is that track's pixel width at hover time. The card is placed
-  // relative to the ANCHOR (not the mouse) and clamped to the track below.
   let hover = $state<{
     key: StageKey;
     metric: MetricKey;
     anchorPct: number;
     trackW: number;
   } | null>(null);
-  // Measured live so we can clamp the card inside the track (no edge cutoff).
   let cardW = $state(0);
 
   const hoverLane = $derived(
@@ -97,9 +67,6 @@
     hoverLane && hover ? metricValue(hoverLane, hover.metric) : null,
   );
 
-  // Card left edge, in px within the track. Prefer the side of the anchor with
-  // more room (anchor in the left half → card to the right, and vice-versa),
-  // then clamp so the card never spills past either track edge.
   const CARD_GAP = 12;
   const CARD_PAD = 6;
   const cardLeft = $derived.by(() => {
@@ -135,7 +102,6 @@
     return lane[metric];
   }
 
-  // Metrics present on a lane, used for hover nearest-snap.
   function entries(lane: LatencyLane): { metric: MetricKey; value: number }[] {
     return (Object.keys(METRIC_LABELS) as MetricKey[]).flatMap((metric) => {
       const value = metricValue(lane, metric);
@@ -340,7 +306,6 @@
     font-weight: 820;
     letter-spacing: -0.02em;
   }
-  /* Jargon-term affordance on the profile heading. */
   .card-head h3.term {
     cursor: help;
     text-decoration: underline dotted
@@ -369,7 +334,6 @@
     min-width: 0;
   }
 
-  /* Skipped-stage banner — why the lanes below stay empty. */
   .lane-fail {
     margin: 14px 14px 0;
     padding: var(--space-1) var(--space-2);
@@ -402,8 +366,6 @@
       var(--surface-inset)
     );
   }
-  /* Muted, not removed — toggling a stage must never change this panel's
-     row count/height (mirrors StageTrack's disabled segment treatment). */
   .lane[data-enabled="false"] {
     opacity: 0.5;
   }
@@ -490,7 +452,6 @@
     isolation: isolate;
   }
 
-  /* min–max range bar with end caps */
   .range {
     position: absolute;
     top: 13px;
@@ -516,7 +477,6 @@
     right: 0;
   }
 
-  /* P10–P90 percentile band */
   .band {
     position: absolute;
     top: 6px;

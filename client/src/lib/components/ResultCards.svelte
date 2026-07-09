@@ -1,34 +1,10 @@
 <script lang="ts">
-  /* ============================================================
-   * <ResultCards> — live measured-vs-estimated cards
-   * Per metric: MEASURED browser value and COMPENSATED wire-rate estimate.
-   * A stability pip (low/medium/high) climbs as the connection settles.
-   * Each visible stage becomes a card via a typed CardVM.
-   * Ping has no wire-rate compensation; bidirectional shows a combined
-   * headline with per-direction subline.
-   *
-   * Reactivity: the live cards read the store's O(1)
-   * `liveCompensation` derived (protocol/config multipliers on the
-   * latest bytesPerSec); the post-run cards read `downloadCompensation` /
-   * `uploadCompensation`, which recompute only when `result`
-   * changes. This component never iterates sample arrays.
-   *
-   * Zero layout shift: tabular-nums + fixed-band fmtSpeed, fixed
-   * pip width, and a fixed two-line value block so the estimate
-   * line is always reserved even when absent.
-   * ============================================================ */
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs, countUp } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
 
-  /** Compact mode renders the same `cards` view-models as a slim one-line-per-
-   *  stage strip (icon + number, no chrome/wire-estimate/pip) instead of the
-   *  full card grid — used by <GaugePanel> to show earlier-phase results
-   *  while a later phase is still running, without the "too large on mobile"
-   *  footprint of a full result card. Same single `cards` derivation feeds
-   *  both renderings — one source of truth, two snippets. */
   interface Props {
     compact?: boolean;
   }
@@ -36,16 +12,10 @@
 
   const dash = "—";
 
-  // Honour the user's motion preference once (the count-up tween is decorative).
   const reduced =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /** Build a transfer card's model (download or upload). Live → the store's O(1)
-   *  `liveCompensation` on the latest sample + the runner's `liveStability`;
-   *  resolved → the per-stage result + its phase-specific compensation. One
-   *  helper for both directions — the only difference is which result + which
-   *  memoized compensation derived to read. */
   function transferModel(phase: "download" | "upload") {
     const st = store.liveStability[phase];
     if (store.phase === phase) {
@@ -79,10 +49,6 @@
   const dl = $derived.by(() => transferModel("download"));
   const ul = $derived.by(() => transferModel("upload"));
 
-  // ---- Bidirectional card (combined down+up; live lanes → final pair) ----
-  // No wire-rate estimate or live stability pip (the engine emits none for this
-  // phase); it carries a per-direction subline and, when resolved, the band of
-  // its down lane. Live = store.liveBidirectional; resolved = result.bidirectional.
   const bidi = $derived.by(() => {
     if (store.phase === "bidirectional") {
       const b = store.liveBidirectional ?? { down: 0, up: 0 };
@@ -110,7 +76,6 @@
     };
   });
 
-  // ---- Ping card (no wire-rate compensation, but it does have stability) ----
   const ping = $derived.by(() => {
     const st = store.liveStability.latency;
     if (store.phase === "latency") {
@@ -133,7 +98,6 @@
     };
   });
 
-  /** Whether compensation actually lifts the value (multiplier > ~1). */
   function lifted(multiplier: number): boolean {
     return multiplier > 1.0005;
   }
@@ -142,18 +106,6 @@
     return `+${((multiplier - 1) * 100).toFixed(1)}%`;
   }
 
-  /* ---- Count-up snaps on complete ----
-     Each card's MEASURED value tweens from its live reading to the final
-     aggregate when a run resolves (220ms ease-out). The override holds the
-     in-flight number; while null, templates fall back to the derived value.
-     Reduced motion skips the tween (the override is set instantly).
-
-     UNIT CONTRACT: the transfer snaps (dl/ul/bidi) carry RAW bytesPerSec, never
-     a scaled display value — `toUnit` is applied once, at render, in `*Shown`.
-     Because `toUnit` is a linear scale the count-up looks identical whether we
-     interpolate in raw or display space, but keeping it raw means a unit toggle
-     re-renders a finished card reactively. `pingSnap` is milliseconds (latency
-     is never unit-converted). */
   const TWEEN_MS = 220;
   let dlSnap = $state<number | null>(null);
   let ulSnap = $state<number | null>(null);
@@ -164,13 +116,6 @@
   let pingCancel: (() => void) | null = null;
   let bidiCancel: (() => void) | null = null;
 
-  /* ---- Progressive reveal — "reveal & keep" ----
-     A card appears when its stage runs and STAYS once finished; not-yet-run
-     stages are hidden until they start (final results show every enabled card).
-     Since `store.result` only lands at completion, each stage's last live value
-     is frozen at hand-off (the $effect below tracks the live phase every tick,
-     then stops when the phase moves on — leaving the last value put) so a
-     finished card keeps a real number through the later stages. */
   let pingFrozen = $state<number | null>(null);
   let dlFrozen = $state<number | null>(null);
   let ulFrozen = $state<number | null>(null);
@@ -189,11 +134,6 @@
     return countUp(from, to, TWEEN_MS, set);
   }
 
-  /* Per-stage count-up: each card tweens from its frozen live value to its
-     FINAL result the instant that stage's result lands (not waiting for the
-     whole run). One effect per stage, tracking only its own `stageResults`
-     field; the "from" values are read untracked so live ticks don't retrigger.
-     Stages are independent — download resolves while upload still runs. */
   $effect(() => {
     const r = store.stageResults.download;
     dlCancel?.();
@@ -253,8 +193,6 @@
     };
   });
 
-  // Bidirectional resolves only at completion (it has no per-stage event), so its
-  // count-up tweens the COMBINED rate from the frozen live value to the final sum.
   $effect(() => {
     const r = store.result?.bidirectional;
     bidiCancel?.();
@@ -277,10 +215,6 @@
     };
   });
 
-  // Freeze each stage's last live value at hand-off. While a stage is the live
-  // phase this re-runs every tick (it reads that phase's live value), tracking
-  // it; once the phase moves on, the branch stops firing and the value stays.
-  // A fresh run (idle/warmup) clears everything so nothing leaks in early.
   $effect(() => {
     const p = store.phase;
     if (p === "idle" || p === "warmup") {
@@ -296,8 +230,6 @@
     else if (p === "bidirectional") bidiFrozen = bidi.combined;
   });
 
-  // Visibility (reveal & keep): a card shows once its enabled stage is live,
-  // has been frozen (finished), or has a final result. Disabled stages never show.
   const pingShow = $derived(
     store.config.stages.latency &&
       (ping.active || pingFrozen != null || ping.has),
@@ -313,8 +245,6 @@
       (bidi.active || bidiFrozen != null || bidi.has),
   );
 
-  // Does the card have a real number to print (vs a dash)? While live, dash
-  // until the first sample; once frozen/resolved, the kept/final value.
   const pingHasVal = $derived(
     ping.active ? ping.has : ping.has || pingFrozen != null,
   );
@@ -324,11 +254,6 @@
     bidi.active ? bidi.has : bidi.has || bidiFrozen != null,
   );
 
-  // The number each card actually renders: the tweened snap when present, else
-  // the live value while active, else the frozen (kept) value for a finished stage.
-  // All transfer inputs are raw bytesPerSec; `store.toUnit` hydrates the active
-  // unit here — the single, last-pass conversion — so flipping base/kind in the
-  // settings drawer reactively re-renders every card, live or finished.
   const dlShown = $derived(
     store.toUnit(
       dlSnap ??
@@ -354,14 +279,8 @@
     ),
   );
 
-  /* ---- Progressive disclosure of the wire-rate estimate ----
-     Headline numbers are MEASURED values. Wire-rate is a refinement,
-     surfaced only when the user opts in via Settings. */
   const showWire = $derived(store.showWireEstimates);
 
-  /* ---- Card view-models ----
-     One typed descriptor per visible card, consumed by the shared {#snippet}.
-     Replaces four near-identical markup blocks with one list + one template. */
   type CardWire =
     | { kind: "lift"; num: string; pct: string }
     | { kind: "flat"; text: string }
@@ -383,9 +302,6 @@
     wire: CardWire;
   }
 
-  /** Wire-rate estimate line for a transfer card (null when the user hasn't
-   *  opted in). Branches on whether the multiplier lifts the measured rate
-   *  or leaves it flat. */
   function wireFor(m: {
     has: boolean;
     multiplier: number;
@@ -401,40 +317,34 @@
     return { kind: "flat", text: m.has ? "no overhead applied" : "" };
   }
 
+  function transferCard(
+    phase: "download" | "upload",
+    model: typeof dl,
+    hasVal: boolean,
+    shown: number,
+  ): CardVM {
+    const download = phase === "download";
+    return {
+      key: phase,
+      icon: download ? ICON.download : ICON.upload,
+      ico: download ? "dl" : "ul",
+      label: download ? "Download" : "Upload",
+      term: false,
+      active: model.active,
+      hasVal,
+      showPip: hasVal,
+      band: model.band,
+      score: model.score,
+      num: hasVal ? fmtSpeed(shown) : dash,
+      unit: store.unitLabel,
+      wire: wireFor(model),
+    };
+  }
+
   const cards = $derived.by<CardVM[]>(() => {
     const out: CardVM[] = [];
-    if (dlShow)
-      out.push({
-        key: "download",
-        icon: ICON.download,
-        ico: "dl",
-        label: "Download",
-        term: false,
-        active: dl.active,
-        hasVal: dlHasVal,
-        showPip: dlHasVal,
-        band: dl.band,
-        score: dl.score,
-        num: dlHasVal ? fmtSpeed(dlShown) : dash,
-        unit: store.unitLabel,
-        wire: wireFor(dl),
-      });
-    if (ulShow)
-      out.push({
-        key: "upload",
-        icon: ICON.upload,
-        ico: "ul",
-        label: "Upload",
-        term: false,
-        active: ul.active,
-        hasVal: ulHasVal,
-        showPip: ulHasVal,
-        band: ul.band,
-        score: ul.score,
-        num: ulHasVal ? fmtSpeed(ulShown) : dash,
-        unit: store.unitLabel,
-        wire: wireFor(ul),
-      });
+    if (dlShow) out.push(transferCard("download", dl, dlHasVal, dlShown));
+    if (ulShow) out.push(transferCard("upload", ul, ulHasVal, ulShown));
     if (bidiShow)
       out.push({
         key: "bidirectional",
@@ -444,7 +354,6 @@
         term: false,
         active: bidi.active,
         hasVal: bidiHasVal,
-        // No live stability for bidi — show the pip only once resolved.
         showPip: bidiHasVal && !bidi.active,
         band: bidi.band,
         score: bidi.score,
@@ -476,9 +385,6 @@
     return out;
   });
 
-  // Guided empty state: before the first run there's nothing measured, so
-  // invite action instead of leaving dashes unexplained. Only the idle
-  // pointer lives here — warmup "checking connection" is shown below the gauge.
   const guidance = $derived.by(() => {
     if (store.phase === "idle")
       return "Your results appear here once you press Engage.";
@@ -550,35 +456,18 @@
     {/each}
   </div>
 
-  <!-- Guided empty state — a quiet invitation while there's no data. -->
   {#if guidance}
     <p class="metric-guidance">{guidance}</p>
   {/if}
 {/if}
 
 <style>
-  /* Grid so only the currently-visible cards share the width (progressive
-     reveal): one card spans full width, two split evenly in half, three in
-     even thirds — auto-fit collapses empty tracks and stretches the ones that
-     exist via 1fr, so N cards always divide the row evenly instead of a flex
-     row wrapping unevenly (e.g. 3-then-1) once a 4th card appears. Reacts to
-     actual available width (not a viewport breakpoint): when the stage is
-     narrow — e.g. panels docked — the cards re-split 3 → 2 → 1 instead of
-     squeezing past their content. Applies at every width; auto-fit already
-     lands on a natural 2-up grid at typical phone content widths (~330-400px
-     after stage/panel padding, gap 12px) while still collapsing to a single
-     full-width track when only one card is visible. */
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
   }
-  /* Reserve one card-row of height for the whole run (from warmup on) so the
-     progressive reveal of cards doesn't resize the gauge above it — the dial
-     stays put from warmup through testing instead of snapping smaller when the
-     first card appears. Kept in lockstep with .result-card's own min-height
-     below and GaugePanel.svelte's .results-slot.reserve — all three must
-     shrink/grow together or a mid-run layout jump reappears. */
+  /* Keep this in sync with .result-card min-height and GaugePanel's result slot. */
   .result-cards.reserve {
     min-height: 64px;
   }
@@ -603,9 +492,6 @@
     border-color: var(--border-strong);
   }
 
-  /* Staggered enter: cards fade/rise in sequence (0–120ms) on mount.
-     Decorative — gated on no-preference so reduced-motion users get them
-     instantly. */
   @media (prefers-reduced-motion: no-preference) {
     .result-card {
       animation: card-enter 220ms var(--ease-out) both;
@@ -633,7 +519,6 @@
       transform: translateY(0);
     }
   }
-  /* The live/active metric gains a faint brand ring. */
   .result-card.active {
     border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
     box-shadow:
@@ -685,7 +570,6 @@
     letter-spacing: -0.01em;
     color: var(--text);
   }
-  /* Jargon-term affordance — dotted underline cues a hover/focus tooltip. */
   .label.term {
     cursor: help;
     text-decoration: underline dotted
@@ -698,7 +582,6 @@
     border-radius: var(--radius-xs);
   }
 
-  /* Confidence pip — fixed slot, never reflows the row. */
   .pip {
     margin-left: auto;
     padding: 2px 7px;
@@ -727,8 +610,6 @@
     align-items: baseline;
     gap: 6px;
   }
-  /* Results stand out: the value uses the Space Grotesk display face (tabular
-     so it doesn't shift), echoing the hero number a tier down. */
   .num {
     font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
@@ -746,8 +627,6 @@
     color: var(--text-soft);
   }
 
-  /* Per-direction subline (bidirectional card) — quiet mono detail under the
-     combined headline. */
   .sub {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -756,8 +635,6 @@
     letter-spacing: 0.01em;
   }
 
-  /* Estimate line — always reserved (fixed height) so toggling the
-     estimate on/off never shifts layout. */
   .est {
     display: flex;
     align-items: baseline;

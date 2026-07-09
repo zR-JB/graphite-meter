@@ -1,10 +1,4 @@
 <script lang="ts">
-  /* ============================================================
-   * <StatusBar> — bottom status zone
-   * State-machine label, elapsed, bytes transferred, build hash.
-   * Owns a local ticker so elapsed advances continuously (off a
-   * wall clock) rather than only when a sample lands.
-   * ============================================================ */
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes } from "../format";
@@ -40,10 +34,6 @@
     return `${s.toFixed(1)}s`;
   }
 
-  // Test-time remaining in the active measured phase (budget − measured
-  // elapsed). It STOPS shrinking while stalled (both inputs freeze in the
-  // core), so a drop makes the push-out of the run end visible here. Shown
-  // only while running with a real budget; on a stall it's tagged "paused".
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
 
@@ -64,8 +54,6 @@
 <span class="soft">build {BUILD_HASH}</span>
 
 <style>
-  /* Keep each status token on one line; the strip clips (Console .status) if
-     the row is too narrow, so nothing wraps past the fixed 28px height. */
   span {
     white-space: nowrap;
   }
@@ -82,8 +70,6 @@
   .soft {
     color: var(--text-soft);
   }
-  /* Remaining-time stalls: tint amber/error so the frozen countdown reads as
-     "paused — link down", not a normal tick. */
   .paused {
     color: var(--err);
     font-weight: 600;

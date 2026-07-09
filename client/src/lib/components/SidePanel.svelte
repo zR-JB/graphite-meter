@@ -1,18 +1,4 @@
 <script lang="ts">
-  /* ============================================================
-   * <SidePanel> — the shared flyout base for both auxiliary panels
-   * (Settings / Settings on the left, Connection & telemetry on the
-   * right). One component so they look and behave identically:
-   *  - opens BELOW the topbar over a shared backdrop (topbar stays
-   *    visible + interactive), never over it
-   *  - slides in/out from its side; stays mounted so the exit
-   *    animation plays, `inert` keeps it out of the tab order closed
-   *  - shared faceplate chrome, header (kicker + title + close),
-   *    focus trap, and Esc-to-close
-   * Content is provided via snippets: an optional `toolbar` row
-   * (e.g. the Settings tabs) pinned under the header, and `children`
-   * which scroll in the body.
-   * ============================================================ */
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
   import { ICON } from "../constants";
@@ -23,21 +9,12 @@
     side?: "left" | "right";
     title: string;
     kicker?: string;
-    /** Accessible label for the dialog; defaults to the title. */
     label?: string;
-    /** Optional width override (CSS length); defaults to the shared token. */
     width?: string;
-    /** When true (wide screens) the panel docks in-flow instead of overlaying:
-        no backdrop, non-modal, no focus trap — it's a persistent sidebar. */
     docked?: boolean;
-    /** Flyout-only: lift above the sibling panel when the two overlap on a
-        narrow screen, so the most-recently-opened drawer wins the stack. */
     raised?: boolean;
-    /** Current docked width (px) — used for the resize handle's aria value. */
     dockWidth?: number;
-    /** Report a new docked width (px) as the inner edge is dragged. */
     onResize?: (px: number) => void;
-    /** Reset the docked width to its default (double-click / Enter on handle). */
     onResetWidth?: () => void;
     toolbar?: Snippet;
     children: Snippet;
@@ -62,8 +39,6 @@
     open = false;
   }
 
-  // ---- Docked resize (inner edge). Pointer-capture so the drag tracks
-  // outside the thin handle; clamped; cleans up on up/cancel. ----
   const MIN_W = 320;
   function maxW() {
     return Math.round(Math.min(720, window.innerWidth * 0.6));
@@ -72,6 +47,10 @@
 
   function clamp(px: number) {
     return Math.max(MIN_W, Math.min(maxW(), px));
+  }
+
+  function resizeBy(startWidth: number, delta: number) {
+    onResize?.(clamp(startWidth + (side === "left" ? delta : -delta)));
   }
 
   function startResize(e: PointerEvent) {
@@ -85,10 +64,7 @@
     document.body.style.cursor = "col-resize";
 
     const onMove = (ev: PointerEvent) => {
-      // Left-docked grows as the pointer moves right; right-docked grows as it
-      // moves left (the handle is always on the panel's inner edge).
-      const delta = side === "left" ? ev.clientX - startX : startX - ev.clientX;
-      onResize?.(clamp(startW + delta));
+      resizeBy(startW, ev.clientX - startX);
     };
     const finish = () => {
       handle.removeEventListener("pointermove", onMove);
@@ -112,9 +88,7 @@
     if (!panelEl) return;
     e.preventDefault();
     const step = (e.shiftKey ? 48 : 16) * (e.key === "ArrowRight" ? 1 : -1);
-    // Map screen direction to "grow" depending on which edge the handle is on.
-    const grow = side === "left" ? step : -step;
-    onResize?.(clamp(panelEl.offsetWidth + grow));
+    resizeBy(panelEl.offsetWidth, step);
   }
 
   const DISMISS_TAP_SLOP_PX = 8;
@@ -232,10 +206,6 @@
 </div>
 
 <style>
-  /* The layer is a logical grouping only (display:contents) so the panel and
-     backdrop are direct children of the #console grid — the panel can then be
-     placed into a reserved grid column when docked. Backdrop and panel both
-     position themselves explicitly, so they don't depend on the layer box. */
   .panel-layer {
     display: contents;
   }
@@ -255,12 +225,10 @@
     opacity: 1;
     pointer-events: auto;
   }
-  /* Docked = a persistent sidebar, never an overlay → no backdrop. */
   .panel-layer.docked .backdrop {
     display: none;
   }
 
-  /* ---- Flyout (default): fixed overlay below the topbar, slides from side ---- */
   .panel {
     position: fixed;
     top: var(--topbar-h);
@@ -293,21 +261,12 @@
   .panel-layer.open .panel {
     transform: translateX(0);
   }
-  /* When both flyout drawers are open on a narrow screen they overlap; equal
-     z-index would let DOM order (always left-then-right) decide the stack.
-     The most-recently-opened panel is marked `raised` so it wins instead.
-     Flyout only — docked panels live in separate grid columns and never
-     overlap, so this is scoped away from `.docked`. */
   .panel-layer.raised:not(.docked) .panel {
     z-index: 51;
   }
 
-  /* ---- Docked: in-flow column in the #console grid, pushing the stage ---- */
   .panel-layer.docked .panel {
-    position: relative; /* anchors the resize handle */
-    /* Neutralize the flyout's fixed offsets — as a relative grid item the
-       panel must sit flush in its cell (no top:topbar-h shift, which caused a
-       gap below the topbar). */
+    position: relative;
     top: 0;
     bottom: auto;
     width: auto;
@@ -318,9 +277,6 @@
     transition: none;
   }
 
-  /* Resize handle — straddles the panel's INNER edge (right edge for a
-     left-docked panel, left edge for a right-docked one). A wide invisible
-     hit area with a thin grip that shows on hover/focus/drag. */
   .resize-handle {
     position: absolute;
     top: 0;
@@ -328,7 +284,7 @@
     width: 11px;
     z-index: 3;
     cursor: col-resize;
-    touch-action: none; /* let pointer drag own the gesture on touch */
+    touch-action: none;
   }
   .panel[data-side="left"] .resize-handle {
     right: -6px;
@@ -354,26 +310,17 @@
   .resize-handle:focus-visible {
     outline: none;
   }
-  /* Closed while docked → fully removed so its grid column collapses. */
   .panel-layer.docked:not(.open) .panel {
     display: none;
   }
 
-  /* Mobile: a bottom sheet — slides up from the bottom edge with a drag
-     handle to dismiss. Docking never triggers below this width (--bp-dock is
-     1200px); :not(.docked) is defensive, and it also lifts specificity to
-     (0,3,0) so this overrides the side-specific left/right/translateX rules
-     above without !important. */
   @media (max-width: 759px) {
-    /* bp: stacked */
     .panel-layer:not(.docked) .panel {
       top: auto;
       left: 0;
       right: 0;
       bottom: 0;
       width: 100%;
-      /* Fixed height, not max-height: switching tabs changes the content
-         height, and the sheet must not jump — the body scrolls instead. */
       height: 88dvh;
       border-radius: var(--r-well) var(--r-well) 0 0;
       padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
@@ -382,8 +329,6 @@
     .panel-layer.open:not(.docked) .panel {
       transform: translateY(0);
     }
-    /* A bottom sheet leaves real page exposed above it — keep the
-       backdrop so that area still dims. */
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -393,8 +338,6 @@
     }
   }
 
-  /* Grab handle — hidden by default (docked sidebar / desktop flyout have no
-     use for it); shown only for the mobile bottom sheet below. */
   .sheet-handle {
     display: none;
     flex: 0 0 auto;
@@ -418,7 +361,6 @@
     background: var(--border-strong);
   }
   @media (max-width: 759px) {
-    /* bp: stacked */
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
       justify-content: center;
@@ -492,8 +434,6 @@
     min-width: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    /* Stop scroll chaining: reaching the panel's scroll boundary must not
-       scroll the page behind it (which would lift the anchored status bar). */
     overscroll-behavior: contain;
     padding-right: var(--space-1);
     scrollbar-gutter: stable;

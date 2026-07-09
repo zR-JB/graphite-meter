@@ -1,11 +1,4 @@
 <script lang="ts">
-  /* ============================================================
-   * <GaugePanel> — the signature visualization
-   * Thin wrapper: instantiates GaugeEngine on mount, feeds it a
-   * pull-callback, and reacts to theme/resize. The live primary
-   * metric is plain DOM (zero layout shift via tabular-nums +
-   * fmtSpeed banding); the canvas is decorative (aria-hidden).
-   * ============================================================ */
   import { onMount, untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
@@ -16,65 +9,34 @@
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
 
-  // Gate the latency panel purely on whether latency is measured at all — the
-  // enabled-stage state is the single source of truth. So a wordmark "home"
-  // reset and a page reload land on the same view: panel shown when latency is
-  // enabled (even on the blank idle gauge), hidden when it isn't.
   const showLatency = $derived(store.latencyEnabled);
 
-  // ---- Instrument / results tri-state ----
-  // idle/running shows just the dial; once a run is underway a compact
-  // one-line-per-stage strip appears; on completion it swaps to the full
-  // result-card grid. The slot below the gauge is ALWAYS mounted (reserved at
-  // its compact-strip height outside the final state) so the gauge height is
-  // identical at page load, mid-run, and after a return to the idle view.
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
     if (store.phase === "idle") return "none";
     return "partial";
   });
 
-  // Total run ETA (read-only here; duration is edited only in Settings).
-  // Backed by the shared scheduler via store.totalEtaMs so it can't drift from
-  // the real timeline (and counts bidirectional when on). Shown so a newcomer
-  // knows roughly how long Engage will take.
   const etaMs = $derived(store.totalEtaMs);
 
   let canvasEl = $state<HTMLCanvasElement>();
   let engine: GaugeEngine;
 
-  // ── Grind-to-zero on a stall (presentation only — principle 2) ──
-  // While the run is stalled (no real samples arriving) the gauge needle + the
-  // big live number EASE to 0 over ~800ms instead of snapping, then snap back
-  // the instant a real sample resumes. This is a pure DRAW-TIME effect computed
-  // from real state (store.stalledSince + the last real sample) — it stores
-  // nothing, emits nothing, and pushes no sample into any buffer. Showing ~0
-  // during dead air is in fact truthful (no bytes are arriving); we just ease
-  // the transition. Needs a per-frame wall clock, so a tiny rAF loop bumps
-  // `nowWall`; the GaugeEngine's own EMA follower carries the needle, while the
-  // DOM number multiplies the last real bytes/sec by the same decay factor.
   const STALL_DECAY_MS = 800;
+  const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
+  const EMPTY_DISPLAY = { value: "—", unit: "" };
   let nowWall = $state(performance.now());
   const stallDecay = $derived.by(() => {
     if (store.measuring || !store.stalledSince) return 1;
     const since = nowWall - store.stalledSince;
     return Math.min(1, Math.max(0, 1 - since / STALL_DECAY_MS));
   });
-  // The live transfer rate, eased toward 0 while stalled. The store's samples
-  // are ALREADY de-aliased at the single smoothing point in RunnerCore, so both
-  // the big number and the needle (via the engine's 60Hz interpolation EMA) read
-  // from that one smoothed source — no extra UI-layer smoothing here.
   const decayedBytesPerSec = $derived(
     store.liveTransferBytesPerSec * stallDecay,
   );
 
-  // Nice-ceiling ladder (ms) for the latency dial. 1-2-5 steps so the five
-  // quarter labels (0 … scale) always land on clean values (5/10/25/50…).
   const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
 
-  // A fixed, linear ms scale for the latency-phase dial: round the running peak
-  // RTT (incl. the pre-test ping) up to the next nice ceiling, so the needle
-  // position reads as a real RTT and the tick labels stay round.
   const latencyScaleMs = $derived.by(() => {
     let peak = store.infra?.preTestPingMs ?? 0;
     for (const s of store.latency)
@@ -86,33 +48,23 @@
     );
   });
 
-  // Quarter tick labels for the dial, memoized so the engine's 60 Hz pull
-  // doesn't re-format ten strings per frame — this only recomputes when the
-  // phase, scale, or display unit actually changes.
   const msTicksActive = $derived(
     store.phase === "latency" ||
       (store.phase === "complete" && store.finalMetric?.kind === "latency"),
   );
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
-      return [0, 0.25, 0.5, 0.75, 1].map((f) => fmtMs(latencyScaleMs * f));
+      return TICK_FRACTIONS.map((f) => fmtMs(latencyScaleMs * f));
     const scale = store.displayScaleBytesPerSec;
-    return [0, 0.25, 0.5, 0.75, 1].map((f) =>
-      fmtSpeed(store.toUnit(scale * f)),
-    );
+    return TICK_FRACTIONS.map((f) => fmtSpeed(store.toUnit(scale * f)));
   });
 
-  // The single big number, per phase.
   const display = $derived.by(() => {
     const p = store.phase;
     if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
-    // Warmup has no meaningful rate yet — show the same neutral dash as the
-    // idle/error/aborted states rather than a misleading 0 bit/s.
     if (p === "idle" || p === "error" || p === "aborted" || p === "warmup")
-      return { value: "—", unit: "" };
+      return EMPTY_DISPLAY;
     if (p === "complete") {
-      // Phase-agnostic headline: download if it ran, else upload, else latency
-      // — never assume download exists.
       const fm = store.finalMetric;
       if (fm?.kind === "speed")
         return {
@@ -120,18 +72,14 @@
           unit: store.unitLabel,
         };
       if (fm?.kind === "latency") return { value: fmtMs(fm.ms), unit: "ms" };
-      return { value: "—", unit: "" };
+      return EMPTY_DISPLAY;
     }
-    // Live download/upload/bidirectional speed (already de-aliased upstream).
-    // While stalled it eases to 0 over ~800ms (presentation only — principle 2);
-    // snaps back on resume.
     return {
       value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
       unit: store.unitLabel,
     };
   });
 
-  // Skipped transfer stages — the gauge explains why throughput is missing.
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
     download: "Download",
@@ -144,9 +92,6 @@
     ),
   );
 
-  // Guided idle / empty + transient states — never a dead, bare dash.
-  // Shown as soft copy beneath the big metric so a newcomer always knows what
-  // to do (idle) or what is happening (warmup probing).
   const hint = $derived.by(() => {
     switch (store.phase) {
       case "idle":
@@ -158,10 +103,6 @@
     }
   });
 
-  // Terminal aborted/error states get a distinct two-line treatment: a
-  // headline naming WHAT happened (friendly reason copy via reasonLabel —
-  // never the backend's raw engineering message) and an action line that
-  // matches the button's actual label ("Run Again") — keep them in sync.
   const status = $derived.by(() => {
     switch (store.phase) {
       case "aborted":
@@ -183,41 +124,23 @@
     }
   });
 
-  // One string for the screen-reader mirror: the status (when terminal) or
-  // the guided hint (idle/warmup); empty mid-run (the live value speaks).
   const statusText = $derived(
     status ? `${status.headline} — ${status.action}` : hint,
   );
 
-  // Wake the (self-parking) gauge loop whenever the live state it draws from
-  // changes. During a run the loop sustains itself; this re-arms it on the
-  // idle→engage transition and any discrete change while parked.
   $effect(() => {
-    // Track the fields the gauge pulls so a change re-runs this effect.
     void store.phase;
     void store.throughput.length;
     void store.latency.length;
     void store.liveRtt;
     void store.displayScaleBytesPerSec;
-    void store.measuring; // re-arm on a stall/resume edge so the decay animates
-    // Re-arm on a unit/base toggle so the tick labels re-format after the run
-    // finishes and the loop has parked (the ticks read store.toUnit live).
+    void store.measuring;
     void store.unitBase;
     void store.unitKind;
-    // unitLabel changes whenever the shared prefix index (k/M/G/T) moves —
-    // that can happen from the raw peak alone, independent of
-    // displayScaleBytesPerSec (which tracks the DWELL-FILTERED sustained
-    // peak, a different signal). Without this, a prefix change while the
-    // loop is parked would leave the canvas-drawn tick labels stale.
     void store.unitLabel;
     engine?.wake();
   });
 
-  // Per-frame wall clock for the grind-to-zero decay. It only needs to tick
-  // while a stall is easing the value down (and one frame after resume to snap
-  // back); a self-parking rAF keeps it idle otherwise. Bumping `nowWall`
-  // recomputes `stallDecay`/`decayedBytesPerSec`, which the DOM number reads and
-  // which feeds the gauge engine's needle EMA.
   let decayRaf = 0;
   $effect(() => {
     const easing = store.isRunning && !store.measuring;
@@ -228,7 +151,7 @@
     }
     const loop = () => {
       nowWall = performance.now();
-      engine?.wake(); // keep the needle's EMA following the decayed value
+      engine?.wake();
       decayRaf = requestAnimationFrame(loop);
     };
     decayRaf = requestAnimationFrame(loop);
@@ -238,12 +161,9 @@
     };
   });
 
-  // Screen-reader mirror: the live value is refreshed on a 1Hz tick (below)
-  // so a 16Hz number doesn't flood the live region, but phase/hint changes — the
-  // semantic events — are announced immediately via this effect.
   let a11y = $state("");
   $effect(() => {
-    const s = statusText; // track phase-driven copy + phase changes; not the live value
+    const s = statusText;
     void store.phase;
     a11y = s
       ? s
@@ -255,10 +175,6 @@
       const p = store.phase;
       const fm = store.finalMetric;
       const scale = store.displayScaleBytesPerSec;
-      // At complete, resolve the dial + its tick scale to the primary result
-      // stage (download→upload→latency) so a run without download still reads
-      // right (needle and labels match, instead of an RTT needle under speed
-      // labels). -1 elsewhere → the per-phase live logic drives the dial.
       let resolvedFraction = -1;
       if (p === "complete" && fm) {
         if (fm.kind === "speed") {
@@ -273,8 +189,6 @@
       }
       return {
         phase: p,
-        // Stall-decayed (presentation only — principle 2): the needle eases to
-        // 0 during dead air via the engine's EMA, snaps back on resume.
         valueBytesPerSec: decayedBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs,
