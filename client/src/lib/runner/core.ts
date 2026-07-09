@@ -24,7 +24,6 @@ import type {
   PhaseTransition,
   InfraInfo,
   EngineInfo,
-  ServerCandidate,
   ThroughputResult,
   LatencyResult,
   StallInfo,
@@ -211,9 +210,6 @@ export interface RunnerBackend {
   idleHintMs?(): number;
   /** OPTIONAL — fire a live dev anomaly; real engines may omit it. */
   injectAnomaly?(a: RunnerAnomaly): void;
-  /** OPTIONAL — the measurement endpoints this backend can target (server
-   *  selection seam). Single-backend engines omit it. */
-  listServers?(): Promise<ServerCandidate[]>;
 }
 
 export class RunnerCore implements NetworkRunner, CoreHost {
@@ -324,12 +320,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   describe(): EngineInfo {
     return this.#backend.describe();
-  }
-
-  /** Server-selection seam: forward to the backend, or an empty list when the
-   *  backend targets a single endpoint. */
-  listServers(): Promise<ServerCandidate[]> {
-    return this.#backend.listServers?.() ?? Promise.resolve([]);
   }
 
   injectAnomaly(a: RunnerAnomaly): void {

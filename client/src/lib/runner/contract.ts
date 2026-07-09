@@ -383,24 +383,6 @@ export interface InfraInfo {
   protocolNegotiated: string;
 }
 
-/* ---------- Backend / server selection (future-proof seam) ----------
- *  One selectable measurement endpoint. A runner that fronts multiple backends
- *  may expose a list of these (via `listServers`) so a future UI can pick or
- *  auto-select the nearest; the chosen one becomes `InfraInfo.server`. Today
- *  every shipped runner targets a single endpoint (host "auto" lets it pick),
- *  so this is a contract seam only — no discovery or selection UI yet. */
-export interface ServerCandidate {
-  /** Stable id for selection/persistence. */
-  id: string;
-  name: string;
-  host: string;
-  port: number;
-  path: string;
-  location?: string;
-  /** Last measured/advertised RTT, when known, for ranking. */
-  rttMs?: number;
-}
-
 /* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
   | { type: "infra"; info: InfraInfo }
@@ -484,9 +466,6 @@ export interface NetworkRunner {
    *  remaining run. OPTIONAL so a minimal engine can omit live reconfigure;
    *  no-op when idle. */
   reconfigureStages?(stages: RunnerConfig["stages"]): void;
-  /** OPTIONAL — list the measurement endpoints this runner can target, for a
-   *  future server-selection UI. Single-backend runners omit it. */
-  listServers?(): Promise<ServerCandidate[]>;
   /** OPTIONAL — fire a live anomaly into an in-flight run. Kept
    *  optional so a minimal real engine need not implement it. */
   injectAnomaly?(a: RunnerAnomaly): void;
