@@ -242,7 +242,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		e := goclient.Event(msg)
 		m.apply(e)
-		if m.mode == modeRun && !m.complete && m.err == nil {
+		if m.mode == modeRun && m.err == nil {
 			return m, waitEvent(m.events)
 		}
 	case doneMsg:

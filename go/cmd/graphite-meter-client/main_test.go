@@ -911,6 +911,53 @@ func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
 	}
 }
 
+func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
+	events := make(chan goclient.Event, 1)
+	events <- goclient.Event{
+		Kind:   goclient.EventResult,
+		Stage:  "bidirectional",
+		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Up, TotalBytes: 42},
+	}
+	close(events)
+
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.events = events
+	m.complete = true
+
+	got, cmd := m.Update(eventMsg(goclient.Event{
+		Kind:   goclient.EventResult,
+		Stage:  "bidirectional",
+		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24},
+	}))
+	if cmd == nil {
+		t.Fatal("completed runs must keep waiting for buffered events")
+	}
+
+	msg := cmd()
+	if msg == nil {
+		t.Fatal("waitEvent returned nil before draining the buffered upload result")
+	}
+	got, _ = got.Update(msg)
+	mm := got.(model)
+
+	var sawDown, sawUp bool
+	for _, res := range mm.results {
+		if res.Stage != "bidirectional" {
+			continue
+		}
+		switch res.Direction {
+		case goclient.Down:
+			sawDown = true
+		case goclient.Up:
+			sawUp = true
+		}
+	}
+	if !sawDown || !sawUp {
+		t.Fatalf("want both bidirectional transfer results after completion, got %+v", mm.results)
+	}
+}
+
 func TestThroughputSmoothingAndScale(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	// First sample seeds the EWMA; a second pulls it toward the new value but
@@ -1074,7 +1121,7 @@ func TestUpdate_EventMsg(t *testing.T) {
 	if !mm.complete {
 		t.Error("expected complete after EventComplete")
 	}
-	if cmd != nil {
-		t.Error("expected nil cmd once the run is complete")
+	if cmd == nil {
+		t.Error("expected a non-nil cmd to drain buffered events after completion")
 	}
 }
