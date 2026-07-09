@@ -1,8 +1,6 @@
 @import "tailwindcss";
 
-/* Self-hosted (no Google Fonts API dependency — the app must work fully
-   offline/air-gapped). Both are variable fonts: one file per subset covers
-   the whole 400-700 weight range the UI uses. */
+/* Fonts are self-hosted so the meter still renders correctly offline. */
 @font-face {
   font-family: "Instrument Sans";
   font-style: normal;
@@ -49,14 +47,8 @@
 }
 
 @theme {
-  /* Instrument Sans carries both display and body (CARBON direction): a
-     geometric grotesque used heavy for the hero number / Engage / panel
-     titles and regular for prose, so the UI reads as one machined object. */
   --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
   --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
-  /* Spline Sans Mono — tabular figures for every live readout: the gauge
-     value, chart ticks, ETA, telemetry. One consistent "instrument digits"
-     face wherever a number can change under your eye. */
   --font-mono:
     "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
     "Liberation Mono", monospace;
@@ -65,59 +57,33 @@
 :root {
   color-scheme: dark;
 
-  /* ---- Geometry tokens ---- */
+  /* Shell breakpoints are duplicated in JS/media queries; keep literals in sync. */
   --topbar-h: 60px;
   --rail-w: 268px;
   --inspector-w: 380px;
   --gap: 16px;
 
-  /* ---- Responsive scale ----
-     Three named breakpoints; every @media must use one of these literal
-     values (custom properties can't be read inside @media) — tag each with a
-     "bp: stacked/compact/dock" comment so drift is greppable. Use viewport
-     queries only for shell-level decisions; inside `.stage` or a side panel
-     use container-intrinsic sizing/queries, since docked panels shrink that
-     column independent of viewport width.
-
-     --bp-compact  430px — phone-in-hand ceiling (compact controls/labels)
-     --bp-stacked  759px — single-column shell threshold
-     --bp-dock    1200px — side-panel dock/flyout threshold */
   --bp-compact: 430px;
   --bp-stacked: 759px;
   --bp-dock: 1200px;
 
-  /* Legacy radii — now derived from --feel-radius so they respond to the knob
-     too (identical values at --feel-radius:1). Prefer the semantic --r-* below
-     for new work; these stay for components not yet migrated. */
   --radius-xs: calc(2px * var(--feel-radius));
   --radius-sm: calc(6px * var(--feel-radius));
   --radius-md: calc(8px * var(--feel-radius));
   --radius-lg: calc(12px * var(--feel-radius));
   --radius-xl: calc(16px * var(--feel-radius));
 
-  /* ---- Motion tokens ---- */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur-hover: 120ms;
   --dur-slide: 180ms;
   --dur-graph: 280ms;
 
-  /* ============ CARBON — FORM CONTROL PANEL ============
-     Three master knobs drive the whole feel. The target is graphite as
-     engineered material: near-monochrome cool greys with a clear metallic
-     step between surfaces, depth read from a hairline rim light + a faint
-     cast shadow rather than an engraved bevel.
-
-       --feel-radius   0 = sharp panel   · 0.6 = default · 1.6 = soft
-       --feel-density  0.85 = compact    · 1 = default · 1.2 = airy
-       --feel-edge     0 = flat/matte    · 0.6 = default · 2 = strong
-  */
+  /* Master feel knobs: most spacing, radii, and edge strength derive from these. */
   --feel-radius: 0.6;
   --feel-density: 1;
   --feel-edge: 0.6;
 
-  /* Modular space scale — every padding / margin / gap derives from this,
-     so density is a single knob instead of scattered pixel values. */
   --space-1: calc(4px * var(--feel-density));
   --space-2: calc(8px * var(--feel-density));
   --space-3: calc(12px * var(--feel-density));
@@ -125,16 +91,10 @@
   --space-5: calc(24px * var(--feel-density));
   --space-6: calc(32px * var(--feel-density));
 
-  /* Semantic radii — instrument-crisp, all driven by --feel-radius */
-  --r-well: calc(6px * var(--feel-radius)); /* recessed data wells */
-  --r-chrome: calc(
-    8px * var(--feel-radius)
-  ); /* flat chrome: buttons, chips, panels */
-  --r-pill: calc(12px * var(--feel-radius)); /* the Engage master action */
+  --r-well: calc(6px * var(--feel-radius));
+  --r-chrome: calc(8px * var(--feel-radius));
+  --r-pill: calc(12px * var(--feel-radius));
 
-  /* Type scale — Instrument Sans (display + body) / Spline Sans Mono (data).
-     --type-hero is the live number: the one typographic moment.
-     --track-wide is for small-caps instrument labels. */
   --type-hero: clamp(40px, 6vw, 76px);
   --type-xl: 22px;
   --type-lg: 17px;
@@ -144,21 +104,13 @@
   --track-tight: -0.02em;
   --track-wide: 0.1em;
 
-  /* ---- Surface texture (DARK): machined plates, not paper ----
-     Depth reads from a hairline top edge (light catching a milled rim) + a
-     shallow cast shadow. The signature contrast is --elev-inset (a recessed
-     well) vs --elev-raised (a plate resting on top). Mode-specific
-     primitives below are overridden in [data-theme="light"]; the recipes
-     themselves are written once. */
   --edge-light: rgba(211, 219, 227, calc(0.07 * var(--feel-edge)));
   --edge-shade: rgba(0, 0, 0, calc(0.4 * var(--feel-edge)));
-  --shadow-ink:
-    5, 7, 9; /* rgb triple composed into shadows (cool, near-black) */
-  --well-depth: 0.35; /* inner-shadow strength for a recessed well */
-  --raise-depth: 0.28; /* drop-shadow strength for a resting plate */
+  --shadow-ink: 5, 7, 9;
+  --well-depth: 0.35;
+  --raise-depth: 0.28;
 
-  /* A recessed well: shallow, even inner shadow plus the crisp border that
-     reads as its machined edge. */
+  /* Elevation recipes stay theme-neutral; dark/light only swap primitives. */
   --elev-inset:
     inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8)),
     inset 0 6px 14px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.45));
@@ -166,18 +118,10 @@
     0 1px 0 var(--edge-light),
     0 4px 14px rgba(var(--shadow-ink), var(--raise-depth));
   --elev-flat: 0 0 0 transparent;
-  /* Shallower recess for secondary screens (chart canvas, mini readouts). */
   --elev-recess: inset 0 1px 2px
     rgba(var(--shadow-ink), calc(var(--well-depth) * 0.4));
-  /* Flat tile: a hairline top edge only — reads as a plate resting on the
-     chassis, quieter than a recessed well. */
   --elev-tile: inset 0 1px 0 var(--edge-light);
 
-  /* ===== DARK: CARBON — graphite as engineered material =====
-     Near-monochrome cool neutral greys (never warm, never purple, never pure
-     black — the mineral's own metallic cast). One accent carries everything
-     live: a muted "conductive" teal. Cold steel blue marks reference and
-     at-rest states. The data provides the rest of the color. */
   /* --canvas is duplicated as a literal hex in index.html's pre-paint <style>
      (the bundle, and thus this file, loads too late to own the first frame).
      If you change this dark value, change index.html's `html { background }`
@@ -195,35 +139,32 @@
   --border: rgba(211, 219, 227, 0.11);
   --border-strong: rgba(211, 219, 227, 0.2);
 
-  --text: #d9dce0; /* silver */
+  --text: #d9dce0;
   --text-muted: #9ba2aa;
   --text-soft: #6a717a;
   --text-inverse: #111315;
 
-  --brand: #6db0b8; /* conductive teal */
+  --brand: #6db0b8;
   --brand-strong: #93cdd4;
   --brand-muted: #47787e;
   --brand-soft: rgba(109, 176, 184, 0.14);
 
-  --signal: #8ba3ba; /* cold steel — reference / at-rest */
+  --signal: #8ba3ba;
   --signal-strong: #adc0d4;
   --signal-soft: rgba(139, 163, 186, 0.14);
 
-  /* Phase identity tints — a cool mineral spectrum: pewter (no data yet),
-     steel blue, conductive teal, muted brass, heather. */
-  --phase-warmup: #858c94; /* pewter — indeterminate */
-  --phase-latency: #8ba3ba; /* steel blue */
-  --phase-download: #6db0b8; /* conductive teal */
-  --phase-upload: #bda36c; /* muted brass — the one warm member */
-  --phase-bidirectional: #a695c8; /* heather */
-  --phase-complete: #7590a5; /* steel, settled */
+  --phase-warmup: #858c94;
+  --phase-latency: #8ba3ba;
+  --phase-download: #6db0b8;
+  --phase-upload: #bda36c;
+  --phase-bidirectional: #a695c8;
+  --phase-complete: #7590a5;
 
-  /* Status tones */
   --ok: #79ad91;
   --ok-soft: rgba(121, 173, 145, 0.14);
   --warn: #c4a568;
   --warn-soft: rgba(196, 165, 104, 0.14);
-  --err: #d89393; /* muted alarm — distinct from every phase tint */
+  --err: #d89393;
   --err-soft: rgba(216, 147, 147, 0.15);
   --info: #8ba3ba;
   --info-soft: rgba(139, 163, 186, 0.14);
@@ -231,16 +172,11 @@
   --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(5, 7, 9, 0.4);
   --shadow-float: 0 18px 60px rgba(4, 6, 8, 0.55);
 
-  /* Graph-specific */
   --grid-line: rgba(211, 219, 227, 0.05);
   --grid-line-major: rgba(211, 219, 227, 0.1);
 }
 
 [data-theme="light"] {
-  /* ===== LIGHT: CARBON — the same instrument in daylight =====
-     Cool paper-grey (deliberately not a warm cream) with near-black ink.
-     Same accent anchors as dark mode, darkened for contrast on a bright
-     ground, so the two modes read as siblings. */
   color-scheme: light;
 
   --canvas: #e9e9e4;
@@ -293,9 +229,6 @@
   --grid-line: rgba(43, 44, 40, 0.06);
   --grid-line-major: rgba(43, 44, 40, 0.12);
 
-  /* ---- Surface texture (LIGHT) — only the primitives change; the
-     --elev-* recipes above recompute. A light plate reads inset via a bright
-     top highlight + a faint ink-toned inner shadow (never heavy darkness). */
   --edge-light: rgba(255, 255, 255, calc(0.6 * var(--feel-edge)));
   --edge-shade: rgba(43, 44, 40, calc(0.12 * var(--feel-edge)));
   --shadow-ink: 43, 44, 40;
@@ -303,7 +236,6 @@
   --raise-depth: 0.1;
 }
 
-/* ---- Tailwind semantic bridge: map tokens → utilities ---- */
 @theme inline {
   --color-canvas: var(--canvas);
   --color-bg: var(--bg);
@@ -328,7 +260,6 @@
   --radius-xl: var(--radius-xl);
 }
 
-/* ---- Base ---- */
 html,
 body {
   height: 100%;
@@ -364,7 +295,6 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* ---- Global focus ring (§7) ---- */
 :focus-visible {
   outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
   outline-offset: 2px;
@@ -374,9 +304,6 @@ body {
   position: relative;
 }
 
-/* ---- Status / phase tone driver (§4.4) ----
-   A single data-phase attribute on #console lets any descendant
-   theme to the active phase via var(--active-accent), no prop drilling. */
 #console {
   --active-accent: var(--brand);
 }
@@ -403,7 +330,6 @@ body {
   --active-accent: var(--err);
 }
 
-/* ---- Reduced motion (§4.5) ---- */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

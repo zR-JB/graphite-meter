@@ -1,26 +1,7 @@
 <script lang="ts">
-  /* ============================================================
-   * <StageTrack> — selection + progress in one element
-   * The single combined stage control: Latency / Download / Upload
-   * each render as ONE segment that is simultaneously
-   *   (a) a selectable switch — toggle enable/disable, routed through
-   *       the store's guarded `toggleStage`/`canToggleStage` +
-   *       `applyStageChange`, keeping the ≥1-enabled floor and the
-   *       future-only rule while a run is in flight; and
-   *   (b) a live progress indicator — the active stage fills by
-   *       `phaseFraction`, completed stages settle into a done state,
-   *       pending enabled stages stay neutral.
-   *
-   * Warmup is NOT a standalone segment: each stage now owns a warmup
-   * lead-in, so during `phase === "warmup"` the *upcoming* stage (the
-   * first enabled stage not yet measured) shows a subtle indeterminate
-   * "warming up" shimmer (reduced-motion safe) while already-measured
-   * stages settle to done. Completion is NOT a separate ✓ block: on
-   * `complete` the track simply settles with each run stage in its done
-   * state. Deselected stages still render (muted) so they can be
-   * re-enabled.
-   * ============================================================ */
-  import { store, type StageKey } from "../state/store.svelte";
+  // Stage rail: maps store/core stage state into toggleable progress segments
+  // for latency, download, upload, and optional bidirectional.
+  import { MEASURED_STAGES, store, type StageKey } from "../state/store.svelte";
   import { applyStageChange } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
@@ -31,26 +12,44 @@
     { key: "upload", label: "Upload", icon: ICON.upload },
   ];
 
-  const ORDER: StageKey[] = ["latency", "download", "upload"];
-  const TRACK_ORDER = [...ORDER, "bidirectional"] as const;
+  const TRACK_ORDER = [...MEASURED_STAGES, "bidirectional"] as const;
   type TrackStageKey = (typeof TRACK_ORDER)[number];
 
   type SegState =
-    | "disabled" // deselected — muted, re-enableable
-    | "warmup" // first enabled stage during lead-in (indeterminate)
-    | "active" // currently running — fills by phaseFraction
-    | "done" // finished this run — settled fill
-    | "failed" // skipped — couldn't run (see store.stageFailures)
-    | "pending"; // enabled, not yet reached
+    "disabled" | "warmup" | "active" | "done" | "failed" | "pending";
 
   const stageIndex = (stage: TrackStageKey | null) =>
     stage ? TRACK_ORDER.indexOf(stage) : -1;
+
+  const progressFill = () => Math.round(store.phaseFraction * 200) / 2;
+
+  // Track state is visual only. The store/core own the actual stage rules and
+  // timeline; this maps them to pending/warmup/active/done/failed.
+  function segmentState(
+    stage: StageKey,
+    enabled: boolean,
+    failed: boolean,
+    curI: number,
+  ): { state: SegState; fill: number } {
+    if (!enabled) return { state: "disabled", fill: 0 };
+    if (failed) return { state: "failed", fill: 0 };
+    if (store.phase === "complete") return { state: "done", fill: 100 };
+    const stI = TRACK_ORDER.indexOf(stage);
+    if (store.phase === "warmup") {
+      if (stI < curI) return { state: "done", fill: 100 };
+      if (stI === curI) return { state: "warmup", fill: 0 };
+      return { state: "pending", fill: 0 };
+    }
+    if (curI === -1) return { state: "pending", fill: 0 };
+    if (stI < curI) return { state: "done", fill: 100 };
+    if (stI === curI) return { state: "active", fill: progressFill() };
+    return { state: "pending", fill: 0 };
+  }
 
   function onToggle(stage: StageKey) {
     if (store.toggleStage(stage)) applyStageChange();
   }
 
-  /** Short reason a segment can't toggle, or null when it is free. */
   function lockReason(stage: StageKey, state: SegState): string | null {
     if (store.canToggleStage(stage)) return null;
     if (state === "done") return "done";
@@ -61,50 +60,12 @@
   }
 
   const segs = $derived.by(() => {
-    const cur = store.phase;
     const curI = stageIndex(store.phaseStage);
     return STAGES.map((s) => {
       const enabled = store.config.stages[s.key];
       const failure = store.stageFailures[s.key];
       const locked = !store.canToggleStage(s.key);
-      let state: SegState;
-      let fill = 0;
-      if (!enabled) {
-        state = "disabled";
-      } else if (failure) {
-        state = "failed";
-      } else if (cur === "complete") {
-        state = "done";
-        fill = 100;
-      } else if (cur === "warmup") {
-        const stI = TRACK_ORDER.indexOf(s.key);
-        if (stI < curI) {
-          state = "done";
-          fill = 100;
-        } else if (stI === curI) state = "warmup";
-        else state = "pending";
-      } else if (curI === -1) {
-        // idle / aborted / error — neutral, selectable.
-        state = "pending";
-      } else {
-        const stI = TRACK_ORDER.indexOf(s.key);
-        if (stI < curI) {
-          state = "done";
-          fill = 100;
-        } else if (stI === curI) {
-          // Active phase: while stalled the fill freezes (phaseFraction is
-          // frozen in the core) and pulses to signal the link is down.
-          // Quantized to 0.5% so the 50 Hz progress stream doesn't restyle
-          // the bar every tick.
-          state = "active";
-          fill = Math.round(store.phaseFraction * 200) / 2;
-        } else {
-          state = "pending";
-        }
-      }
-      // Interaction lock is decoupled from the tag: a "skipped" future stage
-      // stays clickable so it can be re-included. Completed stages keep their
-      // done tag through later warmups and the bidirectional phase.
+      const { state, fill } = segmentState(s.key, enabled, !!failure, curI);
       const reason = enabled
         ? failure
           ? "failed"
@@ -116,13 +77,6 @@
     });
   });
 
-  // Bidirectional is the advanced 4th stage — can only be ENABLED in Settings
-  // (it renders here only once Settings has turned it on), but CAN be disabled
-  // from this track: clicking it flips the config off, which makes this block
-  // return null next render and the segment disappears — re-enabling is
-  // Settings-only again (see canDisableBidirectional/disableBidirectional in
-  // store.svelte.ts). It always runs last, so its state is simply
-  // pending → active (during its phase) → done.
   const bidi = $derived.by<{ state: SegState; fill: number } | null>(() => {
     if (!store.config.stages.bidirectional) return null;
     if (store.stageFailures.bidirectional) return { state: "failed", fill: 0 };
@@ -133,13 +87,11 @@
     if (p === "bidirectional")
       return {
         state: "active",
-        fill: Math.round(store.phaseFraction * 200) / 2,
+        fill: progressFill(),
       };
     return { state: "pending", fill: 0 };
   });
 
-  // 3 stages share one row; with the optional 4th (bidirectional) segment the
-  // track wraps to 2×2 only below the compact width (see .quad's @container).
   const totalSegs = $derived(segs.length + (bidi ? 1 : 0));
   const quad = $derived(totalSegs >= 4);
 </script>
@@ -240,8 +192,6 @@
 </fieldset>
 
 <style>
-  /* 3 segments share one row; 4 (.quad) wrap to 2×2 only below the compact
-     width. A narrow docked-panel stage degrades via .seg-label's ellipsis. */
   .stage-track {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -253,15 +203,12 @@
   .stage-track.quad {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
-  /* Queries the nearest ancestor container (GaugePanel's viz container).
-     430px mirrors --bp-compact (app.css). */
   @container (max-width: 430px) {
     .stage-track.quad {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 
-  /* Each segment is the chip AND the progress lane. */
   .seg {
     position: relative;
     display: flex;
@@ -294,14 +241,12 @@
     outline-offset: 2px;
   }
 
-  /* Enabled (selected) — brass-tinted, the value is "on". */
   .seg.on {
     border-color: color-mix(in srgb, var(--brand) 48%, var(--border));
     background: var(--brand-soft);
     color: var(--text);
   }
 
-  /* Disabled / deselected — de-emphasized but still present + re-enableable. */
   .seg--disabled {
     opacity: 0.5;
   }
@@ -309,7 +254,6 @@
     cursor: not-allowed;
   }
 
-  /* The progress lane that lives at the top of every segment. */
   .seg-bar {
     position: relative;
     width: 100%;
@@ -338,18 +282,14 @@
   .seg-fill--bidirectional {
     background: var(--phase-bidirectional);
   }
-  /* Settled done state — a calm, uniform fill regardless of phase tint. */
   .seg-fill.is-done {
     background: var(--ok);
   }
-  /* Skipped stage — a muted full err band, steady (nothing is in flight). */
   .seg-fill--failed {
     width: 100%;
     background: var(--err);
     opacity: 0.45;
   }
-  /* Stalled (link dropped mid-phase): the fill is frozen — pulse it in an error
-     tint so a stuck progress bar reads as "paused, reconnecting", not hung. */
   .seg-fill.is-stalled {
     background: var(--err);
   }
@@ -368,8 +308,6 @@
     }
   }
 
-  /* Warmup lead-in — indeterminate sweep on the first enabled stage,
-     folded in here instead of a standalone "W" segment. */
   .seg-fill--warmup {
     width: 45%;
     background: color-mix(in srgb, var(--brand) 55%, transparent);
@@ -380,7 +318,6 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    /* Reduced-motion: a steady, soft indeterminate band, no travel. */
     .seg-fill--warmup {
       width: 100%;
       opacity: 0.55;
@@ -395,8 +332,6 @@
     }
   }
 
-  /* Single line always: the label ellipsizes (.seg-label) rather than the
-     tag/check wrapping to a second row, so every segment keeps one height. */
   .seg-row {
     display: flex;
     align-items: center;
@@ -430,14 +365,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* Settled done glyph — the auto margin right-aligns it on whichever flex
-     line it lands on. */
   .seg-check {
     margin-left: auto;
     color: var(--ok);
   }
 
-  /* Lock reason tag. */
   .seg-tag {
     margin-left: auto;
     padding: 2px 6px;

@@ -1,69 +1,9 @@
-/* ============================================================
- * Real Backend — HTTP client skeleton, transport negotiation, preflight
- * ============================================================
- *
- * A compile-clean stub implementing `RunnerBackend` (core.ts) so a
- * future engine talking to live speedtest-server APIs can be filled
- * in WITHOUT touching the core, the UI, or the store. The shared
- * `RunnerCore` already owns the timeline, sequencing, the MEASURED
- * test-time clock + stall accrual, accumulation, stability,
- * early-stop, result reduction, and the whole event stream — so a
- * real engine implements ONLY network I/O and link-health signals.
- *
- * ── What the backend is responsible for ─────────────────────
- *  • probe()         — the preflight handshake (+ a few pre-test pings).
- *  • transport       — negotiate webtransport / websocket / fetch-stream per
- *                    phase; report each attempt with host.reportTransport; if
- *                    every kind fails, host.fail("transport-unavailable", …).
- *  • connection lifecycle — a STAGE owns its connection(s) across its whole
- *                    warmup→measure→end span: open + PRIME on onStageBegin, START
- *                    measuring the SAME connections on onStageMeasure, close on
- *                    onStageEnd / onAbort / onComplete. The warmup genuinely
- *                    warms the wire the measurement runs over — never reopen at
- *                    the seam. The CORE decides WHEN stages change; the backend
- *                    just reacts. Every hook carries the stage's PhaseActivity
- *                    (transfer lanes + loadedLatency), so the backend reads
- *                    NOTHING from global config to know what to open.
- *  • measurement     — stream/measure raw throughput + latency and push them
- *                    in via host.ingestThroughput(dir, …) / host.ingestLatency.
- *                    Direction travels WITH the sample, so a bidirectional
- *                    phase pushes both "down" and "up". (Push model: do NOT
- *                    implement onTick — that is the dummy's pull hook. Real
- *                    samples arrive as bytes do.)
- *  • link health     — on a mid-phase drop call host.stall({reason, transport,
- *                    detail}) (NON-terminal: the core freezes measured-time so
- *                    the phase end recedes by the dead-air); on reconnect call
- *                    host.resume(). A real sample arriving also auto-resumes via
- *                    the core watchdog. Only an UNRECOVERABLE drop is a terminal
- *                    host.fail(...).
- *  • failures        — report unrecoverable drops/timeouts/protocol errors with
- *                    host.fail(reason, message, cause). User abort is the
- *                    core's abort()/"aborted" phase, NOT a failure.
- *
- * ── Real-stats-only (principle 1) ───────────────────────────
- *  Push ONLY real measured samples. NEVER synthesize a sample to fill dead air,
- *  decay a value to zero on a stall, or zero-fill a gap — the ~800ms
- *  grind-to-zero is a render-layer effect (principle 2), computed by the UI from
- *  store.stalledSince. The backend stores/emits nothing during a stall.
- *
- * ── To go live ──────────────────────────────────────────────
- *  Change ONE line in wire.svelte.ts:
- *      runner = new RunnerCore(new RealBackend({ endpoint: ... }));
- *  Nothing else in the app changes.
- *
- * ── Units rule ──────────────────────────────
- *  Raw on the wire: the server serves/sinks BYTES; the client derives
- *  bytes/sec. Push raw instantaneous bytes/sec + the bytes moved over the
- *  interval into host.ingestThroughput. NO bits / base-2/10 / unit
- *  conversion in the backend — that is the UI's job.
- * ============================================================ */
-
+// Real measurement backend: negotiates browser transports, owns workers, and
+// pushes only measured wire samples into RunnerCore.
 import type {
   RunnerConfig,
-  RunnerAnomaly,
   InfraInfo,
   EngineInfo,
-  ServerCandidate,
   TransportKind,
   TransportRole,
   FlowDirection,
@@ -83,113 +23,56 @@ import {
   laneStaggerMs,
 } from "./real/backendPure";
 
-/** Construction options for a real engine: the endpoint to target plus anything
- *  preflight hands back (e.g. a session token). All optional so the class is
- *  trivial to drop into wire.svelte.ts. */
 export interface RealBackendOptions {
-  /** Backend base the API paths are relative to. Falls back to the
-   *  `config.endpoint` passed into start()/probe() when omitted. */
   endpoint?: RunnerConfig["endpoint"];
-  /** Optional bearer/session token from a prior preflight. */
   authToken?: string;
 }
 
-const NOT_IMPL = (method: string) =>
-  new Error(`RealBackend.${method} not implemented`);
-
-/** Throughput push cadence: aggregate worker deltas and push ~16 Hz (mirrors
- *  the dummy's THROUGHPUT_CADENCE_MS so both engines feel identical). */
+// Match the core/dummy cadence so both engines feed the UI at the same rate.
 const THROUGHPUT_CADENCE_MS = 60;
 
-/** Bytes requested per download stream. Sized so ONE request outlasts any
- *  reasonable stage even on a fast link (64 GiB — the server's clamp ceiling —
- *  lasts ~60 s/stream at 1 GB/s), so a stage never churns connections
- *  mid-measurement; the worker still re-fetches if a stream genuinely ends
- *  early, and we abort at stage end. */
-const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024; // 64 GiB
+// Large enough that a normal stage ends by aborting the stream, not by refetching.
+const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 
-/** Backoff before re-opening a dropped lane, so a persistently-failing stream
- *  can't spin a tight respawn loop (re-creating workers). */
+// Restart dropped lanes, but fail fast when a lane never establishes at all.
 const LANE_RESTART_BACKOFF_MS = 300;
-/** Give up a lane after this many consecutive restarts (≈12 s at the backoff);
- *  the core's max-stall timeout also bounds total patience. */
 const LANE_MAX_RESTARTS = 40;
-/** If a stage has NEVER moved a byte, give up much sooner: a lane failing this
- *  many times in a row means the connection can't be established at all, so the
- *  stage is skipped (failStage) instead of stalling toward max-stall. */
 const EARLY_FAIL_RESTARTS = 3;
-/** How long the ping channel gets to deliver its first pong before the latency
- *  stage is skipped as unreachable. */
 const PING_ESTABLISH_TIMEOUT_MS = 3500;
-/** Deadline for the upload-session mint. Without it a hung request (e.g. the
- *  connection pool still draining the download lanes) neither resolves nor
- *  rejects, and the upload stage rides silently into the 20 s max-stall. */
+// A hung upload-session request should skip the stage, not ride into max-stall.
 const UPLOAD_SESSION_TIMEOUT_MS = 3000;
-/** Per-lane spawn delay so the lanes' TCP slow-starts don't ramp in lockstep
- *  (synchronised overshoot → synchronised loss → synchronised backoff). At ≤4
- *  staggered lanes this is ≤300 ms, comfortably inside the warmup window. */
+// Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
-/** Grace after BYE for the /ws/upload worker to flush + receive UPLOAD_COMPLETE
- *  before we terminate it (the client headline is already set, so we don't block). */
 const PROGRESS_BYE_GRACE_MS = 1000;
 
-/* ---------- Latency (ping) tuning, handed to the ping worker ---------- */
-/** Pacer interval per pingConcurrency knob — the floor send rate that keeps
- *  multiple pings on the wire on high-RTT links (mirrors the dummy's map). */
+// Ping pacing is separate for idle, latency, and loaded-transfer contexts.
 const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
   instant: 80,
   medium: 250,
   slow: 600,
 };
-/** Max concurrent in-flight pings — bounds wire spam and the worker's pending
- *  map. Low-RTT links rarely exceed 1–2; high-RTT links fill toward this. */
 const PING_MAX_IN_FLIGHT = 16;
-/** Loaded-phase cadence: under a transfer the idle chain would spray hundreds of
- *  tiny PINGs/sec upstream and starve the download's ACKs on an asymmetric line.
- *  A loaded-latency distribution needs only a few samples/sec, so we kill the
- *  on-receive chain and pace a 2-deep window at ~8 Hz — enough to characterize
- *  bufferbloat, negligible uplink load. */
 const PING_LOADED_INTERVAL_MS = 120;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
-/** Min gap between sends, so the sub-ms on-receive chain tops out at ~1 kHz. */
 const PING_MIN_GAP_MS = 1;
-/** Min gap between UI-bound samples (worker downsamples to this). Decouples the
- *  report rate from the ping rate: on a fast link the chain pings ~1 kHz, but the
- *  main thread sees ≤ ~50 samples/s — comparable to the 16 Hz throughput path —
- *  so host.ingestLatency isn't flooded. The loss estimator still sees every pong;
- *  on slow links (pings farther apart than this) nothing is dropped. */
 const PING_REPORT_GAP_MS = 20;
-/** RTTVAR multiplier for the loss timeout (RFC 6298-style RTO = SRTT + K·RTTVAR).
- *  The deviation term spikes on an abrupt RTT jump, so the timeout adapts UP
- *  within ~1 RTT instead of false-flagging loss. */
 const PING_LOSS_K = 4;
-/** Loss-timeout floor (ms) — a sanity minimum that governs cold start before the
- *  estimator has a sample; the adaptive term takes over after the first pong. */
 const PING_LOSS_FLOOR_MS = 250;
 
-/* ---------- Idle keepalive (connectivity indicator + preflight ping) ----------
- * ONE persistent, low-rate ping worker covers everything outside a run: it
- * starts during preflight at a brisk burst cadence (to fill the sparkline and
- * derive the pre-test ping median quickly), then settles to 1 ping/s. It is
- * stopped for the duration of an actual test (the stage-owned ping channel
- * takes over latency duties then) and restarted the instant it ends. Its
- * samples are tagged phase "idle" and NEVER enter run buffers (the store
- * routes them to its own small ring). /ws/ping is a stateless echo, so
- * holding it open indefinitely costs nothing extra server-side. */
+// One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
 const IDLE_PING_INTERVAL_MS = 1000;
-/** Preflight burst: cadence + how many samples the pre-test median wants. */
 const PROBE_PING_INTERVAL_MS = 120;
 const PROBE_PING_COUNT = 5;
-/** Hard cap on the probe burst, so a slow/dead bus never delays preflight. */
 const PROBE_PING_TIMEOUT_MS = 1500;
-/** Respawn cadence for a dead idle worker. The worker's OWN reconnect loop
- *  handles a dropped socket, but it can't run if the worker script never
- *  loaded — the same server that echoes pings also serves the bundle, so
- *  restarting the keepalive while the server is down kills the Worker at
- *  fetch time (`onerror`, no reconnect loop). Retry the spawn itself until
- *  one sticks. Matches the worker's own RECONNECT_MAX_MS. */
 const IDLE_RESPAWN_MS = 2000;
+
+// Some transports are advertised by the protocol before this client can drive them.
+const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
+  "fetch-stream": true,
+  websocket: true,
+  webtransport: false,
+};
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -376,6 +259,49 @@ export class RealBackend implements RunnerBackend {
     return passed ?? this.#opts.endpoint;
   }
 
+  #authHeaders(): HeadersInit | undefined {
+    return this.#opts.authToken
+      ? { authorization: `Bearer ${this.#opts.authToken}` }
+      : undefined;
+  }
+
+  #downloadWorker(): Worker {
+    return new Worker(
+      new URL("./workers/download-worker.ts", import.meta.url),
+      {
+        type: "module",
+      },
+    );
+  }
+
+  #uploadWorker(): Worker {
+    return new Worker(new URL("./workers/upload-worker.ts", import.meta.url), {
+      type: "module",
+    });
+  }
+
+  #progressWorkerInstance(): Worker {
+    return new Worker(
+      new URL("./workers/upload-progress-worker.ts", import.meta.url),
+      { type: "module" },
+    );
+  }
+
+  #pingWorkerInstance(): Worker {
+    return new Worker(new URL("./workers/ping-worker.ts", import.meta.url), {
+      type: "module",
+    });
+  }
+
+  #resetUploadCounters(): void {
+    this.#srvN = 0;
+    this.#srvPrevN = 0;
+    this.#srvPrevT = 0;
+    this.#srvStartN = 0;
+    this.#srvStartT = 0;
+    this.#srvHaveStart = false;
+  }
+
   /* ================= PROBE ================= */
   /**
    * TARGET: `GET {base}/preflight` (a.k.a. /config).
@@ -396,9 +322,7 @@ export class RealBackend implements RunnerBackend {
       const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
       res = await fetch(`${base}/preflight${ident}`, {
         method: "GET",
-        headers: this.#opts.authToken
-          ? { authorization: `Bearer ${this.#opts.authToken}` }
-          : undefined,
+        headers: this.#authHeaders(),
       });
     } catch (cause) {
       // Network-level failure (server down, DNS, CORS). wire.ts maps the
@@ -493,16 +417,6 @@ export class RealBackend implements RunnerBackend {
     this.#cbSeed = `r${Math.round(performance.now())}`;
   }
 
-  /**
-   * A stage is beginning — the start of its warmup window (or the stage itself
-   * when warmupMs<=0). Negotiate the transport ONCE for the stage, then open and
-   * PRIME every connection `activity` names — WITHOUT measuring yet:
-   *   • activity.transfer — the byte lanes ("down"/"up"); [] for the latency stage.
-   *   • a ping channel    — when activity.loadedLatency, or the latency stage.
-   * The same connections are reused in onStageMeasure, so the warmup genuinely
-   * warms the wire the measurement runs over (no cold reconnect at the seam).
-   * The stub bodies below throw NOT_IMPL — fill them in to go live.
-   */
   onStageBegin(activity: PhaseActivity): void {
     // The ping channel is ALWAYS a latency-role transport (websocket today) — it
     // runs on its OWN socket, never on the stage's transfer transport. Negotiate
@@ -578,30 +492,14 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= TRANSPORT NEGOTIATION ================= */
-  /**
-   * Negotiate a transport for `role`, trying the configured kinds in preference
-   * order (webtransport first, then the config's websocket/fetch-stream fallback).
-   * Report EACH step with host.reportTransport({kind, role, status}):
-   *   negotiating → attempting this kind;
-   *   established → connected — return the kind so the caller opens its I/O;
-   *   failed      → this kind didn't connect — try the next.
-   * If EVERY kind fails, return null — the caller decides whether that skips
-   * the stage (failStage) or is survivable (loaded latency).
-   *
-   * Order is fixed (see #transportOrder): latency roles try webtransport then
-   * websocket; transfer/bidi roles try webtransport then fetch-stream. The sketch
-   * below shows the control flow a real implementation fills in.
-   */
+  /** Try transports in role order, reporting every attempt to the UI. A null
+   *  result means the caller should skip/fail that stage based on its role. */
   #negotiateTransport(role: TransportRole): TransportKind | null {
     const host = this.#host!;
     for (const kind of this.#transportOrder(role)) {
       host.reportTransport({ kind, role, status: "negotiating" });
-      // fetch-stream "establishes" the moment the server advertises it — the real
-      // TCP connect happens when #primeTransfer opens the fetch, and a connect
-      // failure there surfaces as a stream error (handled in #onWorkerError).
-      // webtransport/websocket are not serviced yet (Stage 4–5), so they fail
-      // negotiation here and we fall through to the next kind.
-      if (this.#transportAvailable(kind)) {
+      const unavailable = this.#transportUnavailableReason(kind);
+      if (!unavailable) {
         host.reportTransport({ kind, role, status: "established" });
         this.#activeTransport = kind;
         return kind;
@@ -610,32 +508,33 @@ export class RealBackend implements RunnerBackend {
         kind,
         role,
         status: "failed",
-        detail: "not advertised by server",
+        detail: unavailable,
       });
     }
     return null;
   }
 
-  /** Whether the server's advertised capabilities can service `kind` right now. */
-  #transportAvailable(kind: TransportKind): boolean {
+  #transportUnavailableReason(kind: TransportKind): string | null {
+    if (!RUNNABLE_TRANSPORT[kind]) return "not supported by this client";
     const t = this.#capabilities?.transports;
-    if (!t) return false;
+    if (!t) return "not advertised by server";
+    let advertised = false;
     switch (kind) {
       case "fetch-stream":
-        return t.fetchStream;
+        advertised = t.fetchStream;
+        break;
       case "websocket":
-        return t.websocket;
+        advertised = t.websocket;
+        break;
       case "webtransport":
-        return t.webtransport;
+        advertised = t.webtransport;
+        break;
     }
+    return advertised ? null : "not advertised by server";
   }
 
-  /** The transport kinds to try for a role, most-preferred first. Webtransport
-   *  is always attempted first when the server advertises it (Stage 4–5), then
-   *  the serviced fallback: websocket for latency roles, fetch-stream for transfer
-   *  and bidirectional roles. Until webtransport lands it fails negotiation and
-   *  we fall through to the fallback — the path the engine actually runs today
-   *  (websocket latency + fetch-stream transfer). */
+  /** WebTransport stays first for future support; today it falls through to the
+   *  serviced fallback: WebSocket for pings, fetch streams for byte lanes. */
   #transportOrder(role: TransportRole): TransportKind[] {
     return role === "latency"
       ? ["webtransport", "websocket"]
@@ -683,12 +582,11 @@ export class RealBackend implements RunnerBackend {
     dir: FlowDirection,
     activity: PhaseActivity,
   ): void {
-    if (kind !== "fetch-stream") throw NOT_IMPL(`primeTransfer:${kind}`); // wt = Stage 5
+    if (kind !== "fetch-stream") throw new Error(`unsupported ${kind}`);
 
     // A stage names each direction once (bidirectional calls this twice, one
     // per direction) — a duplicate call for the SAME direction is a real bug.
-    if (this.#lanes[dir])
-      throw NOT_IMPL(`duplicate prime for direction ${dir}`);
+    if (this.#lanes[dir]) throw new Error(`duplicate ${dir} prime`);
 
     const cfg = this.#host!.config!;
     const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
@@ -808,9 +706,7 @@ export class RealBackend implements RunnerBackend {
         method: "POST",
         cache: "no-store",
         signal: ctl.signal,
-        headers: this.#opts.authToken
-          ? { authorization: `Bearer ${this.#opts.authToken}` }
-          : undefined,
+        headers: this.#authHeaders(),
       });
       if (!res.ok)
         throw new Error(`upload session returned HTTP ${res.status}`);
@@ -832,12 +728,7 @@ export class RealBackend implements RunnerBackend {
    *  no samples and the core's stall watchdog ends it cleanly (max-stall →
    *  connection-lost) rather than shipping a client-counted number. */
   #primeUploadProgress(stage: PhaseActivity["stage"]): void {
-    this.#srvN = 0;
-    this.#srvPrevN = 0;
-    this.#srvPrevT = 0;
-    this.#srvStartN = 0;
-    this.#srvStartT = 0;
-    this.#srvHaveStart = false;
+    this.#resetUploadCounters();
 
     const caps = this.#capabilities;
     if (!this.#testId) return; // session mint already skipped the stage
@@ -855,12 +746,7 @@ export class RealBackend implements RunnerBackend {
       this.#resolveWsBase(this.#host!.config!.endpoint) +
       wsUpload +
       `?id=${encodeURIComponent(this.#testId)}`;
-    const w = new Worker(
-      new URL("./workers/upload-progress-worker.ts", import.meta.url),
-      {
-        type: "module",
-      },
-    );
+    const w = this.#progressWorkerInstance();
     w.onmessage = (e: MessageEvent<ProgressOutMsg>): void =>
       this.#onProgressMessage(e.data);
     w.onerror = (): void => {
@@ -895,14 +781,7 @@ export class RealBackend implements RunnerBackend {
   #spawnWorker(dir: FlowDirection, i: number): void {
     const state = this.#lanes[dir];
     if (!state) return; // torn down before a staggered/restart timer fired
-    const w =
-      dir === "down"
-        ? new Worker(new URL("./workers/download-worker.ts", import.meta.url), {
-            type: "module",
-          })
-        : new Worker(new URL("./workers/upload-worker.ts", import.meta.url), {
-            type: "module",
-          });
+    const w = dir === "down" ? this.#downloadWorker() : this.#uploadWorker();
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(dir, e.data, i);
     w.onerror = (e: ErrorEvent) =>
       this.#onWorkerError(dir, i, e.message || "worker error");
@@ -931,7 +810,7 @@ export class RealBackend implements RunnerBackend {
    *  hands it the tuning, and lets it send warmup pings — pushing NOTHING into
    *  the core. #measureLatency flips reporting on over the SAME warmed socket. */
   #primeLatencyChannel(kind: TransportKind, isLatencyStage = false): void {
-    if (kind !== "websocket") throw NOT_IMPL(`primeLatencyChannel:${kind}`); // wt = Stage 5
+    if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
 
     const cfg = this.#host!.config!;
     const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
@@ -952,9 +831,7 @@ export class RealBackend implements RunnerBackend {
         );
       }, PING_ESTABLISH_TIMEOUT_MS);
     }
-    const w = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), {
-      type: "module",
-    });
+    const w = this.#pingWorkerInstance();
     w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onPingMessage(e.data);
     w.onerror = (e: ErrorEvent): void =>
@@ -1077,9 +954,7 @@ export class RealBackend implements RunnerBackend {
     // without this edge a link that recovered before the worker's first stall
     // would never un-latch it.
     this.#idleOffline = true;
-    const w = new Worker(new URL("./workers/ping-worker.ts", import.meta.url), {
-      type: "module",
-    });
+    const w = this.#pingWorkerInstance();
     w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onIdlePingMessage(e.data);
     w.onerror = (e: ErrorEvent): void => {
@@ -1521,34 +1396,6 @@ export class RealBackend implements RunnerBackend {
     );
   }
 
-  /* ================= OPTIONAL SEAMS ================= */
-  /**
-   * OPTIONAL — list the endpoints this backend can target, for a future
-   * server-selection UI (TARGET: `GET {path}/servers`). Remove the method
-   * to drop it from the surface; the core then reports an empty list.
-   */
-  async listServers(): Promise<ServerCandidate[]> {
-    throw NOT_IMPL("listServers");
-  }
-
-  /**
-   * OPTIONAL — fallback idle RTT, used only when a run yields no usable latency
-   * samples. A real engine can return its last preflight ping; 0 means "no hint".
-   */
-  idleHintMs(): number {
-    return 0;
-  }
-
-  /**
-   * OPTIONAL on the contract — a real transport has no synthetic knob to
-   * perturb, so this dev-only hook is a no-op. Remove it to drop it entirely.
-   */
-  injectAnomaly(_a: RunnerAnomaly): void {
-    /* no-op: real transport has no synthetic anomaly to inject */
-  }
-
-  /* ---------- internal ---------- */
-  /** Cancel in-flight I/O and release the AbortController. */
   #closeAll(): void {
     this.#teardownTransfer();
     this.#teardownLatency();
