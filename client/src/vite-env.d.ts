@@ -1,8 +1,6 @@
 /// <reference types="svelte" />
 /// <reference types="vite/client" />
 
-
-
 // Build-time constants injected by Vite `define` (see vite.config.ts). These
 // are literal-substituted at build time; declared here so `svelte-check` (which
 // runs before `vite build` and never sees `define`) type-checks references.
