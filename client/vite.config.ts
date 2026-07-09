@@ -106,8 +106,14 @@ const minifyHtml = (): Plugin => ({
         },
       );
 
-      const compacted = withPlaceholders
-        .replace(/<!--[\s\S]*?-->/g, "")
+      let withoutComments = withPlaceholders;
+      let previous: string;
+      do {
+        previous = withoutComments;
+        withoutComments = withoutComments.replace(/<!--[\s\S]*?-->/g, "");
+      } while (withoutComments !== previous);
+
+      const compacted = withoutComments
         .replace(/\s+/g, " ")
         .replace(/>\s+</g, "><")
         .trim();
