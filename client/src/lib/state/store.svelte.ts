@@ -1,10 +1,3 @@
-/* ============================================================
- * Reactive Store — application state, derived, and side-effects
- * Single source of truth. The UI binds to derived display
- * values, never to raw event streams directly. Ring buffers
- * cap memory and feed the canvas (read via rAF — NOT $effect).
- * ============================================================ */
-
 import type {
   RunnerEvent,
   Phase,
@@ -51,18 +44,24 @@ import {
   type SettingsTab,
 } from "./persistence";
 
-/* ================= STAGE SELECTION ================= */
-
-/** Dwell window (ms) a throughput level must be held before it can lift the
- *  gauge/chart scale to the next tier. Filters brief transient spikes out of the
- *  scale decision while still tracking a genuine plateau within ~1 sample of the
- *  dwell elapsing. ~700 ms ≈ a dozen samples at the live cadence. */
 const SCALE_DWELL_MS = 700;
 
-/** The three user-selectable measured stages. */
-export type StageKey = "latency" | "download" | "upload";
+export const MEASURED_STAGES = ["latency", "download", "upload"] as const;
+export type StageKey = (typeof MEASURED_STAGES)[number];
+const TRANSFER_STAGES = ["download", "upload", "bidirectional"] as const;
+const TERMINAL_PHASES: readonly Phase[] = [
+  "idle",
+  "complete",
+  "aborted",
+  "error",
+];
+const CONNECTION_FAILURE_REASONS: readonly RunnerError["reason"][] = [
+  "connection-lost",
+  "timeout",
+  "preflight-failed",
+  "transport-unavailable",
+];
 
-/** One distribution lane of the native LatencyProfile. */
 export interface LatencyLane {
   key: StageKey;
   min: number | null;
@@ -71,22 +70,13 @@ export interface LatencyLane {
   p90: number | null;
   average: number | null;
   current: number | null;
-  /** Mean absolute deviation from the lane average (ms) — same measure as
-   *  LatencyResult.jitterMs, per lane. Null until ≥2 valid samples. */
   jitter: number | null;
   lossRatio: number;
   count: number;
   active: boolean;
 }
 
-/** Execution order — used by the future-only live-toggle constraint. */
-const STAGE_ORDER: StageKey[] = ["latency", "download", "upload"];
-
-/* ================= DEFAULTS ================= */
-
 export const DEFAULT_CONFIG: RunnerConfig = {
-  // bidirectional defaults OFF — an advanced stage toggled in Settings; enabling
-  // it appends a concurrent down+up phase (combined gauge + a result card).
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
   duration: {
@@ -97,27 +87,21 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     bidirectionalMs: 10000,
   },
   pingConcurrency: "medium",
-  // Advanced ceiling only — lanes are derived per-phase (RealRunner #laneBudget);
-  // 6 = the full per-origin budget, so by default the auto policy is unconstrained.
   parallelStreams: 6,
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
-  // ----- Config surface; inert until future batches consume it -----
   compensation: {
     enabled: true,
-    // Default profile matches the common self-host case: a real LAN NIC, cleartext
-    // HTTP/1.1 (the only transport wired today). applyConnectionProfile() seeds the
-    // factor/param defaults below; the user picks a profile to change them.
     profile: "lan",
     transport: "http1-clear",
     factors: {
       ethernetFraming: true,
-      encapsulation: false, // tunnel-only; off on a plain LAN
-      tlsRecords: false, // no TLS on cleartext HTTP/1.1
-      applicationFraming: false, // HTTP/1.1 has no per-DATA-frame header
+      encapsulation: false,
+      tlsRecords: false,
+      applicationFraming: false,
       reversePathControl: true,
       lossRetransmission: true,
-      receiverBias: false, // download-only browser receive-cost correction
+      receiverBias: false,
       steadyStateRamp: false,
       browserRuntime: true,
     },
@@ -126,7 +110,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
       ipVersion: 4,
       vlanTagged: false,
       tcpOptionsBytes: 12,
-      encapsulationBytes: 60, // WireGuard IPv4 outer header (used when tunnel on)
+      encapsulationBytes: 60,
       framePayloadBytes: 16384,
       tlsRecordBytes: 5,
       aeadTagBytes: 16,
@@ -135,15 +119,13 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     },
   },
   adaptive: {
-    // On by default: the "smart" stable-window result needs it; when off, every
-    // phase runs full and reports its whole-phase average.
     enabled: true,
     minCoverageRatio: 0.52,
     stabilityThreshold: 0.86,
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 8,
     minTransferSamples: 12,
-    glideMs: 1100, // early-finish acceleration glide, real-time ms
+    glideMs: 1100,
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
@@ -172,123 +154,56 @@ export const DURATION_PRESETS = {
   },
 } as const;
 
-const MAX_SAMPLES = 1200; // ~ enough for a 60s run at 16Hz, ring-buffered
-/** Idle-keepalive ring — only feeds the connectivity pulse, so it stays small. */
+const MAX_SAMPLES = 1200;
 const MAX_IDLE_SAMPLES = 60;
 
-/** How far past a unit boundary the peak must reach before the display steps
- *  up to the larger prefix. 1.2 → we stay in Mbit/s until ~1200 Mbit/s, then
- *  switch to Gbit/s — so the dial never reads a fresh "0.xx Gbit/s" the instant
- *  it crosses 1000; the larger scale only appears once we're clearly above it. */
 const UNIT_STEP_UP_HEADROOM = 1.2;
 
 class AppStore {
-  /* ---- raw ingest (ring buffers) ----
-   * `latency` holds ONLY run samples (phase latency/download/upload/…) — the
-   * box plots, chart and result stats read it. Idle-keepalive pings (phase
-   * "idle", including the preflight burst) land in `idleLatency` instead, so
-   * they can never displace or dilute a run's samples. */
   throughput = $state<ThroughputSample[]>([]);
   latency = $state<LatencySample[]>([]);
   idleLatency = $state<LatencySample[]>([]);
 
-  /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
   phaseStage = $state<TransportRole | null>(null);
-  phaseFraction = $state(0); // 0–1 within current phase (of the test-time budget)
-  /* Measured test-time accrual for the active phase. `phaseElapsedMs` is
-   * the budget consumed; `phaseBudgetMs` is the phase's test-time budget. Both
-   * freeze while stalled, so the derived `phaseRemainingMs` (budget − elapsed)
-   * stops shrinking during dead air — the visible push-out of the run end. */
+  phaseFraction = $state(0);
   phaseElapsedMs = $state(0);
   phaseBudgetMs = $state(0);
-  /* Link health — presentation-only. `measuring` is the
-   * core's measured-time gate: false while a stall has frozen accrual. The
-   * grind-to-zero gauge/number decay keys off `stalledSince` (wall-clock epoch
-   * ms the stall began, 0 = live) + the last REAL sample — it stores/emits
-   * nothing. `stallInfo` carries the reason for the transient "connection
-   * lost — …" message. All cleared on resume. */
   measuring = $state(true);
-  /* MONOTONIC `performance.now()` timestamp the current stall began (0 = live),
-   * NOT epoch `Date.now()`: its only consumer is the gauge/number grind-to-zero,
-   * which computes `performance.now() - stalledSince` at draw time. Mixing clocks
-   * makes that delta nonsensical (huge), clamping the decay factor to 1 — i.e.
-   * the value freezes at its last reading instead of easing to 0. */
   stalledSince = $state(0);
   stallInfo = $state<StallInfo | null>(null);
-  /* Transport negotiation telemetry. `currentTransport` is the latest attempt
-   * (which method, what status); `transportLog` is the running history. UI
-   * surface deferred — these are store-only for now. Both cleared on reset(). */
   currentTransport = $state<TransportAttempt | null>(null);
   transportLog = $state<TransportAttempt[]>([]);
-  /* Live measurement stability per measured phase — the single signal behind
-   * the result-card pips (and, in the runner, the early-finish glide). Each
-   * key fills in once its phase begins emitting; null = no read yet. */
   liveStability = $state<{
     latency: StabilitySnapshot | null;
     download: StabilitySnapshot | null;
     upload: StabilitySnapshot | null;
   }>({ latency: null, download: null, upload: null });
-  /* Monotonic run counter, bumped on every reset(). Stateful canvas engines
-   * (e.g. ChartEngine) watch this to drop accumulated per-run state — the
-   * single source of truth for "a new run started, clear yourself". */
   runSeq = $state(0);
 
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
-  /** Static identity + transport capabilities of the wired engine (set once by
-   *  bootRunner from runner.describe(); no I/O involved). */
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
-  /* Per-stage final results, each landing the instant its phase ends (before
-   * the aggregate `result` on complete). The single source of truth for a
-   * finished stage's headline/method/band — cards read these so a stage's real
-   * result shows while later stages still run. Stages are fully independent. */
   stageResults = $state<{
     download: ThroughputResult | null;
     upload: ThroughputResult | null;
     latency: LatencyResult | null;
   }>({ download: null, upload: null, latency: null });
-  /** Structured failure for the last run (null unless phase is "error"). Carries
-   *  the reason, the failed phase, and any partial results (structured
-   *  termination). User aborts are NOT errors — they are the "aborted" phase. */
   error = $state<RunnerError | null>(null);
-  /** Stages skipped this run because they couldn't run (capability missing /
-   *  connection never established). The run continues; the gauge explains a
-   *  skipped transfer, the latency profile a skipped latency stage. */
   stageFailures = $state<Partial<Record<TransportRole, StageFailure>>>({});
   startEpoch = $state(0);
 
-  /* ---- config + display prefs (hydrated from localStorage) ----
-   * `loadPersisted()` deep-merges the saved blob over the defaults so a
-   * missing/extra/corrupt field never crashes; first-ever load → defaults
-   * (theme defaults to "auto", i.e. system `prefers-color-scheme`). A
-   * module-scope $effect (see bottom of file) writes any change back,
-   * debounced ~250ms. */
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
-
-  /* ---- display preferences ---- */
-  unitBase = $state<"base10" | "base2">("base10"); // Mbit/s vs Mibit/s
+  unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
-
-  /* ---- persisted UI prefs (single source of truth) ---- */
-  /** Active theme preference — "dark" | "light" | "auto" (follows OS). Resolved
-   *  to a concrete "dark"/"light" and applied to `document.documentElement[data-theme]`
-   *  by an $effect below — the ONLY place the attribute is set at runtime. */
   theme = $state<ThemePref>("dark");
-  /** Whether result cards surface the compensated wire-rate estimate. */
   showWireEstimates = $state(false);
-  /** User-resized docked side-panel widths (px), per side. Persisted. */
   dockWidth = $state<{ left: number; right: number }>({
     left: 400,
     right: 400,
   });
-  /** Last-viewed Settings tab — persisted so the panel reopens where the user
-   *  left it. */
   settingsTab = $state<SettingsTab>("setup");
-  /** Dev diagnostic toggle (Settings › Developer). When on, the runner/core/
-   *  workers emit verbose console logs; wire.svelte.ts mirrors it into the
-   *  debug logger. Persisted so it survives reloads during a debugging session. */
   debugLogging = $state(false);
 
   constructor() {
@@ -299,14 +214,10 @@ class AppStore {
     this.theme = p.theme;
     this.showWireEstimates = p.showWireEstimates;
     this.dockWidth = p.dockWidth;
-    // Only known tabs; anything else falls back to Setup.
     this.settingsTab = p.settingsTab === "developer" ? "developer" : "setup";
     this.debugLogging = p.debugLogging;
   }
 
-  /* ================= DERIVED ================= */
-
-  /** The single big number shown in the gauge, in the active unit. */
   liveMetric = $derived.by(() => {
     return {
       value: this.toUnit(this.liveTransferBytesPerSec),
@@ -314,11 +225,6 @@ class AppStore {
     };
   });
 
-  /** The headline metric to rest on at the END of a run: download if it ran,
-   *  else upload, else the combined bidirectional rate, else latency.
-   *  Phase-agnostic so the gauge + big number never assume download exists — a
-   *  latency-only, upload-only, or bidirectional-only run all resolve to a
-   *  sensible final reading instead of a stale/misread value. */
   finalMetric = $derived.by<
     | { kind: "speed"; bytesPerSec: number }
     | { kind: "latency"; ms: number }
@@ -340,10 +246,6 @@ class AppStore {
     return null;
   });
 
-  /** Live instantaneous transfer rate the gauge + big number read. In
-   *  download/upload it's the latest sample; in bidirectional it's the sum of
-   *  the most recent down + up samples (the combined throughput), so the dial
-   *  and number show the aggregate the phase is actually moving. */
   liveTransferBytesPerSec = $derived.by(() => {
     if (this.phase === "download" || this.phase === "upload") {
       return latestOneWayThroughputForPhase(this.phase, this.throughput);
@@ -355,29 +257,22 @@ class AppStore {
     return 0;
   });
 
-  /** The bidirectional phase's two live lanes (latest down + up), for the
-   *  result card while the phase runs. Null outside the bidirectional phase. */
   liveBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
     if (this.phase !== "bidirectional") return null;
     return latestBidirectionalLanes(this.throughput);
   });
 
-  /** The samples the connectivity pulse (dot, sparkline, live ping, loss/
-   *  jitter) reads: run samples while a test is in flight, the idle keepalive
-   *  otherwise (it is stopped during a run, so its buffer would be stale). */
   pulseLatency = $derived.by<LatencySample[]>(() => {
     if (this.isRunning) return this.latency;
     return this.idleLatency.length ? this.idleLatency : this.latency;
   });
 
-  /** Most recent rtt for the connectivity pulse + live ping. */
   liveRtt = $derived(
     this.pulseLatency.length
       ? this.pulseLatency.at(-1)!.rttMs
       : (this.infra?.preTestPingMs ?? 0),
   );
 
-  /** Rolling packet loss over last 20 latency samples (for pulse state). */
   rollingLossPct = $derived.by(() => {
     const w = this.pulseLatency.slice(-20);
     if (!w.length) return 0;
@@ -393,14 +288,7 @@ class AppStore {
     return acc / (w.length - 1);
   });
 
-  /** UI computes connectivity if runner doesn't push it (defensive). */
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {
-    // NOTE: no hard "error phase ⇒ offline" pin here — the error ingest latches
-    // `connectivity = "offline"` once for connection failures, and the idle
-    // keepalive (restarted by the backend after every run) is then free to
-    // report recovery while the error view is still up.
-    // A stall mid-run is dead air — the link is effectively offline until the
-    // backend reconnects (resume clears `measuring`), so the pulse goes red.
     if (this.isRunning && !this.measuring) return "offline";
     if (this.connectivity === "offline") return "offline";
     if (this.rollingLossPct > 5) return "unstable";
@@ -408,89 +296,47 @@ class AppStore {
     return "connected";
   });
 
-  /** Total run ETA at the saved config — the sum of every enabled stage's
-   *  test-time budget plus its warmup, computed by the SHARED scheduler so the
-   *  estimate can never drift from the real timeline (and counts bidirectional
-   *  when it's on). Excludes the glide/stall, which only move the actual end. */
   totalEtaMs = $derived(buildSegments(this.config).totalMs);
 
-  /** Test-time remaining in the active phase (budget − measured elapsed). Goes
-   *  to 0 at the budget and STOPS shrinking while stalled (both inputs freeze),
-   *  so a connection drop visibly pushes the run end out. */
   phaseRemainingMs = $derived(
     Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs),
   );
 
   bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
 
-  isRunning = $derived(
-    !["idle", "complete", "aborted", "error"].includes(this.phase),
-  );
+  isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
 
-  /** Skipped TRANSFER stages, in run order — the gauge explains these. */
   transferFailures = $derived.by<StageFailure[]>(() => {
-    const out: StageFailure[] = [];
-    for (const k of ["download", "upload", "bidirectional"] as const) {
-      const f = this.stageFailures[k];
-      if (f) out.push(f);
-    }
-    return out;
+    return TRANSFER_STAGES.flatMap((stage) => this.stageFailures[stage] ?? []);
   });
 
-  /* ============================================================
-   * Stage selection
-   * Live stage toggling: ≥1 stage must always stay enabled, and while
-   * a run is in flight only FUTURE stages (after the current phase in
-   * order latency→download→upload) may be toggled.
-   * ============================================================ */
-
-  /** Enabled stages in execution order — drives the timeline + rail. */
   activeStages = $derived.by<StageKey[]>(() => {
-    const out: StageKey[] = [];
-    if (this.config.stages.latency) out.push("latency");
-    if (this.config.stages.download) out.push("download");
-    if (this.config.stages.upload) out.push("upload");
-    return out;
+    return MEASURED_STAGES.filter((stage) => this.config.stages[stage]);
   });
 
-  /** True when `stage` may be toggled right now. Idle → always; while
-   *  running → only stages strictly after the current phase in STAGE_ORDER. */
   canToggleStage(stage: StageKey): boolean {
     if (!this.isRunning) return true;
-    const currentIndex = STAGE_ORDER.indexOf(this.phase as StageKey);
-    const stageIndex = STAGE_ORDER.indexOf(stage);
+    const currentIndex = MEASURED_STAGES.indexOf(this.phase as StageKey);
+    const stageIndex = MEASURED_STAGES.indexOf(stage);
     return currentIndex >= 0 && stageIndex > currentIndex;
   }
 
-  /** Toggle a stage, enforcing the ≥1-enabled floor and the future-only
-   *  rule. No-ops (returns false) when the toggle is not permitted. */
   toggleStage(stage: StageKey): boolean {
     if (!this.canToggleStage(stage)) return false;
 
     const currentlyEnabled = this.config.stages[stage];
-    const enabledCount =
-      Number(this.config.stages.latency) +
-      Number(this.config.stages.download) +
-      Number(this.config.stages.upload);
+    const enabledCount = this.activeStages.length;
 
-    // Never let the last enabled stage be turned off.
     if (currentlyEnabled && enabledCount <= 1) return false;
 
     this.config.stages[stage] = !currentlyEnabled;
     return true;
   }
 
-  /** Whether the bidirectional segment can be disabled from the stage track
-   *  right now. Kept separate from canToggleStage/STAGE_ORDER: bidirectional is
-   *  deliberately outside the ≥1-enabled-floor set those govern, and this
-   *  direction (off only — re-enabling is Settings-only) has no symmetric
-   *  "toggle on" case to support. See stageGuards.ts for the rule itself. */
   canDisableBidirectional(): boolean {
     return canDisableBidirectionalPure(this.phase, this.isRunning);
   }
 
-  /** Disable bidirectional from the stage track. No-op (returns false) when
-   *  already off or currently locked (see canDisableBidirectional). */
   disableBidirectional(): boolean {
     if (!this.config.stages.bidirectional) return false;
     if (!this.canDisableBidirectional()) return false;
@@ -498,27 +344,10 @@ class AppStore {
     return true;
   }
 
-  /** Whether latency is measured & shown at all. False only when the latency
-   *  stage is off AND the user opted to skip loaded latency with it — then no
-   *  pings run during dl/ul and the profile/chart latency are suppressed.
-   *  The single source of truth for "latency is fully disabled". */
   latencyEnabled = $derived(
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
 
-  /* ============================================================
-   * Overhead compensation
-   * The store stays bytesPerSec-canonical: estimates are bytesPerSec in / bytesPerSec out;
-   * conversion to display units happens at the UI layer via toUnit.
-   * ============================================================ */
-
-  /**
-   * LIVE estimate — O(1) protocol/config-only multipliers applied to the
-   * current instantaneous bytesPerSec. This is a $derived (not $derived.by walking
-   * samples) so it recomputes only when the latest sample's bytesPerSec or the
-   * compensation config changes — never per-sample-iteration, keeping the
-   * sample stream's hot path O(1) instead of a per-sample recompute.
-   */
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
       this.throughput.at(-1)?.bytesPerSec ?? 0,
@@ -527,11 +356,6 @@ class AppStore {
     ),
   );
 
-  /**
-   * RESULT estimate (download) — full sample-derived estimate. Recomputes
-   * ONLY when `result` (or the config) changes, since both inputs are the
-   * only reactive reads here; the heavy factor math runs once on `complete`.
-   */
   downloadCompensation = $derived<CompensationEstimate>(
     estimateResultCompensation(
       this.stageResults.download,
@@ -540,7 +364,6 @@ class AppStore {
     ),
   );
 
-  /** RESULT estimate (upload) — same memoization profile as download. */
   uploadCompensation = $derived<CompensationEstimate>(
     estimateResultCompensation(
       this.stageResults.upload,
@@ -549,8 +372,6 @@ class AppStore {
     ),
   );
 
-  /** Observed throughput peak (bytes/s) across BOTH transfer phases. Monotonic
-   *  per run, so derivations off it ratchet and never jitter down mid-run. */
   #peakBytesPerSec = $derived.by(() => {
     let peak = 0;
     for (const s of this.throughput)
@@ -558,21 +379,11 @@ class AppStore {
     return peak;
   });
 
-  /** Sustained throughput peak (bytes/s) — the highest level the link held for at
-   *  least SCALE_DWELL_MS, time-weighted across BOTH transfer phases. This is the
-   *  scale driver, NOT the raw peak: a brief transient spike (e.g. one 1.2 Gbit
-   *  sample on a 1 Gbit line) never accumulates the dwell, so it can't push the
-   *  gauge/chart to the next tier. It is monotonic non-decreasing within a run —
-   *  time-at-or-above any level only grows as samples accrue — so the scale
-   *  ratchets up with the plateau and never flaps down mid-run. */
   #sustainedPeakBytesPerSec = $derived.by(() => {
     const arr = this.throughput;
     const n = arr.length;
     if (n === 0) return 0;
     if (n === 1) return arr[0].bytesPerSec;
-    // Weight each sample by its time gap (ms) to the previous one; the first
-    // borrows the second's gap. Walk values high→low, accumulating dwell; the
-    // value at which cumulative time crosses SCALE_DWELL_MS is the sustained peak.
     const weighted = new Array<{ v: number; w: number }>(n);
     for (let i = 0; i < n; i++) {
       const w = i === 0 ? arr[1].t - arr[0].t : arr[i].t - arr[i - 1].t;
@@ -584,38 +395,19 @@ class AppStore {
       acc += s.w;
       if (acc >= SCALE_DWELL_MS) return s.v;
     }
-    // Run still shorter than the dwell window → use the lowest level seen, so the
-    // scale starts modest and grows with the ramp instead of latching a transient.
     return weighted[n - 1].v;
   });
 
-  /** Absolute throughput scale (bytes/s) shared by the gauge AND the chart AND the
-   *  display unit, so a glance at either instrument maps to the same number and
-   *  the two are identically scaled. Fixed when the user pins
-   *  `visualization.throughputMaxBytesPerSec`; otherwise auto — the next 1-2-5 rung
-   *  above the SUSTAINED peak across BOTH transfer phases (download + upload), so
-   *  up/down stay on one comparable scale and transients don't bump the tier. */
   displayScaleBytesPerSec = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     if (typeof cfg === "number" && cfg > 0) return cfg;
-    // Headroom + the tier ladder both live in sharedThroughputScale; the idle
-    // default (100 Mbit/s) is returned for a non-positive peak so ticks show.
     return sharedThroughputScale(this.#sustainedPeakBytesPerSec);
   });
 
-  /** Prefix index (k/M/G…) the whole UI displays in. Derived from the observed
-   *  raw-byte peak — NOT the rounded-up gauge ceiling — so a peak whose ceiling
-   *  rounds up to the next unit doesn't flip the display and leave readings at
-   *  "0.xx". The decision lives entirely in the raw-byte domain: a single
-   *  headroom multiplier (UNIT_STEP_UP_HEADROOM) on the raw peak delays the
-   *  step-up until we're comfortably past the boundary. */
   #unitIndex = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
-    // Pinned scale: track the user's fixed ceiling. Otherwise the live peak.
     const refBytesPerSec =
       typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
-    // Express the raw byte rate in the active display kind's base units (bits
-    // when showing bit/s), then pick the prefix with headroom baked in.
     const baseUnits =
       this.unitKind === "bytes" ? refBytesPerSec : refBytesPerSec * 8;
     return rateScaleIndex(baseUnits, this.unitBase, UNIT_STEP_UP_HEADROOM);
@@ -634,9 +426,6 @@ class AppStore {
     );
   }
 
-  /** Inverse of `toUnit`: a value the user typed in the active display unit →
-   *  raw bytes/s for storage in the (bytes-native) config. Uses the same prefix
-   *  index as `toUnit`, so editing a pinned ceiling round-trips losslessly. */
   fromUnit(displayValue: number): number {
     return rawRateFrom(
       displayValue,
@@ -646,7 +435,6 @@ class AppStore {
     );
   }
 
-  /* ================= INGEST ================= */
   ingest = (e: RunnerEvent) => {
     switch (e.type) {
       case "infra":
@@ -656,9 +444,6 @@ class AppStore {
         this.phase = e.transition.to;
         this.phaseStage = e.transition.stage;
         this.phaseFraction = 0;
-        // Stamp the run clock once, when leaving idle — not on every per-stage
-        // warmup (there are now several), and robust to warmupMs===0 (first
-        // transition is then straight into a measurement phase).
         if (e.transition.from === "idle") this.startEpoch = Date.now();
         break;
       }
@@ -669,21 +454,14 @@ class AppStore {
         this.measuring = e.measuring;
         break;
       case "stall":
-        // Transient drop: freeze the "measuring" state + record when it began
-        // (wall-clock) so the gauge/number can grind to 0 over ~800ms purely at
-        // draw time. NO sample enters any buffer (principle 1).
         this.measuring = false;
         this.stalledSince = performance.now();
         this.stallInfo = e.info;
         break;
       case "resume":
-        // Reconnected: real samples are flowing again; presentation snaps back.
-        this.measuring = true;
-        this.stalledSince = 0;
-        this.stallInfo = null;
+        this.#clearStall();
         break;
       case "transport":
-        // Store-only for now (no visible transport indicator yet).
         this.currentTransport = e.attempt;
         this.transportLog.push(e.attempt);
         break;
@@ -723,27 +501,10 @@ class AppStore {
         break;
       case "error": {
         this.error = e.error;
-        // The run is over — the stall (if one was open) is resolved into this
-        // terminal error, so clear its presentation state instead of leaving a
-        // stale "measuring=false" latch behind.
-        this.measuring = true;
-        this.stalledSince = 0;
-        this.stallInfo = null;
-        // Latch the pulse offline for connection-type failures (the link was
-        // demonstrably dead at this moment). The restarted idle keepalive
-        // pushes fresh `connectivity` events, so recovery un-latches this
-        // even while the error view is still showing.
-        if (
-          e.error.reason === "connection-lost" ||
-          e.error.reason === "timeout" ||
-          e.error.reason === "preflight-failed" ||
-          e.error.reason === "transport-unavailable"
-        ) {
+        this.#clearStall();
+        if (CONNECTION_FAILURE_REASONS.includes(e.error.reason)) {
           this.connectivity = "offline";
         }
-        // Surface any partial results the failed run produced — stages that
-        // finished before the failure already arrived as stageResult events,
-        // but a backend may also attach them here.
         const p = e.error.partial;
         if (p) {
           if (p.download) this.stageResults.download = p.download;
@@ -756,6 +517,12 @@ class AppStore {
     }
   };
 
+  #clearStall() {
+    this.measuring = true;
+    this.stalledSince = 0;
+    this.stallInfo = null;
+  }
+
   reset() {
     this.throughput = [];
     this.latency = [];
@@ -764,9 +531,7 @@ class AppStore {
     this.phaseFraction = 0;
     this.phaseElapsedMs = 0;
     this.phaseBudgetMs = 0;
-    this.measuring = true;
-    this.stalledSince = 0;
-    this.stallInfo = null;
+    this.#clearStall();
     this.currentTransport = null;
     this.transportLog = [];
     this.liveStability = { latency: null, download: null, upload: null };
@@ -778,20 +543,8 @@ class AppStore {
     this.runSeq++;
   }
 
-  /* ============================================================
-   * Latency lanes (LatencyProfile)
-   * Bucket every latency sample into one of three lanes by the
-   * sample's own `phase` tag: idle (the `latency` phase), loaded-down
-   * (pings during `download`), loaded-up (pings during `upload`). Each
-   * lane carries the distribution stats the native profile renders:
-   * min/max range, P10–P90 band, average, current, loss. Recomputes
-   * only when `latency` changes (not per render). Pre-test pings carry
-   * phase "idle", so they never fall into the idle (latency) lane.
-   * ============================================================ */
   latencyLanes = $derived.by<LatencyLane[]>(() => {
-    return (["latency", "download", "upload"] as const).map((key) => {
-      // Bucket strictly by the sample's stamped phase: idle = latency-phase
-      // pings; loaded = under-load pings tagged with the matching transfer phase.
+    return MEASURED_STAGES.map((key) => {
       const laneSamples = this.latency.filter((s) =>
         key === "latency"
           ? s.phase === "latency"
@@ -829,29 +582,9 @@ class AppStore {
 
 export const store = new AppStore();
 
-/* ============================================================
- * Persistence side-effects — browser only.
- *
- * A single module-scope `$effect.root` owns two effects:
- *   1. THEME APPLY — resolves `store.theme` ("dark" | "light" | "auto") to a
- *      concrete "dark"/"light" and writes it to the documentElement
- *      `data-theme` attribute. This is the single runtime source of
- *      truth for the attribute (the boot script in main.ts only seeds
- *      it pre-paint to avoid a flash; this effect keeps it in sync — and,
- *      for "auto", keeps re-resolving live as the OS preference changes).
- *   2. DEBOUNCED SAVE — reads every persisted field (so any change to
- *      config / prefs re-runs it) and writes a `$state.snapshot` of the
- *      whole blob to localStorage ~250ms after the last change.
- *
- * `$state.snapshot` unwraps the reactive proxies so JSON.stringify sees
- * plain data. Guarded with `typeof window` so SSR/tests stay inert.
- * `.root` is never torn down — these live for the app's lifetime. ============================================================ */
 const SAVE_DEBOUNCE_MS = 250;
 
 if (typeof window !== "undefined") {
-  // Live OS theme preference, for resolving `theme === "auto"`. Read once for
-  // the initial value; the `change` listener below keeps it current so a
-  // live OS toggle repaints the app immediately while in auto mode.
   let systemPrefersLight = $state(systemThemeDefault() === "light");
   if (window.matchMedia) {
     window
@@ -862,7 +595,6 @@ if (typeof window !== "undefined") {
   }
 
   $effect.root(() => {
-    // 1. Apply theme → <html data-theme>, resolving "auto" to the live OS preference.
     $effect(() => {
       const resolved =
         store.theme === "auto"
@@ -873,10 +605,8 @@ if (typeof window !== "undefined") {
       document.documentElement.setAttribute("data-theme", resolved);
     });
 
-    // 2. Debounced write-through of all persisted fields.
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
-      // Touch every persisted field so the effect tracks them all.
       const snapshot = {
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,
