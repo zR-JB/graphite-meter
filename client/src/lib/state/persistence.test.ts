@@ -1,10 +1,60 @@
 // Persistence tests use an in-memory localStorage and a mocked store default so
 // load/merge behavior can be checked without the Svelte runtime.
 import { test, expect, mock, beforeEach } from "bun:test";
+import type { RunnerConfig } from "../runner/contract";
 
-const FAKE_CONFIG = {
+const FAKE_CONFIG: RunnerConfig = {
+  stages: { latency: true, download: true, upload: true, bidirectional: false },
+  skipLoadedLatencyWhenStageOff: true,
+  duration: {
+    warmupMs: 800,
+    latencyMs: 4000,
+    downloadMs: 10000,
+    uploadMs: 10000,
+    bidirectionalMs: 10000,
+  },
+  pingConcurrency: "medium",
   parallelStreams: 4,
+  experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
+  compensation: {
+    enabled: false,
+    profile: "lan",
+    transport: "http1-clear",
+    factors: {
+      ethernetFraming: false,
+      encapsulation: false,
+      tlsRecords: false,
+      applicationFraming: false,
+      reversePathControl: false,
+      lossRetransmission: false,
+      receiverBias: false,
+      steadyStateRamp: false,
+      browserRuntime: false,
+    },
+    params: {
+      mtuBytes: 1500,
+      ipVersion: 4,
+      vlanTagged: false,
+      tcpOptionsBytes: 12,
+      encapsulationBytes: 60,
+      framePayloadBytes: 16384,
+      tlsRecordBytes: 5,
+      aeadTagBytes: 16,
+      quicConnIdBytes: 8,
+      maxLossRatio: 0.12,
+    },
+  },
+  adaptive: {
+    enabled: false,
+    minCoverageRatio: 0.52,
+    stabilityThreshold: 0.86,
+    maxPhaseReductionRatio: 0.5,
+    minLatencySamples: 8,
+    minTransferSamples: 12,
+    glideMs: 1100,
+  },
+  visualization: { throughputMaxBytesPerSec: "auto" },
 };
 mock.module("./store.svelte", () => ({ DEFAULT_CONFIG: FAKE_CONFIG }));
 
@@ -70,8 +120,12 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   );
   const result = loadPersisted();
   expect(result.theme).toBe("dark");
-  expect((result as Record<string, unknown>).somethingMadeUp).toBeUndefined();
-  expect((result.config as Record<string, unknown>).bogus).toBeUndefined();
+  expect(
+    (result as unknown as Record<string, unknown>).somethingMadeUp,
+  ).toBeUndefined();
+  expect(
+    (result.config as unknown as Record<string, unknown>).bogus,
+  ).toBeUndefined();
 });
 
 test("savePersisted round-trips through loadPersisted", () => {

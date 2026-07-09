@@ -48,12 +48,15 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just client-build-dev` | `bun install` + `bun run build` -> `client/dist`, dev profile (Vite's own defaults: dummy engine + dev tools included). |
 | `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below). |
 | `just client-watch` | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend. |
-| `just client-check` | Type-checks the client (`svelte-check`). |
+| `just client-check` | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`). |
 | `just client-test` | `bun test` — pure-`.ts`-logic unit tests (no component rendering). |
+| `just client-ci` | Runs the fast client CI gates: Prettier check, semantic type check, and Bun tests. |
 | `just client-gen-types` | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth). |
 | `just server-build-dev` | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
 | `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy. |
-| `just server-test` | `go test ./...` — includes the `/preflight` schema-conformance test. |
+| `just server-check` | Checks Go formatting and `go vet ./...`. |
+| `just server-test` | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test. |
+| `just ci` | Runs the main local CI gates: `client-ci`, `server-check`, and `server-test`. |
 | `just goclient-build` | Builds only `go/graphite-meter-client` — does not touch the Svelte client. |
 | `just goclient-run` | `go run`s the native TUI client against a running server. |
 | `just container-build` | `docker build -f container/Dockerfile -t graphite-meter:latest .` |
@@ -72,6 +75,16 @@ hidden — `client/vite.config.ts` reads `GM_CLIENT_*` env vars and injects them
 as raw literal tokens (not strings), which is what lets Rollup constant-fold the relevant
 `if (...)` branches and tree-shake the dead code entirely rather than leaving it reachable behind
 a runtime flag.
+
+Vite remains the browser bundler because Svelte's supported non-SvelteKit toolchain is
+`@sveltejs/vite-plugin-svelte`, which handles `.svelte` files and Svelte-aware diagnostics. Bun is
+still the package manager, script runner, test runner, and runtime used by the client toolchain;
+the small custom inline HTML minification step in `vite.config.ts` also uses `Bun.build`, so there
+is no direct esbuild dependency in this package. The `check` script is deliberately separate from
+the bundler: Bun's bundler transpiles TypeScript, but semantic type checking is handled by
+`svelte-check`/`tsc`. `bun run build` is the validated local/default build (`check` plus
+`build:bundle`); CI smoke and release image builds pass `GM_CLIENT_VALIDATE=0` to the Dockerfile
+because the same commit has already passed the client check/test job.
 
 | Variable | Values | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does |
 | --- | --- | --- | --- | --- |

@@ -147,7 +147,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Prettier
         run: bun run format:check
-      - name: svelte-check
+      - name: Type check
         run: bun run check
       - name: Tests
         run: bun test
@@ -168,9 +168,13 @@ jobs:
           file: container/Dockerfile
           load: true
           tags: graphite-meter:smoke
+          # The Client job owns semantic checks and tests. Smoke only needs
+          # the integration artifact, so avoid repeating svelte-check/tsc
+          # inside Docker while still running the real bundle step.
           build-args: |
             VERSION=0.0.0-ci
             GM_CLIENT_BUILD_LABEL=ci-${{ github.sha }}
+            GM_CLIENT_VALIDATE=0
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Run container

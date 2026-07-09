@@ -1,7 +1,8 @@
 #!/bin/sh
-# Mirrors the CI gates (ci.yml) on whatever is staged, plus local-only safety
-# nets (secrets, conflict markers, accidental branch/large-file commits), so
-# a commit that passes here passes the PR checks. Enable once per clone with:
+# Mirrors the fast CI gates (ci.yml) on whatever is staged, plus local-only
+# safety nets (secrets, conflict markers, accidental branch/large-file commits).
+# The Docker smoke job remains CI-only because it is much heavier and needs a
+# container runtime. Enable once per clone with:
 # just hooks. Bypass a single commit with: git commit --no-verify
 set -e
 
@@ -50,11 +51,11 @@ if echo "$staged" | grep -q '^go/'; then
         echo "$unformatted"
         exit 1
     fi
-    (cd go && go vet ./... && go test ./...)
+    (cd go && go vet ./... && CGO_ENABLED=1 go test -race -shuffle=on ./...)
 fi
 
 if echo "$staged" | grep -q '^client/'; then
-    echo "pre-commit: client (prettier, svelte-check, test)"
+    echo "pre-commit: client (prettier, type-check, test)"
     if ! (cd client && bun run format:check >/dev/null 2>&1); then
         echo "prettier violations (fix with: cd client && bun run format):"
         (cd client && bun run format:check) || true
