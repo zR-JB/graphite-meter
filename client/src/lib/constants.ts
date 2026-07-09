@@ -1,9 +1,3 @@
-/* ============================================================
- * Iconography — inline stroke SVGs
- * 1.8–2.2 stroke, currentColor, no fills except dots.
- * viewBox 0 0 24 24.
- * ============================================================ */
-
 import { BUILD } from "./buildenv";
 
 const A =
@@ -25,16 +19,11 @@ export const ICON = {
   check: `<svg viewBox="0 0 24 24" ${A}><path d="M20 6 9 17l-5-5"/></svg>`,
   inventory: `<svg viewBox="0 0 24 24" ${A}><path d="M3 7h18M3 7l1.5 12.5a1 1 0 0 0 1 .9h11a1 1 0 0 0 1-.9L19 7M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
   route: `<svg viewBox="0 0 24 24" ${A}><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 17V9a4 4 0 0 1 4-4h4"/></svg>`,
-  // Settings / power-user surface — a lab flask (topbar trigger).
   flask: `<svg viewBox="0 0 24 24" ${A}><path d="M9 3h6M10 3v6L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9V3"/><path d="M7 14h10"/></svg>`,
-  // Close (X) — used by the Settings panel header.
   close: `<svg viewBox="0 0 24 24" ${A}><path d="M18 6 6 18M6 6l12 12"/></svg>`,
-  // Info — jargon tooltip affordance; small "i" in a circle.
   info: `<svg viewBox="0 0 24 24" ${A}><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`,
 } as const;
 
 export type IconName = keyof typeof ICON;
 
-/** Build identity shown in the status bar — "dev" by default, the git short
- *  hash (or GM_CLIENT_BUILD_LABEL) for a prod build. */
 export const BUILD_HASH = BUILD.buildLabel;

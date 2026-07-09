@@ -1,9 +1,3 @@
-/* ============================================================
- * focusTrap — Svelte action
- * Tab-cycles focus within an open drawer and focuses the first
- * focusable element on open. Pure DOM, no SvelteKit.
- * ============================================================ */
-
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -48,7 +42,6 @@ export function focusTrap(node: HTMLElement, active = true) {
 
   function focusFirst() {
     const first = getFocusable()[0];
-    // Defer a frame so the node is laid out before focus moves into it.
     window.setTimeout(() => (first ?? node).focus(), 0);
   }
 
