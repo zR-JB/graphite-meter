@@ -117,22 +117,19 @@
     onResize?.(clamp(panelEl.offsetWidth + grow));
   }
 
-  // ---- Mobile bottom-sheet drag-to-dismiss. Same pointer-capture pattern as
-  // the docked resize handle, but tracking vertical delta and closing past a
-  // threshold. The handle is only visible in the mobile flyout (.sheet-handle). ----
+  const DISMISS_TAP_SLOP_PX = 8;
   const DISMISS_THRESHOLD_PX = 80;
   function startDismissDrag(e: PointerEvent) {
     if (docked || !panelEl) return;
+    e.preventDefault();
     const handle = e.currentTarget as HTMLElement;
     const startY = e.clientY;
     handle.setPointerCapture(e.pointerId);
-    // Live-follow the finger with no easing lag; restored on release so the
-    // snap-back (or the rest of the way to closed) animates normally.
     panelEl.style.transition = "none";
     document.body.style.userSelect = "none";
 
     const onMove = (ev: PointerEvent) => {
-      const delta = Math.max(0, ev.clientY - startY); // down only
+      const delta = Math.max(0, ev.clientY - startY);
       panelEl!.style.transform = `translateY(${delta}px)`;
     };
     const finish = (ev: PointerEvent) => {
@@ -142,7 +139,13 @@
       document.body.style.userSelect = "";
       panelEl!.style.transition = "";
       panelEl!.style.transform = "";
-      if (Math.max(0, ev.clientY - startY) > DISMISS_THRESHOLD_PX) close();
+      const delta = Math.max(0, ev.clientY - startY);
+      if (
+        ev.type !== "pointercancel" &&
+        (delta <= DISMISS_TAP_SLOP_PX || delta > DISMISS_THRESHOLD_PX)
+      ) {
+        close();
+      }
     };
     handle.addEventListener("pointermove", onMove);
     handle.addEventListener("pointerup", finish);
@@ -197,9 +200,6 @@
         ondblclick={() => onResetWidth?.()}
       ></div>
     {/if}
-    <!-- Mobile bottom-sheet grab handle — only visible in the mobile flyout
-         media query (see .sheet-handle). A tap closes it (native button
-         click); a drag past the threshold also closes it (startDismissDrag). -->
     <button
       class="sheet-handle"
       aria-label={`Drag down, or press Enter, to close ${title}`}
@@ -399,11 +399,12 @@
     display: none;
     flex: 0 0 auto;
     width: 100%;
-    padding: 10px 0 2px;
+    min-height: 52px;
+    padding: 16px 0 12px;
     border: 0;
     background: transparent;
     cursor: grab;
-    touch-action: none; /* let pointer drag own the vertical gesture, not page scroll */
+    touch-action: none;
   }
   .sheet-handle:active {
     cursor: grabbing;
