@@ -40,6 +40,7 @@ import {
 import { buildSegments } from "../runner/schedule";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
+  latestOneWayThroughputForPhase,
   latestBidirectionalLanes,
 } from "./stageGuards";
 import {
@@ -193,6 +194,7 @@ class AppStore {
 
   /* ---- lifecycle ---- */
   phase = $state<Phase>("idle");
+  phaseStage = $state<TransportRole | null>(null);
   phaseFraction = $state(0); // 0–1 within current phase (of the test-time budget)
   /* Measured test-time accrual for the active phase. `phaseElapsedMs` is
    * the budget consumed; `phaseBudgetMs` is the phase's test-time budget. Both
@@ -306,9 +308,10 @@ class AppStore {
 
   /** The single big number shown in the gauge, in the active unit. */
   liveMetric = $derived.by(() => {
-    const last = this.#lastSampleForPhase();
-    if (!last) return { value: 0, unit: this.unitLabel };
-    return { value: this.toUnit(last.bytesPerSec), unit: this.unitLabel };
+    return {
+      value: this.toUnit(this.liveTransferBytesPerSec),
+      unit: this.unitLabel,
+    };
   });
 
   /** The headline metric to rest on at the END of a run: download if it ran,
@@ -342,11 +345,14 @@ class AppStore {
    *  the most recent down + up samples (the combined throughput), so the dial
    *  and number show the aggregate the phase is actually moving. */
   liveTransferBytesPerSec = $derived.by(() => {
+    if (this.phase === "download" || this.phase === "upload") {
+      return latestOneWayThroughputForPhase(this.phase, this.throughput);
+    }
     if (this.phase === "bidirectional") {
       const { down, up } = latestBidirectionalLanes(this.throughput);
       return down + up;
     }
-    return this.throughput.at(-1)?.bytesPerSec ?? 0;
+    return 0;
   });
 
   /** The bidirectional phase's two live lanes (latest down + up), for the
@@ -648,6 +654,7 @@ class AppStore {
         break;
       case "phase": {
         this.phase = e.transition.to;
+        this.phaseStage = e.transition.stage;
         this.phaseFraction = 0;
         // Stamp the run clock once, when leaving idle — not on every per-stage
         // warmup (there are now several), and robust to warmupMs===0 (first
@@ -753,6 +760,7 @@ class AppStore {
     this.throughput = [];
     this.latency = [];
     this.phase = "idle";
+    this.phaseStage = null;
     this.phaseFraction = 0;
     this.phaseElapsedMs = 0;
     this.phaseBudgetMs = 0;
@@ -817,10 +825,6 @@ class AppStore {
       };
     });
   });
-
-  #lastSampleForPhase() {
-    return this.throughput.at(-1) ?? null;
-  }
 }
 
 export const store = new AppStore();
