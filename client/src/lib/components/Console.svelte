@@ -1,12 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <Console> — the Control Console shell
-   * A single gauge-first stage between the topbar and status bar.
-   * Two auxiliary surfaces — Settings (left) and the
-   * Connection & telemetry inspector (right) — are identical flyout
-   * panels built on the shared <SidePanel>; both are closed by default
-   * so the default view stays focused on the instrument.
-   * ============================================================ */
+  // Main console shell: boots the runner, owns top-level panels, shortcuts,
+  // theme toggle, and docked/flyout layout state.
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
@@ -25,20 +19,14 @@
   import { mediaQuery } from "../actions/mediaQuery.svelte";
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
 
-  // The two auxiliary panels. Both closed by default (progressive disclosure):
-  // the gauge owns the default view; Settings/telemetry are summoned from the
-  // topbar or via the W / D shortcuts. On wide screens an open panel docks as
-  // an in-flow column that pushes the stage; below that it's a flyout overlay.
-  // Same shared <SidePanel> either way.
   let telemetryOpen = $state(false);
   let settingsOpen = $state(false);
   let resetConfirmOpen = $state(false);
-  const dockQuery = mediaQuery(`(min-width: 1200px)`); // bp: dock
+  const dockQuery = mediaQuery(`(min-width: 1200px)`);
+  const RESOLVED_PHASES = ["complete", "aborted", "error"];
 
-  // Track which drawer opened most recently: it stacks on top when both are
-  // docked, and in flyout mode (not docked) opening one closes the other —
-  // overlapping flyouts/bottom sheets would bury whichever is beneath.
-  // Captures any open transition regardless of source (button, W/D key, bind).
+  // In flyout mode the auxiliary panels are mutually exclusive. On docked
+  // layouts both may be open, and the most recently opened panel stacks above.
   let lastOpened = $state<"left" | "right">("right");
   let prevSettingsOpen = false;
   let prevTelemetryOpen = false;
@@ -68,17 +56,13 @@
   };
 
   function toggleTheme() {
-    // Cycle the persisted pref; the store's $effect resolves "auto" against
-    // the live OS preference and applies it to <html data-theme>, and the
-    // debounced save persists it.
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
     store.theme = next;
   }
 
-  // Docked-panel widths (persisted). The reserved grid column is the saved
-  // width only while that panel is docked + open, else 0 (column collapses).
-  // The grid template also CSS-clamps to 46vw so a stale large value is safe.
+  // Persisted widths become reserved grid columns only while that side is
+  // actually docked and open; otherwise the stage gets the space back.
   const dockLeft = $derived(
     dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
   );
@@ -112,15 +96,6 @@
     e.returnValue = "";
   }
 
-  /* ---- Global keyboard map ----
-     | Key            | Action                                          |
-     | Space / Enter  | Engage / Abort (wire.engage toggle)             |
-     | Esc            | Abort if running, else close any open panel     |
-     | W              | Toggle Settings                                    |
-     | D              | Toggle Connection & telemetry                   |
-     | R              | Re-run once resolved (complete/aborted/error)   |
-     | T              | Cycle theme                                     |
-     Guarded against text inputs / contentEditable so typing is never hijacked. */
   function inEditable(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
     const tag = el.tagName;
@@ -137,8 +112,8 @@
     if (inEditable(e.target)) return;
     if (resetConfirmOpen) return;
 
-    // Esc aborts a live run, otherwise closes whichever panel is open.
     if (e.key === "Escape") {
+      // Esc aborts a live run first; otherwise it closes the visible panel.
       if (store.isRunning) {
         engage();
       } else if (settingsOpen) {
@@ -153,11 +128,10 @@
     }
 
     if (e.key === " " || e.key === "Enter") {
-      // If a button/link is focused, let its native activation fire instead so
-      // we never double-toggle (e.g. Enter on the focused RunButton).
       const t = e.target;
       if (t instanceof HTMLElement) {
         const tag = t.tagName;
+        // Let native button/link activation win so Enter does not double-toggle.
         if (
           tag === "BUTTON" ||
           tag === "A" ||
@@ -180,13 +154,7 @@
         e.preventDefault();
         break;
       case "r":
-        // Re-run from ANY resolved state (complete/aborted/error) — matches
-        // RunButton's "Run again" affordance and the ShortcutHints cap.
-        if (
-          store.phase === "complete" ||
-          store.phase === "aborted" ||
-          store.phase === "error"
-        ) {
+        if (RESOLVED_PHASES.includes(store.phase)) {
           engage();
           e.preventDefault();
         }

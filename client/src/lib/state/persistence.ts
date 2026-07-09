@@ -1,36 +1,15 @@
-/* ============================================================
- * Persistence Layer — localStorage hydration + save for the store
- *
- * Versioned, merge-tolerant localStorage hydration + save for the
- * console store. Pure helpers only — the store wires the debounced
- * save $effect and calls `loadPersisted()` at construction.
- *
- * Contract:
- *   - Stored under a single VERSIONED key (`graphite-meter:v1`).
- *   - On read, the parsed blob is DEEP-MERGED over the defaults so a
- *     missing field falls back and an unknown/extra field is dropped.
- *     Corrupt JSON (or a non-object blob) → ignore, use defaults.
- *   - Everything is guarded with `typeof window !== "undefined"` so
- *     the module is import-safe in a non-browser context.
- * ============================================================ */
-
+// LocalStorage schema for user settings. Load is defensive so old or partial
+// blobs merge onto the current defaults instead of breaking startup.
 import type { RunnerConfig } from "../runner/contract";
 import { DEFAULT_CONFIG } from "./store.svelte";
 
-/** Bump when the persisted SHAPE changes incompatibly. The key itself
- *  carries the version so an old blob under `:v1` is simply never read by
- *  a future `:v2` build (and vice-versa) — no migration code required. */
 export const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light" | "auto";
 
-/** Default docked side-panel widths (px). Applied widths are clamped to a
- *  sane range on use, so a stale/large saved value can never eat the screen. */
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
 
-/** The full persisted snapshot. Display prefs + the entire RunnerConfig. */
-/** Which Settings tab was last viewed (restored when the panel reopens). */
 export type SettingsTab = "setup" | "developer";
 
 export interface PersistedState {
@@ -39,17 +18,11 @@ export interface PersistedState {
   unitKind: "bits" | "bytes";
   theme: ThemePref;
   showWireEstimates: boolean;
-  /** User-resized docked panel widths (px), per side. */
   dockWidth: { left: number; right: number };
-  /** Last-viewed Settings tab, so reopening the panel restores the view. */
   settingsTab: SettingsTab;
-  /** Dev diagnostic: when on, the runner/core/workers emit verbose,
-   *  component-tagged console logs (Settings › Developer). Off by default. */
   debugLogging: boolean;
 }
 
-/** Resolves the OS-level `prefers-color-scheme` to a concrete theme, used
- *  when `theme` is `"auto"`. Defaults to dark if the media query is unavailable. */
 export function systemThemeDefault(): "dark" | "light" {
   if (typeof window === "undefined" || !window.matchMedia) return "dark";
   return window.matchMedia("(prefers-color-scheme: light)").matches
@@ -57,8 +30,6 @@ export function systemThemeDefault(): "dark" | "light" {
     : "dark";
 }
 
-/** The defaults the persisted blob merges OVER. Theme defaults to "auto"
- *  (follow system preference); everything else to the store/config defaults. */
 export function defaultPersisted(): PersistedState {
   return {
     config: structuredClone(DEFAULT_CONFIG),
@@ -76,26 +47,16 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/**
- * Recursively merge `source` OVER `base`, key-by-key, keyed off the shape of
- * `base` (the defaults). This makes the merge tolerant in both directions:
- *   - a key absent from `source` keeps the default;
- *   - a key present in `source` but NOT in `base` (an unknown field)
- *     is dropped — we only ever walk keys that exist in the defaults;
- *   - a type mismatch (e.g. saved a string where a number is expected, or an
- *     object where a scalar is expected) is rejected, keeping the default.
- * Arrays and scalars are replaced wholesale (only when the type matches).
- */
 function deepMergeOverDefaults<T>(base: T, source: unknown): T {
+  // Persisted blobs may be old, partial, or hand-edited. Walk only default keys
+  // and type-check leaves so schema changes fall back instead of crashing load.
   if (!isPlainObject(base)) {
-    // Scalar / array leaf: accept the saved value only if its broad type
-    // matches the default's, else keep the default.
     if (source === undefined) return base;
     if (Array.isArray(base))
       return (Array.isArray(source) ? source : base) as T;
     return (typeof source === typeof base ? source : base) as T;
   }
-  if (!isPlainObject(source)) return base; // saved a non-object → ignore it
+  if (!isPlainObject(source)) return base;
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(base as Record<string, unknown>)) {
     out[key] = deepMergeOverDefaults(
@@ -106,7 +67,6 @@ function deepMergeOverDefaults<T>(base: T, source: unknown): T {
   return out as T;
 }
 
-/** Safe JSON parse — never throws; returns `null` on any failure. */
 function safeParse(raw: string | null): unknown {
   if (raw == null) return null;
   try {
@@ -116,11 +76,6 @@ function safeParse(raw: string | null): unknown {
   }
 }
 
-/**
- * Hydrate the persisted state. Reads the versioned key, safe-parses, and
- * deep-merges over `defaultPersisted()`. Any failure (no window, no key,
- * corrupt JSON, wrong type) cleanly yields the defaults.
- */
 export function loadPersisted(): PersistedState {
   const defaults = defaultPersisted();
   if (typeof window === "undefined") return defaults;
@@ -128,20 +83,16 @@ export function loadPersisted(): PersistedState {
   try {
     raw = window.localStorage.getItem(STORAGE_KEY);
   } catch {
-    return defaults; // storage disabled / blocked → defaults
+    return defaults;
   }
   const parsed = safeParse(raw);
   if (!isPlainObject(parsed)) return defaults;
   return deepMergeOverDefaults(defaults, parsed);
 }
 
-/** Serialize + write the snapshot under the versioned key. Never throws
- *  (quota / disabled storage is swallowed). */
 export function savePersisted(snapshot: PersistedState): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-  } catch {
-    /* storage full or disabled — non-fatal, settings just won't persist */
-  }
+  } catch {}
 }

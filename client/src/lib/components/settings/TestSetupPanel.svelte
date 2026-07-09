@@ -1,11 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <TestSetupPanel> — Settings › Test Setup
-   * Every control two-way binds to `console.config` (or the unit
-   * display prefs), so edits reflect instantly in the rail ETA,
-   * gauge, chart, and unit labels. Inputs that are unsafe to
-   * change mid-run are disabled while `running`.
-   * ============================================================ */
+  // Settings test setup: stage selection, timing, endpoint, units, and
+  // compensation controls bound directly into the app store.
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
   import type {
     RunnerConfig,
@@ -22,17 +17,29 @@
   }
   let { running = false }: Props = $props();
 
-  /* ---------- Duration presets (synced with the rail) ---------- */
   type PresetKey = "short" | "medium" | "long" | "custom";
   const PRESET_KEYS: PresetKey[] = ["short", "medium", "long", "custom"];
   type Durations = RunnerConfig["duration"];
+  const DURATION_KEYS = [
+    "warmupMs",
+    "latencyMs",
+    "downloadMs",
+    "uploadMs",
+    "bidirectionalMs",
+  ] as const;
+  const DUR_FIELDS = [
+    { key: "warmupMs", label: "Warmup", inputLabel: "Warmup ms" },
+    { key: "latencyMs", label: "Latency", inputLabel: "Latency ms" },
+    { key: "downloadMs", label: "Download", inputLabel: "Download ms" },
+    { key: "uploadMs", label: "Upload", inputLabel: "Upload ms" },
+  ] as const;
+  const PRESET_SUMMARY_FIELDS = [
+    ...DUR_FIELDS,
+    { key: "bidirectionalMs", label: "Bi-dir", inputLabel: "Bi-dir ms" },
+  ] as const;
+
   function durationsEqual(a: Durations, b: Durations): boolean {
-    return (
-      a.warmupMs === b.warmupMs &&
-      a.latencyMs === b.latencyMs &&
-      a.downloadMs === b.downloadMs &&
-      a.uploadMs === b.uploadMs
-    );
+    return DURATION_KEYS.every((key) => a[key] === b[key]);
   }
   function presetFromDurations(): PresetKey {
     for (const k of ["short", "medium", "long"] as const) {
@@ -40,41 +47,24 @@
     }
     return "custom";
   }
-  // Explicit mode (seeded from the loaded durations) so the Custom tab is
-  // directly selectable and editing any field switches to Custom — deriving
-  // the mode from value-equality alone would leave the Custom tab inert
-  // whenever the current durations happen to match a preset.
   let durationMode = $state<PresetKey>(presetFromDurations());
 
   function applyPreset(k: PresetKey) {
     durationMode = k;
-    // Presets apply their durations; Custom keeps the current values for editing.
     if (k !== "custom") store.config.duration = { ...DURATION_PRESETS[k] };
   }
-  /** Any manual field edit means we're no longer on a named preset. */
   function onDurationEdit() {
     durationMode = "custom";
   }
 
-  const DUR_FIELDS = [
-    { key: "warmupMs", label: "Warmup ms" },
-    { key: "latencyMs", label: "Latency ms" },
-    { key: "downloadMs", label: "Download ms" },
-    { key: "uploadMs", label: "Upload ms" },
-  ] as const;
-
-  /** A named preset's per-stage durations, for the read-only summary grid
-   *  shown instead of the manual field grid (which only appears for Custom). */
   const presetCells = $derived.by<{ label: string; value: string }[]>(() => {
     if (durationMode === "custom") return [];
     const d = DURATION_PRESETS[durationMode];
     const s = (ms: number) => `${+(ms / 1000).toFixed(1)}s`;
-    return [
-      { label: "Warmup", value: s(d.warmupMs) },
-      { label: "Latency", value: s(d.latencyMs) },
-      { label: "Download", value: s(d.downloadMs) },
-      { label: "Upload", value: s(d.uploadMs) },
-    ];
+    return PRESET_SUMMARY_FIELDS.map((f) => ({
+      label: f.label,
+      value: s(d[f.key]),
+    }));
   });
 
   /* ---------- Visualization throughput max ----------
@@ -237,7 +227,7 @@
       <div class="two">
         {#each DUR_FIELDS as f (f.key)}
           <label>
-            <span>{f.label}</span>
+            <span>{f.inputLabel}</span>
             <input
               type="number"
               min="0"

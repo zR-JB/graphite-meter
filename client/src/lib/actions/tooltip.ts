@@ -1,33 +1,12 @@
-/* ============================================================
- * tooltip — Svelte action
- * A small, reusable jargon-tooltip mechanism. Attach to any
- * element carrying a technical term; on mouse hover and keyboard
- * focus it surfaces a plain-language definition in a token-styled
- * floating bubble. Accessible: the bubble gets `role="tooltip"`
- * and the trigger is wired to it via `aria-describedby`, so screen
- * readers announce the definition. Esc dismisses. Pure DOM, no
- * SvelteKit — mirrors the focusTrap / pointerIntent action style.
- *
- * Reduced-motion safe: the fade-in is gated on no-preference via
- * the injected stylesheet (the global guard also neutralizes
- * any residual transition).
- *
- * Usage:  <span use:tooltip={"P95: 95% of pings were at or below this."}>P95</span>
- *         <button use:tooltip={{ text, placement: "bottom" }}>…</button>
- * ============================================================ */
-
+// Svelte tooltip action plus the shared jargon dictionary used by metric labels
+// and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 
 export interface TooltipOptions {
   text: string;
-  /** Preferred side; flips automatically if it would clip. Default "top". */
   placement?: "top" | "bottom";
-  /** Disable without removing the action. */
   disabled?: boolean;
-  /** Skip the hover-intent delay — for tooltips tied to pointer position over
-   * a chart/plot (e.g. a hovered data point), where the tooltip should track
-   * the cursor immediately rather than wait. Basic UI elements (buttons,
-   * labels, jargon terms) keep the delay. Default false. */
+  // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
   instant?: boolean;
 }
 
@@ -99,7 +78,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let bubble: HTMLDivElement | null = null;
   let prevDescribedBy: string | null = null;
 
-  // The trigger must be focusable so keyboard users can reach the definition.
+  // Non-interactive jargon terms still need keyboard focus for aria-describedby.
   if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
     node.tabIndex = 0;
   }
@@ -275,11 +254,6 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   };
 }
 
-/* ============================================================
- * Jargon dictionary — plain-language definitions for the
- * technical terms surfaced across the UI. Centralized so every
- * tooltip reads the same wording. Imported wherever a term shows.
- * ============================================================ */
 export const JARGON = {
   bufferbloat:
     "Bufferbloat: extra delay that piles up when your connection is busy. A grade of A means it stays responsive under load; D or F means calls and games may lag during big downloads.",

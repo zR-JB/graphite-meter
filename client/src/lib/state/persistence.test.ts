@@ -1,17 +1,13 @@
+// Persistence tests use an in-memory localStorage and a mocked store default so
+// load/merge behavior can be checked without the Svelte runtime.
 import { test, expect, mock, beforeEach } from "bun:test";
 
-// persistence.ts imports DEFAULT_CONFIG from store.svelte.ts, a .svelte.ts
-// module whose `$state(...)` rune calls only run inside the Svelte
-// compiler/runtime. Mock it out before persistence.ts is (dynamically)
-// imported below, so bun:test never touches the real module.
 const FAKE_CONFIG = {
   parallelStreams: 4,
   endpoint: { host: "auto", port: 443 },
 };
 mock.module("./store.svelte", () => ({ DEFAULT_CONFIG: FAKE_CONFIG }));
 
-// persistence.ts reads/writes through `window.localStorage`, and bun:test
-// has no `window` global — stub one in with an in-memory Storage.
 class MemoryStorage {
   private map = new Map<string, string>();
   getItem(key: string): string | null {
@@ -34,8 +30,6 @@ beforeEach(() => {
   memoryStorage.clear();
 });
 
-// Static import would run before the mock.module call above (imports are
-// hoisted); dynamic import defers loading until this line actually runs.
 const { loadPersisted, savePersisted, defaultPersisted, STORAGE_KEY } =
   await import("./persistence");
 

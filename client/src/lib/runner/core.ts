@@ -1,18 +1,5 @@
-/* ============================================================
- * Runner Core — phase scheduling, measurement, early finish, stalls
- * Engine-agnostic orchestrator: phase timeline, sequencing, live
- * reconfiguration, run clock, sample accumulation, stability,
- * early-stop, result reduction, RunnerEvent stream.
- *
- * A RunnerBackend plugs in the ONLY engine-specific part: samples.
- * Dummy synthesizes them; real engine measures off wire. Both push
- * raw samples, so identical samples yield identical results.
- *
- * Lifecycle (core → backend): onRunStart → per stage: onStageBegin
- * → onStageMeasure → onStageEnd → onComplete/onAbort. A warmup
- * window BETWEEN onStageBegin and onStageMeasure primes the same
- * connection the measurement reuses.
- * ============================================================ */
+// Engine-agnostic runner orchestration: phase timeline, measured-time clock,
+// stalls, early finish, accumulation, and RunnerEvent emission.
 
 import type {
   NetworkRunner,
@@ -24,7 +11,6 @@ import type {
   PhaseTransition,
   InfraInfo,
   EngineInfo,
-  ServerCandidate,
   ThroughputResult,
   LatencyResult,
   StallInfo,
@@ -211,9 +197,6 @@ export interface RunnerBackend {
   idleHintMs?(): number;
   /** OPTIONAL — fire a live dev anomaly; real engines may omit it. */
   injectAnomaly?(a: RunnerAnomaly): void;
-  /** OPTIONAL — the measurement endpoints this backend can target (server
-   *  selection seam). Single-backend engines omit it. */
-  listServers?(): Promise<ServerCandidate[]>;
 }
 
 export class RunnerCore implements NetworkRunner, CoreHost {
@@ -324,12 +307,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   describe(): EngineInfo {
     return this.#backend.describe();
-  }
-
-  /** Server-selection seam: forward to the backend, or an empty list when the
-   *  backend targets a single endpoint. */
-  listServers(): Promise<ServerCandidate[]> {
-    return this.#backend.listServers?.() ?? Promise.resolve([]);
   }
 
   injectAnomaly(a: RunnerAnomaly): void {
