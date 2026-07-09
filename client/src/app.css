@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* Fonts are self-hosted so the meter still renders correctly offline. */
 @font-face {
   font-family: "Instrument Sans";
   font-style: normal;
@@ -56,6 +57,7 @@
 :root {
   color-scheme: dark;
 
+  /* Shell breakpoints are duplicated in JS/media queries; keep literals in sync. */
   --topbar-h: 60px;
   --rail-w: 268px;
   --inspector-w: 380px;
@@ -77,6 +79,7 @@
   --dur-slide: 180ms;
   --dur-graph: 280ms;
 
+  /* Master feel knobs: most spacing, radii, and edge strength derive from these. */
   --feel-radius: 0.6;
   --feel-density: 1;
   --feel-edge: 0.6;
@@ -107,6 +110,7 @@
   --well-depth: 0.35;
   --raise-depth: 0.28;
 
+  /* Elevation recipes stay theme-neutral; dark/light only swap primitives. */
   --elev-inset:
     inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8)),
     inset 0 6px 14px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.45));

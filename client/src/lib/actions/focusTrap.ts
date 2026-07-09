@@ -1,3 +1,5 @@
+// Minimal Svelte action for flyout dialogs: keep Tab inside while open and
+// focus the first usable control after the panel is mounted.
 const FOCUSABLE_SELECTOR = [
   "a[href]",
   "button:not([disabled])",
@@ -42,6 +44,7 @@ export function focusTrap(node: HTMLElement, active = true) {
 
   function focusFirst() {
     const first = getFocusable()[0];
+    // Wait one task so the opening panel has layout and focusable children.
     window.setTimeout(() => (first ?? node).focus(), 0);
   }
 

@@ -93,6 +93,8 @@
 
   const DISMISS_TAP_SLOP_PX = 8;
   const DISMISS_THRESHOLD_PX = 80;
+  // Flyout sheets can be tapped or dragged downward to dismiss; docked panels
+  // stay in-flow and use the close button instead.
   function startDismissDrag(e: PointerEvent) {
     if (docked || !panelEl) return;
     e.preventDefault();

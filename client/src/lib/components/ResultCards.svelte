@@ -121,6 +121,8 @@
   let ulFrozen = $state<number | null>(null);
   let bidiFrozen = $state<number | null>(null);
 
+  // Freeze the last live value at phase exit so the final result can tween from
+  // what the user just saw, not from zero or a later unrelated sample.
   function tweenTo(
     from: number,
     to: number,

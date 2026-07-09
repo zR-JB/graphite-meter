@@ -225,6 +225,8 @@ class AppStore {
     };
   });
 
+  // End-of-run headline is phase-agnostic: latency-only, upload-only, and
+  // bidirectional-only runs all resolve to the metric that actually ran.
   finalMetric = $derived.by<
     | { kind: "speed"; bytesPerSec: number }
     | { kind: "latency"; ms: number }
@@ -247,6 +249,7 @@ class AppStore {
   });
 
   liveTransferBytesPerSec = $derived.by(() => {
+    // Bidirectional is displayed as aggregate throughput: latest down + latest up.
     if (this.phase === "download" || this.phase === "upload") {
       return latestOneWayThroughputForPhase(this.phase, this.throughput);
     }
@@ -263,6 +266,8 @@ class AppStore {
   });
 
   pulseLatency = $derived.by<LatencySample[]>(() => {
+    // While idle, the pulse reads the keepalive lane if available. During a run,
+    // it reads measured samples so loss/jitter reflect the active test.
     if (this.isRunning) return this.latency;
     return this.idleLatency.length ? this.idleLatency : this.latency;
   });
@@ -289,6 +294,8 @@ class AppStore {
   });
 
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {
+    // Do not pin the error phase offline forever: connection failures latch
+    // connectivity once, then the restarted keepalive can report recovery.
     if (this.isRunning && !this.measuring) return "offline";
     if (this.connectivity === "offline") return "offline";
     if (this.rollingLossPct > 5) return "unstable";
@@ -314,6 +321,8 @@ class AppStore {
     return MEASURED_STAGES.filter((stage) => this.config.stages[stage]);
   });
 
+  // Mid-run toggles may only affect future stages. The current stage is already
+  // wired and past stages have produced results.
   canToggleStage(stage: StageKey): boolean {
     if (!this.isRunning) return true;
     const currentIndex = MEASURED_STAGES.indexOf(this.phase as StageKey);
@@ -334,6 +343,8 @@ class AppStore {
   }
 
   canDisableBidirectional(): boolean {
+    // Bidirectional is outside the "at least one stage" set, so its stage-track
+    // off rule lives separately from canToggleStage().
     return canDisableBidirectionalPure(this.phase, this.isRunning);
   }
 
@@ -348,6 +359,8 @@ class AppStore {
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
 
+  // The store remains bytes/sec-native. UI conversion happens at the edge via
+  // toUnit(), which keeps compensation and scale math in one raw domain.
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
       this.throughput.at(-1)?.bytesPerSec ?? 0,
@@ -380,6 +393,7 @@ class AppStore {
   });
 
   #sustainedPeakBytesPerSec = $derived.by(() => {
+    // Scale from a time-weighted sustained peak, not a single transient spike.
     const arr = this.throughput;
     const n = arr.length;
     if (n === 0) return 0;
@@ -405,6 +419,8 @@ class AppStore {
   });
 
   #unitIndex = $derived.by(() => {
+    // Unit prefix follows the observed raw peak, not the rounded-up dial ceiling,
+    // so readings do not flip to "0.xx" just because scale headroom increased.
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     const refBytesPerSec =
       typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
@@ -444,6 +460,7 @@ class AppStore {
         this.phase = e.transition.to;
         this.phaseStage = e.transition.stage;
         this.phaseFraction = 0;
+        // Stamp the wall-clock run start once, not on every warmup segment.
         if (e.transition.from === "idle") this.startEpoch = Date.now();
         break;
       }
@@ -454,6 +471,7 @@ class AppStore {
         this.measuring = e.measuring;
         break;
       case "stall":
+        // Store only the presentation latch; the core owns measured-time freeze.
         this.measuring = false;
         this.stalledSince = performance.now();
         this.stallInfo = e.info;
@@ -501,6 +519,8 @@ class AppStore {
         break;
       case "error": {
         this.error = e.error;
+        // A terminal error resolves any in-flight stall, so the idle/error view
+        // is not stuck in "measuring=false".
         this.#clearStall();
         if (CONNECTION_FAILURE_REASONS.includes(e.error.reason)) {
           this.connectivity = "offline";
@@ -545,6 +565,8 @@ class AppStore {
 
   latencyLanes = $derived.by<LatencyLane[]>(() => {
     return MEASURED_STAGES.map((key) => {
+      // Bucket by the sample's stamped phase. Pre-test pings are phase "idle",
+      // so they never contaminate the measured latency lane.
       const laneSamples = this.latency.filter((s) =>
         key === "latency"
           ? s.phase === "latency"
@@ -585,6 +607,8 @@ export const store = new AppStore();
 const SAVE_DEBOUNCE_MS = 250;
 
 if (typeof window !== "undefined") {
+  // The inline boot script sets data-theme before paint; this effect keeps it
+  // synced afterward, including live OS changes when theme is "auto".
   let systemPrefersLight = $state(systemThemeDefault() === "light");
   if (window.matchMedia) {
     window
@@ -607,6 +631,8 @@ if (typeof window !== "undefined") {
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
+      // Touch every persisted field so any preference/config change schedules
+      // one debounced write of a plain snapshot.
       const snapshot = {
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,

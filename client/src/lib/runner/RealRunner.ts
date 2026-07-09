@@ -21,24 +21,32 @@ import {
   laneStaggerMs,
 } from "./real/backendPure";
 
+// Network backend only: the core owns scheduling, measured-time, accumulation,
+// and result reduction. This class opens real transports and pushes real samples.
 export interface RealBackendOptions {
   endpoint?: RunnerConfig["endpoint"];
   authToken?: string;
 }
 
+// Match the core/dummy cadence so both engines feed the UI at the same rate.
 const THROUGHPUT_CADENCE_MS = 60;
 
+// Large enough that a normal stage ends by aborting the stream, not by refetching.
 const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 
+// Restart dropped lanes, but fail fast when a lane never establishes at all.
 const LANE_RESTART_BACKOFF_MS = 300;
 const LANE_MAX_RESTARTS = 40;
 const EARLY_FAIL_RESTARTS = 3;
 const PING_ESTABLISH_TIMEOUT_MS = 3500;
+// A hung upload-session request should skip the stage, not ride into max-stall.
 const UPLOAD_SESSION_TIMEOUT_MS = 3000;
+// Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
 const PROGRESS_BYE_GRACE_MS = 1000;
 
+// Ping pacing is separate for idle, latency, and loaded-transfer contexts.
 const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
   instant: 80,
   medium: 250,
@@ -52,12 +60,14 @@ const PING_REPORT_GAP_MS = 20;
 const PING_LOSS_K = 4;
 const PING_LOSS_FLOOR_MS = 250;
 
+// One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
 const IDLE_PING_INTERVAL_MS = 1000;
 const PROBE_PING_INTERVAL_MS = 120;
 const PROBE_PING_COUNT = 5;
 const PROBE_PING_TIMEOUT_MS = 1500;
 const IDLE_RESPAWN_MS = 2000;
 
+// Some transports are advertised by the protocol before this client can drive them.
 const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   "fetch-stream": true,
   websocket: true,
@@ -482,6 +492,8 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= TRANSPORT NEGOTIATION ================= */
+  /** Try transports in role order, reporting every attempt to the UI. A null
+   *  result means the caller should skip/fail that stage based on its role. */
   #negotiateTransport(role: TransportRole): TransportKind | null {
     const host = this.#host!;
     for (const kind of this.#transportOrder(role)) {
@@ -521,6 +533,8 @@ export class RealBackend implements RunnerBackend {
     return advertised ? null : "not advertised by server";
   }
 
+  /** WebTransport stays first for future support; today it falls through to the
+   *  serviced fallback: WebSocket for pings, fetch streams for byte lanes. */
   #transportOrder(role: TransportRole): TransportKind[] {
     return role === "latency"
       ? ["webtransport", "websocket"]

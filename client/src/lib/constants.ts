@@ -1,5 +1,6 @@
 import { BUILD } from "./buildenv";
 
+// Inline SVGs inherit currentColor so controls can theme them with text color.
 const A =
   'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
 
@@ -26,4 +27,5 @@ export const ICON = {
 
 export type IconName = keyof typeof ICON;
 
+// Build identity shown in status/endpoint surfaces.
 export const BUILD_HASH = BUILD.buildLabel;

@@ -66,6 +66,8 @@ export function rateScaleIndex(
   base: UnitBase,
   headroom = 1,
 ): number {
+  // `headroom` delays prefix promotion so values near 1000 do not flip between
+  // e.g. 999 Mbit/s and 1.00 Gbit/s as samples jitter around the boundary.
   const k = base === "base10" ? 1000 : 1024;
   if (baseUnits < headroom) return 0;
   return Math.max(
@@ -95,6 +97,8 @@ export function rawRateFrom(
 }
 
 export function sharedThroughputScale(peakBytesPerSec: number): number {
+  // Throughput scale is always chosen in bit/s, then converted back to bytes/s,
+  // so bits and bytes displays share the same visual ceiling.
   if (peakBytesPerSec <= 0) return 1.25e7;
   return ceil125(peakBytesPerSec * 8) / 8;
 }
@@ -138,6 +142,8 @@ export function niceDomain(
     clampMinZero?: boolean;
   } = {},
 ): NiceDomain {
+  // Widen around the observed range but enforce a minimum span so flat series
+  // still render as readable charts instead of a line glued to an edge.
   const {
     widen = 1.35,
     minSpanRatio = 0.16,

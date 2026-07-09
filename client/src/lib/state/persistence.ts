@@ -46,6 +46,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function deepMergeOverDefaults<T>(base: T, source: unknown): T {
+  // Persisted blobs may be old, partial, or hand-edited. Walk only default keys
+  // and type-check leaves so schema changes fall back instead of crashing load.
   if (!isPlainObject(base)) {
     if (source === undefined) return base;
     if (Array.isArray(base))

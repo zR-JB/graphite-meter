@@ -3,6 +3,8 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import { STORAGE_KEY } from "./lib/state/persistence";
 
+// Backstop theme application as the bundle loads. index.html seeds this
+// pre-paint; this covers cases where the inline script was blocked/stripped.
 (function applyThemePrePaint() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);

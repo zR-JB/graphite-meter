@@ -1,3 +1,5 @@
+// Tiny per-thread logger. Workers have their own module instance, so the main
+// thread passes the current flag in each worker start message.
 let enabled = false;
 
 export function setDebugLogging(on: boolean): void {
@@ -22,6 +24,8 @@ export function dlog(
   console.log(line);
 }
 
+// Unit-explicit formatters keep high-volume runner logs comparable with server
+// logs and external counters.
 export function fmtRate(bytesPerSec: number): string {
   const [v, u] = scale(bytesPerSec * 8, [
     "bit/s",

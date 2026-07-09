@@ -21,6 +21,8 @@
 
   const progressFill = () => Math.round(store.phaseFraction * 200) / 2;
 
+  // Track state is visual only. The store/core own the actual stage rules and
+  // timeline; this maps them to pending/warmup/active/done/failed.
   function segmentState(
     stage: StageKey,
     enabled: boolean,

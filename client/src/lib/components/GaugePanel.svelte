@@ -9,8 +9,12 @@
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
 
+  // Latency visibility follows the stage config, so reload/reset land on the
+  // same panel layout instead of depending on transient phase state.
   const showLatency = $derived(store.latencyEnabled);
 
+  // Reserve the compact result strip area while idle/running; completion swaps
+  // in the full grid without changing the gauge's vertical contract.
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
     if (store.phase === "idle") return "none";
@@ -26,6 +30,8 @@
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
   let nowWall = $state(performance.now());
+  // Presentation only: when samples stall, ease the live number/needle toward
+  // zero. No synthetic sample enters the store or result accumulator.
   const stallDecay = $derived.by(() => {
     if (store.measuring || !store.stalledSince) return 1;
     const since = nowWall - store.stalledSince;
@@ -37,6 +43,8 @@
 
   const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
 
+  // Latency uses a small fixed 1-2-5-ish ladder so the dial scale is legible and
+  // stable while still giving the observed peak a little headroom.
   const latencyScaleMs = $derived.by(() => {
     let peak = store.infra?.preTestPingMs ?? 0;
     for (const s of store.latency)
@@ -129,6 +137,8 @@
   );
 
   $effect(() => {
+    // The canvas engine pulls state lazily, so wake it when reactive inputs that
+    // affect drawing change.
     void store.phase;
     void store.throughput.length;
     void store.latency.length;

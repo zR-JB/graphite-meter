@@ -4,6 +4,7 @@ export interface TooltipOptions {
   text: string;
   placement?: "top" | "bottom";
   disabled?: boolean;
+  // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
   instant?: boolean;
 }
 
@@ -75,6 +76,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let bubble: HTMLDivElement | null = null;
   let prevDescribedBy: string | null = null;
 
+  // Non-interactive jargon terms still need keyboard focus for aria-describedby.
   if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
     node.tabIndex = 0;
   }

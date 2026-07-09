@@ -23,6 +23,8 @@
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
 
+  // In flyout mode the auxiliary panels are mutually exclusive. On docked
+  // layouts both may be open, and the most recently opened panel stacks above.
   let lastOpened = $state<"left" | "right">("right");
   let prevSettingsOpen = false;
   let prevTelemetryOpen = false;
@@ -57,6 +59,8 @@
     store.theme = next;
   }
 
+  // Persisted widths become reserved grid columns only while that side is
+  // actually docked and open; otherwise the stage gets the space back.
   const dockLeft = $derived(
     dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
   );
@@ -107,6 +111,7 @@
     if (resetConfirmOpen) return;
 
     if (e.key === "Escape") {
+      // Esc aborts a live run first; otherwise it closes the visible panel.
       if (store.isRunning) {
         engage();
       } else if (settingsOpen) {
@@ -124,6 +129,7 @@
       const t = e.target;
       if (t instanceof HTMLElement) {
         const tag = t.tagName;
+        // Let native button/link activation win so Enter does not double-toggle.
         if (
           tag === "BUTTON" ||
           tag === "A" ||
