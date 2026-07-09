@@ -111,9 +111,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The guard requires a successful CI push run for this exact commit,
+          # so release only rebuilds the artifact.
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             GM_CLIENT_BUILD_LABEL=prod
+            GM_CLIENT_VALIDATE=0
           cache-from: type=gha
 
   release:

@@ -18,6 +18,6 @@
     "verbatimModuleSyntax": true
   },
   "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],
-  "// exclude": "*.test.ts run under `bun test`, which type-checks them natively (its bun:test globals aren't in svelte-check's tsconfig).",
+  "// exclude": "*.test.ts are checked by tsconfig.check.json with Bun's test globals.",
   "exclude": ["src/**/*.test.ts"]
 }

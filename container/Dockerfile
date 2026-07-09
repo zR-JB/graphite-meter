@@ -30,6 +30,9 @@ ARG GM_CLIENT_ENGINE=real
 ARG GM_CLIENT_ALLOW_DUMMY=0
 ARG GM_CLIENT_DEV_TOOLS=0
 ARG GM_CLIENT_BUILD_LABEL=prod
+# Keep standalone/local Docker builds self-validating. CI sets this to 0 only
+# after the same commit has already passed the client check/test job.
+ARG GM_CLIENT_VALIDATE=1
 ARG VERSION
 ENV GM_CLIENT_ENGINE=$GM_CLIENT_ENGINE \
     GM_CLIENT_ALLOW_DUMMY=$GM_CLIENT_ALLOW_DUMMY \
@@ -44,7 +47,7 @@ COPY client/package.json client/bun.lock ./
 RUN bun --bun install
 # Then the source, then build.
 COPY client/ ./
-RUN bun run build   # -> /app/client/dist
+RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 # ---------------------------------------------------------------------------
 # Stage: server — build the Go binary with the client embedded.

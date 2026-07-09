@@ -59,6 +59,12 @@ default:
 hooks:
     git config core.hooksPath .githooks
 
+# Run the same fast client gates used by CI.
+client-ci:
+    cd client && bun run format:check
+    cd client && bun run check
+    cd client && bun test
+
 # --- Client (Svelte/Vite, bun) ---
 
 # Build the client in dev profile (Vite's own defaults: real engine, dummy + dev tools included)
@@ -71,7 +77,7 @@ client-build-prod:
     cd client && bun install
     bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
-# Type-check the client
+# Type-check the client, including Bun test files
 client-check:
     cd client && bun run check
 
@@ -113,9 +119,18 @@ server-build-prod: client-build-prod _embed-client
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion={{version}}" \
       -trimpath -o graphite-meter ./cmd/graphite-meter
 
-# Run server tests (includes the preflight schema conformance test)
+# Check Go formatting and vet diagnostics.
+server-check:
+    cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
+    cd go && go vet ./...
+
+# Run server tests with the same race/shuffle settings used by CI.
+# Includes the preflight schema conformance test.
 server-test:
-    cd go && go test ./...
+    cd go && CGO_ENABLED=1 go test -race -shuffle=on ./...
+
+# Run the main local CI gates. Docker smoke remains CI-only.
+ci: client-ci server-check server-test
 
 # --- Go native TUI client (graphite-meter-client) ---
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.

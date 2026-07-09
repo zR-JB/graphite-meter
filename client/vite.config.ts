@@ -1,7 +1,6 @@
 import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
-import * as esbuild from "esbuild";
 import pkg from "./package.json";
 
 // --- Build-time client configuration (see src/lib/buildenv.ts) -------------
@@ -48,7 +47,7 @@ const versionFile = (): Plugin => ({
   },
 });
 
-// String.replace has no async callback support; needed since esbuild.transform is async.
+// String.replace has no async callback support; needed since Bun.build is async.
 async function replaceAsync(
   str: string,
   regex: RegExp,
@@ -64,10 +63,33 @@ async function replaceAsync(
   return str.replace(regex, () => results[i++]);
 }
 
+async function minifyInlineBlock(
+  code: string,
+  loader: "css" | "js",
+): Promise<string> {
+  const path = `/inline.${loader}`;
+  const result = await Bun.build({
+    entrypoints: [path],
+    files: { [path]: code },
+    minify: {
+      whitespace: true,
+      syntax: true,
+      identifiers: loader === "js",
+    },
+  });
+  if (!result.success || result.outputs.length === 0) {
+    throw new Error(
+      result.logs.map((log) => log.message).join("\n") ||
+        `Bun failed to minify inline ${loader}`,
+    );
+  }
+  return (await result.outputs[0].text()).trim();
+}
+
 // index.html isn't run through Rollup, so Vite never minifies it (comments,
 // indentation, and the inline pre-paint <script>/<style> all ship as-authored).
 // Runs post-injection (order: "post") so it also compacts the asset tags Vite
-// writes in. Inline JS/CSS get real minification via esbuild; the rest is
+// writes in. Inline JS/CSS get real minification via Bun; the rest is
 // comment stripping + collapsing whitespace between tags.
 const minifyHtml = (): Plugin => ({
   name: "gm-minify-html",
@@ -84,12 +106,7 @@ const minifyHtml = (): Plugin => ({
           const isStyle = tag.toLowerCase() === "style";
           const code =
             inner.trim() && (isInlineScript || isStyle)
-              ? (
-                  await esbuild.transform(inner, {
-                    loader: isStyle ? "css" : "js",
-                    minify: true,
-                  })
-                ).code.trim()
+              ? await minifyInlineBlock(inner, isStyle ? "css" : "js")
               : inner;
           return `<${tag}${attrs}>${code}</${tag}>`;
         },

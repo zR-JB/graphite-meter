@@ -285,6 +285,10 @@ model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing file
 entangled with I/O the same way `stageGuards.ts`/`backendPure.ts`/`hoverInterp.ts` were extracted,
 if it needs to be unit-tested in isolation.
 
+Client type checking is a separate gate from test execution. `just client-check` runs
+`svelte-check` with Bun's test globals enabled, so test files are semantically checked instead of
+only transpiled by `bun test`; it also runs `tsc` over the Vite config.
+
 ---
 
 ## Experimental / not-yet-usable-end-to-end features

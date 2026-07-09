@@ -24,6 +24,7 @@ mock.module("../buildenv", () => ({
   },
 }));
 const { DummyBackend } = await import("./dummy");
+type DummyBackendInstance = InstanceType<typeof DummyBackend>;
 
 // A minimal but complete RunnerConfig fixture (mirrors schedule.test.ts's
 // BASE_CONFIG — store.svelte.ts's DEFAULT_CONFIG can't be imported outside
@@ -168,7 +169,10 @@ function makeBackend(opts: DummyOptions, host = new MockHost()) {
   return { backend, host };
 }
 
-function tick(backend: DummyBackend, overrides: Partial<TickContext>): void {
+function tick(
+  backend: DummyBackendInstance,
+  overrides: Partial<TickContext>,
+): void {
   backend.onTick!({
     phase: "download",
     activity: DOWNLOAD_ACTIVITY,
@@ -186,7 +190,7 @@ function tick(backend: DummyBackend, overrides: Partial<TickContext>): void {
  *  logistic ramp has fully saturated — isolating the plateau/jitter behavior
  *  the profile table controls. */
 function collectThroughput(
-  backend: DummyBackend,
+  backend: DummyBackendInstance,
   host: MockHost,
   activity: PhaseActivity,
   n: number,
@@ -207,7 +211,7 @@ function collectThroughput(
 
 /** Drive `n` latency ticks, spaced past the ping cadence gate. */
 function collectLatency(
-  backend: DummyBackend,
+  backend: DummyBackendInstance,
   host: MockHost,
   activity: PhaseActivity,
   n: number,
