@@ -1,7 +1,7 @@
 /* ============================================================
  * tooltip — Svelte action
  * A small, reusable jargon-tooltip mechanism. Attach to any
- * element carrying a technical term; on BOTH hover and keyboard
+ * element carrying a technical term; on mouse hover and keyboard
  * focus it surfaces a plain-language definition in a token-styled
  * floating bubble. Accessible: the bubble gets `role="tooltip"`
  * and the trigger is wired to it via `aria-describedby`, so screen
@@ -15,6 +15,8 @@
  * Usage:  <span use:tooltip={"P95: 95% of pings were at or below this."}>P95</span>
  *         <button use:tooltip={{ text, placement: "bottom" }}>…</button>
  * ============================================================ */
+
+const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 
 export interface TooltipOptions {
   text: string;
@@ -31,23 +33,10 @@ export interface TooltipOptions {
 
 type TooltipParam = string | TooltipOptions;
 
-/* ---- Coarse-pointer (touch) detection — shared, checked once per device ----
- * On a touchscreen a tap fires `pointerenter` (and often native `focus`) with
- * no reliable trailing `pointerleave`/`blur`, so hover tooltips get stuck
- * open. On a coarse-primary device the hover/focus path is disabled and the
- * tap-to-toggle path below takes over. */
-const coarseQuery =
-  typeof window !== "undefined" ? window.matchMedia("(pointer: coarse)") : null;
-let coarsePointer = coarseQuery?.matches ?? false;
-coarseQuery?.addEventListener("change", (e) => (coarsePointer = e.matches));
-
 let uid = 0;
 const STYLE_ID = "gm-tooltip-styles";
-/** Hover-intent delay — avoids flashing a tooltip for every element the
- * pointer merely passes over while moving across the UI. */
 const HOVER_DELAY_MS = 350;
 
-/** Inject the tooltip stylesheet once (tokens only — no hardcoded hex). */
 function ensureStyles() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID)) return;
@@ -125,7 +114,6 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       opts.placement === "bottom"
         ? r.bottom + margin
         : r.top - b.height - margin;
-    // Flip if it would clip the viewport top/bottom.
     if (top < margin) top = r.bottom + margin;
     if (top + b.height > window.innerHeight - margin)
       top = r.top - b.height - margin;
@@ -154,13 +142,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     );
 
     place();
-    // Next frame so the transition plays from the initial state.
     requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
+    window.addEventListener("blur", hide);
+    document.addEventListener("visibilitychange", onVisibilityDismiss);
+    document.addEventListener("scroll", hide, true);
+    document.addEventListener("pointerdown", onDocumentPointerDown, true);
   }
 
-  // Tap-to-toggle open state (coarse-pointer path only) plus the two listeners
-  // that dismiss it — tap-outside and scroll — added only while it's open.
-  let tapOpen = false;
+  let touchOpen = false;
   let autoDismissTimer = 0;
   let hoverTimer = 0;
 
@@ -171,13 +160,13 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     }
   }
 
-  function onOutsideTap(e: PointerEvent) {
+  function onDocumentPointerDown(e: PointerEvent) {
     const target = e.target as Node | null;
     if (target && (node.contains(target) || bubble?.contains(target))) return;
     hide();
   }
-  function onScrollDismiss() {
-    hide();
+  function onVisibilityDismiss() {
+    if (document.visibilityState !== "visible") hide();
   }
 
   function hide() {
@@ -192,9 +181,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     if (prevDescribedBy === null) node.removeAttribute("aria-describedby");
     else node.setAttribute("aria-describedby", prevDescribedBy);
     prevDescribedBy = null;
-    tapOpen = false;
-    document.removeEventListener("pointerdown", onOutsideTap, true);
-    document.removeEventListener("scroll", onScrollDismiss, true);
+    touchOpen = false;
+    window.removeEventListener("blur", hide);
+    document.removeEventListener("visibilitychange", onVisibilityDismiss);
+    document.removeEventListener("scroll", hide, true);
+    document.removeEventListener("pointerdown", onDocumentPointerDown, true);
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -203,10 +194,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     }
   }
 
-  // ---- Fine pointer (mouse/trackpad): hover-intent delay, unless `instant`
-  // (chart/plot tooltips that should track the cursor immediately). ----
   function onPointerEnter(e: PointerEvent) {
-    if (e.pointerType === "touch") return; // handled by the tap path below
+    if (e.pointerType !== "mouse") return;
     if (opts.instant) {
       show();
       return;
@@ -218,58 +207,48 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     }, HOVER_DELAY_MS);
   }
   function onPointerLeave(e: PointerEvent) {
-    if (e.pointerType === "touch") return;
+    if (e.pointerType !== "mouse") return;
     clearHoverTimer();
     hide();
   }
   function onFocus() {
-    // On a coarse-primary device, tapping an element can also focus it
-    // natively; without this guard that duplicates (and can desync from) the
-    // tap-toggle path below. Keyboard-focus tooltips stay exactly as-is on
-    // fine-pointer devices.
-    if (coarsePointer) return;
+    if (!node.matches(":focus-visible")) return;
     show();
   }
   function onBlur() {
-    if (coarsePointer) return;
     hide();
   }
 
-  // ---- Coarse pointer (touch): tap to show, tap again (or outside, or
-  // scroll) to dismiss. Purely additive — never stopPropagation/
-  // preventDefault — so a trigger that's ALSO a primary action (a StageTrack
-  // segment, RunButton) keeps firing its own click handler normally. ----
   function onPointerUp(e: PointerEvent) {
     if (e.pointerType !== "touch") return;
-    if (tapOpen) {
+    if (touchOpen) {
       hide();
       return;
     }
-    // Actionable controls (buttons, links, labels, switches, tabs) act on tap
-    // and carry their own label — skip the tooltip for them; only
-    // informational, non-actionable elements (jargon terms, pips) show one.
-    if (node.closest("button, a, label, [role='switch'], [role='tab']")) return;
+    if (node.closest(ACTIONABLE_SELECTOR)) return;
     show();
-    if (!bubble) return; // show() no-ops when disabled/no text — nothing to track
-    tapOpen = true;
-    // Safety net: auto-dismiss even if the outside-tap/scroll listeners below
-    // somehow don't fire, so a tooltip can never linger indefinitely.
+    if (!bubble) return;
+    touchOpen = true;
     autoDismissTimer = window.setTimeout(hide, 4000);
-    // Deferred a frame so this same tap doesn't immediately dismiss itself
-    // via the outside-tap listener registered below.
-    requestAnimationFrame(() => {
-      if (!tapOpen) return;
-      document.addEventListener("pointerdown", onOutsideTap, true);
-      document.addEventListener("scroll", onScrollDismiss, true);
-    });
   }
 
+  function onPointerDown(e: PointerEvent) {
+    if (e.pointerType !== "touch") hide();
+  }
+
+  function onClick() {
+    if (touchOpen) return;
+    hide();
+  }
+
+  node.addEventListener("pointerdown", onPointerDown);
   node.addEventListener("pointerenter", onPointerEnter);
   node.addEventListener("pointerleave", onPointerLeave);
   node.addEventListener("focus", onFocus);
   node.addEventListener("blur", onBlur);
   node.addEventListener("pointerup", onPointerUp);
   node.addEventListener("keydown", onKeydown);
+  node.addEventListener("click", onClick);
 
   return {
     update(next: TooltipParam) {
@@ -284,12 +263,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     },
     destroy() {
       hide();
+      node.removeEventListener("pointerdown", onPointerDown);
       node.removeEventListener("pointerenter", onPointerEnter);
       node.removeEventListener("pointerleave", onPointerLeave);
       node.removeEventListener("focus", onFocus);
       node.removeEventListener("blur", onBlur);
       node.removeEventListener("pointerup", onPointerUp);
       node.removeEventListener("keydown", onKeydown);
+      node.removeEventListener("click", onClick);
     },
   };
 }
