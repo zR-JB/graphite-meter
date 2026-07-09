@@ -195,6 +195,7 @@ export interface LatencySample {
 export interface PhaseTransition {
   from: Phase;
   to: Phase;
+  stage: TransportRole | null;
   t: number;
 }
 

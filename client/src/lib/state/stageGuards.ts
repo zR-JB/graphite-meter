@@ -21,6 +21,17 @@ export function canDisableBidirectional(
   return phase !== "bidirectional";
 }
 
+/** Latest sample for the currently measured one-way transfer phase. A warmup
+ *  or a different transfer phase deliberately reads as 0 so the previous
+ *  stage's last value cannot leak into the next gauge state. */
+export function latestOneWayThroughputForPhase(
+  phase: "download" | "upload",
+  throughput: readonly ThroughputSample[],
+): number {
+  const last = throughput.at(-1);
+  return last?.phase === phase ? last.bytesPerSec : 0;
+}
+
 /** The bidirectional phase's two live lanes: the most recent down + up
  *  sample, scanning backward from the end of `throughput` until both are
  *  found or a differently-tagged sample is hit. `{down:0,up:0}` when neither
@@ -30,12 +41,19 @@ export function latestBidirectionalLanes(
 ): { down: number; up: number } {
   let down = 0;
   let up = 0;
+  let seenDown = false;
+  let seenUp = false;
   for (let i = throughput.length - 1; i >= 0; i--) {
     const s = throughput[i];
     if (s.phase !== "bidirectional") break;
-    if (s.dir === "down" && down === 0) down = s.bytesPerSec;
-    else if (s.dir === "up" && up === 0) up = s.bytesPerSec;
-    if (down > 0 && up > 0) break;
+    if (s.dir === "down" && !seenDown) {
+      down = s.bytesPerSec;
+      seenDown = true;
+    } else if (s.dir === "up" && !seenUp) {
+      up = s.bytesPerSec;
+      seenUp = true;
+    }
+    if (seenDown && seenUp) break;
   }
   return { down, up };
 }

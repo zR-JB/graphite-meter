@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import {
   canDisableBidirectional,
   latestBidirectionalLanes,
+  latestOneWayThroughputForPhase,
 } from "./stageGuards";
 import type { ThroughputSample } from "../runner/contract";
 
@@ -56,4 +57,26 @@ test("latestBidirectionalLanes: stops scanning once it hits a differently-tagged
     sample("bidirectional", "down", 80),
   ];
   expect(latestBidirectionalLanes(samples)).toEqual({ down: 80, up: 0 });
+});
+
+test("latestBidirectionalLanes: treats zero as a real latest lane value", () => {
+  const samples = [
+    sample("bidirectional", "down", 100),
+    sample("bidirectional", "up", 50),
+    sample("bidirectional", "down", 0),
+  ];
+  expect(latestBidirectionalLanes(samples)).toEqual({ down: 0, up: 50 });
+});
+
+test("latestOneWayThroughputForPhase: ignores a previous transfer phase", () => {
+  const samples = [sample("download", "down", 900)];
+  expect(latestOneWayThroughputForPhase("upload", samples)).toBe(0);
+});
+
+test("latestOneWayThroughputForPhase: returns the active phase's latest sample", () => {
+  const samples = [
+    sample("download", "down", 900),
+    sample("upload", "up", 500),
+  ];
+  expect(latestOneWayThroughputForPhase("upload", samples)).toBe(500);
 });

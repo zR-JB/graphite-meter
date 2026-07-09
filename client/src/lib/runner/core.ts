@@ -391,7 +391,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#setPhase("aborted");
     this.emit({
       type: "phase",
-      transition: { from, to: "aborted", t: performance.now() - this.#t0 },
+      transition: {
+        from,
+        to: "aborted",
+        stage: null,
+        t: performance.now() - this.#t0,
+      },
     });
   }
 
@@ -471,6 +476,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const transition: PhaseTransition = {
         from: this.#lastEmittedPhase,
         to: seg.phase,
+        stage: seg.activity.stage,
         t: elapsed,
       };
       this.#activeSeg = seg;

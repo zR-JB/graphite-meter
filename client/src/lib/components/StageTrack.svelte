@@ -32,6 +32,8 @@
   ];
 
   const ORDER: StageKey[] = ["latency", "download", "upload"];
+  const TRACK_ORDER = [...ORDER, "bidirectional"] as const;
+  type TrackStageKey = (typeof TRACK_ORDER)[number];
 
   type SegState =
     | "disabled" // deselected — muted, re-enableable
@@ -41,49 +43,29 @@
     | "failed" // skipped — couldn't run (see store.stageFailures)
     | "pending"; // enabled, not yet reached
 
+  const stageIndex = (stage: TrackStageKey | null) =>
+    stage ? TRACK_ORDER.indexOf(stage) : -1;
+
   function onToggle(stage: StageKey) {
     if (store.toggleStage(stage)) applyStageChange();
   }
 
   /** Short reason a segment can't toggle, or null when it is free. */
-  function lockReason(stage: StageKey): string | null {
+  function lockReason(stage: StageKey, state: SegState): string | null {
     if (store.canToggleStage(stage)) return null;
+    if (state === "done") return "done";
     if (store.phase === stage) return "running";
-    const curI = ORDER.indexOf(store.phase as StageKey);
-    const stI = ORDER.indexOf(stage);
+    const curI = stageIndex(store.phaseStage);
+    const stI = TRACK_ORDER.indexOf(stage);
     return curI >= 0 && stI < curI ? "done" : "upcoming";
   }
 
-  // First enabled stage in run order.
-  const firstEnabled = $derived(
-    ORDER.find((k) => store.config.stages[k]) ?? null,
-  );
-
-  // A stage is "done" once its per-stage result has landed — that event fires
-  // the instant a measured phase ends, so it's the direct "finished" signal.
-  const isDone = (k: StageKey) => store.stageResults[k] != null;
-  // The stage a warmup is leading into: first enabled stage not yet measured.
-  const upcoming = $derived(
-    ORDER.find((k) => store.config.stages[k] && !isDone(k)) ?? firstEnabled,
-  );
-
   const segs = $derived.by(() => {
     const cur = store.phase;
-    const curI = ORDER.indexOf(cur as StageKey); // -1 unless running a stage
+    const curI = stageIndex(store.phaseStage);
     return STAGES.map((s) => {
       const enabled = store.config.stages[s.key];
       const failure = store.stageFailures[s.key];
-      // Enabled stages keep the running/done/upcoming logic; deselected stages
-      // read "skipped" once a run has started, no tag while idle.
-      const reason = enabled
-        ? failure
-          ? "failed"
-          : lockReason(s.key)
-        : store.phase !== "idle"
-          ? "skipped"
-          : null;
-      // Interaction lock is decoupled from the tag: a "skipped" future stage
-      // stays clickable so it can be re-included.
       const locked = !store.canToggleStage(s.key);
       let state: SegState;
       let fill = 0;
@@ -95,19 +77,17 @@
         state = "done";
         fill = 100;
       } else if (cur === "warmup") {
-        // Warmup precedes a specific stage now: measured stages settle to done,
-        // the upcoming stage shimmers, the rest stay pending.
-        if (isDone(s.key)) {
+        const stI = TRACK_ORDER.indexOf(s.key);
+        if (stI < curI) {
           state = "done";
           fill = 100;
-        } else {
-          state = s.key === upcoming ? "warmup" : "pending";
-        }
+        } else if (stI === curI) state = "warmup";
+        else state = "pending";
       } else if (curI === -1) {
         // idle / aborted / error — neutral, selectable.
         state = "pending";
       } else {
-        const stI = ORDER.indexOf(s.key);
+        const stI = TRACK_ORDER.indexOf(s.key);
         if (stI < curI) {
           state = "done";
           fill = 100;
@@ -122,6 +102,16 @@
           state = "pending";
         }
       }
+      // Interaction lock is decoupled from the tag: a "skipped" future stage
+      // stays clickable so it can be re-included. Completed stages keep their
+      // done tag through later warmups and the bidirectional phase.
+      const reason = enabled
+        ? failure
+          ? "failed"
+          : lockReason(s.key, state)
+        : store.phase !== "idle"
+          ? "skipped"
+          : null;
       return { ...s, enabled, reason, locked, state, fill, failure };
     });
   });
@@ -138,6 +128,8 @@
     if (store.stageFailures.bidirectional) return { state: "failed", fill: 0 };
     const p = store.phase;
     if (p === "complete") return { state: "done", fill: 100 };
+    if (p === "warmup" && store.phaseStage === "bidirectional")
+      return { state: "warmup", fill: 0 };
     if (p === "bidirectional")
       return {
         state: "active",
@@ -221,7 +213,9 @@
       }}
     >
       <div class="seg-bar" aria-hidden="true">
-        {#if bidi.state === "failed"}
+        {#if bidi.state === "warmup"}
+          <span class="seg-fill seg-fill--warmup"></span>
+        {:else if bidi.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
         {:else if bidi.state === "active" || bidi.state === "done"}
           <span
