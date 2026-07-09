@@ -1,3 +1,5 @@
+// App-wide reactive state for runner events, persisted settings, derived UI
+// metrics, stage guards, compensation, scale, and latency lanes.
 import type {
   RunnerEvent,
   Phase,

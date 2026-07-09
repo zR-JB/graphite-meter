@@ -1,18 +1,5 @@
-/* ============================================================
- * Runner Core — phase scheduling, measurement, early finish, stalls
- * Engine-agnostic orchestrator: phase timeline, sequencing, live
- * reconfiguration, run clock, sample accumulation, stability,
- * early-stop, result reduction, RunnerEvent stream.
- *
- * A RunnerBackend plugs in the ONLY engine-specific part: samples.
- * Dummy synthesizes them; real engine measures off wire. Both push
- * raw samples, so identical samples yield identical results.
- *
- * Lifecycle (core → backend): onRunStart → per stage: onStageBegin
- * → onStageMeasure → onStageEnd → onComplete/onAbort. A warmup
- * window BETWEEN onStageBegin and onStageMeasure primes the same
- * connection the measurement reuses.
- * ============================================================ */
+// Engine-agnostic runner orchestration: phase timeline, measured-time clock,
+// stalls, early finish, accumulation, and RunnerEvent emission.
 
 import type {
   NetworkRunner,

@@ -1,3 +1,5 @@
+// Real measurement backend: negotiates browser transports, owns workers, and
+// pushes only measured wire samples into RunnerCore.
 import type {
   RunnerConfig,
   InfraInfo,
@@ -21,8 +23,6 @@ import {
   laneStaggerMs,
 } from "./real/backendPure";
 
-// Network backend only: the core owns scheduling, measured-time, accumulation,
-// and result reduction. This class opens real transports and pushes real samples.
 export interface RealBackendOptions {
   endpoint?: RunnerConfig["endpoint"];
   authToken?: string;

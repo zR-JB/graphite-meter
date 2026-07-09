@@ -1,3 +1,4 @@
+// Browser entry point: apply the saved theme before mounting the Svelte app.
 import "./app.css";
 import { mount } from "svelte";
 import App from "./App.svelte";

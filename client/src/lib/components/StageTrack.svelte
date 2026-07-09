@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Stage rail: maps store/core stage state into toggleable progress segments
+  // for latency, download, upload, and optional bidirectional.
   import { MEASURED_STAGES, store, type StageKey } from "../state/store.svelte";
   import { applyStageChange } from "../runner/wire.svelte";
   import { ICON } from "../constants";

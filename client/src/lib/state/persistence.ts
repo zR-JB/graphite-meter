@@ -1,3 +1,5 @@
+// LocalStorage schema for user settings. Load is defensive so old or partial
+// blobs merge onto the current defaults instead of breaking startup.
 import type { RunnerConfig } from "../runner/contract";
 import { DEFAULT_CONFIG } from "./store.svelte";
 

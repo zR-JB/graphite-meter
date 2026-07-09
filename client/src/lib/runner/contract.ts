@@ -1,8 +1,5 @@
-/* ============================================================
- * Runner Contract — types only
- * The UI is engine-agnostic: it consumes events from any
- * object implementing `NetworkRunner`.
- * ============================================================ */
+// Shared runner contract: phases, config, events, result shapes, and backend
+// interfaces used by both the UI and measurement engines.
 
 /* ---------- Lifecycle ---------- */
 /* Phase sequence: every enabled stage is preceded by its own self-contained

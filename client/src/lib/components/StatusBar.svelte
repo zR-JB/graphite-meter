@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Bottom status strip: phase label, elapsed/remaining time, transferred bytes,
+  // build identity, and compact connection hints.
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes } from "../format";

@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Latency profile view: renders idle and loaded latency lanes with distribution
+  // bands, current values, jitter, and loss.
   import {
     store,
     type LatencyLane,

@@ -1,3 +1,5 @@
+// Svelte tooltip action plus the shared jargon dictionary used by metric labels
+// and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 
 export interface TooltipOptions {

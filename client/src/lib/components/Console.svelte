@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Main console shell: boots the runner, owns top-level panels, shortcuts,
+  // theme toggle, and docked/flyout layout state.
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";

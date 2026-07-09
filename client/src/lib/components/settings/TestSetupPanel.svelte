@@ -1,11 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <TestSetupPanel> — Settings › Test Setup
-   * Every control two-way binds to `console.config` (or the unit
-   * display prefs), so edits reflect instantly in the rail ETA,
-   * gauge, chart, and unit labels. Inputs that are unsafe to
-   * change mid-run are disabled while `running`.
-   * ============================================================ */
+  // Settings test setup: stage selection, timing, endpoint, units, and
+  // compensation controls bound directly into the app store.
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
   import type {
     RunnerConfig,

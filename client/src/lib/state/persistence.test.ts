@@ -1,3 +1,5 @@
+// Persistence tests use an in-memory localStorage and a mocked store default so
+// load/merge behavior can be checked without the Svelte runtime.
 import { test, expect, mock, beforeEach } from "bun:test";
 
 const FAKE_CONFIG = {

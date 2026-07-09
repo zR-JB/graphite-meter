@@ -1,3 +1,4 @@
+// Shared inline SVG icons and build identity constants used across the UI.
 import { BUILD } from "./buildenv";
 
 // Inline SVGs inherit currentColor so controls can theme them with text color.

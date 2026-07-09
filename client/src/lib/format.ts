@@ -1,3 +1,5 @@
+// Formatting and scale helpers for speeds, bytes, latency, chart domains, and
+// animated numeric transitions.
 import type { TerminationReason } from "./runner/contract";
 
 export function reasonLabel(reason: TerminationReason): string {

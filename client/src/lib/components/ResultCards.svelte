@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Result cards for latency, transfer, and bidirectional stages. Each card
+  // blends live readings with finalized per-stage results.
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs, countUp } from "../format";

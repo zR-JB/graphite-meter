@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Shared side panel primitive for Settings and telemetry: docked column on
+  // wide layouts, focus-trapped flyout/sheet elsewhere.
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
   import { ICON } from "../constants";

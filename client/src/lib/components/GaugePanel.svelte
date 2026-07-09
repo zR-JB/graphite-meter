@@ -1,4 +1,6 @@
 <script lang="ts">
+  // Gauge stage: owns the canvas instrument, headline metric, run status, and
+  // compact/final result area below the dial.
   import { onMount, untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
