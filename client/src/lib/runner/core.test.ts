@@ -337,6 +337,42 @@ test("watchdog auto-stalls a measured phase after prolonged sample silence", () 
   expect(after).toBeGreaterThan(before);
 });
 
+test("loaded pings do not hide a stalled transfer", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+  core.start(makeConfig({ duration: { downloadMs: 5000 } }));
+
+  for (let i = 0; i < 8; i++) {
+    backend.host.ingestLatency(2, true, false);
+    advance(250);
+  }
+
+  expect(events.some((e) => e.type === "stall")).toBe(true);
+});
+
+test("backend boundary flush is included before stage reduction", () => {
+  class FlushingBackend extends FakeBackend {
+    override onStageEnd(activity: PhaseActivity): void {
+      if (activity.stage === "download")
+        this.host.ingestThroughput("down", 1000, 100, 0.1);
+      super.onStageEnd(activity);
+    }
+  }
+  const backend = new FlushingBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+  core.start(makeConfig({ duration: { downloadMs: 100 } }));
+  advance(100);
+
+  const complete = events.find((e) => e.type === "complete");
+  expect(
+    complete?.type === "complete" && complete.result.download?.totalBytes,
+  ).toBe(100);
+});
+
 test("a real sample arriving mid-stall auto-resumes", () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

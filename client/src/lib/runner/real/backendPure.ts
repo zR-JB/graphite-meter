@@ -64,28 +64,3 @@ export function laneStaggerMs(
     ? Math.min(baseMs, Math.floor((warmupMs * 0.5) / (streams - 1)))
     : 0;
 }
-
-export interface ServerSnapshot {
-  n: number;
-  t: number;
-}
-
-/** Append one cumulative server snapshot and derive a live rate over approximately
- *  the requested server-time window. Bytes and time never cross clock domains. */
-export function serverRateWindow(
-  samples: ServerSnapshot[],
-  sample: ServerSnapshot,
-  windowNanos: number,
-): { samples: ServerSnapshot[]; bytesPerSec: number } {
-  const next = [...samples, sample];
-  const cutoff = sample.t - windowNanos;
-  let first = 0;
-  while (first + 1 < next.length && next[first + 1].t <= cutoff) first++;
-  const window = first ? next.slice(first) : next;
-  const start = window[0];
-  const seconds = start ? (sample.t - start.t) / 1e9 : 0;
-  return {
-    samples: window,
-    bytesPerSec: seconds > 0 ? (sample.n - start.n) / seconds : 0,
-  };
-}

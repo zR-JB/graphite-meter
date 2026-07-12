@@ -6,7 +6,6 @@ import {
   median,
   needsPings,
   laneStaggerMs,
-  serverRateWindow,
 } from "./real/backendPure";
 import type { PhaseActivity } from "./contract";
 
@@ -123,17 +122,4 @@ test("laneStaggerMs: splits half the warmup window across the non-first lanes", 
 test("laneStaggerMs: caps at the base stagger even on a long warmup", () => {
   // A generous warmup shouldn't stretch the per-lane gap past the base.
   expect(laneStaggerMs(2, 100_000, 75)).toBe(75);
-});
-
-test("serverRateWindow: uses only cumulative bytes and time from the server", () => {
-  let window = serverRateWindow([], { n: 100, t: 1e9 }, 1e9);
-  expect(window.bytesPerSec).toBe(0);
-  window = serverRateWindow(window.samples, { n: 300, t: 1.5e9 }, 1e9);
-  expect(window.bytesPerSec).toBe(400);
-  window = serverRateWindow(window.samples, { n: 900, t: 2.5e9 }, 1e9);
-  expect(window.bytesPerSec).toBe(600);
-  expect(window.samples).toEqual([
-    { n: 300, t: 1.5e9 },
-    { n: 900, t: 2.5e9 },
-  ]);
 });

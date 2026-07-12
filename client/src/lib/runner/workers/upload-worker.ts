@@ -77,6 +77,7 @@ type InMsg =
       url: string;
       debug?: boolean;
       id?: number;
+      streams?: number;
     }
   | { type: "stop" };
 /** `alive` = one POST drained by the server (lane is live; NO byte count — the
@@ -87,10 +88,8 @@ type OutMsg =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** Maximum POST size per lane. The server counts only bytes it has drained, so
- *  parallel browser buffers cannot inflate measurement. A full pool per lane
- *  lets each request approach the 500 ms target and amortize request turnaround. */
-const UPLOAD_POOL_BYTES = 64 * 1024 * 1024;
+/** One upload reservoir budget divided across the active lanes. */
+const UPLOAD_TOTAL_POOL_BYTES = 64 * 1024 * 1024;
 /** Pool floor keeps the autosizer useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
 
@@ -123,16 +122,23 @@ const FILL_BLOCK_BYTES = 4 * 1024 * 1024;
 /** crypto.getRandomValues' hard per-call byte quota. */
 const RNG_CHUNK_BYTES = 65536;
 
-/** Per-lane upload reservoir scaled to device memory so a low-RAM phone doesn't OOM
- *  building the Blob. `navigator.deviceMemory` is a GiB hint (undefined on Firefox/
- *  Safari → treated as desktop). */
-export function uploadPoolBytes(deviceMemory?: number): number {
+/** Divide the device-scaled total reservoir across the actual lane count. */
+export function uploadPoolBytes(
+  streams: number,
+  deviceMemory?: number,
+): number {
+  streams = Math.max(1, streams);
   const dm = deviceMemory;
   if (typeof dm === "number") {
-    if (dm <= 2) return 16 * 1024 * 1024;
-    if (dm <= 4) return 24 * 1024 * 1024;
+    if (dm <= 2)
+      return Math.max(MIN_POOL_BYTES, Math.floor((16 * 1024 * 1024) / streams));
+    if (dm <= 4)
+      return Math.max(MIN_POOL_BYTES, Math.floor((24 * 1024 * 1024) / streams));
   }
-  return UPLOAD_POOL_BYTES;
+  return Math.max(
+    MIN_POOL_BYTES,
+    Math.floor(UPLOAD_TOTAL_POOL_BYTES / streams),
+  );
 }
 
 /** Map a non-OK POST status to whether retrying the lane is worthwhile.
@@ -163,7 +169,7 @@ let fillBlock: Uint8Array<ArrayBuffer> | null = null;
 let poolBytes = 0;
 /** Per-lane pool size, device-bounded so a phone cannot OOM. Also the autosizer's
  *  upper clamp. */
-let bufBytes = UPLOAD_POOL_BYTES;
+let bufBytes = UPLOAD_TOTAL_POOL_BYTES;
 /** Bytes the NEXT POST will send — the closed-loop variable. Starts at MIN for a
  *  fast first sample, then tracks TARGET_POST_MS × this lane's smoothed rate. */
 let nextBytes = MIN_POST_BYTES;
@@ -188,7 +194,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     streamId = msg.id ?? 0;
     const deviceMemory = (navigator as unknown as { deviceMemory?: number })
       .deviceMemory;
-    bufBytes = Math.max(MIN_POOL_BYTES, uploadPoolBytes(deviceMemory));
+    bufBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
     SIZER.maxBytes = bufBytes; // the pool is the size ceiling
     nextBytes = Math.min(MIN_POST_BYTES, bufBytes);
     rateEwma = 0;

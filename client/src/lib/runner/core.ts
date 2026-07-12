@@ -429,8 +429,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       // The phase we're leaving has just finished — emit its final per-stage
       // result before announcing the transition, so its card resolves now; and
       // when leaving a stage entirely, close that stage's connections.
-      this.#finalizeStage(this.#lastEmittedPhase);
       if (prev && !sameStage) this.#backend.onStageEnd(prev.activity);
+      this.#finalizeStage(this.#lastEmittedPhase);
 
       const transition: PhaseTransition = {
         from: this.#lastEmittedPhase,
@@ -635,9 +635,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     ) {
       return;
     }
-    // A real ping (even a lost-marked one is a real measurement event) proves
-    // the link is alive: refresh the watchdog and auto-resume from any stall.
-    this.#noteRealSample();
+    // Loaded pings use another connection and cannot prove that transfer bytes
+    // still move. Only the latency-only stage uses them as its liveness signal.
+    if (phase === "latency") this.#noteRealSample();
     this.#accum.pushLatency(rttMs, underLoad, lost);
     this.emit({
       type: "latency",
@@ -880,8 +880,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // earlier phases finalized at their transitions), end its stage (close I/O),
     // then assemble RunResult from the cached per-stage results so the aggregate
     // and the per-stage events never disagree.
-    this.#finalizeStage(this.#lastEmittedPhase);
     if (this.#activeSeg) this.#backend.onStageEnd(this.#activeSeg.activity);
+    this.#finalizeStage(this.#lastEmittedPhase);
     // Actual wall-clock length, shortened when adaptive completion finishes early.
     const actualMs = Math.max(0, performance.now() - this.#t0);
     // Bidirectional has no per-stage event (it resolves at completion); reduce its

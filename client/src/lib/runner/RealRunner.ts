@@ -21,8 +21,6 @@ import {
   median,
   needsPings,
   laneStaggerMs,
-  serverRateWindow,
-  type ServerSnapshot,
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
@@ -207,7 +205,6 @@ export class RealBackend implements RunnerBackend {
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
   #srvPrevT = 0; // server elapsed ns of that last delta — the live-curve denominator
-  #srvWindow: ServerSnapshot[] = [];
   #srvHaveStart = false;
 
   /* ---- latency (ping) stage state (Stage 4) ---- */
@@ -292,7 +289,6 @@ export class RealBackend implements RunnerBackend {
     this.#srvN = 0;
     this.#srvPrevN = 0;
     this.#srvPrevT = 0;
-    this.#srvWindow = [];
     this.#srvHaveStart = false;
   }
 
@@ -786,6 +782,7 @@ export class RealBackend implements RunnerBackend {
       url: state.streamUrls[i],
       debug: debugEnabled(),
       id: i,
+      streams: state.laneCount,
       // Download-only experimental chunked mode (ignored by the upload worker).
       chunk: state.chunkDownload,
     });
@@ -1072,7 +1069,6 @@ export class RealBackend implements RunnerBackend {
       // excluding warmup bytes and time together.
       this.#srvHaveStart = false;
       this.#srvPrevN = this.#srvN;
-      this.#srvWindow = [];
     }
     state.dbgWinBytes = 0;
     state.dbgLastLog = state.lastAggregateAt = performance.now();
@@ -1289,7 +1285,6 @@ export class RealBackend implements RunnerBackend {
       this.#srvHaveStart = true;
       this.#srvPrevN = this.#srvN;
       this.#srvPrevT = srvT;
-      this.#srvWindow = [{ n: this.#srvN, t: srvT }];
     }
     // Server bytes drive the live curve directly from the server stream — never
     // via the local #aggregate tick (whose fixed cadence would skew the rate).
@@ -1301,15 +1296,9 @@ export class RealBackend implements RunnerBackend {
     this.#srvPrevN = this.#srvN;
     this.#srvPrevT = srvT;
     if (frameSec > 0) {
-      const live = serverRateWindow(
-        this.#srvWindow,
-        { n: this.#srvN, t: srvT },
-        1e9,
-      );
-      this.#srvWindow = live.samples;
       this.#host!.ingestThroughput(
         "up",
-        live.bytesPerSec,
+        delta / frameSec,
         delta,
         frameSec,
         true,
@@ -1335,6 +1324,8 @@ export class RealBackend implements RunnerBackend {
   /** Stop + terminate every direction's worker pool, aggregation timer, and any
    *  pending lane-restart backoffs. Idempotent. */
   #teardownTransfer(): void {
+    // Preserve the partial download cadence window at the stage boundary.
+    if (this.#lanes.down?.measuring) this.#aggregate("down");
     this.#transferActive = false;
     for (const state of Object.values(this.#lanes)) {
       if (!state) continue;

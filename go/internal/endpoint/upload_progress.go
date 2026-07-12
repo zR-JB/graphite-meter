@@ -36,7 +36,17 @@ const (
 	// the handler returns and the conn closes (which faults the parked recv pump).
 	// The client keeps the read side warm with a periodic HI keepalive.
 	uploadProgressIdle = 10 * time.Second
+	// After BYE, allow cancelled POST handlers to finish draining/closing before
+	// taking the authoritative final snapshot.
+	uploadFinalizeGrace = time.Second
 )
+
+func waitForUploadPosts(agg *uploadAgg) {
+	deadline := time.Now().Add(uploadFinalizeGrace)
+	for agg.posts.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+}
 
 // Handle runs the progress loop for one /ws/upload socket. It resolves the test's
 // shared aggregate from ?id= (create-on-first-touch — the WS may open before any
@@ -127,6 +137,7 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 				// Sole authoritative finalizer, sent once every POST lane has
 				// stopped. Emit the final total exactly once, then release state.
 				if agg.done.CompareAndSwap(false, true) {
+					waitForUploadPosts(agg)
 					n := uint64(agg.bytes.Load())
 					_ = bus.Send(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: n, Nanos: uint64(agg.elapsedNanos(monoNanos()))}))
 				}
