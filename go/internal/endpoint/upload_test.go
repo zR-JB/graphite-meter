@@ -68,8 +68,8 @@ func TestUploadAggregatesByID(t *testing.T) {
 	if got := agg.bytes.Load(); got != n {
 		t.Errorf("aggregate bytes = %d, want %d", got, n)
 	}
-	if got := agg.activeNanos.Load(); got < 0 {
-		t.Errorf("activeNanos = %d, want >= 0", got)
+	if got := agg.elapsedNanos(monoNanos()); got < 0 {
+		t.Errorf("elapsedNanos = %d, want >= 0", got)
 	}
 	if got := agg.posts.Load(); got != 0 {
 		t.Errorf("posts = %d after the lane finished, want 0", got)

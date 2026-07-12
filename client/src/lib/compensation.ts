@@ -114,7 +114,7 @@ export const COMPENSATION_DEFAULTS = {
   /* ---- Receiver-bias (download) measurement correction ---- */
   // The browser RECEIVER is CPU-bound and times over wall-dt, so its counted
   // rate sits below true delivery, and the gap GROWS with rate. The Go receiver
-  // (upload) is active-timed and clean, so this applies to DOWNLOAD only. A
+  // (upload) is server-timed and clean, so this applies to DOWNLOAD only. A
   // saturating (Michaelis–Menten) curve: ~0 at low rate, → ceil at multi-gigabit.
   receiverBiasCeilRatio: 0.045, // asymptotic lift ceiling (≈ +4.5% as rate → ∞)
   receiverBiasHalfRateBytes: 1.5e8, // rate (≈1.2 Gbit/s) at which lift = ½ ceil
@@ -510,7 +510,7 @@ function encapsulationFactor(
  * Receiver-bias (DOWNLOAD only): the browser receiver is CPU-bound and times its
  * rate over wall-dt, so sub-watchdog micro-pauses (GC, event-loop, receive cost)
  * sit inside the measured interval and depress the counted rate — and the deficit
- * GROWS with throughput. Upload is measured by the active-timed Go receiver, which
+ * GROWS with throughput. Upload is measured by the server-timed Go receiver, which
  * is immune, so this is asymmetric: it lifts the download estimate, never upload.
  * A saturating (Michaelis–Menten) curve, ≈0 at low rate → ceil at multi-gigabit.
  * This is a MEASUREMENT correction, not wire bytes; low confidence.

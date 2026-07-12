@@ -88,7 +88,7 @@ type PingOutMsg =
   | { type: "resume" };
 
 /** Upload-progress worker → RealRunner. `bytes`/`complete` carry the SERVER's
- *  cumulative drained count `n` AND the server monotonic clock `t` (ns) it was
+ *  cumulative drained count `n` and elapsed clock `t` (ns) it was
  *  sampled at — the SOLE upload byte source. Rate is derived over server time
  *  (Δn / Δt), so the live curve and the totals headline are both immune to local
  *  tick/arrival jitter. stall/resume bracket a reconnect; since there is no
@@ -203,16 +203,15 @@ export class RealBackend implements RunnerBackend {
   #testId: string | null = null;
   /** The dedicated /ws/upload progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
-  /** Latest cumulative server byte count + the measured-window anchors for the
-   *  totals-based headline = (lastN − startN) / (lastT − startT), where T is the
-   *  server's ACTIVE measurement clock (ns bytes were flowing, dead zones excluded),
-   *  NOT a wall span across frames — so a stall/reconnect/early-finish can't dilute
-   *  the denominator with idle time. */
+  /** Latest cumulative server byte count + measured-window anchors for the
+   *  totals-based headline = (lastN − startN) / (lastT − startT). T is server
+   *  elapsed time since the first received byte; baselining excludes warmup but
+   *  retains every pause inside the measured window. */
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
-  #srvPrevT = 0; // server ACTIVE-time (ns) of that last delta — the live-curve denominator
+  #srvPrevT = 0; // server elapsed ns of that last delta — the live-curve denominator
   #srvStartN = 0;
-  #srvStartT = 0; // server ACTIVE-time (ns) at the first measured frame — the headline window anchor
+  #srvStartT = 0; // server elapsed ns at the first measured frame — headline anchor
   #srvHaveStart = false;
 
   /* ---- latency (ping) stage state (Stage 4) ---- */
@@ -1267,10 +1266,10 @@ export class RealBackend implements RunnerBackend {
    *  measured-time across the gap. This is the watchdog story post-onprogress: while
    *  the socket is up, the 100 ms frames are the heartbeat (each advancing frame →
    *  ingestThroughput → noteRealSample); while it is down, measured-time is frozen,
-   *  and on reconnect the cumulative count + the server's active-time denominator
+   *  and on reconnect the cumulative count + the server's elapsed-time denominator
    *  self-heal the headline. The POST lanes are separate connections, so a progress-
    *  socket drop doesn't stop the transfer: the server keeps draining and accruing
-   *  active-time, and the catch-up Δn / Δactive on reconnect IS the true rate over
+   *  elapsed time, and catch-up Δn / Δelapsed on reconnect is the true rate over
    *  the gap — no client-side counting anywhere. */
   #onProgressMessage(msg: ProgressOutMsg): void {
     const state = this.#lanes.up;
@@ -1288,12 +1287,9 @@ export class RealBackend implements RunnerBackend {
     }
     if (msg.type !== "bytes" && msg.type !== "complete") return; // open: nothing to do
 
-    // `srvT` is the server's ACTIVE measurement clock (ns) at which the server
-    // sampled this count — ns bytes were actually being drained, dead zones excluded,
-    // NOT this thread's frame-arrival time and NOT a wall span. Every rate below
-    // divides server bytes by server active-time, so neither the live curve nor the
-    // headline can be skewed by local tick cadence, event-loop lag, arrival jitter,
-    // or an idle gap (establishment, reconnect, stall) — the server already excised it.
+    // `srvT` is elapsed ns since the server received this id's first byte. It is
+    // independent of local frame-arrival jitter, while deliberately retaining
+    // measured stalls, reconnects and lane turnaround in the denominator.
     const srvT = msg.t;
     if (msg.n > this.#srvN) {
       this.#srvN = msg.n; // cumulative + monotonic guard
@@ -1311,9 +1307,8 @@ export class RealBackend implements RunnerBackend {
     // Server bytes drive the live curve directly from the server stream — never
     // via the local #aggregate tick (whose fixed cadence would skew the rate).
     // Each sample is the byte delta between two server frames divided by the
-    // server ACTIVE-time between those same frames, so the rate is correct at
-    // any tick/frame cadence, and a reconnect gap self-heals: no dead-zone time
-    // enters active-time, so the backlog delta over the gap is the true rate.
+    // server elapsed time between those frames, so the rate is correct at any
+    // push cadence and a reconnect catch-up includes the entire gap.
     const delta = this.#srvN - this.#srvPrevN;
     if (delta > 0) {
       const frameSec = (srvT - this.#srvPrevT) / 1e9;
@@ -1325,8 +1320,7 @@ export class RealBackend implements RunnerBackend {
     }
     // Totals-based authoritative headline over the measured window — one ratio,
     // immune to per-frame arrival jitter (unlike a mean of per-tick rates), using the
-    // server's ACTIVE measurement time between the first and last server sample (idle
-    // gaps already excised server-side, so this is "time to get Δn bytes", not wall).
+    // server elapsed time between the first and last measured server sample.
     const dtSec = (srvT - this.#srvStartT) / 1e9;
     if (dtSec > 0) {
       this.#host!.reportUploadServerRate(

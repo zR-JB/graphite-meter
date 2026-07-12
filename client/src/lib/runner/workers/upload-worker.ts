@@ -103,10 +103,9 @@ const MIN_POOL_BYTES = 2 * 1024 * 1024;
 
 /* ---- Closed-loop POST sizing (per-worker, no kills; see autosize.ts) ---- */
 /** Wall-time each POST aims to span. The lower bound matters for ACCURACY, not just
- *  overhead: the server folds the per-lane request→response turnaround gap into its
- *  active-time denominator whenever that gap ≤ activeGapCap (250 ms, upload_store.go),
- *  so a too-short POST makes turnaround a large fraction of "active" time and
- *  under-reports the rate. 500 ms keeps turnaround a small fraction across the range
+ *  overhead: request→response turnaround remains in the server's elapsed-time
+ *  denominator, so a too-short POST makes overhead a large fraction of measured
+ *  time and correctly lowers the rate. 500 ms keeps it small across the range
  *  where the sizer is below the pool ceiling; the default ≥3 interleaved lanes
  *  cover the rest (while one lane turns around, the others keep the clock advancing).
  *  Still short enough to bound in-flight + re-measure within ~½ s on a slow/dropping

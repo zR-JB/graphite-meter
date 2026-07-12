@@ -97,11 +97,11 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			}
 			agg.lastTouchMono.Store(monoNanos()) // keep the id non-idle for the sweeper
 			// N and TIME describe the same instant (client divides Δn/Δtime).
-			// Load bytes before active so a race can only under-report, never
+			// Load bytes before time so a race can only under-report, never
 			// over-report the rate.
 			n := uint64(agg.bytes.Load())
-			active := uint64(agg.activeNanos.Load())
-			if bus.Send(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})) != nil {
+			elapsed := uint64(agg.elapsedNanos(monoNanos()))
+			if bus.Send(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: elapsed})) != nil {
 				return nil // socket gone mid-send — client is away
 			}
 
@@ -127,7 +127,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 				// Sole authoritative finalizer, sent once every POST lane has
 				// stopped. Emit the final total exactly once, then release state.
 				if agg.done.CompareAndSwap(false, true) {
-					_ = bus.Send(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: uint64(agg.bytes.Load()), Nanos: uint64(agg.activeNanos.Load())}))
+					n := uint64(agg.bytes.Load())
+					_ = bus.Send(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: n, Nanos: uint64(agg.elapsedNanos(monoNanos()))}))
 				}
 				e.store.delete(id)
 				return nil

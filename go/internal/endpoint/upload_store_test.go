@@ -122,57 +122,41 @@ func TestUploadStoreMint(t *testing.T) {
 	}
 }
 
-// TestUploadAggActiveTime checks the active measurement clock (the upload rate's
-// denominator): recordChunk accrues the wall gap between consecutive chunks but
-// EXCLUDES a dead-zone gap longer than activeGapCap (establishment / reconnect /
-// stall), so TIME reflects only the time bytes were actually flowing — never a wall
-// span. Synthetic timestamps make it deterministic (no sleeps).
-func TestUploadAggActiveTime(t *testing.T) {
+// TestUploadAggElapsedTime checks that TIME is wall time since the first byte,
+// including a long transfer stall. Synthetic timestamps keep it deterministic.
+func TestUploadAggElapsedTimeIncludesStalls(t *testing.T) {
 	var a uploadAgg
 	const ms = int64(time.Millisecond)
-	gapCap := int64(activeGapCap)
 
-	// First chunk starts the clock; no prior chunk → no active time yet.
+	// First chunk starts the clock.
 	a.recordChunk(1000*ms, 100)
-	if got := a.activeNanos.Load(); got != 0 {
-		t.Fatalf("active after the first chunk = %d, want 0", got)
+	if got := a.elapsedNanos(1000 * ms); got != 0 {
+		t.Fatalf("elapsed at the first chunk = %d, want 0", got)
 	}
 
-	// A short gap (well under the cap) is counted in full.
-	a.recordChunk(1000*ms+50*ms, 100)
-	if got := a.activeNanos.Load(); got != 50*ms {
-		t.Fatalf("active after a 50ms gap = %d, want %d", got, 50*ms)
+	if got := a.elapsedNanos(1050 * ms); got != 50*ms {
+		t.Fatalf("elapsed after 50ms = %d, want %d", got, 50*ms)
 	}
 
-	// A dead zone (gap > cap) is excluded entirely.
-	deadAt := 1000*ms + 50*ms + gapCap + ms
-	a.recordChunk(deadAt, 100)
-	if got := a.activeNanos.Load(); got != 50*ms {
-		t.Fatalf("active after a dead-zone gap = %d, want %d (gap excluded)", got, 50*ms)
+	// No recordChunk occurs during this 2s stall, but it remains in TIME.
+	if got := a.elapsedNanos(3050 * ms); got != 2050*ms {
+		t.Fatalf("elapsed after stall = %d, want %d", got, 2050*ms)
 	}
-
-	// Transfer resumes; a short gap after the dead zone counts again.
-	a.recordChunk(deadAt+10*ms, 100)
-	if got := a.activeNanos.Load(); got != 60*ms {
-		t.Fatalf("active after resume = %d, want %d", got, 60*ms)
+	a.recordChunk(3060*ms, 100)
+	if got := a.elapsedNanos(3060 * ms); got != 2060*ms {
+		t.Fatalf("elapsed after resume = %d, want %d", got, 2060*ms)
 	}
-	if got := a.bytes.Load(); got != 400 {
-		t.Errorf("bytes = %d, want 400 (every chunk counts regardless of gap)", got)
+	if got := a.bytes.Load(); got != 200 {
+		t.Errorf("bytes = %d, want 200", got)
 	}
 }
 
-// TestUploadAggActiveTimeConcurrent checks the lock-free active clock is sound
-// across a test's parallel lanes — the real shape of a multi-stream upload. Lanes
-// stamp with the actual monotonic clock (as the drain path does), so reorder windows
-// between a monoNanos read and its Swap are sub-µs; the per-chunk gaps telescope into
-// one per-id timeline. The point is race-safety (run with -race) and exact byte
-// accounting; active time must land in a sane range (positive, not exceeding the
-// test's own wall span by more than slack), never double the work.
-func TestUploadAggActiveTimeConcurrent(t *testing.T) {
+// TestUploadAggElapsedTimeConcurrent checks race-safe first-byte anchoring and
+// exact accounting across the parallel lanes used by a real upload.
+func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 	var a uploadAgg
 	const lanes, perLane = 8, 500
 
-	startWall := monoNanos()
 	var wg sync.WaitGroup
 	for l := 0; l < lanes; l++ {
 		wg.Add(1)
@@ -184,16 +168,8 @@ func TestUploadAggActiveTimeConcurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	wallSpan := monoNanos() - startWall
-
-	got := a.activeNanos.Load()
-	if got < 0 {
-		t.Fatalf("concurrent active time = %d, want >= 0", got)
-	}
-	// Active time is wall time minus dead zones, so it can never exceed the window the
-	// chunks actually spanned (plus a small slack for sub-µs Swap reorderings).
-	if slack := int64(time.Millisecond); got > wallSpan+slack {
-		t.Errorf("concurrent active time = %d exceeds wall span %d (+slack)", got, wallSpan)
+	if got := a.elapsedNanos(monoNanos()); got < 0 {
+		t.Fatalf("concurrent elapsed time = %d, want >= 0", got)
 	}
 	if want := int64(lanes * perLane * 64); a.bytes.Load() != want {
 		t.Errorf("bytes = %d, want %d (every chunk counted once, no double count)", a.bytes.Load(), want)
@@ -365,50 +341,20 @@ func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	}
 }
 
-// TestUploadAggRecordChunkIgnoresStaleTimestamp checks recordChunk's
-// forward-only clock: an equal or smaller timestamp than the last recorded
-// chunk (a straggler lane's read landing out of order) contributes no active
-// time and never rewinds lastChunkMono, while its bytes still count.
-func TestUploadAggRecordChunkIgnoresStaleTimestamp(t *testing.T) {
+// TestUploadAggFirstChunkAnchorNeverMoves checks that later lanes cannot move
+// the elapsed clock's first-byte anchor, while every chunk still counts.
+func TestUploadAggFirstChunkAnchorNeverMoves(t *testing.T) {
 	var a uploadAgg
-	a.recordChunk(1000, 100) // first chunk, no time yet
-	a.recordChunk(1000, 100) // equal timestamp — stale, no time added
-	if got := a.activeNanos.Load(); got != 0 {
-		t.Fatalf("active after an equal-timestamp chunk = %d, want 0", got)
-	}
-	a.recordChunk(500, 100) // smaller timestamp — reordered, no time added
-	if got := a.activeNanos.Load(); got != 0 {
-		t.Fatalf("active after a reordered chunk = %d, want 0 (clock must not rewind)", got)
-	}
-	// The clock is still anchored at 1000, so the next real chunk measures
-	// from there, not from the stale/reordered stamps.
+	a.recordChunk(1000, 100)
+	a.recordChunk(500, 100)
 	a.recordChunk(1100, 100)
-	if got := a.activeNanos.Load(); got != 100 {
-		t.Fatalf("active after resuming forward = %d, want 100", got)
+	if got := a.firstChunkMono.Load(); got != 1000 {
+		t.Fatalf("firstChunkMono = %d, want 1000", got)
 	}
-	if got := a.bytes.Load(); got != 400 {
-		t.Errorf("bytes = %d, want 400 (every chunk counts, stale or not)", got)
+	if got := a.elapsedNanos(1200); got != 200 {
+		t.Fatalf("elapsed = %d, want 200", got)
 	}
-}
-
-// TestUploadAggActiveTimeGapCapBoundary checks recordChunk's <= comparison at
-// the exact activeGapCap edge: a gap equal to the cap still counts as
-// continuous transfer; one nanosecond more is a dead zone and is excluded.
-func TestUploadAggActiveTimeGapCapBoundary(t *testing.T) {
-	gapCap := int64(activeGapCap)
-	const start = 1000 // nonzero anchor — 0 collides with lastChunkMono's zero value
-
-	var a uploadAgg
-	a.recordChunk(start, 10)
-	a.recordChunk(start+gapCap, 10) // gap == cap exactly: counted
-	if got := a.activeNanos.Load(); got != gapCap {
-		t.Fatalf("active after a gap == activeGapCap = %d, want %d (boundary inclusive)", got, gapCap)
-	}
-
-	var b uploadAgg
-	b.recordChunk(start, 10)
-	b.recordChunk(start+gapCap+1, 10) // gap == cap+1: dead zone, excluded
-	if got := b.activeNanos.Load(); got != 0 {
-		t.Fatalf("active after a gap == activeGapCap+1 = %d, want 0 (dead zone excluded)", got)
+	if got := a.bytes.Load(); got != 300 {
+		t.Errorf("bytes = %d, want 300", got)
 	}
 }

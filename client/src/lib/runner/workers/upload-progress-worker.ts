@@ -19,10 +19,9 @@ import { encode, decode } from "../real/wire";
 import { nextBackoff } from "./backoff";
 
 type InMsg = { type: "start"; url: string } | { type: "stop" };
-// `t` is the server's ACTIVE measurement time (ns the server was actually draining
-// bytes for this id, dead zones excluded) at which it sampled `n` — the client
-// measures upload rate over this server clock (Δn / Δt), never its own arrival clock
-// and never a wall span. Safe as a JS number: active ns stays < 2^53 for ~104 days.
+// `t` is server elapsed time since this id's first received byte. The client
+// baselines it at measurement start, excluding warmup while keeping measured
+// stalls in Δn / Δt. Safe as a JS number for ~104 days.
 type OutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
