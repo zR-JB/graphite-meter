@@ -124,7 +124,9 @@
   ];
   function reseedProfile() {
     const preset = applyConnectionProfile(store.config.compensation.profile);
+    const ipVersion = store.config.compensation.params.ipVersion;
     Object.assign(store.config.compensation.params, preset.params);
+    store.config.compensation.params.ipVersion = ipVersion;
   }
 
   /* ---------- Compensation numeric params (Advanced) ---------- */
@@ -458,7 +460,10 @@
         </div>
         <p class="hint">
           Detected first hop: {store.infra?.firstHopProtocol ??
-            "scheme fallback"}. An override applies only when selected above.
+            "scheme fallback"}. Client address: {store.infra
+            ? `IPv${store.infra.clientIpVersion} via ${store.infra.clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`
+            : "not detected"}. Proxy translation or overlays can make the
+          address family differ from the physical path.
         </p>
         <details class="advanced">
           <summary>Advanced — raw byte accounting</summary>
@@ -473,8 +478,9 @@
                 disabled={running}
                 bind:value={store.config.compensation.params.ipVersion}
               >
-                <option value={4}>IPv4</option>
-                <option value={6}>IPv6</option>
+                <option value="auto">Automatic (detected)</option>
+                <option value={4}>IPv4 override</option>
+                <option value={6}>IPv6 override</option>
               </select>
             </label>
             {#each COMP_NUMS as n (n.key)}

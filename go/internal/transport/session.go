@@ -10,10 +10,8 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 // Proto names the wire protocol a Session is running over.
@@ -49,7 +47,6 @@ type FlushFunc func() error
 type Session interface {
 	Context() context.Context
 	Query() url.Values
-	ClientIP() string
 	Proto() Proto
 
 	// HTTP exposes the underlying writer/request for request/response endpoints
@@ -68,21 +65,4 @@ type Session interface {
 	// Bus yields the control-message channel, when the session has one
 	// (websocketSession only, today).
 	Bus() (MessageBus, bool)
-}
-
-// ClientIP resolves the caller's address from a request: the first hop of
-// X-Forwarded-For when behind a proxy, else the socket remote address. Shared by
-// every Session impl so the rule stays identical across transports.
-func ClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

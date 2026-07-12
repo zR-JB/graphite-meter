@@ -8,6 +8,8 @@ package wire
 // api/preflight.schema.json exactly; the JSON tags are load-bearing.
 type Preflight struct {
 	ClientIP           string       `json:"clientIp"`
+	ClientIPVersion    int          `json:"clientIpVersion"`
+	ClientIPSource     string       `json:"clientIpSource"`
 	Server             ServerInfo   `json:"server"`
 	PreTestPingMs      float64      `json:"preTestPingMs"`
 	EngineVersion      string       `json:"engineVersion"`

@@ -69,6 +69,7 @@ export type CompensationTransport =
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
 
 export type CompensationTransportSetting = "auto" | CompensationTransport;
+export type CompensationIPVersionSetting = "auto" | 4 | 6;
 
 export interface OverheadCompensationConfig {
   /** Physical first-hop preset. The browser-facing HTTP transport is detected. */
@@ -76,7 +77,7 @@ export interface OverheadCompensationConfig {
   transport: CompensationTransportSetting;
   params: {
     mtuBytes: number;
-    ipVersion: 4 | 6;
+    ipVersion: CompensationIPVersionSetting;
     vlanTagged: boolean; // 802.1Q tag adds 4B per frame
     tcpOptionsMinBytes: number;
     tcpOptionsMaxBytes: number;
@@ -348,6 +349,8 @@ export interface EngineInfo {
 /* ---------- Pre-test handshake info ---------- */
 export interface InfraInfo {
   clientIp: string;
+  clientIpVersion: 4 | 6;
+  clientIpSource: "socket" | "forwarded";
   server: { name: string; host: string; port: number; location?: string };
   preTestPingMs: number;
   engineVersion: string;

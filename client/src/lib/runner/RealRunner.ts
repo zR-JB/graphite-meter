@@ -338,6 +338,8 @@ export class RealBackend implements RunnerBackend {
 
     return {
       clientIp: pf.clientIp,
+      clientIpVersion: pf.clientIpVersion,
+      clientIpSource: pf.clientIpSource,
       server: {
         name: pf.server.name,
         host: pf.server.host,

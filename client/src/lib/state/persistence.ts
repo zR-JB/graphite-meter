@@ -88,6 +88,19 @@ export function loadPersisted(): PersistedState {
   const parsed = safeParse(raw);
   if (!isPlainObject(parsed)) return defaults;
   const merged = deepMergeOverDefaults(defaults, parsed);
+
+  // Version 1 originally stored a numeric IP family. Preserve that explicit
+  // expert choice now that the setting also supports automatic detection.
+  const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  const parsedCompensation = isPlainObject(parsedConfig?.compensation)
+    ? parsedConfig.compensation
+    : null;
+  const parsedParams = isPlainObject(parsedCompensation?.params)
+    ? parsedCompensation.params
+    : null;
+  const savedIPVersion = parsedParams?.ipVersion;
+  if (savedIPVersion === "auto" || savedIPVersion === 4 || savedIPVersion === 6)
+    merged.config.compensation.params.ipVersion = savedIPVersion;
   if (
     !["lan", "loopback", "tunnel", "custom"].includes(
       merged.config.compensation.profile,

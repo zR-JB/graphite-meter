@@ -22,7 +22,7 @@ const FAKE_CONFIG: RunnerConfig = {
     transport: "auto",
     params: {
       mtuBytes: 1500,
-      ipVersion: 4,
+      ipVersion: "auto",
       vlanTagged: false,
       tcpOptionsMinBytes: 0,
       tcpOptionsMaxBytes: 12,
@@ -129,6 +129,16 @@ test("obsolete compensation presets and factors cannot survive hydration", () =>
   const compensation = loadPersisted().config.compensation;
   expect(compensation.profile).toBe("lan");
   expect("factors" in compensation).toBe(false);
+});
+
+test("legacy numeric IP family remains an expert override", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { compensation: { params: { ipVersion: 6 } } },
+    }),
+  );
+  expect(loadPersisted().config.compensation.params.ipVersion).toBe(6);
 });
 
 test("savePersisted round-trips through loadPersisted", () => {

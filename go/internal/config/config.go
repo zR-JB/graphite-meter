@@ -6,7 +6,10 @@
 package config
 
 import (
+	"fmt"
+	"net/netip"
 	"os"
+	"strings"
 )
 
 // EngineVersion is overridable at build time via
@@ -49,6 +52,10 @@ type Config struct {
 	// endpoints, so server-observed rates can be compared against kernel
 	// counters or the browser's own figures. Off by default.
 	Verbose bool
+
+	// TrustedProxies are the socket peers allowed to supply client forwarding
+	// headers. Empty by default: remote headers are then ignored.
+	TrustedProxies []netip.Prefix
 }
 
 // Default returns a Config with the baseline defaults.
@@ -64,7 +71,7 @@ func Default() Config {
 
 // Load builds a Config from the environment, overlaid on Default().
 // Flags (parsed by the caller) take final precedence.
-func Load() Config {
+func Load() (Config, error) {
 	c := Default()
 	if v := os.Getenv("GM_H1_ADDR"); v != "" {
 		c.H1Addr = v
@@ -99,5 +106,14 @@ func Load() Config {
 	if v := os.Getenv("GM_VERBOSE"); v == "1" || v == "true" {
 		c.Verbose = true
 	}
-	return c
+	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
+		for _, raw := range strings.Split(v, ",") {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+			if err != nil {
+				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q: %w", raw, err)
+			}
+			c.TrustedProxies = append(c.TrustedProxies, prefix)
+		}
+	}
+	return c, nil
 }

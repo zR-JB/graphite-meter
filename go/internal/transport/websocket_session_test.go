@@ -38,7 +38,7 @@ func TestWebSocketSession(t *testing.T) {
 			}
 		}
 
-		sess := NewWebSocketSession(r.Context(), conn, ClientIP(r), r.URL.Query())
+		sess := NewWebSocketSession(r.Context(), conn, r.URL.Query())
 
 		check(sess.Proto() == ProtoWS, "Proto() = %v, want ProtoWS", sess.Proto())
 

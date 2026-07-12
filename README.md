@@ -88,9 +88,13 @@ Everything is optional; the defaults just work. The common knobs:
 | `GM_H1_ADDR`         | `:8765`                                 | Listen address.                                                                                                                              |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
 | `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
+| `GM_TRUSTED_PROXIES` | —                                       | Comma-separated proxy CIDRs allowed to supply client IP and scheme forwarding headers.                                                       |
 | `PUBLIC_H1_ORIGIN`   | derived from request                    | Public origin to advertise — set behind a reverse proxy.                                                                                     |
-| `PUBLIC_TLS_ORIGIN`  | derived from `X-Forwarded-Proto: https` | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a typical TLS-terminating reverse proxy; set explicitly if not. |
+| `PUBLIC_TLS_ORIGIN`  | derived from trusted forwarded `https`  | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a proxy in `GM_TRUSTED_PROXIES`; set explicitly if needed.     |
 | `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
+
+Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)
+for nginx, Caddy, and Traefik examples and the trust-chain rules.
 
 Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
 

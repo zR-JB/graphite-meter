@@ -67,6 +67,8 @@ class FakeBackend implements RunnerBackend {
   probe(): Promise<InfraInfo> {
     return Promise.resolve({
       clientIp: "127.0.0.1",
+      clientIpVersion: 4,
+      clientIpSource: "socket",
       server: { name: "fake", host: "fake", port: 0 },
       preTestPingMs: 0,
       engineVersion: "test",

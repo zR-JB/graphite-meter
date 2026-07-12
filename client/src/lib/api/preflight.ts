@@ -10,9 +10,17 @@
  */
 export interface Preflight {
   /**
-   * The client's public IP as observed by the server (X-Forwarded-For first hop, else the socket remote address).
+   * The normalized client IP resolved from the socket peer or a trusted forwarding chain.
    */
   clientIp: string;
+  /**
+   * Address family of clientIp. This is proxy-presented evidence and may differ from the physical path when address translation is involved.
+   */
+  clientIpVersion: 4 | 6;
+  /**
+   * Whether clientIp came from the direct socket peer or a header supplied through a configured trusted proxy.
+   */
+  clientIpSource: "socket" | "forwarded";
   server: {
     name: string;
     host: string;

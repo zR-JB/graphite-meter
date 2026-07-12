@@ -163,7 +163,6 @@ type fakeSession struct {
 
 func (f *fakeSession) Context() context.Context                         { return f.ctx }
 func (f *fakeSession) Query() (v url.Values)                            { v, _ = url.ParseQuery(f.query); return }
-func (f *fakeSession) ClientIP() string                                 { return "" }
 func (f *fakeSession) Proto() transport.Proto                           { return transport.ProtoH1 }
 func (f *fakeSession) HTTP() (http.ResponseWriter, *http.Request, bool) { return nil, nil, false }
 func (f *fakeSession) OpenDownloadSink() (io.Writer, transport.FlushFunc, error) {

@@ -116,6 +116,44 @@ test("invalid expert bounds are clamped and keep the central estimate in range",
   );
 });
 
+test("automatic IP family uses preflight detection while an override wins", () => {
+  const automatic = config();
+  automatic.params.ipVersion = "auto";
+  const ipv4 = estimateLiveCompensation(
+    1_000_000,
+    automatic,
+    "download",
+    "http/1.1",
+    false,
+    4,
+  );
+  const ipv6 = estimateLiveCompensation(
+    1_000_000,
+    automatic,
+    "download",
+    "http/1.1",
+    false,
+    6,
+  );
+  expect(ipv6.estimatedBytesPerSec).toBeGreaterThan(ipv4.estimatedBytesPerSec);
+  expect(
+    estimateLiveCompensation(1_000_000, automatic, "download")
+      .estimatedBytesPerSec,
+  ).toBe(ipv4.estimatedBytesPerSec);
+
+  automatic.params.ipVersion = 4;
+  expect(
+    estimateLiveCompensation(
+      1_000_000,
+      automatic,
+      "download",
+      "http/1.1",
+      false,
+      6,
+    ).estimatedBytesPerSec,
+  ).toBe(ipv4.estimatedBytesPerSec);
+});
+
 test("loopback has no physical wire estimate", () => {
   const estimate = estimateLiveCompensation(
     1_000_000,

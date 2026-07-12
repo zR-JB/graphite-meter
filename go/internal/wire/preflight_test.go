@@ -67,7 +67,9 @@ func TestStructMarshalsToValidSchema(t *testing.T) {
 
 	h1 := "http://speed.example:8765"
 	p := Preflight{
-		ClientIP: "198.51.100.4",
+		ClientIP:        "198.51.100.4",
+		ClientIPVersion: 4,
+		ClientIPSource:  "socket",
 		Server: ServerInfo{
 			Name:     "graphite-meter",
 			Host:     "speed.example",

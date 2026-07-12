@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,7 @@ func (p *Preflight) Handle(s transport.Session) error {
 
 func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 	cfg := p.cfg
+	client := transport.ResolveClientAddress(r, cfg.TrustedProxies)
 
 	host, port := hostPort(r)
 
@@ -58,7 +60,7 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 	if cfg.PublicTLSOrigin != "" {
 		v := cfg.PublicTLSOrigin
 		origins.TLS = &v
-	} else if requestIsTLS(r) {
+	} else if requestIsTLS(r, cfg.TrustedProxies) {
 		// A reverse proxy terminated TLS in front of us (or we're somehow
 		// reached directly over TLS): derive the encrypted origin the same
 		// way h1 is derived, so the client has a real wss(-mappable) origin
@@ -72,7 +74,9 @@ func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
 	}
 
 	return wire.Preflight{
-		ClientIP: s.ClientIP(),
+		ClientIP:        client.Addr.String(),
+		ClientIPVersion: client.Version,
+		ClientIPSource:  string(client.Source),
 		Server: wire.ServerInfo{
 			Name:     cfg.ServerName,
 			Host:     host,
@@ -116,13 +120,16 @@ func hostPort(r *http.Request) (string, int) {
 // the de-facto standard X-Forwarded-Proto header (set by nginx/Caddy/Traefik
 // by default). Only the first hop is read — this server is meant to sit
 // directly behind the terminating proxy, not several hops deep.
-func requestIsTLS(r *http.Request) bool {
+func requestIsTLS(r *http.Request, trusted []netip.Prefix) bool {
 	if r.TLS != nil {
 		return true
+	}
+	if !transport.PeerIsTrusted(r, trusted) {
+		return false
 	}
 	proto := r.Header.Get("X-Forwarded-Proto")
 	if i := strings.IndexByte(proto, ','); i >= 0 {
 		proto = proto[:i]
 	}
-	return strings.TrimSpace(proto) == "https"
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }

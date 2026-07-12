@@ -74,7 +74,7 @@ func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 		defer cancel()
 		defer conn.CloseNow()
 
-		s := transport.NewWebSocketSession(ctx, conn, transport.ClientIP(r), r.URL.Query())
+		s := transport.NewWebSocketSession(ctx, conn, r.URL.Query())
 		if err := e.Handle(s); err != nil {
 			conn.Close(websocket.StatusInternalError, "handler error")
 			return

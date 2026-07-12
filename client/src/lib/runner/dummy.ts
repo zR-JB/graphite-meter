@@ -198,6 +198,8 @@ export class DummyBackend implements RunnerBackend {
     const octet = () => Math.floor(this.#rand() * 254) + 1;
     return {
       clientIp: `${octet()}.${octet()}.${octet()}.${octet()}`,
+      clientIpVersion: 4,
+      clientIpSource: "socket",
       server: {
         name: "Graphite Edge — Frankfurt",
         host,
