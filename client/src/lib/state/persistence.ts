@@ -87,7 +87,20 @@ export function loadPersisted(): PersistedState {
   }
   const parsed = safeParse(raw);
   if (!isPlainObject(parsed)) return defaults;
-  return deepMergeOverDefaults(defaults, parsed);
+  const merged = deepMergeOverDefaults(defaults, parsed);
+  if (
+    !["lan", "loopback", "tunnel", "custom"].includes(
+      merged.config.compensation.profile,
+    )
+  )
+    merged.config.compensation.profile = "lan";
+  if (
+    !["auto", "http1-clear", "https-tls", "http2", "http3-quic"].includes(
+      merged.config.compensation.transport,
+    )
+  )
+    merged.config.compensation.transport = "auto";
+  return merged;
 }
 
 export function savePersisted(snapshot: PersistedState): void {

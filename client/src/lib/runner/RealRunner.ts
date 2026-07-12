@@ -327,6 +327,9 @@ export class RealBackend implements RunnerBackend {
     }
     const pf = (await res.json()) as Preflight;
     this.#capabilities = pf.capabilities;
+    const timing = performance.getEntriesByName(res.url, "resource").at(-1) as
+      PerformanceResourceTiming | undefined;
+    const firstHopProtocol = timing?.nextHopProtocol || undefined;
 
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
@@ -344,6 +347,8 @@ export class RealBackend implements RunnerBackend {
       preTestPingMs: probeRtts.length ? median(probeRtts) : pf.preTestPingMs,
       engineVersion: pf.engineVersion,
       protocolNegotiated: pf.protocolNegotiated,
+      firstHopProtocol,
+      firstHopSecure: new URL(res.url).protocol === "https:",
     };
   }
 

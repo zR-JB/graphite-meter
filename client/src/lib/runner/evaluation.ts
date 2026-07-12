@@ -52,7 +52,7 @@ export class RunAccumulator {
   #allRtts: number[] = [];
   #pingsTotal = 0;
   #pingsLost = 0;
-  // Under-load pings only — feeds the transfer loss/retransmission factor.
+  // Under-load ping timeouts are a quality signal, not inferred TCP loss.
   #loadedPings = 0;
   #loadedPingsLost = 0;
 
@@ -298,10 +298,7 @@ export class RunAccumulator {
     );
   }
 
-  /** Under-load packet-loss % over the whole run — the loss signal the transfer
-   *  loss/retransmission compensation factor consumes. Loss under load is a link
-   *  property, so the same figure is stamped on both transfer results. 0 when no
-   *  loaded pings ran. */
+  /** Under-load ping timeout percentage over the whole run. */
   #loadedLossPct(): number {
     return this.#loadedPings
       ? (this.#loadedPingsLost / this.#loadedPings) * 100

@@ -20,7 +20,7 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
 ## Features
 
 - **Bufferbloat, measured properly** — idle latency is profiled first, then the same ping loop
-  keeps running *during* download and upload, so you see exactly how your latency degrades under
+  keeps running _during_ download and upload, so you see exactly how your latency degrades under
   load (loaded latency), with detailed per-stage latency plots: average, jitter, and range for
   idle vs. loaded, down and up.
 - **Honest numbers** — upload throughput is what the **server** actually received (byte counts
@@ -30,9 +30,10 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
   stage that saturates both directions at once.
 - **Adaptive early stopping** — a stage ends as soon as its result is statistically stable, so a
   steady fiber line finishes in seconds while a jittery link gets the full window.
-- **Overhead compensation model** — opt-in wire-rate estimates that account for Ethernet/IP
-  framing, TLS records, VPN encapsulation, ACK traffic, retransmission, MTU, and more, per
-  connection profile (LAN / loopback / VPN / internet).
+- **Honest wire-rate estimates** — opt-in forward-direction Ethernet accounting for IP,
+  TCP/UDP, TLS/QUIC, HTTP framing, and explicit tunnels. The browser-facing protocol is detected
+  automatically; unobservable packet details are shown as a range instead of guessed from runtime
+  variance, ping timeouts, or ramp-up.
 - **Highly configurable** — durations, parallel streams, ping cadence, units (bits/bytes,
   SI/IEC), manual or auto gauge scaling — from the UI, no config files.
 - **Featherweight server** — a single static Go binary (~10 MB, client embedded, `FROM scratch`
@@ -82,14 +83,14 @@ A ready-made unit that pulls the image and runs it as a systemd service lives at
 
 Everything is optional; the defaults just work. The common knobs:
 
-| Env var | Default | What it does |
-| --- | --- | --- |
-| `GM_H1_ADDR` | `:8765` | Listen address. |
-| `GM_SERVER_NAME` | `graphite-meter` | Server name shown in the client. |
-| `GM_SERVER_LOCATION` | — | Location label shown in the client (e.g. `fra`). |
-| `PUBLIC_H1_ORIGIN` | derived from request | Public origin to advertise — set behind a reverse proxy. |
-| `PUBLIC_TLS_ORIGIN` | derived from `X-Forwarded-Proto: https` | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a typical TLS-terminating reverse proxy; set explicitly if not. |
-| `GM_VERBOSE` | off | Per-second server-side throughput/connection logging. |
+| Env var              | Default                                 | What it does                                                                                                                                 |
+| -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GM_H1_ADDR`         | `:8765`                                 | Listen address.                                                                                                                              |
+| `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
+| `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
+| `PUBLIC_H1_ORIGIN`   | derived from request                    | Public origin to advertise — set behind a reverse proxy.                                                                                     |
+| `PUBLIC_TLS_ORIGIN`  | derived from `X-Forwarded-Proto: https` | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a typical TLS-terminating reverse proxy; set explicitly if not. |
+| `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
 
 Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
 

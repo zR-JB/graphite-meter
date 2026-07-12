@@ -46,7 +46,8 @@
           ["Port", String(i?.server.port ?? store.config.endpoint.port)],
           ["Location", i?.server.location ?? "—"],
           ["Version", i?.engineVersion ?? "—"],
-          ["Protocol", i?.protocolNegotiated ?? "—"],
+          ["Browser protocol", i?.firstHopProtocol ?? "scheme fallback"],
+          ["Backend protocol", i?.protocolNegotiated ?? "—"],
         ] as [string, string][],
       },
       {
