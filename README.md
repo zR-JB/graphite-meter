@@ -26,7 +26,7 @@ and the native terminal client pushes **hundreds of Gbit/s**.\*
   load (loaded latency), with detailed per-stage latency plots: average, jitter, and range for
   idle vs. loaded, down and up.
 - **Honest numbers** — upload throughput is what the **server** actually received (byte counts
-  over an active-time clock streamed back live), never what the browser thinks it sent. All
+  over an elapsed clock streamed back live), never what the browser thinks it sent. All
   payloads are incompressible; stalls and reconnects can't inflate a result.
 - **Every stage is optional** — latency, download, upload, and an optional **bidirectional**
   stage that saturates both directions at once.

@@ -36,8 +36,8 @@
  * worker reports only lane liveness: one `{type:'alive'}` per completed POST
  * (proving the lane recovered, for the restart logic) and `{type:'error'}` on a
  * failed POST. It NEVER reports bytes — the /ws/upload count is the sole source.
- * The 100 ms server frames are the heartbeat; a dropped progress socket freezes
- * measured-time via the progress worker's stall/resume.
+ * The 100 ms server frames carry the authoritative byte/time snapshots; a
+ * dropped progress socket reconnects without removing that gap from the result.
  *
  * ── Why fetch here mirrors download-worker.ts ──
  * Download = fetch + body.getReader(): read-and-DISCARD a streamed RESPONSE at

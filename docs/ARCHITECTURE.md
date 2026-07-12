@@ -149,8 +149,8 @@ idle RTT (floor = configured warmup, ceiling 4s) so TCP slow start finishes befo
 window opens, and staggers parallel lane starts by up to 75ms so congestion windows don't ramp in
 lockstep.
 
-Stats: throughput as a flat mean + running peak across ~100ms samples (upload throughput is
-derived from the server's authoritative byte/elapsed-time counters, same as the browser client);
+Stats: effective throughput as receiver-counted bytes over the measured window, plus a running
+peak across ~100ms samples (upload uses the server receiver, download the local client receiver);
 latency as min/mean/P50/P95 (linear-interpolated percentiles), jitter (mean absolute deviation),
 and loss ratio.
 
@@ -171,8 +171,8 @@ module covers both the server and the TUI client).
 ## The Svelte browser client
 
 The UI (`client/src/`) is deliberately engine-agnostic: it only ever talks to `RunnerCore`
-(`src/lib/runner/core.ts`), which owns the phase timeline, a 20ms tick loop, a "measured
-test-time" clock that freezes during a stall (so dead air doesn't count against the run), an
+(`src/lib/runner/core.ts`), which owns the phase timeline, a 20ms tick loop, a measured clock that
+retains stalls in effective throughput while bounding recovery with a max timeout, an
 adaptive early-finish ("glide" toward the phase boundary once a stage's confidence stabilizes),
 and dual exponential-moving-average smoothing (a fast ~700ms constant for the displayed number, a
 slower ~1800ms constant for stability judgments) — both fed from the same raw samples, so the

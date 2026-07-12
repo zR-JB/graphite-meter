@@ -57,6 +57,9 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 		return Result{}, ctx.Err()
 	case <-start:
 	}
+	if !progress.waitNext(ctx, progress.seq.Load()) {
+		return Result{}, fmt.Errorf("upload progress did not advance")
+	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
 	stats := r.sampleServerUpload(ctx, stage, progress, r.cfg.ParallelStreams, elapsed, baselineN, baselineT)
@@ -184,6 +187,7 @@ type uploadProgress struct {
 	done   chan struct{}
 	n      atomic.Uint64
 	t      atomic.Uint64
+	seq    atomic.Uint64
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
@@ -224,10 +228,26 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 			case wire.OpBytesReceived, wire.OpUploadComplete:
 				p.n.Store(f.N)
 				p.t.Store(f.Nanos)
+				p.seq.Add(1)
 			}
 		}
 	}()
 	return p, nil
+}
+
+func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for p.seq.Load() <= after {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-p.done:
+			return false
+		case <-ticker.C:
+		}
+	}
+	return true
 }
 
 func (p *uploadProgress) close() {

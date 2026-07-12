@@ -142,9 +142,8 @@ export interface RunnerConfig {
    *  taken during download/upload — so latency is fully off (no measurement,
    *  no profile, no chart line) rather than just dropping the idle phase. */
   skipLoadedLatencyWhenStageOff: boolean;
-  /** Per-phase durations. Every measured `*Ms` is a TEST-TIME BUDGET — the
-   *  phase runs until that much VALID measurement time is consumed, so dead air
-   *  pushes its wall-clock end out. `warmupMs` stays plain wall-clock priming. */
+  /** Per-phase wall-time budgets. A stage at its boundary waits for an active
+   *  connection or fails at max-stall; warmup is unmeasured priming. */
   duration: {
     warmupMs: number;
     latencyMs: number;
@@ -310,8 +309,8 @@ export interface TransportAttempt {
 
 /* ---------- Transient link health ---------- */
 /** A NON-terminal stall: the link went quiet mid-phase and the run is waiting
- *  to reconnect. Carried on the `stall` event; the core freezes measured-time
- *  accrual until a matching `resume`. `transport` (when known) names which
+ *  to reconnect. Elapsed time continues so the gap affects throughput.
+ *  `transport` (when known) names which
  *  connection dropped. This is NOT a failure — see `fail`/`RunnerError` for the
  *  terminal case (e.g. a stall that outlives MAX_STALL_MS becomes a
  *  `connection-lost` failure). */
@@ -384,26 +383,20 @@ export type RunnerEvent =
   // loss/jitter/measuring, so this is purely an optional override for a real
   // engine that has a better signal.
   | { type: "connectivity"; state: ConnectivityState }
-  // Progress within the active phase. `fraction` is 0–1 of the phase's
-  // TEST-TIME budget consumed; the *Ms fields expose the raw measured-time
-  // accrual so the UI can show a real "time remaining" (budget − elapsed) that
-  // STOPS shrinking while stalled. `measuring` is the core's measured-time gate
-  // — false while a stall (explicit or watchdog) has frozen accrual; the
-  // grind-to-zero presentation (principle 2) keys off this, not off any sample.
+  // Progress within the active wall-time budget. `measuring` is false while
+  // delivery is stalled; the grind-to-zero presentation keys off this flag.
   | {
       type: "progress";
       phase: Phase;
-      fraction: number; // 0–1 within phase (of the test-time budget)
-      phaseElapsedMs: number; // measured test-time consumed in this phase
-      phaseBudgetMs: number; // this phase's test-time budget
-      measuring: boolean; // false ⇒ accrual frozen (stalled)
+      fraction: number; // 0–1 within the phase budget
+      phaseElapsedMs: number;
+      phaseBudgetMs: number;
+      measuring: boolean; // false while delivery is stalled
     }
   | { type: "stability"; snapshot: StabilitySnapshot } // live measurement stability
   // Transient link health (NON-terminal): the run continues, hoping to
-  // reconnect. `stall` freezes measured-time accrual (the phase end recedes by
-  // the dead-air duration); `resume` un-freezes it. These drive the UI's
-  // grind-to-zero + "connection lost" message — they carry NO sample and NEVER
-  // enter the accumulator (principle 1).
+  // reconnect. Time still contributes to effective throughput. These drive the
+  // UI's grind-to-zero + "connection lost" message.
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
   // Transport negotiation telemetry: which connection method is being tried for

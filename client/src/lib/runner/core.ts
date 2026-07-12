@@ -61,7 +61,7 @@ const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
  * TWO smoothings, because the two consumers have opposite needs:
  *   • DISPLAY (gauge/chart) uses a SHORT tau so the curve tracks a real
  *     line's ramp — up and down — instead of trailing it.
- *   • STABILITY (confidence / early-exit / stable-window headline) uses a
+ *   • STABILITY (confidence / early-exit) uses a
  *     LONGER tau: its coefficients (TRANSFER_VARIANCE_K, stabilityThreshold)
  *     are tuned to that variance — a shorter tau would roughly double
  *     per-tick variance and the phase would stop early-exiting on a
@@ -396,8 +396,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
     this.#measuredElapsed += dtWall;
-    // The glide also advances measured-time, so it too must freeze while
-    // stalled — otherwise an armed glide would race the clock through dead air.
+    // Adaptive completion pauses during recovery; effective elapsed time does not.
     if (this.#measuring && this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
     const elapsed = this.#measuredElapsed;
 
@@ -882,9 +881,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // and the per-stage events never disagree.
     this.#finalizeStage(this.#lastEmittedPhase);
     if (this.#activeSeg) this.#backend.onStageEnd(this.#activeSeg.activity);
-    // Actual wall-clock length — shorter than the nominal #totalMs whenever an
-    // adaptive glide accelerated one or more phases to an early finish,
-    // and LONGER whenever a stall padded it with dead air.
+    // Actual wall-clock length, shortened when adaptive completion finishes early.
     const actualMs = Math.max(0, performance.now() - this.#t0);
     // Bidirectional has no per-stage event (it resolves at completion); reduce its
     // two lanes here when the stage ran, else null.

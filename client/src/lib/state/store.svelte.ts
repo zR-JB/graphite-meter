@@ -473,7 +473,7 @@ class AppStore {
         this.measuring = e.measuring;
         break;
       case "stall":
-        // Store only the presentation latch; the core owns measured-time freeze.
+        // Store only the presentation latch; measurement logic stays in the core.
         this.measuring = false;
         this.stalledSince = performance.now();
         this.stallInfo = e.info;

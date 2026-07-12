@@ -124,8 +124,7 @@ test("a trailing stable run does not hide the earlier ramp", () => {
     samples.push(1000);
     push(accum, 1000);
   }
-  // Early stop never armed for this phase (e.g. it ran to its natural end) —
-  // pre-existing behavior is preserved: trailing stable window, not full avg.
+  // Early stop never armed; the earlier ramp must still remain in the result.
 
   const result = accum.throughputResult("download");
 

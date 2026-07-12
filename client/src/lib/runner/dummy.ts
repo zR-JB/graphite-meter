@@ -42,8 +42,8 @@ interface ProfileSpec {
   lossBase: number;
   /** Relative std of the plateau (throughput and idle RTT) — how *steady* the
    *  link is. This is what the adaptive stability score reads: steady links
-   *  (fiber/cable) settle to a high band and finish early on the stable window;
-   *  jittery ones (lte/satellite) never settle and report the full average. */
+   *  (fiber/cable) settle to a high band and finish early; jittery ones
+   *  (lte/satellite) use the full configured window. */
   jitter: number;
 }
 
@@ -148,12 +148,10 @@ export class DummyBackend implements RunnerBackend {
   // on the effective timeline; the synthesis hooks read this list.
   #liveAnomalies: LiveAnomaly[] = [];
 
-  // A live connection-drop window in REAL (wall-clock) time. While we're inside
-  // it the dummy pushes NO samples — true dead air — so the core's watchdog
-  // doesn't immediately auto-resume us. We stall() on inject and resume() once
-  // wall-clock passes the window's end. Real-time (not measured-time) because
-  // measured-time freezes during the stall, so it could never reach the end.
+  // A live connection-drop window in wall time. It contributes zero-byte
+  // duration samples without proving delivery, then resumes at the window end.
   #dropEndReal = 0; // performance.now() the drop lifts at, or 0 when not dropped
+  #dropLastReal = 0;
 
   constructor(opts: DummyOptions = {}) {
     this.#opts = { profile: opts.profile ?? "fiber", ...opts };
@@ -255,13 +253,15 @@ export class DummyBackend implements RunnerBackend {
     if (!cfg) return;
     const { activity, isWarmup, elapsed, segStart, segEnd, realNow } = ctx;
 
-    // Active connection-drop: true dead air — push NOTHING (so the core watchdog
-    // doesn't auto-resume us), and lift the stall once wall-clock passes the
-    // window end. Measured-time is frozen meanwhile, so the run end recedes by
-    // exactly this real duration — the visible push-out.
+    // Account dead air as zero-byte wall time without falsely resuming delivery.
     if (this.#dropEndReal > 0) {
+      const seconds = Math.max(0, realNow - this.#dropLastReal) / 1000;
+      this.#dropLastReal = realNow;
+      for (const dir of activity.transfer)
+        this.#host!.ingestThroughput(dir, 0, 0, seconds);
       if (realNow < this.#dropEndReal) return;
       this.#dropEndReal = 0;
+      this.#dropLastReal = 0;
       this.#host!.resume();
       // Snap the sample cadence gates to "now" so resume doesn't dump a backlog.
       this.#lastThroughputAt = realNow;
@@ -402,12 +402,13 @@ export class DummyBackend implements RunnerBackend {
     if (!host || !host.config || host.phase === "idle") return;
 
     // Connection-drop is modelled as a real stall, not a synthesis tweak: stall
-    // the core NOW (freezing measured-time) and open a real-time dead-air window
+    // the core now and open a real-time dead-air window
     // that onTick lifts with resume(). No magnitude — it's a full drop.
     if (a.kind === "connection-drop") {
       const durationMs =
         a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;
-      this.#dropEndReal = performance.now() + durationMs;
+      this.#dropLastReal = performance.now();
+      this.#dropEndReal = this.#dropLastReal + durationMs;
       host.stall({ reason: "connection-lost", detail: "injected drop" });
       return;
     }

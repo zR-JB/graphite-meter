@@ -275,11 +275,7 @@ export class RunAccumulator {
       : 0;
   }
 
-  /** Reduce the bidirectional phase's two lanes to a {down, up} result pair —
-   *  each lane reuses the same transfer reducer as download/upload. Both lanes
-   *  share the phase's single stable-run index (computed over the combined-rate
-   *  window), so the trailing stable window is the same span of samples in each
-   *  lane (the lanes are pushed in lock-step, so their array indices align). */
+  /** Reduce both bidirectional lanes with the common effective-rate reducer. */
   bidirectionalResult(): {
     down: ThroughputResult;
     up: ThroughputResult;

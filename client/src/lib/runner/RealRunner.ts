@@ -91,9 +91,7 @@ type PingOutMsg =
  *  cumulative drained count `n` and elapsed clock `t` (ns) it was
  *  sampled at — the SOLE upload byte source. Rate is derived over server time
  *  (Δn / Δt), so the live curve and the totals headline are both immune to local
- *  tick/arrival jitter. stall/resume bracket a reconnect; since there is no
- *  client-side fallback, they are forwarded to the core to freeze measured-time
- *  across the gap (see #onProgressMessage). */
+ *  tick/arrival jitter. stall/resume bracket control-channel recovery. */
 type ProgressOutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
@@ -188,7 +186,7 @@ export class RealBackend implements RunnerBackend {
   /** The STAGE-level stalled flag reported to the host (dedup so stall/resume
    *  each fire once per edge). For bidirectional this is the AND of both lanes
    *  — one direction hiccuping while the other still moves bytes must not
-   *  surface a stall or freeze measured-time (see #setLaneStalled). For a
+   *  surface a stage-wide stall (see #setLaneStalled). For a
    *  single-direction stage there's only one lane, so this is equivalent to
    *  that lane's own stalled state — no behavior change there. Also latches
    *  the idle-latency-only stall path (#onPingMessage) when no transfer is
@@ -875,8 +873,8 @@ export class RealBackend implements RunnerBackend {
   /** Handle a message from the ping worker. The worker reports already-computed
    *  RTTs; the runner just tags underLoad and forwards. stall/resume bracket a
    *  reconnect — surfaced to the core ONLY for the idle latency stage; during a
-   *  transfer stage the byte lanes drive link health (and a ping gap must never
-   *  freeze throughput accrual), so loaded-latency reconnects pass silently. */
+   *  transfer stage the byte lanes drive link health, so loaded-latency
+   *  reconnects pass silently. */
   #onPingMessage(msg: PingOutMsg): void {
     if (!this.#pingActive) return; // late message after teardown
     switch (msg.type) {
@@ -1072,10 +1070,8 @@ export class RealBackend implements RunnerBackend {
       for (const w of state.workers)
         w?.postMessage({ type: "measure", seq: state.measureSeq });
     } else {
-      // Anchor the server-authoritative window at measure-start so warmup bytes
-      // are excluded from both the live curve delta and the totals-based
-      // headline. The start (startN/startT) is captured on the first measured
-      // server byte.
+      // The first progress frame after this boundary becomes the upload baseline,
+      // excluding warmup bytes and time together.
       this.#srvHaveStart = false;
       this.#srvPrevN = this.#srvN;
     }
@@ -1090,9 +1086,8 @@ export class RealBackend implements RunnerBackend {
   /** Aggregation tick: sum the byte deltas `dir`'s workers reported since the
    *  last tick into one real sample tagged with that direction. For download,
    *  each lane contributes bytes / that lane's own receive interval, then the
-   *  lane rates are summed. Pushes nothing on an empty window — dead air is
-   *  never a synthesized sample (principle 1); the core's stall watchdog covers
-   *  a genuine gap. (For "up" this timer runs but is a no-op: upload lanes
+   *  lane rates are summed. Exact bytes and cadence time feed the final reducer,
+   *  including zero-byte windows. (For "up" this timer runs but is a no-op: upload lanes
    *  report no bytes here — the server /ws/upload channel is the sole source,
    *  see #onProgressMessage.) */
   #aggregate(dir: FlowDirection): void {
@@ -1232,8 +1227,8 @@ export class RealBackend implements RunnerBackend {
   /** Reconcile a direction's own stall state into the STAGE-level `#stalled`
    *  flag reported to the host. Bidirectional's two directions are combined
    *  with AND: the stage is stalled only once EVERY currently-primed direction
-   *  is — one lane hiccuping while the other still moves bytes must not freeze
-   *  measured-time or surface a warning. A single-direction stage has exactly
+   *  is — one lane hiccuping while the other still moves bytes must not surface
+   *  a stage-wide warning. A single-direction stage has exactly
    *  one entry in `#lanes`, so this reduces to that lane's own stalled state —
    *  no behavior change there. */
   #setLaneStalled(dir: FlowDirection, stalled: boolean, detail?: string): void {
@@ -1255,13 +1250,12 @@ export class RealBackend implements RunnerBackend {
   }
 
   /** A message from the /ws/upload progress worker. The server count is the SOLE
-   *  upload byte source: `bytes`/`complete` feed the live curve AND the totals-based
-   *  headline. Because there is no client-side fallback, the socket dropping is the
+   *  upload byte source: `bytes`/`complete` feed the live curve and effective result.
+   *  Because there is no client-side fallback, the socket dropping is the
    *  only thing that can leave the up stage without samples — so the worker's
    *  `stall`/`resume` bracket its reconnect. While
-   *  the socket is up, the 100 ms frames are the heartbeat (each advancing frame →
-   *  ingestThroughput → noteRealSample); while it is down, measured-time is frozen,
-   *  and on reconnect the cumulative count + the server's elapsed-time denominator
+   *  the socket is up, the 100 ms frames carry byte/time deltas; on reconnect the
+   *  cumulative count + the server's elapsed-time denominator
    *  self-heal the headline. The POST lanes are separate connections, so a progress-
    *  socket drop doesn't stop the transfer: the server keeps draining and accruing
    *  elapsed time, and catch-up Δn / Δelapsed on reconnect is the true rate over
