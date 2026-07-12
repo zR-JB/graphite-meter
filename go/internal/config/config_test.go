@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"net/netip"
+	"reflect"
+	"testing"
+)
 
 // envKeys lists every environment variable Load reads.
 var envKeys = []string{
@@ -15,6 +19,7 @@ var envKeys = []string{
 	"GM_SERVER_NAME",
 	"GM_SERVER_LOCATION",
 	"GM_VERBOSE",
+	"GM_TRUSTED_PROXIES",
 }
 
 // clearEnv sets every env var Load reads to "", scoped to the test via
@@ -34,14 +39,18 @@ func TestDefault(t *testing.T) {
 		ServerName:    "graphite-meter",
 		EngineVersion: EngineVersion,
 	}
-	if got := Default(); got != want {
+	if got := Default(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Default() = %+v, want %+v", got, want)
 	}
 }
 
 func TestLoad_NoEnvMatchesDefault(t *testing.T) {
 	clearEnv(t)
-	if got, want := Load(), Default(); got != want {
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := Default(); !reflect.DeepEqual(got, want) {
 		t.Errorf("Load() = %+v, want Default() = %+v", got, want)
 	}
 }
@@ -58,7 +67,10 @@ func TestLoad_StringOverrides(t *testing.T) {
 	t.Setenv("GM_SERVER_NAME", "test-server")
 	t.Setenv("GM_SERVER_LOCATION", "test-location")
 
-	c := Load()
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if c.H1Addr != ":9999" {
 		t.Errorf("H1Addr = %q, want %q", c.H1Addr, ":9999")
@@ -102,7 +114,11 @@ func TestLoad_AdvertiseH3(t *testing.T) {
 		t.Run(tc.env, func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv("GM_ADVERTISE_H3", tc.env)
-			if got := Load().AdvertiseH3; got != tc.want {
+			c, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.AdvertiseH3; got != tc.want {
 				t.Errorf("AdvertiseH3 with GM_ADVERTISE_H3=%q = %v, want %v", tc.env, got, tc.want)
 			}
 		})
@@ -122,7 +138,11 @@ func TestLoad_Verbose(t *testing.T) {
 		t.Run(tc.env, func(t *testing.T) {
 			clearEnv(t)
 			t.Setenv("GM_VERBOSE", tc.env)
-			if got := Load().Verbose; got != tc.want {
+			c, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Verbose; got != tc.want {
 				t.Errorf("Verbose with GM_VERBOSE=%q = %v, want %v", tc.env, got, tc.want)
 			}
 		})
@@ -135,11 +155,39 @@ func TestLoad_EmptyEnvDoesNotOverride(t *testing.T) {
 	t.Setenv("GM_H1_ADDR", "")
 	t.Setenv("GM_ADVERTISE_H3", "")
 
-	c := Load()
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if c.H1Addr != Default().H1Addr {
 		t.Errorf("H1Addr = %q, want default %q", c.H1Addr, Default().H1Addr)
 	}
 	if c.AdvertiseH3 != Default().AdvertiseH3 {
 		t.Errorf("AdvertiseH3 = %v, want default %v", c.AdvertiseH3, Default().AdvertiseH3)
+	}
+}
+
+func TestLoadTrustedProxies(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GM_TRUSTED_PROXIES", "127.0.0.1/8, ::1/128, 10.0.0.0/8")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []netip.Prefix{
+		netip.MustParsePrefix("127.0.0.1/8"),
+		netip.MustParsePrefix("::1/128"),
+		netip.MustParsePrefix("10.0.0.0/8"),
+	}
+	if !reflect.DeepEqual(c.TrustedProxies, want) {
+		t.Fatalf("TrustedProxies = %v, want %v", c.TrustedProxies, want)
+	}
+}
+
+func TestLoadRejectsInvalidTrustedProxy(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("GM_TRUSTED_PROXIES", "127.0.0.1/8,not-a-cidr")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid CIDR error")
 	}
 }

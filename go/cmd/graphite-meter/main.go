@@ -15,7 +15,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("configuration error: %v", err)
+	}
 
 	// Flags take final precedence over env/defaults.
 	flag.StringVar(&cfg.H1Addr, "addr", cfg.H1Addr, "HTTP/1.1 listen address")
