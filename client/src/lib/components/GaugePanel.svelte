@@ -62,6 +62,24 @@
     }
   });
 
+  // Completion must display the reducer's authoritative result, not freeze the
+  // last presentation-smoothed live sample.
+  $effect(() => {
+    if (store.phase !== "complete") return;
+    const metric = store.finalMetric;
+    if (!metric) return;
+    if (metric.kind === "latency") {
+      completedKind = "latency";
+      completedDisplay = { value: fmtMs(metric.ms), unit: "ms" };
+    } else {
+      completedKind = "speed";
+      completedDisplay = {
+        value: fmtSpeed(store.toUnit(metric.bytesPerSec)),
+        unit: store.unitLabel,
+      };
+    }
+  });
+
   const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
 
   // Latency uses a small fixed 1-2-5-ish ladder so the dial scale is legible and
