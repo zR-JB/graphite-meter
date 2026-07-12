@@ -96,16 +96,17 @@ export interface TickContext {
   realNow: number;
 }
 
-/** The handle a backend uses to push raw samples / emit events into the core. */
+/** The handle a backend uses to push observations / emit events into the core. */
 export interface CoreHost {
-  /** Push a measured throughput sample: direction, instantaneous bytes/sec,
-   *  bytes transferred, and the interval duration. Direction
+  /** Push one throughput observation. `liveBytesPerSec` is the backend's
+   *  presentation/stability signal; exact result accounting uses only
+   *  `bytesDelta / durationSec`. Direction
    *  travels WITH the sample (no phase-inference), so the bidirectional phase
    *  can carry concurrent down + up samples. The core stamps elapsed,
    *  accumulates it into the matching lane, and emits the throughput event. */
   ingestThroughput(
     dir: FlowDirection,
-    bytesPerSec: number,
+    liveBytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative?: boolean,
@@ -534,7 +535,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   /* ================= SAMPLE INGEST (CoreHost) ================= */
   ingestThroughput(
     dir: FlowDirection,
-    bytesPerSec: number,
+    liveBytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative = false,
@@ -561,13 +562,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const display = this.#emaStep(
       this.#tpEma,
       dir,
-      bytesPerSec,
+      liveBytesPerSec,
       THROUGHPUT_DISPLAY_TAU_MS,
     );
     const stable = this.#emaStep(
       this.#tpEmaStable,
       dir,
-      bytesPerSec,
+      liveBytesPerSec,
       THROUGHPUT_STABILITY_TAU_MS,
     );
     this.#accum.pushThroughput(
@@ -583,7 +584,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       if (now - this.#dbgTpLogAt[dir] >= 1000) {
         this.#dbgTpLogAt[dir] = now;
         dlog("core:throughput", `${dir} de-alias`, {
-          raw: fmtRate(bytesPerSec),
+          source: fmtRate(liveBytesPerSec),
           display: fmtRate(display),
           stable: fmtRate(stable),
           cumulative: fmtBytes(this.#bytesCumulative),

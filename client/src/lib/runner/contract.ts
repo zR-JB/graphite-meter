@@ -168,7 +168,7 @@ export interface RunnerConfig {
 /* ---------- Raw samples emitted DURING a run ---------- */
 export interface ThroughputSample {
   t: number; // ms since run start (monotonic)
-  bytesPerSec: number; // instantaneous bytes/sec (raw, browser-native; UI converts/labels)
+  bytesPerSec: number; // smoothed live rate; exact results use private byte/time observations
   bytesCumulative: number;
   dir: FlowDirection; // which way these bytes flowed (down in download, up in upload, either in bidirectional)
   // The phase that produced this sample, stamped at ingest. Travels WITH the
