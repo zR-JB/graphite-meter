@@ -23,6 +23,15 @@
         title: "Client",
         rows: [
           ["IP", i?.clientIp ?? "—"],
+          ["Address family", i ? `IPv${i.clientIpVersion}` : "—"],
+          [
+            "Address source",
+            i?.clientIpSource === "forwarded"
+              ? "Trusted proxy"
+              : i
+                ? "Socket peer"
+                : "—",
+          ],
           ["Version", BUILD.clientVersion],
         ] as [string, string][],
       },

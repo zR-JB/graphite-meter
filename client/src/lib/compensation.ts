@@ -86,6 +86,7 @@ export function estimateResultCompensation(
   config: OverheadCompensationConfig,
   detectedProtocol?: string,
   detectedSecure?: boolean,
+  detectedIPVersion?: 4 | 6,
 ): CompensationEstimate {
   return estimateLiveCompensation(
     result?.meanBytesPerSec ?? 0,
@@ -93,6 +94,7 @@ export function estimateResultCompensation(
     phase,
     detectedProtocol,
     detectedSecure,
+    detectedIPVersion,
   );
 }
 
@@ -102,6 +104,7 @@ export function estimateLiveCompensation(
   _phase: CompensationPhase,
   detectedProtocol?: string,
   detectedSecure?: boolean,
+  detectedIPVersion?: 4 | 6,
 ): CompensationEstimate {
   const secure =
     detectedSecure ??
@@ -116,6 +119,8 @@ export function estimateLiveCompensation(
   const raw = config.params;
   const p = {
     ...raw,
+    ipVersion:
+      raw.ipVersion === "auto" ? (detectedIPVersion ?? 4) : raw.ipVersion,
     mtuBytes: clamp(raw.mtuBytes, 576, 65_536),
     tcpOptionsMinBytes: clamp(raw.tcpOptionsMinBytes, 0, 40),
     tcpOptionsMaxBytes: clamp(raw.tcpOptionsMaxBytes, 0, 40),

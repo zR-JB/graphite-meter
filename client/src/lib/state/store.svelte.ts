@@ -97,7 +97,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     transport: "auto",
     params: {
       mtuBytes: 1500,
-      ipVersion: 4,
+      ipVersion: "auto",
       vlanTagged: false,
       tcpOptionsMinBytes: 0,
       tcpOptionsMaxBytes: 12,
@@ -356,6 +356,7 @@ class AppStore {
       this.phase === "upload" ? "upload" : "download",
       this.infra?.firstHopProtocol,
       this.infra?.firstHopSecure,
+      this.infra?.clientIpVersion,
     ),
   );
 
@@ -366,6 +367,7 @@ class AppStore {
       this.config.compensation,
       this.infra?.firstHopProtocol,
       this.infra?.firstHopSecure,
+      this.infra?.clientIpVersion,
     ),
   );
 
@@ -376,6 +378,7 @@ class AppStore {
       this.config.compensation,
       this.infra?.firstHopProtocol,
       this.infra?.firstHopSecure,
+      this.infra?.clientIpVersion,
     ),
   );
 
