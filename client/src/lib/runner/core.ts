@@ -42,8 +42,8 @@ const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs e
  * The backend SHOULD bracket dead air with explicit host.stall()/resume(), but
  * a push backend can also simply go silent on a drop. The watchdog is the
  * fallback: in a MEASURED phase, if no real sample has arrived for longer than
- * STALL_WATCHDOG_MS the core auto-stalls (freezing measured-time accrual); the
- * next real sample auto-resumes. MAX_STALL_MS bounds patience — a stall that
+ * STALL_WATCHDOG_MS the core auto-stalls; the next real byte sample resumes.
+ * MAX_STALL_MS bounds patience — a stall that
  * outlives it is escalated to a terminal connection-lost failure rather than
  * accruing dead air forever. Both are wall-clock, never measured-time. */
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
@@ -113,10 +113,8 @@ export interface CoreHost {
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
   /** Signal a NON-terminal link stall: the link went quiet and the backend is
-   *  hoping to reconnect. The core freezes measured-time accrual (so the phase
-   *  end recedes by the dead-air duration) and emits a `stall` event. No-op if
-   *  already stalled. Bracket with resume(); the run continues. Storing nothing
-   *  in the accumulator — dead air is never a sample (principle 1). */
+   *  hoping to reconnect. Elapsed time continues, but the phase cannot finalize
+   *  until delivery resumes or max-stall fails the run. */
   stall(info: StallInfo): void;
   /** Clear a stall: measured-time accrual resumes and a `resume` event fires.
    *  No-op if not stalled. (A real sample arriving in ingest* auto-resumes too.) */
@@ -218,12 +216,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #bytesCumulative = 0;
 
   // ---- measured test-time clock + early-finish glide ----
-  // The tick loop advances MEASURED TEST-TIME each tick. Unlike a plain
-  // wall-clock it accrues ONLY while `#measuring` — so a connection drop (dead
-  // air) does NOT count: the phase end recedes by the stall duration (a 5s drop
-  // on a 10s budget ⇒ 15s wall-clock). Segment lookup, progress, phase-end, and
-  // the glide all run off `#measuredElapsed`; the per-phase budgets are the
-  // segment durations from `schedule`. At rest accrual is 1:1 with wall-clock.
+  // The tick loop advances MEASURED TEST-TIME at wall rate. Connection stalls
+  // count toward effective throughput, but a phase cannot finalize until data
+  // resumes or the max-stall timeout fails the run.
   // When a measured phase becomes confidently stable an early-finish "glide" is
   // armed for that segment: measured-time is driven along an eased curve to the
   // phase's end over a short real-time window (adaptive.glideMs), so it crosses
@@ -237,8 +232,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #glideTargetMeasured = 0;
 
   // ---- measuring / stall gate — three unbraided quantities ----
-  // `#measuring` gates measured-time accrual; it flips false on stall (explicit
-  // host.stall or the watchdog) and true on resume (explicit or a real sample).
+  // `#measuring` gates adaptive glides and finalization; it flips false on stall
+  // and true on resume.
   // `#lastSampleWall` is the wall-clock of the last real sample, read by the
   // watchdog. `#stalledSinceWall` is when the current stall began (0 = not
   // stalled), read by the max-stall escalation. All wall-clock, never measured.
@@ -396,29 +391,24 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= MASTER TICK ================= */
   #tick() {
-    // Advance the MEASURED test-time clock. It accrues at the wall-rate ONLY
-    // while measuring; a stall freezes it (dead air must not count), so the
-    // phase end recedes by exactly the stall duration. While an early-finish
-    // glide is armed the position is then driven further along an eased curve
-    // toward the current phase's end.
+    // Advance measured time at wall rate so dead air remains in throughput.
     const now = performance.now();
     const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
-    if (this.#measuring) this.#measuredElapsed += dtWall;
+    this.#measuredElapsed += dtWall;
     // The glide also advances measured-time, so it too must freeze while
     // stalled — otherwise an armed glide would race the clock through dead air.
     if (this.#measuring && this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
     const elapsed = this.#measuredElapsed;
 
-    // Stall handling runs on WALL time so it ticks even with measured-time
-    // frozen. In a measured phase, prolonged silence trips the watchdog (an
-    // auto-stall); a stall outliving MAX_STALL_MS escalates to a terminal fail.
-    if (this.#updateStallState(now)) return; // a max-stall fail ended the run
-
-    if (elapsed >= this.#totalMs) {
+    if (elapsed >= this.#totalMs && this.#measuring) {
       this.#finish();
       return;
     }
+
+    // In a measured phase, prolonged silence trips the watchdog (an
+    // auto-stall); a stall outliving MAX_STALL_MS escalates to a terminal fail.
+    if (this.#updateStallState(now)) return; // a max-stall fail ended the run
 
     const seg = segmentAt(this.#segments, elapsed);
     if (!seg) return;
@@ -472,10 +462,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       }
     }
 
-    // Progress within the current phase (real coverage — never faked). Fraction
-    // and phaseElapsedMs are over MEASURED test-time, so both FREEZE while
-    // stalled (measuredElapsed is frozen) — the bar stops and the UI's
-    // budget − elapsed "time remaining" stops shrinking until resume.
+    // Progress within the current phase (real coverage — never faked).
     const phaseElapsedMs = elapsed - seg.start;
     const phaseBudgetMs = seg.end - seg.start;
     const frac = phaseElapsedMs / phaseBudgetMs;
@@ -561,8 +548,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // outside a transfer/bidi phase are ignored.
     if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
       return;
-    // A real byte sample proves delivery: refresh the watchdog + auto-resume.
-    this.#noteRealSample();
+    // Zero-byte samples retain time but cannot prove delivery or clear a stall.
+    if (bytesDelta > 0) this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
     // De-alias the rate TWICE from the same raw sample (see the two-tau rationale
     // above): the fast `display` rate every UI consumer reads, and the slow
@@ -704,7 +691,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
    *   • Watchdog: in a measured phase, > STALL_WATCHDOG_MS of silence while
    *     measuring → auto-stall (the backend went quiet without telling us).
    *   • Max-stall: stalled longer than MAX_STALL_MS → give up (connection-lost).
-   *  Both are wall-clock; measured-time stays frozen across the whole gap. */
+   *  Both are wall-clock; measured time continues across the gap. */
   #updateStallState(now: number): boolean {
     if (this.#measuring) {
       // Watchdog only inside a measured phase — warmup primes connections and

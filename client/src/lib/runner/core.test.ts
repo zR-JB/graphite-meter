@@ -276,10 +276,10 @@ test("warmup->measure seam: same stage, no onStageEnd between begin and measure"
 });
 
 // ---------------------------------------------------------------------------
-// Measured test-time clock: stall freeze / resume
+// Measured test-time clock: stalls count, but cannot finalize a phase
 // ---------------------------------------------------------------------------
 
-test("stall freezes the measured-time clock; resume continues it from where it froze", () => {
+test("stall counts toward the window but blocks finalization until resume", () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -296,23 +296,18 @@ test("stall freezes the measured-time clock; resume continues it from where it f
   core.stall({ reason: "connection-lost", detail: "test" });
   expect(events.some((e) => e.type === "stall")).toBe(true);
 
-  // Real time passes but measured-time must not move while stalled.
+  // Wall time continues through the stall.
   advance(500);
-  advance(200);
   last = progressEvents(events).at(-1)!;
-  expect(last.phaseElapsedMs).toBe(300);
+  expect(last.phaseElapsedMs).toBe(800);
   expect(last.measuring).toBe(false);
-  expect(core.phase).toBe("download"); // still frozen mid-phase
+  advance(200); // budget reached while stalled
+  expect(core.phase).toBe("download");
 
   core.resume();
   expect(events.some((e) => e.type === "resume")).toBe(true);
 
-  advance(200);
-  last = progressEvents(events).at(-1)!;
-  expect(last.phaseElapsedMs).toBe(500); // 300 + 200, the stall never counted
-  expect(last.measuring).toBe(true);
-
-  advance(500); // reach the 1000ms budget
+  advance(20);
   expect(core.phase).toBe("complete");
 });
 
@@ -335,11 +330,11 @@ test("watchdog auto-stalls a measured phase after prolonged sample silence", () 
     expect(stall.info.reason).toBe("connection-lost");
   }
 
-  // Frozen: further ticks must not advance measured time without a real sample.
+  // The effective-throughput clock continues through the stalled interval.
   const before = progressEvents(events).at(-1)!.phaseElapsedMs;
   advance(300);
   const after = progressEvents(events).at(-1)!.phaseElapsedMs;
-  expect(after).toBe(before);
+  expect(after).toBeGreaterThan(before);
 });
 
 test("a real sample arriving mid-stall auto-resumes", () => {
@@ -354,6 +349,8 @@ test("a real sample arriving mid-stall auto-resumes", () => {
   core.stall({ reason: "connection-lost" });
   expect(events.filter((e) => e.type === "stall").length).toBe(1);
 
+  core.ingestThroughput("down", 0, 0, 0.1);
+  expect(events.some((e) => e.type === "resume")).toBe(false);
   core.ingestThroughput("down", 1000, 100, 0.1);
   expect(events.some((e) => e.type === "resume")).toBe(true);
 });
@@ -509,6 +506,8 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   // Finish the run and verify the headline uses exact bytes / represented time,
   // while the slow EMA remains stability-only.
   advance(1_000_000);
+  core.resume();
+  advance(20);
   const complete = events.find((e) => e.type === "complete");
   expect(complete).toBeDefined();
   if (complete?.type === "complete") {

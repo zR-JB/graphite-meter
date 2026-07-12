@@ -1258,8 +1258,7 @@ export class RealBackend implements RunnerBackend {
    *  upload byte source: `bytes`/`complete` feed the live curve AND the totals-based
    *  headline. Because there is no client-side fallback, the socket dropping is the
    *  only thing that can leave the up stage without samples — so the worker's
-   *  `stall`/`resume` (bracketing its reconnect) are forwarded to the core to freeze
-   *  measured-time across the gap. This is the watchdog story post-onprogress: while
+   *  `stall`/`resume` bracket its reconnect. While
    *  the socket is up, the 100 ms frames are the heartbeat (each advancing frame →
    *  ingestThroughput → noteRealSample); while it is down, measured-time is frozen,
    *  and on reconnect the cumulative count + the server's elapsed-time denominator
@@ -1272,13 +1271,13 @@ export class RealBackend implements RunnerBackend {
     if (!this.#transferActive || !state) return; // late message after teardown
     if (msg.type === "stall") {
       // The progress socket dropped: no server bytes until it reconnects. Freeze
-      // measured-time so the gap doesn't count against the rate (rather than wait
-      // for the core's silence watchdog to notice ~1.5 s later).
+      // surface recovery immediately instead of waiting for the silence watchdog.
       if (state.measuring) this.#setLaneStalled("up", true, msg.detail);
       return;
     }
     if (msg.type === "resume") {
-      this.#setLaneStalled("up", false);
+      // Reopening the control socket is not proof that upload delivery resumed.
+      // The next advancing server byte snapshot clears the stall.
       return;
     }
     if (msg.type !== "bytes" && msg.type !== "complete") return; // open: nothing to do
