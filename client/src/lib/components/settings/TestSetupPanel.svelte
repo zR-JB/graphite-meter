@@ -5,7 +5,7 @@
   import type {
     RunnerConfig,
     ConnectionProfile,
-    CompensationTransport,
+    CompensationTransportSetting,
   } from "../../runner/contract";
   import { applyConnectionProfile } from "../../compensation";
   import { tooltip, JARGON } from "../../actions/tooltip";
@@ -105,100 +105,65 @@
     store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(n);
   }
 
-  /* ---------- Connection profile + transport presets ----------
-   * Picking either seeds the factor/param defaults via applyConnectionProfile;
-   * the raw knobs stay editable in the Advanced disclosure below. */
+  /* Physical-path presets seed facts the browser cannot detect. */
   const PROFILE_OPTIONS: { value: ConnectionProfile; label: string }[] = [
     { value: "lan", label: "Local Ethernet (LAN)" },
     { value: "loopback", label: "Loopback / same host" },
-    { value: "tunnel", label: "VPN tunnel (WireGuard/Tailscale)" },
-    { value: "internet", label: "Internet" },
+    { value: "tunnel", label: "VPN / UDP tunnel" },
+    { value: "custom", label: "Custom" },
   ];
-  const TRANSPORT_OPTIONS: { value: CompensationTransport; label: string }[] = [
+  const TRANSPORT_OPTIONS: {
+    value: CompensationTransportSetting;
+    label: string;
+  }[] = [
+    { value: "auto", label: "Automatic (browser detected)" },
     { value: "http1-clear", label: "HTTP/1.1 (cleartext)" },
     { value: "https-tls", label: "HTTPS (TLS)" },
     { value: "http2", label: "HTTP/2 (TLS)" },
     { value: "http3-quic", label: "HTTP/3 (QUIC)" },
   ];
-  /** Re-seed factor + param defaults whenever the profile or transport changes. */
   function reseedProfile() {
-    const preset = applyConnectionProfile(
-      store.config.compensation.profile,
-      store.config.compensation.transport,
-    );
-    Object.assign(store.config.compensation.factors, preset.factors);
+    const preset = applyConnectionProfile(store.config.compensation.profile);
     Object.assign(store.config.compensation.params, preset.params);
   }
-
-  /* ---------- Compensation factor groups (de-magicked labels) ---------- */
-  type FactorKey = keyof RunnerConfig["compensation"]["factors"];
-  const COMP_GROUPS: {
-    label: string;
-    tip: string;
-    toggles: { key: FactorKey; label: string }[];
-  }[] = [
-    {
-      label: "Protocol bytes",
-      tip: JARGON.compProtocol,
-      toggles: [
-        { key: "ethernetFraming", label: "Ethernet / IP / transport" },
-        { key: "encapsulation", label: "VPN tunnel encapsulation" },
-        { key: "tlsRecords", label: "TLS records" },
-        { key: "applicationFraming", label: "HTTP / WS / QUIC framing" },
-      ],
-    },
-    {
-      label: "Path behavior",
-      tip: JARGON.compPath,
-      toggles: [
-        { key: "reversePathControl", label: "ACK / control traffic" },
-        { key: "lossRetransmission", label: "Loss / retransmission" },
-      ],
-    },
-    {
-      label: "Measurement model",
-      tip: JARGON.compModel,
-      toggles: [
-        { key: "receiverBias", label: "Browser receive cost (download)" },
-        { key: "steadyStateRamp", label: "Steady-state ramp" },
-        { key: "browserRuntime", label: "Browser runtime tax" },
-      ],
-    },
-  ];
 
   /* ---------- Compensation numeric params (Advanced) ---------- */
   const COMP_NUMS = [
     { key: "mtuBytes", label: "MTU bytes", min: 576, max: 65536, step: 1 },
     {
-      key: "tcpOptionsBytes",
-      label: "TCP options B",
+      key: "tcpOptionsMinBytes",
+      label: "TCP options min B",
+      min: 0,
+      max: 40,
+      step: 4,
+    },
+    {
+      key: "tcpOptionsMaxBytes",
+      label: "TCP options max B",
       min: 0,
       max: 40,
       step: 4,
     },
     {
       key: "encapsulationBytes",
-      label: "Encapsulation B",
+      label: "Tunnel overhead B",
       min: 0,
-      max: 128,
+      max: 256,
       step: 1,
     },
     {
-      key: "framePayloadBytes",
-      label: "Frame payload B",
-      min: 256,
-      max: 65536,
-      step: 256,
-    },
-    { key: "tlsRecordBytes", label: "TLS record B", min: 0, max: 64, step: 1 },
-    { key: "aeadTagBytes", label: "AEAD tag B", min: 0, max: 255, step: 1 },
-    { key: "quicConnIdBytes", label: "QUIC CID B", min: 0, max: 20, step: 1 },
-    {
-      key: "maxLossRatio",
-      label: "Max loss ratio",
+      key: "quicConnIdMinBytes",
+      label: "QUIC CID min B",
       min: 0,
-      max: 1,
-      step: 0.01,
+      max: 20,
+      step: 1,
+    },
+    {
+      key: "quicConnIdMaxBytes",
+      label: "QUIC CID max B",
+      min: 0,
+      max: 20,
+      step: 1,
     },
   ] as const;
 </script>
@@ -458,24 +423,17 @@
       tooltip={JARGON.wireRate}
     />
     <p class="hint">
-      Estimates the real wire-rate under measured protocol overhead.
+      Forward-direction Ethernet estimate from protocol bytes only.
     </p>
 
     <details class="advanced top-level">
       <summary>Customize the compensation model</summary>
       <div class="disclosure-body">
-        <Switch
-          disabled={running}
-          bind:checked={store.config.compensation.enabled}
-          label="Enable overhead compensation model"
-          tooltip={JARGON.overheadCompensation}
-        />
-        <!-- Connection profile + transport presets: seed the factors/params below. -->
         <div class="two">
           <label>
             <span use:tooltip={JARGON.compProfile}>Connection profile</span>
             <select
-              disabled={running || !store.config.compensation.enabled}
+              disabled={running}
               bind:value={store.config.compensation.profile}
               onchange={reseedProfile}
             >
@@ -489,9 +447,8 @@
               >Transport &amp; security</span
             >
             <select
-              disabled={running || !store.config.compensation.enabled}
+              disabled={running}
               bind:value={store.config.compensation.transport}
-              onchange={reseedProfile}
             >
               {#each TRANSPORT_OPTIONS as o (o.value)}
                 <option value={o.value}>{o.label}</option>
@@ -499,25 +456,15 @@
             </select>
           </label>
         </div>
-        <div class="toggle-groups">
-          {#each COMP_GROUPS as g (g.label)}
-            <div class="toggle-group">
-              <strong use:tooltip={g.tip}>{g.label}</strong>
-              {#each g.toggles as t (t.key)}
-                <Switch
-                  disabled={running || !store.config.compensation.enabled}
-                  bind:checked={store.config.compensation.factors[t.key]}
-                  label={t.label}
-                />
-              {/each}
-            </div>
-          {/each}
-        </div>
+        <p class="hint">
+          Detected first hop: {store.infra?.firstHopProtocol ??
+            "scheme fallback"}. An override applies only when selected above.
+        </p>
         <details class="advanced">
           <summary>Advanced — raw byte accounting</summary>
           <p class="hint">
-            Defaults come from the profile/transport above — tweak only for a
-            nonstandard MTU or tunnel.
+            The browser cannot inspect MTU, TCP options, VLANs, or tunnel
+            headers. These bounds define the displayed estimate range.
           </p>
           <div class="two">
             <label>
@@ -693,29 +640,6 @@
   /* Bare span used to make a single grid child span both .two columns. */
   .spanned {
     grid-column: 1 / -1;
-  }
-
-  .toggle-groups {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 10px;
-  }
-  .toggle-group {
-    display: grid;
-    align-content: start;
-    gap: 8px;
-    min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-1);
-    padding: 10px;
-  }
-  .toggle-group strong {
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
   }
 
   .hint {

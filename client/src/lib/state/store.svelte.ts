@@ -93,31 +93,17 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
   compensation: {
-    enabled: true,
     profile: "lan",
-    transport: "http1-clear",
-    factors: {
-      ethernetFraming: true,
-      encapsulation: false,
-      tlsRecords: false,
-      applicationFraming: false,
-      reversePathControl: true,
-      lossRetransmission: true,
-      receiverBias: false,
-      steadyStateRamp: false,
-      browserRuntime: true,
-    },
+    transport: "auto",
     params: {
       mtuBytes: 1500,
       ipVersion: 4,
       vlanTagged: false,
-      tcpOptionsBytes: 12,
-      encapsulationBytes: 60,
-      framePayloadBytes: 16384,
-      tlsRecordBytes: 5,
-      aeadTagBytes: 16,
-      quicConnIdBytes: 8,
-      maxLossRatio: 0.12,
+      tcpOptionsMinBytes: 0,
+      tcpOptionsMaxBytes: 12,
+      encapsulationBytes: 0,
+      quicConnIdMinBytes: 0,
+      quicConnIdMaxBytes: 20,
     },
   },
   adaptive: {
@@ -368,6 +354,8 @@ class AppStore {
       this.liveTransferBytesPerSec,
       this.config.compensation,
       this.phase === "upload" ? "upload" : "download",
+      this.infra?.firstHopProtocol,
+      this.infra?.firstHopSecure,
     ),
   );
 
@@ -376,6 +364,8 @@ class AppStore {
       this.stageResults.download,
       "download",
       this.config.compensation,
+      this.infra?.firstHopProtocol,
+      this.infra?.firstHopSecure,
     ),
   );
 
@@ -384,6 +374,8 @@ class AppStore {
       this.stageResults.upload,
       "upload",
       this.config.compensation,
+      this.infra?.firstHopProtocol,
+      this.infra?.firstHopSecure,
     ),
   );
 

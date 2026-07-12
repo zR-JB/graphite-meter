@@ -18,31 +18,17 @@ const FAKE_CONFIG: RunnerConfig = {
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
   compensation: {
-    enabled: false,
     profile: "lan",
-    transport: "http1-clear",
-    factors: {
-      ethernetFraming: false,
-      encapsulation: false,
-      tlsRecords: false,
-      applicationFraming: false,
-      reversePathControl: false,
-      lossRetransmission: false,
-      receiverBias: false,
-      steadyStateRamp: false,
-      browserRuntime: false,
-    },
+    transport: "auto",
     params: {
       mtuBytes: 1500,
       ipVersion: 4,
       vlanTagged: false,
-      tcpOptionsBytes: 12,
-      encapsulationBytes: 60,
-      framePayloadBytes: 16384,
-      tlsRecordBytes: 5,
-      aeadTagBytes: 16,
-      quicConnIdBytes: 8,
-      maxLossRatio: 0.12,
+      tcpOptionsMinBytes: 0,
+      tcpOptionsMaxBytes: 12,
+      encapsulationBytes: 0,
+      quicConnIdMinBytes: 0,
+      quicConnIdMaxBytes: 20,
     },
   },
   adaptive: {
@@ -126,6 +112,23 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   expect(
     (result.config as unknown as Record<string, unknown>).bogus,
   ).toBeUndefined();
+});
+
+test("obsolete compensation presets and factors cannot survive hydration", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: {
+        compensation: {
+          profile: "internet",
+          factors: { browserRuntime: true, lossRetransmission: true },
+        },
+      },
+    }),
+  );
+  const compensation = loadPersisted().config.compensation;
+  expect(compensation.profile).toBe("lan");
+  expect("factors" in compensation).toBe(false);
 });
 
 test("savePersisted round-trips through loadPersisted", () => {

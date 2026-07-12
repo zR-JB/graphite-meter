@@ -55,50 +55,34 @@ export type ConnectivityState =
   | "offline";
 
 /* ---------- Overhead compensation ---------- */
-/** Estimates true wire-rate from measured browser throughput. Each factor is
- *  independently toggleable; the numeric params feed the protocol accounting.
- *  Currently inert; `enabled: false` (or all factors off) yields a 1.0 multiplier. */
+/** Estimates forward-direction physical link occupancy from application bytes. */
 /** Path the transfer takes — picks which overheads physically apply. Driven by
  *  the UI "Connection profile" preset; loopback has no link layer, a tunnel adds
  *  outer encapsulation, etc. (see applyConnectionProfile in compensation.ts). */
-export type ConnectionProfile = "lan" | "loopback" | "tunnel" | "internet";
+export type ConnectionProfile = "lan" | "loopback" | "tunnel" | "custom";
 
-/** Wire transport + security — gates the TLS / HTTP-framing / QUIC byte math.
- *  Only `http1-clear` runs today; the rest are config seams the estimator already
- *  models so the TLS/HTTP-2/HTTP-3 stage is a selector flip, not a rewrite. */
+/** Browser-facing wire transport, detected from Resource Timing or overridden. */
 export type CompensationTransport =
   | "http1-clear" // HTTP/1.1, no TLS
   | "https-tls" // HTTP/1.1 over TLS
   | "http2" // HTTP/2 over TLS (DATA framing)
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
 
+export type CompensationTransportSetting = "auto" | CompensationTransport;
+
 export interface OverheadCompensationConfig {
-  enabled: boolean;
-  /** High-level presets that seed factors + params; raw knobs remain editable. */
+  /** Physical first-hop preset. The browser-facing HTTP transport is detected. */
   profile: ConnectionProfile;
-  transport: CompensationTransport;
-  factors: {
-    ethernetFraming: boolean; // IP + L4 + Ethernet preamble/FCS/VLAN
-    encapsulation: boolean; // VPN-tunnel outer header (WireGuard/Tailscale/…)
-    tlsRecords: boolean; // TLS record header + AEAD tag (TCP/TLS)
-    applicationFraming: boolean; // HTTP/2 DATA, HTTP/3 QUIC, WS masks
-    reversePathControl: boolean; // TCP ACKs / QUIC control traffic
-    lossRetransmission: boolean; // retransmit tax (capped by maxLossRatio)
-    receiverBias: boolean; // download-only browser receive-cost correction
-    steadyStateRamp: boolean; // lift toward late-test plateau
-    browserRuntime: boolean; // GC/scheduling/render variance tax
-  };
+  transport: CompensationTransportSetting;
   params: {
-    mtuBytes: number; // path MTU (1500 typical; 1420 on a tunnel)
-    ipVersion: 4 | 6; // IP header size + tunnel encap default (60 v4 / 80 v6)
+    mtuBytes: number;
+    ipVersion: 4 | 6;
     vlanTagged: boolean; // 802.1Q tag adds 4B per frame
-    tcpOptionsBytes: number; // timestamps/SACK (~12)
-    encapsulationBytes: number; // VPN outer header per packet (~60 WireGuard v4)
-    framePayloadBytes: number; // HTTP/2 DATA frame payload window
-    tlsRecordBytes: number; // TLS record header (5)
-    aeadTagBytes: number; // AEAD auth tag (16)
-    quicConnIdBytes: number; // QUIC connection-id length (8)
-    maxLossRatio: number; // cap on the loss/retransmission factor (0–1)
+    tcpOptionsMinBytes: number;
+    tcpOptionsMaxBytes: number;
+    encapsulationBytes: number;
+    quicConnIdMinBytes: number;
+    quicConnIdMaxBytes: number;
   };
 }
 
@@ -222,9 +206,7 @@ export interface ThroughputResult {
   method: ResultMethod;
   stabilityScore: number; // 0–1 stability at the moment the phase ended
   band: StabilityBand;
-  /** Under-load packet-loss % observed during transfer phases (from the loaded
-   *  pings). Feeds the loss/retransmission compensation factor; 0 when no loaded
-   *  pings ran (latency fully off). */
+  /** Under-load ping timeout percentage; a quality signal, not TCP packet loss. */
   packetLossPct: number;
   /** True when bytes and time came from the server upload receiver. */
   serverAuthoritative?: boolean;
@@ -370,6 +352,9 @@ export interface InfraInfo {
   preTestPingMs: number;
   engineVersion: string;
   protocolNegotiated: string;
+  /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
+  firstHopProtocol?: string;
+  firstHopSecure?: boolean;
 }
 
 /* ---------- The event union the UI listens to ---------- */

@@ -57,15 +57,15 @@ in Nagle's buffer waiting to coalesce.
 
 ### Routes
 
-| Path | Method | Transport | Purpose |
-| --- | --- | --- | --- |
-| `/preflight` | GET | HTTP/1.1, JSON | Server identity, negotiated protocol, and a `capabilities` block (advertised origins/transports/endpoint paths) the client negotiates against instead of hardcoding. |
-| `/download` | GET | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request. |
-| `/upload/session` | POST | HTTP/1.1, JSON | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket. |
-| `/upload` | POST | HTTP/1.1, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below). |
-| `/ws/ping` | WS upgrade | WebSocket | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side. |
-| `/ws/upload` | WS upgrade | WebSocket | Pushes the server-measured cumulative byte count for a `?id=` (`BYTES_RECEIVED`, then one final `UPLOAD_COMPLETE`) so upload throughput is judged by what the server actually received, not what the browser thinks it sent. |
-| `/` (anything unmatched) | GET | HTTP/1.1 | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it). |
+| Path                     | Method     | Transport               | Purpose                                                                                                                                                                                                                      |
+| ------------------------ | ---------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/preflight`             | GET        | HTTP/1.1, JSON          | Server identity, negotiated protocol, and a `capabilities` block (advertised origins/transports/endpoint paths) the client negotiates against instead of hardcoding.                                                         |
+| `/download`              | GET        | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
+| `/upload/session`        | POST       | HTTP/1.1, JSON          | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket.                                                                  |
+| `/upload`                | POST       | HTTP/1.1, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
+| `/ws/ping`               | WS upgrade | WebSocket               | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                                                           |
+| `/ws/upload`             | WS upgrade | WebSocket               | Pushes the server-measured cumulative byte count for a `?id=` (`BYTES_RECEIVED`, then one final `UPLOAD_COMPLETE`) so upload throughput is judged by what the server actually received, not what the browser thinks it sent. |
+| `/` (anything unmatched) | GET        | HTTP/1.1                | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
 The `/preflight` response also advertises `/wt/ping`, `/wt/download`, `/wt/upload` as endpoint
 paths and a `webtransport` capability flag — those are placeholders for the not-yet-implemented
@@ -92,17 +92,17 @@ opcode or malformed frame gets a non-fatal `ERR,<code>,<text>` reply; the bus is
 for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpus:
 `api/wire.testvectors.txt` (every language's encoder/decoder must match it).
 
-| Opcode | Direction | Shape | Meaning |
-| --- | --- | --- | --- |
-| `HI` | C→S | `HI,<proto>` | Optional hello (`proto` ∈ `ws`/`wt`); lets the bus be primed during warmup. |
-| `READY` | S→C | `READY` | Bus is up. |
-| `PING` | C→S | `PING,<id>` | Latency probe; `id` is a client-owned monotonic uint32. |
-| `PONG` | S→C | `PONG,<id>;TIME,<nanos>` | Echo; `id` verbatim, server clock is diagnostics-only. |
-| `SIZE` | C→S | `SIZE,<bytes>` | WebTransport download-size request — reserved, no consumer yet. |
-| `BYTES_RECEIVED` | S→C | `BYTES_RECEIVED,<n>;TIME,<nanos>` | Running server-measured upload total + elapsed clock. |
-| `UPLOAD_COMPLETE` | S→C | `UPLOAD_COMPLETE,<n>;TIME,<nanos>` | Final upload total + elapsed clock, sent exactly once. |
-| `BYE` | C→S | `BYE` | Graceful bus close. |
-| `ERR` | S→C | `ERR,<code>,<text>` | Non-fatal protocol error. |
+| Opcode            | Direction | Shape                              | Meaning                                                                     |
+| ----------------- | --------- | ---------------------------------- | --------------------------------------------------------------------------- |
+| `HI`              | C→S       | `HI,<proto>`                       | Optional hello (`proto` ∈ `ws`/`wt`); lets the bus be primed during warmup. |
+| `READY`           | S→C       | `READY`                            | Bus is up.                                                                  |
+| `PING`            | C→S       | `PING,<id>`                        | Latency probe; `id` is a client-owned monotonic uint32.                     |
+| `PONG`            | S→C       | `PONG,<id>;TIME,<nanos>`           | Echo; `id` verbatim, server clock is diagnostics-only.                      |
+| `SIZE`            | C→S       | `SIZE,<bytes>`                     | WebTransport download-size request — reserved, no consumer yet.             |
+| `BYTES_RECEIVED`  | S→C       | `BYTES_RECEIVED,<n>;TIME,<nanos>`  | Running server-measured upload total + elapsed clock.                       |
+| `UPLOAD_COMPLETE` | S→C       | `UPLOAD_COMPLETE,<n>;TIME,<nanos>` | Final upload total + elapsed clock, sent exactly once.                      |
+| `BYE`             | C→S       | `BYE`                              | Graceful bus close.                                                         |
+| `ERR`             | S→C       | `ERR,<code>,<text>`                | Non-fatal protocol error.                                                   |
 
 ### Meter (`internal/endpoint/meter.go`)
 
@@ -180,7 +180,7 @@ exact byte totals a run reports never drift from what smoothing displays.
 
 A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage lifecycle
 (`onStageBegin` → prime/open connections, `onStageMeasure` → start pushing real samples on the
-*same* primed connection, `onStageEnd`). Two backends exist:
+_same_ primed connection, `onStageEnd`). Two backends exist:
 
 - **`RealBackend`** (`src/lib/runner/RealRunner.ts`) — the production engine, always used in a
   release build. Negotiates a transport per stage (today this always resolves to `fetch`
@@ -223,24 +223,32 @@ builds. A production build has only Setup, so no tab bar is rendered at all.
 
 **Setup — Run tier**
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| Duration preset | Medium | Short / Medium / Long / Custom; each scales warmup + per-stage duration together. |
-| Bidirectional | off | Plus its own duration field (default 10s). |
-| Auto throughput ceiling | on | When off, a manual max-scale value can be set. |
-| Rate unit | Bits | Bits or Bytes. |
-| Prefix scale | Decimal | Decimal (SI) or Binary (IEC). |
+| Setting                 | Default | Notes                                                                             |
+| ----------------------- | ------- | --------------------------------------------------------------------------------- |
+| Duration preset         | Medium  | Short / Medium / Long / Custom; each scales warmup + per-stage duration together. |
+| Bidirectional           | off     | Plus its own duration field (default 10s).                                        |
+| Auto throughput ceiling | on      | When off, a manual max-scale value can be set.                                    |
+| Rate unit               | Bits    | Bits or Bytes.                                                                    |
+| Prefix scale            | Decimal | Decimal (SI) or Binary (IEC).                                                     |
 
 **Setup — Tuning tier**
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| Adaptive early finish | on | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms). |
-| Chunked download (experimental) | off | See Experimental features. |
-| Ping velocity | Medium | Instant / Medium / Slow pacer. |
-| Max parallel streams | 6 | Ceiling only — actual lane count is auto-derived. |
-| Skip loaded latency when latency stage is off | on | |
-| Include wire-rate estimates in result cards | off | Opt-in overhead-compensation display, expandable into a nested model: connection profile (LAN / Loopback / VPN tunnel / Internet), a transport & security preset (HTTP/1.1 cleartext / HTTPS / HTTP/2 / HTTP/3 — see Roadmap), per-layer framing toggles (Ethernet/IP/transport, VPN encapsulation, TLS records, HTTP/WS/QUIC framing), path-behavior toggles (ACK/control traffic, loss/retransmission), and an advanced raw byte-accounting section (MTU, TCP options, TLS record size, AEAD tag size, QUIC connection-ID length, max loss ratio, VLAN tagging). |
+| Setting                                       | Default | Notes                                                                                                                                                                                                                                          |
+| --------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adaptive early finish                         | on      | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                                                                                                                                                                   |
+| Chunked download (experimental)               | off     | See Experimental features.                                                                                                                                                                                                                     |
+| Ping velocity                                 | Medium  | Instant / Medium / Slow pacer.                                                                                                                                                                                                                 |
+| Max parallel streams                          | 6       | Ceiling only — actual lane count is auto-derived.                                                                                                                                                                                              |
+| Skip loaded latency when latency stage is off | on      |                                                                                                                                                                                                                                                |
+| Include wire-rate estimates in result cards   | off     | Estimates forward-direction physical Ethernet occupancy. Resource Timing detects the browser-facing HTTP protocol; expert settings cover MTU, IP version, TCP-option range, VLAN, QUIC connection-ID range, and explicit tunnel encapsulation. |
+
+Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
+`PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while `/preflight`'s
+`protocolNegotiated` describes proxy→Go; the two are retained separately. The model composes
+application framing, TLS/QUIC protection, packetization, optional tunnel encapsulation, and
+Ethernet framing once. Reverse ACKs belong to the other full-duplex direction, while browser CPU,
+stability, ramp-up, ping timeouts, and proxy buffering describe achieved goodput or measurement
+quality rather than invisible protocol bytes, so none of them increases the estimate.
 
 **Developer tab** (only in dev-tooling builds) — a debug-logging switch (verbose per-worker
 console diagnostics, meant to pair with the server's `-verbose`/`GM_VERBOSE` logging) and, when
@@ -260,13 +268,13 @@ internally for transport negotiation but not yet shown as a full matrix in the U
 
 ### Web Workers
 
-| Worker | Role |
-| --- | --- |
-| `download-worker.ts` | One per download lane; streams and discards bytes, reports periodic byte/time deltas. |
-| `upload-worker.ts` | One per upload lane; builds and POSTs the incompressible payload, reports only liveness. |
-| `upload-progress-worker.ts` | The authoritative upload byte/rate source, over its own `/ws/upload` connection. |
-| `ping-worker.ts` | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread. |
-| `autosize.ts` | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by both the upload worker and the experimental chunked-download path. |
+| Worker                      | Role                                                                                                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                |
+| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
+| `upload-progress-worker.ts` | The authoritative upload byte/rate source, over its own `/ws/upload` connection.                                                                     |
+| `ping-worker.ts`            | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread.                                                               |
+| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by both the upload worker and the experimental chunked-download path. |
 
 ### Testing
 
@@ -326,7 +334,7 @@ implemented yet unless a section above says otherwise.
    browser client is planned to expose an explicit choice of which HTTP version to measure over —
    HTTP/1.1, HTTP/2, or HTTP/3 — instead of only negotiating it implicitly from what the server
    advertises. When HTTP/3 is selected, latency and throughput are planned to be configurable
-   *separately*, each independently able to choose WebTransport unreliable datagrams (for
+   _separately_, each independently able to choose WebTransport unreliable datagrams (for
    loss-tolerant, minimal-overhead probing) instead of the existing reliable channel (WebSocket for
    latency, fetch streams for throughput). Two seams for this already exist: the Settings
    "Transport & security" preset (HTTP/1.1 / HTTPS / HTTP/2 / HTTP/3), which today only feeds the

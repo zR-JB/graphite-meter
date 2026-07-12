@@ -20,6 +20,9 @@
       return {
         measuredBytesPerSec: comp.measuredBytesPerSec,
         estimatedBytesPerSec: comp.estimatedBytesPerSec,
+        lowerBytesPerSec: comp.lowerBytesPerSec,
+        upperBytesPerSec: comp.upperBytesPerSec,
+        available: comp.available,
         multiplier: comp.totalMultiplier,
         band: st?.band ?? "low",
         score: st?.score ?? 0,
@@ -35,6 +38,9 @@
     return {
       measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: comp.estimatedBytesPerSec,
+      lowerBytesPerSec: comp.lowerBytesPerSec,
+      upperBytesPerSec: comp.upperBytesPerSec,
+      available: comp.available,
       multiplier: comp.totalMultiplier,
       band: res?.band ?? st?.band ?? "low",
       score: res?.stabilityScore ?? st?.score ?? 0,
@@ -121,7 +127,7 @@
   const showWire = $derived(store.showWireEstimates);
 
   type CardWire =
-    | { kind: "lift"; num: string; pct: string }
+    | { kind: "lift"; num: string; pct: string; range: string }
     | { kind: "flat"; text: string }
     | null;
   interface CardVM {
@@ -145,13 +151,19 @@
     has: boolean;
     multiplier: number;
     estimatedBytesPerSec: number;
+    lowerBytesPerSec: number;
+    upperBytesPerSec: number;
+    available: boolean;
   }): CardWire {
     if (!showWire) return null;
+    if (m.has && !m.available)
+      return { kind: "flat", text: "loopback — no physical wire" };
     if (m.has && lifted(m.multiplier))
       return {
         kind: "lift",
         num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
         pct: pctLift(m.multiplier),
+        range: `${fmtSpeed(store.toUnit(m.lowerBytesPerSec))}–${fmtSpeed(store.toUnit(m.upperBytesPerSec))}`,
       };
     return { kind: "flat", text: m.has ? "no overhead applied" : "" };
   }
@@ -263,6 +275,9 @@
           <span class="est-tag" use:tooltip={JARGON.wireRate}
             >wire {c.wire.pct}</span
           >
+          {#if c.wire.range}
+            <span class="est-flat">({c.wire.range})</span>
+          {/if}
         {:else}
           <span class="est-flat">{c.wire.text}</span>
         {/if}
