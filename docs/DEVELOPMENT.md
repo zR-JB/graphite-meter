@@ -40,26 +40,26 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 
 ## Just command reference
 
-| Recipe | What it does |
-| --- | --- |
-| `just` (no args) | Lists every recipe. |
-| `just dev` | Builds + embeds the dev-profile client, then `go run`s the server on `:8765`. |
-| `just prod` | Builds + embeds the prod-profile client, then `go run`s the version-stamped server on `:8765`. |
-| `just client-build-dev` | `bun install` + `bun run build` -> `client/dist`, dev profile (Vite's own defaults: dummy engine + dev tools included). |
-| `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below). |
-| `just client-watch` | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend. |
-| `just client-check` | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`). |
-| `just client-test` | `bun test` — pure-`.ts`-logic unit tests (no component rendering). |
-| `just client-ci` | Runs the fast client CI gates: Prettier check, semantic type check, and Bun tests. |
-| `just client-gen-types` | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth). |
-| `just server-build-dev` | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
-| `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy. |
-| `just server-check` | Checks Go formatting and `go vet ./...`. |
-| `just server-test` | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test. |
-| `just ci` | Runs the main local CI gates: `client-ci`, `server-check`, and `server-test`. |
-| `just goclient-build` | Builds only `go/graphite-meter-client` — does not touch the Svelte client. |
-| `just goclient-run` | `go run`s the native TUI client against a running server. |
-| `just container-build` | `docker build -f container/Dockerfile -t graphite-meter:latest .` |
+| Recipe                   | What it does                                                                                                                                                     |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just` (no args)         | Lists every recipe.                                                                                                                                              |
+| `just dev`               | Builds + embeds the dev-profile client, then `go run`s the server on `:8765`.                                                                                    |
+| `just prod`              | Builds + embeds the prod-profile client, then `go run`s the version-stamped server on `:8765`.                                                                   |
+| `just client-build-dev`  | `bun install` + `bun run build` -> `client/dist`, dev profile (Vite's own defaults: dummy engine + dev tools included).                                          |
+| `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below).                                             |
+| `just client-watch`      | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend.                                                                      |
+| `just client-check`      | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`).                                                                   |
+| `just client-test`       | `bun test` — pure-`.ts`-logic unit tests (no component rendering).                                                                                               |
+| `just client-ci`         | Runs the fast client CI gates: Prettier check, semantic type check, and Bun tests.                                                                               |
+| `just client-gen-types`  | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth).                                              |
+| `just server-build-dev`  | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
+| `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy.                                                        |
+| `just server-check`      | Checks Go formatting and `go vet ./...`.                                                                                                                         |
+| `just server-test`       | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test.                                                                           |
+| `just ci`                | Runs the main local CI gates: `client-ci`, `server-check`, and `server-test`.                                                                                    |
+| `just goclient-build`    | Builds only `go/graphite-meter-client` — does not touch the Svelte client.                                                                                       |
+| `just goclient-run`      | `go run`s the native TUI client against a running server.                                                                                                        |
+| `just container-build`   | `docker build -f container/Dockerfile -t graphite-meter:latest .`                                                                                                |
 
 `just prod` and `just client-build-prod` accept the `GM_CLIENT_*` knobs inline to produce a
 configurable build instead of the real-only default, e.g.:
@@ -86,12 +86,12 @@ the bundler: Bun's bundler transpiles TypeScript, but semantic type checking is 
 `build:bundle`); CI smoke and release image builds pass `GM_CLIENT_VALIDATE=0` to the Dockerfile
 because the same commit has already passed the client check/test job.
 
-| Variable | Values | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does |
-| --- | --- | --- | --- | --- |
-| `GM_CLIENT_ENGINE` | `real` / `dummy` | `real` | `real` | Default runner when more than one is compiled in. |
-| `GM_CLIENT_ALLOW_DUMMY` | `0` / `1` | `1` | `0` | Compile in the dummy runner and the Developer-tab anomaly-injection cards. |
-| `GM_CLIENT_DEV_TOOLS` | `0` / `1` | `1` | `0` | Compile in the whole Developer settings tab (including debug logging). |
-| `GM_CLIENT_BUILD_LABEL` | string | `dev` | git short hash | Text shown after `build` in the status bar. Also the label half of the client version `<package.json semver>+<label>`, which is shown in the Endpoint info drawer, written to `dist/version.json`, and sent to the server on preflight as `?client=web&client_version=…`. |
+| Variable                | Values           | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does                                                                                                                                                                                                                                                              |
+| ----------------------- | ---------------- | ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GM_CLIENT_ENGINE`      | `real` / `dummy` | `real`                                | `real`                                  | Default runner when more than one is compiled in.                                                                                                                                                                                                                         |
+| `GM_CLIENT_ALLOW_DUMMY` | `0` / `1`        | `1`                                   | `0`                                     | Compile in the dummy runner and the Developer-tab anomaly-injection cards.                                                                                                                                                                                                |
+| `GM_CLIENT_DEV_TOOLS`   | `0` / `1`        | `1`                                   | `0`                                     | Compile in the whole Developer settings tab (including debug logging).                                                                                                                                                                                                    |
+| `GM_CLIENT_BUILD_LABEL` | string           | `dev`                                 | git short hash                          | Text shown after `build` in the status bar. Also the label half of the client version `<package.json semver>+<label>`, which is shown in the Endpoint info drawer, written to `dist/version.json`, and sent to the server on preflight as `?client=web&client_version=…`. |
 
 At runtime, when the dummy runner is compiled in, `?engine=dummy` on the URL (or a previously
 persisted choice in `localStorage`) switches to it; this check itself compiles away in a
@@ -102,15 +102,16 @@ dummy-stripped build, so it can't be re-enabled by URL trickery in a production 
 Read once at startup; flags (parsed in `cmd/graphite-meter/main.go`) take precedence over
 environment variables, which take precedence over defaults.
 
-| Env var | Flag | Default | What it does |
-| --- | --- | --- | --- |
-| `GM_H1_ADDR` | `-addr` | `:8765` | HTTP/1.1 listen address — the only listener that runs today. |
-| `GM_SERVER_NAME` | `-name` | `graphite-meter` | Server identity advertised in `/preflight`. |
-| `GM_SERVER_LOCATION` | `-location` | — | Location label advertised in `/preflight` (e.g. `fra`). |
-| `GM_VERBOSE` | `-verbose` | off | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)). |
-| `PUBLIC_H1_ORIGIN` | — | derived from request `Host` | Public HTTP/1.1 origin to advertise — set this behind a reverse proxy so the client targets the right URL. |
-| `PUBLIC_TLS_ORIGIN` | — | derived from request when forwarded as `https` | Public encrypted origin to advertise (`capabilities.origins.tls`) — the client prefers this for the WebSocket latency bus, mapped to `wss://`. Auto-derived from the request `Host` whenever the server sees `X-Forwarded-Proto: https` (the default from nginx/Caddy/Traefik terminating TLS in front); set explicitly only if that header isn't forwarded, or the public host/port differs from what the proxy sends upstream. This works even though the server itself has no TLS listener — it only affects what origin gets *advertised*. |
-| `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_H3_ORIGIN` | — | off / unset | Reserved for the HTTP/2 + HTTP/3 stage. Read at startup but no TLS/H3 listener exists yet, so these currently have no runtime effect. |
+| Env var                                                                          | Flag        | Default                                                   | What it does                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GM_H1_ADDR`                                                                     | `-addr`     | `:8765`                                                   | HTTP/1.1 listen address — the only listener that runs today.                                                                                                                                                                                                                                              |
+| `GM_SERVER_NAME`                                                                 | `-name`     | `graphite-meter`                                          | Server identity advertised in `/preflight`.                                                                                                                                                                                                                                                               |
+| `GM_SERVER_LOCATION`                                                             | `-location` | —                                                         | Location label advertised in `/preflight` (e.g. `fra`).                                                                                                                                                                                                                                                   |
+| `GM_TRUSTED_PROXIES`                                                             | —           | —                                                         | Comma-separated trusted-proxy CIDRs. Forwarded client addresses and `X-Forwarded-Proto` are ignored unless the socket peer matches one of them. Invalid CIDRs fail startup. See [REVERSE_PROXY.md](REVERSE_PROXY.md).                                                                                     |
+| `GM_VERBOSE`                                                                     | `-verbose`  | off                                                       | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                                                                                                         |
+| `PUBLIC_H1_ORIGIN`                                                               | —           | derived from request `Host`                               | Public HTTP/1.1 origin to advertise — set this behind a reverse proxy so the client targets the right URL.                                                                                                                                                                                                |
+| `PUBLIC_TLS_ORIGIN`                                                              | —           | derived from a trusted proxy request forwarded as `https` | Public encrypted origin to advertise (`capabilities.origins.tls`) — the client prefers this for the WebSocket latency bus, mapped to `wss://`. Auto-derived from the request `Host` when a peer in `GM_TRUSTED_PROXIES` sends `X-Forwarded-Proto: https`; set explicitly if the public host/port differs. |
+| `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_H3_ORIGIN` | —           | off / unset                                               | Reserved for the HTTP/2 + HTTP/3 stage. Read at startup but no TLS/H3 listener exists yet, so these currently have no runtime effect.                                                                                                                                                                     |
 
 ## Native TUI client flags
 
@@ -121,19 +122,19 @@ just goclient-run     # go run ./cmd/graphite-meter-client (against a running se
 
 All flags are editable again inside the TUI before a run starts:
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `-url` | `http://127.0.0.1:8765` | Server base URL. |
-| `-stages` | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`. |
-| `-warmup` | `800ms` | Per-stage warmup before measurement starts. |
-| `-latency-duration` | `4s` | Latency stage window. |
-| `-download-duration` | `10s` | Download stage window. |
-| `-upload-duration` | `10s` | Upload stage window. |
-| `-bidirectional-duration` | `10s` | Bidirectional stage window. |
-| `-streams` | `4` | Parallel transfer lanes (clamped 1–128). |
-| `-ping` | `medium` | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration. |
-| `-loaded-latency` | `true` | Measure RTT while a transfer stage is running. |
-| `-insecure` | `false` | Skip TLS certificate verification. |
+| Flag                      | Default                   | Meaning                                                                                   |
+| ------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
+| `-url`                    | `http://127.0.0.1:8765`   | Server base URL.                                                                          |
+| `-stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.   |
+| `-warmup`                 | `800ms`                   | Per-stage warmup before measurement starts.                                               |
+| `-latency-duration`       | `4s`                      | Latency stage window.                                                                     |
+| `-download-duration`      | `10s`                     | Download stage window.                                                                    |
+| `-upload-duration`        | `10s`                     | Upload stage window.                                                                      |
+| `-bidirectional-duration` | `10s`                     | Bidirectional stage window.                                                               |
+| `-streams`                | `4`                       | Parallel transfer lanes (clamped 1–128).                                                  |
+| `-ping`                   | `medium`                  | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration. |
+| `-loaded-latency`         | `true`                    | Measure RTT while a transfer stage is running.                                            |
+| `-insecure`               | `false`                   | Skip TLS certificate verification.                                                        |
 
 ## Building the container image from source
 

@@ -28,6 +28,7 @@ PublishPort=8765:8765
 # running behind a reverse proxy so /preflight advertises reachable URLs.
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
+# Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 # Environment=PUBLIC_H1_ORIGIN=http://speed.example:8765
 # Environment=GM_ADVERTISE_H3=0
 # Environment=GM_VERBOSE=1

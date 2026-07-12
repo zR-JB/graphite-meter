@@ -249,6 +249,10 @@ application framing, TLS/QUIC protection, packetization, optional tunnel encapsu
 Ethernet framing once. Reverse ACKs belong to the other full-duplex direction, while browser CPU,
 stability, ramp-up, ping timeouts, and proxy buffering describe achieved goodput or measurement
 quality rather than invisible protocol bytes, so none of them increases the estimate.
+The IP-family input defaults to the normalized client address reported by `/preflight`; forwarding
+headers contribute only through a peer in `GM_TRUSTED_PROXIES`. The UI shows whether that evidence
+came from the socket or a trusted proxy and retains IPv4/IPv6 overrides because translation,
+overlays, and upstream load balancers can make the presented family ambiguous.
 
 **Developer tab** (only in dev-tooling builds) — a debug-logging switch (verbose per-worker
 console diagnostics, meant to pair with the server's `-verbose`/`GM_VERBOSE` logging) and, when
@@ -257,8 +261,8 @@ spike, packet loss, throughput drop, and connection drop (a full stall-then-resu
 
 ### The Endpoint info drawer
 
-The right-side drawer is a read-only card grid: **Client** (public IP from `/preflight`, client
-build version), **Engine** (the wired runner's name, per-runner version, and its supported
+The right-side drawer is a read-only card grid: **Client** (normalized IP, address family and
+detection source from `/preflight`, plus client build version), **Engine** (the wired runner's name, per-runner version, and its supported
 transports per role — latency vs throughput, from `runner.describe()`), **Server** (name/host/
 port/location, server build version, negotiated protocol — all from `/preflight`), and
 **Transport** (the active transfer/latency transports, stream ceiling, pre-test ping). The
