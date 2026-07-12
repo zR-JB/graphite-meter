@@ -158,6 +158,7 @@ interface LaneStreamState {
    *  pool since the last log + its start time. */
   dbgWinBytes: number;
   dbgLastLog: number;
+  lastAggregateAt: number;
 }
 
 export class RealBackend implements RunnerBackend {
@@ -622,6 +623,7 @@ export class RealBackend implements RunnerBackend {
       laneTimers: [],
       dbgWinBytes: 0,
       dbgLastLog: 0,
+      lastAggregateAt: 0,
     };
     this.#lanes[dir] = state;
     this.#transferActive = true;
@@ -1085,7 +1087,7 @@ export class RealBackend implements RunnerBackend {
       this.#srvPrevN = this.#srvN;
     }
     state.dbgWinBytes = 0;
-    state.dbgLastLog = performance.now();
+    state.dbgLastLog = state.lastAggregateAt = performance.now();
     state.aggTimer = setInterval(
       () => this.#aggregate(dir),
       THROUGHPUT_CADENCE_MS,
@@ -1104,6 +1106,8 @@ export class RealBackend implements RunnerBackend {
     const state = this.#lanes[dir];
     if (!state) return;
     const now = performance.now();
+    const durationSec = (now - state.lastAggregateAt) / 1000;
+    state.lastAggregateAt = now;
     let delta = 0;
     let bytesPerSec = 0;
     for (let i = 0; i < state.pendingLaneBytes.length; i++) {
@@ -1115,9 +1119,8 @@ export class RealBackend implements RunnerBackend {
       delta += laneBytes;
       bytesPerSec += laneBytes / laneSec;
     }
-    if (delta > 0 && bytesPerSec > 0) {
-      this.#host!.ingestThroughput(dir, bytesPerSec, delta);
-    }
+    if (durationSec > 0)
+      this.#host!.ingestThroughput(dir, bytesPerSec, delta, durationSec);
     // Verbose: the pool's combined raw rate, 1 Hz. This is the sum the core
     // then smooths (see core:throughput) — comparing this to the per-worker
     // raw logs shows whether aggregation loses anything, and to the server
@@ -1310,12 +1313,13 @@ export class RealBackend implements RunnerBackend {
     // server elapsed time between those frames, so the rate is correct at any
     // push cadence and a reconnect catch-up includes the entire gap.
     const delta = this.#srvN - this.#srvPrevN;
+    const frameSec = (srvT - this.#srvPrevT) / 1e9;
+    this.#srvPrevN = this.#srvN;
+    this.#srvPrevT = srvT;
+    if (frameSec > 0) {
+      this.#host!.ingestThroughput("up", delta / frameSec, delta, frameSec);
+    }
     if (delta > 0) {
-      const frameSec = (srvT - this.#srvPrevT) / 1e9;
-      this.#srvPrevN = this.#srvN;
-      this.#srvPrevT = srvT;
-      if (frameSec > 0)
-        this.#host!.ingestThroughput("up", delta / frameSec, delta);
       this.#setLaneStalled("up", false);
     }
     // Totals-based authoritative headline over the measured window — one ratio,

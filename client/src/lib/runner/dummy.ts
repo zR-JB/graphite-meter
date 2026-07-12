@@ -338,7 +338,12 @@ export class DummyBackend implements RunnerBackend {
     // accumulates this and tracks the cumulative total. Direction travels with
     // the sample (the core never infers it from the phase).
     const bytes = bytesPerSec * (THROUGHPUT_CADENCE_MS / 1000);
-    this.#host!.ingestThroughput(dir, bytesPerSec, bytes);
+    this.#host!.ingestThroughput(
+      dir,
+      bytesPerSec,
+      bytes,
+      THROUGHPUT_CADENCE_MS / 1000,
+    );
   }
 
   /* ---------- Latency sample synthesis ---------- */

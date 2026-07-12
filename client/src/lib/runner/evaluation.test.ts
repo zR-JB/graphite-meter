@@ -26,7 +26,7 @@ const cfg = { adaptive } as unknown as RunnerConfig;
  *  core.ts makes every tick, mirroring the real ingest → confidence →
  *  stable-run-latch sequence. */
 function push(accum: RunAccumulator, value: number): void {
-  accum.pushThroughput("download", "down", value, value);
+  accum.pushThroughput("download", "down", value, value, 1);
   const conf = accum.confidence("download");
   accum.trackStableRun("download", conf.score, adaptive);
 }
@@ -159,13 +159,24 @@ const noAdaptive: AdaptiveDurationConfig = {
 };
 const bidiCfg = { adaptive: noAdaptive } as unknown as RunnerConfig;
 
+test("transfer headline weights samples by represented time", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushThroughput("upload", "up", 100, 10, 0.1);
+  accum.pushThroughput("upload", "up", 10, 10, 1);
+
+  const result = accum.throughputResult("upload", bidiCfg);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(20 / 1.1, 6);
+  expect(result.fullAverageBytesPerSec).not.toBeCloseTo(55, 6);
+});
+
 test("bidirectional: down and up lanes reduce independently", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
   for (let i = 0; i < 30; i++) {
-    accum.pushThroughput("bidirectional", "down", 500, 500);
-    accum.pushThroughput("bidirectional", "up", 300, 300);
+    accum.pushThroughput("bidirectional", "down", 500, 500, 1);
+    accum.pushThroughput("bidirectional", "up", 300, 300, 1);
   }
 
   const result = accum.bidirectionalResult(bidiCfg);
@@ -182,8 +193,8 @@ test("bidirectional: interleaved arrival order doesn't cross-contaminate the lan
   const downs = [400, 420, 440, 460];
   const ups = [100, 120, 140, 160];
   for (let i = 0; i < downs.length; i++) {
-    accum.pushThroughput("bidirectional", "up", ups[i], ups[i]);
-    accum.pushThroughput("bidirectional", "down", downs[i], downs[i]);
+    accum.pushThroughput("bidirectional", "up", ups[i], ups[i], 1);
+    accum.pushThroughput("bidirectional", "down", downs[i], downs[i], 1);
   }
 
   const result = accum.bidirectionalResult(bidiCfg);
@@ -198,7 +209,7 @@ test("bidirectional: one lane still empty (staggered start) reports the other co
   // Download lane has started reporting; upload hasn't sent a sample yet —
   // mirrors the real backend's staggered lane spawn.
   for (let i = 0; i < 10; i++) {
-    accum.pushThroughput("bidirectional", "down", 700, 700);
+    accum.pushThroughput("bidirectional", "down", 700, 700, 1);
   }
 
   const result = accum.bidirectionalResult(bidiCfg);
@@ -211,8 +222,8 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   const stable = new RunAccumulator();
   stable.reset();
   for (let i = 0; i < 40; i++) {
-    stable.pushThroughput("bidirectional", "down", 500, 500);
-    stable.pushThroughput("bidirectional", "up", 300, 300);
+    stable.pushThroughput("bidirectional", "down", 500, 500, 1);
+    stable.pushThroughput("bidirectional", "up", 300, 300, 1);
   }
   const stableScore = stable.confidence("bidirectional").score;
 
@@ -220,8 +231,8 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   erratic.reset();
   for (let i = 0; i < 40; i++) {
     const d = i % 2 === 0 ? 100 : 900; // down swings wildly...
-    erratic.pushThroughput("bidirectional", "down", d, d);
-    erratic.pushThroughput("bidirectional", "up", 300, 300); // ...up alone stays steady
+    erratic.pushThroughput("bidirectional", "down", d, d, 1);
+    erratic.pushThroughput("bidirectional", "up", 300, 300, 1); // ...up alone stays steady
   }
   const erraticScore = erratic.confidence("bidirectional").score;
 

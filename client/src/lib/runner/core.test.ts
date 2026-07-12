@@ -354,7 +354,7 @@ test("a real sample arriving mid-stall auto-resumes", () => {
   core.stall({ reason: "connection-lost" });
   expect(events.filter((e) => e.type === "stall").length).toBe(1);
 
-  core.ingestThroughput("down", 1000, 100);
+  core.ingestThroughput("down", 1000, 100, 0.1);
   expect(events.some((e) => e.type === "resume")).toBe(true);
 });
 
@@ -408,7 +408,7 @@ test("adaptive early-finish arms and completes the run well before the nominal d
 
   // A perfectly flat feed drives the confidence score to 1 (no variance, no
   // slope), well above the 0.9 threshold, once enough samples are in.
-  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100);
+  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
 
   advance(10); // this tick's confidence check arms the glide
   wallAdvanced += 10;
@@ -449,7 +449,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   for (let i = 0; i < N; i++) {
     advance(100);
     const raw = 100 + i * 100;
-    core.ingestThroughput("down", raw, raw);
+    core.ingestThroughput("down", raw, raw, 1);
     if (i < N - 1) expect(core.phase).toBe("download"); // never armed early
   }
 
@@ -478,19 +478,17 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
 
   // First sample seeds both EMA stores directly at 0 (raw=0), then a step to
   // a constant RAW value lets the two taus visibly diverge while converging.
-  core.ingestThroughput("down", 0, 0);
+  core.ingestThroughput("down", 0, 0, 0.1);
   let expectedFast = 0;
   const alphaFast = 1 - Math.exp(-DT / 700);
   const alphaSlow = 1 - Math.exp(-DT / 1800);
   let expectedSlow = 0;
-  const slowSeries: number[] = [];
 
   for (let i = 0; i < N; i++) {
     fakeNow += DT; // advance the mocked clock feeding #emaStep's dt directly
-    core.ingestThroughput("down", RAW, DELTA);
+    core.ingestThroughput("down", RAW, DELTA, 0.1);
     expectedFast = expectedFast + alphaFast * (RAW - expectedFast);
     expectedSlow = expectedSlow + alphaSlow * (RAW - expectedSlow);
-    slowSeries.push(expectedSlow);
   }
 
   const throughputSamples = events.filter(
@@ -508,17 +506,15 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   // DELTA plus the seed sample's 0 bytes.
   expect(lastSample.sample.bytesCumulative).toBe(N * DELTA);
 
-  // The stability-tau series is what actually feeds the accumulator/result —
-  // finish the run (a large overshoot; only ">= totalMs" matters) and check
-  // the reported full-phase average against it.
+  // Finish the run and verify the headline uses exact bytes / represented time,
+  // while the slow EMA remains stability-only.
   advance(1_000_000);
   const complete = events.find((e) => e.type === "complete");
   expect(complete).toBeDefined();
   if (complete?.type === "complete") {
-    const expectedMeanOfStable =
-      (0 + slowSeries.reduce((s, v) => s + v, 0)) / (N + 1);
+    const effectiveRate = (N * DELTA) / ((N + 1) * 0.1);
     expect(complete.result.download!.fullAverageBytesPerSec).toBeCloseTo(
-      expectedMeanOfStable,
+      effectiveRate,
       3,
     );
     expect(complete.result.download!.totalBytes).toBe(N * DELTA);

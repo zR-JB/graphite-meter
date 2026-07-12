@@ -126,6 +126,7 @@ class MockHost implements CoreHost {
     dir: FlowDirection,
     bytesPerSec: number,
     bytesDelta: number,
+    _durationSec: number,
   ): void {
     this.throughput.push({ dir, bytesPerSec, bytesDelta });
   }

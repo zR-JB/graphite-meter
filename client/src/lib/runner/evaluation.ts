@@ -30,18 +30,18 @@ import { median, percentile, meanAbsDeviation } from "./stats";
 
 /** Per-transfer-phase sample bookkeeping for the final result. */
 interface PhaseAccum {
-  bytesPerSecValues: number[];
+  samples: { rate: number; bytes: number; seconds: number }[];
   bytes: number;
 }
 
 export class RunAccumulator {
   // ---- whole-run result bookkeeping ----
-  #dl: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
-  #ul: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
+  #dl: PhaseAccum = { samples: [], bytes: 0 };
+  #ul: PhaseAccum = { samples: [], bytes: 0 };
   // Bidirectional carries TWO concurrent lanes (down + up), each reduced with
   // the same throughput reducer as a normal transfer phase.
-  #biDown: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
-  #biUp: PhaseAccum = { bytesPerSecValues: [], bytes: 0 };
+  #biDown: PhaseAccum = { samples: [], bytes: 0 };
+  #biUp: PhaseAccum = { samples: [], bytes: 0 };
   // Latest per-lane rate, so each bidi push can record the COMBINED (down+up)
   // rate into the confidence window — the single stability signal for the phase.
   #biLastDown = 0;
@@ -94,10 +94,10 @@ export class RunAccumulator {
 
   /** Reset all run state — call at the start of each run. */
   reset(): void {
-    this.#dl = { bytesPerSecValues: [], bytes: 0 };
-    this.#ul = { bytesPerSecValues: [], bytes: 0 };
-    this.#biDown = { bytesPerSecValues: [], bytes: 0 };
-    this.#biUp = { bytesPerSecValues: [], bytes: 0 };
+    this.#dl = { samples: [], bytes: 0 };
+    this.#ul = { samples: [], bytes: 0 };
+    this.#biDown = { samples: [], bytes: 0 };
+    this.#biUp = { samples: [], bytes: 0 };
     this.#biLastDown = 0;
     this.#biLastUp = 0;
     this.#idleRtts = [];
@@ -136,8 +136,8 @@ export class RunAccumulator {
 
   /* ================= SAMPLE INGEST ================= */
 
-  /** Record a transfer sample: instantaneous bytes/sec plus the bytes
-   *  transferred over the cadence window it represents, tagged with direction.
+  /** Record a transfer sample: instantaneous bytes/sec plus exact bytes and
+   *  duration for time-weighted final reduction, tagged with direction.
    *  In download/upload `dir` matches the phase; in bidirectional it routes the
    *  sample to the down or up lane and feeds the COMBINED rate (this lane +
    *  the other lane's latest) into the single confidence window. */
@@ -146,11 +146,18 @@ export class RunAccumulator {
     dir: FlowDirection,
     bytesPerSec: number,
     bytesDelta: number,
+    durationSec: number,
   ): void {
+    if (durationSec <= 0) return;
+    const sample = {
+      rate: bytesPerSec,
+      bytes: Math.max(0, bytesDelta),
+      seconds: durationSec,
+    };
     if (phase === "bidirectional") {
       const lane = dir === "down" ? this.#biDown : this.#biUp;
-      lane.bytesPerSecValues.push(bytesPerSec);
-      lane.bytes += bytesDelta;
+      lane.samples.push(sample);
+      lane.bytes += sample.bytes;
       if (dir === "down") this.#biLastDown = bytesPerSec;
       else this.#biLastUp = bytesPerSec;
       // One stability signal over the combined throughput (down + up).
@@ -158,8 +165,8 @@ export class RunAccumulator {
       return;
     }
     const accum = phase === "download" ? this.#dl : this.#ul;
-    accum.bytesPerSecValues.push(bytesPerSec);
-    accum.bytes += bytesDelta;
+    accum.samples.push(sample);
+    accum.bytes += sample.bytes;
     this.#phaseBytesPerSec.push(bytesPerSec);
   }
 
@@ -260,8 +267,8 @@ export class RunAccumulator {
    *  not either lane; the lanes are pushed in lock-step so the index still
    *  applies to each lane's own array at result time. */
   #sampleArrLen(phase: StagePhase): number {
-    if (phase === "download") return this.#dl.bytesPerSecValues.length;
-    if (phase === "upload") return this.#ul.bytesPerSecValues.length;
+    if (phase === "download") return this.#dl.samples.length;
+    if (phase === "upload") return this.#ul.samples.length;
     if (phase === "bidirectional") return this.#phaseBytesPerSec.length;
     return this.#idleRtts.length;
   }
@@ -372,7 +379,7 @@ export class RunAccumulator {
     cfg: RunnerConfig,
     packetLossPct: number,
   ): ThroughputResult {
-    const v = a.bytesPerSecValues;
+    const v = a.samples.map((s) => s.rate);
     const band = bandForState(stableStart >= 0, finalScore);
     if (!v.length) {
       return {
@@ -388,7 +395,13 @@ export class RunAccumulator {
         packetLossPct,
       };
     }
-    const full = v.reduce((s, x) => s + x, 0) / v.length;
+    const ratio = (samples: PhaseAccum["samples"]): number => {
+      const seconds = samples.reduce((sum, s) => sum + s.seconds, 0);
+      return seconds > 0
+        ? samples.reduce((sum, s) => sum + s.bytes, 0) / seconds
+        : 0;
+    };
+    const full = ratio(a.samples);
     const peak = Math.max(...v);
     const variance = v.reduce((s, x) => s + (x - full) ** 2, 0) / v.length;
     const cv = full > 0 ? Math.sqrt(variance) / full : 0;
@@ -401,8 +414,8 @@ export class RunAccumulator {
       v.length,
     );
     const useWindow = windowStart >= 0;
-    const window = useWindow ? v.slice(windowStart) : v;
-    const reported = window.reduce((s, x) => s + x, 0) / window.length;
+    const window = useWindow ? a.samples.slice(windowStart) : a.samples;
+    const reported = ratio(window);
 
     return {
       meanBytesPerSec: reported,

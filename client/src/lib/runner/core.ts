@@ -98,8 +98,8 @@ export interface TickContext {
 
 /** The handle a backend uses to push raw samples / emit events into the core. */
 export interface CoreHost {
-  /** Push a measured throughput sample: its direction, instantaneous bytes/sec,
-   *  and the bytes transferred over the interval it represents. Direction now
+  /** Push a measured throughput sample: direction, instantaneous bytes/sec,
+   *  bytes transferred, and the interval duration. Direction
    *  travels WITH the sample (no phase-inference), so the bidirectional phase
    *  can carry concurrent down + up samples. The core stamps elapsed,
    *  accumulates it into the matching lane, and emits the throughput event. */
@@ -107,6 +107,7 @@ export interface CoreHost {
     dir: FlowDirection,
     bytesPerSec: number,
     bytesDelta: number,
+    durationSec: number,
   ): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
@@ -558,6 +559,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     dir: FlowDirection,
     bytesPerSec: number,
     bytesDelta: number,
+    durationSec: number,
   ): void {
     const cfg = this.#cfg;
     if (!cfg) return;
@@ -590,7 +592,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       bytesPerSec,
       THROUGHPUT_STABILITY_TAU_MS,
     );
-    this.#accum.pushThroughput(phase, dir, stable, bytesDelta);
+    this.#accum.pushThroughput(phase, dir, stable, bytesDelta, durationSec);
     if (debugEnabled()) {
       const now = performance.now();
       if (now - this.#dbgTpLogAt[dir] >= 1000) {
