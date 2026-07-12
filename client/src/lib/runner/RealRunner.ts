@@ -88,12 +88,10 @@ type PingOutMsg =
   | { type: "resume" };
 
 /** Upload-progress worker → RealRunner. `bytes`/`complete` carry the SERVER's
- *  cumulative drained count `n` AND the server monotonic clock `t` (ns) it was
+ *  cumulative drained count `n` and elapsed clock `t` (ns) it was
  *  sampled at — the SOLE upload byte source. Rate is derived over server time
  *  (Δn / Δt), so the live curve and the totals headline are both immune to local
- *  tick/arrival jitter. stall/resume bracket a reconnect; since there is no
- *  client-side fallback, they are forwarded to the core to freeze measured-time
- *  across the gap (see #onProgressMessage). */
+ *  tick/arrival jitter. stall/resume bracket control-channel recovery. */
 type ProgressOutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
@@ -106,6 +104,15 @@ type ProgressOutMsg =
  *  bidirectional stage populates both ("down" and "up"), each with its own
  *  lane count, aggregation cadence, and stall/retry tracking, so one
  *  direction's health never skews the other's rate or restart backoff. */
+interface ClientByteAggregation {
+  pendingLaneBytes: number[];
+  pendingLaneElapsedSec: number[];
+  timer: ReturnType<typeof setInterval> | null;
+  dbgWinBytes: number;
+  dbgLastLog: number;
+  lastAggregateAt: number;
+}
+
 interface LaneStreamState {
   dir: FlowDirection;
   /** The PhaseActivity.stage that owns this lane (e.g. "download" or
@@ -115,8 +122,7 @@ interface LaneStreamState {
   stage: PhaseActivity["stage"];
   /** Lanes for this direction, derived by laneBudget() at prime time and
    *  cached here because the lane-restart path (#spawnWorker via
-   *  #onWorkerError) has no `activity` in scope. Also the per-worker upload
-   *  reservoir split. */
+   *  #onWorkerError) has no `activity` in scope. */
   laneCount: number;
   /** Experimental chunked-download mode (config flag, download only); the
    *  download worker self-sizes its `&bytes=N` requests when set. */
@@ -134,14 +140,13 @@ interface LaneStreamState {
    *  from matching per-lane numerators/denominators instead of a UI timer
    *  tick. Populated by download progress messages only — an upload lane
    *  reports no bytes (the server /ws/upload channel is the sole source). */
-  pendingLaneBytes: number[];
-  pendingLaneElapsedSec: number[];
+  /** Present only for client-counted download. Server-counted upload has no
+   * local byte clock by construction. */
+  clientAggregation: ClientByteAggregation | null;
   /** Monotonic measurement epoch (download only). Warmup batches carry seq=0;
    *  late messages from an old epoch are ignored at the warmup/measure
    *  boundary. Unused for "up" (upload has no client-side measure epoch). */
   measureSeq: number;
-  /** The ~16 Hz aggregation timer for this direction; null while not measuring. */
-  aggTimer: ReturnType<typeof setInterval> | null;
   /** True between onStageMeasure and onStageEnd for this direction — gates
    *  pushing samples. */
   measuring: boolean;
@@ -154,10 +159,6 @@ interface LaneStreamState {
   /** Per-lane consecutive restart counter (reset on recovery) + backoff timers. */
   laneRetry: number[];
   laneTimers: (ReturnType<typeof setTimeout> | null)[];
-  /** Verbose 1 Hz aggregate-log window: bytes summed across this direction's
-   *  pool since the last log + its start time. */
-  dbgWinBytes: number;
-  dbgLastLog: number;
 }
 
 export class RealBackend implements RunnerBackend {
@@ -187,7 +188,7 @@ export class RealBackend implements RunnerBackend {
   /** The STAGE-level stalled flag reported to the host (dedup so stall/resume
    *  each fire once per edge). For bidirectional this is the AND of both lanes
    *  — one direction hiccuping while the other still moves bytes must not
-   *  surface a stall or freeze measured-time (see #setLaneStalled). For a
+   *  surface a stage-wide stall (see #setLaneStalled). For a
    *  single-direction stage there's only one lane, so this is equivalent to
    *  that lane's own stalled state — no behavior change there. Also latches
    *  the idle-latency-only stall path (#onPingMessage) when no transfer is
@@ -203,16 +204,10 @@ export class RealBackend implements RunnerBackend {
   #testId: string | null = null;
   /** The dedicated /ws/upload progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
-  /** Latest cumulative server byte count + the measured-window anchors for the
-   *  totals-based headline = (lastN − startN) / (lastT − startT), where T is the
-   *  server's ACTIVE measurement clock (ns bytes were flowing, dead zones excluded),
-   *  NOT a wall span across frames — so a stall/reconnect/early-finish can't dilute
-   *  the denominator with idle time. */
+  /** Latest cumulative server byte count and previous measured snapshot. */
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
-  #srvPrevT = 0; // server ACTIVE-time (ns) of that last delta — the live-curve denominator
-  #srvStartN = 0;
-  #srvStartT = 0; // server ACTIVE-time (ns) at the first measured frame — the headline window anchor
+  #srvPrevT = 0; // server elapsed ns of that last delta — the live-curve denominator
   #srvHaveStart = false;
 
   /* ---- latency (ping) stage state (Stage 4) ---- */
@@ -297,8 +292,6 @@ export class RealBackend implements RunnerBackend {
     this.#srvN = 0;
     this.#srvPrevN = 0;
     this.#srvPrevT = 0;
-    this.#srvStartN = 0;
-    this.#srvStartT = 0;
     this.#srvHaveStart = false;
   }
 
@@ -612,17 +605,23 @@ export class RealBackend implements RunnerBackend {
       laneStaggerMs: staggerMs,
       workers: [],
       streamUrls: [],
-      pendingLaneBytes: [],
-      pendingLaneElapsedSec: [],
+      clientAggregation:
+        dir === "down"
+          ? {
+              pendingLaneBytes: [],
+              pendingLaneElapsedSec: [],
+              timer: null,
+              dbgWinBytes: 0,
+              dbgLastLog: 0,
+              lastAggregateAt: 0,
+            }
+          : null,
       measureSeq: 0,
-      aggTimer: null,
       measuring: false,
       stalled: false,
       stageSawBytes: false,
       laneRetry: [],
       laneTimers: [],
-      dbgWinBytes: 0,
-      dbgLastLog: 0,
     };
     this.#lanes[dir] = state;
     this.#transferActive = true;
@@ -786,15 +785,11 @@ export class RealBackend implements RunnerBackend {
     w.onerror = (e: ErrorEvent) =>
       this.#onWorkerError(dir, i, e.message || "worker error");
     // `debug`/`id` only drive the worker's own verbose per-stream logging.
-    // `streams` lets the upload worker split its total payload budget per stream
-    // (so the in-flight reservoir is constant across stream counts); download
-    // ignores it.
     w.postMessage({
       type: "start",
       url: state.streamUrls[i],
       debug: debugEnabled(),
       id: i,
-      // Derived lane count so the per-worker payload split matches the real lanes.
       streams: state.laneCount,
       // Download-only experimental chunked mode (ignored by the upload worker).
       chunk: state.chunkDownload,
@@ -881,8 +876,8 @@ export class RealBackend implements RunnerBackend {
   /** Handle a message from the ping worker. The worker reports already-computed
    *  RTTs; the runner just tags underLoad and forwards. stall/resume bracket a
    *  reconnect — surfaced to the core ONLY for the idle latency stage; during a
-   *  transfer stage the byte lanes drive link health (and a ping gap must never
-   *  freeze throughput accrual), so loaded-latency reconnects pass silently. */
+   *  transfer stage the byte lanes drive link health, so loaded-latency
+   *  reconnects pass silently. */
   #onPingMessage(msg: PingOutMsg): void {
     if (!this.#pingActive) return; // late message after teardown
     switch (msg.type) {
@@ -1071,72 +1066,76 @@ export class RealBackend implements RunnerBackend {
     // away the warmed congestion window). Just open the measurement window:
     // discard whatever accrued during warmup and start aggregating.
     state.measuring = true;
-    state.pendingLaneBytes = Array(state.laneCount).fill(0);
-    state.pendingLaneElapsedSec = Array(state.laneCount).fill(0);
+    const aggregation = state.clientAggregation;
+    if (aggregation) {
+      aggregation.pendingLaneBytes = Array(state.laneCount).fill(0);
+      aggregation.pendingLaneElapsedSec = Array(state.laneCount).fill(0);
+    }
     if (dir === "down") {
       state.measureSeq++;
       for (const w of state.workers)
         w?.postMessage({ type: "measure", seq: state.measureSeq });
     } else {
-      // Anchor the server-authoritative window at measure-start so warmup bytes
-      // are excluded from both the live curve delta and the totals-based
-      // headline. The start (startN/startT) is captured on the first measured
-      // server byte.
+      // The first progress frame after this boundary becomes the upload baseline,
+      // excluding warmup bytes and time together.
       this.#srvHaveStart = false;
       this.#srvPrevN = this.#srvN;
     }
-    state.dbgWinBytes = 0;
-    state.dbgLastLog = performance.now();
-    state.aggTimer = setInterval(
-      () => this.#aggregate(dir),
-      THROUGHPUT_CADENCE_MS,
-    );
+    if (aggregation) {
+      aggregation.dbgWinBytes = 0;
+      aggregation.dbgLastLog = aggregation.lastAggregateAt = performance.now();
+      aggregation.timer = setInterval(
+        () => this.#aggregateDownload(state, aggregation),
+        THROUGHPUT_CADENCE_MS,
+      );
+    }
   }
 
   /** Aggregation tick: sum the byte deltas `dir`'s workers reported since the
    *  last tick into one real sample tagged with that direction. For download,
    *  each lane contributes bytes / that lane's own receive interval, then the
-   *  lane rates are summed. Pushes nothing on an empty window — dead air is
-   *  never a synthesized sample (principle 1); the core's stall watchdog covers
-   *  a genuine gap. (For "up" this timer runs but is a no-op: upload lanes
-   *  report no bytes here — the server /ws/upload channel is the sole source,
-   *  see #onProgressMessage.) */
-  #aggregate(dir: FlowDirection): void {
-    const state = this.#lanes[dir];
-    if (!state) return;
+   *  lane rates are summed. Exact bytes and cadence time feed the final reducer,
+   *  including zero-byte windows. Upload never enters this path: its server
+   *  progress stream owns both bytes and time, so a local timer would double its
+   *  denominator and inject false zero-rate samples into the UI. */
+  #aggregateDownload(
+    state: LaneStreamState,
+    aggregation: ClientByteAggregation,
+  ): void {
     const now = performance.now();
+    const durationSec = (now - aggregation.lastAggregateAt) / 1000;
+    aggregation.lastAggregateAt = now;
     let delta = 0;
     let bytesPerSec = 0;
-    for (let i = 0; i < state.pendingLaneBytes.length; i++) {
-      const laneBytes = state.pendingLaneBytes[i] ?? 0;
-      const laneSec = state.pendingLaneElapsedSec[i] ?? 0;
-      state.pendingLaneBytes[i] = 0;
-      state.pendingLaneElapsedSec[i] = 0;
+    for (let i = 0; i < aggregation.pendingLaneBytes.length; i++) {
+      const laneBytes = aggregation.pendingLaneBytes[i] ?? 0;
+      const laneSec = aggregation.pendingLaneElapsedSec[i] ?? 0;
+      aggregation.pendingLaneBytes[i] = 0;
+      aggregation.pendingLaneElapsedSec[i] = 0;
       if (laneBytes <= 0 || laneSec <= 0) continue;
       delta += laneBytes;
       bytesPerSec += laneBytes / laneSec;
     }
-    if (delta > 0 && bytesPerSec > 0) {
-      this.#host!.ingestThroughput(dir, bytesPerSec, delta);
-    }
+    if (durationSec > 0)
+      this.#host!.ingestThroughput("down", bytesPerSec, delta, durationSec);
     // Verbose: the pool's combined raw rate, 1 Hz. This is the sum the core
     // then smooths (see core:throughput) — comparing this to the per-worker
     // raw logs shows whether aggregation loses anything, and to the server
     // figure whether bytes are lost between the wire and JS.
     if (debugEnabled()) {
-      state.dbgWinBytes += delta;
-      const dt = now - state.dbgLastLog;
+      aggregation.dbgWinBytes += delta;
+      const dt = now - aggregation.dbgLastLog;
       if (dt >= 1000) {
         const active = state.workers.reduce((n, w) => n + (w ? 1 : 0), 0);
-        dlog("realrunner:aggregate", `${dir} pool`, {
-          rate: fmtRate(state.dbgWinBytes / (dt / 1000)),
+        dlog("realrunner:aggregate", "down pool", {
+          rate: fmtRate(aggregation.dbgWinBytes / (dt / 1000)),
           tick: fmtRate(bytesPerSec),
-          window: fmtBytes(state.dbgWinBytes),
+          window: fmtBytes(aggregation.dbgWinBytes),
           streams: active,
           dt: fmtMs(dt),
         });
-        state.dbgWinBytes = 0;
-        state.dbgLastLog = now;
+        aggregation.dbgWinBytes = 0;
+        aggregation.dbgLastLog = now;
       }
     }
   }
@@ -1169,9 +1168,12 @@ export class RealBackend implements RunnerBackend {
       state.laneRetry[i] = 0; // a real send proves this lane recovered
       state.stageSawBytes = true;
       const elapsedMs = msg.elapsedMs ?? THROUGHPUT_CADENCE_MS;
-      state.pendingLaneBytes[i] = (state.pendingLaneBytes[i] ?? 0) + msg.bytes;
-      state.pendingLaneElapsedSec[i] =
-        (state.pendingLaneElapsedSec[i] ?? 0) + elapsedMs / 1000;
+      const aggregation = state.clientAggregation;
+      if (!aggregation) return;
+      aggregation.pendingLaneBytes[i] =
+        (aggregation.pendingLaneBytes[i] ?? 0) + msg.bytes;
+      aggregation.pendingLaneElapsedSec[i] =
+        (aggregation.pendingLaneElapsedSec[i] ?? 0) + elapsedMs / 1000;
       if (state.stalled) this.#setLaneStalled(dir, false);
     } else if (msg.type === "alive") {
       state.laneRetry[i] = 0; // a completed POST proves this upload lane recovered
@@ -1237,8 +1239,8 @@ export class RealBackend implements RunnerBackend {
   /** Reconcile a direction's own stall state into the STAGE-level `#stalled`
    *  flag reported to the host. Bidirectional's two directions are combined
    *  with AND: the stage is stalled only once EVERY currently-primed direction
-   *  is — one lane hiccuping while the other still moves bytes must not freeze
-   *  measured-time or surface a warning. A single-direction stage has exactly
+   *  is — one lane hiccuping while the other still moves bytes must not surface
+   *  a stage-wide warning. A single-direction stage has exactly
    *  one entry in `#lanes`, so this reduces to that lane's own stalled state —
    *  no behavior change there. */
   #setLaneStalled(dir: FlowDirection, stalled: boolean, detail?: string): void {
@@ -1260,40 +1262,35 @@ export class RealBackend implements RunnerBackend {
   }
 
   /** A message from the /ws/upload progress worker. The server count is the SOLE
-   *  upload byte source: `bytes`/`complete` feed the live curve AND the totals-based
-   *  headline. Because there is no client-side fallback, the socket dropping is the
+   *  upload byte source: `bytes`/`complete` feed the live curve and effective result.
+   *  Because there is no client-side fallback, the socket dropping is the
    *  only thing that can leave the up stage without samples — so the worker's
-   *  `stall`/`resume` (bracketing its reconnect) are forwarded to the core to freeze
-   *  measured-time across the gap. This is the watchdog story post-onprogress: while
-   *  the socket is up, the 100 ms frames are the heartbeat (each advancing frame →
-   *  ingestThroughput → noteRealSample); while it is down, measured-time is frozen,
-   *  and on reconnect the cumulative count + the server's active-time denominator
+   *  `stall`/`resume` bracket its reconnect. While
+   *  the socket is up, the 100 ms frames carry byte/time deltas; on reconnect the
+   *  cumulative count + the server's elapsed-time denominator
    *  self-heal the headline. The POST lanes are separate connections, so a progress-
    *  socket drop doesn't stop the transfer: the server keeps draining and accruing
-   *  active-time, and the catch-up Δn / Δactive on reconnect IS the true rate over
+   *  elapsed time, and catch-up Δn / Δelapsed on reconnect is the true rate over
    *  the gap — no client-side counting anywhere. */
   #onProgressMessage(msg: ProgressOutMsg): void {
     const state = this.#lanes.up;
     if (!this.#transferActive || !state) return; // late message after teardown
     if (msg.type === "stall") {
       // The progress socket dropped: no server bytes until it reconnects. Freeze
-      // measured-time so the gap doesn't count against the rate (rather than wait
-      // for the core's silence watchdog to notice ~1.5 s later).
+      // surface recovery immediately instead of waiting for the silence watchdog.
       if (state.measuring) this.#setLaneStalled("up", true, msg.detail);
       return;
     }
     if (msg.type === "resume") {
-      this.#setLaneStalled("up", false);
+      // Reopening the control socket is not proof that upload delivery resumed.
+      // The next advancing server byte snapshot clears the stall.
       return;
     }
     if (msg.type !== "bytes" && msg.type !== "complete") return; // open: nothing to do
 
-    // `srvT` is the server's ACTIVE measurement clock (ns) at which the server
-    // sampled this count — ns bytes were actually being drained, dead zones excluded,
-    // NOT this thread's frame-arrival time and NOT a wall span. Every rate below
-    // divides server bytes by server active-time, so neither the live curve nor the
-    // headline can be skewed by local tick cadence, event-loop lag, arrival jitter,
-    // or an idle gap (establishment, reconnect, stall) — the server already excised it.
+    // `srvT` is elapsed ns since the server received this id's first byte. It is
+    // independent of local frame-arrival jitter, while deliberately retaining
+    // measured stalls, reconnects and lane turnaround in the denominator.
     const srvT = msg.t;
     if (msg.n > this.#srvN) {
       this.#srvN = msg.n; // cumulative + monotonic guard
@@ -1303,35 +1300,29 @@ export class RealBackend implements RunnerBackend {
 
     if (!this.#srvHaveStart) {
       this.#srvHaveStart = true;
-      this.#srvStartN = this.#srvN;
-      this.#srvStartT = srvT;
       this.#srvPrevN = this.#srvN;
       this.#srvPrevT = srvT;
     }
     // Server bytes drive the live curve directly from the server stream — never
     // via the local #aggregate tick (whose fixed cadence would skew the rate).
     // Each sample is the byte delta between two server frames divided by the
-    // server ACTIVE-time between those same frames, so the rate is correct at
-    // any tick/frame cadence, and a reconnect gap self-heals: no dead-zone time
-    // enters active-time, so the backlog delta over the gap is the true rate.
+    // server elapsed time between those frames, so the rate is correct at any
+    // push cadence and a reconnect catch-up includes the entire gap.
     const delta = this.#srvN - this.#srvPrevN;
-    if (delta > 0) {
-      const frameSec = (srvT - this.#srvPrevT) / 1e9;
-      this.#srvPrevN = this.#srvN;
-      this.#srvPrevT = srvT;
-      if (frameSec > 0)
-        this.#host!.ingestThroughput("up", delta / frameSec, delta);
-      this.#setLaneStalled("up", false);
-    }
-    // Totals-based authoritative headline over the measured window — one ratio,
-    // immune to per-frame arrival jitter (unlike a mean of per-tick rates), using the
-    // server's ACTIVE measurement time between the first and last server sample (idle
-    // gaps already excised server-side, so this is "time to get Δn bytes", not wall).
-    const dtSec = (srvT - this.#srvStartT) / 1e9;
-    if (dtSec > 0) {
-      this.#host!.reportUploadServerRate(
-        (this.#srvN - this.#srvStartN) / dtSec,
+    const frameSec = (srvT - this.#srvPrevT) / 1e9;
+    this.#srvPrevN = this.#srvN;
+    this.#srvPrevT = srvT;
+    if (frameSec > 0) {
+      this.#host!.ingestThroughput(
+        "up",
+        delta / frameSec,
+        delta,
+        frameSec,
+        true,
       );
+    }
+    if (delta > 0) {
+      this.#setLaneStalled("up", false);
     }
   }
 
@@ -1350,10 +1341,15 @@ export class RealBackend implements RunnerBackend {
   /** Stop + terminate every direction's worker pool, aggregation timer, and any
    *  pending lane-restart backoffs. Idempotent. */
   #teardownTransfer(): void {
+    // Preserve the partial download cadence window at the stage boundary.
+    const down = this.#lanes.down;
+    if (down?.measuring && down.clientAggregation)
+      this.#aggregateDownload(down, down.clientAggregation);
     this.#transferActive = false;
     for (const state of Object.values(this.#lanes)) {
       if (!state) continue;
-      if (state.aggTimer !== null) clearInterval(state.aggTimer);
+      const timer = state.clientAggregation?.timer;
+      if (timer != null) clearInterval(timer);
       for (const t of state.laneTimers) if (t) clearTimeout(t);
       for (const w of state.workers) {
         if (!w) continue;

@@ -95,6 +95,7 @@ class MockHost implements CoreHost {
     dir: FlowDirection;
     bytesPerSec: number;
     bytesDelta: number;
+    durationSec: number;
   }[] = [];
   latency: { rttMs: number; underLoad: boolean; lost: boolean }[] = [];
   events: RunnerEvent[] = [];
@@ -126,13 +127,13 @@ class MockHost implements CoreHost {
     dir: FlowDirection,
     bytesPerSec: number,
     bytesDelta: number,
+    durationSec: number,
   ): void {
-    this.throughput.push({ dir, bytesPerSec, bytesDelta });
+    this.throughput.push({ dir, bytesPerSec, bytesDelta, durationSec });
   }
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
     this.latency.push({ rttMs, underLoad, lost });
   }
-  reportUploadServerRate(): void {}
   stall(info: StallInfo): void {
     this.stalls.push(info);
   }
@@ -540,7 +541,7 @@ test("injectAnomaly throughput-drop: cuts bytesPerSec by the default 40% within 
   expect(recovered).toBeGreaterThan(dropped * 1.3);
 });
 
-test("injectAnomaly connection-drop: stalls immediately and pushes no samples until the window lifts", () => {
+test("injectAnomaly connection-drop: records dead air until the window lifts", () => {
   const { backend, host } = makeBackend({ profile: "fiber", seed: 1 });
   host.setPhase("download");
   host.setElapsed(1000);
@@ -550,13 +551,14 @@ test("injectAnomaly connection-drop: stalls immediately and pushes no samples un
   expect(host.stalls[0].reason).toBe("connection-lost");
 
   const justAfterInject = performance.now();
-  // Still inside the drop window: no samples, no resume.
+  // Still inside the drop window: a zero-byte interval, no resume.
   tick(backend, {
     activity: DOWNLOAD_ACTIVITY,
     elapsed: 1000,
     realNow: justAfterInject,
   });
-  expect(host.throughput).toHaveLength(0);
+  expect(host.throughput).toHaveLength(1);
+  expect(host.throughput[0].bytesDelta).toBe(0);
   expect(host.resumeCount).toBe(0);
 
   // Past the drop window (real wall-clock, not virtual `elapsed`): resumes,

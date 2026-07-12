@@ -13,11 +13,10 @@ type Frame struct {
 	ID uint32 // PING / PONG — client-owned monotonic id, echoed verbatim
 	// Nanos is the TIME sub-field; meaning depends on Op:
 	//   • PONG: server's raw monotonic clock (ns), for the RTT echo.
-	//   • BYTES_RECEIVED / UPLOAD_COMPLETE: server's ACTIVE measurement clock (ns
-	//     bytes were actually flowing for this id, dead zones excluded), sampled
-	//     alongside N. The client derives upload rate as Δn/Δnanos over this
-	//     clock — never its own arrival clock — so stalls/reconnects can't skew
-	//     it (go/internal/endpoint/upload_store.go: activeNanos).
+	//   • BYTES_RECEIVED / UPLOAD_COMPLETE: server elapsed time since this id's
+	//     first received byte, sampled alongside N. Clients baseline it when the
+	//     measured window begins, so warmup is excluded while measured stalls and
+	//     reconnects correctly reduce Δn/Δnanos.
 	Nanos uint64
 	Bytes uint64 // SIZE — requested byte count
 	N     uint64 // BYTES_RECEIVED / UPLOAD_COMPLETE — server-measured byte total

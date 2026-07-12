@@ -20,18 +20,15 @@ export interface SweepTargetInput {
   latencyScaleMs: number;
   /** Current RTT (ms) during the latency phase. */
   rtt: number;
-  /** Store-resolved primary-stage fraction at `complete`; -1 if unresolved. */
-  resolvedFraction: number;
-  /** Where the dial was when `complete` was entered — the fallback when
-   *  `resolvedFraction` is unresolved. */
+  /** Where the dial was when `complete` was entered. */
   frozenFraction: number;
 }
 
 /** The 0-1 sweep fraction the dial eases toward for the given frame's state.
  *  Mirrors GaugeEngine's per-phase target: a transfer phase reads the
  *  absolute value/scale ratio, latency reads RTT/latencyScale, warmup/idle/
- *  aborted/error hold fixed indeterminate positions, and complete either
- *  follows the store's resolved stage or holds where the dial last was. */
+ *  aborted/error hold fixed indeterminate positions, and complete holds where
+ *  the live dial ended. */
 export function sweepTarget(s: SweepTargetInput): number {
   switch (s.phase) {
     case "download":
@@ -49,7 +46,7 @@ export function sweepTarget(s: SweepTargetInput): number {
     case "idle":
       return 0.1;
     case "complete":
-      return s.resolvedFraction >= 0 ? s.resolvedFraction : s.frozenFraction;
+      return s.frozenFraction;
     default:
       return 0.05; // aborted / error
   }

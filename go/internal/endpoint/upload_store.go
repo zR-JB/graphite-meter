@@ -40,48 +40,34 @@ type uploadShard struct {
 // the POST drain path (recordChunk) and the WS ticker (bytes.Load every 100 ms)
 // never share a lock.
 //
-// activeNanos is the server's own rate denominator: wall time bytes were
-// actually flowing, with dead zones (handshake, reconnect, stall) excluded —
-// NOT the wall span between first and last frame, so a stall can never inflate
-// the rate by stretching a wall-clock denominator instead.
+// firstChunkMono anchors the server's elapsed-time rate denominator. Clients
+// baseline TIME when measurement starts, which excludes warmup while retaining
+// every measured pause: congestion, lane turnaround, reconnects and stalls must
+// reduce throughput rather than disappear from its denominator.
 type uploadAgg struct {
-	bytes         atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
-	activeNanos   atomic.Int64 // cumulative ACTIVE measurement time (ns): wall gaps between chunks, dead zones excluded
-	lastChunkMono atomic.Int64 // mono ns of the previous drained chunk (drain-path ONLY) — the active-clock anchor
-	lastTouchMono atomic.Int64 // mono ns of the last chunk OR last WS tick — the sweeper's idle clock
-	posts         atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
-	done          atomic.Bool  // UPLOAD_COMPLETE already sent — idempotency guard for the WS finalizer
+	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
+	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
+	lastTouchMono  atomic.Int64 // mono ns of the last chunk OR last WS tick — the sweeper's idle clock
+	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
+	done           atomic.Bool  // UPLOAD_COMPLETE already sent — idempotency guard for the WS finalizer
 }
 
-// recordChunk folds one drained chunk (n bytes at monotonic time now) into the
-// aggregate: bytes always add; the wall gap since the previous chunk adds to
-// activeNanos only when at most activeGapCap (a longer gap is a dead zone —
-// establishment, reconnect, stall — and is excluded).
-//
-// The forward-only CAS on lastChunkMono makes this safe across a test's
-// parallel POST lanes without a lock: the clock never rewinds, so gaps from
-// interleaved lanes telescope into one monotonic per-id timeline, never
-// exceeding the true wall span. A stale/reordered stamp (now <= the latest)
-// contributes no time rather than rewinding the clock — any residual skew can
-// only under-report the rate, never inflate it.
+// recordChunk counts one drained chunk and starts the elapsed clock on the first
+// byte. CompareAndSwap makes the anchor safe across parallel POST lanes.
 func (a *uploadAgg) recordChunk(now int64, n int) {
-	for {
-		prev := a.lastChunkMono.Load()
-		if now <= prev {
-			break // stale / reordered stamp — don't rewind the clock or double-count
-		}
-		if a.lastChunkMono.CompareAndSwap(prev, now) {
-			if prev != 0 {
-				if gap := now - prev; gap <= int64(activeGapCap) {
-					a.activeNanos.Add(gap)
-				}
-			}
-			break
-		}
-		// CAS lost to a concurrent lane; retry against the fresh clock value.
-	}
+	a.firstChunkMono.CompareAndSwap(0, now)
 	a.bytes.Add(int64(n))
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
+}
+
+// elapsedNanos returns wall time since the first drained chunk. Sampling this
+// clock even while no bytes arrive is intentional: measured stalls count.
+func (a *uploadAgg) elapsedNanos(now int64) int64 {
+	start := a.firstChunkMono.Load()
+	if start == 0 || now <= start {
+		return 0
+	}
+	return now - start
 }
 
 const (
@@ -100,13 +86,6 @@ const (
 	issuedIDTTL = 2 * time.Minute
 	// uploadSweepInterval is how often RunSweeper scans for idle aggregates.
 	uploadSweepInterval = 5 * time.Second
-	// activeGapCap is the longest inter-chunk gap counted as continuous transfer
-	// (recordChunk); longer gaps are dead zones (handshake, reconnect, stall) and
-	// are excluded. A saturated link keeps real gaps far below this; a lane
-	// reconnect (client backoff + handshake) sits well above it. A request-
-	// buffering proxy can defeat this by releasing data in bursts — an untrusted
-	// topology, detectable by comparing activeNanos to the wall span.
-	activeGapCap = 250 * time.Millisecond
 )
 
 // NewUploadStore builds an empty store with its shard maps initialised.

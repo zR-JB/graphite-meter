@@ -13,12 +13,12 @@
  * ── Why the POST size adapts (dial-up → multi-Gbit in one tool) ──
  * A fixed POST size can't span that range: huge on a slow link (a giant in-flight
  * payload, coarse measurement, sluggish response when the line drops mid-test);
- * pinned-too-small everywhere else. So each POST is sized closed-loop to a ~350 ms
+ * pinned-too-small everywhere else. So each POST is sized closed-loop to a ~500 ms
  * wall-target from THIS lane's own observed rate (an EWMA) — purely per-worker, so
  * lanes never synchronise into oscillation. There are NO preemptive kills: the
  * current POST always finishes; only the NEXT one is resized (a step-clamp is the
  * hysteresis). The size rides between MIN_POST_BYTES and the pool size (a fixed
- * TOTAL/streams reservoir).
+ * per-lane reservoir).
  *
  * ── Why a fixed-Blob `fetch` (and NOT a streaming fetch) ──
  * A `fetch` whose body is a *ReadableStream* (`duplex:'half'`) is the streaming
@@ -36,8 +36,8 @@
  * worker reports only lane liveness: one `{type:'alive'}` per completed POST
  * (proving the lane recovered, for the restart logic) and `{type:'error'}` on a
  * failed POST. It NEVER reports bytes — the /ws/upload count is the sole source.
- * The 100 ms server frames are the heartbeat; a dropped progress socket freezes
- * measured-time via the progress worker's stall/resume.
+ * The 100 ms server frames carry the authoritative byte/time snapshots; a
+ * dropped progress socket reconnects without removing that gap from the result.
  *
  * ── Why fetch here mirrors download-worker.ts ──
  * Download = fetch + body.getReader(): read-and-DISCARD a streamed RESPONSE at
@@ -46,7 +46,7 @@
  * connection). Same fetch/abort/re-loop skeleton both directions.
  *
  * Message protocol (RealBackend's pool drives both directions):
- *   in:  { type: 'start', url, debug?, id?, streams? } | { type: 'stop' }
+ *   in:  { type: 'start', url, debug?, id? } | { type: 'stop' }
  *   out: { type: 'alive' } | { type: 'error', recoverable, detail }
  *
  * ── Why a Blob pool + slice and not a per-POST ArrayBuffer ──
@@ -70,8 +70,7 @@ import {
 } from "../../debug";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
-/** `debug`/`id` drive verbose per-stream logging only. `streams` is the active
- *  parallel-stream count, used to split UPLOAD_TOTAL_BUF_BYTES per worker. */
+/** `debug`/`id` drive verbose per-stream logging only. */
 type InMsg =
   | {
       type: "start";
@@ -89,24 +88,16 @@ type OutMsg =
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** TOTAL upload pool budget across ALL streams — the single knob to tune. Each
- *  worker's pool is TOTAL / parallelStreams (see `bufBytes`), so the combined
- *  reservoir stays CONSTANT no matter how many streams run, and the pool also caps
- *  the autosizer's MAX POST. It is the upper end the size climbs to on a fast link;
- *  the server counts bytes byte-granular as it drains them, so any POST size reports
- *  its real throughput over /ws/upload. Cost: ONE Blob of (TOTAL / streams) per
- *  worker, built once and sliced; fetch references it, so size never grows memory. */
-const UPLOAD_TOTAL_BUF_BYTES = 64 * 1024 * 1024; // 64 MiB desktop default (÷ streams per worker)
-/** Pool floor: the per-worker reservoir (hence the autosizer's MAX) never drops
- *  below this even at a high stream count, so the size always has room to grow. */
+/** One upload reservoir budget divided across the active lanes. */
+const UPLOAD_TOTAL_POOL_BYTES = 64 * 1024 * 1024;
+/** Pool floor keeps the autosizer useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
 
 /* ---- Closed-loop POST sizing (per-worker, no kills; see autosize.ts) ---- */
 /** Wall-time each POST aims to span. The lower bound matters for ACCURACY, not just
- *  overhead: the server folds the per-lane request→response turnaround gap into its
- *  active-time denominator whenever that gap ≤ activeGapCap (250 ms, upload_store.go),
- *  so a too-short POST makes turnaround a large fraction of "active" time and
- *  under-reports the rate. 500 ms keeps turnaround a small fraction across the range
+ *  overhead: request→response turnaround remains in the server's elapsed-time
+ *  denominator, so a too-short POST makes overhead a large fraction of measured
+ *  time and correctly lowers the rate. 500 ms keeps it small across the range
  *  where the sizer is below the pool ceiling; the default ≥3 interleaved lanes
  *  cover the rest (while one lane turns around, the others keep the clock advancing).
  *  Still short enough to bound in-flight + re-measure within ~½ s on a slow/dropping
@@ -131,16 +122,23 @@ const FILL_BLOCK_BYTES = 4 * 1024 * 1024;
 /** crypto.getRandomValues' hard per-call byte quota. */
 const RNG_CHUNK_BYTES = 65536;
 
-/** Total upload reservoir scaled to device memory so a low-RAM phone doesn't OOM
- *  building the Blob. `navigator.deviceMemory` is a GiB hint (undefined on Firefox/
- *  Safari → treated as desktop). */
-function uploadTotalBudget(): number {
-  const dm = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+/** Divide the device-scaled total reservoir across the actual lane count. */
+export function uploadPoolBytes(
+  streams: number,
+  deviceMemory?: number,
+): number {
+  streams = Math.max(1, streams);
+  const dm = deviceMemory;
   if (typeof dm === "number") {
-    if (dm <= 2) return 16 * 1024 * 1024;
-    if (dm <= 4) return 24 * 1024 * 1024;
+    if (dm <= 2)
+      return Math.max(MIN_POOL_BYTES, Math.floor((16 * 1024 * 1024) / streams));
+    if (dm <= 4)
+      return Math.max(MIN_POOL_BYTES, Math.floor((24 * 1024 * 1024) / streams));
   }
-  return UPLOAD_TOTAL_BUF_BYTES;
+  return Math.max(
+    MIN_POOL_BYTES,
+    Math.floor(UPLOAD_TOTAL_POOL_BYTES / streams),
+  );
 }
 
 /** Map a non-OK POST status to whether retrying the lane is worthwhile.
@@ -169,10 +167,9 @@ let pool: Blob | null = null;
 let fillBlock: Uint8Array<ArrayBuffer> | null = null;
 /** The pool's byte length = the autosizer's MAX. */
 let poolBytes = 0;
-/** Pool size = uploadTotalBudget() / parallelStreams (≥ floor), fixed on `start` so
- *  the combined reservoir is independent of stream count (and device-bounded so a
- *  phone can't OOM). Doubles as the autosizer's upper clamp. */
-let bufBytes = UPLOAD_TOTAL_BUF_BYTES;
+/** Per-lane pool size, device-bounded so a phone cannot OOM. Also the autosizer's
+ *  upper clamp. */
+let bufBytes = UPLOAD_TOTAL_POOL_BYTES;
 /** Bytes the NEXT POST will send — the closed-loop variable. Starts at MIN for a
  *  fast first sample, then tracks TARGET_POST_MS × this lane's smoothed rate. */
 let nextBytes = MIN_POST_BYTES;
@@ -195,11 +192,9 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
-    // Split the device-scaled reservoir across the active streams, with a floor.
-    bufBytes = Math.max(
-      MIN_POOL_BYTES,
-      Math.floor(uploadTotalBudget() / Math.max(1, msg.streams ?? 1)),
-    );
+    const deviceMemory = (navigator as unknown as { deviceMemory?: number })
+      .deviceMemory;
+    bufBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
     SIZER.maxBytes = bufBytes; // the pool is the size ceiling
     nextBytes = Math.min(MIN_POST_BYTES, bufBytes);
     rateEwma = 0;

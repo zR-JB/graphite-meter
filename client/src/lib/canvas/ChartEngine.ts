@@ -30,6 +30,10 @@ export interface ChartData {
    *  dial (store.displayScaleBytesPerSec) so the two instruments are identically
    *  scaled. Already dwell-filtered + tiered upstream; the chart just follows it. */
   scaleBytesPerSec: number;
+  /** Canonical headline rates produced by the measurement reducer. */
+  resultRates: Partial<
+    Record<"download" | "upload" | "bidiDown" | "bidiUp", number>
+  >;
 }
 
 export interface ChartFormatters {
@@ -648,12 +652,14 @@ export class ChartEngine implements CanvasEngine {
     // per-phase stats attribute samples exactly as the engine reduces them.
     for (const phase of ["download", "upload"] as const) {
       const seg = all.filter((s) => s.phase === phase);
-      if (seg.length < 2) continue;
+      const average = this.#get().resultRates[phase];
+      if (seg.length < 2 || average == null) continue;
       out.push(
         this.#reduceStat(
           phase,
           seg,
           phase === "download" ? this.#c.download : this.#c.upload,
+          average,
         ),
       );
     }
@@ -665,12 +671,15 @@ export class ChartEngine implements CanvasEngine {
       const seg = all.filter(
         (s) => s.phase === "bidirectional" && s.dir === dir,
       );
-      if (seg.length < 2) continue;
+      const average =
+        this.#get().resultRates[dir === "down" ? "bidiDown" : "bidiUp"];
+      if (seg.length < 2 || average == null) continue;
       out.push(
         this.#reduceStat(
           "bidirectional",
           seg,
           dir === "down" ? this.#c.download : this.#c.upload,
+          average,
         ),
       );
     }
@@ -685,14 +694,13 @@ export class ChartEngine implements CanvasEngine {
     phase: Phase,
     seg: ThroughputSample[],
     stroke: string,
+    canonicalAverage: number,
   ): PhaseStat {
     let min = Infinity;
     let max = 0;
-    let sum = 0;
     for (const s of seg) {
       if (s.bytesPerSec < min) min = s.bytesPerSec;
       if (s.bytesPerSec > max) max = s.bytesPerSec;
-      sum += s.bytesPerSec;
     }
     return {
       phase,
@@ -700,7 +708,7 @@ export class ChartEngine implements CanvasEngine {
       t1: seg[seg.length - 1].t,
       min,
       max,
-      avg: sum / seg.length,
+      avg: canonicalAverage,
       stroke,
     };
   }

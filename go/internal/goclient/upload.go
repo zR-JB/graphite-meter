@@ -57,22 +57,16 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 		return Result{}, ctx.Err()
 	case <-start:
 	}
+	if !progress.waitNext(ctx, progress.seq.Load()) {
+		return Result{}, fmt.Errorf("upload progress did not advance")
+	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
 	stats := r.sampleServerUpload(ctx, stage, progress, r.cfg.ParallelStreams, elapsed, baselineN, baselineT)
 	laneCancel()
 	wg.Wait()
-	timer := time.NewTimer(r.cfg.UploadProgressSettle)
-	select {
-	case <-ctx.Done():
-	case <-timer.C:
-	}
-	timer.Stop()
-	finalN, finalT := progress.bye()
-	if finalT > baselineT && finalN >= baselineN {
-		stats.total = finalN - baselineN
-	}
-	return stats.result(stage, Up, true, elapsed), nil
+	progress.bye()
+	return stats.result(stage, Up, true), nil
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
@@ -193,6 +187,7 @@ type uploadProgress struct {
 	done   chan struct{}
 	n      atomic.Uint64
 	t      atomic.Uint64
+	seq    atomic.Uint64
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
@@ -233,10 +228,26 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 			case wire.OpBytesReceived, wire.OpUploadComplete:
 				p.n.Store(f.N)
 				p.t.Store(f.Nanos)
+				p.seq.Add(1)
 			}
 		}
 	}()
 	return p, nil
+}
+
+func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for p.seq.Load() <= after {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-p.done:
+			return false
+		case <-ticker.C:
+		}
+	}
+	return true
 }
 
 func (p *uploadProgress) close() {
@@ -245,7 +256,7 @@ func (p *uploadProgress) close() {
 	<-p.done
 }
 
-func (p *uploadProgress) bye() (uint64, uint64) {
+func (p *uploadProgress) bye() {
 	_ = p.conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
@@ -253,7 +264,6 @@ func (p *uploadProgress) bye() (uint64, uint64) {
 	case <-p.done:
 	case <-timer.C:
 	}
-	return p.n.Load(), p.t.Load()
 }
 
 func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64) rateStats {
@@ -265,12 +275,19 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 	stats := rateStats{}
 	lastN = baselineN
 	lastT = baselineT
+	finish := func() rateStats {
+		n, elapsed := p.n.Load(), p.t.Load()
+		if n >= baselineN && elapsed >= baselineT {
+			stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT))
+		}
+		return stats
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return stats
+			return finish()
 		case <-timer.C:
-			return stats
+			return finish()
 		case now := <-ticker.C:
 			n := p.n.Load()
 			active := p.t.Load()
@@ -283,7 +300,7 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 			lastT = active
 			bps := float64(dn) / (float64(dt) / float64(time.Second))
 			measuredTotal := n - baselineN
-			stats.add(bps, measuredTotal)
+			stats.add(bps)
 			r.emit(Event{
 				Kind:      EventThroughput,
 				At:        now,

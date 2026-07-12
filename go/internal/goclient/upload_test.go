@@ -289,9 +289,8 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{
-		BaseURL:              srv.URL,
-		ParallelStreams:      1,
-		UploadProgressSettle: 20 * time.Millisecond,
+		BaseURL:         srv.URL,
+		ParallelStreams: 1,
 	}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
 

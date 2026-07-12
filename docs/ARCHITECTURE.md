@@ -74,11 +74,11 @@ WebTransport stage (see Roadmap); the flag is always `false` and no route is act
 ### Server-authoritative upload accounting
 
 `internal/endpoint/upload_store.go` is the interesting piece of the upload path: a 32-shard,
-mostly lock-free per-id aggregate (`bytes`, and an `activeNanos` clock that only counts time
-bytes were *actually* flowing — a lane reconnect, an idle stall, or connection setup is excluded
-via a 250 ms gap cap). Upload throughput is derived client-side as `Δbytes / Δserver-active-time`
-from this clock, not from wall-clock time or the client's own write progress, so a stall or a lane
-reconnect can't distort the reported rate. IDs must have been minted by `/upload/session` — a
+mostly lock-free per-id aggregate (`bytes` plus a monotonic first-byte time anchor). Upload
+throughput is derived client-side as `Δbytes / Δserver-elapsed-time`; clients baseline both values
+when measurement begins, excluding warmup while retaining stalls, reconnects and lane turnaround.
+This avoids client event-loop timing artifacts without inflating results by removing pauses. IDs
+must have been minted by `/upload/session` — a
 flood of forged IDs on this otherwise auth-less, cookie-less bus creates no state. A background
 sweeper reaps idle aggregates after 30s.
 
@@ -99,8 +99,8 @@ for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpu
 | `PING` | C→S | `PING,<id>` | Latency probe; `id` is a client-owned monotonic uint32. |
 | `PONG` | S→C | `PONG,<id>;TIME,<nanos>` | Echo; `id` verbatim, server clock is diagnostics-only. |
 | `SIZE` | C→S | `SIZE,<bytes>` | WebTransport download-size request — reserved, no consumer yet. |
-| `BYTES_RECEIVED` | S→C | `BYTES_RECEIVED,<n>;TIME,<activeNanos>` | Running server-measured upload total + active-time clock. |
-| `UPLOAD_COMPLETE` | S→C | `UPLOAD_COMPLETE,<n>;TIME,<activeNanos>` | Final upload total, sent exactly once. |
+| `BYTES_RECEIVED` | S→C | `BYTES_RECEIVED,<n>;TIME,<nanos>` | Running server-measured upload total + elapsed clock. |
+| `UPLOAD_COMPLETE` | S→C | `UPLOAD_COMPLETE,<n>;TIME,<nanos>` | Final upload total + elapsed clock, sent exactly once. |
 | `BYE` | C→S | `BYE` | Graceful bus close. |
 | `ERR` | S→C | `ERR,<code>,<text>` | Non-fatal protocol error. |
 
@@ -149,8 +149,8 @@ idle RTT (floor = configured warmup, ceiling 4s) so TCP slow start finishes befo
 window opens, and staggers parallel lane starts by up to 75ms so congestion windows don't ramp in
 lockstep.
 
-Stats: throughput as a flat mean + running peak across ~100ms samples (upload throughput is
-derived from the server's authoritative byte/active-time counters, same as the browser client);
+Stats: effective throughput as receiver-counted bytes over the measured window, plus a running
+peak across ~100ms samples (upload uses the server receiver, download the local client receiver);
 latency as min/mean/P50/P95 (linear-interpolated percentiles), jitter (mean absolute deviation),
 and loss ratio.
 
@@ -171,8 +171,8 @@ module covers both the server and the TUI client).
 ## The Svelte browser client
 
 The UI (`client/src/`) is deliberately engine-agnostic: it only ever talks to `RunnerCore`
-(`src/lib/runner/core.ts`), which owns the phase timeline, a 20ms tick loop, a "measured
-test-time" clock that freezes during a stall (so dead air doesn't count against the run), an
+(`src/lib/runner/core.ts`), which owns the phase timeline, a 20ms tick loop, a measured clock that
+retains stalls in effective throughput while bounding recovery with a max timeout, an
 adaptive early-finish ("glide" toward the phase boundary once a stage's confidence stabilizes),
 and dual exponential-moving-average smoothing (a fast ~700ms constant for the displayed number, a
 slower ~1800ms constant for stability judgments) — both fed from the same raw samples, so the
@@ -209,7 +209,7 @@ A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage l
   (`autosize.ts`). The reported throughput number is **server-authoritative**: the worker only
   reports lane liveness, and a separate dedicated `/ws/upload` connection
   (`upload-progress-worker.ts`) is the sole source of the byte count and rate, exactly mirroring
-  the server's active-time clock described above.
+  the server's elapsed-time clock described above.
 - **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
   own worker pool, aggregation cadence, and stall tracking. The browser's per-origin connection
   budget is split between the two directions (after reserving buses for the ping/upload-progress

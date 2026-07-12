@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { RunAccumulator } from "./evaluation";
-import type { AdaptiveDurationConfig, RunnerConfig } from "./contract";
+import type { AdaptiveDurationConfig } from "./contract";
 
 // Regression coverage: once early stopping actually arms for a phase,
 // the reported headline must be either
@@ -20,13 +20,12 @@ const adaptive: AdaptiveDurationConfig = {
   minTransferSamples: 0,
   glideMs: 100,
 };
-const cfg = { adaptive } as unknown as RunnerConfig;
 
 /** Push one download sample and drive the same trackStableRun call site
  *  core.ts makes every tick, mirroring the real ingest → confidence →
  *  stable-run-latch sequence. */
 function push(accum: RunAccumulator, value: number): void {
-  accum.pushThroughput("download", "down", value, value);
+  accum.pushThroughput("download", "down", value, value, 1);
   const conf = accum.confidence("download");
   accum.trackStableRun("download", conf.score, adaptive);
 }
@@ -35,7 +34,7 @@ function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-test("early stop stable throughout → averages the entire early-stopping phase", () => {
+test("early stop reports the entire uninterrupted early-completion window", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
@@ -64,18 +63,15 @@ test("early stop stable throughout → averages the entire early-stopping phase"
     push(accum, 1000);
   }
 
-  const result = accum.throughputResult("download", cfg);
+  const result = accum.throughputResult("download");
 
+  expect(armIndex).toBeGreaterThan(0);
   expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(mean(samples.slice(armIndex)), 6);
-  expect(result.meanBytesPerSec).toBeCloseTo(1000, 6);
-  // Sanity: the early-stopping-phase average must differ from the full
-  // measurement-phase average (the ramp drags the latter down) — otherwise
-  // this test couldn't distinguish the fixed behavior from the old bug.
-  expect(result.meanBytesPerSec).not.toBeCloseTo(
-    result.fullAverageBytesPerSec,
-    0,
+  expect(result.meanBytesPerSec).toBeCloseTo(
+    mean(samples.slice(armIndex - 1)),
+    6,
   );
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(samples), 6);
 });
 
 test("early stop destabilizes after arming → averages the entire measurement phase", () => {
@@ -108,7 +104,7 @@ test("early stop destabilizes after arming → averages the entire measurement p
     push(accum, 3000);
   }
 
-  const result = accum.throughputResult("download", cfg);
+  const result = accum.throughputResult("download");
 
   expect(result.method).toBe("full-average");
   expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
@@ -117,7 +113,7 @@ test("early stop destabilizes after arming → averages the entire measurement p
   expect(result.meanBytesPerSec).not.toBeCloseTo(3000, 0);
 });
 
-test("no early stop, still stable at finish → falls back to the trailing stable-run window", () => {
+test("a trailing stable run does not hide the earlier ramp", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
@@ -131,46 +127,43 @@ test("no early stop, still stable at finish → falls back to the trailing stabl
     samples.push(1000);
     push(accum, 1000);
   }
-  // Early stop never armed for this phase (e.g. it ran to its natural end) —
-  // pre-existing behavior is preserved: trailing stable window, not full avg.
+  // Early stop never armed; the earlier ramp must still remain in the result.
 
-  const result = accum.throughputResult("download", cfg);
+  const result = accum.throughputResult("download");
 
-  expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(1000, 6);
-  expect(result.meanBytesPerSec).not.toBeCloseTo(
-    result.fullAverageBytesPerSec,
-    0,
-  );
+  expect(result.method).toBe("full-average");
+  expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
 });
 
 // Bidirectional coverage: the phase carries two concurrent lanes (down + up)
 // reduced independently, but shares a single combined-rate stability signal.
-// Adaptive is off here — these tests are about lane bookkeeping, not the
-// early-stop window logic already covered above.
-const noAdaptive: AdaptiveDurationConfig = {
-  enabled: false,
-  minCoverageRatio: 0,
-  stabilityThreshold: 0.9,
-  maxPhaseReductionRatio: 1,
-  minLatencySamples: 0,
-  minTransferSamples: 0,
-  glideMs: 0,
-};
-const bidiCfg = { adaptive: noAdaptive } as unknown as RunnerConfig;
+// These tests are about lane bookkeeping, not adaptive phase duration.
+
+test("transfer headline weights samples by represented time", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushThroughput("upload", "up", 100, 10, 0.1);
+  accum.pushThroughput("upload", "up", 10, 10, 1);
+
+  const result = accum.throughputResult("upload");
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(20 / 1.1, 6);
+  expect(result.fullAverageBytesPerSec).not.toBeCloseTo(55, 6);
+});
 
 test("bidirectional: down and up lanes reduce independently", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
   for (let i = 0; i < 30; i++) {
-    accum.pushThroughput("bidirectional", "down", 500, 500);
-    accum.pushThroughput("bidirectional", "up", 300, 300);
+    accum.pushThroughput("bidirectional", "down", 500, 500, 1);
+    accum.pushThroughput("bidirectional", "up", 300, 300, 1, true);
   }
 
-  const result = accum.bidirectionalResult(bidiCfg);
+  const result = accum.bidirectionalResult();
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(500, 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(300, 6);
+  expect(result.down.serverAuthoritative).toBeUndefined();
+  expect(result.up.serverAuthoritative).toBe(true);
   expect(result.down.totalBytes).toBeCloseTo(500 * 30, 6);
   expect(result.up.totalBytes).toBeCloseTo(300 * 30, 6);
 });
@@ -182,11 +175,11 @@ test("bidirectional: interleaved arrival order doesn't cross-contaminate the lan
   const downs = [400, 420, 440, 460];
   const ups = [100, 120, 140, 160];
   for (let i = 0; i < downs.length; i++) {
-    accum.pushThroughput("bidirectional", "up", ups[i], ups[i]);
-    accum.pushThroughput("bidirectional", "down", downs[i], downs[i]);
+    accum.pushThroughput("bidirectional", "up", ups[i], ups[i], 1);
+    accum.pushThroughput("bidirectional", "down", downs[i], downs[i], 1);
   }
 
-  const result = accum.bidirectionalResult(bidiCfg);
+  const result = accum.bidirectionalResult();
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(mean(downs), 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(mean(ups), 6);
 });
@@ -198,10 +191,10 @@ test("bidirectional: one lane still empty (staggered start) reports the other co
   // Download lane has started reporting; upload hasn't sent a sample yet —
   // mirrors the real backend's staggered lane spawn.
   for (let i = 0; i < 10; i++) {
-    accum.pushThroughput("bidirectional", "down", 700, 700);
+    accum.pushThroughput("bidirectional", "down", 700, 700, 1);
   }
 
-  const result = accum.bidirectionalResult(bidiCfg);
+  const result = accum.bidirectionalResult();
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(700, 6);
   expect(result.up.fullAverageBytesPerSec).toBe(0);
   expect(result.up.totalBytes).toBe(0);
@@ -211,8 +204,8 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   const stable = new RunAccumulator();
   stable.reset();
   for (let i = 0; i < 40; i++) {
-    stable.pushThroughput("bidirectional", "down", 500, 500);
-    stable.pushThroughput("bidirectional", "up", 300, 300);
+    stable.pushThroughput("bidirectional", "down", 500, 500, 1);
+    stable.pushThroughput("bidirectional", "up", 300, 300, 1);
   }
   const stableScore = stable.confidence("bidirectional").score;
 
@@ -220,8 +213,8 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   erratic.reset();
   for (let i = 0; i < 40; i++) {
     const d = i % 2 === 0 ? 100 : 900; // down swings wildly...
-    erratic.pushThroughput("bidirectional", "down", d, d);
-    erratic.pushThroughput("bidirectional", "up", 300, 300); // ...up alone stays steady
+    erratic.pushThroughput("bidirectional", "down", d, d, 1);
+    erratic.pushThroughput("bidirectional", "up", 300, 300, 1); // ...up alone stays steady
   }
   const erraticScore = erratic.confidence("bidirectional").score;
 

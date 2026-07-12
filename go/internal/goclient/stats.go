@@ -9,9 +9,10 @@ type rateStats struct {
 	samples []float64
 	peak    float64
 	total   uint64
+	elapsed time.Duration
 }
 
-func (s *rateStats) add(v float64, total uint64) {
+func (s *rateStats) add(v float64) {
 	if v <= 0 {
 		return
 	}
@@ -19,19 +20,17 @@ func (s *rateStats) add(v float64, total uint64) {
 	if v > s.peak {
 		s.peak = v
 	}
-	if total > s.total {
-		s.total = total
-	}
 }
 
-func (s *rateStats) result(stage string, dir Direction, serverAuth bool, elapsed time.Duration) Result {
-	var sum float64
-	for _, v := range s.samples {
-		sum += v
-	}
+func (s *rateStats) setWindow(total uint64, elapsed time.Duration) {
+	s.total = total
+	s.elapsed = elapsed
+}
+
+func (s *rateStats) result(stage string, dir Direction, serverAuth bool) Result {
 	mean := 0.0
-	if len(s.samples) > 0 {
-		mean = sum / float64(len(s.samples))
+	if s.elapsed > 0 {
+		mean = float64(s.total) / s.elapsed.Seconds()
 	}
 	return Result{
 		Stage:      stage,
@@ -41,7 +40,7 @@ func (s *rateStats) result(stage string, dir Direction, serverAuth bool, elapsed
 		TotalBytes: s.total,
 		Samples:    len(s.samples),
 		ServerAuth: serverAuth,
-		Elapsed:    elapsed,
+		Elapsed:    s.elapsed,
 	}
 }
 

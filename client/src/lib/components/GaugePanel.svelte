@@ -42,6 +42,43 @@
   const decayedBytesPerSec = $derived(
     store.liveTransferBytesPerSec * stallDecay,
   );
+  let completedDisplay = $state(EMPTY_DISPLAY);
+  let completedKind = $state<"speed" | "latency">("speed");
+
+  $effect(() => {
+    if (store.phase === "latency") {
+      completedKind = "latency";
+      completedDisplay = { value: fmtMs(store.liveRtt), unit: "ms" };
+    } else if (
+      store.phase === "download" ||
+      store.phase === "upload" ||
+      store.phase === "bidirectional"
+    ) {
+      completedKind = "speed";
+      completedDisplay = {
+        value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
+        unit: store.unitLabel,
+      };
+    }
+  });
+
+  // Completion must display the reducer's authoritative result, not freeze the
+  // last presentation-smoothed live sample.
+  $effect(() => {
+    if (store.phase !== "complete") return;
+    const metric = store.finalMetric;
+    if (!metric) return;
+    if (metric.kind === "latency") {
+      completedKind = "latency";
+      completedDisplay = { value: fmtMs(metric.ms), unit: "ms" };
+    } else {
+      completedKind = "speed";
+      completedDisplay = {
+        value: fmtSpeed(store.toUnit(metric.bytesPerSec)),
+        unit: store.unitLabel,
+      };
+    }
+  });
 
   const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
 
@@ -60,7 +97,7 @@
 
   const msTicksActive = $derived(
     store.phase === "latency" ||
-      (store.phase === "complete" && store.finalMetric?.kind === "latency"),
+      (store.phase === "complete" && completedKind === "latency"),
   );
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
@@ -74,16 +111,7 @@
     if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
     if (p === "idle" || p === "error" || p === "aborted" || p === "warmup")
       return EMPTY_DISPLAY;
-    if (p === "complete") {
-      const fm = store.finalMetric;
-      if (fm?.kind === "speed")
-        return {
-          value: fmtSpeed(store.toUnit(fm.bytesPerSec)),
-          unit: store.unitLabel,
-        };
-      if (fm?.kind === "latency") return { value: fmtMs(fm.ms), unit: "ms" };
-      return EMPTY_DISPLAY;
-    }
+    if (p === "complete") return completedDisplay;
     return {
       value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
       unit: store.unitLabel,
@@ -185,26 +213,12 @@
   onMount(() => {
     engine = new GaugeEngine(() => {
       const p = store.phase;
-      const fm = store.finalMetric;
       const scale = store.displayScaleBytesPerSec;
-      let resolvedFraction = -1;
-      if (p === "complete" && fm) {
-        if (fm.kind === "speed") {
-          resolvedFraction =
-            scale > 0 ? Math.min(1, Math.max(0, fm.bytesPerSec / scale)) : 0;
-        } else {
-          resolvedFraction =
-            latencyScaleMs > 0
-              ? Math.min(1, Math.max(0, fm.ms / latencyScaleMs))
-              : 0;
-        }
-      }
       return {
         phase: p,
         valueBytesPerSec: decayedBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs,
-        resolvedFraction,
         // Five quarter labels (0 … full scale) — memoized above: ms during the
         // latency phase or a latency-resolved end state, else throughput.
         ticks: gaugeTicks,

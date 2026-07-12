@@ -83,11 +83,9 @@ function u64(s: string, what: string): bigint {
 }
 
 /** Parse the "<n>;TIME,<nanos>" body shared by BYTES_RECEIVED and UPLOAD_COMPLETE:
- *  a cumulative server byte total plus the server's ACTIVE measurement time (ns the
- *  server was actually draining bytes, dead zones excluded) it was sampled at. The
- *  client divides Δn by Δnanos over this server clock. Reuses the PONG `;TIME`
- *  framing (and Go's parseCountTime) — but PONG's nanos is a raw clock, while here
- *  it is active-transfer time. */
+ *  a cumulative server byte total plus elapsed ns since the first received byte.
+ *  The client baselines both at measurement start and divides Δn by Δnanos.
+ *  PONG uses the same framing for a raw monotonic timestamp. */
 function countTime(rest: string, op: string): [bigint, bigint] {
   const s = rest.indexOf(";");
   if (s === -1) throw new DecodeError(ErrBadArgs, `${op} TIME`);

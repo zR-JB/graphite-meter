@@ -56,7 +56,7 @@ var scratchPool = sync.Pool{
 // large pooled buffer instead of io.Discard's small internal one. When verbose,
 // it also feeds each drained chunk to the meter for live per-second logging; when
 // an aggregate is attached, it folds the chunk into the test's server-
-// authoritative per-id count and active-time clock.
+// authoritative per-id count and elapsed-time clock.
 type discardSink struct {
 	meter *Meter
 	agg   *uploadAgg // nil unless the POST carried a valid server-minted ?id=
@@ -65,9 +65,8 @@ type discardSink struct {
 func (s discardSink) Write(p []byte) (int, error) {
 	s.meter.Add(len(p))
 	if s.agg != nil {
-		// The ONE upload counting point: bytes AND the active measurement clock are
-		// folded in together here, at the drain, so the rate the client computes
-		// (Δbytes / ΔactiveNanos) is measured at a single point with no double count.
+		// The one upload counting point: the first drained chunk anchors the server
+		// elapsed clock and every drained byte is counted exactly once.
 		s.agg.recordChunk(monoNanos(), len(p))
 	}
 	return len(p), nil

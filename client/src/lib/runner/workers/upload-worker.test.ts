@@ -1,5 +1,12 @@
 import { test, expect } from "bun:test";
-import { recoverableStatus } from "./upload-worker";
+import { recoverableStatus, uploadPoolBytes } from "./upload-worker";
+
+test("uploadPoolBytes: divides one bounded reservoir across lanes", () => {
+  expect(uploadPoolBytes(1)).toBe(64 * 1024 * 1024);
+  expect(uploadPoolBytes(4)).toBe(16 * 1024 * 1024);
+  expect(uploadPoolBytes(4, 4)).toBe(6 * 1024 * 1024);
+  expect(uploadPoolBytes(16, 2)).toBe(2 * 1024 * 1024);
+});
 
 test("recoverableStatus: terminal statuses (429/413/503/410) are not recoverable", () => {
   expect(recoverableStatus(429)).toBe(false);

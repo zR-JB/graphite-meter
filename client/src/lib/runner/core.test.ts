@@ -276,10 +276,10 @@ test("warmup->measure seam: same stage, no onStageEnd between begin and measure"
 });
 
 // ---------------------------------------------------------------------------
-// Measured test-time clock: stall freeze / resume
+// Measured test-time clock: stalls count, but cannot finalize a phase
 // ---------------------------------------------------------------------------
 
-test("stall freezes the measured-time clock; resume continues it from where it froze", () => {
+test("stall counts toward the window but blocks finalization until resume", () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -296,23 +296,18 @@ test("stall freezes the measured-time clock; resume continues it from where it f
   core.stall({ reason: "connection-lost", detail: "test" });
   expect(events.some((e) => e.type === "stall")).toBe(true);
 
-  // Real time passes but measured-time must not move while stalled.
+  // Wall time continues through the stall.
   advance(500);
-  advance(200);
   last = progressEvents(events).at(-1)!;
-  expect(last.phaseElapsedMs).toBe(300);
+  expect(last.phaseElapsedMs).toBe(800);
   expect(last.measuring).toBe(false);
-  expect(core.phase).toBe("download"); // still frozen mid-phase
+  advance(200); // budget reached while stalled
+  expect(core.phase).toBe("download");
 
   core.resume();
   expect(events.some((e) => e.type === "resume")).toBe(true);
 
-  advance(200);
-  last = progressEvents(events).at(-1)!;
-  expect(last.phaseElapsedMs).toBe(500); // 300 + 200, the stall never counted
-  expect(last.measuring).toBe(true);
-
-  advance(500); // reach the 1000ms budget
+  advance(20);
   expect(core.phase).toBe("complete");
 });
 
@@ -335,11 +330,47 @@ test("watchdog auto-stalls a measured phase after prolonged sample silence", () 
     expect(stall.info.reason).toBe("connection-lost");
   }
 
-  // Frozen: further ticks must not advance measured time without a real sample.
+  // The effective-throughput clock continues through the stalled interval.
   const before = progressEvents(events).at(-1)!.phaseElapsedMs;
   advance(300);
   const after = progressEvents(events).at(-1)!.phaseElapsedMs;
-  expect(after).toBe(before);
+  expect(after).toBeGreaterThan(before);
+});
+
+test("loaded pings do not hide a stalled transfer", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+  core.start(makeConfig({ duration: { downloadMs: 5000 } }));
+
+  for (let i = 0; i < 8; i++) {
+    backend.host.ingestLatency(2, true, false);
+    advance(250);
+  }
+
+  expect(events.some((e) => e.type === "stall")).toBe(true);
+});
+
+test("backend boundary flush is included before stage reduction", () => {
+  class FlushingBackend extends FakeBackend {
+    override onStageEnd(activity: PhaseActivity): void {
+      if (activity.stage === "download")
+        this.host.ingestThroughput("down", 1000, 100, 0.1);
+      super.onStageEnd(activity);
+    }
+  }
+  const backend = new FlushingBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+  core.start(makeConfig({ duration: { downloadMs: 100 } }));
+  advance(100);
+
+  const complete = events.find((e) => e.type === "complete");
+  expect(
+    complete?.type === "complete" && complete.result.download?.totalBytes,
+  ).toBe(100);
 });
 
 test("a real sample arriving mid-stall auto-resumes", () => {
@@ -354,7 +385,9 @@ test("a real sample arriving mid-stall auto-resumes", () => {
   core.stall({ reason: "connection-lost" });
   expect(events.filter((e) => e.type === "stall").length).toBe(1);
 
-  core.ingestThroughput("down", 1000, 100);
+  core.ingestThroughput("down", 0, 0, 0.1);
+  expect(events.some((e) => e.type === "resume")).toBe(false);
+  core.ingestThroughput("down", 1000, 100, 0.1);
   expect(events.some((e) => e.type === "resume")).toBe(true);
 });
 
@@ -408,7 +441,7 @@ test("adaptive early-finish arms and completes the run well before the nominal d
 
   // A perfectly flat feed drives the confidence score to 1 (no variance, no
   // slope), well above the 0.9 threshold, once enough samples are in.
-  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100);
+  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
 
   advance(10); // this tick's confidence check arms the glide
   wallAdvanced += 10;
@@ -449,7 +482,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   for (let i = 0; i < N; i++) {
     advance(100);
     const raw = 100 + i * 100;
-    core.ingestThroughput("down", raw, raw);
+    core.ingestThroughput("down", raw, raw, 1);
     if (i < N - 1) expect(core.phase).toBe("download"); // never armed early
   }
 
@@ -478,19 +511,17 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
 
   // First sample seeds both EMA stores directly at 0 (raw=0), then a step to
   // a constant RAW value lets the two taus visibly diverge while converging.
-  core.ingestThroughput("down", 0, 0);
+  core.ingestThroughput("down", 0, 0, 0.1);
   let expectedFast = 0;
   const alphaFast = 1 - Math.exp(-DT / 700);
   const alphaSlow = 1 - Math.exp(-DT / 1800);
   let expectedSlow = 0;
-  const slowSeries: number[] = [];
 
   for (let i = 0; i < N; i++) {
     fakeNow += DT; // advance the mocked clock feeding #emaStep's dt directly
-    core.ingestThroughput("down", RAW, DELTA);
+    core.ingestThroughput("down", RAW, DELTA, 0.1);
     expectedFast = expectedFast + alphaFast * (RAW - expectedFast);
     expectedSlow = expectedSlow + alphaSlow * (RAW - expectedSlow);
-    slowSeries.push(expectedSlow);
   }
 
   const throughputSamples = events.filter(
@@ -508,17 +539,17 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   // DELTA plus the seed sample's 0 bytes.
   expect(lastSample.sample.bytesCumulative).toBe(N * DELTA);
 
-  // The stability-tau series is what actually feeds the accumulator/result —
-  // finish the run (a large overshoot; only ">= totalMs" matters) and check
-  // the reported full-phase average against it.
+  // Finish the run and verify the headline uses exact bytes / represented time,
+  // while the slow EMA remains stability-only.
   advance(1_000_000);
+  core.resume();
+  advance(20);
   const complete = events.find((e) => e.type === "complete");
   expect(complete).toBeDefined();
   if (complete?.type === "complete") {
-    const expectedMeanOfStable =
-      (0 + slowSeries.reduce((s, v) => s + v, 0)) / (N + 1);
+    const effectiveRate = (N * DELTA) / ((N + 1) * 0.1);
     expect(complete.result.download!.fullAverageBytesPerSec).toBeCloseTo(
-      expectedMeanOfStable,
+      effectiveRate,
       3,
     );
     expect(complete.result.download!.totalBytes).toBe(N * DELTA);

@@ -15,9 +15,7 @@ One ~10 MB static binary. Multi-gigabit honest measurements. Beautiful on every 
 
 </div>
 
-Most self-hosted speed tests top out long before your hardware does. Graphite Meter is built to
-measure the link, not the tool: in Chrome it sustains up to **60 Gbit/s down and 18 Gbit/s up**,
-and the native terminal client pushes **hundreds of Gbit/s**.\*
+Graphite Meter is built to measure the link, not the tool: in Chrome it sustains up to **60 Gbit/s down and 18 Gbit/s up**, and the native terminal client pushes **hundreds of Gbit/s**.\*
 
 ## Features
 
@@ -26,7 +24,7 @@ and the native terminal client pushes **hundreds of Gbit/s**.\*
   load (loaded latency), with detailed per-stage latency plots: average, jitter, and range for
   idle vs. loaded, down and up.
 - **Honest numbers** — upload throughput is what the **server** actually received (byte counts
-  over an active-time clock streamed back live), never what the browser thinks it sent. All
+  over an elapsed clock streamed back live), never what the browser thinks it sent. All
   payloads are incompressible; stalls and reconnects can't inflate a result.
 - **Every stage is optional** — latency, download, upload, and an optional **bidirectional**
   stage that saturates both directions at once.
@@ -42,11 +40,11 @@ and the native terminal client pushes **hundreds of Gbit/s**.\*
 - **Native TUI client** — a full interactive terminal client
   (`graphite-meter-client`) that speaks the same wire protocol and runs the same stages against
   any Graphite Meter server.
-- **Modern, responsive UI** — dark and light themes, equally at home on a phone and a 4K
+- **Modern, responsive UI** — dark and light themes, equally at home on a phone and a
   desktop.
 - **Built for what's next** — an engine-agnostic runner core and a transport-negotiating wire
   contract, designed so HTTP/3 + WebTransport measurement slots in as another runner rather than
-  a rewrite.
+  a rewrite in the future.
 - **Free and open source** — AGPL-3.0.
 
 ## Quick start

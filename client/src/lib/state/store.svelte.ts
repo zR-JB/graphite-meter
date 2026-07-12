@@ -235,10 +235,6 @@ class AppStore {
     | null
   >(() => {
     const r = this.stageResults;
-    if (r.download)
-      return { kind: "speed", bytesPerSec: r.download.reportedBytesPerSec };
-    if (r.upload)
-      return { kind: "speed", bytesPerSec: r.upload.reportedBytesPerSec };
     const bidi = this.result?.bidirectional;
     if (bidi)
       return {
@@ -246,6 +242,10 @@ class AppStore {
         bytesPerSec:
           bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec,
       };
+    if (r.upload)
+      return { kind: "speed", bytesPerSec: r.upload.reportedBytesPerSec };
+    if (r.download)
+      return { kind: "speed", bytesPerSec: r.download.reportedBytesPerSec };
     if (r.latency) return { kind: "latency", ms: r.latency.reportedMs };
     return null;
   });
@@ -365,7 +365,7 @@ class AppStore {
   // toUnit(), which keeps compensation and scale math in one raw domain.
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
-      this.throughput.at(-1)?.bytesPerSec ?? 0,
+      this.liveTransferBytesPerSec,
       this.config.compensation,
       this.phase === "upload" ? "upload" : "download",
     ),
@@ -473,7 +473,7 @@ class AppStore {
         this.measuring = e.measuring;
         break;
       case "stall":
-        // Store only the presentation latch; the core owns measured-time freeze.
+        // Store only the presentation latch; measurement logic stays in the core.
         this.measuring = false;
         this.stalledSince = performance.now();
         this.stallInfo = e.info;

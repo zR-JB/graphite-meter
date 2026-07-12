@@ -472,10 +472,9 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 				BaseURL:                srv.URL,
 				Stages:                 StageSet{Bidirectional: true},
 				Warmup:                 0,
-				BidirectionalDuration:  150 * time.Millisecond,
+				BidirectionalDuration:  500 * time.Millisecond,
 				ParallelStreams:        c.streams,
 				DownloadBytesPerStream: 16 * 1024,
-				UploadProgressSettle:   20 * time.Millisecond,
 			}
 
 			var mu sync.Mutex
