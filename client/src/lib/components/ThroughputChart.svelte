@@ -24,6 +24,9 @@
     void store.latency.length;
     void store.latencyEnabled;
     void store.displayScaleBytesPerSec; // re-arm if the shared scale / pinned ceiling shifts while parked
+    void store.stageResults.download;
+    void store.stageResults.upload;
+    void store.result?.bidirectional;
     // Unit/base toggles only change the axis tick FORMAT, not the data — but the
     // loop parks once a finished run settles, so without tracking them here a
     // post-run toggle would never re-wake the loop and the ticks would freeze.
@@ -64,6 +67,12 @@
         phase: store.phase,
         runSeq: store.runSeq,
         scaleBytesPerSec: store.displayScaleBytesPerSec,
+        resultRates: {
+          download: store.stageResults.download?.reportedBytesPerSec,
+          upload: store.stageResults.upload?.reportedBytesPerSec,
+          bidiDown: store.result?.bidirectional?.down.reportedBytesPerSec,
+          bidiUp: store.result?.bidirectional?.up.reportedBytesPerSec,
+        },
       }),
       {
         throughput: (bytesPerSec) => fmtSpeed(store.toUnit(bytesPerSec)),

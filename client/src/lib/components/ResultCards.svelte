@@ -1,9 +1,8 @@
 <script lang="ts">
   // Result cards for latency, transfer, and bidirectional stages. Each card
   // blends live readings with finalized per-stage results.
-  import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
-  import { fmtSpeed, fmtMs, countUp } from "../format";
+  import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
 
@@ -13,10 +12,6 @@
   let { compact = false }: Props = $props();
 
   const dash = "—";
-
-  const reduced =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function transferModel(phase: "download" | "upload") {
     const st = store.liveStability[phase];
@@ -108,180 +103,20 @@
     return `+${((multiplier - 1) * 100).toFixed(1)}%`;
   }
 
-  const TWEEN_MS = 220;
-  let dlSnap = $state<number | null>(null);
-  let ulSnap = $state<number | null>(null);
-  let pingSnap = $state<number | null>(null);
-  let bidiSnap = $state<number | null>(null);
-  let dlCancel: (() => void) | null = null;
-  let ulCancel: (() => void) | null = null;
-  let pingCancel: (() => void) | null = null;
-  let bidiCancel: (() => void) | null = null;
-
-  let pingFrozen = $state<number | null>(null);
-  let dlFrozen = $state<number | null>(null);
-  let ulFrozen = $state<number | null>(null);
-  let bidiFrozen = $state<number | null>(null);
-
-  // Freeze the last live value at phase exit so the final result can tween from
-  // what the user just saw, not from zero or a later unrelated sample.
-  function tweenTo(
-    from: number,
-    to: number,
-    set: (v: number) => void,
-  ): () => void {
-    if (reduced || from === to) {
-      set(to);
-      return () => {};
-    }
-    set(from);
-    return countUp(from, to, TWEEN_MS, set);
-  }
-
-  $effect(() => {
-    const r = store.stageResults.download;
-    dlCancel?.();
-    dlCancel = null;
-    if (!r) {
-      dlSnap = null;
-      return;
-    }
-    dlCancel = untrack(() =>
-      tweenTo(
-        dlFrozen ?? dl.measuredBytesPerSec,
-        r.reportedBytesPerSec,
-        (v) => (dlSnap = v),
-      ),
-    );
-    return () => {
-      dlCancel?.();
-      dlCancel = null;
-    };
-  });
-
-  $effect(() => {
-    const r = store.stageResults.upload;
-    ulCancel?.();
-    ulCancel = null;
-    if (!r) {
-      ulSnap = null;
-      return;
-    }
-    ulCancel = untrack(() =>
-      tweenTo(
-        ulFrozen ?? ul.measuredBytesPerSec,
-        r.reportedBytesPerSec,
-        (v) => (ulSnap = v),
-      ),
-    );
-    return () => {
-      ulCancel?.();
-      ulCancel = null;
-    };
-  });
-
-  $effect(() => {
-    const r = store.stageResults.latency;
-    pingCancel?.();
-    pingCancel = null;
-    if (!r) {
-      pingSnap = null;
-      return;
-    }
-    pingCancel = untrack(() =>
-      tweenTo(pingFrozen ?? ping.ms, r.reportedMs, (v) => (pingSnap = v)),
-    );
-    return () => {
-      pingCancel?.();
-      pingCancel = null;
-    };
-  });
-
-  $effect(() => {
-    const r = store.result?.bidirectional;
-    bidiCancel?.();
-    bidiCancel = null;
-    if (!r) {
-      bidiSnap = null;
-      return;
-    }
-    const finalCombined = r.down.reportedBytesPerSec + r.up.reportedBytesPerSec;
-    bidiCancel = untrack(() =>
-      tweenTo(
-        bidiFrozen ?? bidi.combined,
-        finalCombined,
-        (v) => (bidiSnap = v),
-      ),
-    );
-    return () => {
-      bidiCancel?.();
-      bidiCancel = null;
-    };
-  });
-
-  $effect(() => {
-    const p = store.phase;
-    if (p === "idle" || p === "warmup") {
-      pingFrozen = null;
-      dlFrozen = null;
-      ulFrozen = null;
-      bidiFrozen = null;
-      return;
-    }
-    if (p === "latency") pingFrozen = ping.ms;
-    else if (p === "download") dlFrozen = dl.measuredBytesPerSec;
-    else if (p === "upload") ulFrozen = ul.measuredBytesPerSec;
-    else if (p === "bidirectional") bidiFrozen = bidi.combined;
-  });
-
   const pingShow = $derived(
-    store.config.stages.latency &&
-      (ping.active || pingFrozen != null || ping.has),
+    store.config.stages.latency && (ping.active || ping.has),
   );
   const dlShow = $derived(
-    store.config.stages.download && (dl.active || dlFrozen != null || dl.has),
+    store.config.stages.download && (dl.active || dl.has),
   );
-  const ulShow = $derived(
-    store.config.stages.upload && (ul.active || ulFrozen != null || ul.has),
-  );
+  const ulShow = $derived(store.config.stages.upload && (ul.active || ul.has));
   const bidiShow = $derived(
-    store.config.stages.bidirectional &&
-      (bidi.active || bidiFrozen != null || bidi.has),
+    store.config.stages.bidirectional && (bidi.active || bidi.has),
   );
 
-  const pingHasVal = $derived(
-    ping.active ? ping.has : ping.has || pingFrozen != null,
-  );
-  const dlHasVal = $derived(dl.active ? dl.has : dl.has || dlFrozen != null);
-  const ulHasVal = $derived(ul.active ? ul.has : ul.has || ulFrozen != null);
-  const bidiHasVal = $derived(
-    bidi.active ? bidi.has : bidi.has || bidiFrozen != null,
-  );
-
-  const dlShown = $derived(
-    store.toUnit(
-      dlSnap ??
-        (dl.active
-          ? dl.measuredBytesPerSec
-          : (dlFrozen ?? dl.measuredBytesPerSec)),
-    ),
-  );
-  const ulShown = $derived(
-    store.toUnit(
-      ulSnap ??
-        (ul.active
-          ? ul.measuredBytesPerSec
-          : (ulFrozen ?? ul.measuredBytesPerSec)),
-    ),
-  );
-  const pingShown = $derived(
-    pingSnap ?? (ping.active ? ping.ms : (pingFrozen ?? ping.ms)),
-  );
-  const bidiShown = $derived(
-    store.toUnit(
-      bidiSnap ?? (bidi.active ? bidi.combined : (bidiFrozen ?? bidi.combined)),
-    ),
-  );
+  const dlShown = $derived(store.toUnit(dl.measuredBytesPerSec));
+  const ulShown = $derived(store.toUnit(ul.measuredBytesPerSec));
+  const bidiShown = $derived(store.toUnit(bidi.combined));
 
   const showWire = $derived(store.showWireEstimates);
 
@@ -347,8 +182,8 @@
 
   const cards = $derived.by<CardVM[]>(() => {
     const out: CardVM[] = [];
-    if (dlShow) out.push(transferCard("download", dl, dlHasVal, dlShown));
-    if (ulShow) out.push(transferCard("upload", ul, ulHasVal, ulShown));
+    if (dlShow) out.push(transferCard("download", dl, dl.has, dlShown));
+    if (ulShow) out.push(transferCard("upload", ul, ul.has, ulShown));
     if (bidiShow)
       out.push({
         key: "bidirectional",
@@ -357,13 +192,13 @@
         label: "Bi-dir",
         term: false,
         active: bidi.active,
-        hasVal: bidiHasVal,
-        showPip: bidiHasVal && !bidi.active,
+        hasVal: bidi.has,
+        showPip: bidi.has && !bidi.active,
         band: bidi.band,
         score: bidi.score,
-        num: bidiHasVal ? fmtSpeed(bidiShown) : dash,
+        num: bidi.has ? fmtSpeed(bidiShown) : dash,
         unit: store.unitLabel,
-        sub: bidiHasVal
+        sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
           : undefined,
         wire: null,
@@ -376,11 +211,11 @@
         label: "Ping",
         term: true,
         active: ping.active,
-        hasVal: pingHasVal,
-        showPip: pingHasVal,
+        hasVal: ping.has,
+        showPip: ping.has,
         band: ping.band,
         score: ping.score,
-        num: pingHasVal ? fmtMs(pingShown) : dash,
+        num: ping.has ? fmtMs(ping.ms) : dash,
         unit: "ms",
         wire: showWire
           ? { kind: "flat", text: "latency — uncompensated" }

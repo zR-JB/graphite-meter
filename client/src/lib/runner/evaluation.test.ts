@@ -34,7 +34,7 @@ function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-test("early stop keeps the effective whole-phase headline", () => {
+test("early stop reports the entire uninterrupted early-completion window", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
@@ -66,9 +66,12 @@ test("early stop keeps the effective whole-phase headline", () => {
   const result = accum.throughputResult("download");
 
   expect(armIndex).toBeGreaterThan(0);
-  expect(result.method).toBe("full-average");
-  expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
-  expect(result.meanBytesPerSec).toBeCloseTo(result.fullAverageBytesPerSec, 6);
+  expect(result.method).toBe("stable-window");
+  expect(result.meanBytesPerSec).toBeCloseTo(
+    mean(samples.slice(armIndex - 1)),
+    6,
+  );
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(samples), 6);
 });
 
 test("early stop destabilizes after arming → averages the entire measurement phase", () => {

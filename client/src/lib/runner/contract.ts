@@ -208,8 +208,8 @@ export interface RunResult {
   durationMs: number;
 }
 
-/** How a headline was derived. Transfer results always use full-average;
- *  latency may use an adaptive stable window. */
+/** How a headline was derived. A stable window begins when adaptive completion
+ *  arms and is used only if stability holds until the phase ends. */
 export type ResultMethod = "stable-window" | "full-average";
 
 export interface ThroughputResult {

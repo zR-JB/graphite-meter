@@ -8,7 +8,6 @@ const base: SweepTargetInput = {
   scaleBytesPerSec: 1000,
   latencyScaleMs: 100,
   rtt: 0,
-  resolvedFraction: -1,
   frozenFraction: 0,
 };
 
@@ -81,23 +80,11 @@ test("sweepTarget: idle holds a fixed indeterminate position", () => {
   expect(sweepTarget({ ...base, phase: "idle" })).toBe(0.1);
 });
 
-test("sweepTarget: complete follows a resolved store fraction when present", () => {
+test("sweepTarget: complete holds the last live position", () => {
   expect(
     sweepTarget({
       ...base,
       phase: "complete",
-      resolvedFraction: 0.7,
-      frozenFraction: 0.2,
-    }),
-  ).toBe(0.7);
-});
-
-test("sweepTarget: complete falls back to the frozen fraction when unresolved", () => {
-  expect(
-    sweepTarget({
-      ...base,
-      phase: "complete",
-      resolvedFraction: -1,
       frozenFraction: 0.2,
     }),
   ).toBe(0.2);

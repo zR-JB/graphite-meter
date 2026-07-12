@@ -31,10 +31,6 @@ export interface GaugeState {
   ticks: string[];
   rtt: number;
   pingCount: number;
-  /** At `complete`, the 0–1 dial position to rest on for the primary result
-   *  stage (download→upload→latency, picked by the store). -1 when not
-   *  resolved — the dial then holds wherever the last live phase left it. */
-  resolvedFraction: number;
 }
 
 /** Phase → accent token. Mirrors the gauge panel's mapping so the dial tints
@@ -243,7 +239,6 @@ export class GaugeEngine implements CanvasEngine {
       scaleBytesPerSec: this.#scale,
       latencyScaleMs: s.latencyScaleMs,
       rtt: s.rtt,
-      resolvedFraction: s.resolvedFraction,
       frozenFraction: this.#frozen,
     });
 

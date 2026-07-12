@@ -77,8 +77,14 @@ export class RunAccumulator {
   #latFinalScore = 0;
   #biFinalScore = 0;
 
-  // Latency keeps its stable-window headline; transfer headlines always use
-  // effective bytes/time over their complete measured window.
+  #dlEarlyStopStart = -1;
+  #ulEarlyStopStart = -1;
+  #biEarlyStopStart = -1;
+  #biDownEarlyStopStart = -1;
+  #biUpEarlyStopStart = -1;
+  #dlEarlyStopBroken = false;
+  #ulEarlyStopBroken = false;
+  #biEarlyStopBroken = false;
   #latEarlyStopStart = -1;
 
   /** Reset all run state — call at the start of each run. */
@@ -104,6 +110,14 @@ export class RunAccumulator {
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
     this.#biFinalScore = 0;
+    this.#dlEarlyStopStart = -1;
+    this.#ulEarlyStopStart = -1;
+    this.#biEarlyStopStart = -1;
+    this.#biDownEarlyStopStart = -1;
+    this.#biUpEarlyStopStart = -1;
+    this.#dlEarlyStopBroken = false;
+    this.#ulEarlyStopBroken = false;
+    this.#biEarlyStopBroken = false;
     this.#latEarlyStopStart = -1;
     this.beginPhase();
   }
@@ -221,6 +235,14 @@ export class RunAccumulator {
 
     const wasStable = start >= 0;
     const nowStable = isStillStable(wasStable, score, cfg);
+    if (!nowStable) {
+      if (phase === "download" && this.#dlEarlyStopStart >= 0)
+        this.#dlEarlyStopBroken = true;
+      else if (phase === "upload" && this.#ulEarlyStopStart >= 0)
+        this.#ulEarlyStopBroken = true;
+      else if (phase === "bidirectional" && this.#biEarlyStopStart >= 0)
+        this.#biEarlyStopBroken = true;
+    }
     if (nowStable && !wasStable) start = Math.max(0, arrLen - 1);
     else if (!nowStable && wasStable) start = -1;
 
@@ -232,12 +254,20 @@ export class RunAccumulator {
     return nowStable;
   }
 
-  /** Latch the unloaded-latency sample where its early-finish glide armed. */
+  /** Latch where an uninterrupted early-finish glide armed. */
   noteEarlyStop(phase: StagePhase): void {
-    if (phase !== "latency") return;
     const arrLen = this.#sampleArrLen(phase);
     const start = Math.max(0, arrLen - 1);
-    if (this.#latEarlyStopStart < 0) this.#latEarlyStopStart = start;
+    if (phase === "download" && this.#dlEarlyStopStart < 0)
+      this.#dlEarlyStopStart = start;
+    else if (phase === "upload" && this.#ulEarlyStopStart < 0)
+      this.#ulEarlyStopStart = start;
+    else if (phase === "bidirectional" && this.#biEarlyStopStart < 0) {
+      this.#biEarlyStopStart = start;
+      this.#biDownEarlyStopStart = Math.max(0, this.#biDown.samples.length - 1);
+      this.#biUpEarlyStopStart = Math.max(0, this.#biUp.samples.length - 1);
+    } else if (phase === "latency" && this.#latEarlyStopStart < 0)
+      this.#latEarlyStopStart = start;
   }
 
   /** The sample count so far for a phase's confidence-window array. */
@@ -260,6 +290,9 @@ export class RunAccumulator {
     return this.#reduceTransfer(
       a,
       stableStart,
+      phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart,
+      phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart,
+      phase === "download" ? this.#dlEarlyStopBroken : this.#ulEarlyStopBroken,
       finalScore,
       this.#loadedLossPct(),
     );
@@ -285,12 +318,18 @@ export class RunAccumulator {
       down: this.#reduceTransfer(
         this.#biDown,
         this.#biStableStart,
+        this.#biDownEarlyStopStart,
+        this.#biEarlyStopStart,
+        this.#biEarlyStopBroken,
         this.#biFinalScore,
         lossPct,
       ),
       up: this.#reduceTransfer(
         this.#biUp,
         this.#biStableStart,
+        this.#biUpEarlyStopStart,
+        this.#biEarlyStopStart,
+        this.#biEarlyStopBroken,
         this.#biFinalScore,
         lossPct,
       ),
@@ -317,6 +356,9 @@ export class RunAccumulator {
   #reduceTransfer(
     a: PhaseAccum,
     stableStart: number,
+    earlyStopStart: number,
+    earlyStabilityStart: number,
+    earlyStopBroken: boolean,
     finalScore: number,
     packetLossPct: number,
   ): ThroughputResult {
@@ -344,19 +386,28 @@ export class RunAccumulator {
         : 0;
     };
     const full = ratio(a.samples);
+    const earlyCompleted =
+      earlyStopStart >= 0 &&
+      earlyStopStart < a.samples.length &&
+      !earlyStopBroken &&
+      stableStart >= 0 &&
+      stableStart <= earlyStabilityStart;
+    const reported = earlyCompleted
+      ? ratio(a.samples.slice(earlyStopStart))
+      : full;
     const peak = Math.max(...v);
     const variance = v.reduce((s, x) => s + (x - full) ** 2, 0) / v.length;
     const cv = full > 0 ? Math.sqrt(variance) / full : 0;
     const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
 
     return {
-      meanBytesPerSec: full,
+      meanBytesPerSec: reported,
       peakBytesPerSec: peak,
       stabilityPct,
       totalBytes: a.bytes,
-      reportedBytesPerSec: full,
+      reportedBytesPerSec: reported,
       fullAverageBytesPerSec: full,
-      method: "full-average",
+      method: earlyCompleted ? "stable-window" : "full-average",
       stabilityScore: finalScore,
       band,
       packetLossPct,
