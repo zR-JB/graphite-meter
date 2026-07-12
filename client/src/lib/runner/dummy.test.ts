@@ -133,7 +133,6 @@ class MockHost implements CoreHost {
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
     this.latency.push({ rttMs, underLoad, lost });
   }
-  reportUploadServerRate(): void {}
   stall(info: StallInfo): void {
     this.stalls.push(info);
   }

@@ -108,14 +108,10 @@ export interface CoreHost {
     bytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
+    serverAuthoritative?: boolean,
   ): void;
   /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
-  /** Upload only: report the SERVER-measured headline rate (bytes/sec) computed
-   *  over the measured window from the cumulative /ws/upload count. The core
-   *  substitutes it for the upload's mean-of-rates headline at finalize (the
-   *  jitter-immune totals-based figure). Not called ⇒ client-side fallback. */
-  reportUploadServerRate(bytesPerSec: number): void;
   /** Signal a NON-terminal link stall: the link went quiet and the backend is
    *  hoping to reconnect. The core freezes measured-time accrual (so the phase
    *  end recedes by the dead-air duration) and emits a `stall` event. No-op if
@@ -270,10 +266,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #dlResult: ThroughputResult | null = null;
   #ulResult: ThroughputResult | null = null;
   #latResult: LatencyResult | null = null;
-  // Server-authoritative upload headline (bytes/sec) reported by the backend over
-  // the measured window, or null when the upload ran client-side (fallback). When
-  // set, it overrides the upload's mean-of-rates headline at finalize.
-  #ulServerRate: number | null = null;
 
   constructor(backend: RunnerBackend) {
     this.#backend = backend;
@@ -343,7 +335,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#dlResult = null;
     this.#ulResult = null;
     this.#latResult = null;
-    this.#ulServerRate = null;
     this.#measuredElapsed = 0;
     this.#lastRealNow = 0;
     this.#glideArmedForSeg = -1;
@@ -560,6 +551,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     bytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
+    serverAuthoritative = false,
   ): void {
     const cfg = this.#cfg;
     if (!cfg) return;
@@ -592,7 +584,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       bytesPerSec,
       THROUGHPUT_STABILITY_TAU_MS,
     );
-    this.#accum.pushThroughput(phase, dir, stable, bytesDelta, durationSec);
+    this.#accum.pushThroughput(
+      phase,
+      dir,
+      stable,
+      bytesDelta,
+      durationSec,
+      serverAuthoritative,
+    );
     if (debugEnabled()) {
       const now = performance.now();
       if (now - this.#dbgTpLogAt[dir] >= 1000) {
@@ -663,11 +662,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         phase: this.#phase,
       },
     });
-  }
-
-  /** Record the server-measured upload headline rate; applied at finalize. */
-  reportUploadServerRate(bytesPerSec: number): void {
-    this.#ulServerRate = bytesPerSec;
   }
 
   /* ================= STALL / RESUME (CoreHost) ================= */
@@ -864,23 +858,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const cfg = this.#cfg!;
     if (this.#stageFailures.has(phase as TransportRole)) return; // skipped — no result
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
-      this.#dlResult = this.#accum.throughputResult("download", cfg);
+      this.#dlResult = this.#accum.throughputResult("download");
       this.emit({
         type: "stageResult",
         stage: "download",
         result: this.#dlResult,
       });
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
-      const r = this.#accum.throughputResult("upload", cfg);
-      // Server-authoritative headline: substitute the totals-based server rate
-      // (jitter-immune) for the mean-of-per-tick-rates. Peak/stability/totalBytes
-      // stay sample-derived. Absent ⇒ client-side fallback keeps the mean-of-rates.
-      if (this.#ulServerRate != null) {
-        r.meanBytesPerSec = this.#ulServerRate;
-        r.reportedBytesPerSec = this.#ulServerRate;
-        r.serverAuthoritative = true;
-      }
-      this.#ulResult = r;
+      this.#ulResult = this.#accum.throughputResult("upload");
       this.emit({
         type: "stageResult",
         stage: "upload",
@@ -918,7 +903,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // two lanes here when the stage ran, else null.
     const bidirectional =
       cfg.stages.bidirectional && !this.#stageFailures.has("bidirectional")
-        ? this.#accum.bidirectionalResult(cfg)
+        ? this.#accum.bidirectionalResult()
         : null;
     const result = {
       download: this.#dlResult,

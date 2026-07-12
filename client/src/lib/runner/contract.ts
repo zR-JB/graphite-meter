@@ -209,9 +209,8 @@ export interface RunResult {
   durationMs: number;
 }
 
-/** How the headline value was derived: the trailing stable-plateau window
- *  (adaptive, still stable at finish) or the whole-phase average (adaptive off,
- *  or stability was lost before the phase ended). */
+/** How a headline was derived. Transfer results always use full-average;
+ *  latency may use an adaptive stable window. */
 export type ResultMethod = "stable-window" | "full-average";
 
 export interface ThroughputResult {
@@ -219,8 +218,8 @@ export interface ThroughputResult {
   peakBytesPerSec: number;
   stabilityPct: number; // coefficient-of-variation based (0–100)
   totalBytes: number;
-  reportedBytesPerSec: number; // headline (stable-window or full average)
-  fullAverageBytesPerSec: number; // whole-phase mean, always (inspector/debug)
+  reportedBytesPerSec: number; // effective bytes / represented time
+  fullAverageBytesPerSec: number; // same effective whole-window rate
   method: ResultMethod;
   stabilityScore: number; // 0–1 stability at the moment the phase ended
   band: StabilityBand;
@@ -228,13 +227,7 @@ export interface ThroughputResult {
    *  pings). Feeds the loss/retransmission compensation factor; 0 when no loaded
    *  pings ran (latency fully off). */
   packetLossPct: number;
-  /** Upload only: true when the headline came from the SERVER-measured drained
-   *  byte count over the measured window (via /ws/upload) — the sole upload byte
-   *  source. The live curve/peak/stability also derive from those server samples;
-   *  only meanBytesPerSec is the jitter-immune totals-based figure. Absent ⇒ no
-   *  server count was ever reported (the progress socket never opened), in which
-   *  case the up stage produced no samples and ended via the stall watchdog rather
-   *  than shipping a number. */
+  /** True when bytes and time came from the server upload receiver. */
   serverAuthoritative?: boolean;
 }
 

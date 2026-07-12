@@ -204,15 +204,10 @@ export class RealBackend implements RunnerBackend {
   #testId: string | null = null;
   /** The dedicated /ws/upload progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
-  /** Latest cumulative server byte count + measured-window anchors for the
-   *  totals-based headline = (lastN − startN) / (lastT − startT). T is server
-   *  elapsed time since the first received byte; baselining excludes warmup but
-   *  retains every pause inside the measured window. */
+  /** Latest cumulative server byte count and previous measured snapshot. */
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
   #srvPrevT = 0; // server elapsed ns of that last delta — the live-curve denominator
-  #srvStartN = 0;
-  #srvStartT = 0; // server elapsed ns at the first measured frame — headline anchor
   #srvHaveStart = false;
 
   /* ---- latency (ping) stage state (Stage 4) ---- */
@@ -297,8 +292,6 @@ export class RealBackend implements RunnerBackend {
     this.#srvN = 0;
     this.#srvPrevN = 0;
     this.#srvPrevT = 0;
-    this.#srvStartN = 0;
-    this.#srvStartT = 0;
     this.#srvHaveStart = false;
   }
 
@@ -1302,8 +1295,6 @@ export class RealBackend implements RunnerBackend {
 
     if (!this.#srvHaveStart) {
       this.#srvHaveStart = true;
-      this.#srvStartN = this.#srvN;
-      this.#srvStartT = srvT;
       this.#srvPrevN = this.#srvN;
       this.#srvPrevT = srvT;
     }
@@ -1317,19 +1308,16 @@ export class RealBackend implements RunnerBackend {
     this.#srvPrevN = this.#srvN;
     this.#srvPrevT = srvT;
     if (frameSec > 0) {
-      this.#host!.ingestThroughput("up", delta / frameSec, delta, frameSec);
+      this.#host!.ingestThroughput(
+        "up",
+        delta / frameSec,
+        delta,
+        frameSec,
+        true,
+      );
     }
     if (delta > 0) {
       this.#setLaneStalled("up", false);
-    }
-    // Totals-based authoritative headline over the measured window — one ratio,
-    // immune to per-frame arrival jitter (unlike a mean of per-tick rates), using the
-    // server elapsed time between the first and last measured server sample.
-    const dtSec = (srvT - this.#srvStartT) / 1e9;
-    if (dtSec > 0) {
-      this.#host!.reportUploadServerRate(
-        (this.#srvN - this.#srvStartN) / dtSec,
-      );
     }
   }
 

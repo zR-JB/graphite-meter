@@ -32,16 +32,17 @@ import { median, percentile, meanAbsDeviation } from "./stats";
 interface PhaseAccum {
   samples: { rate: number; bytes: number; seconds: number }[];
   bytes: number;
+  serverAuthoritative: boolean;
 }
 
 export class RunAccumulator {
   // ---- whole-run result bookkeeping ----
-  #dl: PhaseAccum = { samples: [], bytes: 0 };
-  #ul: PhaseAccum = { samples: [], bytes: 0 };
+  #dl: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
+  #ul: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
   // Bidirectional carries TWO concurrent lanes (down + up), each reduced with
   // the same throughput reducer as a normal transfer phase.
-  #biDown: PhaseAccum = { samples: [], bytes: 0 };
-  #biUp: PhaseAccum = { samples: [], bytes: 0 };
+  #biDown: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
+  #biUp: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
   // Latest per-lane rate, so each bidi push can record the COMBINED (down+up)
   // rate into the confidence window — the single stability signal for the phase.
   #biLastDown = 0;
@@ -76,28 +77,16 @@ export class RunAccumulator {
   #latFinalScore = 0;
   #biFinalScore = 0;
 
-  // ---- early-stop arm points ----
-  // The sample index at the moment `shouldExitPhase` first armed the glide for
-  // that phase (-1 if early stop never armed this phase). Latched once per
-  // phase — it never moves once set, unlike the stable-run trackers above,
-  // which can re-open after a drop. Read at finish alongside the stable-run
-  // index: still on the SAME (or an earlier-starting) stable run as when armed
-  // (`stableStart >= 0 && stableStart <= earlyStopStart`) → the entire
-  // early-stopping phase held stable, so average from the arm point to the
-  // end. Otherwise stability broke at some point after arming (dropped and
-  // never recovered, or dropped and re-latched on a LATER run) → average the
-  // entire measurement phase instead, never just the smaller trailing window.
-  #dlEarlyStopStart = -1;
-  #ulEarlyStopStart = -1;
+  // Latency keeps its stable-window headline; transfer headlines always use
+  // effective bytes/time over their complete measured window.
   #latEarlyStopStart = -1;
-  #biEarlyStopStart = -1;
 
   /** Reset all run state — call at the start of each run. */
   reset(): void {
-    this.#dl = { samples: [], bytes: 0 };
-    this.#ul = { samples: [], bytes: 0 };
-    this.#biDown = { samples: [], bytes: 0 };
-    this.#biUp = { samples: [], bytes: 0 };
+    this.#dl = { samples: [], bytes: 0, serverAuthoritative: false };
+    this.#ul = { samples: [], bytes: 0, serverAuthoritative: false };
+    this.#biDown = { samples: [], bytes: 0, serverAuthoritative: false };
+    this.#biUp = { samples: [], bytes: 0, serverAuthoritative: false };
     this.#biLastDown = 0;
     this.#biLastUp = 0;
     this.#idleRtts = [];
@@ -115,10 +104,7 @@ export class RunAccumulator {
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
     this.#biFinalScore = 0;
-    this.#dlEarlyStopStart = -1;
-    this.#ulEarlyStopStart = -1;
     this.#latEarlyStopStart = -1;
-    this.#biEarlyStopStart = -1;
     this.beginPhase();
   }
 
@@ -147,6 +133,7 @@ export class RunAccumulator {
     bytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
+    serverAuthoritative = false,
   ): void {
     if (durationSec <= 0) return;
     const sample = {
@@ -158,6 +145,7 @@ export class RunAccumulator {
       const lane = dir === "down" ? this.#biDown : this.#biUp;
       lane.samples.push(sample);
       lane.bytes += sample.bytes;
+      lane.serverAuthoritative ||= serverAuthoritative;
       if (dir === "down") this.#biLastDown = bytesPerSec;
       else this.#biLastUp = bytesPerSec;
       // One stability signal over the combined throughput (down + up).
@@ -167,6 +155,7 @@ export class RunAccumulator {
     const accum = phase === "download" ? this.#dl : this.#ul;
     accum.samples.push(sample);
     accum.bytes += sample.bytes;
+    accum.serverAuthoritative ||= serverAuthoritative;
     this.#phaseBytesPerSec.push(bytesPerSec);
   }
 
@@ -243,29 +232,15 @@ export class RunAccumulator {
     return nowStable;
   }
 
-  /** Latch the sample index at which `shouldExitPhase` first armed the
-   *  early-finish glide for this phase. Idempotent — only the FIRST call per
-   *  phase sets it (the core only arms a glide once per phase anyway, but this
-   *  guards against ever moving an already-latched arm point). */
+  /** Latch the unloaded-latency sample where its early-finish glide armed. */
   noteEarlyStop(phase: StagePhase): void {
+    if (phase !== "latency") return;
     const arrLen = this.#sampleArrLen(phase);
     const start = Math.max(0, arrLen - 1);
-    if (phase === "download") {
-      if (this.#dlEarlyStopStart < 0) this.#dlEarlyStopStart = start;
-    } else if (phase === "upload") {
-      if (this.#ulEarlyStopStart < 0) this.#ulEarlyStopStart = start;
-    } else if (phase === "bidirectional") {
-      if (this.#biEarlyStopStart < 0) this.#biEarlyStopStart = start;
-    } else {
-      if (this.#latEarlyStopStart < 0) this.#latEarlyStopStart = start;
-    }
+    if (this.#latEarlyStopStart < 0) this.#latEarlyStopStart = start;
   }
 
-  /** The sample count so far for a phase's own confidence-window array — the
-   *  same index space `trackStableRun`/`noteEarlyStop` latch their indices
-   *  into. Bidi uses the COMBINED-rate array (the single stability signal),
-   *  not either lane; the lanes are pushed in lock-step so the index still
-   *  applies to each lane's own array at result time. */
+  /** The sample count so far for a phase's confidence-window array. */
   #sampleArrLen(phase: StagePhase): number {
     if (phase === "download") return this.#dl.samples.length;
     if (phase === "upload") return this.#ul.samples.length;
@@ -275,28 +250,17 @@ export class RunAccumulator {
 
   /* ================= RESULT REDUCTION ================= */
 
-  /**
-   * Reduce a transfer phase's samples to its headline value. See
-   * {@link #windowStart} for which window (early-stopping phase, full
-   * measurement phase, or trailing stable run) backs the headline.
-   */
-  throughputResult(
-    phase: "download" | "upload",
-    cfg: RunnerConfig,
-  ): ThroughputResult {
+  /** Reduce a transfer phase to effective bytes over represented time. */
+  throughputResult(phase: "download" | "upload"): ThroughputResult {
     const a = phase === "download" ? this.#dl : this.#ul;
     const stableStart =
       phase === "download" ? this.#dlStableStart : this.#ulStableStart;
-    const earlyStopStart =
-      phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart;
     const finalScore =
       phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
     return this.#reduceTransfer(
       a,
       stableStart,
-      earlyStopStart,
       finalScore,
-      cfg,
       this.#loadedLossPct(),
     );
   }
@@ -316,7 +280,7 @@ export class RunAccumulator {
    *  share the phase's single stable-run index (computed over the combined-rate
    *  window), so the trailing stable window is the same span of samples in each
    *  lane (the lanes are pushed in lock-step, so their array indices align). */
-  bidirectionalResult(cfg: RunnerConfig): {
+  bidirectionalResult(): {
     down: ThroughputResult;
     up: ThroughputResult;
   } {
@@ -325,35 +289,19 @@ export class RunAccumulator {
       down: this.#reduceTransfer(
         this.#biDown,
         this.#biStableStart,
-        this.#biEarlyStopStart,
         this.#biFinalScore,
-        cfg,
         lossPct,
       ),
       up: this.#reduceTransfer(
         this.#biUp,
         this.#biStableStart,
-        this.#biEarlyStopStart,
         this.#biFinalScore,
-        cfg,
         lossPct,
       ),
     };
   }
 
-  /** Resolve which window backs a phase's headline:
-   *   - Early stop armed for this phase (`earlyStopStart ≥ 0`) AND the phase
-   *     never dropped off its stable run since arming (`stableStart` is still
-   *     the SAME or an earlier-starting run) → average the entire
-   *     early-stopping phase, from the arm point to the end.
-   *   - Early stop armed but stability broke at some point after arming
-   *     (lost it entirely, or lost-then-regained on a LATER run) → average
-   *     the entire measurement phase — never just the smaller trailing window
-   *     a re-latched run would otherwise produce.
-   *   - Early stop never armed (adaptive off, or the phase ran to its natural
-   *     end without ever qualifying) → the pre-existing rule: the trailing
-   *     stable-run window if still stable at finish, else the full average.
-   *  Returns -1 for "use the full array", else the slice start index. */
+  /** Resolve the adaptive stable window used by the latency headline. */
   #windowStart(
     stableStart: number,
     earlyStopStart: number,
@@ -369,14 +317,11 @@ export class RunAccumulator {
     return stableStart >= 0 && stableStart < arrLen ? stableStart : -1;
   }
 
-  /** Shared transfer-phase reducer: turn a lane's sample buffer + its latched
-   *  stable-run/early-stop indices into a {@link ThroughputResult}. */
+  /** Shared effective-throughput reducer for every transfer direction. */
   #reduceTransfer(
     a: PhaseAccum,
     stableStart: number,
-    earlyStopStart: number,
     finalScore: number,
-    cfg: RunnerConfig,
     packetLossPct: number,
   ): ThroughputResult {
     const v = a.samples.map((s) => s.rate);
@@ -393,6 +338,7 @@ export class RunAccumulator {
         stabilityScore: finalScore,
         band,
         packetLossPct,
+        serverAuthoritative: a.serverAuthoritative || undefined,
       };
     }
     const ratio = (samples: PhaseAccum["samples"]): number => {
@@ -407,27 +353,18 @@ export class RunAccumulator {
     const cv = full > 0 ? Math.sqrt(variance) / full : 0;
     const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
 
-    const windowStart = this.#windowStart(
-      stableStart,
-      earlyStopStart,
-      cfg.adaptive.enabled,
-      v.length,
-    );
-    const useWindow = windowStart >= 0;
-    const window = useWindow ? a.samples.slice(windowStart) : a.samples;
-    const reported = ratio(window);
-
     return {
-      meanBytesPerSec: reported,
+      meanBytesPerSec: full,
       peakBytesPerSec: peak,
       stabilityPct,
       totalBytes: a.bytes,
-      reportedBytesPerSec: reported,
+      reportedBytesPerSec: full,
       fullAverageBytesPerSec: full,
-      method: useWindow ? "stable-window" : "full-average",
+      method: "full-average",
       stabilityScore: finalScore,
       band,
       packetLossPct,
+      serverAuthoritative: a.serverAuthoritative || undefined,
     };
   }
 
