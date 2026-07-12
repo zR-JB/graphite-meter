@@ -34,8 +34,6 @@ func (s *httpSession) Proto() Proto {
 	}
 }
 
-func (s *httpSession) ClientIP() string { return ClientIP(s.r) }
-
 func (s *httpSession) HTTP() (http.ResponseWriter, *http.Request, bool) {
 	return s.w, s.r, true
 }

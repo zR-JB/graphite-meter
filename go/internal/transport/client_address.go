@@ -15,8 +15,9 @@ const (
 )
 
 type ClientAddress struct {
-	Addr   netip.Addr
-	Source ClientIPSource
+	Addr    netip.Addr
+	Version int
+	Source  ClientIPSource
 }
 
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress {
@@ -24,7 +25,7 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress
 	if !ok {
 		return ClientAddress{Source: ClientIPSocket}
 	}
-	result := ClientAddress{Addr: peer, Source: ClientIPSocket}
+	result := clientAddress(peer, ClientIPSocket)
 	if !contains(trusted, peer) {
 		return result
 	}
@@ -37,7 +38,20 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress
 	for i := len(chain) - 1; i >= 0 && contains(trusted, current); i-- {
 		current = chain[i]
 	}
-	return ClientAddress{Addr: current, Source: ClientIPForwarded}
+	return clientAddress(current, ClientIPForwarded)
+}
+
+func PeerIsTrusted(r *http.Request, trusted []netip.Prefix) bool {
+	peer, ok := parseAddress(r.RemoteAddr)
+	return ok && contains(trusted, peer)
+}
+
+func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
+	version := 6
+	if addr.Is4() {
+		version = 4
+	}
+	return ClientAddress{Addr: addr, Version: version, Source: source}
 }
 
 func forwardedChain(h http.Header) ([]netip.Addr, bool, bool) {

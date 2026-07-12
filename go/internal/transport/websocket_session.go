@@ -36,22 +36,19 @@ func (b *wsBus) Reliable() bool { return true }
 // MessageBus and reports ErrUnsupported for the HTTP / byte-stream seams — a bus
 // endpoint never touches those.
 type websocketSession struct {
-	conn     *websocket.Conn
-	ctx      context.Context
-	clientIP string
-	query    url.Values
+	conn  *websocket.Conn
+	ctx   context.Context
+	query url.Values
 }
 
 // NewWebSocketSession wraps an upgraded WebSocket conn as a Session. ctx bounds
-// the bus lifetime (the adapter cancels it when the handler returns); clientIP
-// and query are captured from the upgrade request before the hijack.
-func NewWebSocketSession(ctx context.Context, conn *websocket.Conn, clientIP string, query url.Values) Session {
-	return &websocketSession{conn: conn, ctx: ctx, clientIP: clientIP, query: query}
+// the bus lifetime (the adapter cancels it when the handler returns).
+func NewWebSocketSession(ctx context.Context, conn *websocket.Conn, query url.Values) Session {
+	return &websocketSession{conn: conn, ctx: ctx, query: query}
 }
 
 func (s *websocketSession) Context() context.Context { return s.ctx }
 func (s *websocketSession) Query() url.Values        { return s.query }
-func (s *websocketSession) ClientIP() string         { return s.clientIP }
 func (s *websocketSession) Proto() Proto             { return ProtoWS }
 
 func (s *websocketSession) HTTP() (http.ResponseWriter, *http.Request, bool) {

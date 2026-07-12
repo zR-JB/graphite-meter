@@ -1,5 +1,7 @@
 {
   "clientIp": "203.0.113.7",
+  "clientIpVersion": 4,
+  "clientIpSource": "socket",
   "server": {
     "name": "graphite-meter",
     "host": "speed.example",

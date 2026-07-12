@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -50,6 +51,7 @@ func TestPreflightAdvertisesUploadSession(t *testing.T) {
 // has a real wss(-mappable) origin to prefer over the always-http `h1`.
 func TestPreflightOriginsBehindTLSProxy(t *testing.T) {
 	cfg := config.Default()
+	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
 	pf := NewPreflight(&cfg)
 
 	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
@@ -145,12 +147,25 @@ func TestPreflightCapabilitiesTransportFlags(t *testing.T) {
 	}
 }
 
+func TestPreflightClientAddress(t *testing.T) {
+	cfg := config.Default()
+	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
+	req.RemoteAddr = "10.0.0.2:1234"
+	req.Header.Set("Forwarded", `for="[2001:db8::4]:443"`)
+
+	body := NewPreflight(&cfg).build(&fakeSession{}, req)
+	if body.ClientIP != "2001:db8::4" || body.ClientIPVersion != 6 || body.ClientIPSource != "forwarded" {
+		t.Fatalf("client address = %s/IPv%d/%s", body.ClientIP, body.ClientIPVersion, body.ClientIPSource)
+	}
+}
+
 // TestRequestIsTLSDirectConnection checks r.TLS set (a direct TLS
 // connection, no proxy involved) is honored independently of any header.
 func TestRequestIsTLSDirectConnection(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "https://speed.example/preflight", nil)
 	req.TLS = &tls.ConnectionState{}
-	if !requestIsTLS(req) {
+	if !requestIsTLS(req, nil) {
 		t.Error("requestIsTLS = false with r.TLS set, want true")
 	}
 }
@@ -173,22 +188,19 @@ func TestRequestIsTLSMultiHopTakesFirstEntry(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
 			req.Header.Set("X-Forwarded-Proto", tc.proto)
-			if got := requestIsTLS(req); got != tc.want {
+			trusted := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+			if got := requestIsTLS(req, trusted); got != tc.want {
 				t.Errorf("requestIsTLS(X-Forwarded-Proto=%q) = %v, want %v", tc.proto, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestRequestIsTLSCaseSensitive documents current behavior: the comparison
-// against "https" is exact-case, so a proxy that sends an uppercase scheme
-// is not recognized as TLS. This locks the existing behavior rather than
-// changing it.
-func TestRequestIsTLSCaseSensitive(t *testing.T) {
+func TestRequestIsTLSIgnoresUntrustedHeader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-	req.Header.Set("X-Forwarded-Proto", "HTTPS")
-	if requestIsTLS(req) {
-		t.Error("requestIsTLS = true for an uppercase X-Forwarded-Proto, want false (exact-case match only)")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if requestIsTLS(req, nil) {
+		t.Error("requestIsTLS = true for an untrusted forwarding header")
 	}
 }
 
