@@ -22,6 +22,7 @@ func TestResolveClientAddress(t *testing.T) {
 		{"Forwarded quoted IPv6", "10.0.0.2:1234", "Forwarded", `for="[2001:db8::4]:4567"`, "2001:db8::4", "forwarded"},
 		{"XFF bracketed IPv6", "10.0.0.2:1234", "X-Forwarded-For", "[2001:db8::4]:4567", "2001:db8::4", "forwarded"},
 		{"X Real IP", "10.0.0.2:1234", "X-Real-IP", "203.0.113.4", "203.0.113.4", "forwarded"},
+		{"Forwarded multi hop", "10.0.0.2:1234", "Forwarded", "for=203.0.113.4;proto=https, for=192.0.2.7", "203.0.113.4", "forwarded"},
 		{"multi hop boundary", "10.0.0.2:1234", "X-Forwarded-For", "203.0.113.4, 198.51.100.8, 192.0.2.7", "198.51.100.8", "forwarded"},
 		{"all forwarded hops trusted", "10.0.0.2:1234", "X-Forwarded-For", "192.0.2.3, 192.0.2.7", "192.0.2.3", "forwarded"},
 		{"mapped peer and client", "[::ffff:10.0.0.2]:1234", "X-Forwarded-For", "::ffff:203.0.113.4", "203.0.113.4", "forwarded"},
@@ -40,6 +41,18 @@ func TestResolveClientAddress(t *testing.T) {
 				t.Fatalf("ResolveClientAddress() = %s/%s, want %s/%s", got.Addr, got.Source, tt.want, tt.source)
 			}
 		})
+	}
+}
+
+func TestForwardedHeaderPrecedence(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "10.0.0.2:1234"
+	r.Header.Set("Forwarded", "for=203.0.113.4")
+	r.Header.Set("X-Forwarded-For", "198.51.100.8")
+	r.Header.Set("X-Real-IP", "198.51.100.9")
+	got := ResolveClientAddress(r, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	if got.Addr.String() != "203.0.113.4" || got.Source != ClientIPForwarded {
+		t.Fatalf("ResolveClientAddress() = %s/%s, want Forwarded value", got.Addr, got.Source)
 	}
 }
 
