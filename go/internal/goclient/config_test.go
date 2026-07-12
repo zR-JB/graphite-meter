@@ -20,7 +20,6 @@ func TestDefaultConfig(t *testing.T) {
 		LoadedLatency:          true,
 		DownloadBytesPerStream: 64 * 1024 * 1024 * 1024,
 		UploadBytesPerStream:   64 * 1024 * 1024 * 1024,
-		UploadProgressSettle:   250 * time.Millisecond,
 		MaxIdleConnsPerHost:    256,
 		ResponseHeaderTimeout:  10 * time.Second,
 		ExpectContinueTimeout:  time.Second,
@@ -117,11 +116,6 @@ func TestConfigNormalized(t *testing.T) {
 			name:   "negative UploadBytesPerStream defaults",
 			mutate: func(c Config) Config { c.UploadBytesPerStream = -1; return c },
 			check:  func(c Config) (any, any) { return c.UploadBytesPerStream, int64(64 * 1024 * 1024 * 1024) },
-		},
-		{
-			name:   "zero UploadProgressSettle defaults",
-			mutate: func(c Config) Config { c.UploadProgressSettle = 0; return c },
-			check:  func(c Config) (any, any) { return c.UploadProgressSettle, 250 * time.Millisecond },
 		},
 		{
 			name:   "zero MaxIdleConnsPerHost defaults",

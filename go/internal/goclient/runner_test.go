@@ -475,7 +475,6 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 				BidirectionalDuration:  150 * time.Millisecond,
 				ParallelStreams:        c.streams,
 				DownloadBytesPerStream: 16 * 1024,
-				UploadProgressSettle:   20 * time.Millisecond,
 			}
 
 			var mu sync.Mutex

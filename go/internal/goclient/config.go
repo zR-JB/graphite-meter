@@ -22,7 +22,6 @@ type Config struct {
 	LoadedLatency          bool
 	DownloadBytesPerStream int64
 	UploadBytesPerStream   int64
-	UploadProgressSettle   time.Duration
 	InsecureSkipTLSVerify  bool
 	MaxIdleConnsPerHost    int
 	ResponseHeaderTimeout  time.Duration
@@ -43,7 +42,6 @@ func DefaultConfig() Config {
 		LoadedLatency:          true,
 		DownloadBytesPerStream: 64 * 1024 * 1024 * 1024,
 		UploadBytesPerStream:   64 * 1024 * 1024 * 1024,
-		UploadProgressSettle:   250 * time.Millisecond,
 		MaxIdleConnsPerHost:    256,
 		ResponseHeaderTimeout:  10 * time.Second,
 		ExpectContinueTimeout:  time.Second,
@@ -83,9 +81,6 @@ func (c Config) normalized() Config {
 	}
 	if c.UploadBytesPerStream <= 0 {
 		c.UploadBytesPerStream = 64 * 1024 * 1024 * 1024
-	}
-	if c.UploadProgressSettle <= 0 {
-		c.UploadProgressSettle = 250 * time.Millisecond
 	}
 	if c.MaxIdleConnsPerHost <= 0 {
 		c.MaxIdleConnsPerHost = 256

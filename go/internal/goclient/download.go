@@ -49,7 +49,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	cancel()
 	laneCancel()
 	wg.Wait()
-	return stats.result(stage, Down, false, elapsed), nil
+	return stats.result(stage, Down, false), nil
 }
 
 func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64) {
@@ -105,10 +105,12 @@ func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Directi
 	lastN := total.Load()
 	baseline := lastN
 	lastT := time.Now()
+	startT := lastT
 	stats := rateStats{}
 	for {
 		select {
 		case <-ctx.Done():
+			stats.setWindow(total.Load()-baseline, time.Since(startT))
 			return stats
 		case now := <-ticker.C:
 			n := total.Load()
@@ -121,7 +123,7 @@ func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Directi
 			}
 			bps := float64(delta) / dt
 			measuredTotal := n - baseline
-			stats.add(bps, measuredTotal)
+			stats.add(bps)
 			r.emit(Event{
 				Kind:      EventThroughput,
 				At:        now,
