@@ -9,6 +9,7 @@
 
   const PHASE_LABEL: Record<Phase, string> = {
     idle: "Idle",
+    connecting: "Verifying target",
     warmup: "Warming up",
     latency: "Measuring latency",
     download: "Downloading",

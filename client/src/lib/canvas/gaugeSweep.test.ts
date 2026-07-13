@@ -64,6 +64,10 @@ test("sweepTarget: warmup holds a fixed indeterminate position", () => {
   expect(sweepTarget({ ...base, phase: "warmup" })).toBe(0.3);
 });
 
+test("sweepTarget: connecting holds the same indeterminate position", () => {
+  expect(sweepTarget({ ...base, phase: "connecting" })).toBe(0.3);
+});
+
 test("sweepTarget: latency normalizes rtt/latencyScaleMs", () => {
   expect(
     sweepTarget({ ...base, phase: "latency", rtt: 25, latencyScaleMs: 100 }),

@@ -4,13 +4,14 @@
 /* ---------- Lifecycle ---------- */
 /* Phase sequence: every enabled stage is preceded by its own self-contained
  * `warmup` window, e.g. all stages on →
- *   idle → warmup → latency → warmup → download → warmup → upload → warmup → complete
+ *   idle → connecting → warmup → latency → warmup → download → warmup → upload → complete
  * A warmup is omitted when its stage is off or `duration.warmupMs <= 0`. There
  * is no standalone global warmup: each warmup primes only the stage that
  * follows it, so stages carry no cross-dependencies. See the warmup-contract
  * note below `RunnerConfig`. */
 export type Phase =
   | "idle"
+  | "connecting"
   | "warmup"
   | "latency"
   | "download"
@@ -438,10 +439,15 @@ export type RunnerAnomaly =
 
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
-  start(config: RunnerConfig): void;
+  /** Verify the selected target, then run. Emits `connecting` immediately so
+   *  asynchronous path verification is visible and cancellable. */
+  start(config: RunnerConfig): Promise<void>;
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
-  probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo>;
+  probe(
+    endpoint: RunnerConfig["endpoint"],
+    signal?: AbortSignal,
+  ): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (no I/O). */
   describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
@@ -460,7 +466,8 @@ export interface NetworkRunner {
  *  Connections are owned by the STAGE, not by the phase label. The core drives a
  *  three-call lifecycle per enabled stage (see `RunnerBackend` in core.ts), each
  *  call carrying the stage's resolved {@link PhaseActivity}:
- *    onStageBegin(activity)   — open + PRIME every connection the activity names
+ *    onStageBegin(activity)   — open + PRIME every connection the activity names;
+ *                               asynchronous preparation pauses the stage clock
  *                               (the `transfer` lanes, plus the ping channel when
  *                               `loadedLatency` or a latency stage). Fires at the
  *                               start of the stage's warmup window. No measuring.
@@ -469,8 +476,10 @@ export interface NetworkRunner {
  *                               immediately after onStageBegin when warmupMs<=0.
  *    onStageEnd(activity)     — the measured window ended (boundary, early finish,
  *                               or run end); close the stage's connection(s).
- *  Because begin/measure/end bracket ONE connection set, the warmup genuinely
- *  warms the wire the measurement runs over — there is no cold reconnect at the
+ *  The configured warmup begins only after asynchronous preparation resolves,
+ *  so it remains a minimum wire-warming interval rather than a deadline that
+ *  setup can consume. Because begin/measure/end bracket ONE connection set, the
+ *  warmup genuinely warms the wire the measurement runs over — there is no cold reconnect at the
  *  warmup→measure seam (the point of a warmup). Each enabled stage is
  *  still preceded by exactly one `"warmup"` window of `duration.warmupMs`
  *  (omitted when <= 0), emitted to the UI as the generic `"warmup"` phase; the

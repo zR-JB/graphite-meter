@@ -321,7 +321,10 @@ export class RealBackend implements RunnerBackend {
    * rejection to a `preflight-failed` error.
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
-  async probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
+  async probe(
+    endpoint: RunnerConfig["endpoint"],
+    signal?: AbortSignal,
+  ): Promise<InfraInfo> {
     const base = resolveBase(this.#resolveEndpoint(endpoint));
     if (this.#discovery && base !== this.#discoveryBase) {
       this.#discovery = null;
@@ -339,6 +342,7 @@ export class RealBackend implements RunnerBackend {
         const res = await fetch(`${base}/preflight${ident}`, {
           method: "GET",
           headers: this.#authHeaders(),
+          signal,
         });
         if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
         pf = (await res.json()) as Preflight;
@@ -377,6 +381,9 @@ export class RealBackend implements RunnerBackend {
     let pathProbe: Probe | null = null;
     let firstHopProtocol: string | undefined;
     const probeCtl = new AbortController();
+    const probeSignal = signal
+      ? AbortSignal.any([signal, probeCtl.signal])
+      : probeCtl.signal;
     const probeDeadline =
       selected.protocol === "http3"
         ? setTimeout(() => probeCtl.abort(), 2000)
@@ -391,7 +398,7 @@ export class RealBackend implements RunnerBackend {
         const probeRes = await fetch(probeURL, {
           cache: "no-store",
           headers: this.#authHeaders(),
-          signal: probeCtl.signal,
+          signal: probeSignal,
         });
         if (!probeRes.ok)
           throw new Error(`probe returned HTTP ${probeRes.status}`);
@@ -427,7 +434,7 @@ export class RealBackend implements RunnerBackend {
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
-    const probeRtts = await this.#collectIdleRtts(endpoint);
+    const probeRtts = await this.#collectIdleRtts(endpoint, signal);
 
     return {
       clientIp: pathProbe.clientIp,
@@ -459,13 +466,18 @@ export class RealBackend implements RunnerBackend {
    *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
    *  worker to the 1/s idle cadence. Best-effort: resolves with whatever it
    *  gathered by the timeout, never rejects. */
-  #collectIdleRtts(endpoint: RunnerConfig["endpoint"]): Promise<number[]> {
+  #collectIdleRtts(
+    endpoint: RunnerConfig["endpoint"],
+    signal?: AbortSignal,
+  ): Promise<number[]> {
+    if (signal?.aborted) return Promise.resolve([]);
     this.#startIdleKeepalive(endpoint, PROBE_PING_INTERVAL_MS);
     if (!this.#idleWorker) return Promise.resolve([]);
     return new Promise<number[]>((resolve) => {
       const finish = (): void => {
         if (!this.#probeCollect) return;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", finish);
         const rtts = this.#probeCollect.rtts;
         this.#probeCollect = null;
         this.#idleWorker?.postMessage({
@@ -475,6 +487,7 @@ export class RealBackend implements RunnerBackend {
         resolve(rtts);
       };
       const timer = setTimeout(finish, PROBE_PING_TIMEOUT_MS);
+      signal?.addEventListener("abort", finish, { once: true });
       this.#probeCollect = { rtts: [], finish };
     });
   }
@@ -519,7 +532,8 @@ export class RealBackend implements RunnerBackend {
     this.#cbSeed = `r${Math.round(performance.now())}`;
   }
 
-  onStageBegin(activity: PhaseActivity): void {
+  onStageBegin(activity: PhaseActivity): void | Promise<void> {
+    const preparations: Promise<void>[] = [];
     // The ping channel is ALWAYS a latency-role transport (websocket today) — it
     // runs on its OWN socket, never on the stage's transfer transport. Negotiate
     // it separately (and first) so a loaded transfer stage's fetch-stream kind can
@@ -549,9 +563,13 @@ export class RealBackend implements RunnerBackend {
         );
         return;
       }
-      for (const dir of activity.transfer)
-        this.#primeTransfer(kind, dir, activity);
+      for (const dir of activity.transfer) {
+        const preparation = this.#primeTransfer(kind, dir, activity);
+        if (preparation) preparations.push(preparation);
+      }
     }
+    if (preparations.length > 0)
+      return Promise.all(preparations).then(() => undefined);
   }
 
   /**
@@ -665,7 +683,7 @@ export class RealBackend implements RunnerBackend {
     kind: TransportKind,
     dir: FlowDirection,
     activity: PhaseActivity,
-  ): void {
+  ): void | Promise<void> {
     if (kind !== "fetch-stream") throw new Error(`unsupported ${kind}`);
 
     // A stage names each direction once (bidirectional calls this twice, one
@@ -736,8 +754,7 @@ export class RealBackend implements RunnerBackend {
 
     if (dir === "up") {
       this.#testId = null;
-      void this.#primeUploadTransfer(dir, base, streams, url);
-      return;
+      return this.#primeUploadTransfer(dir, base, streams, url);
     }
 
     for (let i = 0; i < streams; i++) {

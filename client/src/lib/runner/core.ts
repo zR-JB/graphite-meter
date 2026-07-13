@@ -28,6 +28,7 @@ import {
 } from "./adaptive";
 import {
   buildSegments,
+  adaptiveWarmupMs,
   rebuildTail,
   segmentAt,
   type Segment,
@@ -158,17 +159,21 @@ export interface RunnerBackend {
   attach(host: CoreHost): void;
   /** Pre-test handshake; resolves InfraInfo. MAY emit a few pre-test `latency`
    *  samples (underLoad:false, negative `t`) via the host for the sparkline. */
-  probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo>;
+  probe(
+    endpoint: RunnerConfig["endpoint"],
+    signal?: AbortSignal,
+  ): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (see EngineInfo). */
   describe(): EngineInfo;
   /** A run is starting with this config. Per-stage priming happens in
    *  onStageBegin; reset any per-run state here. */
   onRunStart(config: RunnerConfig): void;
-  /** A stage is beginning — the start of its warmup window (or the stage itself
-   *  when warmupMs<=0). Open + PRIME every connection `activity` names (the
+  /** A stage is beginning — before its warmup clock starts (or before the stage
+   *  itself when warmupMs<=0). Open + PRIME every connection `activity` names (the
    *  transfer lanes, plus the ping channel when loadedLatency or a latency
-   *  stage), but do NOT push measured samples yet. */
-  onStageBegin(activity: PhaseActivity): void;
+   *  stage), but do NOT push measured samples yet. Returning a promise holds
+   *  the stage clock at zero until preparation is complete. */
+  onStageBegin(activity: PhaseActivity): void | Promise<void>;
   /** The stage's warmup window has elapsed; the connections primed in
    *  onStageBegin are warm. START measuring on the SAME connections — never
    *  reopen them (that discards the warmup). Fires immediately after
@@ -203,10 +208,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   // ---- run-time state ----
   #tickTimer: ReturnType<typeof setInterval> | null = null;
+  #prepareAbort: AbortController | null = null;
+  #runGeneration = 0;
   #t0 = 0; // performance.now() at run start
   #segments: Segment[] = [];
   #totalMs = 0;
   #lastEmittedPhase: Phase = "idle";
+  #stagePreparing = false;
+  #stagePreparationId = 0;
   // The segment currently driving the run, or null before the first tick / after
   // it ends. Backend stage lifecycle keys off this segment's STAGE identity (its
   // `activity.stage`), not the phase label — so the warmup→measure seam (same
@@ -290,8 +299,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     for (const h of this.#handlers) h(e);
   }
 
-  probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
-    return this.#backend.probe(endpoint);
+  probe(
+    endpoint: RunnerConfig["endpoint"],
+    signal?: AbortSignal,
+  ): Promise<InfraInfo> {
+    return this.#backend.probe(endpoint, signal);
   }
 
   describe(): EngineInfo {
@@ -303,10 +315,45 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   /* ================= START ================= */
-  start(config: RunnerConfig): void {
-    if (this.#tickTimer) this.abort();
-    this.#cfg = config;
+  async start(config: RunnerConfig): Promise<void> {
+    if (this.#tickTimer || this.#prepareAbort) this.abort();
+    const generation = ++this.#runGeneration;
+    const prepareAbort = new AbortController();
+    this.#prepareAbort = prepareAbort;
     this.#resetRunState();
+
+    const from = this.#phase;
+    this.#setPhase("connecting");
+    this.#lastEmittedPhase = "connecting";
+    this.emit({
+      type: "phase",
+      transition: { from, to: "connecting", stage: null, t: 0 },
+    });
+
+    let info: InfraInfo;
+    try {
+      info = await this.probe(config.endpoint, prepareAbort.signal);
+    } catch (cause) {
+      if (generation !== this.#runGeneration || prepareAbort.signal.aborted)
+        return;
+      this.#prepareAbort = null;
+      throw cause;
+    }
+    if (generation !== this.#runGeneration) return;
+    this.#prepareAbort = null;
+    this.emit({ type: "infra", info });
+
+    config = {
+      ...config,
+      duration: {
+        ...config.duration,
+        warmupMs: adaptiveWarmupMs(
+          config.duration.warmupMs,
+          info.preTestPingMs,
+        ),
+      },
+    };
+    this.#cfg = config;
 
     // Build the phase timeline, skipping disabled stages (shared scheduler).
     const { segments, totalMs } = buildSegments(config);
@@ -344,13 +391,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#tpEma.down = this.#tpEma.up = null;
     this.#tpEmaStable.down = this.#tpEmaStable.up = null;
     this.#tpEmaPhase = "idle";
+    this.#stagePreparing = false;
+    this.#stagePreparationId++;
   }
 
   /* ================= ABORT ================= */
   abort(): void {
-    if (!this.#tickTimer) return;
-    clearInterval(this.#tickTimer);
+    if (!this.#tickTimer && !this.#prepareAbort) return;
+    this.#runGeneration++;
+    this.#prepareAbort?.abort();
+    this.#prepareAbort = null;
+    if (this.#tickTimer) clearInterval(this.#tickTimer);
     this.#tickTimer = null;
+    this.#stagePreparing = false;
+    this.#stagePreparationId++;
     const from = this.#phase;
     this.#backend.onAbort();
     this.#setPhase("aborted");
@@ -396,6 +450,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const now = performance.now();
     const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
+    if (this.#stagePreparing) return;
     this.#measuredElapsed += dtWall;
     // Adaptive completion pauses during recovery; effective elapsed time does not.
     if (this.#measuring && this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
@@ -452,7 +507,46 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       } else {
         // New stage — open + prime its connection(s). When no warmup window
         // precedes it (warmupMs<=0), begin measuring immediately on the same.
-        this.#backend.onStageBegin(seg.activity);
+        const preparation = this.#backend.onStageBegin(seg.activity);
+        if (preparation) {
+          const preparationId = ++this.#stagePreparationId;
+          this.#stagePreparing = true;
+          void preparation.then(
+            () => {
+              if (
+                preparationId !== this.#stagePreparationId ||
+                !this.#tickTimer
+              )
+                return;
+              this.#stagePreparing = false;
+              this.#lastRealNow = performance.now();
+              if (
+                seg.phase !== "warmup" &&
+                !this.#stageFailures.has(seg.activity.stage)
+              )
+                this.#backend.onStageMeasure(seg.activity);
+              this.#tick();
+            },
+            (cause) => {
+              if (preparationId !== this.#stagePreparationId) return;
+              this.#stagePreparing = false;
+              this.fail(
+                "protocol-error",
+                `${seg.activity.stage} preparation failed`,
+                cause,
+              );
+            },
+          );
+          this.emit({
+            type: "progress",
+            phase: seg.phase,
+            fraction: 0,
+            phaseElapsedMs: 0,
+            phaseBudgetMs: seg.end - seg.start,
+            measuring: true,
+          });
+          return;
+        }
         if (
           seg.phase !== "warmup" &&
           !this.#stageFailures.has(seg.activity.stage)

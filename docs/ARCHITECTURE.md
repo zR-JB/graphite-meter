@@ -180,9 +180,15 @@ and dual exponential-moving-average smoothing (a fast ~700ms constant for the di
 slower ~1800ms constant for stability judgments) — both fed from the same raw samples, so the
 exact byte totals a run reports never drift from what smoothing displays.
 
+Each run enters a visible `connecting` phase while the selected target is probed and verified.
+Only after that succeeds does the measurement timeline start. Stage preparation may also be
+asynchronous: `RunnerCore` holds that stage at zero until `onStageBegin` resolves, then gives the
+primed connection the full configured warmup interval. Discovery, upload-session allocation, and
+other setup work therefore cannot silently consume measured or warmup time.
+
 A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage lifecycle
-(`onStageBegin` → prime/open connections, `onStageMeasure` → start pushing real samples on the
-_same_ primed connection, `onStageEnd`). Two backends exist:
+(`onStageBegin` → prime/open connections and signal readiness, `onStageMeasure` → start pushing
+real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 
 - **`RealBackend`** (`src/lib/runner/RealRunner.ts`) — the production engine, always used in a
   release build. Negotiates a transport per stage (today this always resolves to `fetch`

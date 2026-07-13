@@ -171,7 +171,11 @@ export class DummyBackend implements RunnerBackend {
   }
 
   /* ================= PROBE ================= */
-  async probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
+  async probe(
+    endpoint: RunnerConfig["endpoint"],
+    signal?: AbortSignal,
+  ): Promise<InfraInfo> {
+    signal?.throwIfAborted();
     const interval = 90;
     const pings = 4;
     // Emit a few pre-test pings so the sparkline has something to show. These

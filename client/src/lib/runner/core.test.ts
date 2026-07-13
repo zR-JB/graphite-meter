@@ -86,7 +86,7 @@ class FakeBackend implements RunnerBackend {
   onRunStart(): void {
     this.calls.push("runStart");
   }
-  onStageBegin(activity: PhaseActivity): void {
+  onStageBegin(activity: PhaseActivity): void | Promise<void> {
     this.calls.push(`begin:${activity.stage}`);
   }
   onStageMeasure(activity: PhaseActivity): void {
@@ -178,7 +178,7 @@ function progressEvents(
 // Phase timeline + stage lifecycle
 // ---------------------------------------------------------------------------
 
-test("full run: latency then download — phase order and stage lifecycle", () => {
+test("full run: latency then download — phase order and stage lifecycle", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -188,14 +188,14 @@ test("full run: latency then download — phase order and stage lifecycle", () =
     stages: { latency: true, download: true },
     duration: { latencyMs: 100, downloadMs: 100 },
   });
-  core.start(cfg);
+  await core.start(cfg);
 
   expect(backend.calls).toEqual([
     "runStart",
     "begin:latency",
     "measure:latency",
   ]);
-  expect(phaseTransitions(events)).toEqual(["latency"]);
+  expect(phaseTransitions(events)).toEqual(["connecting", "latency"]);
 
   advance(100); // crosses into download
   expect(backend.calls).toEqual([
@@ -206,7 +206,11 @@ test("full run: latency then download — phase order and stage lifecycle", () =
     "begin:download",
     "measure:download",
   ]);
-  expect(phaseTransitions(events)).toEqual(["latency", "download"]);
+  expect(phaseTransitions(events)).toEqual([
+    "connecting",
+    "latency",
+    "download",
+  ]);
   expect(core.phase).toBe("download");
 
   advance(100); // reaches totalMs -> finish
@@ -230,13 +234,13 @@ test("full run: latency then download — phase order and stage lifecycle", () =
   }
 });
 
-test("throughput stays isolated across transfer warmups", () => {
+test("throughput stays isolated across transfer warmups", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
-  core.start(
+  await core.start(
     makeConfig({
       stages: { download: true, upload: true, bidirectional: true },
       duration: {
@@ -284,13 +288,13 @@ test("throughput stays isolated across transfer warmups", () => {
   ]);
 });
 
-test("phase transitions report scheduled boundaries when a tick overshoots", () => {
+test("phase transitions report scheduled boundaries when a tick overshoots", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
-  core.start(
+  await core.start(
     makeConfig({
       stages: { download: true, upload: true },
       duration: { warmupMs: 100, downloadMs: 100, uploadMs: 100 },
@@ -303,13 +307,14 @@ test("phase transitions report scheduled boundaries when a tick overshoots", () 
     event.type === "phase" ? [event.transition] : [],
   );
   expect(transitions.map(({ to, t }) => ({ to, t }))).toEqual([
+    { to: "connecting", t: 0 },
     { to: "warmup", t: 0 },
     { to: "download", t: 100 },
     { to: "warmup", t: 200 },
   ]);
 });
 
-test("warmup->measure seam: same stage, no onStageEnd between begin and measure", () => {
+test("warmup->measure seam: same stage, no onStageEnd between begin and measure", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -318,11 +323,11 @@ test("warmup->measure seam: same stage, no onStageEnd between begin and measure"
   const cfg = makeConfig({
     duration: { warmupMs: 50, downloadMs: 100 },
   });
-  core.start(cfg);
+  await core.start(cfg);
 
   // Warmup begins the stage but does not measure yet.
   expect(backend.calls).toEqual(["runStart", "begin:download"]);
-  expect(phaseTransitions(events)).toEqual(["warmup"]);
+  expect(phaseTransitions(events)).toEqual(["connecting", "warmup"]);
 
   advance(50); // warmup window elapses -> same stage starts measuring
   expect(backend.calls).toEqual([
@@ -330,7 +335,11 @@ test("warmup->measure seam: same stage, no onStageEnd between begin and measure"
     "begin:download",
     "measure:download",
   ]);
-  expect(phaseTransitions(events)).toEqual(["warmup", "download"]);
+  expect(phaseTransitions(events)).toEqual([
+    "connecting",
+    "warmup",
+    "download",
+  ]);
 
   advance(100); // finish
   expect(backend.calls).toEqual([
@@ -342,18 +351,76 @@ test("warmup->measure seam: same stage, no onStageEnd between begin and measure"
   ]);
 });
 
+test("target verification is a visible phase and abort prevents a late run start", async () => {
+  let resolveProbe!: (info: InfraInfo) => void;
+  class PendingProbeBackend extends FakeBackend {
+    override probe(): Promise<InfraInfo> {
+      return new Promise((resolve) => (resolveProbe = resolve));
+    }
+  }
+  const backend = new PendingProbeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  const start = core.start(makeConfig());
+  expect(core.phase).toBe("connecting");
+  expect(phaseTransitions(events)).toEqual(["connecting"]);
+
+  core.abort();
+  resolveProbe(await new FakeBackend().probe());
+  await start;
+
+  expect(core.phase).toBe("aborted");
+  expect(backend.calls).toEqual(["abort"]);
+});
+
+test("asynchronous stage preparation cannot consume the warmup budget", async () => {
+  let prepared!: () => void;
+  class PreparingBackend extends FakeBackend {
+    override onStageBegin(activity: PhaseActivity): Promise<void> {
+      super.onStageBegin(activity);
+      return new Promise((resolve) => (prepared = resolve));
+    }
+  }
+  const backend = new PreparingBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  await core.start(
+    makeConfig({ duration: { warmupMs: 100, downloadMs: 100 } }),
+  );
+  advance(1000);
+  expect(core.phase).toBe("warmup");
+  expect(progressEvents(events).at(-1)?.phaseElapsedMs).toBe(0);
+  expect(backend.calls).toEqual(["runStart", "begin:download"]);
+
+  prepared();
+  await Promise.resolve();
+  advance(99);
+  expect(core.phase).toBe("warmup");
+  advance(1);
+  expect(core.phase).toBe("download");
+  expect(backend.calls).toEqual([
+    "runStart",
+    "begin:download",
+    "measure:download",
+  ]);
+});
+
 // ---------------------------------------------------------------------------
 // Measured test-time clock: stalls count, but cannot finalize a phase
 // ---------------------------------------------------------------------------
 
-test("stall counts toward the window but blocks finalization until resume", () => {
+test("stall counts toward the window but blocks finalization until resume", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
   const cfg = makeConfig({ duration: { downloadMs: 1000 } });
-  core.start(cfg); // t=0, enters download
+  await core.start(cfg); // t=0, enters download
 
   advance(300);
   let last = progressEvents(events).at(-1)!;
@@ -378,14 +445,14 @@ test("stall counts toward the window but blocks finalization until resume", () =
   expect(core.phase).toBe("complete");
 });
 
-test("watchdog auto-stalls a measured phase after prolonged sample silence", () => {
+test("watchdog auto-stalls a measured phase after prolonged sample silence", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
   const cfg = makeConfig({ duration: { downloadMs: 10000 } });
-  core.start(cfg);
+  await core.start(cfg);
 
   advance(800); // under the 1500ms watchdog threshold
   expect(events.some((e) => e.type === "stall")).toBe(false);
@@ -404,12 +471,12 @@ test("watchdog auto-stalls a measured phase after prolonged sample silence", () 
   expect(after).toBeGreaterThan(before);
 });
 
-test("loaded pings do not hide a stalled transfer", () => {
+test("loaded pings do not hide a stalled transfer", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
-  core.start(makeConfig({ duration: { downloadMs: 5000 } }));
+  await core.start(makeConfig({ duration: { downloadMs: 5000 } }));
 
   for (let i = 0; i < 8; i++) {
     backend.host.ingestLatency(2, true, false);
@@ -419,7 +486,7 @@ test("loaded pings do not hide a stalled transfer", () => {
   expect(events.some((e) => e.type === "stall")).toBe(true);
 });
 
-test("backend boundary flush is included before stage reduction", () => {
+test("backend boundary flush is included before stage reduction", async () => {
   class FlushingBackend extends FakeBackend {
     override onStageEnd(activity: PhaseActivity): void {
       if (activity.stage === "download")
@@ -431,7 +498,7 @@ test("backend boundary flush is included before stage reduction", () => {
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
-  core.start(makeConfig({ duration: { downloadMs: 100 } }));
+  await core.start(makeConfig({ duration: { downloadMs: 100 } }));
   advance(100);
 
   const complete = events.find((e) => e.type === "complete");
@@ -440,14 +507,14 @@ test("backend boundary flush is included before stage reduction", () => {
   ).toBe(100);
 });
 
-test("a real sample arriving mid-stall auto-resumes", () => {
+test("a real sample arriving mid-stall auto-resumes", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
   const cfg = makeConfig({ duration: { downloadMs: 10000 } });
-  core.start(cfg);
+  await core.start(cfg);
 
   core.stall({ reason: "connection-lost" });
   expect(events.filter((e) => e.type === "stall").length).toBe(1);
@@ -458,14 +525,14 @@ test("a real sample arriving mid-stall auto-resumes", () => {
   expect(events.some((e) => e.type === "resume")).toBe(true);
 });
 
-test("a stall that outlives max-stall escalates to a terminal failure", () => {
+test("a stall that outlives max-stall escalates to a terminal failure", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
   const cfg = makeConfig({ duration: { downloadMs: 60000 } });
-  core.start(cfg);
+  await core.start(cfg);
 
   core.stall({ reason: "connection-lost" });
   advance(20001); // exceeds MAX_STALL_MS (20000)
@@ -482,7 +549,7 @@ test("a stall that outlives max-stall escalates to a terminal failure", () => {
 // Adaptive early-finish glide
 // ---------------------------------------------------------------------------
 
-test("adaptive early-finish arms and completes the run well before the nominal duration on a stable feed", () => {
+test("adaptive early-finish arms and completes the run well before the nominal duration on a stable feed", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -500,7 +567,7 @@ test("adaptive early-finish arms and completes the run well before the nominal d
       glideMs: 100,
     },
   });
-  core.start(cfg); // enters download at elapsed 0
+  await core.start(cfg); // enters download at elapsed 0
 
   let wallAdvanced = 0;
   advance(10);
@@ -522,7 +589,7 @@ test("adaptive early-finish arms and completes the run well before the nominal d
   expect(wallAdvanced).toBeLessThan(cfg.duration.downloadMs / 2);
 });
 
-test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the phase runs to its nominal end", () => {
+test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the phase runs to its nominal end", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -540,7 +607,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
       glideMs: 50,
     },
   });
-  core.start(cfg);
+  await core.start(cfg);
 
   // A steady ramp (never plateaus) keeps both the variance and the
   // first-vs-last-third slope of the confidence window high, so the
@@ -562,14 +629,14 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
 // Dual EMA (display vs stability) from the same raw samples
 // ---------------------------------------------------------------------------
 
-test("display (fast) and stability (slow) EMAs both derive from the same raw samples without drifting from exact totals", () => {
+test("display (fast) and stability (slow) EMAs both derive from the same raw samples without drifting from exact totals", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
   core.on((e) => events.push(e));
 
   const cfg = makeConfig({ duration: { downloadMs: 100000 } });
-  core.start(cfg); // enters download at elapsed 0
+  await core.start(cfg); // enters download at elapsed 0
 
   const DT = 200;
   const RAW = 1000;

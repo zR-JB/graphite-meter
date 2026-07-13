@@ -10,7 +10,6 @@
 
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
-import { adaptiveWarmupMs } from "./schedule";
 // NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
 // GM_CLIENT_ALLOW_DUMMY=0), Rollup deletes the branch, this import becomes
@@ -35,11 +34,8 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** Which sample source the app is wired to. `dummy` synthesizes samples (the
- *  default, so the app works with no server); `real` talks to the live Go
- *  backend. The real engine is built out stage by stage — Stage 1 implements
- *  only `probe()`, so a `real` run currently lights up the infra panel but
- *  cannot Engage yet. */
+/** Which sample source the app is wired to. `dummy` synthesizes samples for
+ *  development; `real` talks to the live Go backend. */
 type EngineKind = "dummy" | "real";
 
 const ENGINE_STORAGE_KEY = "gm.engine";
@@ -118,26 +114,14 @@ export function engage() {
     return;
   }
   store.reset();
-  // Stretch warmup to the measured RTT so slow-start finishes before measuring
-  // (the user's configured warmup stays the floor). Mutates the throwaway snapshot
-  // only — the persisted setting is untouched.
   const cfg = $state.snapshot(store.config);
-  cfg.duration = {
-    ...cfg.duration,
-    warmupMs: adaptiveWarmupMs(
-      cfg.duration.warmupMs,
-      store.infra?.preTestPingMs ?? 0,
-    ),
-  };
-  // Resolve the selected target before every run. RealBackend caches logical
-  // discovery, so this performs one selected /probe without another preflight.
+  // start() enters a visible connecting phase immediately, then resolves the
+  // selected target before starting the measurement clock.
   getRunner()
-    .probe(cfg.endpoint)
-    .then((info) => {
-      store.ingest({ type: "infra", info });
-      getRunner().start(cfg);
-    })
+    .start(cfg)
     .catch((cause) => {
+      // An abort invalidates the pending start and resolves it without error.
+      if (store.phase === "aborted") return;
       store.ingest({
         type: "error",
         error: {
@@ -146,7 +130,7 @@ export function engage() {
               ? "transport-unavailable"
               : "preflight-failed",
           message: "Couldn't reach the server",
-          phase: "idle",
+          phase: "connecting",
           cause,
         },
       });
