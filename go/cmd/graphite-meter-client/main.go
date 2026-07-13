@@ -22,7 +22,10 @@ func main() {
 	var ping string
 	var showVersion bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "server base URL")
-	flag.StringVar(&cfg.Protocol, "protocol", cfg.Protocol, "network target: auto, http1, http2, or http3")
+	flag.StringVar(&cfg.TransferTarget, "protocol", cfg.TransferTarget, "transfer target (legacy flag): auto, http1, http1-clear, http1-tls, http2, or http3")
+	flag.StringVar(&cfg.TransferTarget, "transfer-target", cfg.TransferTarget, "transfer target: auto, http1, http1-clear, http1-tls, http2, or http3")
+	flag.StringVar(&cfg.LatencyChannel, "latency-channel", cfg.LatencyChannel, "latency channel id from discovery, or auto")
+	flag.StringVar(&cfg.ProgressChannel, "progress-channel", cfg.ProgressChannel, "upload progress channel id from discovery, or auto")
 	flag.StringVar(&stages, "stages", "latency,download,upload", "comma-separated stages: latency,download,upload,bidirectional")
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
 	flag.DurationVar(&cfg.LatencyDuration, "latency-duration", cfg.LatencyDuration, "latency measurement duration")
@@ -148,7 +151,7 @@ type serverPreset struct {
 
 var serverPresets = []serverPreset{
 	{name: "Local dev", url: "http://127.0.0.1:8765", note: "default HTTP listener"},
-	{name: "Local TLS", url: "https://127.0.0.1:8443", note: "local HTTPS listener"},
+	{name: "Local TLS", url: "https://127.0.0.1:8445", note: "dedicated HTTPS HTTP/1.1 listener"},
 	{name: "LAN host", url: "http://graphite-meter.local:8765", note: "mDNS or local DNS"},
 }
 
@@ -167,12 +170,12 @@ type model struct {
 	done   <-chan error
 	cancel context.CancelFunc
 
-	stage    string
-	status   string
-	server   string
-	protocol string
-	err      error
-	complete bool
+	stage                                   string
+	status                                  string
+	server                                  string
+	target, latencyChannel, progressChannel string
+	err                                     error
+	complete                                bool
 
 	rates   map[goclient.Direction]goclient.ThroughputSample
 	peaks   map[goclient.Direction]float64
@@ -466,14 +469,14 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionNetwork:
 		switch m.row {
 		case 0:
-			protocols := []string{"auto", "http1", "http2", "http3"}
+			protocols := []string{"auto", "http1-clear", "http1-tls", "http2", "http3"}
 			for i, p := range protocols {
-				if p == m.cfg.Protocol {
-					m.cfg.Protocol = protocols[(i+1)%len(protocols)]
+				if p == m.cfg.TransferTarget {
+					m.cfg.TransferTarget = protocols[(i+1)%len(protocols)]
 					break
 				}
 			}
-			m.notice = "Protocol target updated."
+			m.notice = "Transfer target updated."
 		case 1:
 			m.edit = editState{kind: editInt, field: "auto-streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax)}
 			m.notice = "Editing maximum automatic HTTP/1 streams. Use 1 through 128."
@@ -523,7 +526,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.stage = ""
 	m.status = "connecting"
 	m.server = ""
-	m.protocol = ""
+	m.target, m.latencyChannel, m.progressChannel = "", "", ""
 	m.err = nil
 	m.complete = false
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
@@ -546,7 +549,12 @@ func (m *model) apply(e goclient.Event) {
 	switch e.Kind {
 	case goclient.EventPreflight:
 		if e.Preflight != nil {
-			m.protocol = e.Message
+			m.target = e.TransferTarget
+			if m.target == "" {
+				m.target = e.Message
+			}
+			m.latencyChannel = e.LatencyChannel
+			m.progressChannel = e.ProgressChannel
 			observed := ""
 			if e.Probe != nil {
 				observed = "/" + e.Probe.ProtocolNegotiated
@@ -838,9 +846,9 @@ func (m model) timingView(w int) string {
 
 func (m model) networkView(w int) string {
 	rows := []string{
-		valueLine("Protocol", m.cfg.Protocol, "selected target"),
+		valueLine("Transfer", m.cfg.TransferTarget, "selected target"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
-		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.Protocol), "0 automatic; 1–128 forced"),
+		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.TransferTarget), "0 automatic; 1–128 forced"),
 		toggleLine("Skip TLS verification", m.cfg.InsecureSkipTLSVerify, "for local/self-signed certs"),
 		warnStyle.Render("Reset to defaults"),
 	}
@@ -880,7 +888,7 @@ func (m model) planView(w int) string {
 		accentStyle.Render("Current Plan"),
 		labelStyle.Render("Server   ") + valueStyle.Render(m.cfg.BaseURL),
 		labelStyle.Render("Stages   ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
-		labelStyle.Render("Streams  ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.cfg.Protocol)),
+		labelStyle.Render("Streams  ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.cfg.TransferTarget)),
 		labelStyle.Render("Warmup   ") + valueStyle.Render(m.cfg.Warmup.String()),
 		labelStyle.Render("Ping     ") + valueStyle.Render(m.cfg.PingInterval.String()),
 		labelStyle.Render("Loaded   ") + valueStyle.Render(boolLabel(m.cfg.LoadedLatency)),
@@ -940,7 +948,8 @@ func (m model) summaryView(w int) string {
 		labelStyle.Render("Target  ") + valueStyle.Render(server),
 		labelStyle.Render("Stage   ") + mark + valueStyle.Render(emptyDash(m.stage)) + mutedStyle.Render(" / "+emptyDash(m.status)),
 		labelStyle.Render("Profile ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
-		labelStyle.Render("Streams ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.protocol)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
+		labelStyle.Render("Channels") + valueStyle.Render(" latency="+emptyDash(m.latencyChannel)+" progress="+emptyDash(m.progressChannel)),
+		labelStyle.Render("Streams ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.target)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
 	}
 	if m.complete {
 		lines = append(lines, "", successStyle.Render("Finished. Press m for menus or r to run again."))

@@ -93,6 +93,20 @@ export function loadPersisted(): PersistedState {
   // Version 1 originally stored a numeric IP family. Preserve that explicit
   // expert choice now that the setting also supports automatic detection.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  const legacyEndpoint = isPlainObject(parsedConfig?.endpoint)
+    ? parsedConfig.endpoint
+    : null;
+  const legacyTarget = legacyEndpoint?.protocol;
+  switch (legacyTarget) {
+    case "current":
+    case "http2":
+    case "http3":
+      merged.config.transports.transfer = legacyTarget;
+      break;
+    case "http1":
+      merged.config.transports.transfer = "http1-clear";
+      break;
+  }
   if (typeof parsedConfig?.parallelStreams === "number")
     merged.config.transferStreams.count = normalizeStreamCount(
       parsedConfig.parallelStreams,

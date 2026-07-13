@@ -5,57 +5,86 @@
  * BUILD defines.
  * ============================================================ */
 
-import type { RunnerConfig, PhaseActivity, ProtocolTarget } from "../contract";
-import type { Preflight, Target } from "../../api/preflight";
+import type {
+  RunnerConfig,
+  PhaseActivity,
+  ProtocolTarget,
+  TransferTargetSelection,
+} from "../contract";
+import type { ChannelTarget, TransferTarget } from "../../api/preflight";
 
-const targetByNextHop: Partial<Record<string, ProtocolTarget>> = {
+const protocolByNextHop: Partial<Record<string, ProtocolTarget>> = {
   "http/1.1": "http1",
   h2: "http2",
   h3: "http3",
 };
 
-/** Resolve an advertised target without inventing an origin. Secure pages
- * cannot select the clear H1 target because fetch would block mixed content. */
-export function selectProtocolTarget(
-  targets: Preflight["capabilities"]["targets"],
-  selection: ProtocolTarget | "current",
+/** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;
+ *  protocol evidence disambiguates multiple targets sharing an origin. */
+export function selectTransferTarget(
+  targets: TransferTarget[],
+  selection: TransferTargetSelection,
   discoveryOrigin: string,
   securePage: boolean,
   discoveryProtocol?: string,
-): { protocol: ProtocolTarget; target: Target } | null {
-  const entries = Object.entries(targets) as [ProtocolTarget, Target | null][];
-  const currentTargets = entries.filter(
-    ([, target]) => target?.origin === discoveryOrigin,
-  );
-  const observedTarget = discoveryProtocol
-    ? targetByNextHop[discoveryProtocol]
+): TransferTarget | null {
+  const usable = targets.filter((target) => !(securePage && !target.tls));
+  if (selection !== "current")
+    return usable.find((target) => target.id === selection) ?? null;
+  const current = usable.filter((target) => target.origin === discoveryOrigin);
+  const observed = discoveryProtocol
+    ? protocolByNextHop[discoveryProtocol]
     : undefined;
-  const selected =
-    selection === "current"
-      ? (currentTargets.find(([protocol]) => protocol === observedTarget) ??
-        (currentTargets.length === 1 ? currentTargets[0] : undefined) ??
-        entries.find(([protocol, target]) =>
-          securePage
-            ? protocol === "http2" && !!target
-            : protocol === "http1" && !!target,
-        ))
-      : entries.find(([protocol]) => protocol === selection);
-  if (!selected?.[1] || (securePage && selected[0] === "http1")) return null;
-  return { protocol: selected[0], target: selected[1] };
+  return (
+    current.find((target) => target.protocol === observed) ??
+    (current.length === 1 ? current[0] : null) ??
+    usable.find(
+      (target) => target.id === (securePage ? "http1-tls" : "http1-clear"),
+    ) ??
+    usable[0] ??
+    null
+  );
 }
 
 export function browserProtocolMatchesTarget(
-  target: ProtocolTarget,
+  target: TransferTarget,
   nextHopProtocol?: string,
 ): boolean {
-  return !!nextHopProtocol && targetByNextHop[nextHopProtocol] === target;
+  return (
+    !!nextHopProtocol && protocolByNextHop[nextHopProtocol] === target.protocol
+  );
 }
 
-export function protocolTargetKey(
-  protocol: ProtocolTarget | null,
-  target: Target | null,
-): string {
-  return protocol && target ? `${protocol}\n${target.origin}` : "";
+export function transferTargetKey(target: TransferTarget | null): string {
+  return target ? `${target.id}\n${target.origin}` : "";
+}
+
+export type ChannelRole = "latency" | "uploadProgress";
+
+/** Bind a message role independently from throughput. Automatic binding keeps
+ *  the selected transfer origin when possible, but can use any advertised
+ *  channel. Explicit ids make future cross-transport combinations stable. */
+export function selectChannelTarget(
+  channels: ChannelTarget[],
+  role: ChannelRole,
+  selection: "auto" | string,
+  transfer: TransferTarget,
+  securePage: boolean,
+  runnable: ReadonlySet<ChannelTarget["transport"]>,
+): ChannelTarget | null {
+  const usable = channels.filter(
+    (channel) =>
+      channel.routes[role] !== null &&
+      runnable.has(channel.transport) &&
+      !(securePage && !channel.tls),
+  );
+  if (selection !== "auto")
+    return usable.find((channel) => channel.id === selection) ?? null;
+  return (
+    usable.find((channel) => channel.origin === transfer.origin) ??
+    usable[0] ??
+    null
+  );
 }
 
 /** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means

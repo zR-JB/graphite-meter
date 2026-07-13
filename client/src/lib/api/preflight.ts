@@ -5,10 +5,8 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
-export type NullableTarget = null | Target;
-
 /**
- * Logical-server discovery returned by GET /preflight. Connection-specific evidence is returned by GET /probe on the selected target.
+ * Logical-server discovery returned by GET /preflight. Bulk transfer targets and interactive message channels are independently selectable; connection evidence comes from GET /probe on the selected transfer target.
  */
 export interface Preflight {
   server: {
@@ -19,26 +17,33 @@ export interface Preflight {
   };
   engineVersion: string;
   capabilities: {
-    targets: {
-      http1: NullableTarget;
-      http2: NullableTarget;
-      http3: NullableTarget;
-    };
+    transfers: TransferTarget[];
+    channels: ChannelTarget[];
   };
 }
-export interface Target {
+export interface TransferTarget {
+  id: string;
   origin: string;
-  routes: Routes;
+  transport: "fetch-stream";
+  protocol: "http1" | "http2" | "http3";
+  tls: boolean;
+  routes: TransferRoutes;
 }
-export interface Routes {
+export interface TransferRoutes {
   probe: string;
   download: string;
   upload: string;
   uploadSession: string;
-  websocket: null | Websocket;
-  webtransport: string | null;
 }
-export interface Websocket {
-  ping: string;
-  uploadProgress: string;
+export interface ChannelTarget {
+  id: string;
+  origin: string;
+  transport: "websocket" | "webtransport";
+  protocol: "http1" | "http2" | "http3";
+  tls: boolean;
+  routes: ChannelRoutes;
+}
+export interface ChannelRoutes {
+  latency: string | null;
+  uploadProgress: string | null;
 }

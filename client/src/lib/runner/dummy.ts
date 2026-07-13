@@ -171,10 +171,8 @@ export class DummyBackend implements RunnerBackend {
   }
 
   /* ================= PROBE ================= */
-  async probe(
-    endpoint: RunnerConfig["endpoint"],
-    signal?: AbortSignal,
-  ): Promise<InfraInfo> {
+  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+    const endpoint = config.endpoint;
     signal?.throwIfAborted();
     const interval = 90;
     const pings = 4;

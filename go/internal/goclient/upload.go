@@ -185,16 +185,10 @@ type uploadProgress struct {
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
-	routes := r.routes()
-	if routes.WebSocket == nil {
-		return nil, fmt.Errorf("selected target has no upload progress websocket")
+	if r.progressChannel == nil || r.progressChannel.Routes.UploadProgress == nil {
+		return nil, fmt.Errorf("no upload progress channel selected")
 	}
-	path := routes.WebSocket.UploadProgress
-	baseOrigin := r.cfg.BaseURL
-	if r.target != nil {
-		baseOrigin = r.target.Origin
-	}
-	base, err := wsEndpoint(baseOrigin, path)
+	base, err := wsEndpoint(r.progressChannel.Origin, *r.progressChannel.Routes.UploadProgress)
 	if err != nil {
 		return nil, err
 	}

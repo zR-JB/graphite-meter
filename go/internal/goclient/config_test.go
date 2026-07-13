@@ -9,7 +9,9 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	want := Config{
 		BaseURL:                "http://127.0.0.1:8765",
-		Protocol:               "auto",
+		TransferTarget:         "auto",
+		LatencyChannel:         "auto",
+		ProgressChannel:        "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
 		LatencyDuration:        4 * time.Second,

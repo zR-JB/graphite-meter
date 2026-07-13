@@ -8,11 +8,14 @@ import type {
   TransportRole,
   FlowDirection,
   PhaseActivity,
-  ProtocolTarget,
   TransferStreamPolicy,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import type { Preflight, Target } from "../api/preflight";
+import type {
+  ChannelTarget,
+  Preflight,
+  TransferTarget,
+} from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
@@ -23,9 +26,10 @@ import {
   median,
   needsPings,
   laneStaggerMs,
-  selectProtocolTarget,
+  selectTransferTarget,
+  selectChannelTarget,
   browserProtocolMatchesTarget,
-  protocolTargetKey,
+  transferTargetKey,
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
@@ -81,6 +85,11 @@ const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   websocket: true,
   webtransport: false,
 };
+const RUNNABLE_CHANNELS = new Set<ChannelTarget["transport"]>(
+  (Object.entries(RUNNABLE_TRANSPORT) as [TransportKind, boolean][])
+    .filter(([kind, runnable]) => runnable && kind !== "fetch-stream")
+    .map(([kind]) => kind as ChannelTarget["transport"]),
+);
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -181,9 +190,10 @@ export class RealBackend implements RunnerBackend {
    *  endpoint paths + which transports are available). Stashed here so later
    *  stages negotiate transports against what the server actually offers. */
   #capabilities: Preflight["capabilities"] | null = null;
-  /** One resolved target is frozen from probe until the next discovery. */
-  #target: Target | null = null;
-  #targetProtocol: ProtocolTarget | null = null;
+  /** Independent role bindings are frozen from probe until the next run. */
+  #transferTarget: TransferTarget | null = null;
+  #latencyChannel: ChannelTarget | null = null;
+  #progressChannel: ChannelTarget | null = null;
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;
@@ -321,14 +331,13 @@ export class RealBackend implements RunnerBackend {
    * rejection to a `preflight-failed` error.
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
-  async probe(
-    endpoint: RunnerConfig["endpoint"],
-    signal?: AbortSignal,
-  ): Promise<InfraInfo> {
+  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+    const endpoint = config.endpoint;
     const base = resolveBase(this.#resolveEndpoint(endpoint));
     this.#capabilities = null;
-    this.#target = null;
-    this.#targetProtocol = null;
+    this.#transferTarget = null;
+    this.#latencyChannel = null;
+    this.#progressChannel = null;
     this.#discoveryProtocol = undefined;
     let pf: Preflight;
     try {
@@ -352,10 +361,10 @@ export class RealBackend implements RunnerBackend {
       throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
     this.#capabilities = pf.capabilities;
-    const selection = endpoint.protocol ?? "current";
+    const selection = config.transports.transfer;
     const discoveryOrigin = this.#discoveryOrigin;
-    const selected = selectProtocolTarget(
-      pf.capabilities.targets,
+    const selected = selectTransferTarget(
+      pf.capabilities.transfers,
       selection,
       discoveryOrigin,
       location.protocol === "https:",
@@ -363,8 +372,23 @@ export class RealBackend implements RunnerBackend {
     );
     if (!selected)
       throw new TransportUnavailableError(`${selection} target unavailable`);
-    this.#target = selected.target;
-    this.#targetProtocol = selected.protocol;
+    this.#transferTarget = selected;
+    this.#latencyChannel = selectChannelTarget(
+      pf.capabilities.channels,
+      "latency",
+      config.transports.latency,
+      selected,
+      location.protocol === "https:",
+      RUNNABLE_CHANNELS,
+    );
+    this.#progressChannel = selectChannelTarget(
+      pf.capabilities.channels,
+      "uploadProgress",
+      config.transports.uploadProgress,
+      selected,
+      location.protocol === "https:",
+      RUNNABLE_CHANNELS,
+    );
 
     const attempts = selected.protocol === "http3" ? 3 : 1;
     const deadline = performance.now() + 2000;
@@ -384,7 +408,7 @@ export class RealBackend implements RunnerBackend {
         attempt < attempts && performance.now() < deadline;
         attempt++
       ) {
-        const probeURL = `${selected.target.origin}${selected.target.routes.probe}?cb=${performance.now()}-${attempt}`;
+        const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
         const probeRes = await fetch(probeURL, {
           cache: "no-store",
           headers: this.#authHeaders(),
@@ -399,7 +423,7 @@ export class RealBackend implements RunnerBackend {
         firstHopProtocol = timing?.nextHopProtocol || undefined;
         if (
           selected.protocol !== "http3" ||
-          browserProtocolMatchesTarget(selected.protocol, firstHopProtocol)
+          browserProtocolMatchesTarget(selected, firstHopProtocol)
         )
           break;
       }
@@ -414,7 +438,7 @@ export class RealBackend implements RunnerBackend {
     }
     if (
       !pathProbe ||
-      !browserProtocolMatchesTarget(selected.protocol, firstHopProtocol)
+      !browserProtocolMatchesTarget(selected, firstHopProtocol)
     ) {
       throw new TransportUnavailableError(
         `${selected.protocol} transport unavailable`,
@@ -439,16 +463,25 @@ export class RealBackend implements RunnerBackend {
       preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
       engineVersion: pf.engineVersion,
       protocolNegotiated: pathProbe.protocolNegotiated,
-      selectedTarget: selected.protocol,
-      availableTargets: {
-        http1:
-          pf.capabilities.targets.http1 !== null &&
-          location.protocol !== "https:",
-        http2: pf.capabilities.targets.http2 !== null,
-        http3: pf.capabilities.targets.http3 !== null,
-      },
+      selectedTarget: selected.id,
+      selectedTransferProtocol: selected.protocol,
+      selectedLatencyChannel: this.#latencyChannel?.id,
+      selectedProgressChannel: this.#progressChannel?.id,
+      selectedLatencyTransport: this.#latencyChannel?.transport,
+      selectedProgressTransport: this.#progressChannel?.transport,
+      availableTargets: Object.fromEntries([
+        ["current", true],
+        ["http1-clear", false],
+        ["http1-tls", false],
+        ["http2", false],
+        ["http3", false],
+        ...pf.capabilities.transfers.map((target) => [
+          target.id,
+          location.protocol !== "https:" || target.tls,
+        ]),
+      ]),
       firstHopProtocol,
-      firstHopSecure: new URL(selected.target.origin).protocol === "https:",
+      firstHopSecure: selected.tls,
     };
   }
 
@@ -608,7 +641,7 @@ export class RealBackend implements RunnerBackend {
     const host = this.#host!;
     for (const kind of this.#transportOrder(role)) {
       host.reportTransport({ kind, role, status: "negotiating" });
-      const unavailable = this.#transportUnavailableReason(kind);
+      const unavailable = this.#transportUnavailableReason(kind, role);
       if (!unavailable) {
         host.reportTransport({ kind, role, status: "established" });
         this.#activeTransport = kind;
@@ -624,19 +657,24 @@ export class RealBackend implements RunnerBackend {
     return null;
   }
 
-  #transportUnavailableReason(kind: TransportKind): string | null {
+  #transportUnavailableReason(
+    kind: TransportKind,
+    role: TransportRole,
+  ): string | null {
     if (!RUNNABLE_TRANSPORT[kind]) return "not supported by this client";
-    if (!this.#target) return "no selected target";
-    let advertised = false;
+    if (!this.#transferTarget) return "no selected transfer target";
+    const channel =
+      role === "latency" ? this.#latencyChannel : this.#progressChannel;
+    let advertised: boolean;
     switch (kind) {
       case "fetch-stream":
-        advertised = true;
+        advertised = this.#transferTarget.transport === "fetch-stream";
         break;
       case "websocket":
-        advertised = this.#target.routes.websocket !== null;
+        advertised = channel?.transport === "websocket";
         break;
       case "webtransport":
-        advertised = this.#target.routes.webtransport !== null;
+        advertised = channel?.transport === "webtransport";
         break;
     }
     return advertised ? null : "not advertised by server";
@@ -654,9 +692,9 @@ export class RealBackend implements RunnerBackend {
   /** Resolve one direction's transfer streams from the frozen protocol target
    *  and the run's automatic/forced policy. */
   #streamCount(activity: PhaseActivity, dir: FlowDirection): number {
-    if (!this.#targetProtocol) throw new Error("transfer target not resolved");
+    if (!this.#transferTarget) throw new Error("transfer target not resolved");
     return transferStreamCount({
-      protocol: this.#targetProtocol,
+      protocol: this.#transferTarget.protocol,
       policy: this.#streamPolicy,
       transfer: activity.transfer,
       dir,
@@ -682,7 +720,8 @@ export class RealBackend implements RunnerBackend {
 
     const cfg = this.#host!.config!;
     const base =
-      this.#target?.origin ?? resolveBase(this.#resolveEndpoint(cfg.endpoint));
+      this.#transferTarget?.origin ??
+      resolveBase(this.#resolveEndpoint(cfg.endpoint));
     const laneCount = this.#streamCount(activity, dir);
     const streams = laneCount;
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
@@ -732,12 +771,12 @@ export class RealBackend implements RunnerBackend {
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
-        const path = this.#target?.routes.download ?? "/download";
+        const path = this.#transferTarget?.routes.download ?? "/download";
         return chunkDownload
           ? `${base}${path}?cb=${cb}`
           : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
-      const path = this.#target?.routes.upload ?? "/upload";
+      const path = this.#transferTarget?.routes.upload ?? "/upload";
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
@@ -794,7 +833,8 @@ export class RealBackend implements RunnerBackend {
   }
 
   async #mintUploadSession(base: string): Promise<string> {
-    const path = this.#target?.routes.uploadSession ?? "/upload/session";
+    const path =
+      this.#transferTarget?.routes.uploadSession ?? "/upload/session";
     // Own deadline + the run's abort: fetch must reject within the timeout even
     // when the request hangs, so the stage skips instead of max-stalling.
     const ctl = new AbortController();
@@ -826,21 +866,21 @@ export class RealBackend implements RunnerBackend {
   #primeUploadProgress(stage: PhaseActivity["stage"]): Promise<boolean> {
     this.#resetUploadCounters();
 
-    const routes = this.#target?.routes;
+    const channel = this.#progressChannel;
     if (!this.#testId) return Promise.resolve(false);
-    if (!routes?.websocket) {
+    const progressRoute = channel?.routes.uploadProgress;
+    if (!channel || channel.transport !== "websocket" || !progressRoute) {
       this.#host!.failStage(
         stage,
         "transport-unavailable",
-        "server offers no WebSocket progress bus — upload can't be measured",
+        "no supported upload progress channel was selected",
       );
       return Promise.resolve(false);
     }
 
-    const wsUpload = routes.websocket.uploadProgress;
     const url =
-      this.#resolveWsBase(this.#host!.config!.endpoint) +
-      wsUpload +
+      httpToWs(channel.origin) +
+      progressRoute +
       `?id=${encodeURIComponent(this.#testId)}`;
     const w = this.#progressWorkerInstance();
     const ready = new Promise<boolean>((resolve) => {
@@ -925,8 +965,11 @@ export class RealBackend implements RunnerBackend {
     if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
 
     const cfg = this.#host!.config!;
-    const wsPing = this.#target?.routes.websocket?.ping ?? "/ws/ping";
-    const url = this.#resolveWsBase(cfg.endpoint) + wsPing;
+    const channel = this.#latencyChannel;
+    const latencyRoute = channel?.routes.latency;
+    if (!channel || channel.transport !== "websocket" || !latencyRoute)
+      throw new Error("latency channel not resolved");
+    const url = httpToWs(channel.origin) + latencyRoute;
     const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
 
     this.#latencyUnderLoad = false;
@@ -962,25 +1005,6 @@ export class RealBackend implements RunnerBackend {
       lossFloorMs: PING_LOSS_FLOOR_MS,
     });
     this.#pingWorker = w;
-  }
-
-  /** Resolve the ws(s):// base for the latency bus: prefer the advertised tls
-   *  origin, else h1, else the given endpoint base, else same-origin — each
-   *  mapped http→ws. Takes the endpoint explicitly so it is safe during
-   *  probe(), before the run config exists.
-   *
-   *  h1 is frequently a guess, not a considered decision — the server derives
-   *  it as `http://<Host>` whenever PUBLIC_H1_ORIGIN isn't set, with zero
-   *  awareness of a TLS-terminating reverse proxy in front of it. The page we
-   *  are RUNNING IN already knows its own scheme with certainty (the browser
-   *  enforced it), so if the page loaded over https, never hand back a ws://
-   *  base sourced from that guess — the browser would block it as mixed
-   *  content anyway. Upgrade to wss:// instead. */
-  #resolveWsBase(endpoint?: RunnerConfig["endpoint"]): string {
-    if (this.#target) return httpToWs(this.#target.origin);
-    const base = resolveBase(this.#resolveEndpoint(endpoint));
-    if (base) return httpToWs(base);
-    return httpToWs(location.origin);
   }
 
   /** Handle a message from the ping worker. The worker reports already-computed
@@ -1049,12 +1073,13 @@ export class RealBackend implements RunnerBackend {
     endpoint?: RunnerConfig["endpoint"],
     intervalMs = IDLE_PING_INTERVAL_MS,
   ): void {
-    const targetKey = protocolTargetKey(this.#targetProtocol, this.#target);
+    const targetKey = `${transferTargetKey(this.#transferTarget)}\n${this.#latencyChannel?.id ?? ""}`;
     if (this.#idleActive && this.#idleTargetKey === targetKey) return;
     if (this.#idleActive) this.#stopIdleKeepalive();
-    if (!this.#target?.routes.websocket) return;
-    const wsPing = this.#target.routes.websocket.ping;
-    const url = this.#resolveWsBase(endpoint) + wsPing;
+    const channel = this.#latencyChannel;
+    const latencyRoute = channel?.routes.latency;
+    if (!channel || channel.transport !== "websocket" || !latencyRoute) return;
+    const url = httpToWs(channel.origin) + latencyRoute;
     this.#idleActive = true;
     this.#idleTargetKey = targetKey;
     // Treat connectivity as unknown until this (fresh) worker proves the link:

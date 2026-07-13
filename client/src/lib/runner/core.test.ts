@@ -131,6 +131,11 @@ function makeConfig(
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
     endpoint: { host: "auto", port: 443 },
+    transports: {
+      transfer: "current",
+      latency: "auto",
+      uploadProgress: "auto",
+    },
     compensation: {
       profile: "lan",
       transport: "auto",

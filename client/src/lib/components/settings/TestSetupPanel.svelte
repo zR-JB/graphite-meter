@@ -180,13 +180,18 @@
   <section class="panel wide primary">
     <h3>Test plan</h3>
     <label>
-      <span>Network target</span>
-      <select disabled={running} bind:value={store.config.endpoint.protocol}>
+      <span>Transfer target</span>
+      <select disabled={running} bind:value={store.config.transports.transfer}>
         <option value="current">Current origin</option>
         <option
-          value="http1"
-          disabled={store.infra?.availableTargets?.http1 === false}
-          >HTTP/1.1</option
+          value="http1-clear"
+          disabled={store.infra?.availableTargets?.["http1-clear"] === false}
+          >HTTP/1.1 (cleartext)</option
+        >
+        <option
+          value="http1-tls"
+          disabled={store.infra?.availableTargets?.["http1-tls"] === false}
+          >HTTP/1.1 (TLS)</option
         >
         <option
           value="http2"
@@ -200,7 +205,11 @@
         >
       </select>
     </label>
-    <p class="hint">Secure pages cannot select the clear HTTP/1.1 target.</p>
+    <p class="hint">
+      Secure pages cannot select clear HTTP/1.1. TLS HTTP/1.1 remains a
+      parallel-request target; latency and upload progress use independently
+      resolved message channels.
+    </p>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
         <button

@@ -293,6 +293,7 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}.normalized()
 	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
+	attachTestChannels(r, srv.URL)
 
 	start := make(chan struct{})
 	close(start)

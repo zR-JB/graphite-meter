@@ -54,12 +54,13 @@ func TestGoldenConformance(t *testing.T) {
 }
 
 func TestStructConformance(t *testing.T) {
-	h1 := &Target{Origin: "http://speed.example:8765", Routes: DefaultRoutes(true)}
+	h1 := TransferTarget{ID: "http1-clear", Origin: "http://speed.example:8765", Transport: "fetch-stream", Protocol: "http1", Routes: DefaultTransferRoutes()}
+	ws := ChannelTarget{ID: "ws-http1-clear", Origin: h1.Origin, Transport: "websocket", Protocol: "http1", Routes: DefaultWebSocketRoutes()}
 	values := []struct {
 		name  string
 		value any
 	}{
-		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter", Host: "speed.example", Port: 8765}, EngineVersion: "test", Capabilities: Capabilities{Targets: Targets{HTTP1: h1}}}},
+		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter", Host: "speed.example", Port: 8765}, EngineVersion: "test", Capabilities: Capabilities{Transfers: []TransferTarget{h1}, Channels: []ChannelTarget{ws}}}},
 		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}},
 	}
 	for _, tc := range values {
@@ -82,7 +83,7 @@ func TestGoldenRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(data, &pf); err != nil {
 		t.Fatal(err)
 	}
-	if pf.Capabilities.Targets.HTTP1.Routes.WebSocket.Ping != "/ws/ping" {
+	if got := *pf.Capabilities.Channels[0].Routes.Latency; got != "/ws/ping" {
 		t.Fatal("websocket route lost")
 	}
 	data, _ = json.Marshal(pf)

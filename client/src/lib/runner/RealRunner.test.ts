@@ -7,78 +7,132 @@ import {
   median,
   needsPings,
   laneStaggerMs,
-  selectProtocolTarget,
+  selectTransferTarget,
+  selectChannelTarget,
   browserProtocolMatchesTarget,
-  protocolTargetKey,
+  transferTargetKey,
 } from "./real/backendPure";
 import type { PhaseActivity, RunnerConfig } from "./contract";
+import type { ChannelTarget, TransferTarget } from "../api/preflight";
 
 const routes = {
   probe: "/probe",
   download: "/download",
   upload: "/upload",
   uploadSession: "/upload/session",
-  websocket: null,
-  webtransport: null,
 };
 
-test("selectProtocolTarget freezes the requested advertised target", () => {
-  const targets = {
-    http1: { origin: "http://meter:8765", routes },
-    http2: { origin: "https://meter:8443", routes },
-    http3: null,
-  };
+const transfer = (
+  id: string,
+  origin: string,
+  protocol: TransferTarget["protocol"],
+  tls: boolean,
+): TransferTarget => ({
+  id,
+  origin,
+  transport: "fetch-stream",
+  protocol,
+  tls,
+  routes,
+});
+
+test("selectTransferTarget freezes the requested advertised target", () => {
+  const targets = [
+    transfer("http1-clear", "http://meter:8765", "http1", false),
+    transfer("http1-tls", "https://meter:8445", "http1", true),
+    transfer("http2", "https://meter:8443", "http2", true),
+  ];
   expect(
-    selectProtocolTarget(targets, "http2", "http://meter:8765", false)
-      ?.protocol,
-  ).toBe("http2");
+    selectTransferTarget(targets, "http1-tls", "http://meter:8765", false)?.id,
+  ).toBe("http1-tls");
   expect(
-    selectProtocolTarget(targets, "http3", "http://meter:8765", false),
+    selectTransferTarget(targets, "http3", "http://meter:8765", false),
   ).toBeNull();
 });
 
-test("selectProtocolTarget rejects clear H1 on a secure page", () => {
-  const targets = {
-    http1: { origin: "http://meter:8765", routes },
-    http2: null,
-    http3: null,
-  };
+test("secure pages reject only clear H1, not TLS H1", () => {
+  const targets = [
+    transfer("http1-clear", "http://meter:8765", "http1", false),
+    transfer("http1-tls", "https://meter:8445", "http1", true),
+  ];
   expect(
-    selectProtocolTarget(targets, "http1", "https://meter", true),
+    selectTransferTarget(targets, "http1-clear", "https://meter", true),
   ).toBeNull();
+  expect(
+    selectTransferTarget(targets, "http1-tls", "https://meter", true)?.id,
+  ).toBe("http1-tls");
 });
 
 test("current target follows the negotiated protocol on a shared origin", () => {
   const shared = "https://meter";
-  const targets = {
-    http1: null,
-    http2: { origin: shared, routes },
-    http3: { origin: shared, routes },
-  };
+  const targets = [
+    transfer("http2", shared, "http2", true),
+    transfer("http3", shared, "http3", true),
+  ];
   expect(
-    selectProtocolTarget(targets, "current", shared, true, "h2")?.protocol,
+    selectTransferTarget(targets, "current", shared, true, "h2")?.protocol,
   ).toBe("http2");
   expect(
-    selectProtocolTarget(targets, "current", shared, true, "h3")?.protocol,
+    selectTransferTarget(targets, "current", shared, true, "h3")?.protocol,
   ).toBe("http3");
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {
-  expect(browserProtocolMatchesTarget("http1", "http/1.1")).toBe(true);
-  expect(browserProtocolMatchesTarget("http2", "h2")).toBe(true);
-  expect(browserProtocolMatchesTarget("http3", "h3")).toBe(true);
-  expect(browserProtocolMatchesTarget("http2", "http/1.1")).toBe(false);
+  const h1 = transfer("http1-tls", "https://meter", "http1", true);
+  const h2 = transfer("http2", "https://meter", "http2", true);
+  expect(browserProtocolMatchesTarget(h1, "http/1.1")).toBe(true);
+  expect(browserProtocolMatchesTarget(h2, "h2")).toBe(true);
+  expect(browserProtocolMatchesTarget(h2, "http/1.1")).toBe(false);
 });
 
 test("idle target ownership includes protocol and public origin", () => {
-  const target = { origin: "https://meter", routes };
-  expect(protocolTargetKey("http2", target)).toBe("http2\nhttps://meter");
-  expect(protocolTargetKey("http3", target)).not.toBe(
-    protocolTargetKey("http2", target),
-  );
+  const target = transfer("http2", "https://meter", "http2", true);
+  expect(transferTargetKey(target)).toBe("http2\nhttps://meter");
   expect(
-    protocolTargetKey("http2", { ...target, origin: "https://other-meter" }),
-  ).not.toBe(protocolTargetKey("http2", target));
+    transferTargetKey({ ...target, origin: "https://other-meter" }),
+  ).not.toBe(transferTargetKey(target));
+});
+
+test("message channels bind independently from the transfer target", () => {
+  const h1 = transfer("http1-tls", "https://meter:8445", "http1", true);
+  const channels: ChannelTarget[] = [
+    {
+      id: "ws-http1-tls",
+      origin: h1.origin,
+      transport: "websocket",
+      protocol: "http1",
+      tls: true,
+      routes: { latency: "/ws/ping", uploadProgress: "/ws/upload" },
+    },
+    {
+      id: "wt-http3",
+      origin: "https://meter:8444",
+      transport: "webtransport",
+      protocol: "http3",
+      tls: true,
+      routes: { latency: "/wt", uploadProgress: "/wt" },
+    },
+  ];
+  expect(
+    selectChannelTarget(
+      channels,
+      "latency",
+      "wt-http3",
+      h1,
+      true,
+      new Set(["websocket", "webtransport"]),
+    )?.id,
+  ).toBe("wt-http3");
+  expect(
+    selectChannelTarget(
+      channels,
+      "uploadProgress",
+      "auto",
+      h1,
+      true,
+      new Set(["websocket"]),
+    )?.id,
+  ).toBe("ws-http1-tls");
 });
 
 /* ---------- resolveBase ---------- */
@@ -261,21 +315,26 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     terminate(): void {}
   }
 
-  const targetRoutes = {
-    ...routes,
-    websocket: { ping: "/ws/ping", uploadProgress: "/ws/upload" },
-  };
   const discovery = (withH2: boolean) => ({
     server: { name: "test", host: "meter.test", port: 8765 },
     engineVersion: "test",
     capabilities: {
-      targets: {
-        http1: { origin: "http://meter.test:8765", routes: targetRoutes },
-        http2: withH2
-          ? { origin: "https://meter.test:8443", routes: targetRoutes }
-          : null,
-        http3: null,
-      },
+      transfers: [
+        transfer("http1-clear", "http://meter.test:8765", "http1", false),
+        ...(withH2
+          ? [transfer("http2", "https://meter.test:8443", "http2", true)]
+          : []),
+      ],
+      channels: [
+        {
+          id: "ws-http1-clear",
+          origin: "http://meter.test:8765",
+          transport: "websocket",
+          protocol: "http1",
+          tls: false,
+          routes: { latency: "/ws/ping", uploadProgress: "/ws/upload" },
+        },
+      ],
     },
   });
 
@@ -305,13 +364,55 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       throw new Error(`unexpected fetch ${url}`);
     }) as typeof fetch;
 
-    const config = {
-      endpoint: { host: "meter.test", port: 8765, protocol: "http1" },
+    const config: RunnerConfig = {
+      stages: {
+        latency: true,
+        download: true,
+        upload: true,
+        bidirectional: false,
+      },
+      skipLoadedLatencyWhenStageOff: true,
+      endpoint: { host: "meter.test", port: 8765 },
+      transports: {
+        transfer: "http1-clear",
+        latency: "auto",
+        uploadProgress: "auto",
+      },
       transferStreams: { mode: "forced", count: 6 },
-      duration: { warmupMs: 0 },
+      duration: {
+        warmupMs: 0,
+        latencyMs: 1,
+        downloadMs: 1,
+        uploadMs: 1,
+        bidirectionalMs: 1,
+      },
       pingConcurrency: "medium",
       experimentalChunkedDownload: false,
-    } as RunnerConfig;
+      compensation: {
+        profile: "loopback",
+        transport: "auto",
+        params: {
+          mtuBytes: 65536,
+          ipVersion: "auto",
+          vlanTagged: false,
+          tcpOptionsMinBytes: 0,
+          tcpOptionsMaxBytes: 0,
+          encapsulationBytes: 0,
+          quicConnIdMinBytes: 0,
+          quicConnIdMaxBytes: 0,
+        },
+      },
+      adaptive: {
+        enabled: false,
+        minCoverageRatio: 1,
+        stabilityThreshold: 1,
+        maxPhaseReductionRatio: 0,
+        minLatencySamples: 1,
+        minTransferSamples: 1,
+        glideMs: 0,
+      },
+      visualization: { throughputMaxBytesPerSec: "auto" },
+    };
     const failures: string[] = [];
     const host = {
       config,
@@ -331,8 +432,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     const backend = new RealBackend();
     backend.attach(host);
 
-    const first = await backend.probe(config.endpoint);
-    const secondProbe = backend.probe(config.endpoint);
+    const first = await backend.probe(config);
+    const secondProbe = backend.probe(config);
     for (let i = 0; i < 10; i++) await Promise.resolve();
     pingWorker!.emit({
       type: "samples",

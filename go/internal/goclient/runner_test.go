@@ -205,6 +205,7 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	attachTestChannels(r, srv.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -221,7 +222,11 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test", Host: r.Host, Port: 80}, EngineVersion: "test", Capabilities: wire.Capabilities{Targets: wire.Targets{HTTP1: &wire.Target{Origin: "http://" + r.Host, Routes: wire.DefaultRoutes(true)}}}})
+		origin := "http://" + r.Host
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test", Host: r.Host, Port: 80}, EngineVersion: "test", Capabilities: wire.Capabilities{
+			Transfers: []wire.TransferTarget{testTransfer("http1-clear", origin, "http1", false)},
+			Channels:  []wire.ChannelTarget{testChannel("ws-http1-clear", origin, false)},
+		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
@@ -294,9 +299,9 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(wire.Preflight{
 			Server: wire.ServerInfo{Name: "proxy", Host: r.Host, Port: 443},
-			Capabilities: wire.Capabilities{Targets: wire.Targets{HTTP2: &wire.Target{
-				Origin: origin, Routes: wire.DefaultRoutes(false),
-			}}},
+			Capabilities: wire.Capabilities{Transfers: []wire.TransferTarget{
+				testTransfer("http2", origin, "http2", true),
+			}},
 		})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +321,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	origin = srv.URL
 
 	cfg := Config{
-		BaseURL: origin, Protocol: "http2", Stages: StageSet{Download: true},
+		BaseURL: origin, TransferTarget: "http2", Stages: StageSet{Download: true},
 		DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true,
 		TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024,
 	}

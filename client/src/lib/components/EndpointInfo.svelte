@@ -71,7 +71,7 @@
         title: "Connection",
         rows: [
           {
-            label: "Selected target",
+            label: "Transfer target",
             value: i?.selectedTarget ?? "Current origin",
           },
           {
@@ -79,13 +79,27 @@
             value: i?.firstHopProtocol ?? "Scheme fallback",
           },
           { label: "Server observed", value: i?.protocolNegotiated ?? "—" },
-          { label: "Transfer", value: "Fetch streams" },
-          { label: "Latency / progress", value: "WebSocket over TCP" },
+          {
+            label: "Transfer path",
+            value: `Fetch streams · ${i?.selectedTransferProtocol ?? "—"}`,
+          },
+          {
+            label: "Latency channel",
+            value: i?.selectedLatencyChannel
+              ? `${i.selectedLatencyTransport} · ${i.selectedLatencyChannel}`
+              : "Unavailable",
+          },
+          {
+            label: "Progress channel",
+            value: i?.selectedProgressChannel
+              ? `${i.selectedProgressTransport} · ${i.selectedProgressChannel}`
+              : "Unavailable",
+          },
           {
             label: "Streams",
             value: describeTransferStreams(
               store.config.transferStreams,
-              i?.selectedTarget,
+              i?.selectedTransferProtocol,
             ),
           },
           {

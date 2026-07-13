@@ -36,7 +36,7 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	return pf, nil
 }
 
-func getProbe(ctx context.Context, hc *http.Client, target *wire.Target) (wire.Probe, error) {
+func getProbe(ctx context.Context, hc *http.Client, target *wire.TransferTarget) (wire.Probe, error) {
 	u, err := httpEndpoint(target.Origin, target.Routes.Probe)
 	if err != nil {
 		return wire.Probe{}, err

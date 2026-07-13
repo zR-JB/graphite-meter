@@ -2,13 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://graphite-meter/api/preflight.schema.json",
   "title": "Preflight",
-  "description": "Logical-server discovery returned by GET /preflight. Connection-specific evidence is returned by GET /probe on the selected target.",
+  "description": "Logical-server discovery returned by GET /preflight. Bulk transfer targets and interactive message channels are independently selectable; connection evidence comes from GET /probe on the selected transfer target.",
   "type": "object",
   "additionalProperties": false,
   "required": ["server", "engineVersion", "capabilities"],
   "properties": {
     "server": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "required": ["name", "host", "port"],
       "properties": {
         "name": { "type": "string" },
@@ -19,47 +20,60 @@
     },
     "engineVersion": { "type": "string" },
     "capabilities": {
-      "type": "object", "additionalProperties": false, "required": ["targets"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transfers", "channels"],
       "properties": {
-        "targets": {
-          "type": "object", "additionalProperties": false,
-          "required": ["http1", "http2", "http3"],
-          "properties": {
-            "http1": { "$ref": "#/$defs/nullableTarget" },
-            "http2": { "$ref": "#/$defs/nullableTarget" },
-            "http3": { "$ref": "#/$defs/nullableTarget" }
-          }
-        }
+        "transfers": { "type": "array", "items": { "$ref": "#/$defs/transferTarget" } },
+        "channels": { "type": "array", "items": { "$ref": "#/$defs/channelTarget" } }
       }
     }
   },
   "$defs": {
-    "nullableTarget": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/target" }] },
-    "target": {
-      "type": "object", "additionalProperties": false, "required": ["origin", "routes"],
+    "transferTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
       "properties": {
+        "id": { "type": "string", "minLength": 1 },
         "origin": { "type": "string", "format": "uri" },
-        "routes": { "$ref": "#/$defs/routes" }
+        "transport": { "enum": ["fetch-stream"] },
+        "protocol": { "enum": ["http1", "http2", "http3"] },
+        "tls": { "type": "boolean" },
+        "routes": { "$ref": "#/$defs/transferRoutes" }
       }
     },
-    "routes": {
-      "type": "object", "additionalProperties": false,
-      "required": ["probe", "download", "upload", "uploadSession", "websocket", "webtransport"],
+    "transferRoutes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["probe", "download", "upload", "uploadSession"],
       "properties": {
         "probe": { "type": "string" },
         "download": { "type": "string" },
         "upload": { "type": "string" },
-        "uploadSession": { "type": "string" },
-        "websocket": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/websocket" }] },
-        "webtransport": { "type": ["string", "null"] }
+        "uploadSession": { "type": "string" }
       }
     },
-    "websocket": {
-      "type": "object", "additionalProperties": false,
-      "required": ["ping", "uploadProgress"],
+    "channelTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
       "properties": {
-        "ping": { "type": "string" },
-        "uploadProgress": { "type": "string" }
+        "id": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "format": "uri" },
+        "transport": { "enum": ["websocket", "webtransport"] },
+        "protocol": { "enum": ["http1", "http2", "http3"] },
+        "tls": { "type": "boolean" },
+        "routes": { "$ref": "#/$defs/channelRoutes" }
+      }
+    },
+    "channelRoutes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latency", "uploadProgress"],
+      "properties": {
+        "latency": { "type": ["string", "null"] },
+        "uploadProgress": { "type": ["string", "null"] }
       }
     }
   }

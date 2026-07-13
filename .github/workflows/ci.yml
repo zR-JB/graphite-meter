@@ -216,16 +216,22 @@ jobs:
           curl -fsS http://localhost:8765/preflight | tee /tmp/preflight.json
           jq -e '
             .engineVersion == "0.0.0-ci"
-            and .capabilities.targets.http1.origin == "http://localhost:8765"
-            and .capabilities.targets.http1.routes.probe == "/probe"
-            and .capabilities.targets.http1.routes.download == "/download"
-            and .capabilities.targets.http1.routes.upload == "/upload"
-            and .capabilities.targets.http1.routes.uploadSession == "/upload/session"
-            and .capabilities.targets.http1.routes.websocket.ping == "/ws/ping"
-            and .capabilities.targets.http1.routes.websocket.uploadProgress == "/ws/upload"
-            and .capabilities.targets.http1.routes.webtransport == null
-            and .capabilities.targets.http2 == null
-            and .capabilities.targets.http3 == null
+            and .capabilities.transfers == [{
+              "id": "http1-clear",
+              "origin": "http://localhost:8765",
+              "transport": "fetch-stream",
+              "protocol": "http1",
+              "tls": false,
+              "routes": {"probe":"/probe","download":"/download","upload":"/upload","uploadSession":"/upload/session"}
+            }]
+            and .capabilities.channels == [{
+              "id": "ws-http1-clear",
+              "origin": "http://localhost:8765",
+              "transport": "websocket",
+              "protocol": "http1",
+              "tls": false,
+              "routes": {"latency":"/ws/ping","uploadProgress":"/ws/upload"}
+            }]
             and (.server.port | type == "number")
           ' /tmp/preflight.json
       - name: Smoke /probe

@@ -12,16 +12,10 @@ import (
 )
 
 func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, start <-chan struct{}) (LatencyStats, error) {
-	routes := r.routes()
-	if routes.WebSocket == nil {
-		return LatencyStats{}, fmt.Errorf("selected target has no latency websocket")
+	if r.latencyChannel == nil || r.latencyChannel.Routes.Latency == nil {
+		return LatencyStats{}, fmt.Errorf("no latency channel selected")
 	}
-	path := routes.WebSocket.Ping
-	baseOrigin := r.cfg.BaseURL
-	if r.target != nil {
-		baseOrigin = r.target.Origin
-	}
-	u, err := wsEndpoint(baseOrigin, path)
+	u, err := wsEndpoint(r.latencyChannel.Origin, *r.latencyChannel.Routes.Latency)
 	if err != nil {
 		return LatencyStats{}, err
 	}

@@ -26,6 +26,8 @@ export type Phase =
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3";
+/** Advertised transfer target id; "current" resolves from the discovery hop. */
+export type TransferTargetSelection = string;
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by
@@ -152,7 +154,13 @@ export interface RunnerConfig {
   endpoint: {
     host: string;
     port: number;
-    protocol?: "current" | ProtocolTarget;
+  };
+  /** Independent role bindings. Channel ids are advertised by discovery;
+   *  "auto" prefers the selected transfer origin and then any compatible path. */
+  transports: {
+    transfer: TransferTargetSelection;
+    latency: "auto" | string;
+    uploadProgress: "auto" | string;
   };
   /** Wire-rate estimation. */
   compensation: OverheadCompensationConfig;
@@ -367,8 +375,13 @@ export interface InfraInfo {
   preTestPingMs: number;
   engineVersion: string;
   protocolNegotiated: string;
-  selectedTarget?: ProtocolTarget;
-  availableTargets?: Record<ProtocolTarget, boolean>;
+  selectedTarget?: string;
+  selectedTransferProtocol?: ProtocolTarget;
+  selectedLatencyChannel?: string;
+  selectedProgressChannel?: string;
+  selectedLatencyTransport?: TransportKind;
+  selectedProgressTransport?: TransportKind;
+  availableTargets?: Record<string, boolean>;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;
@@ -444,10 +457,7 @@ export interface NetworkRunner {
   start(config: RunnerConfig): Promise<void>;
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
-  probe(
-    endpoint: RunnerConfig["endpoint"],
-    signal?: AbortSignal,
-  ): Promise<InfraInfo>;
+  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (no I/O). */
   describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe

@@ -46,12 +46,12 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 		emit(Event{Kind: EventError, At: time.Now(), Err: err})
 		return err
 	}
-	target, protocol, err := selectTarget(cfg, pf)
+	target, err := selectTarget(cfg, pf)
 	if err != nil {
 		emit(Event{Kind: EventError, At: time.Now(), Err: err})
 		return err
 	}
-	transfer, closeTransfer := protocolClient(cfg, protocol, baseTransport)
+	transfer, closeTransfer := protocolClient(cfg, target.Protocol, baseTransport)
 	defer closeTransfer()
 	probe, err := getProbe(ctx, transfer, target)
 	if err != nil {
@@ -60,7 +60,22 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	}
 	// The protocol-specific transport verifies this client-to-target hop. Probe
 	// evidence describes the target-to-Go hop, which may differ behind a proxy.
-	emit(Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, Message: protocol})
+	latencyChannel, err := selectChannel(cfg.LatencyChannel, "latency", target, pf.Capabilities.Channels)
+	if err != nil && cfg.Stages.Latency {
+		return err
+	}
+	progressChannel, err := selectChannel(cfg.ProgressChannel, "uploadProgress", target, pf.Capabilities.Channels)
+	if err != nil && (cfg.Stages.Upload || cfg.Stages.Bidirectional) {
+		return err
+	}
+	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, Message: target.ID, TransferTarget: target.ID}
+	if latencyChannel != nil {
+		event.LatencyChannel = latencyChannel.ID
+	}
+	if progressChannel != nil {
+		event.ProgressChannel = progressChannel.ID
+	}
+	emit(event)
 
 	wsTransport := baseTransport()
 	wsp := &http.Protocols{}
@@ -68,9 +83,10 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	wsTransport.Protocols = wsp
 	defer wsTransport.CloseIdleConnections()
 	r := runner{
-		cfg: cfg, streams: cfg.TransferStreams.Resolve(protocol),
+		cfg: cfg, streams: cfg.TransferStreams.Resolve(target.Protocol),
 		http: transfer, websocketHTTP: &http.Client{Transport: wsTransport},
-		target: target, preflight: pf, probe: probe, emit: emit,
+		target: target, latencyChannel: latencyChannel, progressChannel: progressChannel,
+		preflight: pf, probe: probe, emit: emit,
 	}
 	if cfg.Stages.Latency {
 		if err := r.runLatencyStage(ctx, "latency", false, cfg.LatencyDuration); err != nil {
@@ -97,14 +113,15 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 }
 
 type runner struct {
-	cfg           Config
-	streams       int
-	http          *http.Client
-	websocketHTTP *http.Client
-	target        *wire.Target
-	preflight     wire.Preflight
-	probe         wire.Probe
-	emit          func(Event)
+	cfg                             Config
+	streams                         int
+	http                            *http.Client
+	websocketHTTP                   *http.Client
+	target                          *wire.TransferTarget
+	latencyChannel, progressChannel *wire.ChannelTarget
+	preflight                       wire.Preflight
+	probe                           wire.Probe
+	emit                            func(Event)
 	// Idle RTT captured from the latency stage; used to stretch later stages'
 	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
 	idleRTT time.Duration
@@ -297,38 +314,67 @@ func (r *runner) endpoint(path string) (string, error) {
 	return httpEndpoint(base, path)
 }
 
-func (r *runner) routes() wire.Routes {
+func (r *runner) routes() wire.TransferRoutes {
 	if r.target != nil {
 		return r.target.Routes
 	}
-	return wire.DefaultRoutes(true)
+	return wire.DefaultTransferRoutes()
 }
 
-func selectTarget(cfg Config, pf wire.Preflight) (*wire.Target, string, error) {
-	targets := map[string]*wire.Target{"http1": pf.Capabilities.Targets.HTTP1, "http2": pf.Capabilities.Targets.HTTP2, "http3": pf.Capabilities.Targets.HTTP3}
-	protocol := cfg.Protocol
-	if protocol == "invalid" {
-		return nil, "", fmt.Errorf("protocol must be auto, http1, http2, or http3")
+func selectTarget(cfg Config, pf wire.Preflight) (*wire.TransferTarget, error) {
+	selection := cfg.TransferTarget
+	if selection == "invalid" {
+		return nil, fmt.Errorf("protocol must be auto, http1, http1-clear, http1-tls, http2, or http3")
 	}
-	if protocol == "auto" {
+	if selection == "auto" {
 		base, err := url.Parse(cfg.BaseURL)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		for _, name := range []string{"http1", "http2", "http3"} {
-			if t := targets[name]; t != nil {
-				u, _ := url.Parse(t.Origin)
-				if u.Scheme == base.Scheme && u.Host == base.Host {
-					return t, name, nil
-				}
+		for i := range pf.Capabilities.Transfers {
+			t := &pf.Capabilities.Transfers[i]
+			u, _ := url.Parse(t.Origin)
+			if u.Scheme == base.Scheme && u.Host == base.Host {
+				return t, nil
 			}
 		}
-		protocol = "http1"
+		if len(pf.Capabilities.Transfers) > 0 {
+			return &pf.Capabilities.Transfers[0], nil
+		}
 	}
-	if targets[protocol] == nil {
-		return nil, "", fmt.Errorf("%s target unavailable", protocol)
+	for i := range pf.Capabilities.Transfers {
+		t := &pf.Capabilities.Transfers[i]
+		if t.ID == selection || (selection == "http1" && t.Protocol == "http1") {
+			return t, nil
+		}
 	}
-	return targets[protocol], protocol, nil
+	return nil, fmt.Errorf("%s target unavailable", selection)
+}
+
+func selectChannel(selection, role string, transfer *wire.TransferTarget, channels []wire.ChannelTarget) (*wire.ChannelTarget, error) {
+	supports := func(c *wire.ChannelTarget) bool {
+		if c.Transport != "websocket" {
+			return false
+		}
+		if role == "latency" {
+			return c.Routes.Latency != nil
+		}
+		return c.Routes.UploadProgress != nil
+	}
+	for i := range channels {
+		c := &channels[i]
+		if supports(c) && ((selection != "auto" && c.ID == selection) || (selection == "auto" && c.Origin == transfer.Origin)) {
+			return c, nil
+		}
+	}
+	if selection == "auto" {
+		for i := range channels {
+			if supports(&channels[i]) {
+				return &channels[i], nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("%s channel %q unavailable", role, selection)
 }
 
 func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {

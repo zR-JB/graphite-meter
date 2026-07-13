@@ -7,20 +7,33 @@
   },
   "engineVersion": "0.1.0-test",
   "capabilities": {
-    "targets": {
-      "http1": {
+    "transfers": [
+      {
+        "id": "http1-clear",
         "origin": "http://speed.example:8765",
+        "transport": "fetch-stream",
+        "protocol": "http1",
+        "tls": false,
         "routes": {
           "probe": "/probe",
           "download": "/download",
           "upload": "/upload",
-          "uploadSession": "/upload/session",
-          "websocket": { "ping": "/ws/ping", "uploadProgress": "/ws/upload" },
-          "webtransport": null
+          "uploadSession": "/upload/session"
         }
-      },
-      "http2": null,
-      "http3": null
-    }
+      }
+    ],
+    "channels": [
+      {
+        "id": "ws-http1-clear",
+        "origin": "http://speed.example:8765",
+        "transport": "websocket",
+        "protocol": "http1",
+        "tls": false,
+        "routes": {
+          "latency": "/ws/ping",
+          "uploadProgress": "/ws/upload"
+        }
+      }
+    ]
   }
 }

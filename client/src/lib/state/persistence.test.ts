@@ -17,6 +17,7 @@ const FAKE_CONFIG: RunnerConfig = {
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
+  transports: { transfer: "current", latency: "auto", uploadProgress: "auto" },
   compensation: {
     profile: "lan",
     transport: "auto",
@@ -97,6 +98,18 @@ test("legacy parallel-stream ceiling migrates into automatic policy", () => {
   expect(loadPersisted().config.transferStreams).toEqual({
     mode: "auto",
     count: 2,
+  });
+});
+
+test("legacy protocol selection migrates to a transfer target", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ config: { endpoint: { protocol: "http1" } } }),
+  );
+  expect(loadPersisted().config.transports).toEqual({
+    transfer: "http1-clear",
+    latency: "auto",
+    uploadProgress: "auto",
   });
 });
 

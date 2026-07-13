@@ -90,7 +90,7 @@ export async function bootRunner() {
   store.engineInfo = r.describe();
   unsub = r.on((e) => store.ingest(e));
   try {
-    const info = await r.probe(store.config.endpoint);
+    const info = await r.probe(store.config);
     store.ingest({ type: "infra", info });
   } catch (cause) {
     store.ingest({
