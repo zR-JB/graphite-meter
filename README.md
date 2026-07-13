@@ -116,13 +116,14 @@ Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](doc
 
 ```sh
 just goclient-build            # -> go/graphite-meter-client
-./go/graphite-meter-client -url https://your-server:8445 -transfer-target http1-tls
+./go/graphite-meter-client -url https://your-server:8445 \
+  -throughput-target http1-tls -latency-target ws-http1-tls
 ```
 
 An interactive TUI with the same stages (latency, download, upload, bidirectional, loaded
 latency), server presets, and live telemetry — ideal for headless boxes and for pushing rates a
-browser can't. Transfer, latency, and upload-progress bindings are independent; see the
-`-transfer-target`, `-latency-channel`, and `-progress-channel` flags.
+browser can't. Throughput and latency targets are independently selected and verified; upload
+progress is part of the selected throughput path. See `-throughput-target` and `-latency-target`.
 
 ## Building from source & contributing
 

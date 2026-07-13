@@ -170,15 +170,13 @@ just goclient-build   # -> go/graphite-meter-client
 just goclient-run     # go run ./cmd/graphite-meter-client (against a running server)
 ```
 
-Run settings are editable inside the TUI before a run starts. Channel-id overrides are CLI-only
-until discovery-driven channel menus land:
+Run settings, including both target roles, are editable inside the TUI before a run starts:
 
 | Flag                      | Default                   | Meaning                                                                                   |
 | ------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `-url`                    | `http://127.0.0.1:8765`   | Server base URL.                                                                          |
-| `-transfer-target` (`-protocol` legacy alias) | `auto` | Transfer target: `auto`, `http1`, `http1-clear`, `http1-tls`, `http2`, or direct-QUIC `http3`. |
-| `-latency-channel`        | `auto`                    | Advertised channel id for latency, independently of the transfer target.                   |
-| `-progress-channel`       | `auto`                    | Advertised channel id for upload progress, independently of the transfer target.           |
+| `-throughput-target` (`-transfer-target` and `-protocol` migration aliases) | `auto` | Fetch target: `auto`, `http1`, `http1-clear`, `http1-tls`, `http2`, or direct-QUIC `http3`. |
+| `-latency-target` (`-latency-channel` migration alias) | `auto` | `ws-http1-clear` or `ws-http1-tls`, selected independently. |
 | `-stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.   |
 | `-warmup`                 | `800ms`                   | Per-stage warmup before measurement starts.                                               |
 | `-latency-duration`       | `4s`                      | Latency stage window.                                                                     |

@@ -36,9 +36,23 @@ A conventional HTTP reverse proxy changes the measured hop: Resource Timing then
 browser-to-proxy protocol, while `/probe` describes the proxy-to-server protocol. Directly expose
 the native H2 TCP and H3 TCP+UDP ports when the goal is to compare those server listeners.
 
+`GET /upload/progress` is a live `application/x-ndjson` response. Proxies must flush it as records
+arrive and must not compress, transform, cache, or buffer it. The server sends `Cache-Control:
+no-store, no-transform` and `X-Accel-Buffering: no`, but the proxy
+configuration remains authoritative. A deployment is not measurement-safe until `ready` and
+roughly 100 ms progress records are observable immediately at the public origin.
+
 ## nginx
 
 ```nginx
+location = /upload/progress {
+    proxy_pass http://graphite-meter:8765;
+    proxy_http_version 1.1;
+    proxy_buffering off;
+    proxy_cache off;
+    gzip off;
+}
+
 location / {
     proxy_pass http://graphite-meter:8765;
     proxy_http_version 1.1;
