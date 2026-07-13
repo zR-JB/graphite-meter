@@ -218,29 +218,35 @@ _same_ primed connection, `onStageEnd`). Two backends exist:
 
 ### Settings
 
-Settings live in a docked panel with up to two tabs — Setup, plus Developer in dev-tooling
-builds. A production build has only Setup, so no tab bar is rendered at all.
+Settings use a docked panel on wide layouts, a side flyout on smaller desktops, and a draggable
+bottom sheet on mobile. There are up to two tabs — Setup, plus Developer in dev-tooling builds.
+A production build has only Setup, so no tab bar is rendered at all.
 
-**Setup — Run tier**
+**Setup — Test tier**
 
-| Setting                 | Default | Notes                                                                             |
-| ----------------------- | ------- | --------------------------------------------------------------------------------- |
-| Duration preset         | Medium  | Short / Medium / Long / Custom; each scales warmup + per-stage duration together. |
-| Bidirectional           | off     | Plus its own duration field (default 10s).                                        |
-| Auto throughput ceiling | on      | When off, a manual max-scale value can be set.                                    |
-| Rate unit               | Bits    | Bits or Bytes.                                                                    |
-| Prefix scale            | Decimal | Decimal (SI) or Binary (IEC).                                                     |
+| Setting         | Default | Notes                                                                                                                                            |
+| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Duration preset | Medium  | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                  |
+| Bidirectional   | off     | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration. |
 
-**Setup — Tuning tier**
+**Setup — Results tier**
 
-| Setting                                       | Default | Notes                                                                                                                                                                                                                                          |
-| --------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adaptive early finish                         | on      | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                                                                                                                                                                   |
-| Chunked download (experimental)               | off     | See Experimental features.                                                                                                                                                                                                                     |
-| Ping velocity                                 | Medium  | Instant / Medium / Slow pacer.                                                                                                                                                                                                                 |
-| Max parallel streams                          | 6       | Ceiling only — actual lane count is auto-derived.                                                                                                                                                                                              |
-| Skip loaded latency when latency stage is off | on      |                                                                                                                                                                                                                                                |
-| Include wire-rate estimates in result cards   | off     | Estimates forward-direction physical Ethernet occupancy. Resource Timing detects the browser-facing HTTP protocol; expert settings cover MTU, IP version, TCP-option range, VLAN, QUIC connection-ID range, and explicit tunnel encapsulation. |
+| Setting                                     | Default | Notes                                                                                                                                                                                                                                          |
+| ------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rate unit                                   | Bits    | Bits or Bytes.                                                                                                                                                                                                                                 |
+| Prefix scale                                | Decimal | Decimal (SI) or Binary (IEC).                                                                                                                                                                                                                  |
+| Auto throughput ceiling                     | on      | When off, a manual max-scale value can be set.                                                                                                                                                                                                 |
+| Include wire-rate estimates in result cards | off     | Estimates forward-direction physical Ethernet occupancy. Resource Timing detects the browser-facing HTTP protocol; expert settings cover MTU, IP version, TCP-option range, VLAN, QUIC connection-ID range, and explicit tunnel encapsulation. |
+
+**Setup — Advanced tier**
+
+| Setting                                       | Default | Notes                                                                        |
+| --------------------------------------------- | ------- | ---------------------------------------------------------------------------- |
+| Adaptive early finish                         | on      | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms). |
+| Ping velocity                                 | Medium  | Instant / Medium / Slow pacer.                                               |
+| Max parallel streams                          | 6       | Ceiling only — actual lane count is auto-derived.                            |
+| Skip loaded latency when latency stage is off | on      |                                                                              |
+| Chunked download (experimental)               | off     | See Experimental features.                                                   |
 
 Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
 `PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while `/preflight`'s
@@ -261,11 +267,12 @@ spike, packet loss, throughput drop, and connection drop (a full stall-then-resu
 
 ### The Endpoint info drawer
 
-The right-side drawer is a read-only card grid: **Client** (normalized IP, address family and
-detection source from `/preflight`, plus client build version), **Engine** (the wired runner's name, per-runner version, and its supported
-transports per role — latency vs throughput, from `runner.describe()`), **Server** (name/host/
-port/location, server build version, negotiated protocol — all from `/preflight`), and
-**Transport** (the active transfer/latency transports, stream ceiling, pre-test ping). The
+The right-side drawer is a responsive read-only card grid: **Client** (normalized IP, address
+family and detection source from `/preflight`, plus client build version), **Engine** (the wired
+runner's name, per-runner version, and its supported transports per role — latency vs throughput,
+from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
+`/preflight`), and **Connection** (browser-facing and backend protocols, active transfer/latency
+transports, stream ceiling, and pre-test ping). The
 `capabilities` object the server advertises (per-transport availability booleans, per-transport
 origin URLs, and every stable endpoint path) is richer than what's rendered — it's consumed
 internally for transport negotiation but not yet shown as a full matrix in the UI.

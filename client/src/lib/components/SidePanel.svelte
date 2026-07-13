@@ -3,6 +3,7 @@
   // wide layouts, focus-trapped flyout/sheet elsewhere.
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
+  import { sheetDrag } from "../actions/sheetDrag";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 
@@ -93,42 +94,7 @@
     resizeBy(panelEl.offsetWidth, step);
   }
 
-  const DISMISS_TAP_SLOP_PX = 8;
-  const DISMISS_THRESHOLD_PX = 80;
-  // Flyout sheets can be tapped or dragged downward to dismiss; docked panels
-  // stay in-flow and use the close button instead.
-  function startDismissDrag(e: PointerEvent) {
-    if (docked || !panelEl) return;
-    e.preventDefault();
-    const handle = e.currentTarget as HTMLElement;
-    const startY = e.clientY;
-    handle.setPointerCapture(e.pointerId);
-    panelEl.style.transition = "none";
-    document.body.style.userSelect = "none";
-
-    const onMove = (ev: PointerEvent) => {
-      const delta = Math.max(0, ev.clientY - startY);
-      panelEl!.style.transform = `translateY(${delta}px)`;
-    };
-    const finish = (ev: PointerEvent) => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
-      document.body.style.userSelect = "";
-      panelEl!.style.transition = "";
-      panelEl!.style.transform = "";
-      const delta = Math.max(0, ev.clientY - startY);
-      if (
-        ev.type !== "pointercancel" &&
-        (delta <= DISMISS_TAP_SLOP_PX || delta > DISMISS_THRESHOLD_PX)
-      ) {
-        close();
-      }
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
-  }
+  let backdropEl = $state<HTMLButtonElement>();
 </script>
 
 <div
@@ -140,6 +106,7 @@
 >
   <button
     class="backdrop"
+    bind:this={backdropEl}
     aria-label={`Close ${title}`}
     tabindex={open ? 0 : -1}
     onclick={close}
@@ -148,6 +115,11 @@
   <div
     class="panel"
     bind:this={panelEl}
+    use:sheetDrag={{
+      enabled: open && !docked,
+      backdrop: backdropEl,
+      onDismiss: close,
+    }}
     data-side={side}
     style={width ? `--panel-w: ${width}` : undefined}
     role={docked ? "region" : "dialog"}
@@ -178,14 +150,9 @@
         ondblclick={() => onResetWidth?.()}
       ></div>
     {/if}
-    <button
-      class="sheet-handle"
-      aria-label={`Drag down, or press Enter, to close ${title}`}
-      onpointerdown={startDismissDrag}
-      onclick={close}
-    >
+    <div class="sheet-handle" aria-hidden="true">
       <span class="sheet-grip" aria-hidden="true"></span>
-    </button>
+    </div>
     <header class="panel-head">
       <div class="title">
         {#if kicker}<span class="kicker">{kicker}</span>{/if}
@@ -346,21 +313,14 @@
     display: none;
     flex: 0 0 auto;
     width: 100%;
-    min-height: 52px;
-    padding: 16px 0 12px;
-    border: 0;
-    background: transparent;
-    cursor: grab;
-    touch-action: none;
-  }
-  .sheet-handle:active {
-    cursor: grabbing;
+    height: 8px;
+    align-items: start;
   }
   .sheet-grip {
     display: block;
     width: 36px;
     height: 4px;
-    margin: 0 auto;
+    margin: -6px auto 0;
     border-radius: 999px;
     background: var(--border-strong);
   }

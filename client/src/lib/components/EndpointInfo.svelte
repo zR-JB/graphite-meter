@@ -1,12 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <EndpointInfo> — Info drawer › Endpoint
-   * Read-only card grid: client identity (IP + build version), the
-   * wired engine (per-runner version + supported transports per
-   * role), the probed server, and the active transport setup.
-   * Client/Engine facts are build-static; Server/Transport rows
-   * fall back to "—" until the pre-test probe resolves.
-   * ============================================================ */
+  // Responsive endpoint facts for the info drawer. Probe-dependent values
+  // remain visibly pending until the handshake resolves.
   import { store } from "../state/store.svelte";
   import { pointerIntent } from "../actions/pointerIntent";
   import { fmtMs } from "../format";
@@ -15,58 +9,82 @@
   const infra = $derived(store.infra);
   const engine = $derived(store.engineInfo);
 
-  const cards = $derived.by(() => {
+  type Fact = { label: string; value: string | string[] };
+  type Card = { title: string; rows: Fact[] };
+
+  function endpointAddress(host: string, port: number): string {
+    const address =
+      host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+    return `${address}:${port}`;
+  }
+
+  const cards = $derived.by<Card[]>(() => {
     const i = infra;
     const e = engine;
     return [
       {
         title: "Client",
         rows: [
-          ["IP", i?.clientIp ?? "—"],
-          ["Address family", i ? `IPv${i.clientIpVersion}` : "—"],
-          [
-            "Address source",
-            i?.clientIpSource === "forwarded"
-              ? "Trusted proxy"
-              : i
-                ? "Socket peer"
-                : "—",
-          ],
-          ["Version", BUILD.clientVersion],
-        ] as [string, string][],
+          { label: "Address", value: i?.clientIp ?? "—" },
+          {
+            label: "Observed via",
+            value: i
+              ? `IPv${i.clientIpVersion} · ${
+                  i.clientIpSource === "forwarded"
+                    ? "Trusted proxy"
+                    : "Socket peer"
+                }`
+              : "—",
+          },
+          { label: "App version", value: BUILD.clientVersion },
+        ],
       },
       {
-        // The engine ships with (and is versioned by) the client build today;
-        // the per-role transport lists are its capabilities — a future UI lets
-        // the user pick latency/throughput transports from exactly these.
         title: "Engine",
         rows: [
-          ["Runner", e?.name ?? "—"],
-          ["Version", e?.version ?? "—"],
-          ["Latency", e ? e.latencyTransports.join(", ") : "—"],
-          ["Transfer", e ? e.throughputTransports.join(", ") : "—"],
-        ] as [string, string][],
+          { label: "Runner", value: e?.name ?? "—" },
+          { label: "Version", value: e?.version ?? "—" },
+          { label: "Latency", value: e?.latencyTransports ?? "—" },
+          { label: "Transfer", value: e?.throughputTransports ?? "—" },
+        ],
       },
       {
         title: "Server",
         rows: [
-          ["Node", i?.server.name ?? store.config.endpoint.host],
-          ["Host", i?.server.host ?? store.config.endpoint.host],
-          ["Port", String(i?.server.port ?? store.config.endpoint.port)],
-          ["Location", i?.server.location ?? "—"],
-          ["Version", i?.engineVersion ?? "—"],
-          ["Browser protocol", i?.firstHopProtocol ?? "scheme fallback"],
-          ["Backend protocol", i?.protocolNegotiated ?? "—"],
-        ] as [string, string][],
+          {
+            label: "Node",
+            value: i?.server.name ?? store.config.endpoint.host,
+          },
+          { label: "Location", value: i?.server.location ?? "—" },
+          {
+            label: "Endpoint",
+            value: endpointAddress(
+              i?.server.host ?? store.config.endpoint.host,
+              i?.server.port ?? store.config.endpoint.port,
+            ),
+          },
+          { label: "Version", value: i?.engineVersion ?? "—" },
+        ],
       },
       {
-        title: "Transport",
+        title: "Connection",
         rows: [
-          ["Transfer", "HTTP streams"],
-          ["Latency", "WebSocket"],
-          ["Streams", `auto (≤${store.config.parallelStreams})`],
-          ["Pre-test ping", i ? `${fmtMs(i.preTestPingMs)} ms` : "—"],
-        ] as [string, string][],
+          {
+            label: "Browser hop",
+            value: i?.firstHopProtocol ?? "Scheme fallback",
+          },
+          { label: "Backend hop", value: i?.protocolNegotiated ?? "—" },
+          { label: "Transfer", value: "HTTP streams" },
+          { label: "Latency", value: "WebSocket" },
+          {
+            label: "Streams",
+            value: `Automatic · up to ${store.config.parallelStreams}`,
+          },
+          {
+            label: "Pre-test ping",
+            value: i ? `${fmtMs(i.preTestPingMs)} ms` : "—",
+          },
+        ],
       },
     ];
   });
@@ -78,10 +96,20 @@
       <article class="card" use:pointerIntent>
         <h4>{c.title}</h4>
         <dl>
-          {#each c.rows as [dt, dd] (dt)}
+          {#each c.rows as row (row.label)}
             <div>
-              <dt>{dt}</dt>
-              <dd>{dd}</dd>
+              <dt>{row.label}</dt>
+              <dd>
+                {#if Array.isArray(row.value)}
+                  <span class="values">
+                    {#each row.value as value (value)}
+                      <span>{value}</span>
+                    {/each}
+                  </span>
+                {:else}
+                  {row.value}
+                {/if}
+              </dd>
             </div>
           {/each}
         </dl>
@@ -100,11 +128,12 @@
   .infra {
     display: grid;
     gap: 14px;
+    container-type: inline-size;
   }
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
     gap: 12px;
   }
 
@@ -167,8 +196,8 @@
   }
   dl div {
     display: grid;
-    grid-template-columns: minmax(70px, max-content) minmax(0, 1fr);
-    gap: 10px;
+    grid-template-columns: minmax(88px, max-content) minmax(0, 1fr);
+    gap: 12px;
     align-items: baseline;
   }
   dt {
@@ -183,6 +212,25 @@
     font-family: var(--font-mono);
     font-size: 11px;
     overflow-wrap: anywhere; /* transport lists / long hosts wrap, not clip */
+  }
+
+  .values {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+  }
+  .values span {
+    padding: 2px 5px;
+    border-radius: var(--radius-xs);
+    background: var(--surface-1);
+    white-space: nowrap;
+  }
+
+  @container (max-width: 300px) {
+    dl div {
+      grid-template-columns: 1fr;
+      gap: 3px;
+    }
   }
 
   .hint {

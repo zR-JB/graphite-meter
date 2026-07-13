@@ -1,12 +1,5 @@
 <script lang="ts">
-  /* ============================================================
-   * <TelemetryPanel> — the info drawer
-   * Mirror of <SettingsPanel>: a thin wrapper over the shared
-   * <SidePanel> (right side), so the two auxiliary panels are visually
-   * and behaviourally identical. Hosts the Endpoint info card grid
-   * (client / engine / server / transport identity + capabilities)
-   * and the license line.
-   * ============================================================ */
+  // Endpoint info wrapper around the shared docked/flyout panel.
   import SidePanel from "./SidePanel.svelte";
   import EndpointInfo from "./EndpointInfo.svelte";
 
