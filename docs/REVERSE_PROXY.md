@@ -17,10 +17,16 @@ IPv6, optional ports, quoted/bracketed values, and IPv4-mapped IPv6 are
 normalized with Go's `net/netip` package.
 
 The resolved address is diagnostic evidence only. It is never used for
-authentication or authorization. `/preflight` reports the normalized address,
+authentication or authorization. The selected target's `/probe` reports the normalized address,
 its family, and whether it came from the socket or a trusted header. A proxy can
 translate between IPv4 and IPv6 or traverse an overlay/load balancer, so the
 reported family is not guaranteed to describe every physical segment.
+
+`/preflight` is logical discovery and does not claim which protocol a later target uses. Set
+`PUBLIC_H1_ORIGIN`, `PUBLIC_H2_ORIGIN`, and `PUBLIC_H3_ORIGIN` to origins the browser can reach.
+A conventional HTTP reverse proxy changes the measured hop: Resource Timing then describes the
+browser-to-proxy protocol, while `/probe` describes the proxy-to-server protocol. Directly expose
+the native H2 TCP and H3 TCP+UDP ports when the goal is to compare those server listeners.
 
 ## nginx
 

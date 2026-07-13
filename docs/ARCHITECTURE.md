@@ -4,9 +4,9 @@ Graphite Meter is a self-hosted internet speed-test tool. A Svelte 5 browser cli
 companion native Go terminal client) drive a small, high-throughput measurement server. The
 server's job is limited to serving and sinking raw **bytes** and echoing timestamps — every rate,
 unit, and statistic is derived on the client side. The explicit design goal is to compare
-transports honestly: the client always chooses the transport (HTTP/1.1 streams, WebSocket, and —
-once wired up — HTTP/3 / WebTransport), rather than letting the browser negotiate one behind the
-scenes.
+transports honestly: discovery identifies one logical server, then the client freezes one explicit
+HTTP/1.1, HTTP/2, or HTTP/3 target for the run. WebSockets remain a separate TCP latency/progress
+channel and are never described as H2/H3 throughput.
 
 ## Repository layout (monorepo)
 
@@ -23,7 +23,8 @@ go/                           Go module: the measurement server + a native Bubbl
   internal/goclient/          The native TUI client's measurement engine (shares the wire protocol).
   internal/static/            //go:embed wrapper that serves the built Svelte client.
 api/                          Cross-language contract, source of truth for client/server agreement:
-                                 preflight.schema.json / preflight.golden.json  — GET /preflight shape
+                                 preflight schema/golden — logical discovery
+                                 probe schema/golden     — selected-path evidence
                                  wire.md / wire.testvectors.txt                — WS/WT message protocol
 container/                    Deployment: image-based docker-compose.yml + quadlet unit (default),
                                the multi-stage Dockerfile, and build-from-source variants.
@@ -50,16 +51,17 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 ## The Go measurement server
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
-builds one shared immutable 256 KiB block of `crypto/rand` bytes at startup, wires every endpoint
-onto a `Registry`, and starts exactly one listener: plain HTTP/1.1 on `Config.H1Addr` (default
-`:8765`). `TCP_NODELAY` is forced on every accepted connection so a single ping frame never sits
-in Nagle's buffer waiting to coalesce.
+builds the random block, upload store, meters, and endpoint implementations once. Listener-specific
+muxes expose H1 on 8765/tcp, optional H2 on 8443/tcp, and optional H3 on 8444/udp with a TLS H1
+bootstrap on 8444/tcp. The H3 TCP surface has only `/probe` and WebSockets, so transfer requests
+cannot silently fall back to H1. QUIC 0-RTT is disabled to prevent POST replay.
 
 ### Routes
 
 | Path                     | Method     | Transport               | Purpose                                                                                                                                                                                                                      |
 | ------------------------ | ---------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET        | HTTP/1.1, JSON          | Server identity, negotiated protocol, and a `capabilities` block (advertised origins/transports/endpoint paths) the client negotiates against instead of hardcoding.                                                         |
+| `/preflight`             | GET        | H1/H2 UI origins, JSON  | Logical server identity and nullable H1/H2/H3 targets with exact routes. Called once per logical connection. |
+| `/probe`                 | GET        | selected H1/H2/H3       | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes. |
 | `/download`              | GET        | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
 | `/upload/session`        | POST       | HTTP/1.1, JSON          | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket.                                                                  |
 | `/upload`                | POST       | HTTP/1.1, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
@@ -67,9 +69,9 @@ in Nagle's buffer waiting to coalesce.
 | `/ws/upload`             | WS upgrade | WebSocket               | Pushes the server-measured cumulative byte count for a `?id=` (`BYTES_RECEIVED`, then one final `UPLOAD_COMPLETE`) so upload throughput is judged by what the server actually received, not what the browser thinks it sent. |
 | `/` (anything unmatched) | GET        | HTTP/1.1                | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
-The `/preflight` response also advertises `/wt/ping`, `/wt/download`, `/wt/upload` as endpoint
-paths and a `webtransport` capability flag — those are placeholders for the not-yet-implemented
-WebTransport stage (see Roadmap); the flag is always `false` and no route is actually mounted.
+WebTransport is null in discovery and no route is mounted. The compatible `webtransport-go`
+HTTP/3 setup is present so adding it later does not require replacing the QUIC server, but this
+release makes no WebTransport capability claim.
 
 ### Server-authoritative upload accounting
 
@@ -84,7 +86,7 @@ sweeper reaps idle aggregates after 30s.
 
 ### Wire protocol (message buses only)
 
-Plain request/response endpoints (`/preflight`, `/download`, `/upload`) are normal HTTP and not
+Plain request/response endpoints (`/preflight`, `/probe`, `/download`, `/upload`) are normal HTTP and not
 covered by a message protocol. The two WebSocket buses (and their future WebTransport
 counterparts) speak a tiny ASCII, comma-delimited protocol — one logical message per frame, no
 length prefix, `OP` or `OP,arg[,arg...]`, parsed by `indexOf(',')` slicing, never JSON. An unknown
@@ -249,13 +251,13 @@ A production build has only Setup, so no tab bar is rendered at all.
 | Chunked download (experimental)               | off     | See Experimental features.                                                   |
 
 Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
-`PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while `/preflight`'s
-`protocolNegotiated` describes proxy→Go; the two are retained separately. The model composes
+`PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while the selected `/probe`'s
+`protocolNegotiated` describes what Go observed; the two are retained separately. The model composes
 application framing, TLS/QUIC protection, packetization, optional tunnel encapsulation, and
 Ethernet framing once. Reverse ACKs belong to the other full-duplex direction, while browser CPU,
 stability, ramp-up, ping timeouts, and proxy buffering describe achieved goodput or measurement
 quality rather than invisible protocol bytes, so none of them increases the estimate.
-The IP-family input defaults to the normalized client address reported by `/preflight`; forwarding
+The IP-family input defaults to the normalized client address reported by `/probe`; forwarding
 headers contribute only through a peer in `GM_TRUSTED_PROXIES`. The UI shows whether that evidence
 came from the socket or a trusted proxy and retains IPv4/IPv6 overrides because translation,
 overlays, and upstream load balancers can make the presented family ambiguous.
@@ -268,14 +270,12 @@ spike, packet loss, throughput drop, and connection drop (a full stall-then-resu
 ### The Endpoint info drawer
 
 The right-side drawer is a responsive read-only card grid: **Client** (normalized IP, address
-family and detection source from `/preflight`, plus client build version), **Engine** (the wired
+family and detection source from `/probe`, plus client build version), **Engine** (the wired
 runner's name, per-runner version, and its supported transports per role — latency vs throughput,
 from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
-`/preflight`), and **Connection** (browser-facing and backend protocols, active transfer/latency
+`/preflight`), and **Connection** (selected target, browser-verified and server-observed protocols, transfer/latency
 transports, stream ceiling, and pre-test ping). The
-`capabilities` object the server advertises (per-transport availability booleans, per-transport
-origin URLs, and every stable endpoint path) is richer than what's rendered — it's consumed
-internally for transport negotiation but not yet shown as a full matrix in the UI.
+`capabilities.targets` object advertises nullable protocol targets, exact origins, and exact routes.
 
 ### Web Workers
 
@@ -310,58 +310,19 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 
 ---
 
-## Experimental / not-yet-usable-end-to-end features
+## Experimental and roadmap
 
-- **Chunked download** — an opt-in "Chunked download (experimental)" setting that requests a
-  sequence of adaptively-sized chunks on one connection instead of one long stream. Implemented
-  and usable today; explicitly labeled experimental because it's newer and less exercised than
-  the default long-stream path.
-- **WebTransport** — modeled as a transport option throughout the client's negotiation logic and
-  the `/preflight` capability schema (server and client both), but not implemented on either end:
-  the server never opens an HTTP/3 listener and always advertises `webtransport: false`; the
-  browser client throws on that transport kind if it's ever selected. See Roadmap.
-- **Server-selection seam** — both the runner contract and the real backend carry a stubbed
-  `listServers()` method for a future multi-server picker (see Roadmap); it throws today and no
-  UI consumes it yet.
-- **TLS / HTTP/2 / HTTP/3 server config fields** — `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`,
-  `GM_ADVERTISE_H3`, `PUBLIC_TLS_ORIGIN`, `PUBLIC_H3_ORIGIN` all exist in `internal/config` and
-  are read at startup, but no TLS or HTTP/3 listener is ever started — setting them today has no
-  effect.
+- **Chunked download** is an opt-in adaptive-chunk alternative to long streams.
+- **WebTransport** remains future work. It is neither mounted nor advertised; H3 throughput uses
+  fetch over QUIC, while latency and upload progress use WebSockets over TLS/TCP.
+- **Server selection and simultaneous multi-server testing** remain future work. Protocol targets
+  in one discovery document are listeners of one logical server, not independent servers.
 
----
+## TLS security and lifecycle
 
-## Roadmap
-
-Everything below is planned, in roughly increasing order of how far out it is; none of it is
-implemented yet unless a section above says otherwise.
-
-1. **Multi-protocol server.** Today the server runs a single plain HTTP/1.1 listener. Planned work
-   adds native TLS termination and native HTTP/2 and HTTP/3 (QUIC) listeners as their own server
-   handler stacks/endpoints, addressable independently rather than only through an external
-   reverse proxy. The config surface for this already exists (`GM_H3_ADDR`, `GM_TLS_CERT`,
-   `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_TLS_ORIGIN`, `PUBLIC_H3_ORIGIN`) but is currently
-   inert.
-2. **A client-side protocol/transport selector.** Once the server speaks more than HTTP/1.1, the
-   browser client is planned to expose an explicit choice of which HTTP version to measure over —
-   HTTP/1.1, HTTP/2, or HTTP/3 — instead of only negotiating it implicitly from what the server
-   advertises. When HTTP/3 is selected, latency and throughput are planned to be configurable
-   _separately_, each independently able to choose WebTransport unreliable datagrams (for
-   loss-tolerant, minimal-overhead probing) instead of the existing reliable channel (WebSocket for
-   latency, fetch streams for throughput). Two seams for this already exist: the Settings
-   "Transport & security" preset (HTTP/1.1 / HTTPS / HTTP/2 / HTTP/3), which today only feeds the
-   overhead-compensation byte math, and the runner contract's `EngineInfo` (`runner.describe()`),
-   which carries per-role supported-transport lists (latency vs throughput) rendered in the
-   Endpoint info drawer — the selection UI will offer exactly those lists.
-3. **A server-selection UI.** Planned so the primary server — the one that serves the web page —
-   can be configured, via a TOML file or environment variables, with a list of other Graphite
-   Meter server instances running elsewhere. The browser client would then let the user pick which
-   configured server to actually run the test against, instead of always testing the server that
-   served the page. The runner contract already carries a stubbed `listServers()` method as a seam
-   for this; no UI consumes it yet.
-4. **Far future, speculative: simultaneous multi-server testing.** Running a test against several
-   configured servers at once, in a single pass, to compare routes or providers directly.
-5. **Far future, speculative: a Rust server implementation.** An alternative to the Go server,
-   using `s2n-quic-h3` for the QUIC/HTTP/3/WebTransport side. No `server-rs/` directory exists in
-   this checkout yet.
-6. **Far future, speculative: a native Rust TUI client**, as a Rust-side counterpart to the
-   existing Go Bubble Tea client.
+H2/H3 are opt-in and fail before binding when the PEM pair is missing, mismatched, outside its
+validity window, or incompatible with a configured public TLS hostname. Private-key permissions
+and certificates expiring within 30 days produce warnings. Files are checked every minute and a
+complete valid renewal is swapped atomically; a partial or invalid renewal leaves the last valid
+certificate serving. No private-key bytes are logged. The Compose overlay mounts the complete
+Let's Encrypt tree read-only so `live/` symlinks into `archive/` remain usable.

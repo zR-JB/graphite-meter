@@ -15,10 +15,11 @@ ContainerName=graphite-meter
 # dependency on graphite-meter-build.service.
 Image=graphite-meter.build
 
-# HTTP/1.1 (default). TLS + HTTP/3 (WebTransport) land in a later stage.
+# HTTP/1.1 default; uncomment the three TLS target ports together.
 PublishPort=8765:8765
 # PublishPort=8443:8443/tcp
-# PublishPort=8443:8443/udp
+# PublishPort=8444:8444/tcp
+# PublishPort=8444:8444/udp
 
 # On rootless Podman, user-mode networking can use pasta and
 # significantly reduce throughput. For better performance, uncomment:
@@ -30,7 +31,8 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 # Environment=PUBLIC_H1_ORIGIN=http://speed.example:8765
-# Environment=GM_ADVERTISE_H3=0
+# Environment=GM_ENABLE_H2=true
+# Environment=GM_ENABLE_H3=true
 # Environment=GM_VERBOSE=1
 
 [Service]

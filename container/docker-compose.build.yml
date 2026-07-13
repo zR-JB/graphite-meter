@@ -18,8 +18,9 @@ services:
         # GM_CLIENT_BUILD_LABEL: "0.1.0"  # status-bar + client-version label (default "prod")
     ports:
       - "8765:8765" # HTTP/1.1 (default)
-      # - "8443:8443/tcp"  # TLS + HTTP/1.1/h2 (Stage 5)
-      # - "8443:8443/udp"  # HTTP/3 + WebTransport (Stage 5)
+      # - "8443:8443/tcp"  # HTTP/2 + H1 WebSocket fallback
+      # - "8444:8444/tcp"  # HTTP/3 bootstrap + WebSockets
+      # - "8444:8444/udp"  # HTTP/3 transfers
     environment:
       # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
       # running behind a reverse proxy so /preflight advertises reachable URLs.
@@ -27,5 +28,6 @@ services:
       # GM_SERVER_LOCATION: "fra"
       # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network
       # PUBLIC_H1_ORIGIN: "http://speed.example:8765"
-      # GM_ADVERTISE_H3: "0"
+      # GM_ENABLE_H2: "true"
+      # GM_ENABLE_H3: "true"
     restart: unless-stopped

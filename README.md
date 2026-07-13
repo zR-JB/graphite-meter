@@ -43,9 +43,8 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
   any Graphite Meter server.
 - **Modern, responsive UI** — dark and light themes, equally at home on a phone and a
   desktop.
-- **Built for what's next** — an engine-agnostic runner core and a transport-negotiating wire
-  contract, designed so HTTP/3 + WebTransport measurement slots in as another runner rather than
-  a rewrite in the future.
+- **Selectable HTTP/1.1, HTTP/2, and HTTP/3** — one logical server and shared measurement core;
+  browser and native clients freeze one verified target for every transfer in a run.
 - **Free and open source** — AGPL-3.0.
 
 ## Quick start
@@ -56,9 +55,8 @@ Run the published image (multi-arch: amd64 + arm64):
 docker run -d --name graphite-meter -p 8765:8765 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open **http://localhost:8765** — that's it. The server listens on a single TCP port (`8765`) for
-the web UI and all measurement traffic. Pin a version tag (`:0.1.0`, `:0.1`) for reproducible
-deploys.
+Open **http://localhost:8765** — that's it for the default HTTP/1.1 deployment. Optional native
+H2 and H3 listeners require a valid certificate; use the Compose TLS overlay below.
 
 ### docker compose
 
@@ -73,6 +71,11 @@ services:
     restart: unless-stopped
 ```
 
+Enable all protocol targets with `container/docker-compose.tls.yml`. Set `GM_PUBLIC_HOST` and
+mount/provision a certificate in the overlay's complete `/etc/letsencrypt` volume (the complete
+tree is required because `live/` contains symlinks into `archive/`). H3 needs both TCP and UDP
+8444 reachable.
+
 ### Podman + systemd (Quadlet)
 
 A ready-made unit that pulls the image and runs it as a systemd service lives at
@@ -85,12 +88,15 @@ Everything is optional; the defaults just work. The common knobs:
 
 | Env var              | Default                                 | What it does                                                                                                                                 |
 | -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR`         | `:8765`                                 | Listen address.                                                                                                                              |
+| `GM_H1_ADDR`         | `:8765`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
+| `GM_ENABLE_H2`       | off                                     | Enable HTTP/2 on `GM_H2_ADDR` (`:8443`).                                                                                                     |
+| `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 UDP plus its H1 TLS bootstrap on `GM_H3_ADDR` (`:8444`).                                                                       |
+| `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by H2/H3; renewed files hot-reload.                                                             |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
 | `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
 | `GM_TRUSTED_PROXIES` | —                                       | Comma-separated proxy CIDRs allowed to supply client IP and scheme forwarding headers.                                                       |
 | `PUBLIC_H1_ORIGIN`   | derived from request                    | Public origin to advertise — set behind a reverse proxy.                                                                                     |
-| `PUBLIC_TLS_ORIGIN`  | derived from trusted forwarded `https`  | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a proxy in `GM_TRUSTED_PROXIES`; set explicitly if needed.     |
+| `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN` | derived from request host | Exact public TLS origins advertised for the selectable H2 and H3 targets.                                                               |
 | `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
 
 Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)
@@ -106,7 +112,7 @@ Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](doc
 
 ```sh
 just goclient-build            # -> go/graphite-meter-client
-./go/graphite-meter-client -url http://your-server:8765
+./go/graphite-meter-client -url http://your-server:8765 -protocol auto
 ```
 
 An interactive TUI with the same stages (latency, download, upload, bidirectional, loaded

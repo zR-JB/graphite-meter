@@ -1,0 +1,28 @@
+# TLS overlay: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+services:
+  graphite-meter:
+    ports:
+      - "8443:8443/tcp" # HTTP/2 plus HTTP/1.1 UI/WebSocket fallback
+      - "8444:8444/tcp" # HTTP/3 Alt-Svc bootstrap and WebSockets
+      - "8444:8444/udp" # HTTP/3 measurement traffic
+    environment:
+      GM_ENABLE_H2: "true"
+      GM_ENABLE_H3: "true"
+      GM_TLS_CERT: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/fullchain.pem
+      GM_TLS_KEY: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/privkey.pem
+      PUBLIC_H2_ORIGIN: https://${GM_PUBLIC_HOST}:8443
+      PUBLIC_H3_ORIGIN: https://${GM_PUBLIC_HOST}:8444
+    volumes:
+      # Mount the complete tree: live/ entries are symlinks into archive/.
+      - letsencrypt:/etc/letsencrypt:ro
+
+  certbot:
+    image: docker.io/certbot/certbot:latest
+    profiles: ["certbot"]
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+
+volumes:
+  letsencrypt:
+  certbot-webroot:

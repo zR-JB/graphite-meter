@@ -51,7 +51,7 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just client-check`      | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`).                                                                   |
 | `just client-test`       | `bun test` — pure-`.ts`-logic unit tests (no component rendering).                                                                                               |
 | `just client-ci`         | Runs the fast client CI gates: Prettier check, semantic type check, and Bun tests.                                                                               |
-| `just client-gen-types`  | Regenerates `client/src/lib/api/preflight.ts` from `api/preflight.schema.json` (the schema is the source of truth).                                              |
+| `just client-gen-types`  | Regenerates TypeScript discovery and probe types from both JSON schemas.                                                                                     |
 | `just server-build-dev`  | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
 | `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy.                                                        |
 | `just server-check`      | Checks Go formatting and `go vet ./...`.                                                                                                                         |
@@ -104,14 +104,16 @@ environment variables, which take precedence over defaults.
 
 | Env var                                                                          | Flag        | Default                                                   | What it does                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR`                                                                     | `-addr`     | `:8765`                                                   | HTTP/1.1 listen address — the only listener that runs today.                                                                                                                                                                                                                                              |
+| `GM_H1_ADDR` | `-h1-addr` | `:8765` | Clear HTTP/1.1 UI and measurement listener. |
+| `GM_H2_ADDR` | `-h2-addr` | `:8443` | TLS listener with HTTP/2 transfers and HTTP/1.1 UI/WebSocket fallback. |
+| `GM_H3_ADDR` | `-h3-addr` | `:8444` | UDP HTTP/3 plus TCP TLS Alt-Svc bootstrap/WebSocket listener. |
+| `GM_ENABLE_H2` / `GM_ENABLE_H3` | `-enable-h2` / `-enable-h3` | off | Enable the corresponding TLS listeners. |
+| `GM_TLS_CERT` / `GM_TLS_KEY` | `-tls-cert` / `-tls-key` | — | Matching PEM pair. Invalid dates, hostnames, and pairs fail startup; valid renewals hot-reload. |
 | `GM_SERVER_NAME`                                                                 | `-name`     | `graphite-meter`                                          | Server identity advertised in `/preflight`.                                                                                                                                                                                                                                                               |
 | `GM_SERVER_LOCATION`                                                             | `-location` | —                                                         | Location label advertised in `/preflight` (e.g. `fra`).                                                                                                                                                                                                                                                   |
 | `GM_TRUSTED_PROXIES`                                                             | —           | —                                                         | Comma-separated trusted-proxy CIDRs. Forwarded client addresses and `X-Forwarded-Proto` are ignored unless the socket peer matches one of them. Invalid CIDRs fail startup. See [REVERSE_PROXY.md](REVERSE_PROXY.md).                                                                                     |
 | `GM_VERBOSE`                                                                     | `-verbose`  | off                                                       | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                                                                                                         |
-| `PUBLIC_H1_ORIGIN`                                                               | —           | derived from request `Host`                               | Public HTTP/1.1 origin to advertise — set this behind a reverse proxy so the client targets the right URL.                                                                                                                                                                                                |
-| `PUBLIC_TLS_ORIGIN`                                                              | —           | derived from a trusted proxy request forwarded as `https` | Public encrypted origin to advertise (`capabilities.origins.tls`) — the client prefers this for the WebSocket latency bus, mapped to `wss://`. Auto-derived from the request `Host` when a peer in `GM_TRUSTED_PROXIES` sends `X-Forwarded-Proto: https`; set explicitly if the public host/port differs. |
-| `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_H3_ORIGIN` | —           | off / unset                                               | Reserved for the HTTP/2 + HTTP/3 stage. Read at startup but no TLS/H3 listener exists yet, so these currently have no runtime effect.                                                                                                                                                                     |
+| `PUBLIC_H1_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags | request host + listener port | Exact externally reachable origins. H1 must be `http`; H2/H3 must be `https`. |
 
 ## Native TUI client flags
 
@@ -125,6 +127,7 @@ All flags are editable again inside the TUI before a run starts:
 | Flag                      | Default                   | Meaning                                                                                   |
 | ------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `-url`                    | `http://127.0.0.1:8765`   | Server base URL.                                                                          |
+| `-protocol`               | `auto`                    | Freeze `auto`, `http1`, `http2`, or direct-QUIC `http3` for the run.                       |
 | `-stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.   |
 | `-warmup`                 | `800ms`                   | Per-stage warmup before measurement starts.                                               |
 | `-latency-duration`       | `4s`                      | Latency stage window.                                                                     |
@@ -157,8 +160,8 @@ podman run -d --name gm --replace -p 8765:8765 graphite-meter:latest
 2. **`server`** (`golang:1.26`) — `go mod download`, copies `go/` and `api/` (the schema
    conformance test references `api/` by relative path), embeds the client build from stage 1,
    builds a `CGO_ENABLED=0`, stripped, trimmed, ldflags-versioned static binary.
-3. **final** (`scratch`) — just the binary. `EXPOSE 8765/tcp` (a commented `8443/tcp` and
-   `8443/udp` mark where the future TLS/H3 listener will attach). No entrypoint shell is needed —
+3. **final** (`scratch`) — just the binary. It exposes 8765/tcp, 8443/tcp, and 8444/tcp+udp.
+   No entrypoint shell is needed —
    config is read natively from env/flags.
 
 To bake a configurable (non-prod-default) image, pass `--build-arg` for any client knob:
@@ -170,7 +173,7 @@ podman build -f container/Dockerfile -t graphite-meter:dev \
 
 `container/docker-compose.build.yml` wraps the same build (context = repo root, `dockerfile:
 container/Dockerfile`) with the server env vars pre-wired and commented-out slots for the future
-TLS/HTTP/3 ports and the client build knobs. The build-from-source Quadlet variant
+TLS ports and the client build knobs. The build-from-source Quadlet variant
 (`graphite-meter.build` + `graphite-meter-source.container`) is documented in
 [`container/quadlet/README.md`](../container/quadlet/README.md).
 
