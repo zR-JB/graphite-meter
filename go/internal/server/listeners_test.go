@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -60,6 +61,52 @@ func TestBuildMuxFallsThroughToStaticAtRoot(t *testing.T) {
 	// decides to serve for "/" (that logic is embed_test.go's job).
 	if got := rec.Body.String(); got == "fake-endpoint-response" {
 		t.Fatalf("body = %q, want the static handler's response, not the endpoint's", got)
+	}
+}
+
+func TestH3BootstrapCannotServeTransfers(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := bootstrapMux(context.Background(), e)
+	for _, path := range []string{"/download", "/upload", "/upload/session"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d", path, rec.Code)
+		}
+	}
+}
+
+func TestH2TransferRoutesRequireHTTP2(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := fullMux(context.Background(), e, false, 2, true)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("h1 transfer status = %d", rec.Code)
+	}
+}
+
+func TestPublicH3Port(t *testing.T) {
+	cfg := config.Default()
+	if got := publicH3Port(&cfg); got != "8444" {
+		t.Fatalf("default port = %q", got)
+	}
+	cfg.PublicH3Origin = "https://meter.example:18444"
+	if got := publicH3Port(&cfg); got != "18444" {
+		t.Fatalf("public port = %q", got)
+	}
+	cfg.PublicH3Origin = "https://meter.example"
+	if got := publicH3Port(&cfg); got != "443" {
+		t.Fatalf("default TLS port = %q", got)
 	}
 }
 
