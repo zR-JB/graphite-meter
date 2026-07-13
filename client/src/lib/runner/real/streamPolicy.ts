@@ -1,5 +1,6 @@
 // Resolves the configured transfer-stream policy after protocol selection.
-// Automatic H1 respects its configured browser-pool ceiling; H2/H3 use one.
+// Automatic H1 respects its configured browser-pool ceiling. Multiplexed
+// protocols need one download request but overlapping finite upload POSTs.
 import type {
   FlowDirection,
   ProtocolTarget,
@@ -7,6 +8,7 @@ import type {
 } from "../contract";
 
 export const BROWSER_CONNECTION_BUDGET = 6;
+export const MULTIPLEXED_UPLOAD_STREAMS = 3;
 export const MAX_FORCED_STREAMS = 128;
 
 export interface TransferStreamOptions {
@@ -27,7 +29,8 @@ export function normalizeStreamCount(count: number): number {
 export function transferStreamCount(opts: TransferStreamOptions): number {
   if (opts.policy.mode === "forced")
     return normalizeStreamCount(opts.policy.count);
-  if (opts.protocol !== "http1") return 1;
+  if (opts.protocol !== "http1")
+    return opts.dir === "up" ? MULTIPLEXED_UPLOAD_STREAMS : 1;
 
   const total = opts.totalBudget ?? BROWSER_CONNECTION_BUDGET;
   const controlConnections =
@@ -51,6 +54,6 @@ export function describeTransferStreams(
   if (policy.mode === "forced")
     return `Forced · ${normalizeStreamCount(policy.count)} per direction`;
   if (protocol === "http2" || protocol === "http3")
-    return "Automatic · 1 per direction";
+    return `Automatic · 1 download / ${MULTIPLEXED_UPLOAD_STREAMS} upload`;
   return `Automatic · up to ${normalizeStreamCount(policy.count)} per direction`;
 }

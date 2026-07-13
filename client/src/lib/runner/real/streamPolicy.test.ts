@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   BROWSER_CONNECTION_BUDGET,
+  MULTIPLEXED_UPLOAD_STREAMS,
   describeTransferStreams,
   normalizeStreamCount,
   transferStreamCount,
@@ -8,19 +9,18 @@ import {
 
 const auto = { mode: "auto", count: 6 } as const;
 
-test("automatic H2 and H3 use one stream per active direction", () => {
+test("automatic H2 and H3 overlap finite upload requests", () => {
   for (const protocol of ["http2", "http3"] as const) {
-    for (const dir of ["down", "up"] as const) {
-      expect(
-        transferStreamCount({
-          protocol,
-          policy: auto,
-          transfer: ["down", "up"],
-          dir,
-          needsPing: true,
-        }),
-      ).toBe(1);
-    }
+    const base = {
+      protocol,
+      policy: auto,
+      transfer: ["down", "up"],
+      needsPing: true,
+    } as const;
+    expect(transferStreamCount({ ...base, dir: "down" })).toBe(1);
+    expect(transferStreamCount({ ...base, dir: "up" })).toBe(
+      MULTIPLEXED_UPLOAD_STREAMS,
+    );
   }
 });
 
@@ -70,7 +70,7 @@ test("forced policy is exact per direction and ignores protocol and browser budg
 
 test("stream diagnostics distinguish automatic and forced policy", () => {
   expect(describeTransferStreams(auto, "http3")).toBe(
-    "Automatic · 1 per direction",
+    `Automatic · 1 download / ${MULTIPLEXED_UPLOAD_STREAMS} upload`,
   );
   expect(describeTransferStreams({ mode: "forced", count: 9 }, "http3")).toBe(
     "Forced · 9 per direction",

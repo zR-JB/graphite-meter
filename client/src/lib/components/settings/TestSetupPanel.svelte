@@ -500,13 +500,13 @@
       onToggle={setForcedStreams}
       disabled={running}
       label="Force transfer stream count"
-      tooltip="Automatic uses the browser connection budget for HTTP/1.1 and one stream per direction for multiplexed HTTP/2 and HTTP/3. Forced starts the exact request count per active direction; HTTP/1.1 requests beyond the browser connection limit may queue."
+      tooltip="Automatic uses the browser connection budget for HTTP/1.1. HTTP/2 and HTTP/3 use one download request and overlapping upload requests on one multiplexed connection. Forced starts the exact request count per active direction; HTTP/1.1 requests beyond the browser connection limit may queue."
     />
     <label>
       <span
         use:tooltip={store.config.transferStreams.mode === "forced"
           ? "Exact request streams started for every active transfer direction."
-          : "Maximum HTTP/1.1 streams allowed per active direction. HTTP/2 and HTTP/3 remain at one."}
+          : "Maximum HTTP/1.1 streams allowed per active direction. HTTP/2 and HTTP/3 choose protocol-safe request concurrency automatically."}
         >{store.config.transferStreams.mode === "forced"
           ? "Streams per direction"
           : "Max H1 streams per direction"}</span
@@ -530,7 +530,8 @@
       <p class="hint">
         Automatic: HTTP/1.1 uses the available connection pool, capped at
         {store.config.transferStreams.count} per direction; HTTP/2 and HTTP/3 use
-        one multiplexed stream per active direction.
+        one download request and three overlapping upload requests on their multiplexed
+        connection.
       </p>
     {/if}
     <Switch

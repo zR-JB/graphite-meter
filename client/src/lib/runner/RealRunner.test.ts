@@ -47,6 +47,21 @@ test("selectProtocolTarget rejects clear H1 on a secure page", () => {
   ).toBeNull();
 });
 
+test("current target follows the negotiated protocol on a shared origin", () => {
+  const shared = "https://meter";
+  const targets = {
+    http1: null,
+    http2: { origin: shared, routes },
+    http3: { origin: shared, routes },
+  };
+  expect(
+    selectProtocolTarget(targets, "current", shared, true, "h2")?.protocol,
+  ).toBe("http2");
+  expect(
+    selectProtocolTarget(targets, "current", shared, true, "h3")?.protocol,
+  ).toBe("http3");
+});
+
 test("browser protocol verification is independent of server probe evidence", () => {
   expect(browserProtocolMatchesTarget("http1", "http/1.1")).toBe(true);
   expect(browserProtocolMatchesTarget("http2", "h2")).toBe(true);

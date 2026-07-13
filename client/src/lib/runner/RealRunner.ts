@@ -187,6 +187,7 @@ export class RealBackend implements RunnerBackend {
   #discovery: Preflight | null = null;
   #discoveryOrigin = "";
   #discoveryBase = "";
+  #discoveryProtocol: string | undefined;
 
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
    *  Bidirectional primes BOTH directions on the SAME stage (onStageBegin calls
@@ -326,6 +327,7 @@ export class RealBackend implements RunnerBackend {
       this.#discovery = null;
       this.#target = null;
       this.#targetProtocol = null;
+      this.#discoveryProtocol = undefined;
     }
     let pf = this.#discovery;
     if (!pf)
@@ -343,6 +345,10 @@ export class RealBackend implements RunnerBackend {
         this.#discovery = pf;
         this.#discoveryBase = base;
         this.#discoveryOrigin = new URL(res.url, location.href).origin;
+        this.#discoveryProtocol = (
+          performance.getEntriesByName(res.url, "resource").at(-1) as
+            PerformanceResourceTiming | undefined
+        )?.nextHopProtocol;
       } catch (cause) {
         // Network-level failure (server down, DNS, CORS). wire.ts maps the
         // rejection to a `preflight-failed` error.
@@ -359,6 +365,7 @@ export class RealBackend implements RunnerBackend {
       selection,
       discoveryOrigin,
       location.protocol === "https:",
+      this.#discoveryProtocol,
     );
     if (!selected)
       throw new TransportUnavailableError(`${selection} target unavailable`);

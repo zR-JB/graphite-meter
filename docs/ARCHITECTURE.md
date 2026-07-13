@@ -209,15 +209,17 @@ _same_ primed connection, `onStageEnd`). Two backends exist:
 - **Upload** — `upload-worker.ts` builds one incompressible Blob "pool" via
   `crypto.getRandomValues` (generated once, then sliced with zero-copy views — never
   regenerated per request), and POSTs adaptively-sized slices toward a 500ms target
-  (`autosize.ts`). The reported throughput number is **server-authoritative**: the worker only
+  (`autosize.ts`). Automatic H2/H3 uses three overlapping POST lanes so the connection keeps
+  carrying data while another finite request waits for its response. The shared 64 MiB reservoir
+  is divided across those lanes. The reported throughput number is **server-authoritative**: the worker only
   reports lane liveness, and a separate dedicated `/ws/upload` connection
   (`upload-progress-worker.ts`) is the sole source of the byte count and rate, exactly mirroring
   the server's elapsed-time clock described above.
 - **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
   own worker pool, aggregation cadence, and stall tracking. Automatic HTTP/1.1 splits the
   available connection budget between directions after reserving control channels and applies the
-  configured ceiling to each share; automatic HTTP/2 and HTTP/3 use one multiplexed stream per
-  direction. Forced policy starts the exact configured request count independently for each
+  configured ceiling to each share; automatic HTTP/2 and HTTP/3 use one download request and
+  three overlapping upload requests on one multiplexed connection. Forced policy starts the exact configured request count independently for each
   direction and protocol. HTTP/1.1 requests over the browser's connection limit can be queued.
 
 ### Settings
@@ -248,7 +250,7 @@ A production build has only Setup, so no tab bar is rendered at all.
 | --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
 | Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                             |
 | Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                           |
-| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2/H3 use one per direction. Forced uses the configured count exactly for every protocol. |
+| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2/H3 use one download and three overlapping upload requests. Forced uses the configured count exactly for every protocol. |
 | Skip loaded latency when latency stage is off | on        |                                                                                                          |
 | Chunked download (experimental)               | off       | See Experimental features.                                                                               |
 

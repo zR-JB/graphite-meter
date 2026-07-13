@@ -8,6 +8,12 @@
 import type { RunnerConfig, PhaseActivity, ProtocolTarget } from "../contract";
 import type { Preflight, Target } from "../../api/preflight";
 
+const targetByNextHop: Partial<Record<string, ProtocolTarget>> = {
+  "http/1.1": "http1",
+  h2: "http2",
+  h3: "http3",
+};
+
 /** Resolve an advertised target without inventing an origin. Secure pages
  * cannot select the clear H1 target because fetch would block mixed content. */
 export function selectProtocolTarget(
@@ -15,11 +21,19 @@ export function selectProtocolTarget(
   selection: ProtocolTarget | "current",
   discoveryOrigin: string,
   securePage: boolean,
+  discoveryProtocol?: string,
 ): { protocol: ProtocolTarget; target: Target } | null {
   const entries = Object.entries(targets) as [ProtocolTarget, Target | null][];
+  const currentTargets = entries.filter(
+    ([, target]) => target?.origin === discoveryOrigin,
+  );
+  const observedTarget = discoveryProtocol
+    ? targetByNextHop[discoveryProtocol]
+    : undefined;
   const selected =
     selection === "current"
-      ? (entries.find(([, target]) => target?.origin === discoveryOrigin) ??
+      ? (currentTargets.find(([protocol]) => protocol === observedTarget) ??
+        (currentTargets.length === 1 ? currentTargets[0] : undefined) ??
         entries.find(([protocol, target]) =>
           securePage
             ? protocol === "http2" && !!target
@@ -34,9 +48,7 @@ export function browserProtocolMatchesTarget(
   target: ProtocolTarget,
   nextHopProtocol?: string,
 ): boolean {
-  return (
-    nextHopProtocol === { http1: "http/1.1", http2: "h2", http3: "h3" }[target]
-  );
+  return !!nextHopProtocol && targetByNextHop[nextHopProtocol] === target;
 }
 
 export function protocolTargetKey(
