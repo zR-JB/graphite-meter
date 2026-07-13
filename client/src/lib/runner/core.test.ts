@@ -230,6 +230,45 @@ test("full run: latency then download — phase order and stage lifecycle", () =
   }
 });
 
+test("download throughput cannot leak through upload warmup", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  core.start(
+    makeConfig({
+      stages: { download: true, upload: true },
+      duration: { warmupMs: 100, downloadMs: 100, uploadMs: 100 },
+    }),
+  );
+
+  advance(100); // download measurement
+  core.ingestThroughput("down", 20_000_000, 2_000_000, 0.1);
+
+  advance(100); // upload warmup
+  expect(core.phase).toBe("warmup");
+  core.ingestThroughput("down", 20_000_000, 2_000_000, 0.1);
+
+  advance(100); // upload measurement
+  core.ingestThroughput("up", 10_000_000, 1_000_000, 0.1);
+
+  const samples = events.flatMap((event) =>
+    event.type === "throughput" ? [event.sample] : [],
+  );
+  expect(samples).toHaveLength(2);
+  expect(
+    samples.map(({ phase, dir, bytesPerSec }) => ({
+      phase,
+      dir,
+      bytesPerSec,
+    })),
+  ).toEqual([
+    { phase: "download", dir: "down", bytesPerSec: 20_000_000 },
+    { phase: "upload", dir: "up", bytesPerSec: 10_000_000 },
+  ]);
+});
+
 test("warmup->measure seam: same stage, no onStageEnd between begin and measure", () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
