@@ -12,17 +12,18 @@ import (
 var EngineVersion = "0.0.0-dev"
 
 type Config struct {
-	H1Addr, H2Addr, H3Addr                         string
-	EnableH2, EnableH3                             bool
-	TLSCert, TLSKey                                string
-	PublicH1Origin, PublicH2Origin, PublicH3Origin string
-	ServerName, ServerLocation, EngineVersion      string
-	Verbose                                        bool
-	TrustedProxies                                 []netip.Prefix
+	H1Addr, H1TLSAddr, H2Addr, H3Addr         string
+	EnableH1TLS, EnableH2, EnableH3           bool
+	TLSCert, TLSKey                           string
+	PublicH1Origin, PublicH1TLSOrigin         string
+	PublicH2Origin, PublicH3Origin            string
+	ServerName, ServerLocation, EngineVersion string
+	Verbose                                   bool
+	TrustedProxies                            []netip.Prefix
 }
 
 func Default() Config {
-	return Config{H1Addr: ":8765", H2Addr: ":8443", H3Addr: ":8444", ServerName: "graphite-meter", EngineVersion: EngineVersion}
+	return Config{H1Addr: ":8765", H1TLSAddr: ":8445", H2Addr: ":8443", H3Addr: ":8444", ServerName: "graphite-meter", EngineVersion: EngineVersion}
 }
 
 func Load() (Config, error) {
@@ -34,9 +35,9 @@ func Load() (Config, error) {
 		name string
 		dst  *string
 	}{
-		{"GM_H1_ADDR", &c.H1Addr}, {"GM_H2_ADDR", &c.H2Addr}, {"GM_H3_ADDR", &c.H3Addr},
+		{"GM_H1_ADDR", &c.H1Addr}, {"GM_H1_TLS_ADDR", &c.H1TLSAddr}, {"GM_H2_ADDR", &c.H2Addr}, {"GM_H3_ADDR", &c.H3Addr},
 		{"GM_TLS_CERT", &c.TLSCert}, {"GM_TLS_KEY", &c.TLSKey},
-		{"PUBLIC_H1_ORIGIN", &c.PublicH1Origin}, {"PUBLIC_H2_ORIGIN", &c.PublicH2Origin}, {"PUBLIC_H3_ORIGIN", &c.PublicH3Origin},
+		{"PUBLIC_H1_ORIGIN", &c.PublicH1Origin}, {"PUBLIC_H1_TLS_ORIGIN", &c.PublicH1TLSOrigin}, {"PUBLIC_H2_ORIGIN", &c.PublicH2Origin}, {"PUBLIC_H3_ORIGIN", &c.PublicH3Origin},
 		{"GM_SERVER_NAME", &c.ServerName}, {"GM_SERVER_LOCATION", &c.ServerLocation},
 	}
 	for _, e := range stringEnv {
@@ -45,6 +46,9 @@ func Load() (Config, error) {
 		}
 	}
 	var err error
+	if c.EnableH1TLS, err = envBool("GM_ENABLE_H1_TLS", false); err != nil {
+		return Config{}, err
+	}
 	if c.EnableH2, err = envBool("GM_ENABLE_H2", false); err != nil {
 		return Config{}, err
 	}
@@ -85,22 +89,33 @@ func (c Config) Validate() error {
 	if c.H1Addr == "" {
 		return fmt.Errorf("GM_H1_ADDR must not be empty")
 	}
+	if c.EnableH1TLS && c.H1TLSAddr == "" {
+		return fmt.Errorf("GM_H1_TLS_ADDR must not be empty when HTTPS HTTP/1.1 is enabled")
+	}
 	if c.EnableH2 && c.H2Addr == "" {
 		return fmt.Errorf("GM_H2_ADDR must not be empty when HTTP/2 is enabled")
 	}
 	if c.EnableH3 && c.H3Addr == "" {
 		return fmt.Errorf("GM_H3_ADDR must not be empty when HTTP/3 is enabled")
 	}
-	if c.EnableH2 || c.EnableH3 {
+	if c.EnableH1TLS || c.EnableH2 || c.EnableH3 {
 		if c.TLSCert == "" || c.TLSKey == "" {
-			return fmt.Errorf("GM_TLS_CERT and GM_TLS_KEY are required when HTTP/2 or HTTP/3 is enabled")
+			return fmt.Errorf("GM_TLS_CERT and GM_TLS_KEY are required when a native TLS listener is enabled")
 		}
 	}
-	if c.EnableH2 && c.EnableH3 && c.H2Addr == c.H3Addr {
-		return fmt.Errorf("GM_H2_ADDR and GM_H3_ADDR must differ because HTTP/3 also binds TCP")
+	listeners := []struct {
+		enabled    bool
+		name, addr string
+	}{{true, "GM_H1_ADDR", c.H1Addr}, {c.EnableH1TLS, "GM_H1_TLS_ADDR", c.H1TLSAddr}, {c.EnableH2, "GM_H2_ADDR", c.H2Addr}, {c.EnableH3, "GM_H3_ADDR", c.H3Addr}}
+	for i, a := range listeners {
+		for _, b := range listeners[i+1:] {
+			if a.enabled && b.enabled && a.addr == b.addr {
+				return fmt.Errorf("%s and %s must differ", a.name, b.name)
+			}
+		}
 	}
 	for _, v := range []struct{ name, value, scheme string }{
-		{"PUBLIC_H1_ORIGIN", c.PublicH1Origin, "http"}, {"PUBLIC_H2_ORIGIN", c.PublicH2Origin, "https"}, {"PUBLIC_H3_ORIGIN", c.PublicH3Origin, "https"},
+		{"PUBLIC_H1_ORIGIN", c.PublicH1Origin, "http"}, {"PUBLIC_H1_TLS_ORIGIN", c.PublicH1TLSOrigin, "https"}, {"PUBLIC_H2_ORIGIN", c.PublicH2Origin, "https"}, {"PUBLIC_H3_ORIGIN", c.PublicH3Origin, "https"},
 	} {
 		if v.value == "" {
 			continue

@@ -30,6 +30,52 @@ func protocolTestTLS(t *testing.T) (*config.Config, *certificateManager) {
 	return &cfg, cm
 }
 
+func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
+	cfg, cm := protocolTestTLS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e, err := buildEndpoints(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &http.Protocols{}
+	p.SetHTTP1(true)
+	srv := baseServer(fullMux(ctx, e, false, 1, true), p)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go serve(tls.NewListener(ln, cm.tlsConfig("http/1.1")), srv)
+	defer srv.Close()
+	cp := &http.Protocols{}
+	cp.SetHTTP1(true)
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: cp} //nolint:gosec
+	defer tr.CloseIdleConnections()
+	hc := &http.Client{Transport: tr}
+	base := "https://" + ln.Addr().String()
+	res, err := hc.Get(base + "/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe wire.Probe
+	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if probe.ProtocolNegotiated != "http/1.1" {
+		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+	}
+	res, err = hc.Get(base + "/download?bytes=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if len(body) != 1 {
+		t.Fatalf("download bytes = %d", len(body))
+	}
+}
+
 func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	cfg, cm := protocolTestTLS(t)
 	ctx, cancel := context.WithCancel(context.Background())

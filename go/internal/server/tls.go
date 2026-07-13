@@ -55,7 +55,7 @@ func (m *certificateManager) reload(now time.Time) error {
 	for _, public := range []struct {
 		enabled bool
 		origin  string
-	}{{m.cfg.EnableH2, m.cfg.PublicH2Origin}, {m.cfg.EnableH3, m.cfg.PublicH3Origin}} {
+	}{{m.cfg.EnableH1TLS, m.cfg.PublicH1TLSOrigin}, {m.cfg.EnableH2, m.cfg.PublicH2Origin}, {m.cfg.EnableH3, m.cfg.PublicH3Origin}} {
 		if !public.enabled || public.origin == "" {
 			continue
 		}

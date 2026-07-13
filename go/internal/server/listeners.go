@@ -142,7 +142,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	var cm *certificateManager
 	var err error
-	if cfg.EnableH2 || cfg.EnableH3 {
+	if cfg.EnableH1TLS || cfg.EnableH2 || cfg.EnableH3 {
 		if cm, err = newCertificateManager(cfg); err != nil {
 			return err
 		}
@@ -169,6 +169,23 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.H1Addr, network: "tcp",
 		run: func() error { return serve(h1ln, h1) }, stop: h1.Shutdown,
 	}}
+
+	if cfg.EnableH1TLS {
+		p := &http.Protocols{}
+		p.SetHTTP1(true)
+		s := baseServer(fullMux(ctx, e, true, 1, true), p)
+		ln, err := net.Listen("tcp", cfg.H1TLSAddr)
+		if err != nil {
+			closeOpened()
+			return err
+		}
+		opened = append(opened, ln)
+		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		services = append(services, service{
+			name: "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
+			addr: cfg.H1TLSAddr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+		})
+	}
 
 	if cfg.EnableH2 {
 		p := &http.Protocols{}
