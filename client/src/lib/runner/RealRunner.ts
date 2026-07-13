@@ -48,6 +48,7 @@ const EARLY_FAIL_RESTARTS = 3;
 const PING_ESTABLISH_TIMEOUT_MS = 3500;
 // A hung upload-session request should skip the stage, not ride into max-stall.
 const UPLOAD_SESSION_TIMEOUT_MS = 3000;
+const PROGRESS_ESTABLISH_TIMEOUT_MS = 3500;
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
@@ -184,9 +185,7 @@ export class RealBackend implements RunnerBackend {
   #target: Target | null = null;
   #targetProtocol: ProtocolTarget | null = null;
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
-  #discovery: Preflight | null = null;
   #discoveryOrigin = "";
-  #discoveryBase = "";
   #discoveryProtocol: string | undefined;
 
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
@@ -219,6 +218,7 @@ export class RealBackend implements RunnerBackend {
   #testId: string | null = null;
   /** The dedicated /ws/upload progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
+  #progressReady: { finish: (ready: boolean) => void } | null = null;
   /** Latest cumulative server byte count and previous measured snapshot. */
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
@@ -326,41 +326,31 @@ export class RealBackend implements RunnerBackend {
     signal?: AbortSignal,
   ): Promise<InfraInfo> {
     const base = resolveBase(this.#resolveEndpoint(endpoint));
-    if (this.#discovery && base !== this.#discoveryBase) {
-      this.#discovery = null;
-      this.#target = null;
-      this.#targetProtocol = null;
-      this.#discoveryProtocol = undefined;
+    this.#capabilities = null;
+    this.#target = null;
+    this.#targetProtocol = null;
+    this.#discoveryProtocol = undefined;
+    let pf: Preflight;
+    try {
+      // A logical server may restart with different public targets while the
+      // SPA remains open, so every run resolves a fresh discovery document.
+      const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
+      const res = await fetch(`${base}/preflight${ident}`, {
+        method: "GET",
+        cache: "no-store",
+        headers: this.#authHeaders(),
+        signal,
+      });
+      if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
+      pf = (await res.json()) as Preflight;
+      this.#discoveryOrigin = new URL(res.url, location.href).origin;
+      this.#discoveryProtocol = (
+        performance.getEntriesByName(res.url, "resource").at(-1) as
+          PerformanceResourceTiming | undefined
+      )?.nextHopProtocol;
+    } catch (cause) {
+      throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
-    let pf = this.#discovery;
-    if (!pf)
-      try {
-        // Identify the client to the server (version negotiation seam): a future
-        // server can key feature/compat decisions off these. Query params (not a
-        // custom header) so a cross-origin preflight GET stays a simple request.
-        const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-        const res = await fetch(`${base}/preflight${ident}`, {
-          method: "GET",
-          headers: this.#authHeaders(),
-          signal,
-        });
-        if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
-        pf = (await res.json()) as Preflight;
-        this.#discovery = pf;
-        this.#discoveryBase = base;
-        this.#discoveryOrigin = new URL(res.url, location.href).origin;
-        this.#discoveryProtocol = (
-          performance.getEntriesByName(res.url, "resource").at(-1) as
-            PerformanceResourceTiming | undefined
-        )?.nextHopProtocol;
-      } catch (cause) {
-        // Network-level failure (server down, DNS, CORS). wire.ts maps the
-        // rejection to a `preflight-failed` error.
-        throw new Error(`preflight request failed: ${String(cause)}`, {
-          cause,
-        });
-      }
-    if (!pf) throw new Error("preflight returned no discovery document");
     this.#capabilities = pf.capabilities;
     const selection = endpoint.protocol ?? "current";
     const discoveryOrigin = this.#discoveryOrigin;
@@ -791,13 +781,16 @@ export class RealBackend implements RunnerBackend {
     const state = this.#lanes[dir];
     if (!this.#transferActive || !state) return;
     this.#testId = id;
+    // The progress socket is the authoritative upload meter. Establish it
+    // before any POST workers so forced H1 lanes cannot occupy every browser
+    // connection slot and queue the control channel behind the upload.
+    if (!(await this.#primeUploadProgress(state.stage))) return;
+    const readyState = this.#lanes[dir];
+    if (!this.#transferActive || !readyState) return;
     for (let i = 0; i < streams; i++) {
-      state.streamUrls[i] = url(i, id);
+      readyState.streamUrls[i] = url(i, id);
       this.#spawnLaneStaggered(dir, i);
     }
-    // Open the /ws/upload progress socket after the token exists. It is still part
-    // of warmup; measurement starts later via #measureTransfer.
-    this.#primeUploadProgress(state.stage);
   }
 
   async #mintUploadSession(base: string): Promise<string> {
@@ -828,24 +821,20 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Spawn the /ws/upload progress worker for the up stage. Resets the server
-   *  window anchors. The server count is the SOLE upload byte source now (no
-   *  client-side onprogress fallback): if there is no minted id or the server does
-   *  not advertise WebSocket, no server bytes ever arrive, so the up stage produces
-   *  no samples and the core's stall watchdog ends it cleanly (max-stall →
-   *  connection-lost) rather than shipping a client-counted number. */
-  #primeUploadProgress(stage: PhaseActivity["stage"]): void {
+  /** Establish the server-authoritative upload progress socket before starting
+   *  POST lanes. Upload cannot be measured honestly without this channel. */
+  #primeUploadProgress(stage: PhaseActivity["stage"]): Promise<boolean> {
     this.#resetUploadCounters();
 
     const routes = this.#target?.routes;
-    if (!this.#testId) return; // session mint already skipped the stage
+    if (!this.#testId) return Promise.resolve(false);
     if (!routes?.websocket) {
       this.#host!.failStage(
         stage,
         "transport-unavailable",
         "server offers no WebSocket progress bus — upload can't be measured",
       );
-      return;
+      return Promise.resolve(false);
     }
 
     const wsUpload = routes.websocket.uploadProgress;
@@ -854,14 +843,34 @@ export class RealBackend implements RunnerBackend {
       wsUpload +
       `?id=${encodeURIComponent(this.#testId)}`;
     const w = this.#progressWorkerInstance();
-    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void =>
+    const ready = new Promise<boolean>((resolve) => {
+      const finish = (established: boolean): void => {
+        if (this.#progressReady?.finish !== finish) return;
+        clearTimeout(timer);
+        this.#progressReady = null;
+        resolve(established);
+      };
+      const timer = setTimeout(() => {
+        this.#host!.failStage(
+          stage,
+          "connection-lost",
+          "upload progress channel could not be established",
+        );
+        finish(false);
+      }, PROGRESS_ESTABLISH_TIMEOUT_MS);
+      this.#progressReady = { finish };
+    });
+    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
+      if (e.data.type === "open") this.#progressReady?.finish(true);
       this.#onProgressMessage(e.data);
+    };
     w.onerror = (): void => {
       /* the worker owns reconnect; a hard worker error just means no server bytes
        * until it recovers, which the stall watchdog already covers. */
     };
     w.postMessage({ type: "start", url });
     this.#progressWorker = w;
+    return ready;
   }
 
   /** Spawn lane `i` at prime time, staggered by LANE_STAGGER_MS per index so the
@@ -1437,6 +1446,8 @@ export class RealBackend implements RunnerBackend {
    *  can flush. The client headline was already set from the last reported rate,
    *  so we never block on it. Idempotent. */
   #teardownProgress(): void {
+    this.#progressReady?.finish(false);
+    this.#progressReady = null;
     const w = this.#progressWorker;
     this.#progressWorker = null;
     if (!w) return;

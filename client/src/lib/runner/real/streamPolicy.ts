@@ -27,6 +27,8 @@ export function normalizeStreamCount(count: number): number {
 }
 
 export function transferStreamCount(opts: TransferStreamOptions): number {
+  // Forced means exact even above the browser's nominal H1 pool. Required
+  // control sockets are established before these lanes are started.
   if (opts.policy.mode === "forced")
     return normalizeStreamCount(opts.policy.count);
   if (opts.protocol !== "http1")

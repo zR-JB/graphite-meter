@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import type { CoreHost } from "./core";
 import {
   resolveBase,
   httpToWs,
@@ -10,7 +11,7 @@ import {
   browserProtocolMatchesTarget,
   protocolTargetKey,
 } from "./real/backendPure";
-import type { PhaseActivity } from "./contract";
+import type { PhaseActivity, RunnerConfig } from "./contract";
 
 const routes = {
   probe: "/probe",
@@ -193,4 +194,191 @@ test("laneStaggerMs: splits half the warmup window across the non-first lanes", 
 test("laneStaggerMs: caps at the base stagger even on a long warmup", () => {
   // A generous warmup shouldn't stretch the per-lane gap past the base.
   expect(laneStaggerMs(2, 100_000, 75)).toBe(75);
+});
+
+test("each probe refreshes discovery and upload progress opens before forced H1 lanes", async () => {
+  const buildGlobals = globalThis as typeof globalThis &
+    Record<string, unknown>;
+  Object.assign(buildGlobals, {
+    __GM_DEFAULT_ENGINE__: "real",
+    __GM_ALLOW_DUMMY__: false,
+    __GM_DEV_TOOLS__: false,
+    __GM_BUILD_LABEL__: "test",
+    __GM_CLIENT_VERSION__: "0.0.0-test",
+  });
+  const { RealBackend } = await import("./RealRunner");
+  const realFetch = globalThis.fetch;
+  const realWorker = globalThis.Worker;
+  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const realEntries = performance.getEntriesByName.bind(performance);
+  const started: string[] = [];
+  let preflights = 0;
+  let progressWorker: FakeWorker | null = null;
+  let pingWorker: FakeWorker | null = null;
+
+  class FakeWorker {
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    readonly kind: "ping" | "progress" | "upload" | "download";
+
+    constructor(url: URL) {
+      const path = String(url);
+      this.kind = path.includes("upload-progress")
+        ? "progress"
+        : path.includes("upload-worker")
+          ? "upload"
+          : path.includes("download-worker")
+            ? "download"
+            : "ping";
+      if (this.kind === "ping") pingWorker = this;
+    }
+
+    postMessage(message: { type: string }): void {
+      if (message.type !== "start" && message.type !== "measure") return;
+      if (this.kind === "ping") {
+        queueMicrotask(() =>
+          this.emit({
+            type: "samples",
+            samples: [
+              { rtt: 1, lost: false },
+              { rtt: 1, lost: false },
+              { rtt: 1, lost: false },
+              { rtt: 1, lost: false },
+              { rtt: 1, lost: false },
+            ],
+          }),
+        );
+      } else if (message.type === "start") {
+        started.push(this.kind);
+        if (this.kind === "progress") progressWorker = this;
+      }
+    }
+
+    emit(data: unknown): void {
+      this.onmessage?.({ data } as MessageEvent);
+    }
+
+    terminate(): void {}
+  }
+
+  const targetRoutes = {
+    ...routes,
+    websocket: { ping: "/ws/ping", uploadProgress: "/ws/upload" },
+  };
+  const discovery = (withH2: boolean) => ({
+    server: { name: "test", host: "meter.test", port: 8765 },
+    engineVersion: "test",
+    capabilities: {
+      targets: {
+        http1: { origin: "http://meter.test:8765", routes: targetRoutes },
+        http2: withH2
+          ? { origin: "https://meter.test:8443", routes: targetRoutes }
+          : null,
+        http3: null,
+      },
+    },
+  });
+
+  try {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: new URL("http://meter.test:8765/"),
+    });
+    globalThis.Worker = FakeWorker as unknown as typeof Worker;
+    performance.getEntriesByName = () =>
+      [{ nextHopProtocol: "http/1.1" }] as unknown as PerformanceEntry[];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/preflight")) {
+        preflights++;
+        return Response.json(discovery(preflights > 1));
+      }
+      if (url.includes("/probe"))
+        return Response.json({
+          clientIp: "127.0.0.1",
+          clientIpVersion: 4,
+          clientIpSource: "socket",
+          protocolNegotiated: "http/1.1",
+        });
+      if (url.includes("/upload/session"))
+        return Response.json({ uploadId: "gmu_test" });
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    const config = {
+      endpoint: { host: "meter.test", port: 8765, protocol: "http1" },
+      transferStreams: { mode: "forced", count: 6 },
+      duration: { warmupMs: 0 },
+      pingConcurrency: "medium",
+      experimentalChunkedDownload: false,
+    } as RunnerConfig;
+    const failures: string[] = [];
+    const host = {
+      config,
+      phase: "idle",
+      elapsed: 0,
+      emit() {},
+      reportTransport() {},
+      fail() {},
+      failStage(_stage, _reason, message) {
+        failures.push(message);
+      },
+      ingestThroughput() {},
+      ingestLatency() {},
+      stall() {},
+      resume() {},
+    } as CoreHost;
+    const backend = new RealBackend();
+    backend.attach(host);
+
+    const first = await backend.probe(config.endpoint);
+    const secondProbe = backend.probe(config.endpoint);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    pingWorker!.emit({
+      type: "samples",
+      samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
+    });
+    const second = await secondProbe;
+    expect(preflights).toBe(2);
+    expect(first.availableTargets?.http2).toBe(false);
+    expect(second.availableTargets?.http2).toBe(true);
+
+    backend.onRunStart(config);
+    const preparation = backend.onStageBegin({
+      stage: "upload",
+      transfer: ["up"],
+      loadedLatency: false,
+    });
+    for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
+    expect(started).toEqual(["progress"]);
+
+    progressWorker!.emit({ type: "open" });
+    await preparation;
+    expect(started).toEqual([
+      "progress",
+      "upload",
+      "upload",
+      "upload",
+      "upload",
+      "upload",
+      "upload",
+    ]);
+    expect(failures).toEqual([]);
+    backend.onAbort();
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.Worker = realWorker;
+    if (realLocation)
+      Object.defineProperty(globalThis, "location", realLocation);
+    else Reflect.deleteProperty(globalThis, "location");
+    performance.getEntriesByName = realEntries;
+    for (const key of [
+      "__GM_DEFAULT_ENGINE__",
+      "__GM_ALLOW_DUMMY__",
+      "__GM_DEV_TOOLS__",
+      "__GM_BUILD_LABEL__",
+      "__GM_CLIENT_VERSION__",
+    ])
+      Reflect.deleteProperty(buildGlobals, key);
+  }
 });
