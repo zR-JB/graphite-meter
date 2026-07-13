@@ -70,8 +70,8 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := bootstrapMux(context.Background(), e)
-	for _, path := range []string{"/download", "/upload", "/upload/session"} {
+	mux := bootstrapMux(e)
+	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusNotFound {
@@ -80,18 +80,43 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 	}
 }
 
-func TestH2TransferRoutesRequireHTTP2(t *testing.T) {
+func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	cfg := config.Default()
 	e, err := buildEndpoints(context.Background(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := fullMux(context.Background(), e, false, 2, true)
+	mux := fullMux(context.Background(), e, muxTopology{discovery: true, requiredProto: 2})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("h1 transfer status = %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("H2 websocket status = %d", rec.Code)
+	}
+}
+
+func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1 := fullMux(context.Background(), e, muxTopology{discovery: true, latency: true, requiredProto: 1})
+	rec := httptest.NewRecorder()
+	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("H1 latency websocket is not mounted")
+	}
+	h3 := h3Mux(e)
+	rec = httptest.NewRecorder()
+	h3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=unknown", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("H3 upload progress is not mounted")
 	}
 }
 

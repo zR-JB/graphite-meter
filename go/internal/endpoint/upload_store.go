@@ -10,17 +10,16 @@ import (
 	"time"
 )
 
-// UploadStore holds per-test state shared between a POST /upload lane and its
-// /ws/upload progress socket — separate TCP connections joined by ?id= — so the
+// UploadStore holds per-test state shared between POST /upload lanes and the
+// /upload/progress stream — separate requests joined by ?id= — so the
 // SERVER's drained byte count, not the browser's onprogress, is authoritative.
 //
 // The map is sharded so a POST's hot-path byte add never contends a lock: the
 // add is a lockless atomic on *uploadAgg; only first-touch create and sweep
 // delete take a shard mutex.
 //
-// An aggregate is created on first touch (POST or WS, whichever arrives first)
-// and reaped only by the TTL sweeper — a refcount fast-path delete once raced a
-// straggler lane into a fresh zero-byte aggregate that lost its bytes.
+// An aggregate is created on first touch and deleted after explicit finalization
+// or by the TTL sweeper after an abandoned run.
 //
 // Creation is gated to ids minted at /upload/session (markIssued): a flood of
 // forged ids on this auth-less bus creates no state, closing both the cross-tab
@@ -37,7 +36,7 @@ type uploadShard struct {
 }
 
 // uploadAgg is one test's cross-connection accumulator; every field is atomic so
-// the POST drain path (recordChunk) and the WS ticker (bytes.Load every 100 ms)
+// the POST drain path (recordChunk) and the NDJSON stream (bytes.Load every 100 ms)
 // never share a lock.
 //
 // firstChunkMono anchors the server's elapsed-time rate denominator. Clients
@@ -47,9 +46,11 @@ type uploadShard struct {
 type uploadAgg struct {
 	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // mono ns of the last chunk OR last WS tick — the sweeper's idle clock
+	lastTouchMono  atomic.Int64 // mono ns of the last chunk or progress tick — sweeper idle clock
 	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
-	done           atomic.Bool  // UPLOAD_COMPLETE already sent — idempotency guard for the WS finalizer
+	postsChanged   chan struct{}
+	finished       chan struct{} // explicitly closed by DELETE /upload/progress
+	finishOnce     sync.Once
 }
 
 // recordChunk counts one drained chunk and starts the elapsed clock on the first
@@ -58,6 +59,14 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 	a.firstChunkMono.CompareAndSwap(0, now)
 	a.bytes.Add(int64(n))
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
+}
+
+func (a *uploadAgg) changePosts(delta int32) {
+	a.posts.Add(delta)
+	select {
+	case a.postsChanged <- struct{}{}:
+	default:
+	}
 }
 
 // elapsedNanos returns wall time since the first drained chunk. Sampling this
@@ -77,8 +86,8 @@ const (
 	// maxLiveUploads bounds the aggregate map so a burst of minted ids can't grow
 	// memory without bound.
 	maxLiveUploads = 1000
-	// uploadIDTTL: an aggregate idle this long (no chunk, no WS tick) is reaped by
-	// the sweeper — covers abort, tab close, crash, or an orphaned WS with no POST.
+	// uploadIDTTL: an aggregate idle this long (no chunk or progress tick) is
+	// reaped by the sweeper after abort, tab close, or crash.
 	uploadIDTTL = 30 * time.Second
 	// issuedIDTTL forgets a minted-but-unconsumed id after this long, so `issued`
 	// can't grow forever. Pruning it never breaks a running test — getOrCreate
@@ -125,7 +134,7 @@ func (s *UploadStore) Mint() string {
 	return id
 }
 
-// markIssued records that the server minted id at /upload/session, so a later POST/WS
+// markIssued records that the server minted id at /upload/session, so a later POST/progress
 // carrying it may create an aggregate. Idempotent.
 func (s *UploadStore) markIssued(id string) {
 	if id == "" {
@@ -165,12 +174,23 @@ func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 		sh.mu.Unlock()
 		return nil, false
 	}
-	agg := &uploadAgg{}
+	agg := &uploadAgg{finished: make(chan struct{}), postsChanged: make(chan struct{}, 1)}
 	agg.lastTouchMono.Store(monoNanos())
 	sh.m[id] = agg
 	s.live.Add(1)
 	sh.mu.Unlock()
 	return agg, true
+}
+
+// finish marks the client-owned upload stage lifecycle as closed. Completion is
+// explicit: the progress stream never guesses from a quiet gap between POSTs.
+func (s *UploadStore) finish(id string) bool {
+	agg, ok := s.get(id)
+	if !ok {
+		return false
+	}
+	agg.finishOnce.Do(func() { close(agg.finished) })
+	return true
 }
 
 // get returns the existing aggregate for id without creating one.
@@ -197,10 +217,10 @@ func (s *UploadStore) delete(id string) {
 	sh.mu.Unlock()
 }
 
-// sweep reaps every aggregate idle longer than ttl (no chunk, no WS tick) and
+// sweep reaps every aggregate idle longer than ttl and
 // forgets every minted id older than issuedIDTTL. It is the store's only deleter
 // of aggregate state; bytes are never lost because the sole authoritative read is
-// the cumulative value at the client's BYE, long before idle reaping.
+// the cumulative value at explicit finalization, long before idle reaping.
 func (s *UploadStore) sweep(ttl time.Duration) {
 	now := monoNanos()
 	aggCutoff := now - int64(ttl)
@@ -225,9 +245,8 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 }
 
 // RunSweeper reaps idle aggregates until ctx is cancelled. Start it once per store
-// in its own goroutine (like Meter.Run). It reaps map STATE only — goroutine
-// lifetimes on the /ws/upload bus are bounded separately by that handler's idle
-// read deadline (10s timeout on /ws/upload bus handler).
+// in its own goroutine (like Meter.Run). Request contexts independently bound
+// progress-handler goroutine lifetimes.
 func (s *UploadStore) RunSweeper(ctx context.Context) {
 	ticker := time.NewTicker(uploadSweepInterval)
 	defer ticker.Stop()

@@ -111,7 +111,7 @@ func httpAdapter(e Endpoint) http.Handler {
 func setCommonHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	h.Set("Access-Control-Allow-Headers", "*")
 	h.Set("Timing-Allow-Origin", "*")
 }

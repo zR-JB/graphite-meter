@@ -115,7 +115,7 @@ func TestHTTPAdapterSetsCommonHeaders(t *testing.T) {
 		if got := res.Header.Get("Access-Control-Allow-Origin"); got != "*" {
 			t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
 		}
-		if got := res.Header.Get("Access-Control-Allow-Methods"); got != "GET, POST, OPTIONS" {
+		if got := res.Header.Get("Access-Control-Allow-Methods"); got != "GET, POST, DELETE, OPTIONS" {
 			t.Errorf("Access-Control-Allow-Methods = %q", got)
 		}
 		if got := res.Header.Get("Access-Control-Allow-Headers"); got != "*" {

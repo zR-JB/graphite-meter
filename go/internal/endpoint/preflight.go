@@ -33,40 +33,38 @@ func (p *Preflight) Handle(s transport.Session) error {
 
 func (p *Preflight) build(r *http.Request) wire.Preflight {
 	host, port := hostPort(r)
-	transfers := []wire.TransferTarget{
-		transferTarget("http1-clear", origin(p.cfg.PublicH1Origin, "http", host, p.cfg.H1Addr), "http1", false),
+	throughput := []wire.ThroughputTarget{
+		throughputTarget("http1-clear", origin(p.cfg.PublicH1Origin, "http", host, p.cfg.H1Addr), "http1", false),
 	}
-	channels := []wire.ChannelTarget{
-		webSocketTarget("ws-http1-clear", transfers[0].Origin, false),
+	latency := []wire.LatencyTarget{
+		latencyTarget("ws-http1-clear", throughput[0].Origin, false),
 	}
 	if p.cfg.EnableH1TLS || p.cfg.PublicH1TLSOrigin != "" {
 		o := origin(p.cfg.PublicH1TLSOrigin, "https", host, p.cfg.H1TLSAddr)
-		transfers = append(transfers, transferTarget("http1-tls", o, "http1", true))
-		channels = append(channels, webSocketTarget("ws-http1-tls", o, true))
+		throughput = append(throughput, throughputTarget("http1-tls", o, "http1", true))
+		latency = append(latency, latencyTarget("ws-http1-tls", o, true))
 	}
 	if p.cfg.EnableH2 || p.cfg.PublicH2Origin != "" {
 		o := origin(p.cfg.PublicH2Origin, "https", host, p.cfg.H2Addr)
-		transfers = append(transfers, transferTarget("http2", o, "http2", true))
-		channels = append(channels, webSocketTarget("ws-http2", o, true))
+		throughput = append(throughput, throughputTarget("http2", o, "http2", true))
 	}
 	if p.cfg.EnableH3 || p.cfg.PublicH3Origin != "" {
 		o := origin(p.cfg.PublicH3Origin, "https", host, p.cfg.H3Addr)
-		transfers = append(transfers, transferTarget("http3", o, "http3", true))
-		channels = append(channels, webSocketTarget("ws-http3", o, true))
+		throughput = append(throughput, throughputTarget("http3", o, "http3", true))
 	}
 	return wire.Preflight{
 		Server:        wire.ServerInfo{Name: p.cfg.ServerName, Host: host, Port: port, Location: p.cfg.ServerLocation},
 		EngineVersion: p.cfg.EngineVersion,
-		Capabilities:  wire.Capabilities{Transfers: transfers, Channels: channels},
+		Capabilities:  wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency},
 	}
 }
 
-func transferTarget(id, origin, protocol string, tls bool) wire.TransferTarget {
-	return wire.TransferTarget{ID: id, Origin: strings.TrimRight(origin, "/"), Transport: "fetch-stream", Protocol: protocol, TLS: tls, Routes: wire.DefaultTransferRoutes()}
+func throughputTarget(id, origin, protocol string, tls bool) wire.ThroughputTarget {
+	return wire.ThroughputTarget{ID: id, Origin: strings.TrimRight(origin, "/"), Transport: "fetch-stream", Protocol: protocol, TLS: tls, Routes: wire.DefaultThroughputRoutes()}
 }
 
-func webSocketTarget(id, origin string, tls bool) wire.ChannelTarget {
-	return wire.ChannelTarget{ID: id, Origin: strings.TrimRight(origin, "/"), Transport: "websocket", Protocol: "http1", TLS: tls, Routes: wire.DefaultWebSocketRoutes()}
+func latencyTarget(id, origin string, tls bool) wire.LatencyTarget {
+	return wire.LatencyTarget{ID: id, Origin: strings.TrimRight(origin, "/"), Transport: "websocket", Protocol: "http1", TLS: tls, Routes: wire.DefaultLatencyRoutes()}
 }
 
 func origin(public, scheme, host, addr string) string {

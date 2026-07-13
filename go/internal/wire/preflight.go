@@ -15,55 +15,53 @@ type ServerInfo struct {
 	Location string `json:"location,omitempty"`
 }
 
-// Capabilities separates bulk byte paths from interactive message channels.
-// A run can bind each role independently without inventing another server.
+// Capabilities advertises independently selectable throughput and latency paths.
 type Capabilities struct {
-	Transfers []TransferTarget `json:"transfers"`
-	Channels  []ChannelTarget  `json:"channels"`
+	ThroughputTargets []ThroughputTarget `json:"throughputTargets"`
+	LatencyTargets    []LatencyTarget    `json:"latencyTargets"`
 }
 
-type TransferTarget struct {
-	ID        string         `json:"id"`
-	Origin    string         `json:"origin"`
-	Transport string         `json:"transport"`
-	Protocol  string         `json:"protocol"`
-	TLS       bool           `json:"tls"`
-	Routes    TransferRoutes `json:"routes"`
+type ThroughputTarget struct {
+	ID        string           `json:"id"`
+	Origin    string           `json:"origin"`
+	Transport string           `json:"transport"`
+	Protocol  string           `json:"protocol"`
+	TLS       bool             `json:"tls"`
+	Routes    ThroughputRoutes `json:"routes"`
 }
 
-type TransferRoutes struct {
-	Probe         string `json:"probe"`
-	Download      string `json:"download"`
-	Upload        string `json:"upload"`
-	UploadSession string `json:"uploadSession"`
+type ThroughputRoutes struct {
+	Probe          string `json:"probe"`
+	Download       string `json:"download"`
+	Upload         string `json:"upload"`
+	UploadSession  string `json:"uploadSession"`
+	UploadProgress string `json:"uploadProgress"`
 }
 
-// ChannelTarget is an independently selectable latency/progress path. Protocol
-// names the actual browser-facing wire protocol, not a companion bulk target.
-type ChannelTarget struct {
+// LatencyTarget is an independently selectable interactive latency path.
+type LatencyTarget struct {
 	ID        string        `json:"id"`
 	Origin    string        `json:"origin"`
 	Transport string        `json:"transport"`
 	Protocol  string        `json:"protocol"`
 	TLS       bool          `json:"tls"`
-	Routes    ChannelRoutes `json:"routes"`
+	Routes    LatencyRoutes `json:"routes"`
 }
 
-type ChannelRoutes struct {
-	Latency        *string `json:"latency"`
-	UploadProgress *string `json:"uploadProgress"`
+type LatencyRoutes struct {
+	Probe string `json:"probe"`
+	Ping  string `json:"ping"`
 }
 
-func DefaultTransferRoutes() TransferRoutes {
-	return TransferRoutes{Probe: "/probe", Download: "/download", Upload: "/upload", UploadSession: "/upload/session"}
+func DefaultThroughputRoutes() ThroughputRoutes {
+	return ThroughputRoutes{Probe: "/probe", Download: "/download", Upload: "/upload", UploadSession: "/upload/session", UploadProgress: "/upload/progress"}
 }
 
-func DefaultWebSocketRoutes() ChannelRoutes {
-	latency, progress := "/ws/ping", "/ws/upload"
-	return ChannelRoutes{Latency: &latency, UploadProgress: &progress}
+func DefaultLatencyRoutes() LatencyRoutes {
+	return LatencyRoutes{Probe: "/probe", Ping: "/ws/ping"}
 }
 
-// Probe describes the path used to reach one selected transfer target.
+// Probe describes one independently selected target path.
 type Probe struct {
 	ClientIP           string `json:"clientIp"`
 	ClientIPVersion    int    `json:"clientIpVersion"`

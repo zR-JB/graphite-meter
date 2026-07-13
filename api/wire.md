@@ -28,8 +28,6 @@ as a shared constant table in each language (`go/internal/wire/opcodes.go`,
 | C→S | `PING,<id>` | ws, wt-dgram | Latency probe. `<id>` = client-owned monotonic **uint32** counter (see Ids). |
 | S→C | `PONG,<id>;TIME,<nanos>` | ws, wt-dgram | Echo. `<id>` copied **verbatim**. `<nanos>` = server monotonic clock (uint64 ns) at receive — **diagnostics/skew only**. RTT is measured purely client-side as `recv − send` using the client's own clock. |
 | C→S | `SIZE,<bytes>` | wt (download) | Request `<bytes>` (uint64) on the next opened uni-stream. The WebTransport analogue of `GET /download?bytes=N`. |
-| S→C | `BYTES_RECEIVED,<n>;TIME,<nanos>` | ws/wt (upload) | Server-measured running byte count. `<n>` is the cumulative drained total; `<nanos>` is monotonic elapsed time since the first byte received for this upload id, sampled alongside `<n>`. Clients baseline both values when measurement begins, excluding warmup while retaining measured stalls, reconnects and request turnaround in `Δn / Δnanos`. This server clock avoids client event-loop and frame-arrival jitter. |
-| S→C | `UPLOAD_COMPLETE,<n>;TIME,<nanos>` | ws/wt (upload) | Final server-measured byte total with the final elapsed time. Same `;TIME` semantics as `BYTES_RECEIVED`. |
 | C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
 | S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
 

@@ -9,7 +9,7 @@ import (
 
 // UploadSession mints the short-lived upload correlation token during the upload
 // warmup phase. The token is then echoed as ?id= by POST /upload lanes and the
-// /ws/upload progress socket for this upload stage only.
+// /upload/progress progress stream for this upload stage only.
 type UploadSession struct {
 	store *UploadStore
 }

@@ -1,388 +1,110 @@
 package endpoint
 
 import (
+	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	"github.com/coder/websocket"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-/* ---- test doubles ---- */
-
-// fakeBus is an in-memory transport.MessageBus: `in` carries client→server frames,
-// `out` records server→client frames, and closing `closed` simulates the socket
-// dropping (Recv then faults, like the real conn close).
-type fakeBus struct {
-	in     chan string
-	out    chan string
-	closed chan struct{}
+type progressRecorder struct {
+	mu sync.Mutex
+	h  http.Header
+	b  bytes.Buffer
+	n  chan struct{}
 }
 
-func newFakeBus() *fakeBus {
-	return &fakeBus{in: make(chan string, 8), out: make(chan string, 256), closed: make(chan struct{})}
+func newProgressRecorder() *progressRecorder {
+	return &progressRecorder{h: make(http.Header), n: make(chan struct{}, 1)}
 }
-
-func (b *fakeBus) Recv() (string, error) {
+func (r *progressRecorder) Header() http.Header { return r.h }
+func (r *progressRecorder) WriteHeader(int)     {}
+func (r *progressRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	n, err := r.b.Write(p)
+	r.mu.Unlock()
 	select {
-	case m, ok := <-b.in:
-		if !ok {
-			return "", io.EOF
-		}
-		return m, nil
-	case <-b.closed:
-		return "", io.EOF
+	case r.n <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+func (r *progressRecorder) Flush() {
+	select {
+	case r.n <- struct{}{}:
+	default:
 	}
 }
-
-func (b *fakeBus) Send(m string) error { b.out <- m; return nil }
-func (b *fakeBus) Reliable() bool      { return true }
-
-// busSession is a Session whose Bus() yields a fakeBus (shadowing fakeSession's
-// nil stub). query carries the ?id=.
-type busSession struct {
-	*fakeSession
-	bus transport.MessageBus
+func (r *progressRecorder) text() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.b.String()
 }
 
-func (s *busSession) Bus() (transport.MessageBus, bool) { return s.bus, true }
-
-// readFrame drains out until a frame matches, or fails on timeout.
-func readFrame(t *testing.T, b *fakeBus, match func(wire.Frame) bool, what string) wire.Frame {
+func waitProgressText(t *testing.T, r *progressRecorder, part string) {
 	t.Helper()
-	deadline := time.After(2 * time.Second)
-	for {
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	for !strings.Contains(r.text(), part) {
 		select {
-		case raw := <-b.out:
-			f, err := wire.Decode(raw)
-			if err != nil {
-				t.Fatalf("server sent undecodable frame %q: %v", raw, err)
-			}
-			if match(f) {
-				return f
-			}
-		case <-deadline:
-			t.Fatalf("timed out waiting for %s", what)
+		case <-r.n:
+		case <-deadline.C:
+			t.Fatalf("progress stream never contained %q: %s", part, r.text())
 		}
 	}
 }
 
-// waitAgg polls until the handler's getOrCreate has run.
-func waitAgg(t *testing.T, s *UploadStore, id string) *uploadAgg {
-	t.Helper()
-	deadline := time.After(time.Second)
-	for {
-		if a, ok := s.get(id); ok {
-			return a
-		}
-		select {
-		case <-deadline:
-			t.Fatal("aggregate was never created")
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
-}
-
-/* ---- tests ---- */
-
-// TestUploadProgressFlow drives the full happy path: HI→READY, ticked
-// BYTES_RECEIVED tracking the aggregate, BYE→one UPLOAD_COMPLETE with the final
-// total, then the aggregate is released and Handle returns.
-func TestUploadProgressFlow(t *testing.T) {
+func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	bus := newFakeBus()
-	defer close(bus.closed) // release the recv pump after Handle returns
-	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
-
-	handleErr := make(chan error, 1)
-	go func() { handleErr <- NewUploadProgress(store).Handle(sess) }()
-
-	// The WS created the aggregate on first touch; simulate POST lanes draining
-	// bytes into it.
-	agg := waitAgg(t, store, id)
-	agg.bytes.Store(1500)
-
-	// Warmup hello is acknowledged.
-	bus.in <- wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})
-	readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY")
-
-	// A tick reports the current server count.
-	readFrame(t, bus, func(f wire.Frame) bool {
-		return f.Op == wire.OpBytesReceived && f.N == 1500
-	}, "BYTES_RECEIVED,1500")
-
-	// More bytes arrive, then the client finishes its lanes and sends BYE.
-	agg.bytes.Store(4096)
-	bus.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
-
-	final := readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpUploadComplete }, "UPLOAD_COMPLETE")
-	if final.N != 4096 {
-		t.Errorf("UPLOAD_COMPLETE N = %d, want 4096", final.N)
-	}
-
-	select {
-	case err := <-handleErr:
-		if err != nil {
-			t.Errorf("Handle returned %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Handle did not return after BYE")
-	}
-	if _, ok := store.get(id); ok {
-		t.Error("aggregate not released after BYE")
-	}
-}
-
-// TestUploadProgressOverWebSocket drives the full bus path (wsAdapter →
-// websocketSession → UploadProgress) over a real WebSocket upgrade: HI→READY,
-// ticked BYTES_RECEIVED reflecting the aggregate, BYE→UPLOAD_COMPLETE.
-func TestUploadProgressOverWebSocket(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-
-	reg := NewRegistry()
-	reg.RegisterWS("/ws/upload", NewUploadProgress(store))
-	mux := http.NewServeMux()
-	reg.Mount(context.Background(), mux)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	h := HTTPHandler(NewUploadProgress(store))
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx)
+	rec := newProgressRecorder()
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(rec, req); close(done) }()
 
-	conn, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/upload?id="+id, &websocket.DialOptions{
-		CompressionMode: websocket.CompressionNoContextTakeover,
-	})
-	if err != nil {
-		t.Fatalf("dial: %v", err)
+	waitProgressText(t, rec, `{"type":"ready"}`)
+	if got := rec.Header().Get("Content-Type"); got != "application/x-ndjson" {
+		t.Fatalf("Content-Type = %q", got)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	if got := resp.Header.Get("Sec-WebSocket-Extensions"); got != "" {
-		t.Fatalf("Sec-WebSocket-Extensions = %q, want no compression negotiation", got)
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, no-transform" {
+		t.Fatalf("Cache-Control = %q", got)
 	}
-
-	send := func(msg string) {
-		t.Helper()
-		if err := conn.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
-			t.Fatalf("write %q: %v", msg, err)
-		}
+	agg, ok := store.get(id)
+	if !ok {
+		t.Fatal("aggregate not created by progress GET")
 	}
-	recvUntil := func(match func(wire.Frame) bool, what string) wire.Frame {
-		t.Helper()
-		for {
-			_, data, err := conn.Read(ctx)
-			if err != nil {
-				t.Fatalf("read (%s): %v", what, err)
-			}
-			f, derr := wire.Decode(string(data))
-			if derr != nil {
-				t.Fatalf("decode %q: %v", string(data), derr)
-			}
-			if match(f) {
-				return f
-			}
-		}
+	agg.changePosts(1)
+	agg.recordChunk(monoNanos(), 4096)
+	waitProgressText(t, rec, `"type":"progress","bytes":4096`)
+	agg.changePosts(-1)
+
+	finish := httptest.NewRecorder()
+	h.ServeHTTP(finish, httptest.NewRequest(http.MethodDelete, "/upload/progress?id="+id, nil))
+	if finish.Code != http.StatusNoContent {
+		t.Fatalf("DELETE status = %d", finish.Code)
 	}
-
-	agg := waitAgg(t, store, id)
-	agg.bytes.Store(8192)
-
-	send("HI,ws")
-	recvUntil(func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY")
-	recvUntil(func(f wire.Frame) bool { return f.Op == wire.OpBytesReceived && f.N == 8192 }, "BYTES_RECEIVED,8192")
-
-	send("BYE")
-	if f := recvUntil(func(f wire.Frame) bool { return f.Op == wire.OpUploadComplete }, "UPLOAD_COMPLETE"); f.N != 8192 {
-		t.Errorf("UPLOAD_COMPLETE N = %d, want 8192", f.N)
-	}
-}
-
-// TestUploadProgressClientCloseReturns checks a dropped socket (Recv faults) ends
-// the handler cleanly — the fast path that bounds the recv pump on a normal close.
-func TestUploadProgressClientCloseReturns(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-	bus := newFakeBus()
-	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
-
-	handleErr := make(chan error, 1)
-	go func() { handleErr <- NewUploadProgress(store).Handle(sess) }()
-	waitAgg(t, store, id)
-
-	close(bus.closed) // simulate the connection dropping
-
+	waitProgressText(t, rec, `"type":"complete","bytes":4096`)
 	select {
-	case err := <-handleErr:
-		if err != nil {
-			t.Errorf("Handle returned %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Handle did not return after the socket dropped")
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("progress GET did not terminate after explicit finalization")
 	}
 }
 
-// TestUploadProgressBadFrameGetsErrAndBusStaysUp checks an undecodable frame
-// gets an ERR,bad_op reply and never tears the bus down: a subsequent valid
-// HI is still answered with READY on the same connection.
-func TestUploadProgressBadFrameGetsErrAndBusStaysUp(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-	bus := newFakeBus()
-	defer close(bus.closed)
-	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
-
-	handleErr := make(chan error, 1)
-	go func() { handleErr <- NewUploadProgress(store).Handle(sess) }()
-	waitAgg(t, store, id)
-
-	bus.in <- "TOTAL_GARBAGE_OPCODE"
-	errFrame := readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpERR }, "ERR for a malformed frame")
-	if errFrame.Code != wire.ErrBadOp {
-		t.Errorf("ERR code = %q, want %q", errFrame.Code, wire.ErrBadOp)
+func TestUploadProgressRejectsUnknownID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	HTTPHandler(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=forged", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", rec.Code)
 	}
-
-	// The bus must still be up: a valid HI still gets a READY.
-	bus.in <- wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})
-	readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY after a bad frame")
-
-	bus.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
-	select {
-	case err := <-handleErr:
-		if err != nil {
-			t.Errorf("Handle returned %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Handle did not return after BYE")
-	}
-}
-
-// TestUploadProgressMalformedArgsGetsErrBadArgs checks a known opcode with
-// missing/malformed arguments (HI with no proto) gets ERR,bad_args rather
-// than being silently dropped or tearing down the bus.
-func TestUploadProgressMalformedArgsGetsErrBadArgs(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-	bus := newFakeBus()
-	defer close(bus.closed)
-	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
-
-	go func() { _ = NewUploadProgress(store).Handle(sess) }()
-	waitAgg(t, store, id)
-
-	bus.in <- "HI" // no proto argument
-	errFrame := readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpERR }, "ERR for malformed HI")
-	if errFrame.Code != wire.ErrBadArgs {
-		t.Errorf("ERR code = %q, want %q", errFrame.Code, wire.ErrBadArgs)
-	}
-}
-
-// TestUploadProgressUnexpectedOpcodeIgnored checks a syntactically valid but
-// unexpected opcode on this bus (e.g. a server→client frame echoed back) is
-// silently ignored per the wire "ignore and continue" rule, without a reply
-// and without disturbing later frames.
-func TestUploadProgressUnexpectedOpcodeIgnored(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-	bus := newFakeBus()
-	defer close(bus.closed)
-	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: bus}
-
-	go func() { _ = NewUploadProgress(store).Handle(sess) }()
-	waitAgg(t, store, id)
-
-	bus.in <- wire.Encode(wire.Frame{Op: wire.OpREADY}) // server-only opcode, echoed back
-
-	// No ERR/REPLY should be produced for it specifically; confirm the bus is
-	// still responsive by following up with a real HI.
-	bus.in <- wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})
-	readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpREADY }, "READY after an ignored opcode")
-}
-
-// TestUploadProgressConcurrentBYEEmitsOneComplete checks the done idempotency
-// guard end-to-end: two independent /ws/upload handlers sharing the same id
-// (e.g. a client reconnect racing the original socket) each send BYE, but
-// only one UPLOAD_COMPLETE is ever emitted between them.
-func TestUploadProgressConcurrentBYEEmitsOneComplete(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-	busA, busB := newFakeBus(), newFakeBus()
-	defer close(busA.closed)
-	defer close(busB.closed)
-	sessA := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: busA}
-	sessB := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id}, bus: busB}
-
-	doneA := make(chan error, 1)
-	doneB := make(chan error, 1)
-	go func() { doneA <- NewUploadProgress(store).Handle(sessA) }()
-	go func() { doneB <- NewUploadProgress(store).Handle(sessB) }()
-
-	agg := waitAgg(t, store, id)
-	agg.bytes.Store(2048)
-
-	busA.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
-	busB.in <- wire.Encode(wire.Frame{Op: wire.OpBYE})
-
-	waitReturn := func(ch chan error) {
-		t.Helper()
-		select {
-		case err := <-ch:
-			if err != nil {
-				t.Errorf("Handle returned %v, want nil", err)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("handler did not return after BYE")
-		}
-	}
-	waitReturn(doneA)
-	waitReturn(doneB)
-
-	countComplete := func(b *fakeBus) int {
-		n := 0
-		for {
-			select {
-			case raw := <-b.out:
-				if f, err := wire.Decode(raw); err == nil && f.Op == wire.OpUploadComplete {
-					n++
-				}
-			default:
-				return n
-			}
-		}
-	}
-	if total := countComplete(busA) + countComplete(busB); total != 1 {
-		t.Errorf("total UPLOAD_COMPLETE frames across both handlers = %d, want 1", total)
-	}
-}
-
-// TestUploadProgressUnknownID checks an unissued id gets an ERR and the handler
-// closes (the client then falls back to its own client-side count).
-func TestUploadProgressUnknownID(t *testing.T) {
-	store := NewUploadStore()
-	bus := newFakeBus()
-	defer close(bus.closed)
-	sess := &busSession{fakeSession: &fakeSession{ctx: context.Background(), query: "id=forged"}, bus: bus}
-
-	handleErr := make(chan error, 1)
-	go func() { handleErr <- NewUploadProgress(store).Handle(sess) }()
-
-	readFrame(t, bus, func(f wire.Frame) bool { return f.Op == wire.OpERR }, "ERR for unknown id")
-	select {
-	case err := <-handleErr:
-		if err != nil {
-			t.Errorf("Handle returned %v, want nil", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Handle did not return for an unknown id")
-	}
-	if store.live.Load() != 0 {
-		t.Errorf("live = %d for a forged id, want 0", store.live.Load())
+	if !strings.Contains(rec.Body.String(), `"type":"error"`) {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

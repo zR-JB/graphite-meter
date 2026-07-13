@@ -44,7 +44,7 @@ func TestUploadCountsAndEchoes(t *testing.T) {
 
 // TestUploadAggregatesByID checks that a POST carrying a server-minted ?id= adds
 // its drained bytes to the shared per-id aggregate (the server-authoritative count
-// the /ws/upload bus reports) and accrues active measurement time.
+// the /upload/progress bus reports) and accrues active measurement time.
 func TestUploadAggregatesByID(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()

@@ -5,13 +5,11 @@ package wire
 // MUST match every language's implementation. Frames are message-delimited ASCII —
 // one logical message per WS frame / WT datagram, parsed by slicing on ','.
 const (
-	OpHI             = "HI"              // C→S  optional hello on bus open: HI,<proto>
-	OpREADY          = "READY"           // S→C  bus is up; client may begin the ping chain
-	OpPING           = "PING"            // C→S  latency probe: PING,<id> (uint32, client-owned)
-	OpPONG           = "PONG"            // S→C  echo: PONG,<id>;TIME,<nanos> (id verbatim)
-	OpSIZE           = "SIZE"            // C→S  wt download request: SIZE,<bytes>
-	OpBytesReceived  = "BYTES_RECEIVED"  // S→C  running server-measured upload count + elapsed time: BYTES_RECEIVED,<n>;TIME,<nanos>
-	OpUploadComplete = "UPLOAD_COMPLETE" // S→C  final server-measured upload total + elapsed time: UPLOAD_COMPLETE,<n>;TIME,<nanos>
-	OpBYE            = "BYE"             // C→S  graceful bus close
-	OpERR            = "ERR"             // S→C  non-fatal protocol error: ERR,<code>,<text>
+	OpHI    = "HI"    // C→S  optional hello on bus open: HI,<proto>
+	OpREADY = "READY" // S→C  bus is up; client may begin the ping chain
+	OpPING  = "PING"  // C→S  latency probe: PING,<id> (uint32, client-owned)
+	OpPONG  = "PONG"  // S→C  echo: PONG,<id>;TIME,<nanos> (id verbatim)
+	OpSIZE  = "SIZE"  // C→S  wt download request: SIZE,<bytes>
+	OpBYE   = "BYE"   // C→S  graceful bus close
+	OpERR   = "ERR"   // S→C  non-fatal protocol error: ERR,<code>,<text>
 )

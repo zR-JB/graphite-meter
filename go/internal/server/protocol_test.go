@@ -40,7 +40,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	}
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
-	srv := baseServer(fullMux(ctx, e, false, 1, true), p)
+	srv := baseServer(fullMux(ctx, e, muxTopology{discovery: true, latency: true, requiredProto: 1}), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
 	p.SetHTTP2(true)
-	srv := baseServer(fullMux(ctx, e, false, 2, true), p)
+	srv := baseServer(fullMux(ctx, e, muxTopology{discovery: true, requiredProto: 2}), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

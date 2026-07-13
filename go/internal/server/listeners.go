@@ -78,19 +78,24 @@ func publicH3Port(cfg *config.Config) string {
 	return port
 }
 
-func fullMux(ctx context.Context, e *endpoints, spa bool, requiredProto int, includePreflight bool) *http.ServeMux {
+type muxTopology struct {
+	spa, discovery, latency bool
+	requiredProto           int
+}
+
+func fullMux(ctx context.Context, e *endpoints, topology muxTopology) *http.ServeMux {
 	m := http.NewServeMux()
-	if includePreflight {
+	if topology.discovery {
 		m.Handle("/preflight", endpoint.HTTPHandler(e.preflight))
 	}
 	m.Handle("/probe", endpoint.HTTPHandler(e.probe))
 	transfer := func(h endpoint.Endpoint) http.Handler {
 		base := endpoint.HTTPHandler(h)
-		if requiredProto == 0 {
+		if topology.requiredProto == 0 {
 			return base
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.ProtoMajor != requiredProto {
+			if r.ProtoMajor != topology.requiredProto {
 				http.NotFound(w, r)
 				return
 			}
@@ -100,19 +105,19 @@ func fullMux(ctx context.Context, e *endpoints, spa bool, requiredProto int, inc
 	m.Handle("/download", transfer(e.download))
 	m.Handle("/upload/session", transfer(e.uploadSession))
 	m.Handle("/upload", transfer(e.upload))
-	m.Handle("/ws/ping", endpoint.WSHandler(ctx, e.ping))
-	m.Handle("/ws/upload", endpoint.WSHandler(ctx, e.uploadProgress))
-	if spa {
+	m.Handle("/upload/progress", transfer(e.uploadProgress))
+	if topology.latency {
+		m.Handle("/ws/ping", endpoint.WSHandler(ctx, e.ping))
+	}
+	if topology.spa {
 		m.Handle("/", static.Handler())
 	}
 	return m
 }
 
-func bootstrapMux(ctx context.Context, e *endpoints) *http.ServeMux {
+func bootstrapMux(e *endpoints) *http.ServeMux {
 	m := http.NewServeMux()
 	m.Handle("/probe", endpoint.HTTPHandler(e.bootstrapProbe))
-	m.Handle("/ws/ping", endpoint.WSHandler(ctx, e.ping))
-	m.Handle("/ws/upload", endpoint.WSHandler(ctx, e.uploadProgress))
 	return m
 }
 
@@ -122,6 +127,7 @@ func h3Mux(e *endpoints) *http.ServeMux {
 	m.Handle("/download", endpoint.HTTPHandler(e.download))
 	m.Handle("/upload/session", endpoint.HTTPHandler(e.uploadSession))
 	m.Handle("/upload", endpoint.HTTPHandler(e.upload))
+	m.Handle("/upload/progress", endpoint.HTTPHandler(e.uploadProgress))
 	return m
 }
 
@@ -154,7 +160,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
-	h1 := baseServer(fullMux(ctx, e, true, 0, true), h1p)
+	h1 := baseServer(fullMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true}), h1p)
 	h1ln, err := net.Listen("tcp", cfg.H1Addr)
 	if err != nil {
 		return err
@@ -173,7 +179,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.EnableH1TLS {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
-		s := baseServer(fullMux(ctx, e, true, 1, true), p)
+		s := baseServer(fullMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, requiredProto: 1}), p)
 		ln, err := net.Listen("tcp", cfg.H1TLSAddr)
 		if err != nil {
 			closeOpened()
@@ -189,25 +195,24 @@ func Run(ctx context.Context, cfg *config.Config) error {
 
 	if cfg.EnableH2 {
 		p := &http.Protocols{}
-		p.SetHTTP1(true)
 		p.SetHTTP2(true)
-		s := baseServer(fullMux(ctx, e, true, 2, true), p)
+		s := baseServer(fullMux(ctx, e, muxTopology{spa: true, discovery: true, requiredProto: 2}), p)
 		ln, err := net.Listen("tcp", cfg.H2Addr)
 		if err != nil {
 			closeOpened()
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2", "http/1.1"))
+		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2"))
 		services = append(services, service{
-			name: "HTTPS/WSS: HTTP/2 UI, discovery, probe, transfers; HTTP/1.1 UI, discovery, probe, WebSockets",
+			name: "HTTPS HTTP/2: UI, discovery, probe, transfers, progress",
 			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
 		})
 	}
 	if cfg.EnableH3 {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
-		bootstrap := baseServer(bootstrapMux(ctx, e), p)
+		bootstrap := baseServer(bootstrapMux(e), p)
 		ln, err := net.Listen("tcp", cfg.H3Addr)
 		if err != nil {
 			closeOpened()
@@ -225,10 +230,10 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		opened = append(opened, pc)
 		services = append(services,
 			service{
-				name: "HTTPS/WSS HTTP/1.1 companion: HTTP/3 bootstrap probe, WebSockets",
+				name: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only",
 				addr: cfg.H3Addr, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
 			},
-			service{name: "HTTP/3: probe, transfers", addr: cfg.H3Addr, network: "udp", run: func() error {
+			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.H3Addr, network: "udp", run: func() error {
 				err := h3.Serve(pc)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 					return nil

@@ -17,7 +17,7 @@ func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 	cfg.PublicH3Origin = "https://meter.example:8444"
 	req := httptest.NewRequest(http.MethodGet, "http://discovery.example:8765/preflight", nil)
 	pf := NewPreflight(&cfg).build(req)
-	if len(pf.Capabilities.Transfers) != 4 || len(pf.Capabilities.Channels) != 4 {
+	if len(pf.Capabilities.ThroughputTargets) != 4 || len(pf.Capabilities.LatencyTargets) != 2 {
 		t.Fatalf("capabilities = %+v", pf.Capabilities)
 	}
 	want := []struct {
@@ -29,13 +29,17 @@ func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 		{"http2", cfg.PublicH2Origin, "http2", true},
 		{"http3", cfg.PublicH3Origin, "http3", true},
 	}
-	for i, transfer := range pf.Capabilities.Transfers {
+	for i, transfer := range pf.Capabilities.ThroughputTargets {
 		if transfer.ID != want[i].id || transfer.Origin != want[i].origin || transfer.Transport != "fetch-stream" || transfer.Protocol != want[i].protocol || transfer.TLS != want[i].tls {
 			t.Errorf("transfer %d = %+v", i, transfer)
 		}
-		channel := pf.Capabilities.Channels[i]
-		if channel.Transport != "websocket" || channel.Protocol != "http1" || channel.Origin != transfer.Origin {
-			t.Errorf("channel %d = %+v", i, channel)
+	}
+	for i, latency := range pf.Capabilities.LatencyTargets {
+		if latency.Transport != "websocket" || latency.Protocol != "http1" || latency.Origin != want[i].origin {
+			t.Errorf("latency target %d = %+v", i, latency)
+		}
+		if latency.ID != []string{"ws-http1-clear", "ws-http1-tls"}[i] {
+			t.Errorf("latency target %d id = %q", i, latency.ID)
 		}
 	}
 }
@@ -43,10 +47,10 @@ func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 func TestPreflightOmitsDisabledTargets(t *testing.T) {
 	cfg := config.Default()
 	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil))
-	if len(pf.Capabilities.Transfers) != 1 || len(pf.Capabilities.Channels) != 1 {
+	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
 		t.Fatalf("disabled TLS capabilities advertised: %+v", pf.Capabilities)
 	}
-	if got := pf.Capabilities.Transfers[0].Origin; got != "http://speed.example:8765" {
+	if got := pf.Capabilities.ThroughputTargets[0].Origin; got != "http://speed.example:8765" {
 		t.Fatalf("h1 = %q", got)
 	}
 }
@@ -58,7 +62,7 @@ func TestPreflightAdvertisesExternalProxyTargetsWithoutNativeTLS(t *testing.T) {
 	cfg.PublicH3Origin = "https://quic.example"
 	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://internal:8765/preflight", nil))
 	for i, want := range []string{"http://internal:8765", cfg.PublicH1TLSOrigin, cfg.PublicH2Origin, cfg.PublicH3Origin} {
-		if got := pf.Capabilities.Transfers[i].Origin; got != want {
+		if got := pf.Capabilities.ThroughputTargets[i].Origin; got != want {
 			t.Errorf("external transfer %d = %q, want %q", i, got, want)
 		}
 	}

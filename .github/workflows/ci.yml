@@ -216,21 +216,21 @@ jobs:
           curl -fsS http://localhost:8765/preflight | tee /tmp/preflight.json
           jq -e '
             .engineVersion == "0.0.0-ci"
-            and .capabilities.transfers == [{
+            and .capabilities.throughputTargets == [{
               "id": "http1-clear",
               "origin": "http://localhost:8765",
               "transport": "fetch-stream",
               "protocol": "http1",
               "tls": false,
-              "routes": {"probe":"/probe","download":"/download","upload":"/upload","uploadSession":"/upload/session"}
+              "routes": {"probe":"/probe","download":"/download","upload":"/upload","uploadSession":"/upload/session","uploadProgress":"/upload/progress"}
             }]
-            and .capabilities.channels == [{
+            and .capabilities.latencyTargets == [{
               "id": "ws-http1-clear",
               "origin": "http://localhost:8765",
               "transport": "websocket",
               "protocol": "http1",
               "tls": false,
-              "routes": {"latency":"/ws/ping","uploadProgress":"/ws/upload"}
+              "routes": {"probe":"/probe","ping":"/ws/ping"}
             }]
             and (.server.port | type == "number")
           ' /tmp/preflight.json

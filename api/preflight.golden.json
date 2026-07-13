@@ -7,7 +7,7 @@
   },
   "engineVersion": "0.1.0-test",
   "capabilities": {
-    "transfers": [
+    "throughputTargets": [
       {
         "id": "http1-clear",
         "origin": "http://speed.example:8765",
@@ -18,11 +18,12 @@
           "probe": "/probe",
           "download": "/download",
           "upload": "/upload",
-          "uploadSession": "/upload/session"
+          "uploadSession": "/upload/session",
+          "uploadProgress": "/upload/progress"
         }
       }
     ],
-    "channels": [
+    "latencyTargets": [
       {
         "id": "ws-http1-clear",
         "origin": "http://speed.example:8765",
@@ -30,8 +31,8 @@
         "protocol": "http1",
         "tls": false,
         "routes": {
-          "latency": "/ws/ping",
-          "uploadProgress": "/ws/upload"
+          "probe": "/probe",
+          "ping": "/ws/ping"
         }
       }
     ]
