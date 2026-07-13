@@ -18,6 +18,30 @@ concurrency:
 # status so required PR checks can't hang, and release.yml relies on a CI run
 # existing for every push to main.
 jobs:
+  certificate-safety:
+    name: No committed TLS material
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Reject certificates and private keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|\.(pem|key|crt|cer|der|csr|p12|pfx|pkcs8|jks|keystore)$'
+          files=$(git ls-files | grep -Ei "$pattern" || true)
+          if [[ -n "$files" ]]; then
+            echo "::error::TLS certificate or key material is tracked"
+            printf '%s\n' "$files"
+            exit 1
+          fi
+          pem=$(git grep -Il -E -e '-----BEGIN (CERTIFICATE|([^ -]+ )*PRIVATE KEY)-----' -- . || true)
+          if [[ -n "$pem" ]]; then
+            echo "::error::PEM certificate or private-key material is tracked"
+            printf '%s\n' "$pem"
+            exit 1
+          fi
+
   changes:
     name: Detect changes
     runs-on: ubuntu-latest

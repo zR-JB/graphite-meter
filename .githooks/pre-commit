@@ -20,6 +20,17 @@ if git diff --cached -U0 --diff-filter=ACMR | grep -qE '^\+(<{7}|={7}|>{7})'; th
     exit 1
 fi
 
+tls_files=$(printf '%s\n' "$staged" | grep -Ei '(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|\.(pem|key|crt|cer|der|csr|p12|pfx|pkcs8|jks|keystore)$' || true)
+if [ -n "$tls_files" ]; then
+    echo "pre-commit: refusing to commit TLS certificate or key material:"
+    echo "$tls_files"
+    exit 1
+fi
+if git diff --cached -U0 --diff-filter=ACMR | grep -qE '^\+-----BEGIN (CERTIFICATE|([^ -]+ )*PRIVATE KEY)-----'; then
+    echo "pre-commit: refusing to commit PEM certificate or private-key material"
+    exit 1
+fi
+
 max_kb=1024
 big=""
 for f in $staged; do

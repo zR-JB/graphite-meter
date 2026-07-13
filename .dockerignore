@@ -8,3 +8,20 @@ server/internal/static/dist
 **/.DS_Store
 the-next-step-will-harmonic-harp.md
 .claude
+
+# Never send local TLS material to the image builder.
+**/.dev-certs
+**/certs
+**/certificates
+**/letsencrypt
+**/*.pem
+**/*.key
+**/*.crt
+**/*.cer
+**/*.der
+**/*.csr
+**/*.p12
+**/*.pfx
+**/*.pkcs8
+**/*.jks
+**/*.keystore
