@@ -128,7 +128,7 @@ function makeConfig(
       ...overrides.duration,
     },
     pingConcurrency: "medium",
-    parallelStreams: 6,
+    transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
     endpoint: { host: "auto", port: 443 },
     compensation: {

@@ -8,13 +8,15 @@ import type {
   TransportRole,
   FlowDirection,
   PhaseActivity,
+  ProtocolTarget,
+  TransferStreamPolicy,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type { Preflight, Target } from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
-import { laneBudget, BROWSER_CONN_BUDGET } from "./real/laneBudget";
+import { transferStreamCount } from "./real/streamPolicy";
 import {
   resolveBase,
   httpToWs,
@@ -123,7 +125,7 @@ interface LaneStreamState {
    *  down/up lane failure must report against "bidirectional", never the
    *  direction-derived "download"/"upload" name. */
   stage: PhaseActivity["stage"];
-  /** Lanes for this direction, derived by laneBudget() at prime time and
+  /** Lanes for this direction, resolved from the stream policy at prime time and
    *  cached here because the lane-restart path (#spawnWorker via
    *  #onWorkerError) has no `activity` in scope. */
   laneCount: number;
@@ -178,6 +180,8 @@ export class RealBackend implements RunnerBackend {
   #capabilities: Preflight["capabilities"] | null = null;
   /** One resolved target is frozen from probe until the next discovery. */
   #target: Target | null = null;
+  #targetProtocol: ProtocolTarget | null = null;
+  #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discovery: Preflight | null = null;
   #discoveryOrigin = "";
   #discoveryBase = "";
@@ -318,6 +322,7 @@ export class RealBackend implements RunnerBackend {
     if (this.#discovery && base !== this.#discoveryBase) {
       this.#discovery = null;
       this.#target = null;
+      this.#targetProtocol = null;
     }
     let pf = this.#discovery;
     if (!pf)
@@ -355,6 +360,7 @@ export class RealBackend implements RunnerBackend {
     if (!selected)
       throw new TransportUnavailableError(`${selection} target unavailable`);
     this.#target = selected.target;
+    this.#targetProtocol = selected.protocol;
 
     const expected = { http1: "http/1.1", http2: "h2", http3: "h3" }[
       selected.protocol
@@ -496,6 +502,7 @@ export class RealBackend implements RunnerBackend {
     // completion/abort).
     this.#stopIdleKeepalive();
     void this.#resolveEndpoint(config.endpoint);
+    this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
     this.#teardownTransfer(); // clear any leftover lanes from a prior run
@@ -630,37 +637,20 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= PRIME (warmup window) — open, don't measure ================= */
-  /** Parallel POST lanes for `dir` this stage, derived from (phase, direction,
-   *  features, transport) — no manual count. On HTTP/1.1 each lane is its own
-   *  TCP connection filling the BDP, so we carve them from the per-origin pool
-   *  after reserving the buses this phase needs; a bidirectional stage further
-   *  splits that pool 50/50 between its two concurrent directions (see
-   *  laneBudget.ts). On a multiplexed transport every lane shares ONE
-   *  congestion window, so extra lanes buy no throughput — cap low. The
-   *  configured `parallelStreams` is only an upper ceiling (#laneCeiling),
-   *  applied PER DIRECTION — never a target, never applied to a combined total. */
-  #laneBudget(
-    activity: PhaseActivity,
-    kind: TransportKind,
-    dir: FlowDirection,
-  ): number {
-    return laneBudget({
-      kind,
+  /** Resolve one direction's transfer streams from the frozen protocol target
+   *  and the run's automatic/forced policy. */
+  #streamCount(activity: PhaseActivity, dir: FlowDirection): number {
+    if (!this.#targetProtocol) throw new Error("transfer target not resolved");
+    return transferStreamCount({
+      protocol: this.#targetProtocol,
+      policy: this.#streamPolicy,
       transfer: activity.transfer,
       dir,
       needsPing: needsPings(activity),
-      ceiling: this.#laneCeiling(),
     });
   }
 
-  /** Advanced upper bound on lanes (repurposed `parallelStreams`); 0/unset ⇒ the
-   *  full connection budget, so the derived policy governs unconstrained. */
-  #laneCeiling(): number {
-    const max = this.#host!.config!.parallelStreams;
-    return max > 0 ? max : BROWSER_CONN_BUDGET;
-  }
-
-  /** Open `config.parallelStreams` transfer stream(s) for `dir` over `kind`
+  /** Open the resolved transfer stream(s) for `dir` over `kind`
    *  (`GET {path}/download?bytes=N` for "down", `POST {path}/upload` streamed body
    *  for "up", or webtransport) and run priming bytes to warm the path (TCP
    *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
@@ -679,7 +669,7 @@ export class RealBackend implements RunnerBackend {
     const cfg = this.#host!.config!;
     const base =
       this.#target?.origin ?? resolveBase(this.#resolveEndpoint(cfg.endpoint));
-    const laneCount = this.#laneBudget(activity, kind, dir);
+    const laneCount = this.#streamCount(activity, dir);
     const streams = laneCount;
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
     // half the warmup; 0 when there's no warmup (lanes spawn together rather than

@@ -24,6 +24,7 @@ export type Phase =
  *  so the core never infers direction from the phase — that lets a single
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
+export type ProtocolTarget = "http1" | "http2" | "http3";
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by
@@ -113,6 +114,12 @@ export interface StabilitySnapshot {
   sampleCount: number; // usable samples in the confidence window
 }
 
+export interface TransferStreamPolicy {
+  mode: "auto" | "forced";
+  /** H1 per-direction ceiling in auto mode; exact count in forced mode. */
+  count: number;
+}
+
 /* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
   /** Enabled measured stages. `bidirectional` (concurrent down+up) defaults
@@ -137,14 +144,14 @@ export interface RunnerConfig {
     bidirectionalMs: number;
   };
   pingConcurrency: "instant" | "medium" | "slow"; // → interval map
-  parallelStreams: number; // advanced ceiling on derived per-phase lanes (1–6)
+  transferStreams: TransferStreamPolicy;
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
   endpoint: {
     host: string;
     port: number;
-    protocol?: "current" | "http1" | "http2" | "http3";
+    protocol?: "current" | ProtocolTarget;
   };
   /** Wire-rate estimation. */
   compensation: OverheadCompensationConfig;
@@ -359,8 +366,8 @@ export interface InfraInfo {
   preTestPingMs: number;
   engineVersion: string;
   protocolNegotiated: string;
-  selectedTarget?: "http1" | "http2" | "http3";
-  availableTargets?: Record<"http1" | "http2" | "http3", boolean>;
+  selectedTarget?: ProtocolTarget;
+  availableTargets?: Record<ProtocolTarget, boolean>;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;

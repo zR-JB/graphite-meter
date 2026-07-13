@@ -5,6 +5,7 @@
   import { pointerIntent } from "../actions/pointerIntent";
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
+  import { describeTransferStreams } from "../runner/real/streamPolicy";
 
   const infra = $derived(store.infra);
   const engine = $derived(store.engineInfo);
@@ -82,7 +83,10 @@
           { label: "Latency / progress", value: "WebSocket over TCP" },
           {
             label: "Streams",
-            value: `Automatic · up to ${store.config.parallelStreams}`,
+            value: describeTransferStreams(
+              store.config.transferStreams,
+              i?.selectedTarget,
+            ),
           },
           {
             label: "Pre-test ping",

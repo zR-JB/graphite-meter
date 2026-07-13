@@ -1,14 +1,12 @@
 /* ============================================================
  * RealBackend pure helpers — origin/URL mapping, small math, and stage-
  * activity queries with no fetch/worker/websocket entanglement. Split out
- * of RealRunner.ts (mirrors laneBudget.ts) so they're unit-testable without
- * pulling in RealRunner.ts's build-time BUILD defines.
+ * of RealRunner.ts so they're unit-testable without pulling in its build-time
+ * BUILD defines.
  * ============================================================ */
 
-import type { RunnerConfig, PhaseActivity } from "../contract";
+import type { RunnerConfig, PhaseActivity, ProtocolTarget } from "../contract";
 import type { Preflight, Target } from "../../api/preflight";
-
-export type ProtocolTarget = "http1" | "http2" | "http3";
 
 /** Resolve an advertised target without inventing an origin. Secure pages
  * cannot select the clear H1 target because fetch would block mixed content. */

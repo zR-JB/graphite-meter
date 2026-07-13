@@ -105,6 +105,10 @@
     store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(n);
   }
 
+  function setForcedStreams(forced: boolean) {
+    store.config.transferStreams.mode = forced ? "forced" : "auto";
+  }
+
   /* Physical-path presets seed facts the browser cannot detect. */
   const PROFILE_OPTIONS: { value: ConnectionProfile; label: string }[] = [
     { value: "lan", label: "Local Ethernet (LAN)" },
@@ -491,20 +495,44 @@
         <option value="slow">Slow</option>
       </select>
     </label>
+    <Switch
+      checked={store.config.transferStreams.mode === "forced"}
+      onToggle={setForcedStreams}
+      disabled={running}
+      label="Force transfer stream count"
+      tooltip="Automatic uses the browser connection budget for HTTP/1.1 and one stream per direction for multiplexed HTTP/2 and HTTP/3. Forced starts the exact request count per active direction; HTTP/1.1 requests beyond the browser connection limit may queue."
+    />
     <label>
-      <span>Max parallel streams</span>
+      <span
+        use:tooltip={store.config.transferStreams.mode === "forced"
+          ? "Exact request streams started for every active transfer direction."
+          : "Maximum HTTP/1.1 streams allowed per active direction. HTTP/2 and HTTP/3 remain at one."}
+        >{store.config.transferStreams.mode === "forced"
+          ? "Streams per direction"
+          : "Max H1 streams per direction"}</span
+      >
       <input
         type="number"
         min="1"
-        max="6"
+        max="128"
         step="1"
         disabled={running}
-        bind:value={store.config.parallelStreams}
+        bind:value={store.config.transferStreams.count}
       />
     </label>
-    <p class="hint">
-      Lanes are chosen automatically per phase; this only caps the maximum.
-    </p>
+    {#if store.config.transferStreams.mode === "forced"}
+      <p class="hint">
+        Starts exactly {store.config.transferStreams.count} per active direction.
+        HTTP/1.1 requests beyond the browser's per-origin connection limit may queue;
+        HTTP/2 and HTTP/3 multiplex them.
+      </p>
+    {:else}
+      <p class="hint">
+        Automatic: HTTP/1.1 uses the available connection pool, capped at
+        {store.config.transferStreams.count} per direction; HTTP/2 and HTTP/3 use
+        one multiplexed stream per active direction.
+      </p>
+    {/if}
     <Switch
       disabled={running}
       bind:checked={store.config.skipLoadedLatencyWhenStageOff}

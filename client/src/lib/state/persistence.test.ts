@@ -14,7 +14,7 @@ const FAKE_CONFIG: RunnerConfig = {
     bidirectionalMs: 10000,
   },
   pingConcurrency: "medium",
-  parallelStreams: 4,
+  transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443 },
   compensation: {
@@ -87,6 +87,30 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(FAKE_CONFIG);
+});
+
+test("legacy parallel-stream ceiling migrates into automatic policy", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ config: { parallelStreams: 2 } }),
+  );
+  expect(loadPersisted().config.transferStreams).toEqual({
+    mode: "auto",
+    count: 2,
+  });
+});
+
+test("invalid forced stream settings are normalized", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { transferStreams: { mode: "forced", count: 999.4 } },
+    }),
+  );
+  expect(loadPersisted().config.transferStreams).toEqual({
+    mode: "forced",
+    count: 128,
+  });
 });
 
 test("corrupt (non-JSON) stored value: falls back to defaults without throwing", () => {

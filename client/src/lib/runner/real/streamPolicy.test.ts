@@ -1,0 +1,83 @@
+import { expect, test } from "bun:test";
+import {
+  BROWSER_CONNECTION_BUDGET,
+  describeTransferStreams,
+  normalizeStreamCount,
+  transferStreamCount,
+} from "./streamPolicy";
+
+const auto = { mode: "auto", count: 6 } as const;
+
+test("automatic H2 and H3 use one stream per active direction", () => {
+  for (const protocol of ["http2", "http3"] as const) {
+    for (const dir of ["down", "up"] as const) {
+      expect(
+        transferStreamCount({
+          protocol,
+          policy: auto,
+          transfer: ["down", "up"],
+          dir,
+          needsPing: true,
+        }),
+      ).toBe(1);
+    }
+  }
+});
+
+test("automatic H1 reserves control connections and splits bidirectional capacity", () => {
+  const base = {
+    protocol: "http1",
+    policy: auto,
+    transfer: ["down", "up"],
+    needsPing: true,
+  } as const;
+  expect(transferStreamCount({ ...base, dir: "down" })).toBe(2);
+  expect(transferStreamCount({ ...base, dir: "up" })).toBe(2);
+  expect(
+    transferStreamCount({
+      protocol: "http1",
+      policy: auto,
+      transfer: ["down"],
+      dir: "down",
+      needsPing: true,
+    }),
+  ).toBe(BROWSER_CONNECTION_BUDGET - 1);
+  expect(
+    transferStreamCount({
+      protocol: "http1",
+      policy: { mode: "auto", count: 1 },
+      transfer: ["down"],
+      dir: "down",
+      needsPing: false,
+    }),
+  ).toBe(1);
+});
+
+test("forced policy is exact per direction and ignores protocol and browser budget", () => {
+  for (const protocol of ["http1", "http2", "http3"] as const) {
+    expect(
+      transferStreamCount({
+        protocol,
+        policy: { mode: "forced", count: 12 },
+        transfer: ["down", "up"],
+        dir: "up",
+        needsPing: true,
+        totalBudget: 2,
+      }),
+    ).toBe(12);
+  }
+});
+
+test("stream diagnostics distinguish automatic and forced policy", () => {
+  expect(describeTransferStreams(auto, "http3")).toBe(
+    "Automatic · 1 per direction",
+  );
+  expect(describeTransferStreams({ mode: "forced", count: 9 }, "http3")).toBe(
+    "Forced · 9 per direction",
+  );
+  expect(normalizeStreamCount(Number.NaN)).toBe(1);
+  expect(normalizeStreamCount(999)).toBe(128);
+  expect(describeTransferStreams({ mode: "auto", count: 3 }, "http1")).toBe(
+    "Automatic · up to 3 per direction",
+  );
+});

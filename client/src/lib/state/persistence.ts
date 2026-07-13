@@ -1,6 +1,7 @@
 // LocalStorage schema for user settings. Load is defensive so old or partial
 // blobs merge onto the current defaults instead of breaking startup.
 import type { RunnerConfig } from "../runner/contract";
+import { normalizeStreamCount } from "../runner/real/streamPolicy";
 import { DEFAULT_CONFIG } from "./store.svelte";
 
 export const STORAGE_VERSION = 1;
@@ -92,6 +93,10 @@ export function loadPersisted(): PersistedState {
   // Version 1 originally stored a numeric IP family. Preserve that explicit
   // expert choice now that the setting also supports automatic detection.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  if (typeof parsedConfig?.parallelStreams === "number")
+    merged.config.transferStreams.count = normalizeStreamCount(
+      parsedConfig.parallelStreams,
+    );
   const parsedCompensation = isPlainObject(parsedConfig?.compensation)
     ? parsedConfig.compensation
     : null;
@@ -113,6 +118,11 @@ export function loadPersisted(): PersistedState {
     )
   )
     merged.config.compensation.transport = "auto";
+  if (!["auto", "forced"].includes(merged.config.transferStreams.mode))
+    merged.config.transferStreams.mode = "auto";
+  merged.config.transferStreams.count = normalizeStreamCount(
+    merged.config.transferStreams.count,
+  );
   return merged;
 }
 

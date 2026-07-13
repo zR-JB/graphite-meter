@@ -89,7 +89,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     bidirectionalMs: 10000,
   },
   pingConcurrency: "medium",
-  parallelStreams: 6,
+  transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
   endpoint: { host: "auto", port: 443, protocol: "current" },
   compensation: {
