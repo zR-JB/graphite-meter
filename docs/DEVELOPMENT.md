@@ -115,6 +115,52 @@ environment variables, which take precedence over defaults.
 | `GM_VERBOSE`                                                                     | `-verbose`  | off                                                       | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                                                                                                         |
 | `PUBLIC_H1_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags | request host + listener port | Exact externally reachable origins. H1 must be `http`; H2/H3 must be `https`. |
 
+### Local TLS and HTTP/3 certificates
+
+Use a locally trusted CA for browser testing. A bare self-signed leaf may be
+accepted through an HTTPS warning for an ordinary TCP request, but that does
+not give an Alt-Svc HTTP/3 connection a usable certificate exception. The leaf
+must also cover every name used in the public origins; for the standard local
+setup that means `localhost`, `127.0.0.1`, and `::1`.
+
+[`mkcert`](https://github.com/FiloSottile/mkcert) installs a development CA and
+can install it into Firefox's NSS store when the platform's NSS tools are
+available. Restart browsers after installing the CA.
+
+```sh
+mkdir -p .dev-certs
+mkcert -install
+mkcert -cert-file .dev-certs/localhost.pem \
+  -key-file .dev-certs/localhost-key.pem localhost 127.0.0.1 ::1
+just prod
+cd go
+GM_ENABLE_H2=true GM_ENABLE_H3=true \
+  GM_TLS_CERT=../.dev-certs/localhost.pem \
+  GM_TLS_KEY=../.dev-certs/localhost-key.pem \
+  PUBLIC_H1_ORIGIN=http://localhost:8765 \
+  PUBLIC_H2_ORIGIN=https://localhost:8443 \
+  PUBLIC_H3_ORIGIN=https://localhost:8444 \
+  ./graphite-meter
+```
+
+Firefox has an [additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341):
+by default it disables HTTP/3 when the certificate chain contains a third-party root, even when
+that root is trusted for normal HTTPS. For a local development profile, open `about:config`, set
+`network.http.http3.disable_when_third_party_roots_found` to `false`, and
+restart Firefox. Do not weaken this setting in a normal browsing profile.
+
+The H3 bootstrap still needs `8444/tcp`, and QUIC needs `8444/udp`. A successful
+`curl --http3-only` or native-client request proves the server and UDP path, but
+not browser certificate policy. In the browser, select HTTP/3 and confirm the
+application reports verified browser protocol `h3`; Graphite Meter fails the
+run instead of silently measuring its TCP bootstrap.
+
+The `.dev-certs/` directory and common certificate/key extensions are ignored,
+and CI rejects tracked TLS material. Never copy a private key into another
+tracked path. The mkcert CA key (shown by `mkcert -CAROOT`) is especially
+sensitive and must never be shared or committed. Use publicly trusted
+certificates for deployed servers; mkcert is development-only.
+
 ## Native TUI client flags
 
 ```sh

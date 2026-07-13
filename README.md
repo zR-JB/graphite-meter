@@ -57,6 +57,8 @@ docker run -d --name graphite-meter -p 8765:8765 ghcr.io/zr-jb/graphite-meter:la
 
 Open **http://localhost:8765** — that's it for the default HTTP/1.1 deployment. Optional native
 H2 and H3 listeners require a valid certificate; use the Compose TLS overlay below.
+For local browser testing, including Firefox's stricter handling of private-root
+HTTP/3 certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
 
 ### docker compose
 
