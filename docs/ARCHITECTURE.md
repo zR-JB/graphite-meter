@@ -56,11 +56,29 @@ muxes expose H1 on 8765/tcp, optional H2 on 8443/tcp, and optional H3 on 8444/ud
 bootstrap on 8444/tcp. The H3 TCP surface has only `/probe` and WebSockets, so transfer requests
 cannot silently fall back to H1. QUIC 0-RTT is disabled to prevent POST replay.
 
+The TLS/TCP protocols on the H2 and H3 origins are companion surfaces, not extra measurement
+targets:
+
+| Listener | Bulk transfer | Companion surface |
+| --- | --- | --- |
+| `:8765/tcp` | HTTP/1.1 | Clear HTTP/1.1 UI, discovery, probe, and WebSockets. |
+| `:8443/tcp` | HTTP/2 | TLS HTTP/1.1 on the same origin for UI, discovery, probe, and WebSockets. |
+| `:8444/udp` | HTTP/3 | `:8444/tcp` TLS HTTP/1.1 for Alt-Svc bootstrap, probe, and WebSockets. |
+
+Keeping each companion on its selected target's origin avoids another certificate, CORS boundary,
+and independently configured control address. It also keeps target discovery atomic. A fourth
+selectable HTTP/1.1-over-TLS transfer target would not make WebSockets more correct; it would mix a
+control-path requirement into the measurement-target list. WebSockets can be bootstrapped over H2
+or H3 Extended CONNECT ([RFC 8441](https://www.rfc-editor.org/rfc/rfc8441),
+[RFC 9220](https://www.rfc-editor.org/rfc/rfc9220)), but the current browser/server path uses the
+widely interoperable HTTP/1.1 Upgrade. The UI therefore reports WebSocket latency/progress as
+TLS/TCP, never as H2/H3 traffic.
+
 ### Routes
 
 | Path                     | Method     | Transport               | Purpose                                                                                                                                                                                                                      |
 | ------------------------ | ---------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET        | H1/H2 UI origins, JSON  | Logical server identity and nullable H1/H2/H3 targets with exact routes. Called once per logical connection. |
+| `/preflight`             | GET        | H1/H2 UI origins, JSON  | Logical server identity and nullable H1/H2/H3 targets with exact routes. Refreshed before every run. |
 | `/probe`                 | GET        | selected H1/H2/H3       | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes. |
 | `/download`              | GET        | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
 | `/upload/session`        | POST       | HTTP/1.1, JSON          | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket.                                                                  |

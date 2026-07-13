@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -39,9 +38,9 @@ type endpoints struct {
 }
 
 type service struct {
-	name string
-	run  func() error
-	stop func(context.Context) error
+	name, addr, network string
+	run                 func() error
+	stop                func(context.Context) error
 }
 
 func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error) {
@@ -166,7 +165,10 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			_ = c.Close()
 		}
 	}
-	services := []service{{"http/1.1", func() error { return serve(h1ln, h1) }, h1.Shutdown}}
+	services := []service{{
+		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.H1Addr, network: "tcp",
+		run: func() error { return serve(h1ln, h1) }, stop: h1.Shutdown,
+	}}
 
 	if cfg.EnableH2 {
 		p := &http.Protocols{}
@@ -180,7 +182,10 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2", "http/1.1"))
-		services = append(services, service{"http/2", func() error { return serve(tlsLn, s) }, s.Shutdown})
+		services = append(services, service{
+			name: "HTTPS/WSS: HTTP/2 UI, discovery, probe, transfers; HTTP/1.1 UI, discovery, probe, WebSockets",
+			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+		})
 	}
 	if cfg.EnableH3 {
 		p := &http.Protocols{}
@@ -202,14 +207,17 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 		opened = append(opened, pc)
 		services = append(services,
-			service{"http/3 bootstrap", func() error { return serve(tlsLn, bootstrap) }, bootstrap.Shutdown},
-			service{"http/3", func() error {
+			service{
+				name: "HTTPS/WSS HTTP/1.1 companion: HTTP/3 bootstrap probe, WebSockets",
+				addr: cfg.H3Addr, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
+			},
+			service{name: "HTTP/3: probe, transfers", addr: cfg.H3Addr, network: "udp", run: func() error {
 				err := h3.Serve(pc)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 					return nil
 				}
 				return err
-			}, func(ctx context.Context) error { err := h3.Shutdown(ctx); _ = pc.Close(); return err }})
+			}, stop: func(ctx context.Context) error { err := h3.Shutdown(ctx); _ = pc.Close(); return err }})
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -217,7 +225,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	errs := make(chan error, len(services))
 	for _, svc := range services {
 		svc := svc
-		log.Printf("graphite-meter %s listening on %s (%s)", cfg.EngineVersion, addressFor(svc.name, cfg), svc.name)
+		log.Printf("graphite-meter %s listening on %s/%s (%s)", cfg.EngineVersion, svc.addr, svc.network, svc.name)
 		go func() {
 			if err := svc.run(); err != nil {
 				errs <- fmt.Errorf("%s: %w", svc.name, err)
@@ -240,15 +248,6 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func addressFor(name string, cfg *config.Config) string {
-	if strings.HasPrefix(name, "http/3") {
-		return cfg.H3Addr
-	}
-	if name == "http/2" {
-		return cfg.H2Addr
-	}
-	return cfg.H1Addr
-}
 func shutdown(services []service) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

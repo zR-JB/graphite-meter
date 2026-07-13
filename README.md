@@ -91,8 +91,8 @@ Everything is optional; the defaults just work. The common knobs:
 | Env var              | Default                                 | What it does                                                                                                                                 |
 | -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GM_H1_ADDR`         | `:8765`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
-| `GM_ENABLE_H2`       | off                                     | Enable HTTP/2 on `GM_H2_ADDR` (`:8443`).                                                                                                     |
-| `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 UDP plus its H1 TLS bootstrap on `GM_H3_ADDR` (`:8444`).                                                                       |
+| `GM_ENABLE_H2`       | off                                     | Enable HTTP/2 transfers plus TLS HTTP/1.1 UI/probe/WebSocket fallback on `GM_H2_ADDR` (`:8443/tcp`).                                         |
+| `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 transfers on `GM_H3_ADDR` UDP plus TLS HTTP/1.1 bootstrap/probe/WebSockets on the same TCP port (`:8444`).                      |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by H2/H3; renewed files hot-reload.                                                             |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
 | `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
