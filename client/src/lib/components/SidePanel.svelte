@@ -93,42 +93,152 @@
     resizeBy(panelEl.offsetWidth, step);
   }
 
-  const DISMISS_TAP_SLOP_PX = 8;
-  const DISMISS_THRESHOLD_PX = 80;
-  // Flyout sheets can be tapped or dragged downward to dismiss; docked panels
-  // stay in-flow and use the close button instead.
-  function startDismissDrag(e: PointerEvent) {
-    if (docked || !panelEl) return;
-    e.preventDefault();
-    const handle = e.currentTarget as HTMLElement;
-    const startY = e.clientY;
-    handle.setPointerCapture(e.pointerId);
-    panelEl.style.transition = "none";
-    document.body.style.userSelect = "none";
+  let backdropEl = $state<HTMLButtonElement>();
+  let resetTimer: number | undefined;
 
-    const onMove = (ev: PointerEvent) => {
-      const delta = Math.max(0, ev.clientY - startY);
-      panelEl!.style.transform = `translateY(${delta}px)`;
-    };
-    const finish = (ev: PointerEvent) => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
-      document.body.style.userSelect = "";
-      panelEl!.style.transition = "";
-      panelEl!.style.transform = "";
-      const delta = Math.max(0, ev.clientY - startY);
-      if (
-        ev.type !== "pointercancel" &&
-        (delta <= DISMISS_TAP_SLOP_PX || delta > DISMISS_THRESHOLD_PX)
-      ) {
-        close();
-      }
-    };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
+  function resetSheetStyles() {
+    window.clearTimeout(resetTimer);
+    if (panelEl) {
+      panelEl.style.transition = "";
+      panelEl.style.transform = "";
+    }
+    if (backdropEl) {
+      backdropEl.style.transition = "";
+      backdropEl.style.opacity = "";
+    }
   }
+
+  function animateSheet(offset: number, animate: boolean) {
+    if (!panelEl || !backdropEl) return;
+    const progress = Math.min(1, offset / panelEl.offsetHeight);
+    const transition = animate ? `var(--dur-slide) var(--ease-out)` : "none";
+    panelEl.style.transition = `transform ${transition}`;
+    panelEl.style.transform = `translateY(${offset}px)`;
+    backdropEl.style.transition = `opacity ${transition}`;
+    backdropEl.style.opacity = String(1 - progress);
+  }
+
+  // A downward swipe from any non-control surface dismisses the mobile sheet.
+  // Native content scrolling wins unless the body is already at its top edge.
+  $effect(() => {
+    const panel = panelEl;
+    if (!panel) return;
+
+    let gesture:
+      | {
+          id: number;
+          startX: number;
+          startY: number;
+          lastY: number;
+          lastAt: number;
+          velocity: number;
+          dragging: boolean;
+        }
+      | undefined;
+
+    const interactive = (target: EventTarget | null) =>
+      target instanceof Element &&
+      !!target.closest(
+        "button, a, input, select, textarea, summary, [contenteditable='true']",
+      );
+
+    const onStart = (event: TouchEvent) => {
+      if (
+        docked ||
+        !open ||
+        event.touches.length !== 1 ||
+        !window.matchMedia("(max-width: 759px)").matches ||
+        interactive(event.target)
+      )
+        return;
+      const touch = event.touches[0];
+      gesture = {
+        id: touch.identifier,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        lastY: touch.clientY,
+        lastAt: event.timeStamp,
+        velocity: 0,
+        dragging: false,
+      };
+    };
+
+    const onMove = (event: TouchEvent) => {
+      if (!gesture) return;
+      const touch = [...event.touches].find(
+        (candidate) => candidate.identifier === gesture!.id,
+      );
+      if (!touch) return;
+      const deltaX = touch.clientX - gesture.startX;
+      const deltaY = touch.clientY - gesture.startY;
+
+      if (!gesture.dragging) {
+        if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 10) return;
+        const body =
+          event.target instanceof Element
+            ? event.target.closest(".panel-body")
+            : null;
+        if (
+          deltaY <= 0 ||
+          Math.abs(deltaX) > Math.abs(deltaY) ||
+          (body instanceof HTMLElement && body.scrollTop > 0)
+        ) {
+          gesture = undefined;
+          return;
+        }
+        gesture.dragging = true;
+      }
+
+      event.preventDefault();
+      const elapsed = Math.max(1, event.timeStamp - gesture.lastAt);
+      const instantVelocity = (touch.clientY - gesture.lastY) / elapsed;
+      gesture.velocity = gesture.velocity * 0.65 + instantVelocity * 0.35;
+      gesture.lastY = touch.clientY;
+      gesture.lastAt = event.timeStamp;
+      animateSheet(Math.max(0, deltaY), false);
+    };
+
+    const onEnd = (event: TouchEvent) => {
+      if (!gesture) return;
+      const touch = [...event.changedTouches].find(
+        (candidate) => candidate.identifier === gesture!.id,
+      );
+      if (!touch || !gesture.dragging) {
+        gesture = undefined;
+        return;
+      }
+      const distance = Math.max(0, touch.clientY - gesture.startY);
+      const height = panel.offsetHeight;
+      const dismiss =
+        distance >= Math.min(160, height * 0.28) ||
+        (distance >= 48 && gesture.velocity >= 0.75);
+      gesture = undefined;
+
+      if (event.type === "touchcancel" || !dismiss) {
+        animateSheet(0, true);
+        resetTimer = window.setTimeout(resetSheetStyles, 200);
+        return;
+      }
+
+      animateSheet(height, true);
+      resetTimer = window.setTimeout(() => {
+        close();
+        resetSheetStyles();
+      }, 180);
+    };
+
+    panel.addEventListener("touchstart", onStart, { passive: true });
+    panel.addEventListener("touchmove", onMove, { passive: false });
+    panel.addEventListener("touchend", onEnd, { passive: true });
+    panel.addEventListener("touchcancel", onEnd, { passive: true });
+    return () => {
+      panel.removeEventListener("touchstart", onStart);
+      panel.removeEventListener("touchmove", onMove);
+      panel.removeEventListener("touchend", onEnd);
+      panel.removeEventListener("touchcancel", onEnd);
+      resetSheetStyles();
+    };
+  });
 </script>
 
 <div
@@ -140,6 +250,7 @@
 >
   <button
     class="backdrop"
+    bind:this={backdropEl}
     aria-label={`Close ${title}`}
     tabindex={open ? 0 : -1}
     onclick={close}
@@ -178,14 +289,9 @@
         ondblclick={() => onResetWidth?.()}
       ></div>
     {/if}
-    <button
-      class="sheet-handle"
-      aria-label={`Drag down, or press Enter, to close ${title}`}
-      onpointerdown={startDismissDrag}
-      onclick={close}
-    >
+    <div class="sheet-handle" aria-hidden="true">
       <span class="sheet-grip" aria-hidden="true"></span>
-    </button>
+    </div>
     <header class="panel-head">
       <div class="title">
         {#if kicker}<span class="kicker">{kicker}</span>{/if}
@@ -346,21 +452,14 @@
     display: none;
     flex: 0 0 auto;
     width: 100%;
-    min-height: 52px;
-    padding: 16px 0 12px;
-    border: 0;
-    background: transparent;
-    cursor: grab;
-    touch-action: none;
-  }
-  .sheet-handle:active {
-    cursor: grabbing;
+    height: 8px;
+    align-items: start;
   }
   .sheet-grip {
     display: block;
     width: 36px;
     height: 4px;
-    margin: 0 auto;
+    margin: -6px auto 0;
     border-radius: 999px;
     background: var(--border-strong);
   }
