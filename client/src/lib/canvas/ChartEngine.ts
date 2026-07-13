@@ -64,13 +64,10 @@ interface Viewport {
   rttMax: number;
 }
 
-/** Per-phase throughput summary drawn as min/max/avg overlays in result mode. */
+/** Per-lane average overlay drawn in result mode. */
 interface PhaseStat {
-  phase: Phase;
   t0: number;
   t1: number;
-  min: number;
-  max: number;
   avg: number;
   stroke: string;
 }
@@ -639,7 +636,6 @@ export class ChartEngine implements CanvasEngine {
       if (seg.length < 2 || average == null) continue;
       out.push(
         this.#reduceStat(
-          phase,
           seg,
           phase === "download" ? this.#c.download : this.#c.upload,
           average,
@@ -647,7 +643,7 @@ export class ChartEngine implements CanvasEngine {
       );
     }
     // Bidirectional carries two concurrent lanes tagged by `dir`, not `phase` —
-    // split them so each still gets its own min/max/avg overlay, drawn in the
+    // split them so each still gets its own average overlay, drawn in the
     // existing download/upload colors (matches #drawThroughput's two-line
     // rendering for this phase, rather than one combined line).
     for (const dir of ["down", "up"] as const) {
@@ -659,7 +655,6 @@ export class ChartEngine implements CanvasEngine {
       if (seg.length < 2 || average == null) continue;
       out.push(
         this.#reduceStat(
-          "bidirectional",
           seg,
           dir === "down" ? this.#c.download : this.#c.upload,
           average,
@@ -669,28 +664,15 @@ export class ChartEngine implements CanvasEngine {
     return out;
   }
 
-  /** Reduce a sample subset to its {@link PhaseStat} (min/max/avg over the
-   *  segment's time span), tagged with the color it draws in. Shared by both
-   *  the single-lane (download/upload) and split-lane (bidirectional down/up)
-   *  cases in #phaseStats. */
+  /** Build the shared result overlay for one throughput lane. */
   #reduceStat(
-    phase: Phase,
     seg: ThroughputSample[],
     stroke: string,
     canonicalAverage: number,
   ): PhaseStat {
-    let min = Infinity;
-    let max = 0;
-    for (const s of seg) {
-      if (s.bytesPerSec < min) min = s.bytesPerSec;
-      if (s.bytesPerSec > max) max = s.bytesPerSec;
-    }
     return {
-      phase,
       t0: seg[0].t,
       t1: seg[seg.length - 1].t,
-      min,
-      max,
       avg: canonicalAverage,
       stroke,
     };
