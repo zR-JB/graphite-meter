@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { interpolateAt, closestSample } from "./hoverInterp";
+import { interpolateAt } from "./hoverInterp";
 
 const pts = [
   { t: 0, v: 0 },
@@ -46,17 +46,4 @@ test("interpolateAt: single-sample array only matches its own t", () => {
   const one = [{ t: 5, v: 42 }];
   expect(interpolateAt(one, 5, pick)).toBe(42);
   expect(interpolateAt(one, 6, pick)).toBeNull();
-});
-
-test("closestSample: picks the nearer of two neighbors", () => {
-  expect(closestSample(pts, 3)).toEqual({ t: 0, v: 0 });
-  expect(closestSample(pts, 7)).toEqual({ t: 10, v: 100 });
-});
-
-test("closestSample: exact match returns that sample", () => {
-  expect(closestSample(pts, 10)).toEqual({ t: 10, v: 100 });
-});
-
-test("closestSample: ties resolve to the earlier (first-seen) sample", () => {
-  expect(closestSample(pts, 5)).toEqual({ t: 0, v: 0 });
 });

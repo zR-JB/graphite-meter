@@ -360,7 +360,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         from,
         to: "aborted",
         stage: null,
-        t: performance.now() - this.#t0,
+        t: this.#measuredElapsed,
       },
     });
   }
@@ -436,7 +436,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         from: this.#lastEmittedPhase,
         to: seg.phase,
         stage: seg.activity.stage,
-        t: elapsed,
+        t: seg.start,
       };
       this.#activeSeg = seg;
       this.#lastEmittedPhase = seg.phase;

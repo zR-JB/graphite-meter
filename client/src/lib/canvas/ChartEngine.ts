@@ -14,7 +14,7 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
-import { interpolateAt, closestSample } from "./hoverInterp";
+import { interpolateAt } from "./hoverInterp";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -23,6 +23,8 @@ export interface ChartData {
    *  the right (latency) axis so the chart reads as throughput-only. */
   latencyEnabled: boolean;
   phase: Phase;
+  /** Exact phase boundary on the runner's measured timeline. */
+  phaseStartedAtMs: number;
   /** Monotonic run counter from the store; a change means a new run started
    *  and the engine must drop all accumulated per-run state. */
   runSeq: number;
@@ -299,22 +301,13 @@ export class ChartEngine implements CanvasEngine {
     t: number,
     pick: (s: T) => number,
   ): number | null {
-    if (!arr.length) return null;
     const span = this.#spanAt(t);
-    if (span) {
-      const phaseSamples = arr.filter((s) => s.phase === span.phase);
-      const value = interpolateAt(phaseSamples, t, pick);
-      if (value != null) return value;
-      return null;
-    }
-
-    const nearestPhase = this.#nearestPhaseWithSamples(arr, t);
-    if (nearestPhase) {
-      const firstSample = arr.find((s) => s.phase === nearestPhase);
-      if (firstSample) return pick(firstSample);
-    }
-
-    return pick(closestSample(arr, t));
+    if (!span) return null;
+    return interpolateAt(
+      arr.filter((s) => s.phase === span.phase),
+      t,
+      pick,
+    );
   }
 
   #spanAt(t: number): PhaseSpan | null {
@@ -322,25 +315,6 @@ export class ChartEngine implements CanvasEngine {
       if (t >= span.t0 && t <= span.t1) return span;
     }
     return null;
-  }
-
-  #nearestPhaseWithSamples<T extends { phase: Phase }>(
-    arr: T[],
-    t: number,
-  ): Phase | null {
-    if (!this.#spans.length) return null;
-    const availablePhases = new Set(arr.map((s) => s.phase));
-    let nearest: Phase | null = null;
-    let nearestDist = Infinity;
-    for (const span of this.#spans) {
-      if (!availablePhases.has(span.phase)) continue;
-      const dist = t < span.t0 ? span.t0 - t : t > span.t1 ? t - span.t1 : 0;
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearest = span.phase;
-      }
-    }
-    return nearest;
   }
 
   #resolveColors(): void {
@@ -450,12 +424,21 @@ export class ChartEngine implements CanvasEngine {
       this.#resetRunState();
     }
 
-    // Track phase spans (for per-phase colouring + the phase ribbon).
+    // Track exact runner-owned boundaries. Sample timestamps cannot represent
+    // a sample-free warmup and therefore are not a phase clock.
     if (d.phase !== this.#lastPhase) {
-      const lt = this.#latestT(d);
-      if (this.#spans.length) this.#spans[this.#spans.length - 1].t1 = lt;
-      this.#spans.push({ phase: d.phase, t0: lt, t1: Infinity });
+      const phaseStart =
+        d.phase === "complete" || d.phase === "error"
+          ? this.#latestT(d)
+          : d.phaseStartedAtMs;
+      if (this.#spans.length)
+        this.#spans[this.#spans.length - 1].t1 = phaseStart;
+      this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
+
+      // A live phase is a new chart window. Cut at its exact boundary so the
+      // previous stage cannot remain visible while the camera eases forward.
+      if (this.#vpInit) this.#vp.tMin = Math.max(this.#vp.tMin, phaseStart);
     }
 
     const latest = this.#latestT(d);
