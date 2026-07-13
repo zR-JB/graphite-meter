@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,34 +59,42 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 		emit(Event{Kind: EventError, At: time.Now(), Err: err})
 		return err
 	}
-	// The protocol-specific transport verifies this client-to-target hop. Probe
-	// evidence describes the target-to-Go hop, which may differ behind a proxy.
-	latencyChannel, err := selectChannel(cfg.LatencyChannel, "latency", target, pf.Capabilities.Channels)
-	if err != nil && cfg.Stages.Latency {
-		return err
-	}
-	progressChannel, err := selectChannel(cfg.ProgressChannel, "uploadProgress", target, pf.Capabilities.Channels)
-	if err != nil && (cfg.Stages.Upload || cfg.Stages.Bidirectional) {
-		return err
-	}
-	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, Message: target.ID, TransferTarget: target.ID}
-	if latencyChannel != nil {
-		event.LatencyChannel = latencyChannel.ID
-	}
-	if progressChannel != nil {
-		event.ProgressChannel = progressChannel.ID
-	}
-	emit(event)
-
 	wsTransport := baseTransport()
 	wsp := &http.Protocols{}
 	wsp.SetHTTP1(true)
 	wsTransport.Protocols = wsp
 	defer wsTransport.CloseIdleConnections()
+	wsClient := &http.Client{Transport: wsTransport}
+	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
+	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
+	if latencyErr != nil && needsLatency {
+		return latencyErr
+	}
+	var latencyProbe *wire.Probe
+	if !needsLatency {
+		latencyTarget = nil
+	} else if latencyTarget != nil {
+		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)
+		if err != nil {
+			if needsLatency {
+				return err
+			}
+			latencyTarget = nil
+		} else {
+			latencyProbe = &p
+		}
+	}
+	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: targetProtocolEvidence(target.Protocol)}
+	if latencyTarget != nil {
+		event.LatencyTarget = latencyTarget.ID
+		event.LatencyProtocol = latencyProbe.ProtocolNegotiated
+	}
+	emit(event)
+
 	r := runner{
 		cfg: cfg, streams: cfg.TransferStreams.Resolve(target.Protocol),
-		http: transfer, websocketHTTP: &http.Client{Transport: wsTransport},
-		target: target, latencyChannel: latencyChannel, progressChannel: progressChannel,
+		http: transfer, websocketHTTP: wsClient,
+		target: target, latencyTarget: latencyTarget,
 		preflight: pf, probe: probe, emit: emit,
 	}
 	if cfg.Stages.Latency {
@@ -113,15 +122,15 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 }
 
 type runner struct {
-	cfg                             Config
-	streams                         int
-	http                            *http.Client
-	websocketHTTP                   *http.Client
-	target                          *wire.TransferTarget
-	latencyChannel, progressChannel *wire.ChannelTarget
-	preflight                       wire.Preflight
-	probe                           wire.Probe
-	emit                            func(Event)
+	cfg           Config
+	streams       int
+	http          *http.Client
+	websocketHTTP *http.Client
+	target        *wire.ThroughputTarget
+	latencyTarget *wire.LatencyTarget
+	preflight     wire.Preflight
+	probe         wire.Probe
+	emit          func(Event)
 	// Idle RTT captured from the latency stage; used to stretch later stages'
 	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
 	idleRTT time.Duration
@@ -314,67 +323,74 @@ func (r *runner) endpoint(path string) (string, error) {
 	return httpEndpoint(base, path)
 }
 
-func (r *runner) routes() wire.TransferRoutes {
+func (r *runner) routes() wire.ThroughputRoutes {
 	if r.target != nil {
 		return r.target.Routes
 	}
-	return wire.DefaultTransferRoutes()
+	return wire.DefaultThroughputRoutes()
 }
 
-func selectTarget(cfg Config, pf wire.Preflight) (*wire.TransferTarget, error) {
-	selection := cfg.TransferTarget
-	if selection == "invalid" {
-		return nil, fmt.Errorf("protocol must be auto, http1, http1-clear, http1-tls, http2, or http3")
-	}
+func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
+	selection := cfg.ThroughputTarget
 	if selection == "auto" {
 		base, err := url.Parse(cfg.BaseURL)
 		if err != nil {
 			return nil, err
 		}
-		for i := range pf.Capabilities.Transfers {
-			t := &pf.Capabilities.Transfers[i]
+		for i := range pf.Capabilities.ThroughputTargets {
+			t := &pf.Capabilities.ThroughputTargets[i]
+			if t.Transport != "fetch-stream" {
+				continue
+			}
 			u, _ := url.Parse(t.Origin)
 			if u.Scheme == base.Scheme && u.Host == base.Host {
 				return t, nil
 			}
 		}
-		if len(pf.Capabilities.Transfers) > 0 {
-			return &pf.Capabilities.Transfers[0], nil
+		for i := range pf.Capabilities.ThroughputTargets {
+			t := &pf.Capabilities.ThroughputTargets[i]
+			if t.Transport == "fetch-stream" {
+				return t, nil
+			}
 		}
 	}
-	for i := range pf.Capabilities.Transfers {
-		t := &pf.Capabilities.Transfers[i]
-		if t.ID == selection || (selection == "http1" && t.Protocol == "http1") {
+	for i := range pf.Capabilities.ThroughputTargets {
+		t := &pf.Capabilities.ThroughputTargets[i]
+		if t.Transport == "fetch-stream" && (t.ID == selection || (selection == "http1" && t.Protocol == "http1")) {
 			return t, nil
 		}
 	}
 	return nil, fmt.Errorf("%s target unavailable", selection)
 }
 
-func selectChannel(selection, role string, transfer *wire.TransferTarget, channels []wire.ChannelTarget) (*wire.ChannelTarget, error) {
-	supports := func(c *wire.ChannelTarget) bool {
-		if c.Transport != "websocket" {
-			return false
-		}
-		if role == "latency" {
-			return c.Routes.Latency != nil
-		}
-		return c.Routes.UploadProgress != nil
+func targetProtocolEvidence(protocol string) string {
+	switch protocol {
+	case "http1":
+		return "http/1.1"
+	case "http2":
+		return "h2"
+	case "http3":
+		return "h3"
+	default:
+		return protocol
 	}
-	for i := range channels {
-		c := &channels[i]
-		if supports(c) && ((selection != "auto" && c.ID == selection) || (selection == "auto" && c.Origin == transfer.Origin)) {
-			return c, nil
+}
+
+func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (*wire.LatencyTarget, error) {
+	wantsTLS := strings.HasPrefix(base, "https://")
+	for i := range targets {
+		t := &targets[i]
+		if t.Transport != "websocket" || t.Protocol != "http1" {
+			continue
+		}
+		if selection != "auto" && t.ID == selection {
+			return t, nil
+		}
+		if selection == "auto" && t.TLS == wantsTLS {
+			return t, nil
 		}
 	}
-	if selection == "auto" {
-		for i := range channels {
-			if supports(&channels[i]) {
-				return &channels[i], nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("%s channel %q unavailable", role, selection)
+	return nil, fmt.Errorf("latency target %q unavailable", selection)
 }
 
 func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {

@@ -205,7 +205,7 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
-	attachTestChannels(r, srv.URL)
+	attachTestLatencyTarget(r, srv.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -224,8 +224,8 @@ func mountDiscovery(mux *http.ServeMux) {
 		w.Header().Set("Content-Type", "application/json")
 		origin := "http://" + r.Host
 		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test", Host: r.Host, Port: 80}, EngineVersion: "test", Capabilities: wire.Capabilities{
-			Transfers: []wire.TransferTarget{testTransfer("http1-clear", origin, "http1", false)},
-			Channels:  []wire.ChannelTarget{testChannel("ws-http1-clear", origin, false)},
+			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
+			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +299,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(wire.Preflight{
 			Server: wire.ServerInfo{Name: "proxy", Host: r.Host, Port: 443},
-			Capabilities: wire.Capabilities{Transfers: []wire.TransferTarget{
+			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("http2", origin, "http2", true),
 			}},
 		})
@@ -321,7 +321,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	origin = srv.URL
 
 	cfg := Config{
-		BaseURL: origin, TransferTarget: "http2", Stages: StageSet{Download: true},
+		BaseURL: origin, ThroughputTarget: "http2", Stages: StageSet{Download: true},
 		DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true,
 		TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024,
 	}
@@ -458,45 +458,7 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 			}
 		}
 	})
-	mux.HandleFunc("/ws/upload", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		ctx := r.Context()
-		bye := make(chan struct{})
-		go func() {
-			for {
-				_, msg, err := conn.Read(ctx)
-				if err != nil {
-					close(bye)
-					return
-				}
-				if f, derr := wire.Decode(string(msg)); derr == nil && f.Op == wire.OpBYE {
-					close(bye)
-					return
-				}
-			}
-		}()
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-bye:
-				n, active := uploaded.Load(), uint64(time.Since(started))
-				_ = conn.Write(context.Background(), websocket.MessageText,
-					[]byte(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: n, Nanos: active})))
-				return
-			case <-ticker.C:
-				n, active := uploaded.Load(), uint64(time.Since(started))
-				_ = conn.Write(ctx, websocket.MessageText,
-					[]byte(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})))
-			}
-		}
-	})
+	mountFakeProgress(mux, &uploaded, started)
 	return httptest.NewServer(mux)
 }
 

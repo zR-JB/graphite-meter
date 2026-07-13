@@ -9,9 +9,8 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	want := Config{
 		BaseURL:                "http://127.0.0.1:8765",
-		TransferTarget:         "auto",
-		LatencyChannel:         "auto",
-		ProgressChannel:        "auto",
+		ThroughputTarget:       "auto",
+		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
 		LatencyDuration:        4 * time.Second,
@@ -65,6 +64,11 @@ func TestConfigNormalized(t *testing.T) {
 			name:   "empty BaseURL defaults",
 			mutate: func(c Config) Config { c.BaseURL = ""; return c },
 			check:  func(c Config) (any, any) { return c.BaseURL, "http://127.0.0.1:8765" },
+		},
+		{
+			name:   "advertised throughput target id passes through",
+			mutate: func(c Config) Config { c.ThroughputTarget = "edge-h2"; return c },
+			check:  func(c Config) (any, any) { return c.ThroughputTarget, "edge-h2" },
 		},
 		{
 			name:   "negative Warmup clamps to 0",

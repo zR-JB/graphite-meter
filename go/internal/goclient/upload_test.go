@@ -7,12 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/coder/websocket"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestCyclingBodyWrapsDeterministically(t *testing.T) {
@@ -212,10 +210,39 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 	}
 }
 
-// newFakeUploadServer wires up the three endpoints measureUpload depends on: a
-// session mint, an upload sink that counts drained bytes, and a /ws/upload bus
-// that reports that count back as server-authoritative BYTES_RECEIVED /
-// UPLOAD_COMPLETE frames, mirroring go/internal/endpoint's real protocol.
+func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.Time) {
+	finished := make(chan struct{})
+	var once sync.Once
+	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			once.Do(func() { close(finished) })
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher := w.(http.Flusher)
+		_ = json.NewEncoder(w).Encode(uploadProgressEvent{Type: "ready"})
+		flusher.Flush()
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-finished:
+				_ = json.NewEncoder(w).Encode(uploadProgressEvent{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				flusher.Flush()
+				return
+			case <-ticker.C:
+				_ = json.NewEncoder(w).Encode(uploadProgressEvent{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				flusher.Flush()
+			}
+		}
+	})
+}
+
+// newFakeUploadServer wires the session, upload sink, and throughput-bound
+// NDJSON progress stream used by measureUpload.
 func newFakeUploadServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var served atomic.Uint64
@@ -238,49 +265,7 @@ func newFakeUploadServer(t *testing.T) *httptest.Server {
 			}
 		}
 	})
-	mux.HandleFunc("/ws/upload", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		ctx := r.Context()
-
-		bye := make(chan struct{})
-		go func() {
-			for {
-				_, msg, err := conn.Read(ctx)
-				if err != nil {
-					close(bye)
-					return
-				}
-				if f, derr := wire.Decode(string(msg)); derr == nil && f.Op == wire.OpBYE {
-					close(bye)
-					return
-				}
-			}
-		}()
-
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-bye:
-				n := served.Load()
-				active := uint64(time.Since(started))
-				_ = conn.Write(context.Background(), websocket.MessageText,
-					[]byte(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: n, Nanos: active})))
-				return
-			case <-ticker.C:
-				n := served.Load()
-				active := uint64(time.Since(started))
-				_ = conn.Write(ctx, websocket.MessageText,
-					[]byte(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})))
-			}
-		}
-	})
+	mountFakeProgress(mux, &served, started)
 	return httptest.NewServer(mux)
 }
 
@@ -293,7 +278,7 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}.normalized()
 	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
-	attachTestChannels(r, srv.URL)
+	attachTestLatencyTarget(r, srv.URL)
 
 	start := make(chan struct{})
 	close(start)
