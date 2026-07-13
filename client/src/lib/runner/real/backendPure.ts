@@ -9,9 +9,14 @@ import type {
   RunnerConfig,
   PhaseActivity,
   ProtocolTarget,
-  TransferTargetSelection,
+  ThroughputTargetSelection,
 } from "../contract";
-import type { ChannelTarget, TransferTarget } from "../../api/preflight";
+import type {
+  FetchThroughputTarget,
+  LatencyTarget,
+  ThroughputTarget,
+  WebSocketLatencyTarget,
+} from "../../api/preflight";
 
 const protocolByNextHop: Partial<Record<string, ProtocolTarget>> = {
   "http/1.1": "http1",
@@ -21,14 +26,17 @@ const protocolByNextHop: Partial<Record<string, ProtocolTarget>> = {
 
 /** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;
  *  protocol evidence disambiguates multiple targets sharing an origin. */
-export function selectTransferTarget(
-  targets: TransferTarget[],
-  selection: TransferTargetSelection,
+export function selectThroughputTarget(
+  targets: ThroughputTarget[],
+  selection: ThroughputTargetSelection,
   discoveryOrigin: string,
   securePage: boolean,
   discoveryProtocol?: string,
-): TransferTarget | null {
-  const usable = targets.filter((target) => !(securePage && !target.tls));
+): FetchThroughputTarget | null {
+  const usable = targets.filter(
+    (target): target is FetchThroughputTarget =>
+      target.transport === "fetch-stream" && !(securePage && !target.tls),
+  );
   if (selection !== "current")
     return usable.find((target) => target.id === selection) ?? null;
   const current = usable.filter((target) => target.origin === discoveryOrigin);
@@ -47,7 +55,7 @@ export function selectTransferTarget(
 }
 
 export function browserProtocolMatchesTarget(
-  target: TransferTarget,
+  target: FetchThroughputTarget,
   nextHopProtocol?: string,
 ): boolean {
   return (
@@ -55,35 +63,24 @@ export function browserProtocolMatchesTarget(
   );
 }
 
-export function transferTargetKey(target: TransferTarget | null): string {
+export function throughputTargetKey(target: ThroughputTarget | null): string {
   return target ? `${target.id}\n${target.origin}` : "";
 }
 
-export type ChannelRole = "latency" | "uploadProgress";
-
-/** Bind a message role independently from throughput. Automatic binding keeps
- *  the selected transfer origin when possible, but can use any advertised
- *  channel. Explicit ids make future cross-transport combinations stable. */
-export function selectChannelTarget(
-  channels: ChannelTarget[],
-  role: ChannelRole,
+/** Select latency independently. Auto follows page security, not throughput. */
+export function selectLatencyTarget(
+  targets: LatencyTarget[],
   selection: "auto" | string,
-  transfer: TransferTarget,
   securePage: boolean,
-  runnable: ReadonlySet<ChannelTarget["transport"]>,
-): ChannelTarget | null {
-  const usable = channels.filter(
-    (channel) =>
-      channel.routes[role] !== null &&
-      runnable.has(channel.transport) &&
-      !(securePage && !channel.tls),
+): WebSocketLatencyTarget | null {
+  const usable = targets.filter(
+    (target): target is WebSocketLatencyTarget =>
+      target.transport === "websocket" && !(securePage && !target.tls),
   );
   if (selection !== "auto")
-    return usable.find((channel) => channel.id === selection) ?? null;
+    return usable.find((target) => target.id === selection) ?? null;
   return (
-    usable.find((channel) => channel.origin === transfer.origin) ??
-    usable[0] ??
-    null
+    usable.find((target) => target.tls === securePage) ?? usable[0] ?? null
   );
 }
 

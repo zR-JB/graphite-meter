@@ -132,9 +132,8 @@ function makeConfig(
     experimentalChunkedDownload: false,
     endpoint: { host: "auto", port: 443 },
     transports: {
-      transfer: "current",
-      latency: "auto",
-      uploadProgress: "auto",
+      throughputTarget: "current",
+      latencyTarget: "auto",
     },
     compensation: {
       profile: "lan",

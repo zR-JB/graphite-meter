@@ -27,7 +27,7 @@ export type Phase =
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3";
 /** Advertised transfer target id; "current" resolves from the discovery hop. */
-export type TransferTargetSelection = string;
+export type ThroughputTargetSelection = string;
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by
@@ -155,12 +155,10 @@ export interface RunnerConfig {
     host: string;
     port: number;
   };
-  /** Independent role bindings. Channel ids are advertised by discovery;
-   *  "auto" prefers the selected transfer origin and then any compatible path. */
+  /** Independently selected throughput and latency targets. */
   transports: {
-    transfer: TransferTargetSelection;
-    latency: "auto" | string;
-    uploadProgress: "auto" | string;
+    throughputTarget: ThroughputTargetSelection;
+    latencyTarget: "auto" | string;
   };
   /** Wire-rate estimation. */
   compensation: OverheadCompensationConfig;
@@ -375,12 +373,11 @@ export interface InfraInfo {
   preTestPingMs: number;
   engineVersion: string;
   protocolNegotiated: string;
-  selectedTarget?: string;
-  selectedTransferProtocol?: ProtocolTarget;
-  selectedLatencyChannel?: string;
-  selectedProgressChannel?: string;
+  selectedThroughputTarget?: string;
+  selectedThroughputProtocol?: ProtocolTarget;
+  selectedLatencyTarget?: string;
   selectedLatencyTransport?: TransportKind;
-  selectedProgressTransport?: TransportKind;
+  verifiedLatencyProtocol?: string;
   availableTargets?: Record<string, boolean>;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;

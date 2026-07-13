@@ -1,162 +1,157 @@
-/* ============================================================
- * Upload progress worker — server-authoritative upload relay
- * Owns /ws/upload WebSocket on its own thread (never co-located
- * with saturated upload worker to avoid UI lag). Carries test's
- * server-minted ?id= and relays SERVER-measured drained byte count.
- *
- * Protocol (message-delimited ASCII via real/wire.ts):
- *   on open    → HI,ws; server replies READY (ignored)
- *   every 3s   → HI keepalive (server's 10s idle deadline)
- *   push       → BYTES_RECEIVED,<n> (~10 Hz, cumulative)
- *   on stop    → BYE; server replies UPLOAD_COMPLETE,<n>, close
- *
- * Counts cumulative & self-healing: dropped frame loses nothing
- * (next has corrected total). Dropped socket non-fatal: reconnects
- * with backoff; main thread keeps live needle until recovery.
- * ============================================================ */
+/* Streams server-authoritative upload snapshots from the selected throughput
+ * target. Empty NDJSON lines are liveness heartbeats, never measurements. */
 
-import { encode, decode } from "../real/wire";
 import { nextBackoff } from "./backoff";
 
-type InMsg = { type: "start"; url: string } | { type: "stop" };
-// `t` is server elapsed time since this id's first received byte. The client
-// baselines it at measurement start, excluding warmup while keeping measured
-// stalls in Δn / Δt. Safe as a JS number for ~104 days.
+type InMsg =
+  | { type: "start"; url: string; headers?: Record<string, string> }
+  | { type: "stop" };
 type OutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
   | { type: "stall"; detail: string }
   | { type: "resume" };
+type ProgressEvent = {
+  type: "ready" | "progress" | "complete" | "error";
+  bytes?: number;
+  nanos?: number;
+  message?: string;
+};
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
-const post = (m: OutMsg): void => ctx.postMessage(m);
-
-/** Re-send HI this often to keep the server's read side warm (< its 10 s idle). */
-const KEEPALIVE_MS = 3000;
-/** Reconnect backoff bounds (ms). */
+const post = (message: OutMsg): void => ctx.postMessage(message);
 const RECONNECT_MIN_MS = 100;
 const RECONNECT_MAX_MS = 2000;
-/** After BYE, wait at most this long for UPLOAD_COMPLETE before closing anyway. */
-const BYE_GRACE_MS = 800;
 
 let url = "";
-let ws: WebSocket | null = null;
+let headers: Record<string, string> = {};
+let controller: AbortController | null = null;
+let wakeReconnect: (() => void) | null = null;
 let stopped = false;
-let stalledOut = false; // a `stall` emitted, not yet matched by `resume`
+let finishing = false;
+let stalledOut = false;
 let backoff = 0;
-/** Last cumulative count forwarded — guards against a non-monotonic frame. */
 let lastN = 0;
 
-let keepalive: ReturnType<typeof setInterval> | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let byeTimer: ReturnType<typeof setTimeout> | null = null;
-
-ctx.onmessage = (e: MessageEvent<InMsg>): void => {
-  const m = e.data;
-  if (m.type === "start") {
-    url = m.url;
+ctx.onmessage = (event: MessageEvent<InMsg>): void => {
+  if (event.data.type === "start") {
+    url = event.data.url;
+    headers = event.data.headers ?? {};
     stopped = false;
+    finishing = false;
     lastN = 0;
-    connect();
-  } else if (m.type === "stop") {
-    finish();
+    void run();
+  } else {
+    void finish();
   }
 };
 
-function connect(): void {
-  if (stopped) return;
-  try {
-    ws = new WebSocket(url);
-  } catch (err) {
-    scheduleReconnect(String(err));
-    return;
-  }
-  ws.onopen = (): void => {
-    backoff = 0;
-    if (stalledOut) {
-      post({ type: "resume" });
-      stalledOut = false;
+async function run(): Promise<void> {
+  while (!stopped) {
+    controller = new AbortController();
+    let detail = "progress stream closed";
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        headers: { ...headers, accept: "application/x-ndjson" },
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body)
+        throw new Error(`progress returned HTTP ${response.status}`);
+      await readEvents(response.body);
+    } catch (error) {
+      detail = String(error);
+    } finally {
+      controller = null;
     }
-    post({ type: "open" });
-    trySend(encode({ op: "HI", proto: "ws" }));
-    keepalive ??= setInterval(
-      () => trySend(encode({ op: "HI", proto: "ws" })),
-      KEEPALIVE_MS,
-    );
-  };
-  ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
-  // onerror is always followed by onclose for WebSocket — reconnect once, in onclose.
-  ws.onclose = (): void => onDisconnect("websocket closed");
+    if (stopped) return;
+    if (!stalledOut) {
+      post({ type: "stall", detail });
+      stalledOut = true;
+    }
+    backoff = nextBackoff(backoff, RECONNECT_MIN_MS, RECONNECT_MAX_MS);
+    await reconnectDelay(backoff);
+  }
 }
 
-function onFrame(data: unknown): void {
-  if (typeof data !== "string") return; // the bus is text-only
-  let f;
+function reconnectDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      if (wakeReconnect === finish) wakeReconnect = null;
+      resolve();
+    }
+    wakeReconnect = finish;
+  });
+}
+
+async function readEvents(body: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    pending += decoder.decode(value, { stream: !done });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim() === "") continue;
+      let event: ProgressEvent;
+      try {
+        event = JSON.parse(line) as ProgressEvent;
+      } catch {
+        continue;
+      }
+      if (event.type === "ready") {
+        backoff = 0;
+        if (stalledOut) {
+          post({ type: "resume" });
+          stalledOut = false;
+        }
+        post({ type: "open" });
+      } else if (event.type === "progress" || event.type === "complete") {
+        const n = Number(event.bytes ?? 0);
+        const t = Number(event.nanos ?? 0);
+        if (n >= lastN) lastN = n;
+        post({
+          type: event.type === "progress" ? "bytes" : "complete",
+          n: lastN,
+          t,
+        });
+        if (event.type === "complete") {
+          teardown();
+          return;
+        }
+      } else if (event.type === "error") {
+        throw new Error(event.message || "upload progress error");
+      }
+    }
+    if (done) return;
+  }
+}
+
+async function finish(): Promise<void> {
+  if (stopped || finishing) return;
+  finishing = true;
+  wakeReconnect?.();
   try {
-    f = decode(data);
+    const response = await fetch(url, {
+      method: "DELETE",
+      cache: "no-store",
+      headers,
+    });
+    if (!response.ok) teardown();
   } catch {
-    return; // ignore malformed / ERR / READY frames — never tear the bus down
+    teardown();
   }
-  if (f.op === "BYTES_RECEIVED") {
-    const n = Number(f.n);
-    if (n >= lastN) {
-      lastN = n;
-      post({ type: "bytes", n, t: Number(f.nanos) });
-    }
-    return;
-  }
-  if (f.op === "UPLOAD_COMPLETE") {
-    const n = Number(f.n);
-    if (n >= lastN) lastN = n;
-    post({ type: "complete", n: lastN, t: Number(f.nanos) });
-    teardown(); // the authoritative final arrived — close for good
-  }
-}
-
-function onDisconnect(detail: string): void {
-  if (stopped) return; // a normal close after BYE/teardown
-  ws = null;
-  scheduleReconnect(detail);
-}
-
-function scheduleReconnect(detail: string): void {
-  if (stopped) return;
-  if (!stalledOut) {
-    post({ type: "stall", detail });
-    stalledOut = true;
-  }
-  backoff = nextBackoff(backoff, RECONNECT_MIN_MS, RECONNECT_MAX_MS);
-  reconnectTimer = setTimeout(connect, backoff);
-}
-
-/** Graceful finish on `stop`: send BYE so the server emits UPLOAD_COMPLETE, then
- *  close once it arrives (onFrame) or after a short grace. */
-function finish(): void {
-  if (stopped) return;
-  stopped = true;
-  trySend(encode({ op: "BYE" }));
-  byeTimer = setTimeout(teardown, BYE_GRACE_MS);
 }
 
 function teardown(): void {
   stopped = true;
-  if (keepalive !== null) clearInterval(keepalive);
-  if (reconnectTimer !== null) clearTimeout(reconnectTimer);
-  if (byeTimer !== null) clearTimeout(byeTimer);
-  keepalive = reconnectTimer = byeTimer = null;
-  try {
-    ws?.close(1000, "");
-  } catch {
-    /* already closed */
-  }
-  ws = null;
-}
-
-function trySend(msg: string): void {
-  try {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg);
-  } catch {
-    /* closed mid-send — onclose drives the reconnect */
-  }
+  wakeReconnect?.();
+  wakeReconnect = null;
+  controller?.abort();
+  controller = null;
 }

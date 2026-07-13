@@ -180,35 +180,59 @@
   <section class="panel wide primary">
     <h3>Test plan</h3>
     <label>
-      <span>Transfer target</span>
-      <select disabled={running} bind:value={store.config.transports.transfer}>
-        <option value="current">Current origin</option>
+      <span>Throughput target</span>
+      <select
+        disabled={running}
+        bind:value={store.config.transports.throughputTarget}
+      >
+        <option value="current">Fetch / current verified HTTP</option>
         <option
           value="http1-clear"
           disabled={store.infra?.availableTargets?.["http1-clear"] === false}
-          >HTTP/1.1 (cleartext)</option
+          >Fetch / HTTP/1.1 clear</option
         >
         <option
           value="http1-tls"
           disabled={store.infra?.availableTargets?.["http1-tls"] === false}
-          >HTTP/1.1 (TLS)</option
+          >Fetch / HTTP/1.1 TLS</option
         >
         <option
           value="http2"
           disabled={store.infra?.availableTargets?.http2 === false}
-          >HTTP/2</option
+          >Fetch / HTTP/2 TLS</option
         >
         <option
           value="http3"
           disabled={store.infra?.availableTargets?.http3 === false}
-          >HTTP/3</option
+          >Fetch / HTTP/3 QUIC</option
+        >
+      </select>
+    </label>
+    <label>
+      <span>Latency target</span>
+      <select
+        disabled={running}
+        bind:value={store.config.transports.latencyTarget}
+      >
+        <option value="auto">Follow page security</option>
+        <option
+          value="ws-http1-clear"
+          disabled={(typeof location !== "undefined" &&
+            location.protocol === "https:") ||
+            store.infra?.availableTargets?.["ws-http1-clear"] === false}
+          >WebSocket / HTTP/1.1 clear</option
+        >
+        <option
+          value="ws-http1-tls"
+          disabled={store.infra?.availableTargets?.["ws-http1-tls"] === false}
+          >WebSocket / HTTP/1.1 TLS</option
         >
       </select>
     </label>
     <p class="hint">
       Secure pages cannot select clear HTTP/1.1. TLS HTTP/1.1 remains a
-      parallel-request target; latency and upload progress use independently
-      resolved message channels.
+      parallel-request target. Latency is verified independently; upload
+      progress always uses the selected throughput path.
     </p>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}

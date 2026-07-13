@@ -5,8 +5,11 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+export type ThroughputTarget = FetchThroughputTarget | WebTransportStreamsThroughputTarget;
+export type LatencyTarget = WebSocketLatencyTarget | WebTransportDatagramsLatencyTarget;
+
 /**
- * Logical-server discovery returned by GET /preflight. Bulk transfer targets and interactive message channels are independently selectable; connection evidence comes from GET /probe on the selected transfer target.
+ * Logical-server discovery returned by GET /preflight. Throughput and latency targets are independently selectable and independently verified.
  */
 export interface Preflight {
   server: {
@@ -17,33 +20,54 @@ export interface Preflight {
   };
   engineVersion: string;
   capabilities: {
-    transfers: TransferTarget[];
-    channels: ChannelTarget[];
+    throughputTargets: ThroughputTarget[];
+    latencyTargets: LatencyTarget[];
   };
 }
-export interface TransferTarget {
+export interface FetchThroughputTarget {
   id: string;
   origin: string;
   transport: "fetch-stream";
   protocol: "http1" | "http2" | "http3";
   tls: boolean;
-  routes: TransferRoutes;
+  routes: ThroughputRoutes;
 }
-export interface TransferRoutes {
+export interface ThroughputRoutes {
   probe: string;
   download: string;
   upload: string;
   uploadSession: string;
+  uploadProgress: string;
 }
-export interface ChannelTarget {
+export interface WebTransportStreamsThroughputTarget {
   id: string;
   origin: string;
-  transport: "websocket" | "webtransport";
-  protocol: "http1" | "http2" | "http3";
-  tls: boolean;
-  routes: ChannelRoutes;
+  transport: "webtransport-streams";
+  protocol: "http3";
+  tls: true;
+  routes: {
+    [k: string]: unknown;
+  };
 }
-export interface ChannelRoutes {
-  latency: string | null;
-  uploadProgress: string | null;
+export interface WebSocketLatencyTarget {
+  id: string;
+  origin: string;
+  transport: "websocket";
+  protocol: "http1";
+  tls: boolean;
+  routes: LatencyRoutes;
+}
+export interface LatencyRoutes {
+  probe: string;
+  ping: string;
+}
+export interface WebTransportDatagramsLatencyTarget {
+  id: string;
+  origin: string;
+  transport: "webtransport-datagrams";
+  protocol: "http3";
+  tls: true;
+  routes: {
+    [k: string]: unknown;
+  };
 }

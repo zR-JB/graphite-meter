@@ -17,8 +17,6 @@ export const Op = {
   PING: "PING",
   PONG: "PONG",
   SIZE: "SIZE",
-  BYTES_RECEIVED: "BYTES_RECEIVED",
-  UPLOAD_COMPLETE: "UPLOAD_COMPLETE",
   BYE: "BYE",
   ERR: "ERR",
 } as const;
@@ -35,8 +33,6 @@ export type Frame =
   | { op: "PONG"; id: number; nanos: bigint }
   | { op: "SIZE"; bytes: bigint }
   | { op: "HI"; proto: string }
-  | { op: "BYTES_RECEIVED"; n: bigint; nanos: bigint }
-  | { op: "UPLOAD_COMPLETE"; n: bigint; nanos: bigint }
   | { op: "ERR"; code: string; text: string };
 
 /** Stable rejection codes a receiver echoes as ERR,<code>,<text>. */
@@ -82,21 +78,6 @@ function u64(s: string, what: string): bigint {
   return v;
 }
 
-/** Parse the "<n>;TIME,<nanos>" body shared by BYTES_RECEIVED and UPLOAD_COMPLETE:
- *  a cumulative server byte total plus elapsed ns since the first received byte.
- *  The client baselines both at measurement start and divides Δn by Δnanos.
- *  PONG uses the same framing for a raw monotonic timestamp. */
-function countTime(rest: string, op: string): [bigint, bigint] {
-  const s = rest.indexOf(";");
-  if (s === -1) throw new DecodeError(ErrBadArgs, `${op} TIME`);
-  const n = u64(rest.slice(0, s), `${op} n`);
-  const tail = rest.slice(s + 1);
-  const tc = tail.indexOf(",");
-  if (tc === -1 || tail.slice(0, tc) !== "TIME")
-    throw new DecodeError(ErrBadArgs, `${op} TIME`);
-  return [n, u64(tail.slice(tc + 1), `${op} nanos`)];
-}
-
 /** Parse one on-wire message into a Frame. Throws DecodeError(bad_op) on an
  *  unknown opcode and DecodeError(bad_args) on missing/malformed args. */
 export function decode(msg: string): Frame {
@@ -133,16 +114,6 @@ export function decode(msg: string): Frame {
       if (rest === "") throw new DecodeError(ErrBadArgs, "HI proto");
       return { op: "HI", proto: rest };
 
-    case Op.BYTES_RECEIVED: {
-      const [n, nanos] = countTime(rest, "BYTES_RECEIVED");
-      return { op: "BYTES_RECEIVED", n, nanos };
-    }
-
-    case Op.UPLOAD_COMPLETE: {
-      const [n, nanos] = countTime(rest, "UPLOAD_COMPLETE");
-      return { op: "UPLOAD_COMPLETE", n, nanos };
-    }
-
     case Op.ERR: {
       const ec = rest.indexOf(",");
       const code = ec === -1 ? rest : rest.slice(0, ec);
@@ -171,10 +142,6 @@ export function encode(f: Frame): string {
       return `${Op.SIZE},${f.bytes}`;
     case "HI":
       return `${Op.HI},${f.proto}`;
-    case "BYTES_RECEIVED":
-      return `${Op.BYTES_RECEIVED},${f.n};TIME,${f.nanos}`;
-    case "UPLOAD_COMPLETE":
-      return `${Op.UPLOAD_COMPLETE},${f.n};TIME,${f.nanos}`;
     case "ERR":
       return `${Op.ERR},${f.code},${f.text}`;
   }

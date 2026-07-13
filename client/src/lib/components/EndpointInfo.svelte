@@ -71,8 +71,8 @@
         title: "Connection",
         rows: [
           {
-            label: "Transfer target",
-            value: i?.selectedTarget ?? "Current origin",
+            label: "Throughput target",
+            value: i?.selectedThroughputTarget ?? "Current origin",
           },
           {
             label: "Verified browser",
@@ -81,25 +81,27 @@
           { label: "Server observed", value: i?.protocolNegotiated ?? "—" },
           {
             label: "Transfer path",
-            value: `Fetch streams · ${i?.selectedTransferProtocol ?? "—"}`,
+            value: `Fetch streams · ${i?.selectedThroughputProtocol ?? "—"}`,
           },
           {
-            label: "Latency channel",
-            value: i?.selectedLatencyChannel
-              ? `${i.selectedLatencyTransport} · ${i.selectedLatencyChannel}`
+            label: "Latency target",
+            value: i?.selectedLatencyTarget
+              ? `${i.selectedLatencyTransport} · ${i.selectedLatencyTarget}`
               : "Unavailable",
           },
           {
-            label: "Progress channel",
-            value: i?.selectedProgressChannel
-              ? `${i.selectedProgressTransport} · ${i.selectedProgressChannel}`
-              : "Unavailable",
+            label: "Verified latency",
+            value: i?.verifiedLatencyProtocol ?? "Unavailable",
+          },
+          {
+            label: "Upload progress",
+            value: "Selected throughput path · NDJSON",
           },
           {
             label: "Streams",
             value: describeTransferStreams(
               store.config.transferStreams,
-              i?.selectedTransferProtocol,
+              i?.selectedThroughputProtocol,
             ),
           },
           {

@@ -93,6 +93,18 @@ export function loadPersisted(): PersistedState {
   // Version 1 originally stored a numeric IP family. Preserve that explicit
   // expert choice now that the setting also supports automatic detection.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  const legacyTransports = isPlainObject(parsedConfig?.transports)
+    ? parsedConfig.transports
+    : null;
+  if (typeof legacyTransports?.throughputTarget === "string")
+    merged.config.transports.throughputTarget =
+      legacyTransports.throughputTarget;
+  else if (typeof legacyTransports?.transfer === "string")
+    merged.config.transports.throughputTarget = legacyTransports.transfer;
+  if (typeof legacyTransports?.latencyTarget === "string")
+    merged.config.transports.latencyTarget = legacyTransports.latencyTarget;
+  else if (typeof legacyTransports?.latency === "string")
+    merged.config.transports.latencyTarget = legacyTransports.latency;
   const legacyEndpoint = isPlainObject(parsedConfig?.endpoint)
     ? parsedConfig.endpoint
     : null;
@@ -101,10 +113,10 @@ export function loadPersisted(): PersistedState {
     case "current":
     case "http2":
     case "http3":
-      merged.config.transports.transfer = legacyTarget;
+      merged.config.transports.throughputTarget = legacyTarget;
       break;
     case "http1":
-      merged.config.transports.transfer = "http1-clear";
+      merged.config.transports.throughputTarget = "http1-clear";
       break;
   }
   if (typeof parsedConfig?.parallelStreams === "number")

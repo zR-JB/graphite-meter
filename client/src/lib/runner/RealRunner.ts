@@ -12,9 +12,9 @@ import type {
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type {
-  ChannelTarget,
+  FetchThroughputTarget,
   Preflight,
-  TransferTarget,
+  WebSocketLatencyTarget,
 } from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
@@ -26,10 +26,10 @@ import {
   median,
   needsPings,
   laneStaggerMs,
-  selectTransferTarget,
-  selectChannelTarget,
+  selectThroughputTarget,
+  selectLatencyTarget,
   browserProtocolMatchesTarget,
-  transferTargetKey,
+  throughputTargetKey,
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
@@ -85,12 +85,6 @@ const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   websocket: true,
   webtransport: false,
 };
-const RUNNABLE_CHANNELS = new Set<ChannelTarget["transport"]>(
-  (Object.entries(RUNNABLE_TRANSPORT) as [TransportKind, boolean][])
-    .filter(([kind, runnable]) => runnable && kind !== "fetch-stream")
-    .map(([kind]) => kind as ChannelTarget["transport"]),
-);
-
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
   rtt: number;
@@ -156,7 +150,7 @@ interface LaneStreamState {
    *  reports its own receive elapsed time, so the pool rate can be summed
    *  from matching per-lane numerators/denominators instead of a UI timer
    *  tick. Populated by download progress messages only — an upload lane
-   *  reports no bytes (the server /ws/upload channel is the sole source). */
+   *  reports no bytes (the server /upload/progress channel is the sole source). */
   /** Present only for client-counted download. Server-counted upload has no
    * local byte clock by construction. */
   clientAggregation: ClientByteAggregation | null;
@@ -191,9 +185,8 @@ export class RealBackend implements RunnerBackend {
    *  stages negotiate transports against what the server actually offers. */
   #capabilities: Preflight["capabilities"] | null = null;
   /** Independent role bindings are frozen from probe until the next run. */
-  #transferTarget: TransferTarget | null = null;
-  #latencyChannel: ChannelTarget | null = null;
-  #progressChannel: ChannelTarget | null = null;
+  #throughputTarget: FetchThroughputTarget | null = null;
+  #latencyTarget: WebSocketLatencyTarget | null = null;
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;
@@ -223,10 +216,10 @@ export class RealBackend implements RunnerBackend {
 
   /* ---- server-authoritative upload state (Stage 3+) ---- */
   /** The upload-session id minted during upload warmup; appended as &id= on the
-   *  upload POST lanes AND the /ws/upload socket so the server correlates them.
+   *  upload POST lanes AND the /upload/progress stream so the server correlates them.
    *  null ⇒ the current upload stage has not been allocated yet. */
   #testId: string | null = null;
-  /** The dedicated /ws/upload progress worker (up stage only), or null. */
+  /** The dedicated /upload/progress progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
   #progressReady: { finish: (ready: boolean) => void } | null = null;
   /** Latest cumulative server byte count and previous measured snapshot. */
@@ -335,9 +328,8 @@ export class RealBackend implements RunnerBackend {
     const endpoint = config.endpoint;
     const base = resolveBase(this.#resolveEndpoint(endpoint));
     this.#capabilities = null;
-    this.#transferTarget = null;
-    this.#latencyChannel = null;
-    this.#progressChannel = null;
+    this.#throughputTarget = null;
+    this.#latencyTarget = null;
     this.#discoveryProtocol = undefined;
     let pf: Preflight;
     try {
@@ -361,10 +353,10 @@ export class RealBackend implements RunnerBackend {
       throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
     this.#capabilities = pf.capabilities;
-    const selection = config.transports.transfer;
+    const selection = config.transports.throughputTarget;
     const discoveryOrigin = this.#discoveryOrigin;
-    const selected = selectTransferTarget(
-      pf.capabilities.transfers,
+    const selected = selectThroughputTarget(
+      pf.capabilities.throughputTargets,
       selection,
       discoveryOrigin,
       location.protocol === "https:",
@@ -372,23 +364,23 @@ export class RealBackend implements RunnerBackend {
     );
     if (!selected)
       throw new TransportUnavailableError(`${selection} target unavailable`);
-    this.#transferTarget = selected;
-    this.#latencyChannel = selectChannelTarget(
-      pf.capabilities.channels,
-      "latency",
-      config.transports.latency,
-      selected,
+    this.#throughputTarget = selected;
+    this.#latencyTarget = selectLatencyTarget(
+      pf.capabilities.latencyTargets,
+      config.transports.latencyTarget,
       location.protocol === "https:",
-      RUNNABLE_CHANNELS,
     );
-    this.#progressChannel = selectChannelTarget(
-      pf.capabilities.channels,
-      "uploadProgress",
-      config.transports.uploadProgress,
-      selected,
-      location.protocol === "https:",
-      RUNNABLE_CHANNELS,
-    );
+    const needsLatency =
+      config.stages.latency ||
+      (!config.skipLoadedLatencyWhenStageOff &&
+        (config.stages.download ||
+          config.stages.upload ||
+          config.stages.bidirectional));
+    if (needsLatency && !this.#latencyTarget)
+      throw new TransportUnavailableError(
+        `${config.transports.latencyTarget} latency target unavailable`,
+      );
+    if (!needsLatency) this.#latencyTarget = null;
 
     const attempts = selected.protocol === "http3" ? 3 : 1;
     const deadline = performance.now() + 2000;
@@ -445,10 +437,35 @@ export class RealBackend implements RunnerBackend {
       );
     }
 
+    let verifiedLatencyProtocol: string | undefined;
+    if (needsLatency && this.#latencyTarget) {
+      const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
+      const latencyRes = await fetch(latencyURL, {
+        cache: "no-store",
+        headers: this.#authHeaders(),
+        signal,
+      });
+      if (!latencyRes.ok)
+        throw new TransportUnavailableError(
+          `latency probe returned HTTP ${latencyRes.status}`,
+        );
+      await latencyRes.json();
+      verifiedLatencyProtocol = (
+        performance.getEntriesByName(latencyRes.url, "resource").at(-1) as
+          PerformanceResourceTiming | undefined
+      )?.nextHopProtocol;
+      if (verifiedLatencyProtocol !== "http/1.1")
+        throw new TransportUnavailableError(
+          `latency target negotiated ${verifiedLatencyProtocol || "unknown"}, want http/1.1`,
+        );
+    }
+
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
-    const probeRtts = await this.#collectIdleRtts(endpoint, signal);
+    const probeRtts = needsLatency
+      ? await this.#collectIdleRtts(endpoint, signal)
+      : [];
 
     return {
       clientIp: pathProbe.clientIp,
@@ -463,21 +480,25 @@ export class RealBackend implements RunnerBackend {
       preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
       engineVersion: pf.engineVersion,
       protocolNegotiated: pathProbe.protocolNegotiated,
-      selectedTarget: selected.id,
-      selectedTransferProtocol: selected.protocol,
-      selectedLatencyChannel: this.#latencyChannel?.id,
-      selectedProgressChannel: this.#progressChannel?.id,
-      selectedLatencyTransport: this.#latencyChannel?.transport,
-      selectedProgressTransport: this.#progressChannel?.transport,
+      selectedThroughputTarget: selected.id,
+      selectedThroughputProtocol: selected.protocol,
+      selectedLatencyTarget: this.#latencyTarget?.id,
+      selectedLatencyTransport: this.#latencyTarget?.transport,
+      verifiedLatencyProtocol,
       availableTargets: Object.fromEntries([
         ["current", true],
         ["http1-clear", false],
         ["http1-tls", false],
         ["http2", false],
         ["http3", false],
-        ...pf.capabilities.transfers.map((target) => [
+        ...pf.capabilities.throughputTargets.map((target) => [
           target.id,
           location.protocol !== "https:" || target.tls,
+        ]),
+        ...pf.capabilities.latencyTargets.map((target) => [
+          target.id,
+          target.transport === "websocket" &&
+            (location.protocol !== "https:" || target.tls),
         ]),
       ]),
       firstHopProtocol,
@@ -662,19 +683,18 @@ export class RealBackend implements RunnerBackend {
     role: TransportRole,
   ): string | null {
     if (!RUNNABLE_TRANSPORT[kind]) return "not supported by this client";
-    if (!this.#transferTarget) return "no selected transfer target";
-    const channel =
-      role === "latency" ? this.#latencyChannel : this.#progressChannel;
+    if (!this.#throughputTarget) return "no selected transfer target";
     let advertised: boolean;
     switch (kind) {
       case "fetch-stream":
-        advertised = this.#transferTarget.transport === "fetch-stream";
+        advertised = this.#throughputTarget.transport === "fetch-stream";
         break;
       case "websocket":
-        advertised = channel?.transport === "websocket";
+        advertised =
+          role === "latency" && this.#latencyTarget?.transport === "websocket";
         break;
       case "webtransport":
-        advertised = channel?.transport === "webtransport";
+        advertised = false;
         break;
     }
     return advertised ? null : "not advertised by server";
@@ -692,9 +712,10 @@ export class RealBackend implements RunnerBackend {
   /** Resolve one direction's transfer streams from the frozen protocol target
    *  and the run's automatic/forced policy. */
   #streamCount(activity: PhaseActivity, dir: FlowDirection): number {
-    if (!this.#transferTarget) throw new Error("transfer target not resolved");
+    if (!this.#throughputTarget)
+      throw new Error("transfer target not resolved");
     return transferStreamCount({
-      protocol: this.#transferTarget.protocol,
+      protocol: this.#throughputTarget.protocol,
       policy: this.#streamPolicy,
       transfer: activity.transfer,
       dir,
@@ -720,7 +741,7 @@ export class RealBackend implements RunnerBackend {
 
     const cfg = this.#host!.config!;
     const base =
-      this.#transferTarget?.origin ??
+      this.#throughputTarget?.origin ??
       resolveBase(this.#resolveEndpoint(cfg.endpoint));
     const laneCount = this.#streamCount(activity, dir);
     const streams = laneCount;
@@ -771,12 +792,12 @@ export class RealBackend implements RunnerBackend {
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
-        const path = this.#transferTarget?.routes.download ?? "/download";
+        const path = this.#throughputTarget?.routes.download ?? "/download";
         return chunkDownload
           ? `${base}${path}?cb=${cb}`
           : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
-      const path = this.#transferTarget?.routes.upload ?? "/upload";
+      const path = this.#throughputTarget?.routes.upload ?? "/upload";
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
@@ -820,7 +841,7 @@ export class RealBackend implements RunnerBackend {
     const state = this.#lanes[dir];
     if (!this.#transferActive || !state) return;
     this.#testId = id;
-    // The progress socket is the authoritative upload meter. Establish it
+    // The progress stream is the authoritative upload meter. Establish it
     // before any POST workers so forced H1 lanes cannot occupy every browser
     // connection slot and queue the control channel behind the upload.
     if (!(await this.#primeUploadProgress(state.stage))) return;
@@ -834,7 +855,7 @@ export class RealBackend implements RunnerBackend {
 
   async #mintUploadSession(base: string): Promise<string> {
     const path =
-      this.#transferTarget?.routes.uploadSession ?? "/upload/session";
+      this.#throughputTarget?.routes.uploadSession ?? "/upload/session";
     // Own deadline + the run's abort: fetch must reject within the timeout even
     // when the request hangs, so the stage skips instead of max-stalling.
     const ctl = new AbortController();
@@ -861,27 +882,24 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Establish the server-authoritative upload progress socket before starting
+  /** Establish the server-authoritative upload progress stream before starting
    *  POST lanes. Upload cannot be measured honestly without this channel. */
   #primeUploadProgress(stage: PhaseActivity["stage"]): Promise<boolean> {
     this.#resetUploadCounters();
 
-    const channel = this.#progressChannel;
     if (!this.#testId) return Promise.resolve(false);
-    const progressRoute = channel?.routes.uploadProgress;
-    if (!channel || channel.transport !== "websocket" || !progressRoute) {
+    const target = this.#throughputTarget;
+    const progressRoute = target?.routes.uploadProgress;
+    if (!target || !progressRoute) {
       this.#host!.failStage(
         stage,
         "transport-unavailable",
-        "no supported upload progress channel was selected",
+        "selected throughput target has no upload progress route",
       );
       return Promise.resolve(false);
     }
 
-    const url =
-      httpToWs(channel.origin) +
-      progressRoute +
-      `?id=${encodeURIComponent(this.#testId)}`;
+    const url = `${target.origin}${progressRoute}?id=${encodeURIComponent(this.#testId)}`;
     const w = this.#progressWorkerInstance();
     const ready = new Promise<boolean>((resolve) => {
       const finish = (established: boolean): void => {
@@ -908,7 +926,13 @@ export class RealBackend implements RunnerBackend {
       /* the worker owns reconnect; a hard worker error just means no server bytes
        * until it recovers, which the stall watchdog already covers. */
     };
-    w.postMessage({ type: "start", url });
+    w.postMessage({
+      type: "start",
+      url,
+      headers: this.#opts.authToken
+        ? { authorization: `Bearer ${this.#opts.authToken}` }
+        : undefined,
+    });
     this.#progressWorker = w;
     return ready;
   }
@@ -965,10 +989,10 @@ export class RealBackend implements RunnerBackend {
     if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
 
     const cfg = this.#host!.config!;
-    const channel = this.#latencyChannel;
-    const latencyRoute = channel?.routes.latency;
+    const channel = this.#latencyTarget;
+    const latencyRoute = channel?.routes.ping;
     if (!channel || channel.transport !== "websocket" || !latencyRoute)
-      throw new Error("latency channel not resolved");
+      throw new Error("latency target not resolved");
     const url = httpToWs(channel.origin) + latencyRoute;
     const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
 
@@ -1073,11 +1097,11 @@ export class RealBackend implements RunnerBackend {
     endpoint?: RunnerConfig["endpoint"],
     intervalMs = IDLE_PING_INTERVAL_MS,
   ): void {
-    const targetKey = `${transferTargetKey(this.#transferTarget)}\n${this.#latencyChannel?.id ?? ""}`;
+    const targetKey = `${throughputTargetKey(this.#throughputTarget)}\n${this.#latencyTarget?.id ?? ""}`;
     if (this.#idleActive && this.#idleTargetKey === targetKey) return;
     if (this.#idleActive) this.#stopIdleKeepalive();
-    const channel = this.#latencyChannel;
-    const latencyRoute = channel?.routes.latency;
+    const channel = this.#latencyTarget;
+    const latencyRoute = channel?.routes.ping;
     if (!channel || channel.transport !== "websocket" || !latencyRoute) return;
     const url = httpToWs(channel.origin) + latencyRoute;
     this.#idleActive = true;
@@ -1284,7 +1308,7 @@ export class RealBackend implements RunnerBackend {
    *   • download `progress` → client-counted bytes drive the live curve: accrue
    *     into the aggregation window and clear any open stall.
    *   • upload `alive` → one POST completed; reset the lane's restart counter. The
-   *     server /ws/upload count is the SOLE upload byte source, so an upload lane
+   *     server /upload/progress count is the SOLE upload byte source, so an upload lane
    *     reports NO bytes and never drives the curve or resumes a stall here (the
    *     progress worker owns the up curve + its stall/resume — see #onProgressMessage).
    *   • `error` → stall + restart that single lane (#onWorkerError). */
@@ -1401,7 +1425,7 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** A message from the /ws/upload progress worker. The server count is the SOLE
+  /** A message from the /upload/progress progress worker. The server count is the SOLE
    *  upload byte source: `bytes`/`complete` feed the live curve and effective result.
    *  Because there is no client-side fallback, the socket dropping is the
    *  only thing that can leave the up stage without samples — so the worker's
@@ -1416,7 +1440,7 @@ export class RealBackend implements RunnerBackend {
     const state = this.#lanes.up;
     if (!this.#transferActive || !state) return; // late message after teardown
     if (msg.type === "stall") {
-      // The progress socket dropped: no server bytes until it reconnects. Freeze
+      // The progress stream dropped: no server bytes until it reconnects. Freeze
       // surface recovery immediately instead of waiting for the silence watchdog.
       if (state.measuring) this.#setLaneStalled("up", true, msg.detail);
       return;
@@ -1466,10 +1490,8 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Stop the /ws/upload worker: it sends BYE (the server's authoritative
-   *  finalizer) then closes; we terminate after a grace so BYE + UPLOAD_COMPLETE
-   *  can flush. The client headline was already set from the last reported rate,
-   *  so we never block on it. Idempotent. */
+  /** Stop the progress worker after the POST lanes. It explicitly finalizes the
+   *  session with DELETE and lets the stream receive the terminal complete record. */
   #teardownProgress(): void {
     this.#progressReady?.finish(false);
     this.#progressReady = null;
