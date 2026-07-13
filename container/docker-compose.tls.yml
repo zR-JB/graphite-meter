@@ -1,11 +1,12 @@
-# TLS overlay: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+# TLS overlay from the repository root:
+# docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 services:
   graphite-meter:
     ports:
-      - "8445:8445/tcp" # dedicated HTTPS HTTP/1.1 transfers and WebSockets
-      - "8443:8443/tcp" # HTTP/2 plus HTTP/1.1 UI/WebSocket fallback
-      - "8444:8444/tcp" # HTTP/3 Alt-Svc bootstrap and WebSockets
-      - "8444:8444/udp" # HTTP/3 measurement traffic
+      - "8445:8445/tcp" # dedicated HTTPS HTTP/1.1 throughput and WSS latency
+      - "8443:8443/tcp" # HTTP/2-only UI, discovery, transfers, and progress
+      - "8444:8444/tcp" # HTTP/3 Alt-Svc bootstrap probe only
+      - "8444:8444/udp" # HTTP/3 probe, transfers, and progress
     environment:
       GM_ENABLE_H1_TLS: "true"
       GM_ENABLE_H2: "true"

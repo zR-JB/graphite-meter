@@ -106,8 +106,8 @@ environment variables, which take precedence over defaults.
 | -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GM_H1_ADDR` | `-h1-addr` (`-addr` legacy alias) | `:8765` | Clear HTTP/1.1 UI and measurement listener. |
 | `GM_H1_TLS_ADDR` | `-h1-tls-addr` | `:8445` | Dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, and WebSockets. |
-| `GM_H2_ADDR` | `-h2-addr` | `:8443` | TCP TLS listener: HTTP/2 transfers plus HTTP/1.1 UI/discovery/probe/WebSockets. |
-| `GM_H3_ADDR` | `-h3-addr` | `:8444` | UDP HTTP/3 transfers plus TCP TLS HTTP/1.1 Alt-Svc bootstrap/probe/WebSockets. |
+| `GM_H2_ADDR` | `-h2-addr` | `:8443` | HTTP/2-only TLS listener for UI, discovery, probe, transfers, and upload progress. |
+| `GM_H3_ADDR` | `-h3-addr` | `:8444` | UDP HTTP/3 probe, transfers, and progress plus a TCP HTTP/1.1 Alt-Svc bootstrap probe only. |
 | `GM_ENABLE_H1_TLS` / `GM_ENABLE_H2` / `GM_ENABLE_H3` | matching flags | off | Enable the corresponding native TLS listeners. |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | `-tls-cert` / `-tls-key` | — | Matching PEM pair. Invalid dates, hostnames, and pairs fail startup; valid renewals hot-reload. |
 | `GM_SERVER_NAME`                                                                 | `-name`     | `graphite-meter`                                          | Server identity advertised in `/preflight`.                                                                                                                                                                                                                                                               |
@@ -133,8 +133,6 @@ mkdir -p .dev-certs
 mkcert -install
 mkcert -cert-file .dev-certs/localhost.pem \
   -key-file .dev-certs/localhost-key.pem localhost 127.0.0.1 ::1
-just prod
-cd go
 GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
   GM_TLS_CERT=../.dev-certs/localhost.pem \
   GM_TLS_KEY=../.dev-certs/localhost-key.pem \
@@ -142,8 +140,11 @@ GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
   PUBLIC_H1_TLS_ORIGIN=https://localhost:8445 \
   PUBLIC_H2_ORIGIN=https://localhost:8443 \
   PUBLIC_H3_ORIGIN=https://localhost:8444 \
-  ./graphite-meter
+  just prod
 ```
+
+That single command starts clear H1 on `8765/tcp`, TLS-only H1 on `8445/tcp`, H2-only TLS on
+`8443/tcp`, and the H3 bootstrap/QUIC pair on `8444/tcp` and `8444/udp`.
 
 Firefox has an [additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341):
 by default it disables HTTP/3 when the certificate chain contains a third-party root, even when
@@ -222,8 +223,8 @@ podman build -f container/Dockerfile -t graphite-meter:dev \
 ```
 
 `container/docker-compose.build.yml` wraps the same build (context = repo root, `dockerfile:
-container/Dockerfile`) with the server env vars pre-wired and commented-out slots for the future
-TLS ports and the client build knobs. The build-from-source Quadlet variant
+container/Dockerfile`) with the server env vars pre-wired, a complete commented native TLS
+listener example, and the client build knobs. The build-from-source Quadlet variant
 (`graphite-meter.build` + `graphite-meter-source.container`) is documented in
 [`container/quadlet/README.md`](../container/quadlet/README.md).
 

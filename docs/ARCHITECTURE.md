@@ -4,9 +4,10 @@ Graphite Meter is a self-hosted internet speed-test tool. A Svelte 5 browser cli
 companion native Go terminal client) drive a small, high-throughput measurement server. The
 server's job is limited to serving and sinking raw **bytes** and echoing timestamps — every rate,
 unit, and statistic is derived on the client side. The explicit design goal is to compare
-transports honestly: discovery identifies one logical server, then the client freezes one explicit
-HTTP/1.1, HTTP/2, or HTTP/3 target for the run. WebSockets remain a separate TCP latency/progress
-channel and are never described as H2/H3 throughput.
+transports honestly: discovery identifies one logical server, then the client independently
+freezes a throughput target and a latency target for the run. Fetch throughput may use HTTP/1.1,
+HTTP/2, or HTTP/3; WebSockets remain a dedicated HTTP/1.1 latency transport. Upload progress is
+part of the selected throughput target and is never coupled to latency.
 
 ## Repository layout (monorepo)
 
@@ -32,9 +33,10 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 
 ## How it's built, at a glance
 
-- **Server** (`go/cmd/graphite-meter`): one Go binary. It streams/discards raw bytes on plain
-  HTTP/1.1 and runs two small WebSocket message buses for latency and upload progress. It embeds
-  the built Svelte client via `//go:embed`, so the whole app ships as a single static binary.
+- **Server** (`go/cmd/graphite-meter`): one Go binary. It streams/discards raw bytes and serves
+  authoritative NDJSON upload progress over the selected H1/H2/H3 throughput listener, while a
+  dedicated H1 WebSocket bus handles latency. It embeds the built Svelte client via `//go:embed`,
+  so the whole app ships as a single static binary.
 - **Browser client** (`client/`): a Svelte 5 app built around an engine-agnostic core
   (`RunnerCore`) that consumes events from a pluggable backend. The real backend talks to the Go
   server over `fetch`/streamed HTTP and WebSocket, doing all the actual measurement work off the
@@ -57,12 +59,13 @@ and optional H3 on 8444/udp with a TLS H1 bootstrap on 8444/tcp. The H3 TCP surf
 `/probe`, so transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
 disabled to prevent POST replay.
 
-| Listener | Bulk transfer | Companion surface |
+| Listener | Protocol | Owned surface |
 | --- | --- | --- |
-| `:8765/tcp` | HTTP/1.1 | Clear HTTP/1.1 UI, discovery, probe, and WebSockets. |
-| `:8445/tcp` | HTTP/1.1 over TLS | HTTPS UI, discovery, probe, transfers, and WSS. ALPN offers only HTTP/1.1 so browsers cannot silently negotiate H2. |
+| `:8765/tcp` | HTTP/1.1 clear | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency. |
+| `:8445/tcp` | HTTP/1.1 TLS only | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
 | `:8443/tcp` | HTTP/2 only | H2 UI, discovery, probe, transfers, and upload progress. No H1 ALPN or WebSocket route. |
-| `:8444/udp` | HTTP/3 | H3 probe, transfers, and upload progress; `:8444/tcp` serves only the Alt-Svc bootstrap probe. |
+| `:8444/udp` | HTTP/3 | H3 probe, transfers, and upload progress. |
+| `:8444/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets. |
 
 Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
 freezes one target for each role and verifies each target independently. Fetch throughput targets
@@ -160,10 +163,9 @@ client-side orchestration; the server has no special bidirectional mode, it's ju
 run concurrently during a transfer stage, to measure RTT-under-load / bufferbloat separately from
 the idle baseline).
 
-Transport: plain streamed HTTP GET/POST for bulk transfer (HTTP/2 is explicitly disabled on this
-client's `http.Transport`) and WebSocket for the ping and upload-progress buses. WebTransport is
-not attempted — the `SIZE` opcode exists in the shared wire package but this client never sends
-it.
+Transport: protocol-specific streamed HTTP GET/POST clients for throughput and its NDJSON upload
+progress, plus an independently selected HTTP/1.1 WebSocket for latency. WebTransport is not
+attempted — the `SIZE` opcode exists in the shared wire package but this client never sends it.
 
 To reduce measurement noise, the runner adaptively stretches warmup to roughly 10x the measured
 idle RTT (floor = configured warmup, ceiling 4s) so TCP slow start finishes before the measured
@@ -344,8 +346,8 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 ## Experimental and roadmap
 
 - **Chunked download** is an opt-in adaptive-chunk alternative to long streams.
-- **WebTransport** remains future work. It is neither mounted nor advertised; H3 throughput uses
-  fetch over QUIC, while latency and upload progress use WebSockets over TLS/TCP.
+- **WebTransport** remains future work. It is neither mounted nor advertised; H3 throughput and
+  upload progress use fetch over QUIC, while latency independently uses an H1-TLS WebSocket.
 - **Server selection and simultaneous multi-server testing** remain future work. Protocol targets
   in one discovery document are listeners of one logical server, not independent servers.
 

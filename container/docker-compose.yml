@@ -18,9 +18,6 @@ services:
       GM_SERVER_NAME: "graphite-meter"
       # GM_SERVER_LOCATION: "fra"
       # GM_H1_ADDR: ":8765"              # listen address inside the container
-      # GM_ENABLE_H1_TLS: "true"
-      # GM_ENABLE_H2: "true"
-      # GM_ENABLE_H3: "true"
       # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network
       # PUBLIC_H1_ORIGIN: "http://speed.example:8765"
       # GM_VERBOSE: "1"                  # per-second server-side throughput log

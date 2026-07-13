@@ -18,10 +18,10 @@ services:
         # GM_CLIENT_BUILD_LABEL: "0.1.0"  # status-bar + client-version label (default "prod")
     ports:
       - "8765:8765" # HTTP/1.1 (default)
-      # - "8445:8445/tcp"  # dedicated HTTPS HTTP/1.1 transfers
-      # - "8443:8443/tcp"  # HTTP/2 + H1 WebSocket fallback
-      # - "8444:8444/tcp"  # HTTP/3 bootstrap + WebSockets
-      # - "8444:8444/udp"  # HTTP/3 transfers
+      # - "8445:8445/tcp"  # dedicated HTTPS HTTP/1.1 throughput + WSS latency
+      # - "8443:8443/tcp"  # HTTP/2-only UI, discovery, transfers, and progress
+      # - "8444:8444/tcp"  # HTTP/3 Alt-Svc bootstrap probe only
+      # - "8444:8444/udp"  # HTTP/3 probe, transfers, and progress
     environment:
       # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
       # running behind a reverse proxy so /preflight advertises reachable URLs.
@@ -32,4 +32,12 @@ services:
       # GM_ENABLE_H1_TLS: "true"
       # GM_ENABLE_H2: "true"
       # GM_ENABLE_H3: "true"
+      # GM_TLS_CERT: "/etc/letsencrypt/live/graphite-meter/fullchain.pem"
+      # GM_TLS_KEY: "/etc/letsencrypt/live/graphite-meter/privkey.pem"
+      # PUBLIC_H1_TLS_ORIGIN: "https://speed.example:8445"
+      # PUBLIC_H2_ORIGIN: "https://speed.example:8443"
+      # PUBLIC_H3_ORIGIN: "https://speed.example:8444"
+    # Mount the complete Let's Encrypt tree when enabling the TLS settings above:
+    # volumes:
+    #   - /etc/letsencrypt:/etc/letsencrypt:ro
     restart: unless-stopped
