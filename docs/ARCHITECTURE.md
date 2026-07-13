@@ -203,8 +203,9 @@ _same_ primed connection, `onStageEnd`). Two backends exist:
   with an in-flight transfer.
 - **Download** — `download-worker.ts`, one per parallel lane: a `fetch` GET with a streamed
   response read via a BYOB reader that reuses a single 1 MiB buffer (no per-chunk allocation —
-  this is the actual read-side ceiling at multi-gigabit rates). Lane count is auto-derived from
-  the browser's per-origin connection budget, capped by the user's configured ceiling.
+  this is the actual read-side ceiling at multi-gigabit rates). Automatic stream policy uses the
+  browser's per-origin connection budget, bounded by the configured H1 ceiling, and one request
+  stream for HTTP/2/HTTP/3.
 - **Upload** — `upload-worker.ts` builds one incompressible Blob "pool" via
   `crypto.getRandomValues` (generated once, then sliced with zero-copy views — never
   regenerated per request), and POSTs adaptively-sized slices toward a 500ms target
@@ -213,10 +214,11 @@ _same_ primed connection, `onStageEnd`). Two backends exist:
   (`upload-progress-worker.ts`) is the sole source of the byte count and rate, exactly mirroring
   the server's elapsed-time clock described above.
 - **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
-  own worker pool, aggregation cadence, and stall tracking. The browser's per-origin connection
-  budget is split between the two directions (after reserving buses for the ping/upload-progress
-  channels), with the user's ceiling applied per direction exactly as it is for a standalone
-  download or upload stage.
+  own worker pool, aggregation cadence, and stall tracking. Automatic HTTP/1.1 splits the
+  available connection budget between directions after reserving control channels and applies the
+  configured ceiling to each share; automatic HTTP/2 and HTTP/3 use one multiplexed stream per
+  direction. Forced policy starts the exact configured request count independently for each
+  direction and protocol. HTTP/1.1 requests over the browser's connection limit can be queued.
 
 ### Settings
 
@@ -242,13 +244,13 @@ A production build has only Setup, so no tab bar is rendered at all.
 
 **Setup — Advanced tier**
 
-| Setting                                       | Default | Notes                                                                        |
-| --------------------------------------------- | ------- | ---------------------------------------------------------------------------- |
-| Adaptive early finish                         | on      | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms). |
-| Ping velocity                                 | Medium  | Instant / Medium / Slow pacer.                                               |
-| Max parallel streams                          | 6       | Ceiling only — actual lane count is auto-derived.                            |
-| Skip loaded latency when latency stage is off | on      |                                                                              |
-| Chunked download (experimental)               | off     | See Experimental features.                                                   |
+| Setting                                       | Default   | Notes                                                                                                    |
+| --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
+| Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                             |
+| Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                           |
+| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2/H3 use one per direction. Forced uses the configured count exactly for every protocol. |
+| Skip loaded latency when latency stage is off | on        |                                                                                                          |
+| Chunked download (experimental)               | off       | See Experimental features.                                                                               |
 
 Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
 `PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while the selected `/probe`'s
@@ -274,7 +276,7 @@ family and detection source from `/probe`, plus client build version), **Engine*
 runner's name, per-runner version, and its supported transports per role — latency vs throughput,
 from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
 `/preflight`), and **Connection** (selected target, browser-verified and server-observed protocols, transfer/latency
-transports, stream ceiling, and pre-test ping). The
+transports, resolved automatic or forced stream policy, and pre-test ping). The
 `capabilities.targets` object advertises nullable protocol targets, exact origins, and exact routes.
 
 ### Web Workers
@@ -294,9 +296,9 @@ rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Covered s
 `compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
 test double, exercising the full phase-lifecycle/stall/early-finish/EMA behavior without a real
 network or worker), `runner/dummy.ts`, `state/persistence.ts`, `runner/workers/autosize.ts`,
-`runner/workers/backoff.ts`, `runner/workers/rttEstimator.ts`, `runner/real/laneBudget.ts`,
+`runner/workers/backoff.ts`, `runner/workers/rttEstimator.ts`, `runner/real/streamPolicy.ts`,
 `runner/real/wire.ts`, `runner/real/backendPure.ts` (URL/median/ping-need/lane-stagger helpers
-split out of `RealRunner.ts`, mirroring `laneBudget.ts`, so they're testable without pulling in
+split out of `RealRunner.ts`, so they're testable without pulling in
 `RealRunner.ts`'s build-time `BUILD` defines), `canvas/hoverInterp.ts` and `canvas/gaugeSweep.ts`
 (pure interpolation/mapping math split out of `ChartEngine.ts`/`GaugeEngine.ts`), `runner/evaluation.ts`,
 `runner/schedule.ts`, and `state/stageGuards.ts`. Follow `state/stageGuards.test.ts` as the style

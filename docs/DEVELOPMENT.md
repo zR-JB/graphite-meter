@@ -134,7 +134,8 @@ All flags are editable again inside the TUI before a run starts:
 | `-download-duration`      | `10s`                     | Download stage window.                                                                    |
 | `-upload-duration`        | `10s`                     | Upload stage window.                                                                      |
 | `-bidirectional-duration` | `10s`                     | Bidirectional stage window.                                                               |
-| `-streams`                | `4`                       | Parallel transfer lanes (clamped 1–128).                                                  |
+| `-auto-streams`           | `6`                       | Maximum automatic HTTP/1 streams per direction. H2/H3 automatic remains one.              |
+| `-streams`                | `0`                       | `0` selects automatic; `1–128` forces an exact count per direction for every protocol.    |
 | `-ping`                   | `medium`                  | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration. |
 | `-loaded-latency`         | `true`                    | Measure RTT while a transfer stage is running.                                            |
 | `-insecure`               | `false`                   | Skip TLS certificate verification.                                                        |
