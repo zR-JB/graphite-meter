@@ -32,6 +32,7 @@ type Event struct {
 	Direction  Direction
 	Message    string
 	Preflight  *wire.Preflight
+	Probe      *wire.Probe
 	Throughput ThroughputSample
 	Latency    LatencySample
 	Result     *Result

@@ -265,7 +265,7 @@ func TestRowCount(t *testing.T) {
 		{sectionServers, len(serverPresets) + 1},
 		{sectionStages, 5},
 		{sectionTiming, 6},
-		{sectionNetwork, 3},
+		{sectionNetwork, 4},
 		{sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -375,7 +375,7 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 		rows    int
 	}{
 		{"servers", sectionServers, len(serverPresets) + 1},
-		{"network", sectionNetwork, 3},
+		{"network", sectionNetwork, 4},
 		{"run (single row)", sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -549,7 +549,7 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 func TestActivate_NetworkStreamsStartsEdit(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionNetwork
-	m.row = 0
+	m.row = 1
 	next, _ := m.activate()
 	m = next.(model)
 	if m.edit.kind != editInt {
@@ -560,7 +560,7 @@ func TestActivate_NetworkStreamsStartsEdit(t *testing.T) {
 func TestActivate_NetworkTLSToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionNetwork
-	m.row = 1
+	m.row = 2
 	before := m.cfg.InsecureSkipTLSVerify
 	next, _ := m.activate()
 	m = next.(model)
@@ -574,7 +574,7 @@ func TestActivate_NetworkReset(t *testing.T) {
 	m.cfg.ParallelStreams = 99
 	m.cfg.BaseURL = "http://changed.example"
 	m.section = sectionNetwork
-	m.row = 2
+	m.row = 3
 	next, _ := m.activate()
 	m = next.(model)
 	want := goclient.DefaultConfig()

@@ -11,6 +11,7 @@ type StageSet struct {
 
 type Config struct {
 	BaseURL                string
+	Protocol               string
 	Stages                 StageSet
 	Warmup                 time.Duration
 	LatencyDuration        time.Duration
@@ -31,6 +32,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		BaseURL:                "http://127.0.0.1:8765",
+		Protocol:               "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
 		LatencyDuration:        4 * time.Second,
@@ -51,6 +53,13 @@ func DefaultConfig() Config {
 func (c Config) normalized() Config {
 	if c.BaseURL == "" {
 		c.BaseURL = "http://127.0.0.1:8765"
+	}
+	switch c.Protocol {
+	case "", "auto":
+		c.Protocol = "auto"
+	case "http1", "http2", "http3":
+	default:
+		c.Protocol = "invalid"
 	}
 	if c.Warmup < 0 {
 		c.Warmup = 0

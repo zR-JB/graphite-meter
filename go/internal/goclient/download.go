@@ -11,15 +11,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time.Duration, start <-chan struct{}) (Result, error) {
-	path := r.preflight.Capabilities.Endpoints.Download
-	if path == "" {
-		path = wire.DefaultEndpoints().Download
-	}
+	path := r.routes().Download
 	base, err := r.endpoint(path)
 	if err != nil {
 		return Result{}, err

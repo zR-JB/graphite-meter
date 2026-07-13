@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestHTTPEndpoint(t *testing.T) {
@@ -24,6 +26,23 @@ func TestHTTPEndpoint(t *testing.T) {
 		if got != c.want {
 			t.Errorf("httpEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
 		}
+	}
+}
+
+func TestSelectTarget(t *testing.T) {
+	h1 := &wire.Target{Origin: "http://meter:8765", Routes: wire.DefaultRoutes(true)}
+	h2 := &wire.Target{Origin: "https://meter:8443", Routes: wire.DefaultRoutes(true)}
+	pf := wire.Preflight{Capabilities: wire.Capabilities{Targets: wire.Targets{HTTP1: h1, HTTP2: h2}}}
+	for _, tc := range []struct{ protocol, base, want string }{
+		{"auto", "http://meter:8765", "http1"}, {"http2", "http://discovery", "http2"},
+	} {
+		_, got, err := selectTarget(Config{Protocol: tc.protocol, BaseURL: tc.base}, pf)
+		if err != nil || got != tc.want {
+			t.Errorf("select %s = %s, %v", tc.protocol, got, err)
+		}
+	}
+	if _, _, err := selectTarget(Config{Protocol: "http3"}, pf); err == nil {
+		t.Fatal("unavailable H3 selected")
 	}
 }
 
@@ -52,7 +71,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"clientIp":"1.2.3.4","server":{"name":"srv","host":"h","port":8765},"preTestPingMs":12.5,"engineVersion":"1.0","protocolNegotiated":"h1"}`))
+			w.Write([]byte(`{"server":{"name":"srv","host":"h","port":8765},"engineVersion":"1.0","capabilities":{"targets":{"http1":null,"http2":null,"http3":null}}}`))
 		}))
 		defer srv.Close()
 
@@ -60,14 +79,11 @@ func TestGetPreflight(t *testing.T) {
 		if err != nil {
 			t.Fatalf("getPreflight() error: %v", err)
 		}
-		if pf.ClientIP != "1.2.3.4" {
-			t.Errorf("ClientIP = %q, want 1.2.3.4", pf.ClientIP)
-		}
 		if pf.Server.Name != "srv" || pf.Server.Port != 8765 {
 			t.Errorf("Server = %+v, unexpected", pf.Server)
 		}
-		if pf.PreTestPingMs != 12.5 {
-			t.Errorf("PreTestPingMs = %v, want 12.5", pf.PreTestPingMs)
+		if pf.EngineVersion != "1.0" {
+			t.Errorf("EngineVersion = %q", pf.EngineVersion)
 		}
 	})
 

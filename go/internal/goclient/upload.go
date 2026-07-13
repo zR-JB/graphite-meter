@@ -70,10 +70,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
-	path := r.preflight.Capabilities.Endpoints.UploadSession
-	if path == "" {
-		path = wire.DefaultEndpoints().UploadSession
-	}
+	path := r.routes().UploadSession
 	u, err := r.endpoint(path)
 	if err != nil {
 		return "", err
@@ -101,10 +98,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 }
 
 func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte) {
-	path := r.preflight.Capabilities.Endpoints.Upload
-	if path == "" {
-		path = wire.DefaultEndpoints().Upload
-	}
+	path := r.routes().Upload
 	base, err := r.endpoint(path)
 	if err != nil {
 		return
@@ -191,11 +185,16 @@ type uploadProgress struct {
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
-	path := r.preflight.Capabilities.Endpoints.WSUpload
-	if path == "" {
-		path = wire.DefaultEndpoints().WSUpload
+	routes := r.routes()
+	if routes.WebSocket == nil {
+		return nil, fmt.Errorf("selected target has no upload progress websocket")
 	}
-	base, err := wsEndpoint(r.cfg.BaseURL, path)
+	path := routes.WebSocket.UploadProgress
+	baseOrigin := r.cfg.BaseURL
+	if r.target != nil {
+		baseOrigin = r.target.Origin
+	}
+	base, err := wsEndpoint(baseOrigin, path)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +205,7 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 	q := u.Query()
 	q.Set("id", id)
 	u.RawQuery = q.Encode()
-	conn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
+	conn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return nil, err
 	}

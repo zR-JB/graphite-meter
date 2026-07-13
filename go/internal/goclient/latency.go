@@ -12,15 +12,20 @@ import (
 )
 
 func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, start <-chan struct{}) (LatencyStats, error) {
-	path := r.preflight.Capabilities.Endpoints.WSPing
-	if path == "" {
-		path = wire.DefaultEndpoints().WSPing
+	routes := r.routes()
+	if routes.WebSocket == nil {
+		return LatencyStats{}, fmt.Errorf("selected target has no latency websocket")
 	}
-	u, err := wsEndpoint(r.cfg.BaseURL, path)
+	path := routes.WebSocket.Ping
+	baseOrigin := r.cfg.BaseURL
+	if r.target != nil {
+		baseOrigin = r.target.Origin
+	}
+	u, err := wsEndpoint(baseOrigin, path)
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
+	conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return LatencyStats{}, err
 	}

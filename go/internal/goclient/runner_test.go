@@ -218,13 +218,20 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 
 /* ---- Run() stage-orchestration end-to-end ---- */
 
+func mountDiscovery(mux *http.ServeMux) {
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test", Host: r.Host, Port: 80}, EngineVersion: "test", Capabilities: wire.Capabilities{Targets: wire.Targets{HTTP1: &wire.Target{Origin: "http://" + r.Host, Routes: wire.DefaultRoutes(true)}}}})
+	})
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+	})
+}
+
 func newDownloadOnlyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	})
+	mountDiscovery(mux)
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
 		if err != nil || n <= 0 {
@@ -283,10 +290,7 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 func newLatencyOnlyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	})
+	mountDiscovery(mux)
 	mux.Handle("/ws/ping", echoPingHandler())
 	return httptest.NewServer(mux)
 }
@@ -381,10 +385,7 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 	started := time.Now()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	})
+	mountDiscovery(mux)
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
 		if err != nil || n <= 0 {

@@ -7,42 +7,69 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
+
+	"github.com/quic-go/quic-go/http3"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	cfg = cfg.normalized()
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
-		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
-		MaxConnsPerHost:       0,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
-		ExpectContinueTimeout: cfg.ExpectContinueTimeout,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
-		// 256 KiB socket buffers (vs the 4 KiB default) so a saturated link moves
-		// each direction in large reads/writes instead of thousands of tiny
-		// syscalls — the upload write side felt this most (see uploadLane).
-		WriteBufferSize: 256 * 1024,
-		ReadBufferSize:  256 * 1024,
+	baseTransport := func() *http.Transport {
+		return &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     false,
+			MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
+			MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+			MaxConnsPerHost:       0,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
+			ExpectContinueTimeout: cfg.ExpectContinueTimeout,
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
+			// 256 KiB socket buffers (vs the 4 KiB default) so a saturated link moves
+			// each direction in large reads/writes instead of thousands of tiny
+			// syscalls — the upload write side felt this most (see uploadLane).
+			WriteBufferSize: 256 * 1024,
+			ReadBufferSize:  256 * 1024,
+		}
 	}
-	defer tr.CloseIdleConnections()
-	hc := &http.Client{Transport: tr}
+	discoveryTransport := baseTransport()
+	defer discoveryTransport.CloseIdleConnections()
+	discoveryClient := &http.Client{Transport: discoveryTransport}
 
-	pf, err := getPreflight(ctx, hc, cfg.BaseURL)
+	pf, err := getPreflight(ctx, discoveryClient, cfg.BaseURL)
 	if err != nil {
 		emit(Event{Kind: EventError, At: time.Now(), Err: err})
 		return err
 	}
-	emit(Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf})
+	target, protocol, err := selectTarget(cfg, pf)
+	if err != nil {
+		emit(Event{Kind: EventError, At: time.Now(), Err: err})
+		return err
+	}
+	transfer, closeTransfer := protocolClient(cfg, protocol, baseTransport)
+	defer closeTransfer()
+	probe, err := getProbe(ctx, transfer, target)
+	if err != nil {
+		emit(Event{Kind: EventError, At: time.Now(), Err: err})
+		return err
+	}
+	expected := map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"}[protocol]
+	if probe.ProtocolNegotiated != expected {
+		return fmt.Errorf("selected %s but probe negotiated %s", protocol, probe.ProtocolNegotiated)
+	}
+	emit(Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, Message: protocol})
 
-	r := runner{cfg: cfg, http: hc, preflight: pf, emit: emit}
+	wsTransport := baseTransport()
+	wsp := &http.Protocols{}
+	wsp.SetHTTP1(true)
+	wsTransport.Protocols = wsp
+	defer wsTransport.CloseIdleConnections()
+	r := runner{cfg: cfg, http: transfer, websocketHTTP: &http.Client{Transport: wsTransport}, target: target, preflight: pf, probe: probe, emit: emit}
 	if cfg.Stages.Latency {
 		if err := r.runLatencyStage(ctx, "latency", false, cfg.LatencyDuration); err != nil {
 			return r.fail(err)
@@ -68,10 +95,13 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 }
 
 type runner struct {
-	cfg       Config
-	http      *http.Client
-	preflight wire.Preflight
-	emit      func(Event)
+	cfg           Config
+	http          *http.Client
+	websocketHTTP *http.Client
+	target        *wire.Target
+	preflight     wire.Preflight
+	probe         wire.Probe
+	emit          func(Event)
 	// Idle RTT captured from the latency stage; used to stretch later stages'
 	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
 	idleRTT time.Duration
@@ -257,5 +287,58 @@ func (r *runner) endpoint(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("empty endpoint path")
 	}
-	return httpEndpoint(r.cfg.BaseURL, path)
+	base := r.cfg.BaseURL
+	if r.target != nil {
+		base = r.target.Origin
+	}
+	return httpEndpoint(base, path)
+}
+
+func (r *runner) routes() wire.Routes {
+	if r.target != nil {
+		return r.target.Routes
+	}
+	return wire.DefaultRoutes(true)
+}
+
+func selectTarget(cfg Config, pf wire.Preflight) (*wire.Target, string, error) {
+	targets := map[string]*wire.Target{"http1": pf.Capabilities.Targets.HTTP1, "http2": pf.Capabilities.Targets.HTTP2, "http3": pf.Capabilities.Targets.HTTP3}
+	protocol := cfg.Protocol
+	if protocol == "invalid" {
+		return nil, "", fmt.Errorf("protocol must be auto, http1, http2, or http3")
+	}
+	if protocol == "auto" {
+		base, err := url.Parse(cfg.BaseURL)
+		if err != nil {
+			return nil, "", err
+		}
+		for _, name := range []string{"http1", "http2", "http3"} {
+			if t := targets[name]; t != nil {
+				u, _ := url.Parse(t.Origin)
+				if u.Scheme == base.Scheme && u.Host == base.Host {
+					return t, name, nil
+				}
+			}
+		}
+		protocol = "http1"
+	}
+	if targets[protocol] == nil {
+		return nil, "", fmt.Errorf("%s target unavailable", protocol)
+	}
+	return targets[protocol], protocol, nil
+}
+
+func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {
+	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify} //nolint:gosec
+	if protocol == "http3" {
+		tr := &http3.Transport{TLSClientConfig: tlsConfig}
+		return &http.Client{Transport: tr}, func() { _ = tr.Close() }
+	}
+	tr := makeHTTP()
+	tr.TLSClientConfig = tlsConfig
+	p := &http.Protocols{}
+	p.SetHTTP1(protocol == "http1")
+	p.SetHTTP2(protocol == "http2")
+	tr.Protocols = p
+	return &http.Client{Transport: tr}, tr.CloseIdleConnections
 }

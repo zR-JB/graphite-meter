@@ -22,6 +22,7 @@ func main() {
 	var ping string
 	var showVersion bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "server base URL")
+	flag.StringVar(&cfg.Protocol, "protocol", cfg.Protocol, "network target: auto, http1, http2, or http3")
 	flag.StringVar(&stages, "stages", "latency,download,upload", "comma-separated stages: latency,download,upload,bidirectional")
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
 	flag.DurationVar(&cfg.LatencyDuration, "latency-duration", cfg.LatencyDuration, "latency measurement duration")
@@ -451,12 +452,21 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionNetwork:
 		switch m.row {
 		case 0:
+			protocols := []string{"auto", "http1", "http2", "http3"}
+			for i, p := range protocols {
+				if p == m.cfg.Protocol {
+					m.cfg.Protocol = protocols[(i+1)%len(protocols)]
+					break
+				}
+			}
+			m.notice = "Protocol target updated."
+		case 1:
 			m.edit = editState{kind: editInt, field: "streams", value: fmt.Sprintf("%d", m.cfg.ParallelStreams)}
 			m.notice = "Editing parallel streams. Use 1 through 128."
-		case 1:
+		case 2:
 			m.cfg.InsecureSkipTLSVerify = !m.cfg.InsecureSkipTLSVerify
 			m.notice = "TLS verification setting updated."
-		case 2:
+		case 3:
 			m.cfg = goclient.DefaultConfig()
 			m.notice = "Configuration reset to defaults."
 		}
@@ -518,7 +528,11 @@ func (m *model) apply(e goclient.Event) {
 	switch e.Kind {
 	case goclient.EventPreflight:
 		if e.Preflight != nil {
-			m.server = fmt.Sprintf("%s %s:%d %s", e.Preflight.Server.Name, e.Preflight.Server.Host, e.Preflight.Server.Port, e.Preflight.Server.Location)
+			observed := ""
+			if e.Probe != nil {
+				observed = "/" + e.Probe.ProtocolNegotiated
+			}
+			m.server = fmt.Sprintf("%s %s:%d %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Host, e.Preflight.Server.Port, e.Preflight.Server.Location, e.Message, observed)
 			m.status = "connected"
 		}
 	case goclient.EventStage:
@@ -595,7 +609,7 @@ func (m model) rowCount() int {
 	case sectionTiming:
 		return 6
 	case sectionNetwork:
-		return 3
+		return 4
 	case sectionRun:
 		return 1
 	default:
@@ -811,6 +825,7 @@ func (m model) networkView(w int) string {
 		streamNote = "editing"
 	}
 	rows := []string{
+		valueLine("Protocol", m.cfg.Protocol, "selected target"),
 		valueLine("Streams", streamValue, streamNote),
 		toggleLine("Skip TLS verification", m.cfg.InsecureSkipTLSVerify, "for local/self-signed certs"),
 		warnStyle.Render("Reset to defaults"),

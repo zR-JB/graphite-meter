@@ -36,6 +36,30 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	return pf, nil
 }
 
+func getProbe(ctx context.Context, hc *http.Client, target *wire.Target) (wire.Probe, error) {
+	u, err := httpEndpoint(target.Origin, target.Routes.Probe)
+	if err != nil {
+		return wire.Probe{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return wire.Probe{}, err
+	}
+	res, err := hc.Do(req)
+	if err != nil {
+		return wire.Probe{}, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return wire.Probe{}, fmt.Errorf("probe returned HTTP %d", res.StatusCode)
+	}
+	var p wire.Probe
+	if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+		return wire.Probe{}, err
+	}
+	return p, nil
+}
+
 func httpEndpoint(base, path string) (string, error) {
 	return url.JoinPath(strings.TrimRight(base, "/"), path)
 }
