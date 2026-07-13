@@ -91,7 +91,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   pingConcurrency: "medium",
   parallelStreams: 6,
   experimentalChunkedDownload: false,
-  endpoint: { host: "auto", port: 443 },
+  endpoint: { host: "auto", port: 443, protocol: "current" },
   compensation: {
     profile: "lan",
     transport: "auto",

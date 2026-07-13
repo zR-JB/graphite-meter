@@ -70,12 +70,16 @@
         title: "Connection",
         rows: [
           {
-            label: "Browser hop",
+            label: "Selected target",
+            value: i?.selectedTarget ?? "Current origin",
+          },
+          {
+            label: "Verified browser",
             value: i?.firstHopProtocol ?? "Scheme fallback",
           },
-          { label: "Backend hop", value: i?.protocolNegotiated ?? "—" },
-          { label: "Transfer", value: "HTTP streams" },
-          { label: "Latency", value: "WebSocket" },
+          { label: "Server observed", value: i?.protocolNegotiated ?? "—" },
+          { label: "Transfer", value: "Fetch streams" },
+          { label: "Latency / progress", value: "WebSocket over TCP" },
           {
             label: "Streams",
             value: `Automatic · up to ${store.config.parallelStreams}`,

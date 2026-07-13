@@ -175,6 +175,28 @@
 
   <section class="panel wide primary">
     <h3>Test plan</h3>
+    <label>
+      <span>Network target</span>
+      <select disabled={running} bind:value={store.config.endpoint.protocol}>
+        <option value="current">Current origin</option>
+        <option
+          value="http1"
+          disabled={store.infra?.availableTargets?.http1 === false}
+          >HTTP/1.1</option
+        >
+        <option
+          value="http2"
+          disabled={store.infra?.availableTargets?.http2 === false}
+          >HTTP/2</option
+        >
+        <option
+          value="http3"
+          disabled={store.infra?.availableTargets?.http3 === false}
+          >HTTP/3</option
+        >
+      </select>
+    </label>
+    <p class="hint">Secure pages cannot select the clear HTTP/1.1 target.</p>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
         <button
