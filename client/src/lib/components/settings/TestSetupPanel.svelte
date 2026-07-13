@@ -33,10 +33,11 @@
     { key: "downloadMs", label: "Download", inputLabel: "Download ms" },
     { key: "uploadMs", label: "Upload", inputLabel: "Upload ms" },
   ] as const;
-  const PRESET_SUMMARY_FIELDS = [
-    ...DUR_FIELDS,
-    { key: "bidirectionalMs", label: "Bi-dir", inputLabel: "Bi-dir ms" },
-  ] as const;
+  const BIDIRECTIONAL_FIELD = {
+    key: "bidirectionalMs",
+    label: "Bi-dir",
+    inputLabel: "Bidirectional ms",
+  } as const;
 
   function durationsEqual(a: Durations, b: Durations): boolean {
     return DURATION_KEYS.every((key) => a[key] === b[key]);
@@ -53,15 +54,14 @@
     durationMode = k;
     if (k !== "custom") store.config.duration = { ...DURATION_PRESETS[k] };
   }
-  function onDurationEdit() {
-    durationMode = "custom";
-  }
-
   const presetCells = $derived.by<{ label: string; value: string }[]>(() => {
     if (durationMode === "custom") return [];
     const d = DURATION_PRESETS[durationMode];
     const s = (ms: number) => `${+(ms / 1000).toFixed(1)}s`;
-    return PRESET_SUMMARY_FIELDS.map((f) => ({
+    const fields = store.config.stages.bidirectional
+      ? [...DUR_FIELDS, BIDIRECTIONAL_FIELD]
+      : DUR_FIELDS;
+    return fields.map((f) => ({
       label: f.label,
       value: s(d[f.key]),
     }));
@@ -171,17 +171,15 @@
 </script>
 
 <div class="setup-grid">
-  <!-- "Run" tier: settings a user plausibly changes every session. -->
-  <h2 class="tier-label">Run</h2>
+  <h2 class="tier-label">Test</h2>
 
-  <!-- Duration -->
-  <section class="panel">
-    <h3>Duration</h3>
-    <div class="seg" role="tablist" aria-label="Duration preset">
+  <section class="panel wide primary">
+    <h3>Test plan</h3>
+    <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
         <button
-          role="tab"
-          aria-selected={durationMode === k}
+          type="button"
+          aria-pressed={durationMode === k}
           class:active={durationMode === k}
           disabled={running}
           onclick={() => applyPreset(k)}
@@ -190,8 +188,13 @@
         </button>
       {/each}
     </div>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.stages.bidirectional}
+      label="Include concurrent download + upload"
+    />
     {#if durationMode === "custom"}
-      <div class="two">
+      <div class="duration-fields">
         {#each DUR_FIELDS as f (f.key)}
           <label>
             <span>{f.inputLabel}</span>
@@ -200,13 +203,24 @@
               min="0"
               step="500"
               disabled={running}
-              oninput={onDurationEdit}
               bind:value={store.config.duration[f.key]}
             />
           </label>
         {/each}
+        {#if store.config.stages.bidirectional}
+          <label>
+            <span>{BIDIRECTIONAL_FIELD.inputLabel}</span>
+            <input
+              type="number"
+              min="0"
+              step="500"
+              disabled={running}
+              bind:value={store.config.duration.bidirectionalMs}
+            />
+          </label>
+        {/if}
       </div>
-      <p class="hint">Set each stage's duration in milliseconds.</p>
+      <p class="hint">Custom stage durations are in milliseconds.</p>
     {:else}
       <div class="dur-summary">
         {#each presetCells as c (c.label)}
@@ -217,55 +231,13 @@
         {/each}
       </div>
     {/if}
-  </section>
-
-  <!-- Bidirectional -->
-  <section class="panel">
-    <h3>Bidirectional</h3>
-    <Switch
-      disabled={running}
-      bind:checked={store.config.stages.bidirectional}
-      label="Bidirectional (concurrent down + up)"
-    />
-    <label>
-      <span>Bidirectional duration (ms)</span>
-      <input
-        type="number"
-        min="0"
-        step="500"
-        disabled={running || !store.config.stages.bidirectional}
-        bind:value={store.config.duration.bidirectionalMs}
-      />
-    </label>
     <p class="hint">
-      Adds a combined down+up phase for real-world two-way load.
+      Bidirectional adds a real-world two-way load phase. Named presets apply
+      the matching preset duration automatically.
     </p>
   </section>
 
-  <!-- Gauge Scale -->
-  <section class="panel">
-    <h3>Gauge Scale</h3>
-    <Switch
-      checked={vizAuto}
-      onToggle={setVizAuto}
-      label="Auto throughput ceiling"
-    />
-    <label>
-      <span>Throughput max {store.unitLabel}</span>
-      <input
-        type="number"
-        min="1"
-        step="1"
-        disabled={vizAuto}
-        value={vizAuto ? "" : Number(vizDisplay.toFixed(2))}
-        oninput={onVizInput}
-      />
-    </label>
-    <p class="hint">
-      Manual Y-axis ceiling for the gauge and chart; auto self-scales to the
-      peak.
-    </p>
-  </section>
+  <h2 class="tier-label">Results</h2>
 
   <!-- Display Units -->
   <section class="panel">
@@ -315,104 +287,28 @@
     </p>
   </section>
 
-  <!-- "Tuning" tier: set once, rarely revisited. -->
-  <h2 class="tier-label">Tuning</h2>
-
-  <!-- Early Finish -->
   <section class="panel">
-    <h3>Early Finish</h3>
+    <h3>Gauge Scale</h3>
     <Switch
-      disabled={running}
-      bind:checked={store.config.adaptive.enabled}
-      label="Enable adaptive early phase completion"
+      checked={vizAuto}
+      onToggle={setVizAuto}
+      label="Scale throughput automatically"
     />
-    <div class="two">
+    {#if !vizAuto}
       <label>
-        <span>Min coverage</span>
+        <span>Throughput max {store.unitLabel}</span>
         <input
           type="number"
-          min="0.25"
-          max="1"
-          step="0.01"
-          disabled={running}
-          bind:value={store.config.adaptive.minCoverageRatio}
+          min="1"
+          step="1"
+          value={Number(vizDisplay.toFixed(2))}
+          oninput={onVizInput}
         />
       </label>
-      <label>
-        <span use:tooltip={JARGON.stability}>Stability</span>
-        <input
-          type="number"
-          min="0.5"
-          max="0.99"
-          step="0.01"
-          disabled={running}
-          bind:value={store.config.adaptive.stabilityThreshold}
-        />
-      </label>
-      <label>
-        <span>Glide (ms)</span>
-        <input
-          type="number"
-          min="300"
-          max="1500"
-          step="50"
-          disabled={running}
-          bind:value={store.config.adaptive.glideMs}
-        />
-      </label>
-    </div>
+    {/if}
     <p class="hint">
-      Finishes early once the reading stabilizes, instead of running full
-      duration.
-    </p>
-  </section>
-
-  <!-- Download Engine -->
-  <section class="panel">
-    <h3>Download Engine</h3>
-    <Switch
-      disabled={running}
-      bind:checked={store.config.experimentalChunkedDownload}
-      label="Chunked download (experimental)"
-    />
-    <p class="hint">
-      Uses adaptively-sized chunks instead of one long stream per lane
-      (experimental).
-    </p>
-  </section>
-
-  <!-- Connections & Timing -->
-  <section class="panel">
-    <h3>Connections &amp; Timing</h3>
-    <label>
-      <span>Ping velocity</span>
-      <select disabled={running} bind:value={store.config.pingConcurrency}>
-        <option value="instant">Instant</option>
-        <option value="medium">Medium</option>
-        <option value="slow">Slow</option>
-      </select>
-    </label>
-    <label>
-      <span>Max parallel streams</span>
-      <input
-        type="number"
-        min="1"
-        max="6"
-        step="1"
-        disabled={running}
-        bind:value={store.config.parallelStreams}
-      />
-    </label>
-    <p class="hint">
-      Lanes are chosen automatically per phase; this only caps the maximum.
-    </p>
-    <Switch
-      disabled={running}
-      bind:checked={store.config.skipLoadedLatencyWhenStageOff}
-      label="Skip loaded-latency when the latency stage is off"
-    />
-    <p class="hint">
-      Also skips under-load pings when the latency stage itself is off.
+      Sets the gauge and chart ceiling; automatic mode follows the measured
+      peak.
     </p>
   </section>
 
@@ -508,13 +404,116 @@
       </div>
     </details>
   </section>
+
+  <h2 class="tier-label">Advanced</h2>
+
+  <!-- Early Finish -->
+  <section class="panel">
+    <h3>Early Finish</h3>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.adaptive.enabled}
+      label="Enable adaptive early phase completion"
+    />
+    {#if store.config.adaptive.enabled}
+      <div class="two">
+        <label>
+          <span>Min coverage</span>
+          <input
+            type="number"
+            min="0.25"
+            max="1"
+            step="0.01"
+            disabled={running}
+            bind:value={store.config.adaptive.minCoverageRatio}
+          />
+        </label>
+        <label>
+          <span use:tooltip={JARGON.stability}>Stability</span>
+          <input
+            type="number"
+            min="0.5"
+            max="0.99"
+            step="0.01"
+            disabled={running}
+            bind:value={store.config.adaptive.stabilityThreshold}
+          />
+        </label>
+        <label>
+          <span>Glide (ms)</span>
+          <input
+            type="number"
+            min="300"
+            max="1500"
+            step="50"
+            disabled={running}
+            bind:value={store.config.adaptive.glideMs}
+          />
+        </label>
+      </div>
+    {/if}
+    <p class="hint">
+      Finishes early once the reading stabilizes, instead of running full
+      duration.
+    </p>
+  </section>
+
+  <!-- Connections & Timing -->
+  <section class="panel">
+    <h3>Connections &amp; Timing</h3>
+    <label>
+      <span>Ping velocity</span>
+      <select disabled={running} bind:value={store.config.pingConcurrency}>
+        <option value="instant">Instant</option>
+        <option value="medium">Medium</option>
+        <option value="slow">Slow</option>
+      </select>
+    </label>
+    <label>
+      <span>Max parallel streams</span>
+      <input
+        type="number"
+        min="1"
+        max="6"
+        step="1"
+        disabled={running}
+        bind:value={store.config.parallelStreams}
+      />
+    </label>
+    <p class="hint">
+      Lanes are chosen automatically per phase; this only caps the maximum.
+    </p>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      label="Skip loaded-latency when the latency stage is off"
+    />
+    <p class="hint">
+      Also skips under-load pings when the latency stage itself is off.
+    </p>
+  </section>
+
+  <!-- Download Engine -->
+  <section class="panel">
+    <h3>Download Engine</h3>
+    <Switch
+      disabled={running}
+      bind:checked={store.config.experimentalChunkedDownload}
+      label="Chunked download (experimental)"
+    />
+    <p class="hint">
+      Uses adaptively-sized chunks instead of one long stream per lane
+      (experimental).
+    </p>
+  </section>
 </div>
 
 <style>
   .setup-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
     gap: 12px;
+    container-type: inline-size;
   }
   .panel {
     display: grid;
@@ -533,10 +532,12 @@
     grid-column: 1 / -1;
   }
 
-  /* Tier separators — "Run" (touched every session) vs. "Tuning" (set once,
-     rarely revisited). Plain heading + reorder, not a nested tab: this is
-     still one scrollable screen, just with a visual hierarchy the flat
-     7-section list didn't have before. */
+  .panel.primary {
+    border-color: color-mix(in srgb, var(--brand) 24%, var(--border));
+  }
+
+  /* Tier headings keep one scrollable surface while making frequency and
+     impact clear: test setup, result presentation, then advanced tuning. */
   .tier-label {
     grid-column: 1 / -1;
     margin: 4px 0 -4px;
@@ -604,6 +605,12 @@
   .two {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .duration-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 10px;
   }
 
@@ -733,5 +740,14 @@
   .disclosure-body {
     display: grid;
     gap: 12px;
+  }
+
+  @container (max-width: 360px) {
+    .two {
+      grid-template-columns: 1fr;
+    }
+    .spanned {
+      grid-column: auto;
+    }
   }
 </style>

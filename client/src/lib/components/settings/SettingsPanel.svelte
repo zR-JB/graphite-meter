@@ -1,14 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <SettingsPanel> — advanced settings surface
-   * A thin wrapper over the shared <SidePanel> (left side) so it
-   * looks and behaves exactly like the Connection & telemetry panel.
-   * Owns only the tab switcher + which sub-panel is shown; the shell,
-   * header, backdrop, slide, focus trap and Esc all live in SidePanel.
-   * Two tabs: Test Setup / Developer (dev builds only — a prod build
-   * is Setup-only, so the tab bar itself disappears). All Test-Setup
-   * controls two-way bind to store.config.
-   * ============================================================ */
+  // Settings drawer wrapper and optional developer tab. The shared SidePanel
+  // owns docking, focus, dismissal, and mobile sheet behavior.
   import SidePanel from "../SidePanel.svelte";
   import { store } from "../../state/store.svelte";
   import TestSetupPanel from "./TestSetupPanel.svelte";
@@ -73,7 +65,7 @@
   {onResetWidth}
   side="left"
   title="Settings"
-  kicker="Setup & Tuning"
+  kicker="Test & Display"
   label="Settings"
   width="min(560px, 94vw)"
   toolbar={TABS.length > 1 ? tabs : undefined}
