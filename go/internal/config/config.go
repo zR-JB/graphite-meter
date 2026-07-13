@@ -1,110 +1,55 @@
-// Package config loads server configuration from flags + environment.
-//
-// Defaults favor the "just works" path: plain HTTP/1.1 on :8765, no TLS, no
-// HTTP/3 / Alt-Svc. TLS/h3 support is future work (docs/ARCHITECTURE.md#roadmap);
-// AdvertiseH3 stays false so an h1.1 throughput test is never auto-migrated onto QUIC.
+// Package config loads and validates server configuration.
 package config
 
 import (
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 )
 
-// EngineVersion is overridable at build time via
-//
-//	-ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=1.2.3"
-//
-// The default below is a sentinel for "built without the VERSION build-arg"
-// (e.g. `go run`/`go build` invoked directly, bypassing just/Docker) — it is
-// never bumped by hand. Every real version comes from the git tag via
-// release.yml; see client/package.json's "version" field for the client's
-// equivalent frozen sentinel.
 var EngineVersion = "0.0.0-dev"
 
-// Config is the resolved server configuration.
 type Config struct {
-	// HTTP/1.1 cleartext listen address (default, always on).
-	H1Addr string
-
-	// Reserved for future TLS/HTTP-3 support — see docs/ARCHITECTURE.md#roadmap.
-	H3Addr      string
-	TLSCert     string
-	TLSKey      string
-	AdvertiseH3 bool
-
-	// Externally-reachable origins advertised in /preflight. Empty => derive
-	// from the request Host (correct for direct access; set these behind a
-	// reverse proxy so the client targets the right public URLs).
-	PublicH1Origin  string
-	PublicTLSOrigin string
-	PublicH3Origin  string
-
-	// Server identity surfaced in /preflight.
-	ServerName     string
-	ServerLocation string
-
-	// Build/engine version surfaced in /preflight.
-	EngineVersion string
-
-	// Verbose enables per-second throughput logging on the download/upload
-	// endpoints, so server-observed rates can be compared against kernel
-	// counters or the browser's own figures. Off by default.
-	Verbose bool
-
-	// TrustedProxies are the socket peers allowed to supply client forwarding
-	// headers. Empty by default: remote headers are then ignored.
-	TrustedProxies []netip.Prefix
+	H1Addr, H2Addr, H3Addr                         string
+	EnableH2, EnableH3                             bool
+	TLSCert, TLSKey                                string
+	PublicH1Origin, PublicH2Origin, PublicH3Origin string
+	ServerName, ServerLocation, EngineVersion      string
+	Verbose                                        bool
+	TrustedProxies                                 []netip.Prefix
 }
 
-// Default returns a Config with the baseline defaults.
 func Default() Config {
-	return Config{
-		H1Addr:        ":8765",
-		H3Addr:        ":8443",
-		AdvertiseH3:   false,
-		ServerName:    "graphite-meter",
-		EngineVersion: EngineVersion,
-	}
+	return Config{H1Addr: ":8765", H2Addr: ":8443", H3Addr: ":8444", ServerName: "graphite-meter", EngineVersion: EngineVersion}
 }
 
-// Load builds a Config from the environment, overlaid on Default().
-// Flags (parsed by the caller) take final precedence.
 func Load() (Config, error) {
 	c := Default()
-	if v := os.Getenv("GM_H1_ADDR"); v != "" {
-		c.H1Addr = v
+	stringEnv := []struct {
+		name string
+		dst  *string
+	}{
+		{"GM_H1_ADDR", &c.H1Addr}, {"GM_H2_ADDR", &c.H2Addr}, {"GM_H3_ADDR", &c.H3Addr},
+		{"GM_TLS_CERT", &c.TLSCert}, {"GM_TLS_KEY", &c.TLSKey},
+		{"PUBLIC_H1_ORIGIN", &c.PublicH1Origin}, {"PUBLIC_H2_ORIGIN", &c.PublicH2Origin}, {"PUBLIC_H3_ORIGIN", &c.PublicH3Origin},
+		{"GM_SERVER_NAME", &c.ServerName}, {"GM_SERVER_LOCATION", &c.ServerLocation},
 	}
-	if v := os.Getenv("GM_H3_ADDR"); v != "" {
-		c.H3Addr = v
+	for _, e := range stringEnv {
+		if v := os.Getenv(e.name); v != "" {
+			*e.dst = v
+		}
 	}
-	if v := os.Getenv("GM_TLS_CERT"); v != "" {
-		c.TLSCert = v
+	var err error
+	if c.EnableH2, err = envBool("GM_ENABLE_H2", false); err != nil {
+		return Config{}, err
 	}
-	if v := os.Getenv("GM_TLS_KEY"); v != "" {
-		c.TLSKey = v
+	if c.EnableH3, err = envBool("GM_ENABLE_H3", false); err != nil {
+		return Config{}, err
 	}
-	if v := os.Getenv("GM_ADVERTISE_H3"); v == "1" || v == "true" {
-		c.AdvertiseH3 = true
-	}
-	if v := os.Getenv("PUBLIC_H1_ORIGIN"); v != "" {
-		c.PublicH1Origin = v
-	}
-	if v := os.Getenv("PUBLIC_TLS_ORIGIN"); v != "" {
-		c.PublicTLSOrigin = v
-	}
-	if v := os.Getenv("PUBLIC_H3_ORIGIN"); v != "" {
-		c.PublicH3Origin = v
-	}
-	if v := os.Getenv("GM_SERVER_NAME"); v != "" {
-		c.ServerName = v
-	}
-	if v := os.Getenv("GM_SERVER_LOCATION"); v != "" {
-		c.ServerLocation = v
-	}
-	if v := os.Getenv("GM_VERBOSE"); v == "1" || v == "true" {
-		c.Verbose = true
+	if c.Verbose, err = envBool("GM_VERBOSE", false); err != nil {
+		return Config{}, err
 	}
 	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
 		for _, raw := range strings.Split(v, ",") {
@@ -115,5 +60,52 @@ func Load() (Config, error) {
 			c.TrustedProxies = append(c.TrustedProxies, prefix)
 		}
 	}
-	return c, nil
+	return c, c.Validate()
+}
+
+func envBool(name string, fallback bool) (bool, error) {
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		return fallback, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true":
+		return true, nil
+	case "0", "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true/false or 1/0", name)
+	}
+}
+
+func (c Config) Validate() error {
+	if c.H1Addr == "" {
+		return fmt.Errorf("GM_H1_ADDR must not be empty")
+	}
+	if c.EnableH2 && c.H2Addr == "" {
+		return fmt.Errorf("GM_H2_ADDR must not be empty when HTTP/2 is enabled")
+	}
+	if c.EnableH3 && c.H3Addr == "" {
+		return fmt.Errorf("GM_H3_ADDR must not be empty when HTTP/3 is enabled")
+	}
+	if c.EnableH2 || c.EnableH3 {
+		if c.TLSCert == "" || c.TLSKey == "" {
+			return fmt.Errorf("GM_TLS_CERT and GM_TLS_KEY are required when HTTP/2 or HTTP/3 is enabled")
+		}
+	}
+	if c.EnableH2 && c.EnableH3 && c.H2Addr == c.H3Addr {
+		return fmt.Errorf("GM_H2_ADDR and GM_H3_ADDR must differ because HTTP/3 also binds TCP")
+	}
+	for _, v := range []struct{ name, value, scheme string }{
+		{"PUBLIC_H1_ORIGIN", c.PublicH1Origin, "http"}, {"PUBLIC_H2_ORIGIN", c.PublicH2Origin, "https"}, {"PUBLIC_H3_ORIGIN", c.PublicH3Origin, "https"},
+	} {
+		if v.value == "" {
+			continue
+		}
+		u, err := url.Parse(v.value)
+		if err != nil || u.Scheme != v.scheme || u.Host == "" || u.Path != "" {
+			return fmt.Errorf("%s must be an origin with %s scheme", v.name, v.scheme)
+		}
+	}
+	return nil
 }
