@@ -11,6 +11,19 @@ interface SnapInput {
   releasedAfterMs: number;
 }
 
+export type SheetGestureIntent = "pending" | "drag" | "scroll";
+
+export function sheetGestureIntent(
+  deltaX: number,
+  deltaY: number,
+  scrollTop: number,
+): SheetGestureIntent {
+  if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 10) return "pending";
+  if (deltaY <= 0 || Math.abs(deltaX) > Math.abs(deltaY) || scrollTop > 0)
+    return "scroll";
+  return "drag";
+}
+
 export function shouldDismissSheet({
   distance,
   height,
@@ -19,12 +32,53 @@ export function shouldDismissSheet({
 }: SnapInput): boolean {
   const farEnough = distance >= Math.min(160, height * 0.28);
   const recentFlick =
-    distance >= 48 && velocity >= 0.75 && releasedAfterMs <= 80;
+    distance >= 96 && velocity >= 0.85 && releasedAfterMs <= 80;
   return farEnough || recentFlick;
+}
+
+let pageLockCount = 0;
+let pageState:
+  | {
+      scrollY: number;
+      bodyCss: string;
+      rootOverscroll: string;
+    }
+  | undefined;
+
+function lockPage() {
+  pageLockCount++;
+  if (pageLockCount !== 1) return;
+  const body = document.body;
+  pageState = {
+    scrollY: window.scrollY,
+    bodyCss: body.style.cssText,
+    rootOverscroll: document.documentElement.style.overscrollBehavior,
+  };
+  document.documentElement.style.overscrollBehavior = "none";
+  Object.assign(body.style, {
+    position: "fixed",
+    top: `-${pageState.scrollY}px`,
+    left: "0",
+    right: "0",
+    width: "100%",
+    overflow: "hidden",
+    overscrollBehavior: "none",
+  });
+}
+
+function unlockPage() {
+  if (!pageLockCount || --pageLockCount) return;
+  const state = pageState;
+  pageState = undefined;
+  if (!state) return;
+  document.body.style.cssText = state.bodyCss;
+  document.documentElement.style.overscrollBehavior = state.rootOverscroll;
+  window.scrollTo(0, state.scrollY);
 }
 
 export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   let opts = options;
+  let pageLocked = false;
   let resetTimer: number | undefined;
   let gesture:
     | {
@@ -35,17 +89,19 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
         lastAt: number;
         velocity: number;
         dragging: boolean;
+        scroller?: HTMLElement;
       }
     | undefined;
 
-  const interactive = (target: EventTarget | null) =>
-    target instanceof Element &&
-    !!target.closest(
-      "button, a, label, input, select, textarea, summary, [contenteditable='true']",
-    );
-
   const reducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function setPageLocked(locked: boolean) {
+    if (locked === pageLocked) return;
+    pageLocked = locked;
+    if (locked) lockPage();
+    else unlockPage();
+  }
 
   function reset() {
     window.clearTimeout(resetTimer);
@@ -75,11 +131,14 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     if (
       !opts.enabled ||
       event.touches.length !== 1 ||
-      !window.matchMedia("(max-width: 759px)").matches ||
-      interactive(event.target)
+      !window.matchMedia("(max-width: 759px)").matches
     )
       return;
     const touch = event.touches[0];
+    const scroller =
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>(".panel-body")
+        : null;
     gesture = {
       id: touch.identifier,
       startX: touch.clientX,
@@ -88,6 +147,7 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       lastAt: event.timeStamp,
       velocity: 0,
       dragging: false,
+      scroller: scroller ?? undefined,
     };
   }
 
@@ -101,16 +161,13 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     const deltaY = touch.clientY - gesture.startY;
 
     if (!gesture.dragging) {
-      if (Math.max(Math.abs(deltaX), Math.abs(deltaY)) < 10) return;
-      const body =
-        event.target instanceof Element
-          ? event.target.closest(".panel-body")
-          : null;
-      if (
-        deltaY <= 0 ||
-        Math.abs(deltaX) > Math.abs(deltaY) ||
-        (body instanceof HTMLElement && body.scrollTop > 0)
-      ) {
+      const intent = sheetGestureIntent(
+        deltaX,
+        deltaY,
+        gesture.scroller?.scrollTop ?? 0,
+      );
+      if (intent === "pending") return;
+      if (intent === "scroll") {
         gesture = undefined;
         return;
       }
@@ -169,10 +226,12 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   node.addEventListener("touchmove", onMove, { passive: false });
   node.addEventListener("touchend", onEnd, { passive: true });
   node.addEventListener("touchcancel", onEnd, { passive: true });
+  setPageLocked(opts.enabled);
 
   return {
     update(next: SheetDragOptions) {
       opts = next;
+      setPageLocked(opts.enabled);
       if (!opts.enabled) {
         gesture = undefined;
         reset();
@@ -183,6 +242,7 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       node.removeEventListener("touchmove", onMove);
       node.removeEventListener("touchend", onEnd);
       node.removeEventListener("touchcancel", onEnd);
+      setPageLocked(false);
       reset();
     },
   };
