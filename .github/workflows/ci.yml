@@ -216,10 +216,27 @@ jobs:
           curl -fsS http://localhost:8765/preflight | tee /tmp/preflight.json
           jq -e '
             .engineVersion == "0.0.0-ci"
-            and .capabilities.transports.websocket == true
-            and .capabilities.endpoints.download == "/download"
+            and .capabilities.targets.http1.origin == "http://localhost:8765"
+            and .capabilities.targets.http1.routes.probe == "/probe"
+            and .capabilities.targets.http1.routes.download == "/download"
+            and .capabilities.targets.http1.routes.upload == "/upload"
+            and .capabilities.targets.http1.routes.uploadSession == "/upload/session"
+            and .capabilities.targets.http1.routes.websocket.ping == "/ws/ping"
+            and .capabilities.targets.http1.routes.websocket.uploadProgress == "/ws/upload"
+            and .capabilities.targets.http1.routes.webtransport == null
+            and .capabilities.targets.http2 == null
+            and .capabilities.targets.http3 == null
             and (.server.port | type == "number")
           ' /tmp/preflight.json
+      - name: Smoke /probe
+        run: |
+          curl -fsS http://localhost:8765/probe | tee /tmp/probe.json
+          jq -e '
+            (.clientIp | type == "string" and length > 0)
+            and (.clientIpVersion == 4 or .clientIpVersion == 6)
+            and (.clientIpSource | type == "string" and length > 0)
+            and .protocolNegotiated == "http/1.1"
+          ' /tmp/probe.json
       - name: Smoke built client metadata
         run: |
           curl -fsS http://localhost:8765/version.json | tee /tmp/version.json
