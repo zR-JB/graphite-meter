@@ -11,13 +11,14 @@ services:
     image: ghcr.io/zr-jb/graphite-meter:latest
     ports:
       - "8765:8765" # HTTP/1.1 (default)
-      # Add docker-compose.tls.yml for H2 TCP and H3 TCP+UDP.
+      # Add docker-compose.tls.yml for H1-TLS, H2 TCP, and H3 TCP+UDP.
     environment:
       # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
       # running behind a reverse proxy so /preflight advertises reachable URLs.
       GM_SERVER_NAME: "graphite-meter"
       # GM_SERVER_LOCATION: "fra"
       # GM_H1_ADDR: ":8765"              # listen address inside the container
+      # GM_ENABLE_H1_TLS: "true"
       # GM_ENABLE_H2: "true"
       # GM_ENABLE_H3: "true"
       # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network

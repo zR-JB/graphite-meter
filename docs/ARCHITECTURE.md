@@ -52,44 +52,48 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
 builds the random block, upload store, meters, and endpoint implementations once. Listener-specific
-muxes expose H1 on 8765/tcp, optional H2 on 8443/tcp, and optional H3 on 8444/udp with a TLS H1
-bootstrap on 8444/tcp. The H3 TCP surface has only `/probe` and WebSockets, so transfer requests
-cannot silently fall back to H1. QUIC 0-RTT is disabled to prevent POST replay.
-
-The TLS/TCP protocols on the H2 and H3 origins are companion surfaces, not extra measurement
-targets:
+muxes expose clear H1 on 8765/tcp, optional TLS-only H1 on 8445/tcp, optional H2 on 8443/tcp,
+and optional H3 on 8444/udp with a TLS H1 bootstrap on 8444/tcp. The H3 TCP surface has only
+`/probe` and WebSockets, so transfer requests cannot silently fall back to H1. QUIC 0-RTT is
+disabled to prevent POST replay.
 
 | Listener | Bulk transfer | Companion surface |
 | --- | --- | --- |
 | `:8765/tcp` | HTTP/1.1 | Clear HTTP/1.1 UI, discovery, probe, and WebSockets. |
+| `:8445/tcp` | HTTP/1.1 over TLS | HTTPS UI, discovery, probe, transfers, and WSS. ALPN offers only HTTP/1.1 so browsers cannot silently negotiate H2. |
 | `:8443/tcp` | HTTP/2 | TLS HTTP/1.1 on the same origin for UI, discovery, probe, and WebSockets. |
 | `:8444/udp` | HTTP/3 | `:8444/tcp` TLS HTTP/1.1 for Alt-Svc bootstrap, probe, and WebSockets. |
 
-Keeping each companion on its selected target's origin avoids another certificate, CORS boundary,
-and independently configured control address. It also keeps target discovery atomic. A fourth
-selectable HTTP/1.1-over-TLS transfer target would not make WebSockets more correct; it would mix a
-control-path requirement into the measurement-target list. WebSockets can be bootstrapped over H2
-or H3 Extended CONNECT ([RFC 8441](https://www.rfc-editor.org/rfc/rfc8441),
-[RFC 9220](https://www.rfc-editor.org/rfc/rfc9220)), but the current browser/server path uses the
-widely interoperable HTTP/1.1 Upgrade. The UI therefore reports WebSocket latency/progress as
-TLS/TCP, never as H2/H3 traffic.
+Discovery deliberately separates `capabilities.transfers` from `capabilities.channels`. A run
+freezes three bindings: one bulk transfer target, one latency channel, and one upload-progress
+channel. Automatic channel selection prefers the transfer origin but is not coupled to it. This
+allows H1-TLS throughput with a future H3/WebTransport latency channel without changing the run
+lifecycle or pretending both roles share a protocol. Today every channel is WebSocket over H1;
+WebTransport remains unadvertised. WebSockets over H2 or H3 Extended CONNECT are specified by
+[RFC 8441](https://www.rfc-editor.org/rfc/rfc8441) and
+[RFC 9220](https://www.rfc-editor.org/rfc/rfc9220), but the current implementation uses the widely
+interoperable HTTP/1.1 Upgrade.
+
+The dedicated H1-TLS listener is a real transfer target, not a control fallback. It exists because
+browsers cannot be forced to use H1 on an origin that advertises H2 through ALPN. Operators using a
+reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on that virtual host.
 
 ### Routes
 
 | Path                     | Method     | Transport               | Purpose                                                                                                                                                                                                                      |
 | ------------------------ | ---------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET        | H1/H2 UI origins, JSON  | Logical server identity and nullable H1/H2/H3 targets with exact routes. Refreshed before every run. |
+| `/preflight`             | GET        | UI origins, JSON  | Logical server identity plus independent transfer and channel catalogs. Refreshed before every run. |
 | `/probe`                 | GET        | selected H1/H2/H3       | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes. |
-| `/download`              | GET        | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
-| `/upload/session`        | POST       | HTTP/1.1, JSON          | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket.                                                                  |
-| `/upload`                | POST       | HTTP/1.1, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
+| `/download`              | GET        | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
+| `/upload/session`        | POST       | selected fetch target, JSON          | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket.                                                                  |
+| `/upload`                | POST       | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
 | `/ws/ping`               | WS upgrade | WebSocket               | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                                                           |
 | `/ws/upload`             | WS upgrade | WebSocket               | Pushes the server-measured cumulative byte count for a `?id=` (`BYTES_RECEIVED`, then one final `UPLOAD_COMPLETE`) so upload throughput is judged by what the server actually received, not what the browser thinks it sent. |
-| `/` (anything unmatched) | GET        | HTTP/1.1                | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
+| `/` (anything unmatched) | GET        | H1/H1-TLS/H2 UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
-WebTransport is null in discovery and no route is mounted. The compatible `webtransport-go`
-HTTP/3 setup is present so adding it later does not require replacing the QUIC server, but this
-release makes no WebTransport capability claim.
+No WebTransport channel is advertised and no route is mounted. The compatible
+`webtransport-go` HTTP/3 setup is present so adding it later does not require replacing the QUIC
+server, but this release makes no WebTransport capability claim.
 
 ### Server-authoritative upload accounting
 
@@ -303,7 +307,8 @@ runner's name, per-runner version, and its supported transports per role — lat
 from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
 `/preflight`), and **Connection** (selected target, browser-verified and server-observed protocols, transfer/latency
 transports, resolved automatic or forced stream policy, and pre-test ping). The
-`capabilities.targets` object advertises nullable protocol targets, exact origins, and exact routes.
+`capabilities.transfers` advertises bulk targets while `capabilities.channels` advertises
+independent latency/progress paths. The resolved ids in this drawer are the frozen run plan.
 
 ### Web Workers
 
@@ -348,9 +353,9 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 
 ## TLS security and lifecycle
 
-H2/H3 are opt-in and fail before binding when the PEM pair is missing, mismatched, outside its
-validity window, or incompatible with a configured public TLS hostname. Private-key permissions
-and certificates expiring within 30 days produce warnings. Files are checked every minute and a
-complete valid renewal is swapped atomically; a partial or invalid renewal leaves the last valid
-certificate serving. No private-key bytes are logged. The Compose overlay mounts the complete
-Let's Encrypt tree read-only so `live/` symlinks into `archive/` remain usable.
+H1-TLS, H2, and H3 are opt-in and fail before binding when the PEM pair is missing, mismatched,
+outside its validity window, or incompatible with a configured public TLS hostname. Private-key
+permissions and certificates expiring within 30 days produce warnings. Files are checked every
+minute and a complete valid renewal is swapped atomically; a partial or invalid renewal leaves the
+last valid certificate serving. No private-key bytes are logged. The Compose overlay mounts the
+complete Let's Encrypt tree read-only so `live/` symlinks into `archive/` remain usable.

@@ -76,6 +76,7 @@ RUN CGO_ENABLED=0 go build \
 FROM scratch
 COPY --from=server /graphite-meter /graphite-meter
 EXPOSE 8765/tcp
+EXPOSE 8445/tcp
 EXPOSE 8443/tcp
 EXPOSE 8444/tcp
 EXPOSE 8444/udp

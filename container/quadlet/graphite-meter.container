@@ -19,8 +19,9 @@ Image=ghcr.io/zr-jb/graphite-meter:latest
 # together with the :latest tag above):
 # AutoUpdate=registry
 
-# HTTP/1.1 default; uncomment the three TLS target ports together.
+# Clear HTTP/1.1 default; enable only the TLS targets you need.
 PublishPort=8765:8765
+# PublishPort=8445:8445/tcp
 # PublishPort=8443:8443/tcp
 # PublishPort=8444:8444/tcp
 # PublishPort=8444:8444/udp
@@ -34,6 +35,7 @@ PublishPort=8765:8765
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_H1_ADDR=:8765
+# Environment=GM_ENABLE_H1_TLS=true
 # Environment=GM_ENABLE_H2=true
 # Environment=GM_ENABLE_H3=true
 # Environment=GM_TLS_CERT=/etc/letsencrypt/live/graphite-meter/fullchain.pem
@@ -41,6 +43,7 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Volume=/etc/letsencrypt:/etc/letsencrypt:ro
 # Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 # Environment=PUBLIC_H1_ORIGIN=http://speed.example:8765
+# Environment=PUBLIC_H1_TLS_ORIGIN=https://speed.example:8445
 # Environment=GM_VERBOSE=1
 
 [Service]

@@ -55,8 +55,8 @@ Run the published image (multi-arch: amd64 + arm64):
 docker run -d --name graphite-meter -p 8765:8765 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open **http://localhost:8765** — that's it for the default HTTP/1.1 deployment. Optional native
-H2 and H3 listeners require a valid certificate; use the Compose TLS overlay below.
+Open **http://localhost:8765** — that's it for the default clear HTTP/1.1 deployment. The TLS
+overlay adds a dedicated HTTPS HTTP/1.1 target alongside native H2 and H3.
 For local browser testing, including Firefox's stricter handling of private-root
 HTTP/3 certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
 
@@ -76,7 +76,7 @@ services:
 Enable all protocol targets with `container/docker-compose.tls.yml`. Set `GM_PUBLIC_HOST` and
 mount/provision a certificate in the overlay's complete `/etc/letsencrypt` volume (the complete
 tree is required because `live/` contains symlinks into `archive/`). H3 needs both TCP and UDP
-8444 reachable.
+8444 reachable; the dedicated H1-TLS target uses TCP 8445.
 
 ### Podman + systemd (Quadlet)
 
@@ -91,14 +91,15 @@ Everything is optional; the defaults just work. The common knobs:
 | Env var              | Default                                 | What it does                                                                                                                                 |
 | -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GM_H1_ADDR`         | `:8765`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
+| `GM_ENABLE_H1_TLS`   | off                                     | Enable dedicated HTTPS HTTP/1.1 transfers and WSS on `GM_H1_TLS_ADDR` (`:8445/tcp`).                                                        |
 | `GM_ENABLE_H2`       | off                                     | Enable HTTP/2 transfers plus TLS HTTP/1.1 UI/probe/WebSocket fallback on `GM_H2_ADDR` (`:8443/tcp`).                                         |
 | `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 transfers on `GM_H3_ADDR` UDP plus TLS HTTP/1.1 bootstrap/probe/WebSockets on the same TCP port (`:8444`).                      |
-| `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by H2/H3; renewed files hot-reload.                                                             |
+| `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by native H1-TLS/H2/H3; renewed files hot-reload.                                               |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
 | `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
 | `GM_TRUSTED_PROXIES` | —                                       | Comma-separated proxy CIDRs allowed to supply client IP and scheme forwarding headers.                                                       |
 | `PUBLIC_H1_ORIGIN`   | derived from request                    | Public origin to advertise — set behind a reverse proxy.                                                                                     |
-| `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN` | derived from request host | Exact public TLS origins. Setting one advertises that external target even when its native listener is disabled.                         |
+| `PUBLIC_H1_TLS_ORIGIN` / `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN` | derived from request host | Exact public TLS origins. Setting one advertises that external target even when its native listener is disabled.             |
 | `PUBLIC_TLS_ORIGIN` | — | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence. |
 | `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
 
@@ -115,20 +116,21 @@ Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](doc
 
 ```sh
 just goclient-build            # -> go/graphite-meter-client
-./go/graphite-meter-client -url http://your-server:8765 -protocol auto
+./go/graphite-meter-client -url https://your-server:8445 -transfer-target http1-tls
 ```
 
 An interactive TUI with the same stages (latency, download, upload, bidirectional, loaded
 latency), server presets, and live telemetry — ideal for headless boxes and for pushing rates a
-browser can't.
+browser can't. Transfer, latency, and upload-progress bindings are independent; see the
+`-transfer-target`, `-latency-channel`, and `-progress-channel` flags.
 
 ## Building from source & contributing
 
 - **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — toolchain, `just` recipes, build flags,
   building the image from source.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the server, the browser client, the TUI
-  client, and the cross-language `api/` contract fit together, plus the roadmap (HTTP/3 /
-  WebTransport, multi-server testing).
+  client, and the cross-language `api/` contract fit together, plus the roadmap (WebTransport,
+  multi-server testing).
 
 The short version: `git clone`, then `just dev`, then open http://localhost:8765.
 

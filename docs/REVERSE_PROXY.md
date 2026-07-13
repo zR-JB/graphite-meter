@@ -23,10 +23,15 @@ translate between IPv4 and IPv6 or traverse an overlay/load balancer, so the
 reported family is not guaranteed to describe every physical segment.
 
 `/preflight` is logical discovery and does not claim which protocol a later target uses. Set
-`PUBLIC_H1_ORIGIN`, `PUBLIC_H2_ORIGIN`, and `PUBLIC_H3_ORIGIN` to origins the browser can reach.
-An explicit `PUBLIC_H2_ORIGIN` or `PUBLIC_H3_ORIGIN` is advertised even when the corresponding
-native listener is disabled: the public target may be an H2/H3-capable proxy forwarding to the
-server's H1 listener. Native listener flags control local binds, not external target discovery.
+`PUBLIC_H1_ORIGIN`, `PUBLIC_H1_TLS_ORIGIN`, `PUBLIC_H2_ORIGIN`, and `PUBLIC_H3_ORIGIN` to origins
+the browser can reach. Any explicit public origin is advertised even when its corresponding native
+listener is disabled: the public target may be a proxy forwarding to the server's H1 listener.
+Native listener flags control local binds, not external target discovery.
+
+An advertised H1-TLS target must negotiate HTTP/1.1 at the browser-facing hop. Give it a dedicated
+port or virtual host whose ALPN policy does not offer H2. Advertising the same H2-enabled origin as
+both `PUBLIC_H1_TLS_ORIGIN` and `PUBLIC_H2_ORIGIN` does not let JavaScript force H1; Graphite Meter
+will correctly reject the H1-TLS selection when Resource Timing reports `h2`.
 A conventional HTTP reverse proxy changes the measured hop: Resource Timing then describes the
 browser-to-proxy protocol, while `/probe` describes the proxy-to-server protocol. Directly expose
 the native H2 TCP and H3 TCP+UDP ports when the goal is to compare those server listeners.

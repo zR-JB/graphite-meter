@@ -105,15 +105,16 @@ environment variables, which take precedence over defaults.
 | Env var                                                                          | Flag        | Default                                                   | What it does                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GM_H1_ADDR` | `-h1-addr` (`-addr` legacy alias) | `:8765` | Clear HTTP/1.1 UI and measurement listener. |
+| `GM_H1_TLS_ADDR` | `-h1-tls-addr` | `:8445` | Dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, and WebSockets. |
 | `GM_H2_ADDR` | `-h2-addr` | `:8443` | TCP TLS listener: HTTP/2 transfers plus HTTP/1.1 UI/discovery/probe/WebSockets. |
 | `GM_H3_ADDR` | `-h3-addr` | `:8444` | UDP HTTP/3 transfers plus TCP TLS HTTP/1.1 Alt-Svc bootstrap/probe/WebSockets. |
-| `GM_ENABLE_H2` / `GM_ENABLE_H3` | `-enable-h2` / `-enable-h3` | off | Enable the corresponding TLS listeners. |
+| `GM_ENABLE_H1_TLS` / `GM_ENABLE_H2` / `GM_ENABLE_H3` | matching flags | off | Enable the corresponding native TLS listeners. |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | `-tls-cert` / `-tls-key` | — | Matching PEM pair. Invalid dates, hostnames, and pairs fail startup; valid renewals hot-reload. |
 | `GM_SERVER_NAME`                                                                 | `-name`     | `graphite-meter`                                          | Server identity advertised in `/preflight`.                                                                                                                                                                                                                                                               |
 | `GM_SERVER_LOCATION`                                                             | `-location` | —                                                         | Location label advertised in `/preflight` (e.g. `fra`).                                                                                                                                                                                                                                                   |
 | `GM_TRUSTED_PROXIES`                                                             | —           | —                                                         | Comma-separated trusted-proxy CIDRs. Forwarded client addresses and `X-Forwarded-Proto` are ignored unless the socket peer matches one of them. Invalid CIDRs fail startup. See [REVERSE_PROXY.md](REVERSE_PROXY.md).                                                                                     |
 | `GM_VERBOSE`                                                                     | `-verbose`  | off                                                       | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                                                                                                         |
-| `PUBLIC_H1_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags | request host + listener port | Exact externally reachable origins. H1 must be `http`; H2/H3 must be `https`. |
+| `PUBLIC_H1_ORIGIN`, `PUBLIC_H1_TLS_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags | request host + listener port | Exact externally reachable transfer origins. Clear H1 must be `http`; all TLS targets must be `https`. |
 
 ### Local TLS and HTTP/3 certificates
 
@@ -134,10 +135,11 @@ mkcert -cert-file .dev-certs/localhost.pem \
   -key-file .dev-certs/localhost-key.pem localhost 127.0.0.1 ::1
 just prod
 cd go
-GM_ENABLE_H2=true GM_ENABLE_H3=true \
+GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
   GM_TLS_CERT=../.dev-certs/localhost.pem \
   GM_TLS_KEY=../.dev-certs/localhost-key.pem \
   PUBLIC_H1_ORIGIN=http://localhost:8765 \
+  PUBLIC_H1_TLS_ORIGIN=https://localhost:8445 \
   PUBLIC_H2_ORIGIN=https://localhost:8443 \
   PUBLIC_H3_ORIGIN=https://localhost:8444 \
   ./graphite-meter
@@ -168,12 +170,15 @@ just goclient-build   # -> go/graphite-meter-client
 just goclient-run     # go run ./cmd/graphite-meter-client (against a running server)
 ```
 
-All flags are editable again inside the TUI before a run starts:
+Run settings are editable inside the TUI before a run starts. Channel-id overrides are CLI-only
+until discovery-driven channel menus land:
 
 | Flag                      | Default                   | Meaning                                                                                   |
 | ------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
 | `-url`                    | `http://127.0.0.1:8765`   | Server base URL.                                                                          |
-| `-protocol`               | `auto`                    | Freeze `auto`, `http1`, `http2`, or direct-QUIC `http3` for the run.                       |
+| `-transfer-target` (`-protocol` legacy alias) | `auto` | Transfer target: `auto`, `http1`, `http1-clear`, `http1-tls`, `http2`, or direct-QUIC `http3`. |
+| `-latency-channel`        | `auto`                    | Advertised channel id for latency, independently of the transfer target.                   |
+| `-progress-channel`       | `auto`                    | Advertised channel id for upload progress, independently of the transfer target.           |
 | `-stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.   |
 | `-warmup`                 | `800ms`                   | Per-stage warmup before measurement starts.                                               |
 | `-latency-duration`       | `4s`                      | Latency stage window.                                                                     |
@@ -207,7 +212,7 @@ podman run -d --name gm --replace -p 8765:8765 graphite-meter:latest
 2. **`server`** (`golang:1.26`) — `go mod download`, copies `go/` and `api/` (the schema
    conformance test references `api/` by relative path), embeds the client build from stage 1,
    builds a `CGO_ENABLED=0`, stripped, trimmed, ldflags-versioned static binary.
-3. **final** (`scratch`) — just the binary. It exposes 8765/tcp, 8443/tcp, and 8444/tcp+udp.
+3. **final** (`scratch`) — just the binary. It exposes 8765/tcp, 8445/tcp, 8443/tcp, and 8444/tcp+udp.
    No entrypoint shell is needed —
    config is read natively from env/flags.
 

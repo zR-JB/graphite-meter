@@ -2,14 +2,17 @@
 services:
   graphite-meter:
     ports:
+      - "8445:8445/tcp" # dedicated HTTPS HTTP/1.1 transfers and WebSockets
       - "8443:8443/tcp" # HTTP/2 plus HTTP/1.1 UI/WebSocket fallback
       - "8444:8444/tcp" # HTTP/3 Alt-Svc bootstrap and WebSockets
       - "8444:8444/udp" # HTTP/3 measurement traffic
     environment:
+      GM_ENABLE_H1_TLS: "true"
       GM_ENABLE_H2: "true"
       GM_ENABLE_H3: "true"
       GM_TLS_CERT: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/fullchain.pem
       GM_TLS_KEY: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/privkey.pem
+      PUBLIC_H1_TLS_ORIGIN: https://${GM_PUBLIC_HOST}:8445
       PUBLIC_H2_ORIGIN: https://${GM_PUBLIC_HOST}:8443
       PUBLIC_H3_ORIGIN: https://${GM_PUBLIC_HOST}:8444
     volumes:
