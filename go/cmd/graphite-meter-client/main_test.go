@@ -265,7 +265,7 @@ func TestRowCount(t *testing.T) {
 		{sectionServers, len(serverPresets) + 1},
 		{sectionStages, 5},
 		{sectionTiming, 6},
-		{sectionNetwork, 4},
+		{sectionNetwork, 5},
 		{sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -375,7 +375,7 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 		rows    int
 	}{
 		{"servers", sectionServers, len(serverPresets) + 1},
-		{"network", sectionNetwork, 4},
+		{"network", sectionNetwork, 5},
 		{"run (single row)", sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -546,21 +546,23 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 	}
 }
 
-func TestActivate_NetworkStreamsStartsEdit(t *testing.T) {
+func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionNetwork
-	m.row = 1
-	next, _ := m.activate()
-	m = next.(model)
-	if m.edit.kind != editInt {
-		t.Errorf("edit.kind = %v, want editInt", m.edit.kind)
+	for row, field := range map[int]string{1: "auto-streams", 2: "streams"} {
+		m.row = row
+		next, _ := m.activate()
+		edited := next.(model)
+		if edited.edit.kind != editInt || edited.edit.field != field {
+			t.Errorf("row %d edit = %+v, want editInt %q", row, edited.edit, field)
+		}
 	}
 }
 
 func TestActivate_NetworkTLSToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionNetwork
-	m.row = 2
+	m.row = 3
 	before := m.cfg.InsecureSkipTLSVerify
 	next, _ := m.activate()
 	m = next.(model)
@@ -571,10 +573,10 @@ func TestActivate_NetworkTLSToggle(t *testing.T) {
 
 func TestActivate_NetworkReset(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.cfg.ParallelStreams = 99
+	m.cfg.TransferStreams.Forced = 99
 	m.cfg.BaseURL = "http://changed.example"
 	m.section = sectionNetwork
-	m.row = 3
+	m.row = 4
 	next, _ := m.activate()
 	m = next.(model)
 	want := goclient.DefaultConfig()
@@ -694,7 +696,7 @@ func TestCommitEdit_Int(t *testing.T) {
 		{"8", false, 8},
 		{"1", false, 1},
 		{"128", false, 128},
-		{"0", true, 0},
+		{"0", false, 0},
 		{"129", true, 0},
 		{"abc", true, 0},
 		{"", true, 0},
@@ -702,17 +704,31 @@ func TestCommitEdit_Int(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.value, func(t *testing.T) {
 			m := newModel(goclient.DefaultConfig())
-			before := m.cfg.ParallelStreams
+			before := m.cfg.TransferStreams.Forced
 			m.edit = editState{kind: editInt, value: c.value}
 			m.commitEdit()
 			if c.wantErr {
-				if m.cfg.ParallelStreams != before {
-					t.Errorf("ParallelStreams changed to %d despite invalid input %q", m.cfg.ParallelStreams, c.value)
+				if m.cfg.TransferStreams.Forced != before {
+					t.Errorf("forced streams changed to %d despite invalid input %q", m.cfg.TransferStreams.Forced, c.value)
 				}
-			} else if m.cfg.ParallelStreams != c.want {
-				t.Errorf("ParallelStreams = %d, want %d", m.cfg.ParallelStreams, c.want)
+			} else if m.cfg.TransferStreams.Forced != c.want {
+				t.Errorf("forced streams = %d, want %d", m.cfg.TransferStreams.Forced, c.want)
 			}
 		})
+	}
+}
+
+func TestCommitEdit_AutomaticStreams(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.edit = editState{kind: editInt, field: "auto-streams", value: "1"}
+	m.commitEdit()
+	if m.cfg.TransferStreams.AutomaticMax != 1 {
+		t.Fatalf("automatic max = %d, want 1", m.cfg.TransferStreams.AutomaticMax)
+	}
+	m.edit = editState{kind: editInt, field: "auto-streams", value: "0"}
+	m.commitEdit()
+	if m.cfg.TransferStreams.AutomaticMax != 1 {
+		t.Fatalf("invalid automatic max changed to %d", m.cfg.TransferStreams.AutomaticMax)
 	}
 }
 

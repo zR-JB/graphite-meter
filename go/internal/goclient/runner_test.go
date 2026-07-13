@@ -56,7 +56,7 @@ func TestLaneStaggerStep(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &runner{cfg: Config{ParallelStreams: c.streams, Warmup: c.warmup}, idleRTT: c.idleRTT}
+			r := &runner{cfg: Config{Warmup: c.warmup}, streams: c.streams, idleRTT: c.idleRTT}
 			if got := r.laneStaggerStep(); got != c.want {
 				t.Errorf("laneStaggerStep() = %v, want %v", got, c.want)
 			}
@@ -252,7 +252,7 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 		Stages:                 StageSet{Download: true},
 		Warmup:                 0,
 		DownloadDuration:       300 * time.Millisecond,
-		ParallelStreams:        1,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
@@ -305,7 +305,7 @@ func TestRunLatencyStageEndToEnd(t *testing.T) {
 		Warmup:          0,
 		LatencyDuration: 200 * time.Millisecond,
 		PingInterval:    20 * time.Millisecond,
-		ParallelStreams: 1,
+		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}
 
 	var mu sync.Mutex
@@ -341,7 +341,7 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 		Stages:                 StageSet{Download: true},
 		Warmup:                 3 * time.Second,
 		DownloadDuration:       3 * time.Second,
-		ParallelStreams:        1,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
@@ -454,7 +454,7 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 
 // TestRunBidirectionalStageEndToEnd checks the download and upload lanes run
 // concurrently without interfering: each reports its own non-zero Result, at
-// both a single stream and the ParallelStreams clamp ceiling from
+// both a single forced stream and the forced-stream clamp ceiling from
 // Config.normalized().
 func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	cases := []struct {
@@ -474,7 +474,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 				Stages:                 StageSet{Bidirectional: true},
 				Warmup:                 0,
 				BidirectionalDuration:  500 * time.Millisecond,
-				ParallelStreams:        c.streams,
+				TransferStreams:        TransferStreamPolicy{Forced: c.streams},
 				DownloadBytesPerStream: 16 * 1024,
 			}
 
@@ -544,8 +544,8 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

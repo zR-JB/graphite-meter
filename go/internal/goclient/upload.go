@@ -41,7 +41,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	defer laneCancel()
 	var wg sync.WaitGroup
 	stagger := r.laneStaggerStep()
-	for i := 0; i < r.cfg.ParallelStreams; i++ {
+	for i := 0; i < r.streams; i++ {
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
@@ -62,7 +62,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
-	stats := r.sampleServerUpload(ctx, stage, progress, r.cfg.ParallelStreams, elapsed, baselineN, baselineT)
+	stats := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT)
 	laneCancel()
 	wg.Wait()
 	progress.bye()

@@ -29,7 +29,8 @@ func main() {
 	flag.DurationVar(&cfg.DownloadDuration, "download-duration", cfg.DownloadDuration, "download measurement duration")
 	flag.DurationVar(&cfg.UploadDuration, "upload-duration", cfg.UploadDuration, "upload measurement duration")
 	flag.DurationVar(&cfg.BidirectionalDuration, "bidirectional-duration", cfg.BidirectionalDuration, "bidirectional measurement duration")
-	flag.IntVar(&cfg.ParallelStreams, "streams", cfg.ParallelStreams, "parallel transfer streams")
+	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum automatic HTTP/1 streams per direction")
+	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force streams per active direction (0 = automatic)")
 	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
@@ -169,6 +170,7 @@ type model struct {
 	stage    string
 	status   string
 	server   string
+	protocol string
 	err      error
 	complete bool
 
@@ -398,12 +400,24 @@ func (m *model) commitEdit() {
 		m.notice = "Timing updated."
 	case editInt:
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 128 {
-			m.notice = "Streams must be an integer from 1 to 128."
+		min := 0
+		if field == "auto-streams" {
+			min = 1
+		}
+		if err != nil || n < min || n > 128 {
+			if field == "auto-streams" {
+				m.notice = "Automatic H1 max must be an integer from 1 to 128."
+				return
+			}
+			m.notice = "Streams must be 0 (automatic) or an integer from 1 to 128."
 			return
 		}
-		m.cfg.ParallelStreams = n
-		m.notice = "Parallel stream count updated."
+		if field == "auto-streams" {
+			m.cfg.TransferStreams.AutomaticMax = n
+		} else {
+			m.cfg.TransferStreams.Forced = n
+		}
+		m.notice = "Transfer stream policy updated."
 	}
 }
 
@@ -461,12 +475,15 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 			}
 			m.notice = "Protocol target updated."
 		case 1:
-			m.edit = editState{kind: editInt, field: "streams", value: fmt.Sprintf("%d", m.cfg.ParallelStreams)}
-			m.notice = "Editing parallel streams. Use 1 through 128."
+			m.edit = editState{kind: editInt, field: "auto-streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax)}
+			m.notice = "Editing maximum automatic HTTP/1 streams. Use 1 through 128."
 		case 2:
+			m.edit = editState{kind: editInt, field: "streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.Forced)}
+			m.notice = "Editing streams per direction. Use 0 for automatic or 1 through 128 to force."
+		case 3:
 			m.cfg.InsecureSkipTLSVerify = !m.cfg.InsecureSkipTLSVerify
 			m.notice = "TLS verification setting updated."
-		case 3:
+		case 4:
 			m.cfg = goclient.DefaultConfig()
 			m.notice = "Configuration reset to defaults."
 		}
@@ -506,6 +523,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.stage = ""
 	m.status = "connecting"
 	m.server = ""
+	m.protocol = ""
 	m.err = nil
 	m.complete = false
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
@@ -528,6 +546,7 @@ func (m *model) apply(e goclient.Event) {
 	switch e.Kind {
 	case goclient.EventPreflight:
 		if e.Preflight != nil {
+			m.protocol = e.Message
 			observed := ""
 			if e.Probe != nil {
 				observed = "/" + e.Probe.ProtocolNegotiated
@@ -609,7 +628,7 @@ func (m model) rowCount() int {
 	case sectionTiming:
 		return 6
 	case sectionNetwork:
-		return 4
+		return 5
 	case sectionRun:
 		return 1
 	default:
@@ -818,17 +837,18 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
-	streamValue := fmt.Sprintf("%d", m.cfg.ParallelStreams)
-	streamNote := "parallel transfers"
-	if m.edit.kind == editInt {
-		streamValue = m.edit.value + "█"
-		streamNote = "editing"
-	}
 	rows := []string{
 		valueLine("Protocol", m.cfg.Protocol, "selected target"),
-		valueLine("Streams", streamValue, streamNote),
+		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
+		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.Protocol), "0 automatic; 1–128 forced"),
 		toggleLine("Skip TLS verification", m.cfg.InsecureSkipTLSVerify, "for local/self-signed certs"),
 		warnStyle.Render("Reset to defaults"),
+	}
+	if m.edit.field == "auto-streams" {
+		rows[1] = valueLine("Auto H1 max", m.edit.value+"█", "editing")
+	}
+	if m.edit.field == "streams" {
+		rows[2] = valueLine("Streams", m.edit.value+"█", "editing")
 	}
 	return m.listWithTitle("Network", rows, w)
 }
@@ -860,7 +880,7 @@ func (m model) planView(w int) string {
 		accentStyle.Render("Current Plan"),
 		labelStyle.Render("Server   ") + valueStyle.Render(m.cfg.BaseURL),
 		labelStyle.Render("Stages   ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
-		labelStyle.Render("Streams  ") + valueStyle.Render(fmt.Sprintf("%d", m.cfg.ParallelStreams)),
+		labelStyle.Render("Streams  ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.cfg.Protocol)),
 		labelStyle.Render("Warmup   ") + valueStyle.Render(m.cfg.Warmup.String()),
 		labelStyle.Render("Ping     ") + valueStyle.Render(m.cfg.PingInterval.String()),
 		labelStyle.Render("Loaded   ") + valueStyle.Render(boolLabel(m.cfg.LoadedLatency)),
@@ -920,7 +940,7 @@ func (m model) summaryView(w int) string {
 		labelStyle.Render("Target  ") + valueStyle.Render(server),
 		labelStyle.Render("Stage   ") + mark + valueStyle.Render(emptyDash(m.stage)) + mutedStyle.Render(" / "+emptyDash(m.status)),
 		labelStyle.Render("Profile ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
-		labelStyle.Render("Streams ") + valueStyle.Render(fmt.Sprintf("%d", m.cfg.ParallelStreams)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
+		labelStyle.Render("Streams ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.protocol)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
 	}
 	if m.complete {
 		lines = append(lines, "", successStyle.Render("Finished. Press m for menus or r to run again."))

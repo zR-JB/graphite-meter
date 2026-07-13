@@ -16,7 +16,7 @@ func TestDefaultConfig(t *testing.T) {
 		DownloadDuration:       10 * time.Second,
 		UploadDuration:         10 * time.Second,
 		BidirectionalDuration:  10 * time.Second,
-		ParallelStreams:        4,
+		TransferStreams:        TransferStreamPolicy{AutomaticMax: 6},
 		PingInterval:           250 * time.Millisecond,
 		LoadedLatency:          true,
 		DownloadBytesPerStream: 64 * 1024 * 1024 * 1024,
@@ -27,6 +27,27 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if got := DefaultConfig(); !reflect.DeepEqual(got, want) {
 		t.Errorf("DefaultConfig() = %+v, want %+v", got, want)
+	}
+}
+
+func TestTransferStreamPolicy(t *testing.T) {
+	auto := TransferStreamPolicy{AutomaticMax: 6}
+	if got := auto.Resolve("http1"); got != 6 {
+		t.Fatalf("automatic HTTP/1 streams = %d, want 6", got)
+	}
+	for _, protocol := range []string{"http2", "http3"} {
+		if got := auto.Resolve(protocol); got != 1 {
+			t.Errorf("automatic %s streams = %d, want 1", protocol, got)
+		}
+	}
+	forced := TransferStreamPolicy{Forced: 9}
+	for _, protocol := range []string{"http1", "http2", "http3"} {
+		if got := forced.Resolve(protocol); got != 9 {
+			t.Errorf("forced %s streams = %d, want 9", protocol, got)
+		}
+	}
+	if got := forced.Label("http3"); got != "Forced · 9 per direction" {
+		t.Errorf("forced label = %q", got)
 	}
 }
 
@@ -74,24 +95,29 @@ func TestConfigNormalized(t *testing.T) {
 			check:  func(c Config) (any, any) { return c.BidirectionalDuration, 10 * time.Second },
 		},
 		{
-			name:   "ParallelStreams below 1 clamps to 1",
-			mutate: func(c Config) Config { c.ParallelStreams = 0; return c },
-			check:  func(c Config) (any, any) { return c.ParallelStreams, 1 },
+			name:   "zero automatic max restores default",
+			mutate: func(c Config) Config { c.TransferStreams.AutomaticMax = 0; return c },
+			check:  func(c Config) (any, any) { return c.TransferStreams.AutomaticMax, 6 },
 		},
 		{
-			name:   "ParallelStreams negative clamps to 1",
-			mutate: func(c Config) Config { c.ParallelStreams = -5; return c },
-			check:  func(c Config) (any, any) { return c.ParallelStreams, 1 },
+			name:   "automatic max clamps to 128",
+			mutate: func(c Config) Config { c.TransferStreams.AutomaticMax = 500; return c },
+			check:  func(c Config) (any, any) { return c.TransferStreams.AutomaticMax, 128 },
 		},
 		{
-			name:   "ParallelStreams above 128 clamps to 128",
-			mutate: func(c Config) Config { c.ParallelStreams = 500; return c },
-			check:  func(c Config) (any, any) { return c.ParallelStreams, 128 },
+			name:   "negative forced stream count selects automatic",
+			mutate: func(c Config) Config { c.TransferStreams.Forced = -5; return c },
+			check:  func(c Config) (any, any) { return c.TransferStreams.Forced, 0 },
 		},
 		{
-			name:   "ParallelStreams in range passes through",
-			mutate: func(c Config) Config { c.ParallelStreams = 64; return c },
-			check:  func(c Config) (any, any) { return c.ParallelStreams, 64 },
+			name:   "forced stream count clamps to 128",
+			mutate: func(c Config) Config { c.TransferStreams.Forced = 500; return c },
+			check:  func(c Config) (any, any) { return c.TransferStreams.Forced, 128 },
+		},
+		{
+			name:   "forced stream count in range passes through",
+			mutate: func(c Config) Config { c.TransferStreams.Forced = 64; return c },
+			check:  func(c Config) (any, any) { return c.TransferStreams.Forced, 64 },
 		},
 		{
 			name:   "zero PingInterval defaults",

@@ -69,7 +69,11 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	wsp.SetHTTP1(true)
 	wsTransport.Protocols = wsp
 	defer wsTransport.CloseIdleConnections()
-	r := runner{cfg: cfg, http: transfer, websocketHTTP: &http.Client{Transport: wsTransport}, target: target, preflight: pf, probe: probe, emit: emit}
+	r := runner{
+		cfg: cfg, streams: cfg.TransferStreams.Resolve(protocol),
+		http: transfer, websocketHTTP: &http.Client{Transport: wsTransport},
+		target: target, preflight: pf, probe: probe, emit: emit,
+	}
 	if cfg.Stages.Latency {
 		if err := r.runLatencyStage(ctx, "latency", false, cfg.LatencyDuration); err != nil {
 			return r.fail(err)
@@ -96,6 +100,7 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 
 type runner struct {
 	cfg           Config
+	streams       int
 	http          *http.Client
 	websocketHTTP *http.Client
 	target        *wire.Target
@@ -131,10 +136,10 @@ func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 // up to 128) spawns within half the warmup window — laneStagger is only the cap.
 // 0 ⇒ one lane or no warmup ⇒ spawn together.
 func (r *runner) laneStaggerStep() time.Duration {
-	if r.cfg.ParallelStreams <= 1 {
+	if r.streams <= 1 {
 		return 0
 	}
-	step := adaptiveWarmup(r.cfg.Warmup, r.idleRTT) / 2 / time.Duration(r.cfg.ParallelStreams-1)
+	step := adaptiveWarmup(r.cfg.Warmup, r.idleRTT) / 2 / time.Duration(r.streams-1)
 	if step > laneStagger {
 		step = laneStagger
 	}

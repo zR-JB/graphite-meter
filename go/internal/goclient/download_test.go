@@ -30,8 +30,8 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	srv := newCountingDownloadServer(size)
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: size}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client()}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: size}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client()}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -79,8 +79,8 @@ func TestMeasureDownloadReportsBytes(t *testing.T) {
 	srv := newBytesEchoDownloadServer()
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: 128 * 1024}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 128 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
 
 	start := make(chan struct{})
 	close(start)
@@ -109,8 +109,8 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	srv := newBytesEchoDownloadServer()
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
 
 	start := make(chan struct{})
 	close(start)
@@ -160,8 +160,8 @@ func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
 	srv := newAbruptCloseDownloadServer(partial)
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: partial * 4}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client()}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: partial * 4}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -186,8 +186,8 @@ func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
 	srv := newBytesEchoDownloadServer()
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

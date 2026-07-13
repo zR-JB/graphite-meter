@@ -290,9 +290,9 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 
 	cfg := Config{
 		BaseURL:         srv.URL,
-		ParallelStreams: 1,
+		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
 
 	start := make(chan struct{})
 	close(start)
