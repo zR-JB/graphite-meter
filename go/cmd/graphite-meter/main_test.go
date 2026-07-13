@@ -30,3 +30,19 @@ func TestH1AddressFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
+	t.Setenv("GM_ENABLE_H2", "true")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	if err := fs.Parse([]string{"-tls-cert", "/cert.pem", "-tls-key", "/key.pem"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("flags did not complete environment config: %v", err)
+	}
+}

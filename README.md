@@ -97,6 +97,7 @@ Everything is optional; the defaults just work. The common knobs:
 | `GM_TRUSTED_PROXIES` | —                                       | Comma-separated proxy CIDRs allowed to supply client IP and scheme forwarding headers.                                                       |
 | `PUBLIC_H1_ORIGIN`   | derived from request                    | Public origin to advertise — set behind a reverse proxy.                                                                                     |
 | `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN` | derived from request host | Exact public TLS origins. Setting one advertises that external target even when its native listener is disabled.                         |
+| `PUBLIC_TLS_ORIGIN` | — | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence. |
 | `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
 
 Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)

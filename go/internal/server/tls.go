@@ -52,11 +52,14 @@ func (m *certificateManager) reload(now time.Time) error {
 	if !now.Before(leaf.NotAfter) {
 		return fmt.Errorf("TLS certificate expired at %s", leaf.NotAfter.Format(time.RFC3339))
 	}
-	for _, raw := range []string{m.cfg.PublicH2Origin, m.cfg.PublicH3Origin} {
-		if raw == "" {
+	for _, public := range []struct {
+		enabled bool
+		origin  string
+	}{{m.cfg.EnableH2, m.cfg.PublicH2Origin}, {m.cfg.EnableH3, m.cfg.PublicH3Origin}} {
+		if !public.enabled || public.origin == "" {
 			continue
 		}
-		u, _ := url.Parse(raw)
+		u, _ := url.Parse(public.origin)
 		if err := leaf.VerifyHostname(u.Hostname()); err != nil {
 			return fmt.Errorf("TLS certificate incompatible with %s: %w", u.Hostname(), err)
 		}

@@ -32,6 +32,37 @@ func TestLoadProtocolEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadLegacyTLSOrigin(t *testing.T) {
+	t.Setenv("PUBLIC_TLS_ORIGIN", "https://legacy.example")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicH2Origin != "https://legacy.example" {
+		t.Fatalf("PublicH2Origin = %q", c.PublicH2Origin)
+	}
+
+	t.Setenv("PUBLIC_H2_ORIGIN", "https://meter.example")
+	c, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.PublicH2Origin != "https://meter.example" {
+		t.Fatalf("explicit PublicH2Origin = %q", c.PublicH2Origin)
+	}
+}
+
+func TestLoadDefersValidation(t *testing.T) {
+	t.Setenv("GM_ENABLE_H2", "true")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("incomplete environment config validated")
+	}
+}
+
 func TestLoadRejectsInvalidBool(t *testing.T) {
 	t.Setenv("GM_ENABLE_H2", "sometimes")
 	if _, err := Load(); err == nil {
@@ -78,7 +109,7 @@ func TestLoadTrustedProxies(t *testing.T) {
 }
 
 func TestLoadUsesDefaultsWithCleanEnvironment(t *testing.T) {
-	for _, k := range []string{"GM_ENABLE_H2", "GM_ENABLE_H3", "GM_TLS_CERT", "GM_TLS_KEY", "PUBLIC_H1_ORIGIN", "PUBLIC_H2_ORIGIN", "PUBLIC_H3_ORIGIN", "GM_TRUSTED_PROXIES"} {
+	for _, k := range []string{"GM_ENABLE_H2", "GM_ENABLE_H3", "GM_TLS_CERT", "GM_TLS_KEY", "PUBLIC_H1_ORIGIN", "PUBLIC_TLS_ORIGIN", "PUBLIC_H2_ORIGIN", "PUBLIC_H3_ORIGIN", "GM_TRUSTED_PROXIES"} {
 		old, ok := os.LookupEnv(k)
 		os.Unsetenv(k)
 		if ok {

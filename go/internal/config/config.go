@@ -27,6 +27,9 @@ func Default() Config {
 
 func Load() (Config, error) {
 	c := Default()
+	if v := os.Getenv("PUBLIC_TLS_ORIGIN"); v != "" {
+		c.PublicH2Origin = v
+	}
 	stringEnv := []struct {
 		name string
 		dst  *string
@@ -60,7 +63,7 @@ func Load() (Config, error) {
 			c.TrustedProxies = append(c.TrustedProxies, prefix)
 		}
 	}
-	return c, c.Validate()
+	return c, nil
 }
 
 func envBool(name string, fallback bool) (bool, error) {

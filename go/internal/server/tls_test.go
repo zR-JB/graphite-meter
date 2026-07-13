@@ -74,6 +74,20 @@ func TestCertificateValidation(t *testing.T) {
 	}
 }
 
+func TestCertificateValidationIgnoresExternalOrigins(t *testing.T) {
+	now := time.Now()
+	dir := t.TempDir()
+	cert, key := writeCertificate(t, dir, "quic", "quic.example", now.Add(-time.Hour), now.Add(time.Hour))
+	cfg := config.Default()
+	cfg.EnableH3 = true
+	cfg.TLSCert, cfg.TLSKey = cert, key
+	cfg.PublicH2Origin = "https://speed.example"
+	cfg.PublicH3Origin = "https://quic.example"
+	if _, err := newCertificateManager(&cfg); err != nil {
+		t.Fatalf("native H3 certificate rejected for external H2 origin: %v", err)
+	}
+}
+
 func TestCertificateReloadKeepsLastValid(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
