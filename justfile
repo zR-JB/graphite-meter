@@ -90,9 +90,10 @@ client-watch:
     cd client && bun run dev
 
 # Output lives inside the client tree so Vite's dev-server fs.allow is happy.
-# Regenerate the client's preflight types from the JSON Schema (source of truth).
+# Regenerate client discovery and path-probe types from the JSON Schemas.
 client-gen-types:
     cd client && bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts
+    cd client && bunx json-schema-to-typescript ../api/probe.schema.json -o src/lib/api/probe.ts
 
 # --- Embedding (Go module + client, shared by both profiles) ---
 

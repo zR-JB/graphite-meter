@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -13,123 +13,63 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Preflight serves GET /preflight: server identity, advertised origins, and
-// per-stage capability flags. Request/response JSON (no wire protocol). Upload
-// correlation tokens are minted later by /upload/session during upload warmup.
-// The web client identifies itself via query params (?client=web&
-// client_version=<semver>+<label>) — read them here when version-gated
-// feature/compat decisions are needed.
-type Preflight struct {
-	cfg *config.Config
-}
+// Preflight serves logical-server discovery. It deliberately ignores the
+// request protocol; the selected target's /probe reports path evidence.
+type Preflight struct{ cfg *config.Config }
 
-// NewPreflight builds the preflight endpoint bound to cfg.
-func NewPreflight(cfg *config.Config) *Preflight {
-	return &Preflight{cfg: cfg}
-}
-
-func (p *Preflight) ID() string                 { return "preflight" }
-func (p *Preflight) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func NewPreflight(cfg *config.Config) *Preflight { return &Preflight{cfg: cfg} }
+func (p *Preflight) ID() string                  { return "preflight" }
+func (p *Preflight) Capabilities() Capabilities  { return Capabilities{HTTP: true} }
 
 func (p *Preflight) Handle(s transport.Session) error {
 	w, r, ok := s.HTTP()
 	if !ok {
 		return transport.ErrUnsupported
 	}
-	body := p.build(s, r)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	return enc.Encode(body)
+	return json.NewEncoder(w).Encode(p.build(r))
 }
 
-func (p *Preflight) build(s transport.Session, r *http.Request) wire.Preflight {
-	cfg := p.cfg
-	client := transport.ResolveClientAddress(r, cfg.TrustedProxies)
-
+func (p *Preflight) build(r *http.Request) wire.Preflight {
 	host, port := hostPort(r)
-
-	// h1 origin: configured public origin, else derived from how the client
-	// reached us. Always cleartext — see requestIsTLS for the encrypted case.
-	h1 := cfg.PublicH1Origin
-	if h1 == "" {
-		h1 = "http://" + r.Host
+	targets := wire.Targets{HTTP1: target(origin(p.cfg.PublicH1Origin, "http", host, p.cfg.H1Addr), true)}
+	if p.cfg.EnableH2 {
+		targets.HTTP2 = target(origin(p.cfg.PublicH2Origin, "https", host, p.cfg.H2Addr), true)
 	}
-	origins := wire.Origins{H1: &h1}
-	if cfg.PublicTLSOrigin != "" {
-		v := cfg.PublicTLSOrigin
-		origins.TLS = &v
-	} else if requestIsTLS(r, cfg.TrustedProxies) {
-		// A reverse proxy terminated TLS in front of us (or we're somehow
-		// reached directly over TLS): derive the encrypted origin the same
-		// way h1 is derived, so the client has a real wss(-mappable) origin
-		// to prefer instead of falling back to h1's hardcoded http://.
-		v := "https://" + r.Host
-		origins.TLS = &v
+	if p.cfg.EnableH3 {
+		targets.HTTP3 = target(origin(p.cfg.PublicH3Origin, "https", host, p.cfg.H3Addr), true)
 	}
-	if cfg.PublicH3Origin != "" {
-		v := cfg.PublicH3Origin
-		origins.H3 = &v
-	}
-
 	return wire.Preflight{
-		ClientIP:        client.Addr.String(),
-		ClientIPVersion: client.Version,
-		ClientIPSource:  string(client.Source),
-		Server: wire.ServerInfo{
-			Name:     cfg.ServerName,
-			Host:     host,
-			Port:     port,
-			Location: cfg.ServerLocation,
-		},
-		PreTestPingMs:      0, // not computed server-side; the client measures RTT itself over /ws/ping
-		EngineVersion:      cfg.EngineVersion,
-		ProtocolNegotiated: string(s.Proto()),
-		Capabilities: wire.Capabilities{
-			Origins: origins,
-			Transports: wire.Transports{
-				// FetchStream and WebSocket are live; WebTransport is reserved
-				// for Stage 5 — see docs/ARCHITECTURE.md#roadmap.
-				FetchStream:  true,
-				WebSocket:    true,
-				WebTransport: false,
-			},
-			Endpoints: wire.DefaultEndpoints(),
-		},
+		Server:        wire.ServerInfo{Name: p.cfg.ServerName, Host: host, Port: port, Location: p.cfg.ServerLocation},
+		EngineVersion: p.cfg.EngineVersion,
+		Capabilities:  wire.Capabilities{Targets: targets},
 	}
 }
 
-// hostPort splits the request Host into a hostname and port, defaulting the
-// port to 80 (http) when absent.
+func target(origin string, ws bool) *wire.Target {
+	return &wire.Target{Origin: strings.TrimRight(origin, "/"), Routes: wire.DefaultRoutes(ws)}
+}
+
+func origin(public, scheme, host, addr string) string {
+	if public != "" {
+		return public
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return scheme + "://" + host
+	}
+	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}).String()
+}
+
 func hostPort(r *http.Request) (string, int) {
 	host, portStr, err := net.SplitHostPort(r.Host)
 	if err != nil {
-		// No port in Host.
-		return r.Host, 80
+		return r.Host, map[bool]int{true: 443, false: 80}[r.TLS != nil]
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return host, 80
+		return host, 0
 	}
 	return host, port
-}
-
-// requestIsTLS reports whether this request reached us encrypted: directly
-// (r.TLS set) or via a reverse proxy that terminated TLS and says so through
-// the de-facto standard X-Forwarded-Proto header (set by nginx/Caddy/Traefik
-// by default). Only the first hop is read — this server is meant to sit
-// directly behind the terminating proxy, not several hops deep.
-func requestIsTLS(r *http.Request, trusted []netip.Prefix) bool {
-	if r.TLS != nil {
-		return true
-	}
-	if !transport.PeerIsTrusted(r, trusted) {
-		return false
-	}
-	proto := r.Header.Get("X-Forwarded-Proto")
-	if i := strings.IndexByte(proto, ','); i >= 0 {
-		proto = proto[:i]
-	}
-	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }

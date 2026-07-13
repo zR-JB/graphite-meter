@@ -2,7 +2,7 @@
 
 This spec governs the **message-based channels only**: the WebSocket latency bus (`/ws/ping`),
 WebTransport datagrams (`/wt/ping`), and the `SIZE` control on `/wt/download`. The plain
-request/response HTTP endpoints (`/preflight`, `/download`, `/upload`) are **not** covered here — they
+request/response HTTP endpoints (`/preflight`, `/probe`, `/download`, `/upload`) are **not** covered here — they
 use normal HTTP (query params, status codes, streaming bodies).
 
 It is frozen before implementation. Every Go / TS / (future) Rust encoder and decoder MUST agree with

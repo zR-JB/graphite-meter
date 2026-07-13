@@ -1,36 +1,26 @@
 {
-  "clientIp": "203.0.113.7",
-  "clientIpVersion": 4,
-  "clientIpSource": "socket",
   "server": {
     "name": "graphite-meter",
     "host": "speed.example",
     "port": 8765,
     "location": "fra"
   },
-  "preTestPingMs": 0,
-  "engineVersion": "0.1.0",
-  "protocolNegotiated": "http/1.1",
+  "engineVersion": "0.1.0-test",
   "capabilities": {
-    "origins": {
-      "h1": "http://speed.example:8765",
-      "tls": null,
-      "h3": null
-    },
-    "transports": {
-      "fetchStream": true,
-      "websocket": true,
-      "webtransport": false
-    },
-    "endpoints": {
-      "download": "/download",
-      "upload": "/upload",
-      "uploadSession": "/upload/session",
-      "wsPing": "/ws/ping",
-      "wsUpload": "/ws/upload",
-      "wtPing": "/wt/ping",
-      "wtDownload": "/wt/download",
-      "wtUpload": "/wt/upload"
+    "targets": {
+      "http1": {
+        "origin": "http://speed.example:8765",
+        "routes": {
+          "probe": "/probe",
+          "download": "/download",
+          "upload": "/upload",
+          "uploadSession": "/upload/session",
+          "websocket": { "ping": "/ws/ping", "uploadProgress": "/ws/upload" },
+          "webtransport": null
+        }
+      },
+      "http2": null,
+      "http3": null
     }
   }
 }
