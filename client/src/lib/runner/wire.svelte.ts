@@ -17,7 +17,7 @@ import { adaptiveWarmupMs } from "./schedule";
 // unused, and — because dummy.ts is side-effect-free — the whole module is
 // tree-shaken out. Keep dummy.ts free of top-level side effects or it'll stay.
 import { DummyBackend } from "./dummy";
-import { RealBackend } from "./RealRunner";
+import { RealBackend, TransportUnavailableError } from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
@@ -100,7 +100,10 @@ export async function bootRunner() {
     store.ingest({
       type: "error",
       error: {
-        reason: "preflight-failed",
+        reason:
+          cause instanceof TransportUnavailableError
+            ? "transport-unavailable"
+            : "preflight-failed",
         message: "Probe failed",
         phase: "idle",
         cause,
@@ -126,12 +129,8 @@ export function engage() {
       store.infra?.preTestPingMs ?? 0,
     ),
   };
-  if (store.infra) {
-    getRunner().start(cfg);
-    return;
-  }
-  // No successful preflight yet (server was down at boot?) — re-check the
-  // server's capabilities before running instead of failing every stage.
+  // Resolve the selected target before every run. RealBackend caches logical
+  // discovery, so this performs one selected /probe without another preflight.
   getRunner()
     .probe(cfg.endpoint)
     .then((info) => {
@@ -142,7 +141,10 @@ export function engage() {
       store.ingest({
         type: "error",
         error: {
-          reason: "preflight-failed",
+          reason:
+            cause instanceof TransportUnavailableError
+              ? "transport-unavailable"
+              : "preflight-failed",
           message: "Couldn't reach the server",
           phase: "idle",
           cause,

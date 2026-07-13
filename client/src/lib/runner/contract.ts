@@ -141,7 +141,11 @@ export interface RunnerConfig {
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
-  endpoint: { host: string; port: number };
+  endpoint: {
+    host: string;
+    port: number;
+    protocol?: "current" | "http1" | "http2" | "http3";
+  };
   /** Wire-rate estimation. */
   compensation: OverheadCompensationConfig;
   /** Confidence-based early exit. */
@@ -355,6 +359,8 @@ export interface InfraInfo {
   preTestPingMs: number;
   engineVersion: string;
   protocolNegotiated: string;
+  selectedTarget?: "http1" | "http2" | "http3";
+  availableTargets?: Record<"http1" | "http2" | "http3", boolean>;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;

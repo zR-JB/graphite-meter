@@ -6,6 +6,31 @@
  * ============================================================ */
 
 import type { RunnerConfig, PhaseActivity } from "../contract";
+import type { Preflight, Target } from "../../api/preflight";
+
+export type ProtocolTarget = "http1" | "http2" | "http3";
+
+/** Resolve an advertised target without inventing an origin. Secure pages
+ * cannot select the clear H1 target because fetch would block mixed content. */
+export function selectProtocolTarget(
+  targets: Preflight["capabilities"]["targets"],
+  selection: ProtocolTarget | "current",
+  discoveryOrigin: string,
+  securePage: boolean,
+): { protocol: ProtocolTarget; target: Target } | null {
+  const entries = Object.entries(targets) as [ProtocolTarget, Target | null][];
+  const selected =
+    selection === "current"
+      ? (entries.find(([, target]) => target?.origin === discoveryOrigin) ??
+        entries.find(([protocol, target]) =>
+          securePage
+            ? protocol === "http2" && !!target
+            : protocol === "http1" && !!target,
+        ))
+      : entries.find(([protocol]) => protocol === selection);
+  if (!selected?.[1] || (securePage && selected[0] === "http1")) return null;
+  return { protocol: selected[0], target: selected[1] };
+}
 
 /** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
  *  same-origin (relative requests) — the Stage-1 case where the Go server serves

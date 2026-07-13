@@ -6,8 +6,44 @@ import {
   median,
   needsPings,
   laneStaggerMs,
+  selectProtocolTarget,
 } from "./real/backendPure";
 import type { PhaseActivity } from "./contract";
+
+const routes = {
+  probe: "/probe",
+  download: "/download",
+  upload: "/upload",
+  uploadSession: "/upload/session",
+  websocket: null,
+  webtransport: null,
+};
+
+test("selectProtocolTarget freezes the requested advertised target", () => {
+  const targets = {
+    http1: { origin: "http://meter:8765", routes },
+    http2: { origin: "https://meter:8443", routes },
+    http3: null,
+  };
+  expect(
+    selectProtocolTarget(targets, "http2", "http://meter:8765", false)
+      ?.protocol,
+  ).toBe("http2");
+  expect(
+    selectProtocolTarget(targets, "http3", "http://meter:8765", false),
+  ).toBeNull();
+});
+
+test("selectProtocolTarget rejects clear H1 on a secure page", () => {
+  const targets = {
+    http1: { origin: "http://meter:8765", routes },
+    http2: null,
+    http3: null,
+  };
+  expect(
+    selectProtocolTarget(targets, "http1", "https://meter", true),
+  ).toBeNull();
+});
 
 /* ---------- resolveBase ---------- */
 

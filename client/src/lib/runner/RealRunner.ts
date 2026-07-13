@@ -10,23 +10,26 @@ import type {
   PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import type { Preflight } from "../api/preflight";
+import type { Preflight, Target } from "../api/preflight";
+import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
 import { laneBudget, BROWSER_CONN_BUDGET } from "./real/laneBudget";
 import {
   resolveBase,
   httpToWs,
-  wsToWss,
   median,
   needsPings,
   laneStaggerMs,
+  selectProtocolTarget,
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
   endpoint?: RunnerConfig["endpoint"];
   authToken?: string;
 }
+
+export class TransportUnavailableError extends Error {}
 
 // Match the core/dummy cadence so both engines feed the UI at the same rate.
 const THROUGHPUT_CADENCE_MS = 60;
@@ -173,6 +176,11 @@ export class RealBackend implements RunnerBackend {
    *  endpoint paths + which transports are available). Stashed here so later
    *  stages negotiate transports against what the server actually offers. */
   #capabilities: Preflight["capabilities"] | null = null;
+  /** One resolved target is frozen from probe until the next discovery. */
+  #target: Target | null = null;
+  #discovery: Preflight | null = null;
+  #discoveryOrigin = "";
+  #discoveryBase = "";
 
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
    *  Bidirectional primes BOTH directions on the SAME stage (onStageBegin calls
@@ -307,29 +315,102 @@ export class RealBackend implements RunnerBackend {
    */
   async probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
     const base = resolveBase(this.#resolveEndpoint(endpoint));
-    let res: Response;
-    try {
-      // Identify the client to the server (version negotiation seam): a future
-      // server can key feature/compat decisions off these. Query params (not a
-      // custom header) so a cross-origin preflight GET stays a simple request.
-      const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-      res = await fetch(`${base}/preflight${ident}`, {
-        method: "GET",
-        headers: this.#authHeaders(),
-      });
-    } catch (cause) {
-      // Network-level failure (server down, DNS, CORS). wire.ts maps the
-      // rejection to a `preflight-failed` error.
-      throw new Error(`preflight request failed: ${String(cause)}`, { cause });
+    if (this.#discovery && base !== this.#discoveryBase) {
+      this.#discovery = null;
+      this.#target = null;
     }
-    if (!res.ok) {
-      throw new Error(`preflight returned HTTP ${res.status}`);
-    }
-    const pf = (await res.json()) as Preflight;
+    let pf = this.#discovery;
+    if (!pf)
+      try {
+        // Identify the client to the server (version negotiation seam): a future
+        // server can key feature/compat decisions off these. Query params (not a
+        // custom header) so a cross-origin preflight GET stays a simple request.
+        const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
+        const res = await fetch(`${base}/preflight${ident}`, {
+          method: "GET",
+          headers: this.#authHeaders(),
+        });
+        if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
+        pf = (await res.json()) as Preflight;
+        this.#discovery = pf;
+        this.#discoveryBase = base;
+        this.#discoveryOrigin = new URL(res.url, location.href).origin;
+      } catch (cause) {
+        // Network-level failure (server down, DNS, CORS). wire.ts maps the
+        // rejection to a `preflight-failed` error.
+        throw new Error(`preflight request failed: ${String(cause)}`, {
+          cause,
+        });
+      }
+    if (!pf) throw new Error("preflight returned no discovery document");
     this.#capabilities = pf.capabilities;
-    const timing = performance.getEntriesByName(res.url, "resource").at(-1) as
-      PerformanceResourceTiming | undefined;
-    const firstHopProtocol = timing?.nextHopProtocol || undefined;
+    const selection = endpoint.protocol ?? "current";
+    const discoveryOrigin = this.#discoveryOrigin;
+    const selected = selectProtocolTarget(
+      pf.capabilities.targets,
+      selection,
+      discoveryOrigin,
+      location.protocol === "https:",
+    );
+    if (!selected)
+      throw new TransportUnavailableError(`${selection} target unavailable`);
+    this.#target = selected.target;
+
+    const expected = { http1: "http/1.1", http2: "h2", http3: "h3" }[
+      selected.protocol
+    ];
+    const attempts = selected.protocol === "http3" ? 3 : 1;
+    const deadline = performance.now() + 2000;
+    let pathProbe: Probe | null = null;
+    let firstHopProtocol: string | undefined;
+    const probeCtl = new AbortController();
+    const probeDeadline =
+      selected.protocol === "http3"
+        ? setTimeout(() => probeCtl.abort(), 2000)
+        : undefined;
+    try {
+      for (
+        let attempt = 0;
+        attempt < attempts && performance.now() < deadline;
+        attempt++
+      ) {
+        const probeURL = `${selected.target.origin}${selected.target.routes.probe}?cb=${performance.now()}-${attempt}`;
+        const probeRes = await fetch(probeURL, {
+          cache: "no-store",
+          headers: this.#authHeaders(),
+          signal: probeCtl.signal,
+        });
+        if (!probeRes.ok)
+          throw new Error(`probe returned HTTP ${probeRes.status}`);
+        pathProbe = (await probeRes.json()) as Probe;
+        const timing = performance
+          .getEntriesByName(probeRes.url, "resource")
+          .at(-1) as PerformanceResourceTiming | undefined;
+        firstHopProtocol = timing?.nextHopProtocol || undefined;
+        if (
+          selected.protocol !== "http3" ||
+          (firstHopProtocol === "h3" && pathProbe.protocolNegotiated === "h3")
+        )
+          break;
+      }
+    } catch (cause) {
+      if (selected.protocol === "http3")
+        throw new TransportUnavailableError("http3 transport unavailable", {
+          cause,
+        });
+      throw cause;
+    } finally {
+      if (probeDeadline !== undefined) clearTimeout(probeDeadline);
+    }
+    if (
+      !pathProbe ||
+      pathProbe.protocolNegotiated !== expected ||
+      (selected.protocol === "http3" && firstHopProtocol !== "h3")
+    ) {
+      throw new TransportUnavailableError(
+        `${selected.protocol} transport unavailable`,
+      );
+    }
 
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
@@ -337,20 +418,28 @@ export class RealBackend implements RunnerBackend {
     const probeRtts = await this.#collectIdleRtts(endpoint);
 
     return {
-      clientIp: pf.clientIp,
-      clientIpVersion: pf.clientIpVersion,
-      clientIpSource: pf.clientIpSource,
+      clientIp: pathProbe.clientIp,
+      clientIpVersion: pathProbe.clientIpVersion,
+      clientIpSource: pathProbe.clientIpSource,
       server: {
         name: pf.server.name,
         host: pf.server.host,
         port: pf.server.port,
         location: pf.server.location,
       },
-      preTestPingMs: probeRtts.length ? median(probeRtts) : pf.preTestPingMs,
+      preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
       engineVersion: pf.engineVersion,
-      protocolNegotiated: pf.protocolNegotiated,
+      protocolNegotiated: pathProbe.protocolNegotiated,
+      selectedTarget: selected.protocol,
+      availableTargets: {
+        http1:
+          pf.capabilities.targets.http1 !== null &&
+          location.protocol !== "https:",
+        http2: pf.capabilities.targets.http2 !== null,
+        http3: pf.capabilities.targets.http3 !== null,
+      },
       firstHopProtocol,
-      firstHopSecure: new URL(res.url).protocol === "https:",
+      firstHopSecure: new URL(selected.target.origin).protocol === "https:",
     };
   }
 
@@ -516,18 +605,17 @@ export class RealBackend implements RunnerBackend {
 
   #transportUnavailableReason(kind: TransportKind): string | null {
     if (!RUNNABLE_TRANSPORT[kind]) return "not supported by this client";
-    const t = this.#capabilities?.transports;
-    if (!t) return "not advertised by server";
+    if (!this.#target) return "no selected target";
     let advertised = false;
     switch (kind) {
       case "fetch-stream":
-        advertised = t.fetchStream;
+        advertised = true;
         break;
       case "websocket":
-        advertised = t.websocket;
+        advertised = this.#target.routes.websocket !== null;
         break;
       case "webtransport":
-        advertised = t.webtransport;
+        advertised = this.#target.routes.webtransport !== null;
         break;
     }
     return advertised ? null : "not advertised by server";
@@ -589,7 +677,8 @@ export class RealBackend implements RunnerBackend {
     if (this.#lanes[dir]) throw new Error(`duplicate ${dir} prime`);
 
     const cfg = this.#host!.config!;
-    const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
+    const base =
+      this.#target?.origin ?? resolveBase(this.#resolveEndpoint(cfg.endpoint));
     const laneCount = this.#laneBudget(activity, kind, dir);
     const streams = laneCount;
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
@@ -639,12 +728,12 @@ export class RealBackend implements RunnerBackend {
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
-        const path = this.#capabilities?.endpoints.download ?? "/download";
+        const path = this.#target?.routes.download ?? "/download";
         return chunkDownload
           ? `${base}${path}?cb=${cb}`
           : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
-      const path = this.#capabilities?.endpoints.upload ?? "/upload";
+      const path = this.#target?.routes.upload ?? "/upload";
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
@@ -699,8 +788,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   async #mintUploadSession(base: string): Promise<string> {
-    const path =
-      this.#capabilities?.endpoints.uploadSession ?? "/upload/session";
+    const path = this.#target?.routes.uploadSession ?? "/upload/session";
     // Own deadline + the run's abort: fetch must reject within the timeout even
     // when the request hangs, so the stage skips instead of max-stalling.
     const ctl = new AbortController();
@@ -736,9 +824,9 @@ export class RealBackend implements RunnerBackend {
   #primeUploadProgress(stage: PhaseActivity["stage"]): void {
     this.#resetUploadCounters();
 
-    const caps = this.#capabilities;
+    const routes = this.#target?.routes;
     if (!this.#testId) return; // session mint already skipped the stage
-    if (!caps?.transports.websocket) {
+    if (!routes?.websocket) {
       this.#host!.failStage(
         stage,
         "transport-unavailable",
@@ -747,7 +835,7 @@ export class RealBackend implements RunnerBackend {
       return;
     }
 
-    const wsUpload = caps.endpoints.wsUpload ?? "/ws/upload";
+    const wsUpload = routes.websocket.uploadProgress;
     const url =
       this.#resolveWsBase(this.#host!.config!.endpoint) +
       wsUpload +
@@ -815,7 +903,7 @@ export class RealBackend implements RunnerBackend {
     if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
 
     const cfg = this.#host!.config!;
-    const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
+    const wsPing = this.#target?.routes.websocket?.ping ?? "/ws/ping";
     const url = this.#resolveWsBase(cfg.endpoint) + wsPing;
     const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
 
@@ -867,14 +955,7 @@ export class RealBackend implements RunnerBackend {
    *  base sourced from that guess — the browser would block it as mixed
    *  content anyway. Upgrade to wss:// instead. */
   #resolveWsBase(endpoint?: RunnerConfig["endpoint"]): string {
-    const tls = this.#capabilities?.origins.tls;
-    if (tls) return httpToWs(tls);
-    const pageIsSecure = location.protocol === "https:";
-    const h1 = this.#capabilities?.origins.h1;
-    if (h1) {
-      const ws = httpToWs(h1);
-      return pageIsSecure ? wsToWss(ws) : ws;
-    }
+    if (this.#target) return httpToWs(this.#target.origin);
     const base = resolveBase(this.#resolveEndpoint(endpoint));
     if (base) return httpToWs(base);
     return httpToWs(location.origin);
@@ -946,8 +1027,8 @@ export class RealBackend implements RunnerBackend {
     endpoint?: RunnerConfig["endpoint"],
     intervalMs = IDLE_PING_INTERVAL_MS,
   ): void {
-    if (this.#idleActive || !this.#capabilities?.transports.websocket) return;
-    const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
+    if (this.#idleActive || !this.#target?.routes.websocket) return;
+    const wsPing = this.#target.routes.websocket.ping;
     const url = this.#resolveWsBase(endpoint) + wsPing;
     this.#idleActive = true;
     // Treat connectivity as unknown until this (fresh) worker proves the link:
