@@ -7,6 +7,8 @@ import {
   needsPings,
   laneStaggerMs,
   selectProtocolTarget,
+  browserProtocolMatchesTarget,
+  protocolTargetKey,
 } from "./real/backendPure";
 import type { PhaseActivity } from "./contract";
 
@@ -43,6 +45,24 @@ test("selectProtocolTarget rejects clear H1 on a secure page", () => {
   expect(
     selectProtocolTarget(targets, "http1", "https://meter", true),
   ).toBeNull();
+});
+
+test("browser protocol verification is independent of server probe evidence", () => {
+  expect(browserProtocolMatchesTarget("http1", "http/1.1")).toBe(true);
+  expect(browserProtocolMatchesTarget("http2", "h2")).toBe(true);
+  expect(browserProtocolMatchesTarget("http3", "h3")).toBe(true);
+  expect(browserProtocolMatchesTarget("http2", "http/1.1")).toBe(false);
+});
+
+test("idle target ownership includes protocol and public origin", () => {
+  const target = { origin: "https://meter", routes };
+  expect(protocolTargetKey("http2", target)).toBe("http2\nhttps://meter");
+  expect(protocolTargetKey("http3", target)).not.toBe(
+    protocolTargetKey("http2", target),
+  );
+  expect(
+    protocolTargetKey("http2", { ...target, origin: "https://other-meter" }),
+  ).not.toBe(protocolTargetKey("http2", target));
 });
 
 /* ---------- resolveBase ---------- */

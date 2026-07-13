@@ -24,6 +24,9 @@ reported family is not guaranteed to describe every physical segment.
 
 `/preflight` is logical discovery and does not claim which protocol a later target uses. Set
 `PUBLIC_H1_ORIGIN`, `PUBLIC_H2_ORIGIN`, and `PUBLIC_H3_ORIGIN` to origins the browser can reach.
+An explicit `PUBLIC_H2_ORIGIN` or `PUBLIC_H3_ORIGIN` is advertised even when the corresponding
+native listener is disabled: the public target may be an H2/H3-capable proxy forwarding to the
+server's H1 listener. Native listener flags control local binds, not external target discovery.
 A conventional HTTP reverse proxy changes the measured hop: Resource Timing then describes the
 browser-to-proxy protocol, while `/probe` describes the proxy-to-server protocol. Directly expose
 the native H2 TCP and H3 TCP+UDP ports when the goal is to compare those server listeners.

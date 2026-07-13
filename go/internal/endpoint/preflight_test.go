@@ -41,6 +41,19 @@ func TestPreflightOmitsDisabledTargets(t *testing.T) {
 	}
 }
 
+func TestPreflightAdvertisesExternalProxyTargetsWithoutNativeTLS(t *testing.T) {
+	cfg := config.Default()
+	cfg.PublicH2Origin = "https://meter.example"
+	cfg.PublicH3Origin = "https://quic.example"
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://internal:8765/preflight", nil))
+	if got := pf.Capabilities.Targets.HTTP2; got == nil || got.Origin != cfg.PublicH2Origin {
+		t.Fatalf("external h2 target = %+v", got)
+	}
+	if got := pf.Capabilities.Targets.HTTP3; got == nil || got.Origin != cfg.PublicH3Origin {
+		t.Fatalf("external h3 target = %+v", got)
+	}
+}
+
 func TestHostPortDefaultsByTLS(t *testing.T) {
 	for _, tc := range []struct {
 		url  string

@@ -58,10 +58,8 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 		emit(Event{Kind: EventError, At: time.Now(), Err: err})
 		return err
 	}
-	expected := map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"}[protocol]
-	if probe.ProtocolNegotiated != expected {
-		return fmt.Errorf("selected %s but probe negotiated %s", protocol, probe.ProtocolNegotiated)
-	}
+	// The protocol-specific transport verifies this client-to-target hop. Probe
+	// evidence describes the target-to-Go hop, which may differ behind a proxy.
 	emit(Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, Message: protocol})
 
 	wsTransport := baseTransport()

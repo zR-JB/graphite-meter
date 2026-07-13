@@ -104,7 +104,7 @@ environment variables, which take precedence over defaults.
 
 | Env var                                                                          | Flag        | Default                                                   | What it does                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR` | `-h1-addr` | `:8765` | Clear HTTP/1.1 UI and measurement listener. |
+| `GM_H1_ADDR` | `-h1-addr` (`-addr` legacy alias) | `:8765` | Clear HTTP/1.1 UI and measurement listener. |
 | `GM_H2_ADDR` | `-h2-addr` | `:8443` | TLS listener with HTTP/2 transfers and HTTP/1.1 UI/WebSocket fallback. |
 | `GM_H3_ADDR` | `-h3-addr` | `:8444` | UDP HTTP/3 plus TCP TLS Alt-Svc bootstrap/WebSocket listener. |
 | `GM_ENABLE_H2` / `GM_ENABLE_H3` | `-enable-h2` / `-enable-h3` | off | Enable the corresponding TLS listeners. |

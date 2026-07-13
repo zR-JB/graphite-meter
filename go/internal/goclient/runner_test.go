@@ -287,6 +287,49 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 	}
 }
 
+func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
+	var origin string
+	var probeRequestProtocol string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Preflight{
+			Server: wire.ServerInfo{Name: "proxy", Host: r.Host, Port: 443},
+			Capabilities: wire.Capabilities{Targets: wire.Targets{HTTP2: &wire.Target{
+				Origin: origin, Routes: wire.DefaultRoutes(false),
+			}}},
+		})
+	})
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		probeRequestProtocol = r.Proto
+		_ = json.NewEncoder(w).Encode(wire.Probe{
+			ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket",
+			ProtocolNegotiated: "http/1.1", // proxy-to-Go evidence
+		})
+	})
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 64*1024))
+	})
+	srv := httptest.NewUnstartedServer(mux)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	origin = srv.URL
+
+	cfg := Config{
+		BaseURL: origin, Protocol: "http2", Stages: StageSet{Download: true},
+		DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true,
+		TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := Run(ctx, cfg, func(Event) {}); err != nil {
+		t.Fatalf("Run through H2 proxy with H1 downstream evidence: %v", err)
+	}
+	if probeRequestProtocol != "HTTP/2.0" {
+		t.Fatalf("client-to-proxy probe used %q, want HTTP/2.0", probeRequestProtocol)
+	}
+}
+
 func newLatencyOnlyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()

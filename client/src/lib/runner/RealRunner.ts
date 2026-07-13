@@ -24,6 +24,8 @@ import {
   needsPings,
   laneStaggerMs,
   selectProtocolTarget,
+  browserProtocolMatchesTarget,
+  protocolTargetKey,
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
@@ -241,6 +243,7 @@ export class RealBackend implements RunnerBackend {
    * active at the same time (stopped in onRunStart, restarted on run end). */
   #idleWorker: Worker | null = null;
   #idleActive = false;
+  #idleTargetKey = "";
   /** Set while probe() is harvesting the keepalive's first RTTs; `finish`
    *  resolves the preflight median wait (idempotent). */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
@@ -362,9 +365,6 @@ export class RealBackend implements RunnerBackend {
     this.#target = selected.target;
     this.#targetProtocol = selected.protocol;
 
-    const expected = { http1: "http/1.1", http2: "h2", http3: "h3" }[
-      selected.protocol
-    ];
     const attempts = selected.protocol === "http3" ? 3 : 1;
     const deadline = performance.now() + 2000;
     let pathProbe: Probe | null = null;
@@ -395,7 +395,7 @@ export class RealBackend implements RunnerBackend {
         firstHopProtocol = timing?.nextHopProtocol || undefined;
         if (
           selected.protocol !== "http3" ||
-          (firstHopProtocol === "h3" && pathProbe.protocolNegotiated === "h3")
+          browserProtocolMatchesTarget(selected.protocol, firstHopProtocol)
         )
           break;
       }
@@ -410,8 +410,7 @@ export class RealBackend implements RunnerBackend {
     }
     if (
       !pathProbe ||
-      pathProbe.protocolNegotiated !== expected ||
-      (selected.protocol === "http3" && firstHopProtocol !== "h3")
+      !browserProtocolMatchesTarget(selected.protocol, firstHopProtocol)
     ) {
       throw new TransportUnavailableError(
         `${selected.protocol} transport unavailable`,
@@ -1017,10 +1016,14 @@ export class RealBackend implements RunnerBackend {
     endpoint?: RunnerConfig["endpoint"],
     intervalMs = IDLE_PING_INTERVAL_MS,
   ): void {
-    if (this.#idleActive || !this.#target?.routes.websocket) return;
+    const targetKey = protocolTargetKey(this.#targetProtocol, this.#target);
+    if (this.#idleActive && this.#idleTargetKey === targetKey) return;
+    if (this.#idleActive) this.#stopIdleKeepalive();
+    if (!this.#target?.routes.websocket) return;
     const wsPing = this.#target.routes.websocket.ping;
     const url = this.#resolveWsBase(endpoint) + wsPing;
     this.#idleActive = true;
+    this.#idleTargetKey = targetKey;
     // Treat connectivity as unknown until this (fresh) worker proves the link:
     // its first samples then emit a "connected" edge. Crucial after a
     // connection-lost failure — the store latched the pulse offline, and
@@ -1062,6 +1065,7 @@ export class RealBackend implements RunnerBackend {
    *  app is tearing down. Idempotent. */
   #stopIdleKeepalive(): void {
     this.#idleActive = false;
+    this.#idleTargetKey = "";
     if (this.#idleRespawnTimer) {
       clearTimeout(this.#idleRespawnTimer);
       this.#idleRespawnTimer = null;

@@ -30,6 +30,22 @@ export function selectProtocolTarget(
   return { protocol: selected[0], target: selected[1] };
 }
 
+export function browserProtocolMatchesTarget(
+  target: ProtocolTarget,
+  nextHopProtocol?: string,
+): boolean {
+  return (
+    nextHopProtocol === { http1: "http/1.1", http2: "h2", http3: "h3" }[target]
+  );
+}
+
+export function protocolTargetKey(
+  protocol: ProtocolTarget | null,
+  target: Target | null,
+): string {
+  return protocol && target ? `${protocol}\n${target.origin}` : "";
+}
+
 /** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
  *  same-origin (relative requests) — the Stage-1 case where the Go server serves
  *  both the app and the API. A concrete host builds an absolute origin. */

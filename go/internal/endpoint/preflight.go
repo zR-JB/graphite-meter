@@ -34,10 +34,10 @@ func (p *Preflight) Handle(s transport.Session) error {
 func (p *Preflight) build(r *http.Request) wire.Preflight {
 	host, port := hostPort(r)
 	targets := wire.Targets{HTTP1: target(origin(p.cfg.PublicH1Origin, "http", host, p.cfg.H1Addr), true)}
-	if p.cfg.EnableH2 {
+	if p.cfg.EnableH2 || p.cfg.PublicH2Origin != "" {
 		targets.HTTP2 = target(origin(p.cfg.PublicH2Origin, "https", host, p.cfg.H2Addr), true)
 	}
-	if p.cfg.EnableH3 {
+	if p.cfg.EnableH3 || p.cfg.PublicH3Origin != "" {
 		targets.HTTP3 = target(origin(p.cfg.PublicH3Origin, "https", host, p.cfg.H3Addr), true)
 	}
 	return wire.Preflight{
