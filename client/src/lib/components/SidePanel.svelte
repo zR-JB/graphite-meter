@@ -399,6 +399,8 @@
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
     padding-right: var(--space-1);
     scrollbar-gutter: stable;
     display: flex;
