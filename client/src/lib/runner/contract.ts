@@ -177,7 +177,7 @@ export interface PhaseTransition {
   from: Phase;
   to: Phase;
   stage: TransportRole | null;
-  t: number;
+  t: number; // exact boundary on the run's measured timeline
 }
 
 /* ---------- Aggregate result (emitted on complete) ---------- */

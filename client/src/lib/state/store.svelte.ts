@@ -154,6 +154,7 @@ class AppStore {
 
   phase = $state<Phase>("idle");
   phaseStage = $state<TransportRole | null>(null);
+  phaseStartedAtMs = $state(0);
   phaseFraction = $state(0);
   phaseElapsedMs = $state(0);
   phaseBudgetMs = $state(0);
@@ -456,6 +457,7 @@ class AppStore {
       case "phase": {
         this.phase = e.transition.to;
         this.phaseStage = e.transition.stage;
+        this.phaseStartedAtMs = e.transition.t;
         this.phaseFraction = 0;
         // Stamp the wall-clock run start once, not on every warmup segment.
         if (e.transition.from === "idle") this.startEpoch = Date.now();
@@ -545,6 +547,7 @@ class AppStore {
     this.latency = [];
     this.phase = "idle";
     this.phaseStage = null;
+    this.phaseStartedAtMs = 0;
     this.phaseFraction = 0;
     this.phaseElapsedMs = 0;
     this.phaseBudgetMs = 0;

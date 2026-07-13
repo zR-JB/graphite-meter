@@ -230,6 +230,85 @@ test("full run: latency then download — phase order and stage lifecycle", () =
   }
 });
 
+test("throughput stays isolated across transfer warmups", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  core.start(
+    makeConfig({
+      stages: { download: true, upload: true, bidirectional: true },
+      duration: {
+        warmupMs: 100,
+        downloadMs: 100,
+        uploadMs: 100,
+        bidirectionalMs: 100,
+      },
+    }),
+  );
+
+  advance(100); // download measurement
+  core.ingestThroughput("down", 20_000_000, 2_000_000, 0.1);
+
+  advance(100); // upload warmup
+  expect(core.phase).toBe("warmup");
+  core.ingestThroughput("down", 20_000_000, 2_000_000, 0.1);
+
+  advance(100); // upload measurement
+  core.ingestThroughput("up", 10_000_000, 1_000_000, 0.1);
+
+  advance(100); // bidirectional warmup
+  expect(core.phase).toBe("warmup");
+  core.ingestThroughput("up", 10_000_000, 1_000_000, 0.1);
+
+  advance(100); // bidirectional measurement
+  core.ingestThroughput("down", 7_000_000, 700_000, 0.1);
+  core.ingestThroughput("up", 3_000_000, 300_000, 0.1);
+
+  const samples = events.flatMap((event) =>
+    event.type === "throughput" ? [event.sample] : [],
+  );
+  expect(samples).toHaveLength(4);
+  expect(
+    samples.map(({ phase, dir, bytesPerSec }) => ({
+      phase,
+      dir,
+      bytesPerSec,
+    })),
+  ).toEqual([
+    { phase: "download", dir: "down", bytesPerSec: 20_000_000 },
+    { phase: "upload", dir: "up", bytesPerSec: 10_000_000 },
+    { phase: "bidirectional", dir: "down", bytesPerSec: 7_000_000 },
+    { phase: "bidirectional", dir: "up", bytesPerSec: 3_000_000 },
+  ]);
+});
+
+test("phase transitions report scheduled boundaries when a tick overshoots", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  core.start(
+    makeConfig({
+      stages: { download: true, upload: true },
+      duration: { warmupMs: 100, downloadMs: 100, uploadMs: 100 },
+    }),
+  );
+  advance(125);
+  advance(100);
+
+  const transitions = events.flatMap((event) =>
+    event.type === "phase" ? [event.transition] : [],
+  );
+  expect(transitions.map(({ to, t }) => ({ to, t }))).toEqual([
+    { to: "warmup", t: 0 },
+    { to: "download", t: 100 },
+    { to: "warmup", t: 200 },
+  ]);
+});
+
 test("warmup->measure seam: same stage, no onStageEnd between begin and measure", () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

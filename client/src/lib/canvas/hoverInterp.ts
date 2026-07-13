@@ -29,18 +29,3 @@ export function interpolateAt<T extends { t: number }>(
   }
   return null;
 }
-
-/** The sample in non-empty `arr` whose `t` is closest to `t`. */
-export function closestSample<T extends { t: number }>(arr: T[], t: number): T {
-  let closest = arr[0];
-  let closestDist = Math.abs(arr[0].t - t);
-  for (let i = 1; i < arr.length; i++) {
-    const sample = arr[i];
-    const dist = Math.abs(sample.t - t);
-    if (dist < closestDist) {
-      closestDist = dist;
-      closest = sample;
-    }
-  }
-  return closest;
-}

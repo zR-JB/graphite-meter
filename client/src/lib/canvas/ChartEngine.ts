@@ -14,7 +14,7 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
-import { interpolateAt, closestSample } from "./hoverInterp";
+import { interpolateAt } from "./hoverInterp";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -23,6 +23,8 @@ export interface ChartData {
    *  the right (latency) axis so the chart reads as throughput-only. */
   latencyEnabled: boolean;
   phase: Phase;
+  /** Exact phase boundary on the runner's measured timeline. */
+  phaseStartedAtMs: number;
   /** Monotonic run counter from the store; a change means a new run started
    *  and the engine must drop all accumulated per-run state. */
   runSeq: number;
@@ -62,13 +64,10 @@ interface Viewport {
   rttMax: number;
 }
 
-/** Per-phase throughput summary drawn as min/max/avg overlays in result mode. */
+/** Per-lane average overlay drawn in result mode. */
 interface PhaseStat {
-  phase: Phase;
   t0: number;
   t1: number;
-  min: number;
-  max: number;
   avg: number;
   stroke: string;
 }
@@ -299,22 +298,13 @@ export class ChartEngine implements CanvasEngine {
     t: number,
     pick: (s: T) => number,
   ): number | null {
-    if (!arr.length) return null;
     const span = this.#spanAt(t);
-    if (span) {
-      const phaseSamples = arr.filter((s) => s.phase === span.phase);
-      const value = interpolateAt(phaseSamples, t, pick);
-      if (value != null) return value;
-      return null;
-    }
-
-    const nearestPhase = this.#nearestPhaseWithSamples(arr, t);
-    if (nearestPhase) {
-      const firstSample = arr.find((s) => s.phase === nearestPhase);
-      if (firstSample) return pick(firstSample);
-    }
-
-    return pick(closestSample(arr, t));
+    if (!span) return null;
+    return interpolateAt(
+      arr.filter((s) => s.phase === span.phase),
+      t,
+      pick,
+    );
   }
 
   #spanAt(t: number): PhaseSpan | null {
@@ -322,25 +312,6 @@ export class ChartEngine implements CanvasEngine {
       if (t >= span.t0 && t <= span.t1) return span;
     }
     return null;
-  }
-
-  #nearestPhaseWithSamples<T extends { phase: Phase }>(
-    arr: T[],
-    t: number,
-  ): Phase | null {
-    if (!this.#spans.length) return null;
-    const availablePhases = new Set(arr.map((s) => s.phase));
-    let nearest: Phase | null = null;
-    let nearestDist = Infinity;
-    for (const span of this.#spans) {
-      if (!availablePhases.has(span.phase)) continue;
-      const dist = t < span.t0 ? span.t0 - t : t > span.t1 ? t - span.t1 : 0;
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearest = span.phase;
-      }
-    }
-    return nearest;
   }
 
   #resolveColors(): void {
@@ -450,12 +421,21 @@ export class ChartEngine implements CanvasEngine {
       this.#resetRunState();
     }
 
-    // Track phase spans (for per-phase colouring + the phase ribbon).
+    // Track exact runner-owned boundaries. Sample timestamps cannot represent
+    // a sample-free warmup and therefore are not a phase clock.
     if (d.phase !== this.#lastPhase) {
-      const lt = this.#latestT(d);
-      if (this.#spans.length) this.#spans[this.#spans.length - 1].t1 = lt;
-      this.#spans.push({ phase: d.phase, t0: lt, t1: Infinity });
+      const phaseStart =
+        d.phase === "complete" || d.phase === "error"
+          ? this.#latestT(d)
+          : d.phaseStartedAtMs;
+      if (this.#spans.length)
+        this.#spans[this.#spans.length - 1].t1 = phaseStart;
+      this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
+
+      // A live phase is a new chart window. Cut at its exact boundary so the
+      // previous stage cannot remain visible while the camera eases forward.
+      if (this.#vpInit) this.#vp.tMin = Math.max(this.#vp.tMin, phaseStart);
     }
 
     const latest = this.#latestT(d);
@@ -656,7 +636,6 @@ export class ChartEngine implements CanvasEngine {
       if (seg.length < 2 || average == null) continue;
       out.push(
         this.#reduceStat(
-          phase,
           seg,
           phase === "download" ? this.#c.download : this.#c.upload,
           average,
@@ -664,7 +643,7 @@ export class ChartEngine implements CanvasEngine {
       );
     }
     // Bidirectional carries two concurrent lanes tagged by `dir`, not `phase` —
-    // split them so each still gets its own min/max/avg overlay, drawn in the
+    // split them so each still gets its own average overlay, drawn in the
     // existing download/upload colors (matches #drawThroughput's two-line
     // rendering for this phase, rather than one combined line).
     for (const dir of ["down", "up"] as const) {
@@ -676,7 +655,6 @@ export class ChartEngine implements CanvasEngine {
       if (seg.length < 2 || average == null) continue;
       out.push(
         this.#reduceStat(
-          "bidirectional",
           seg,
           dir === "down" ? this.#c.download : this.#c.upload,
           average,
@@ -686,28 +664,15 @@ export class ChartEngine implements CanvasEngine {
     return out;
   }
 
-  /** Reduce a sample subset to its {@link PhaseStat} (min/max/avg over the
-   *  segment's time span), tagged with the color it draws in. Shared by both
-   *  the single-lane (download/upload) and split-lane (bidirectional down/up)
-   *  cases in #phaseStats. */
+  /** Build the shared result overlay for one throughput lane. */
   #reduceStat(
-    phase: Phase,
     seg: ThroughputSample[],
     stroke: string,
     canonicalAverage: number,
   ): PhaseStat {
-    let min = Infinity;
-    let max = 0;
-    for (const s of seg) {
-      if (s.bytesPerSec < min) min = s.bytesPerSec;
-      if (s.bytesPerSec > max) max = s.bytesPerSec;
-    }
     return {
-      phase,
       t0: seg[0].t,
       t1: seg[seg.length - 1].t,
-      min,
-      max,
       avg: canonicalAverage,
       stroke,
     };

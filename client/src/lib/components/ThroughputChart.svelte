@@ -65,6 +65,7 @@
         latency: store.latency, // raw — the engine buckets the LINE itself; axis/hover use raw
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
+        phaseStartedAtMs: store.phaseStartedAtMs,
         runSeq: store.runSeq,
         scaleBytesPerSec: store.displayScaleBytesPerSec,
         resultRates: {
