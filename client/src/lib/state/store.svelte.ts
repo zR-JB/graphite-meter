@@ -5,6 +5,7 @@ import type {
   Phase,
   ConnectivityState,
   InfraInfo,
+  TransportDiscovery,
   EngineInfo,
   RunResult,
   RunnerConfig,
@@ -175,6 +176,7 @@ class AppStore {
 
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
+  transportDiscovery = $state<TransportDiscovery | null>(null);
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
   stageResults = $state<{
@@ -454,6 +456,9 @@ class AppStore {
 
   ingest = (e: RunnerEvent) => {
     switch (e.type) {
+      case "transportDiscovery":
+        this.transportDiscovery = e.discovery;
+        break;
       case "infra":
         this.infra = e.info;
         break;

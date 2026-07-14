@@ -1,6 +1,11 @@
 // Shared runner contract: phases, config, events, result shapes, and backend
 // interfaces used by both the UI and measurement engines.
 
+import type {
+  FetchThroughputTarget,
+  WebSocketLatencyTarget,
+} from "../api/preflight";
+
 /* ---------- Lifecycle ---------- */
 /* Phase sequence: every enabled stage is preceded by its own self-contained
  * `warmup` window, e.g. all stages on →
@@ -374,14 +379,32 @@ export interface InfraInfo {
   selectedLatencyTarget?: string;
   selectedLatencyTransport?: TransportKind;
   verifiedLatencyProtocol?: string;
-  availableTargets?: Record<string, boolean>;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;
 }
 
+export type TransportDiscoveryState =
+  "advertised" | "browser-blocked" | "not-advertised";
+
+export interface DiscoveredTarget<T> {
+  state: TransportDiscoveryState;
+  target?: T;
+}
+
+/** Server-advertised transports classified against the page that will use
+ * them. Emitted as soon as /preflight completes, before selection or probing. */
+export interface TransportDiscovery {
+  pageOrigin: string;
+  pageSecure: boolean;
+  pageProtocol?: string;
+  throughput: Record<string, DiscoveredTarget<FetchThroughputTarget>>;
+  latency: Record<string, DiscoveredTarget<WebSocketLatencyTarget>>;
+}
+
 /* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
+  | { type: "transportDiscovery"; discovery: TransportDiscovery }
   | { type: "infra"; info: InfraInfo }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }

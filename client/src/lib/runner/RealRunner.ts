@@ -28,6 +28,7 @@ import {
   selectThroughputTarget,
   selectLatencyTarget,
   browserProtocolMatchesTarget,
+  classifyTransportDiscovery,
   throughputTargetKey,
 } from "./real/backendPure";
 
@@ -343,22 +344,22 @@ export class RealBackend implements RunnerBackend {
       throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
     this.#capabilities = pf.capabilities;
-    const selection = config.transports.throughputTarget;
-    const discoveryOrigin = this.#discoveryOrigin;
-    const selected = selectThroughputTarget(
+    const discovery = classifyTransportDiscovery(
       pf.capabilities.throughputTargets,
-      selection,
-      discoveryOrigin,
+      pf.capabilities.latencyTargets,
+      this.#discoveryOrigin,
       location.protocol === "https:",
       this.#discoveryProtocol,
     );
+    this.#host?.emit({ type: "transportDiscovery", discovery });
+    const selection = config.transports.throughputTarget;
+    const selected = selectThroughputTarget(discovery, selection);
     if (!selected)
       throw new TransportUnavailableError(`${selection} target unavailable`);
     this.#throughputTarget = selected;
     this.#latencyTarget = selectLatencyTarget(
-      pf.capabilities.latencyTargets,
+      discovery,
       config.transports.latencyTarget,
-      location.protocol === "https:",
     );
     const needsLatency =
       config.stages.latency ||
@@ -473,22 +474,6 @@ export class RealBackend implements RunnerBackend {
       selectedLatencyTarget: this.#latencyTarget?.id,
       selectedLatencyTransport: this.#latencyTarget?.transport,
       verifiedLatencyProtocol,
-      availableTargets: Object.fromEntries([
-        ["current", true],
-        ["http1-clear", false],
-        ["http1-tls", false],
-        ["http2", false],
-        ["http3", false],
-        ...pf.capabilities.throughputTargets.map((target) => [
-          target.id,
-          location.protocol !== "https:" || target.tls,
-        ]),
-        ...pf.capabilities.latencyTargets.map((target) => [
-          target.id,
-          target.transport === "websocket" &&
-            (location.protocol !== "https:" || target.tls),
-        ]),
-      ]),
       firstHopProtocol,
       firstHopSecure: selected.tls,
     };
