@@ -17,26 +17,26 @@ services:
         # GM_CLIENT_ENGINE: "real"        # default runner when multiple are built in
         # GM_CLIENT_BUILD_LABEL: "0.1.0"  # status-bar + client-version label (default "prod")
     ports:
-      - "8765:8765" # HTTP/1.1 (default)
-      # - "8445:8445/tcp"  # dedicated HTTPS HTTP/1.1 throughput + WSS latency
-      # - "8443:8443/tcp"  # HTTP/2-only UI, discovery, transfers, and progress
-      # - "8444:8444/tcp"  # HTTP/3 Alt-Svc bootstrap probe only
-      # - "8444:8444/udp"  # HTTP/3 probe, transfers, and progress
+      - "7246:7246" # HTTP/1.1 (default)
+      # - "7247:7247/tcp"  # dedicated HTTPS HTTP/1.1 throughput + WSS latency
+      # - "7248:7248/tcp"  # HTTP/2-only UI, discovery, transfers, and progress
+      # - "7249:7249/tcp"  # HTTP/3 Alt-Svc bootstrap probe only
+      # - "7249:7249/udp"  # HTTP/3 probe, transfers, and progress
     environment:
       # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
       # running behind a reverse proxy so /preflight advertises reachable URLs.
       GM_SERVER_NAME: "graphite-meter"
       # GM_SERVER_LOCATION: "fra"
       # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network
-      # PUBLIC_H1_ORIGIN: "http://speed.example:8765"
+      # PUBLIC_H1_ORIGIN: "http://speed.example:7246"
       # GM_ENABLE_H1_TLS: "true"
       # GM_ENABLE_H2: "true"
       # GM_ENABLE_H3: "true"
       # GM_TLS_CERT: "/etc/letsencrypt/live/graphite-meter/fullchain.pem"
       # GM_TLS_KEY: "/etc/letsencrypt/live/graphite-meter/privkey.pem"
-      # PUBLIC_H1_TLS_ORIGIN: "https://speed.example:8445"
-      # PUBLIC_H2_ORIGIN: "https://speed.example:8443"
-      # PUBLIC_H3_ORIGIN: "https://speed.example:8444"
+      # PUBLIC_H1_TLS_ORIGIN: "https://speed.example:7247"
+      # PUBLIC_H2_ORIGIN: "https://speed.example:7248"
+      # PUBLIC_H3_ORIGIN: "https://speed.example:7249"
     # Mount the complete Let's Encrypt tree when enabling the TLS settings above:
     # volumes:
     #   - /etc/letsencrypt:/etc/letsencrypt:ro

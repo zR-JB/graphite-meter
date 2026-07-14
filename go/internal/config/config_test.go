@@ -7,7 +7,7 @@ import (
 
 func TestDefault(t *testing.T) {
 	c := Default()
-	if c.H1Addr != ":8765" || c.H1TLSAddr != ":8445" || c.H2Addr != ":8443" || c.H3Addr != ":8444" {
+	if c.H1Addr != ":7246" || c.H1TLSAddr != ":7247" || c.H2Addr != ":7248" || c.H3Addr != ":7249" {
 		t.Fatalf("addresses = %q %q %q %q", c.H1Addr, c.H1TLSAddr, c.H2Addr, c.H3Addr)
 	}
 	if c.EnableH1TLS || c.EnableH2 || c.EnableH3 {
@@ -21,15 +21,15 @@ func TestLoadProtocolEnvironment(t *testing.T) {
 	t.Setenv("GM_ENABLE_H3", "1")
 	t.Setenv("GM_TLS_CERT", "/cert.pem")
 	t.Setenv("GM_TLS_KEY", "/key.pem")
-	t.Setenv("PUBLIC_H1_ORIGIN", "http://meter.example:8765")
-	t.Setenv("PUBLIC_H1_TLS_ORIGIN", "https://meter.example:8445")
-	t.Setenv("PUBLIC_H2_ORIGIN", "https://meter.example:8443")
-	t.Setenv("PUBLIC_H3_ORIGIN", "https://meter.example:8444")
+	t.Setenv("PUBLIC_H1_ORIGIN", "http://meter.example:7246")
+	t.Setenv("PUBLIC_H1_TLS_ORIGIN", "https://meter.example:7247")
+	t.Setenv("PUBLIC_H2_ORIGIN", "https://meter.example:7248")
+	t.Setenv("PUBLIC_H3_ORIGIN", "https://meter.example:7249")
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.EnableH1TLS || !c.EnableH2 || !c.EnableH3 || c.PublicH1TLSOrigin != "https://meter.example:8445" {
+	if !c.EnableH1TLS || !c.EnableH2 || !c.EnableH3 || c.PublicH1TLSOrigin != "https://meter.example:7247" {
 		t.Fatalf("config = %+v", c)
 	}
 }
@@ -134,7 +134,7 @@ func TestLoadUsesDefaultsWithCleanEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.H1Addr != ":8765" || c.H1TLSAddr != ":8445" || c.H2Addr != ":8443" || c.H3Addr != ":8444" || c.EnableH1TLS || c.EnableH2 || c.EnableH3 || len(c.TrustedProxies) != 0 {
+	if c.H1Addr != ":7246" || c.H1TLSAddr != ":7247" || c.H2Addr != ":7248" || c.H3Addr != ":7249" || c.EnableH1TLS || c.EnableH2 || c.EnableH3 || len(c.TrustedProxies) != 0 {
 		t.Fatalf("load defaults = %+v", c)
 	}
 }

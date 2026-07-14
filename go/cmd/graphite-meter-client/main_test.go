@@ -869,7 +869,7 @@ func TestApply_Events(t *testing.T) {
 	}
 
 	m2 := newModel(goclient.DefaultConfig())
-	pf := &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Host: "host.example", Port: 8765, Location: "ams"}}
+	pf := &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Host: "host.example", Port: 7246, Location: "ams"}}
 	m2.apply(goclient.Event{Kind: goclient.EventPreflight, Preflight: pf})
 	if m2.status != "connected" || !strings.Contains(m2.server, "host.example") {
 		t.Errorf("after EventPreflight: status=%q server=%q", m2.status, m2.server)

@@ -202,23 +202,23 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Run container
-        run: docker run -d --name gm -p 8765:8765 graphite-meter:smoke
+        run: docker run -d --name gm -p 7246:7246 graphite-meter:smoke
       - name: Wait for ready
         run: |
           for i in $(seq 1 30); do
-            curl -fsS -o /dev/null http://localhost:8765/preflight && exit 0
+            curl -fsS -o /dev/null http://localhost:7246/preflight && exit 0
             sleep 1
           done
           echo "::error::server never became ready"
           exit 1
       - name: Smoke /preflight
         run: |
-          curl -fsS http://localhost:8765/preflight | tee /tmp/preflight.json
+          curl -fsS http://localhost:7246/preflight | tee /tmp/preflight.json
           jq -e '
             .engineVersion == "0.0.0-ci"
             and .capabilities.throughputTargets == [{
               "id": "http1-clear",
-              "origin": "http://localhost:8765",
+              "origin": "http://localhost:7246",
               "transport": "fetch-stream",
               "protocol": "http1",
               "tls": false,
@@ -226,7 +226,7 @@ jobs:
             }]
             and .capabilities.latencyTargets == [{
               "id": "ws-http1-clear",
-              "origin": "http://localhost:8765",
+              "origin": "http://localhost:7246",
               "transport": "websocket",
               "protocol": "http1",
               "tls": false,
@@ -236,7 +236,7 @@ jobs:
           ' /tmp/preflight.json
       - name: Smoke /probe
         run: |
-          curl -fsS http://localhost:8765/probe | tee /tmp/probe.json
+          curl -fsS http://localhost:7246/probe | tee /tmp/probe.json
           jq -e '
             (.clientIp | type == "string" and length > 0)
             and (.clientIpVersion == 4 or .clientIpVersion == 6)
@@ -245,7 +245,7 @@ jobs:
           ' /tmp/probe.json
       - name: Smoke built client metadata
         run: |
-          curl -fsS http://localhost:8765/version.json | tee /tmp/version.json
+          curl -fsS http://localhost:7246/version.json | tee /tmp/version.json
           jq -e '
             .version == "0.0.0-ci+ci-${{ github.sha }}"
             and .label == "ci-${{ github.sha }}"
@@ -253,7 +253,7 @@ jobs:
       - name: Smoke built client assets
         run: |
           set -euo pipefail
-          base=http://localhost:8765
+          base=http://localhost:7246
           curl -fsS "$base/" -o /tmp/index.html
 
           grep -qi '<script[^>]*type="module"' /tmp/index.html || {
@@ -342,7 +342,7 @@ jobs:
       - name: Smoke SPA routing
         run: |
           set -euo pipefail
-          base=http://localhost:8765
+          base=http://localhost:7246
           curl -fsS "$base/settings/" -o /tmp/spa-route.html
           grep -qi '<div id="app"' /tmp/spa-route.html || {
             echo "::error::extensionless SPA route did not fall back to index.html"

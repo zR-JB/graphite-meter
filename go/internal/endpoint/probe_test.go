@@ -27,8 +27,8 @@ func TestProbeReturnsConnectionEvidence(t *testing.T) {
 func TestBootstrapProbeAdvertisesH3AndCloses(t *testing.T) {
 	cfg := config.Default()
 	rec := httptest.NewRecorder()
-	httpAdapter(NewProbe(&cfg, "8444")).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://meter/probe", nil))
-	if got := rec.Header().Get("Alt-Svc"); got != `h3=":8444"` {
+	httpAdapter(NewProbe(&cfg, "7249")).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://meter/probe", nil))
+	if got := rec.Header().Get("Alt-Svc"); got != `h3=":7249"` {
 		t.Fatalf("Alt-Svc = %q", got)
 	}
 	if got := rec.Header().Get("Connection"); got != "close" {

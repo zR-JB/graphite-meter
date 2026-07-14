@@ -16,14 +16,14 @@ ContainerName=graphite-meter
 Image=graphite-meter.build
 
 # Clear HTTP/1.1 default; enable only the TLS targets you need.
-PublishPort=8765:8765
+PublishPort=7246:7246
 # Dedicated HTTPS HTTP/1.1 throughput + WSS latency:
-# PublishPort=8445:8445/tcp
+# PublishPort=7247:7247/tcp
 # HTTP/2 only:
-# PublishPort=8443:8443/tcp
+# PublishPort=7248:7248/tcp
 # HTTP/3 bootstrap probe only (TCP) and throughput (UDP):
-# PublishPort=8444:8444/tcp
-# PublishPort=8444:8444/udp
+# PublishPort=7249:7249/tcp
+# PublishPort=7249:7249/udp
 
 # On rootless Podman, user-mode networking can use pasta and
 # significantly reduce throughput. For better performance, uncomment:
@@ -34,10 +34,10 @@ PublishPort=8765:8765
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
-# Environment=PUBLIC_H1_ORIGIN=http://speed.example:8765
-# Environment=PUBLIC_H1_TLS_ORIGIN=https://speed.example:8445
-# Environment=PUBLIC_H2_ORIGIN=https://speed.example:8443
-# Environment=PUBLIC_H3_ORIGIN=https://speed.example:8444
+# Environment=PUBLIC_H1_ORIGIN=http://speed.example:7246
+# Environment=PUBLIC_H1_TLS_ORIGIN=https://speed.example:7247
+# Environment=PUBLIC_H2_ORIGIN=https://speed.example:7248
+# Environment=PUBLIC_H3_ORIGIN=https://speed.example:7249
 # Environment=GM_ENABLE_H1_TLS=true
 # Environment=GM_ENABLE_H2=true
 # Environment=GM_ENABLE_H3=true

@@ -54,13 +54,13 @@ func TestGoldenConformance(t *testing.T) {
 }
 
 func TestStructConformance(t *testing.T) {
-	h1 := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:8765", Transport: "fetch-stream", Protocol: "http1", Routes: DefaultThroughputRoutes()}
+	h1 := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:7246", Transport: "fetch-stream", Protocol: "http1", Routes: DefaultThroughputRoutes()}
 	ws := LatencyTarget{ID: "ws-http1-clear", Origin: h1.Origin, Transport: "websocket", Protocol: "http1", Routes: DefaultLatencyRoutes()}
 	values := []struct {
 		name  string
 		value any
 	}{
-		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter", Host: "speed.example", Port: 8765}, EngineVersion: "test", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{h1}, LatencyTargets: []LatencyTarget{ws}}}},
+		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter", Host: "speed.example", Port: 7246}, EngineVersion: "test", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{h1}, LatencyTargets: []LatencyTarget{ws}}}},
 		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}},
 	}
 	for _, tc := range values {

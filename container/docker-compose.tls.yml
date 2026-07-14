@@ -3,19 +3,19 @@
 services:
   graphite-meter:
     ports:
-      - "8445:8445/tcp" # dedicated HTTPS HTTP/1.1 throughput and WSS latency
-      - "8443:8443/tcp" # HTTP/2-only UI, discovery, transfers, and progress
-      - "8444:8444/tcp" # HTTP/3 Alt-Svc bootstrap probe only
-      - "8444:8444/udp" # HTTP/3 probe, transfers, and progress
+      - "7247:7247/tcp" # dedicated HTTPS HTTP/1.1 throughput and WSS latency
+      - "7248:7248/tcp" # HTTP/2-only UI, discovery, transfers, and progress
+      - "7249:7249/tcp" # HTTP/3 Alt-Svc bootstrap probe only
+      - "7249:7249/udp" # HTTP/3 probe, transfers, and progress
     environment:
       GM_ENABLE_H1_TLS: "true"
       GM_ENABLE_H2: "true"
       GM_ENABLE_H3: "true"
       GM_TLS_CERT: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/fullchain.pem
       GM_TLS_KEY: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/privkey.pem
-      PUBLIC_H1_TLS_ORIGIN: https://${GM_PUBLIC_HOST}:8445
-      PUBLIC_H2_ORIGIN: https://${GM_PUBLIC_HOST}:8443
-      PUBLIC_H3_ORIGIN: https://${GM_PUBLIC_HOST}:8444
+      PUBLIC_H1_TLS_ORIGIN: https://${GM_PUBLIC_HOST}:7247
+      PUBLIC_H2_ORIGIN: https://${GM_PUBLIC_HOST}:7248
+      PUBLIC_H3_ORIGIN: https://${GM_PUBLIC_HOST}:7249
     volumes:
       # Mount the complete tree: live/ entries are symlinks into archive/.
       - letsencrypt:/etc/letsencrypt:ro

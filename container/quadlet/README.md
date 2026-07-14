@@ -25,7 +25,7 @@ systemctl --user daemon-reload
 systemctl --user start graphite-meter.service
 ```
 
-Then open <http://localhost:8765>.
+Then open <http://localhost:7246>.
 
 **Rootful:** copy to `/etc/containers/systemd/`, then
 `sudo systemctl daemon-reload && sudo systemctl start graphite-meter.service`.

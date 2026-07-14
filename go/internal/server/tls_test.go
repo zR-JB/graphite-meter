@@ -42,7 +42,7 @@ func tlsTestConfig(cert, key string) *config.Config {
 	c := config.Default()
 	c.EnableH2 = true
 	c.TLSCert, c.TLSKey = cert, key
-	c.PublicH2Origin = "https://meter.example:8443"
+	c.PublicH2Origin = "https://meter.example:7248"
 	return &c
 }
 

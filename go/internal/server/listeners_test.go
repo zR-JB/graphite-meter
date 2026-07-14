@@ -122,7 +122,7 @@ func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
 
 func TestPublicH3Port(t *testing.T) {
 	cfg := config.Default()
-	if got := publicH3Port(&cfg); got != "8444" {
+	if got := publicH3Port(&cfg); got != "7249" {
 		t.Fatalf("default port = %q", got)
 	}
 	cfg.PublicH3Origin = "https://meter.example:18444"

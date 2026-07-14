@@ -2,7 +2,7 @@
   "server": {
     "name": "graphite-meter",
     "host": "speed.example",
-    "port": 8765,
+    "port": 7246,
     "location": "fra"
   },
   "engineVersion": "0.1.0-test",
@@ -10,7 +10,7 @@
     "throughputTargets": [
       {
         "id": "http1-clear",
-        "origin": "http://speed.example:8765",
+        "origin": "http://speed.example:7246",
         "transport": "fetch-stream",
         "protocol": "http1",
         "tls": false,
@@ -26,7 +26,7 @@
     "latencyTargets": [
       {
         "id": "ws-http1-clear",
-        "origin": "http://speed.example:8765",
+        "origin": "http://speed.example:7246",
         "transport": "websocket",
         "protocol": "http1",
         "tls": false,

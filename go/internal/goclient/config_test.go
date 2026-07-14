@@ -8,7 +8,7 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	want := Config{
-		BaseURL:                "http://127.0.0.1:8765",
+		BaseURL:                "http://127.0.0.1:7246",
 		ThroughputTarget:       "auto",
 		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
@@ -63,7 +63,7 @@ func TestConfigNormalized(t *testing.T) {
 		{
 			name:   "empty BaseURL defaults",
 			mutate: func(c Config) Config { c.BaseURL = ""; return c },
-			check:  func(c Config) (any, any) { return c.BaseURL, "http://127.0.0.1:8765" },
+			check:  func(c Config) (any, any) { return c.BaseURL, "http://127.0.0.1:7246" },
 		},
 		{
 			name:   "advertised throughput target id passes through",

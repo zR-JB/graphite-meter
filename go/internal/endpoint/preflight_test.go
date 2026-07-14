@@ -11,11 +11,11 @@ import (
 func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 	cfg := config.Default()
 	cfg.EnableH1TLS, cfg.EnableH2, cfg.EnableH3 = true, true, true
-	cfg.PublicH1Origin = "http://meter.example:8765"
-	cfg.PublicH1TLSOrigin = "https://meter.example:8445"
-	cfg.PublicH2Origin = "https://meter.example:8443"
-	cfg.PublicH3Origin = "https://meter.example:8444"
-	req := httptest.NewRequest(http.MethodGet, "http://discovery.example:8765/preflight", nil)
+	cfg.PublicH1Origin = "http://meter.example:7246"
+	cfg.PublicH1TLSOrigin = "https://meter.example:7247"
+	cfg.PublicH2Origin = "https://meter.example:7248"
+	cfg.PublicH3Origin = "https://meter.example:7249"
+	req := httptest.NewRequest(http.MethodGet, "http://discovery.example:7246/preflight", nil)
 	pf := NewPreflight(&cfg).build(req)
 	if len(pf.Capabilities.ThroughputTargets) != 4 || len(pf.Capabilities.LatencyTargets) != 2 {
 		t.Fatalf("capabilities = %+v", pf.Capabilities)
@@ -46,11 +46,11 @@ func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 
 func TestPreflightOmitsDisabledTargets(t *testing.T) {
 	cfg := config.Default()
-	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil))
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://speed.example:7246/preflight", nil))
 	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
 		t.Fatalf("disabled TLS capabilities advertised: %+v", pf.Capabilities)
 	}
-	if got := pf.Capabilities.ThroughputTargets[0].Origin; got != "http://speed.example:8765" {
+	if got := pf.Capabilities.ThroughputTargets[0].Origin; got != "http://speed.example:7246" {
 		t.Fatalf("h1 = %q", got)
 	}
 }
@@ -60,8 +60,8 @@ func TestPreflightAdvertisesExternalProxyTargetsWithoutNativeTLS(t *testing.T) {
 	cfg.PublicH1TLSOrigin = "https://h1.example"
 	cfg.PublicH2Origin = "https://meter.example"
 	cfg.PublicH3Origin = "https://quic.example"
-	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://internal:8765/preflight", nil))
-	for i, want := range []string{"http://internal:8765", cfg.PublicH1TLSOrigin, cfg.PublicH2Origin, cfg.PublicH3Origin} {
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://internal:7246/preflight", nil))
+	for i, want := range []string{"http://internal:7246", cfg.PublicH1TLSOrigin, cfg.PublicH2Origin, cfg.PublicH3Origin} {
 		if got := pf.Capabilities.ThroughputTargets[i].Origin; got != want {
 			t.Errorf("external transfer %d = %q, want %q", i, got, want)
 		}

@@ -39,23 +39,23 @@ const transfer = (
 
 test("selectThroughputTarget freezes the requested advertised target", () => {
   const targets = [
-    transfer("http1-clear", "http://meter:8765", "http1", false),
-    transfer("http1-tls", "https://meter:8445", "http1", true),
-    transfer("http2", "https://meter:8443", "http2", true),
+    transfer("http1-clear", "http://meter:7246", "http1", false),
+    transfer("http1-tls", "https://meter:7247", "http1", true),
+    transfer("http2", "https://meter:7248", "http2", true),
   ];
   expect(
-    selectThroughputTarget(targets, "http1-tls", "http://meter:8765", false)
+    selectThroughputTarget(targets, "http1-tls", "http://meter:7246", false)
       ?.id,
   ).toBe("http1-tls");
   expect(
-    selectThroughputTarget(targets, "http3", "http://meter:8765", false),
+    selectThroughputTarget(targets, "http3", "http://meter:7246", false),
   ).toBeNull();
 });
 
 test("secure pages reject only clear H1, not TLS H1", () => {
   const targets = [
-    transfer("http1-clear", "http://meter:8765", "http1", false),
-    transfer("http1-tls", "https://meter:8445", "http1", true),
+    transfer("http1-clear", "http://meter:7246", "http1", false),
+    transfer("http1-tls", "https://meter:7247", "http1", true),
   ];
   expect(
     selectThroughputTarget(targets, "http1-clear", "https://meter", true),
@@ -99,7 +99,7 @@ test("latency target follows page security independently from throughput", () =>
   const targets: LatencyTarget[] = [
     {
       id: "ws-http1-tls",
-      origin: "https://meter:8445",
+      origin: "https://meter:7247",
       transport: "websocket",
       protocol: "http1",
       tls: true,
@@ -107,7 +107,7 @@ test("latency target follows page security independently from throughput", () =>
     },
     {
       id: "ws-http1-clear",
-      origin: "http://meter:8765",
+      origin: "http://meter:7246",
       transport: "websocket",
       protocol: "http1",
       tls: false,
@@ -123,15 +123,15 @@ test("latency target follows page security independently from throughput", () =>
 
 test("every fetch target combines with either H1 websocket latency target", () => {
   const throughput = [
-    transfer("http1-clear", "http://meter:8765", "http1", false),
-    transfer("http1-tls", "https://meter:8445", "http1", true),
-    transfer("http2", "https://meter:8443", "http2", true),
-    transfer("http3", "https://meter:8444", "http3", true),
+    transfer("http1-clear", "http://meter:7246", "http1", false),
+    transfer("http1-tls", "https://meter:7247", "http1", true),
+    transfer("http2", "https://meter:7248", "http2", true),
+    transfer("http3", "https://meter:7249", "http3", true),
   ];
   const latency: LatencyTarget[] = [
     {
       id: "ws-http1-clear",
-      origin: "http://meter:8765",
+      origin: "http://meter:7246",
       transport: "websocket",
       protocol: "http1",
       tls: false,
@@ -139,7 +139,7 @@ test("every fetch target combines with either H1 websocket latency target", () =
     },
     {
       id: "ws-http1-tls",
-      origin: "https://meter:8445",
+      origin: "https://meter:7247",
       transport: "websocket",
       protocol: "http1",
       tls: true,
@@ -167,13 +167,13 @@ test("every fetch target combines with either H1 websocket latency target", () =
 
 test("resolveBase: undefined/auto/empty host all mean same-origin (relative)", () => {
   expect(resolveBase(undefined)).toBe("");
-  expect(resolveBase({ host: "auto", port: 8765 })).toBe("");
-  expect(resolveBase({ host: "", port: 8765 })).toBe("");
+  expect(resolveBase({ host: "auto", port: 7246 })).toBe("");
+  expect(resolveBase({ host: "", port: 7246 })).toBe("");
 });
 
 test("resolveBase: builds an absolute http origin for a concrete host", () => {
-  expect(resolveBase({ host: "example.com", port: 8765 })).toBe(
-    "http://example.com:8765",
+  expect(resolveBase({ host: "example.com", port: 7246 })).toBe(
+    "http://example.com:7246",
   );
 });
 
@@ -187,7 +187,7 @@ test("resolveBase: port 443 builds an https origin", () => {
 
 test("httpToWs: maps https:// to wss:// and http:// to ws://", () => {
   expect(httpToWs("https://example.com:443")).toBe("wss://example.com:443");
-  expect(httpToWs("http://example.com:8765")).toBe("ws://example.com:8765");
+  expect(httpToWs("http://example.com:7246")).toBe("ws://example.com:7246");
 });
 
 test("httpToWs: passes through anything already ws(s):// or relative", () => {
@@ -199,7 +199,7 @@ test("httpToWs: passes through anything already ws(s):// or relative", () => {
 /* ---------- wsToWss ---------- */
 
 test("wsToWss: upgrades ws:// to wss://", () => {
-  expect(wsToWss("ws://example.com:8765")).toBe("wss://example.com:8765");
+  expect(wsToWss("ws://example.com:7246")).toBe("wss://example.com:7246");
 });
 
 test("wsToWss: leaves wss:// (or anything else) unchanged", () => {
@@ -344,19 +344,19 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   }
 
   const discovery = (withH2: boolean) => ({
-    server: { name: "test", host: "meter.test", port: 8765 },
+    server: { name: "test", host: "meter.test", port: 7246 },
     engineVersion: "test",
     capabilities: {
       throughputTargets: [
-        transfer("http1-clear", "http://meter.test:8765", "http1", false),
+        transfer("http1-clear", "http://meter.test:7246", "http1", false),
         ...(withH2
-          ? [transfer("http2", "https://meter.test:8443", "http2", true)]
+          ? [transfer("http2", "https://meter.test:7248", "http2", true)]
           : []),
       ],
       latencyTargets: [
         {
           id: "ws-http1-clear",
-          origin: "http://meter.test:8765",
+          origin: "http://meter.test:7246",
           transport: "websocket",
           protocol: "http1",
           tls: false,
@@ -369,7 +369,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   try {
     Object.defineProperty(globalThis, "location", {
       configurable: true,
-      value: new URL("http://meter.test:8765/"),
+      value: new URL("http://meter.test:7246/"),
     });
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     performance.getEntriesByName = () =>
@@ -400,7 +400,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
         bidirectional: false,
       },
       skipLoadedLatencyWhenStageOff: true,
-      endpoint: { host: "meter.test", port: 8765 },
+      endpoint: { host: "meter.test", port: 7246 },
       transports: {
         throughputTarget: "http1-clear",
         latencyTarget: "auto",

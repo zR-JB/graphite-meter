@@ -46,7 +46,7 @@ roughly 100 ms progress records are observable immediately at the public origin.
 
 ```nginx
 location = /upload/progress {
-    proxy_pass http://graphite-meter:8765;
+    proxy_pass http://graphite-meter:7246;
     proxy_http_version 1.1;
     proxy_buffering off;
     proxy_cache off;
@@ -54,7 +54,7 @@ location = /upload/progress {
 }
 
 location / {
-    proxy_pass http://graphite-meter:8765;
+    proxy_pass http://graphite-meter:7246;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -72,7 +72,7 @@ Meter, not to the browser's network.
 
 ```caddyfile
 speed.example.com {
-    reverse_proxy graphite-meter:8765
+    reverse_proxy graphite-meter:7246
 }
 ```
 
@@ -85,7 +85,7 @@ to its upstream. Trust only the Caddy container/host CIDR in Graphite Meter.
 labels:
   - traefik.enable=true
   - traefik.http.routers.graphite-meter.rule=Host(`speed.example.com`)
-  - traefik.http.services.graphite-meter.loadbalancer.server.port=8765
+  - traefik.http.services.graphite-meter.loadbalancer.server.port=7246
 ```
 
 Traefik supplies the standard `X-Forwarded-*` headers to its upstream. Trust

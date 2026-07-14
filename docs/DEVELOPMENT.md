@@ -20,10 +20,10 @@ cd graphite-meter
 ## Quick start (development)
 
 ```sh
-just dev          # build the client (dev profile), embed it into the Go server, run it on :8765
+just dev          # build the client (dev profile), embed it into the Go server, run it on :7246
 ```
 
-Open `http://localhost:8765`. `just dev` and `just prod` are the two "do everything" entrypoints
+Open `http://localhost:7246`. `just dev` and `just prod` are the two "do everything" entrypoints
 and are deliberately symmetric: each builds the Svelte client in its own profile, stages it into
 `go/internal/static/dist` (picked up by `//go:embed`), and `go run`s the server — only the profile
 differs. `just dev` includes the dummy runner (`?engine=dummy`) and the Developer settings tab by
@@ -43,8 +43,8 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | Recipe                   | What it does                                                                                                                                                     |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `just` (no args)         | Lists every recipe.                                                                                                                                              |
-| `just dev`               | Builds + embeds the dev-profile client, then `go run`s the server on `:8765`.                                                                                    |
-| `just prod`              | Builds + embeds the prod-profile client, then `go run`s the version-stamped server on `:8765`.                                                                   |
+| `just dev`               | Builds + embeds the dev-profile client, then `go run`s the server on `:7246`.                                                                                    |
+| `just prod`              | Builds + embeds the prod-profile client, then `go run`s the version-stamped server on `:7246`.                                                                   |
 | `just client-build-dev`  | `bun install` + `bun run build` -> `client/dist`, dev profile (Vite's own defaults: dummy engine + dev tools included).                                          |
 | `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below).                                             |
 | `just client-watch`      | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend.                                                                      |
@@ -104,10 +104,10 @@ environment variables, which take precedence over defaults.
 
 | Env var                                                                          | Flag        | Default                                                   | What it does                                                                                                                                                                                                                                                                                              |
 | -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR` | `-h1-addr` (`-addr` legacy alias) | `:8765` | Clear HTTP/1.1 UI and measurement listener. |
-| `GM_H1_TLS_ADDR` | `-h1-tls-addr` | `:8445` | Dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, and WebSockets. |
-| `GM_H2_ADDR` | `-h2-addr` | `:8443` | HTTP/2-only TLS listener for UI, discovery, probe, transfers, and upload progress. |
-| `GM_H3_ADDR` | `-h3-addr` | `:8444` | UDP HTTP/3 probe, transfers, and progress plus a TCP HTTP/1.1 Alt-Svc bootstrap probe only. |
+| `GM_H1_ADDR` | `-h1-addr` (`-addr` legacy alias) | `:7246` | Clear HTTP/1.1 UI and measurement listener. |
+| `GM_H1_TLS_ADDR` | `-h1-tls-addr` | `:7247` | Dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, and WebSockets. |
+| `GM_H2_ADDR` | `-h2-addr` | `:7248` | HTTP/2-only TLS listener for UI, discovery, probe, transfers, and upload progress. |
+| `GM_H3_ADDR` | `-h3-addr` | `:7249` | UDP HTTP/3 probe, transfers, and progress plus a TCP HTTP/1.1 Alt-Svc bootstrap probe only. |
 | `GM_ENABLE_H1_TLS` / `GM_ENABLE_H2` / `GM_ENABLE_H3` | matching flags | off | Enable the corresponding native TLS listeners. |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | `-tls-cert` / `-tls-key` | — | Matching PEM pair. Invalid dates, hostnames, and pairs fail startup; valid renewals hot-reload. |
 | `GM_SERVER_NAME`                                                                 | `-name`     | `graphite-meter`                                          | Server identity advertised in `/preflight`.                                                                                                                                                                                                                                                               |
@@ -136,15 +136,15 @@ mkcert -cert-file .dev-certs/localhost.pem \
 GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
   GM_TLS_CERT=../.dev-certs/localhost.pem \
   GM_TLS_KEY=../.dev-certs/localhost-key.pem \
-  PUBLIC_H1_ORIGIN=http://localhost:8765 \
-  PUBLIC_H1_TLS_ORIGIN=https://localhost:8445 \
-  PUBLIC_H2_ORIGIN=https://localhost:8443 \
-  PUBLIC_H3_ORIGIN=https://localhost:8444 \
+  PUBLIC_H1_ORIGIN=http://localhost:7246 \
+  PUBLIC_H1_TLS_ORIGIN=https://localhost:7247 \
+  PUBLIC_H2_ORIGIN=https://localhost:7248 \
+  PUBLIC_H3_ORIGIN=https://localhost:7249 \
   just prod
 ```
 
-That single command starts clear H1 on `8765/tcp`, TLS-only H1 on `8445/tcp`, H2-only TLS on
-`8443/tcp`, and the H3 bootstrap/QUIC pair on `8444/tcp` and `8444/udp`.
+That single command starts clear H1 on `7246/tcp`, TLS-only H1 on `7247/tcp`, H2-only TLS on
+`7248/tcp`, and the H3 bootstrap/QUIC pair on `7249/tcp` and `7249/udp`.
 
 Firefox has an [additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341):
 by default it disables HTTP/3 when the certificate chain contains a third-party root, even when
@@ -152,7 +152,7 @@ that root is trusted for normal HTTPS. For a local development profile, open `ab
 `network.http.http3.disable_when_third_party_roots_found` to `false`, and
 restart Firefox. Do not weaken this setting in a normal browsing profile.
 
-The H3 bootstrap still needs `8444/tcp`, and QUIC needs `8444/udp`. A successful
+The H3 bootstrap still needs `7249/tcp`, and QUIC needs `7249/udp`. A successful
 `curl --http3-only` or native-client request proves the server and UDP path, but
 not browser certificate policy. In the browser, select HTTP/3 and confirm the
 application reports verified browser protocol `h3`; Graphite Meter fails the
@@ -175,7 +175,7 @@ Run settings, including both target roles, are editable inside the TUI before a 
 
 | Flag                      | Default                   | Meaning                                                                                   |
 | ------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `-url`                    | `http://127.0.0.1:8765`   | Server base URL.                                                                          |
+| `-url`                    | `http://127.0.0.1:7246`   | Server base URL.                                                                          |
 | `-throughput-target` (`-transfer-target` and `-protocol` migration aliases) | `auto` | Fetch target: `auto`, `http1`, `http1-clear`, `http1-tls`, `http2`, or direct-QUIC `http3`. |
 | `-latency-target` (`-latency-channel` migration alias) | `auto` | `ws-http1-clear` or `ws-http1-tls`, selected independently. |
 | `-stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.   |
@@ -198,8 +198,8 @@ ships a single static binary (no shell, no libc). Base images are fully qualifie
 
 ```sh
 just container-build
-podman run -d --name gm --replace -p 8765:8765 graphite-meter:latest
-# open http://localhost:8765 ; stop with: podman rm -f gm
+podman run -d --name gm --replace -p 7246:7246 graphite-meter:latest
+# open http://localhost:7246 ; stop with: podman rm -f gm
 ```
 
 `container/Dockerfile` stages:
@@ -211,7 +211,7 @@ podman run -d --name gm --replace -p 8765:8765 graphite-meter:latest
 2. **`server`** (`golang:1.26`) — `go mod download`, copies `go/` and `api/` (the schema
    conformance test references `api/` by relative path), embeds the client build from stage 1,
    builds a `CGO_ENABLED=0`, stripped, trimmed, ldflags-versioned static binary.
-3. **final** (`scratch`) — just the binary. It exposes 8765/tcp, 8445/tcp, 8443/tcp, and 8444/tcp+udp.
+3. **final** (`scratch`) — just the binary. It exposes 7246/tcp, 7247/tcp, 7248/tcp, and 7249/tcp+udp.
    No entrypoint shell is needed —
    config is read natively from env/flags.
 

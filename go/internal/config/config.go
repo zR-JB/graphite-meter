@@ -23,7 +23,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{H1Addr: ":8765", H1TLSAddr: ":8445", H2Addr: ":8443", H3Addr: ":8444", ServerName: "graphite-meter", EngineVersion: EngineVersion}
+	return Config{H1Addr: ":7246", H1TLSAddr: ":7247", H2Addr: ":7248", H3Addr: ":7249", ServerName: "graphite-meter", EngineVersion: EngineVersion}
 }
 
 func Load() (Config, error) {

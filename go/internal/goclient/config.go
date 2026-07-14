@@ -69,7 +69,7 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		BaseURL:                "http://127.0.0.1:8765",
+		BaseURL:                "http://127.0.0.1:7246",
 		ThroughputTarget:       "auto",
 		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
@@ -91,7 +91,7 @@ func DefaultConfig() Config {
 
 func (c Config) normalized() Config {
 	if c.BaseURL == "" {
-		c.BaseURL = "http://127.0.0.1:8765"
+		c.BaseURL = "http://127.0.0.1:7246"
 	}
 	if c.ThroughputTarget == "" {
 		c.ThroughputTarget = "auto"

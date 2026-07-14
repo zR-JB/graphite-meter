@@ -54,18 +54,18 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
 builds the random block, upload store, meters, and endpoint implementations once. Listener-specific
-muxes expose clear H1 on 8765/tcp, optional TLS-only H1 on 8445/tcp, optional H2 on 8443/tcp,
-and optional H3 on 8444/udp with a TLS H1 bootstrap on 8444/tcp. The H3 TCP surface has only
+muxes expose clear H1 on 7246/tcp, optional TLS-only H1 on 7247/tcp, optional H2 on 7248/tcp,
+and optional H3 on 7249/udp with a TLS H1 bootstrap on 7249/tcp. The H3 TCP surface has only
 `/probe`, so transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
 disabled to prevent POST replay.
 
 | Listener | Protocol | Owned surface |
 | --- | --- | --- |
-| `:8765/tcp` | HTTP/1.1 clear | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency. |
-| `:8445/tcp` | HTTP/1.1 TLS only | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
-| `:8443/tcp` | HTTP/2 only | H2 UI, discovery, probe, transfers, and upload progress. No H1 ALPN or WebSocket route. |
-| `:8444/udp` | HTTP/3 | H3 probe, transfers, and upload progress. |
-| `:8444/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets. |
+| `:7246/tcp` | HTTP/1.1 clear | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency. |
+| `:7247/tcp` | HTTP/1.1 TLS only | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
+| `:7248/tcp` | HTTP/2 only | H2 UI, discovery, probe, transfers, and upload progress. No H1 ALPN or WebSocket route. |
+| `:7249/udp` | HTTP/3 | H3 probe, transfers, and upload progress. |
+| `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets. |
 
 Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
 freezes one target for each role and verifies each target independently. Fetch throughput targets

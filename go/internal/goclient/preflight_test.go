@@ -30,15 +30,15 @@ func TestHTTPEndpoint(t *testing.T) {
 }
 
 func TestSelectTarget(t *testing.T) {
-	webTransport := testTransfer("wt-http3", "https://meter:8444", "http3", true)
+	webTransport := testTransfer("wt-http3", "https://meter:7249", "http3", true)
 	webTransport.Transport = "webtransport-streams"
-	h1 := testTransfer("http1-clear", "http://meter:8765", "http1", false)
-	h2 := testTransfer("http2", "https://meter:8443", "http2", true)
+	h1 := testTransfer("http1-clear", "http://meter:7246", "http1", false)
+	h2 := testTransfer("http2", "https://meter:7248", "http2", true)
 	custom := testTransfer("edge-h2", "https://edge.example", "http2", true)
 	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{webTransport, h1, h2, custom}}}
 	for _, tc := range []struct{ protocol, base, want string }{
-		{"auto", "https://meter:8444", "http1-clear"},
-		{"auto", "http://meter:8765", "http1-clear"},
+		{"auto", "https://meter:7249", "http1-clear"},
+		{"auto", "http://meter:7246", "http1-clear"},
 		{"http2", "http://discovery", "http2"},
 		{"edge-h2", "http://discovery", "edge-h2"},
 	} {
@@ -62,14 +62,14 @@ func TestTargetProtocolEvidence(t *testing.T) {
 
 func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
 	targets := []wire.LatencyTarget{
-		testChannel("ws-http1-clear", "http://meter:8765", false),
-		testChannel("ws-http1-tls", "https://meter:8445", true),
+		testChannel("ws-http1-clear", "http://meter:7246", false),
+		testChannel("ws-http1-tls", "https://meter:7247", true),
 	}
-	auto, err := selectLatencyTarget("auto", "https://meter:8443", targets)
+	auto, err := selectLatencyTarget("auto", "https://meter:7248", targets)
 	if err != nil || auto.ID != "ws-http1-tls" {
 		t.Fatalf("automatic target = %+v, %v", auto, err)
 	}
-	explicit, err := selectLatencyTarget("ws-http1-clear", "http://meter:8765", targets)
+	explicit, err := selectLatencyTarget("ws-http1-clear", "http://meter:7246", targets)
 	if err != nil || explicit.ID != "ws-http1-clear" {
 		t.Fatalf("explicit target = %+v, %v", explicit, err)
 	}
@@ -113,7 +113,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"server":{"name":"srv","host":"h","port":8765},"engineVersion":"1.0","capabilities":{"transfers":[],"channels":[]}}`))
+			w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","capabilities":{"transfers":[],"channels":[]}}`))
 		}))
 		defer srv.Close()
 
@@ -121,7 +121,7 @@ func TestGetPreflight(t *testing.T) {
 		if err != nil {
 			t.Fatalf("getPreflight() error: %v", err)
 		}
-		if pf.Server.Name != "srv" || pf.Server.Port != 8765 {
+		if pf.Server.Name != "srv" || pf.Server.Port != 7246 {
 			t.Errorf("Server = %+v, unexpected", pf.Server)
 		}
 		if pf.EngineVersion != "1.0" {

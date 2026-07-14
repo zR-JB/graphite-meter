@@ -53,10 +53,10 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
 Run the published image (multi-arch: amd64 + arm64):
 
 ```sh
-docker run -d --name graphite-meter -p 8765:8765 ghcr.io/zr-jb/graphite-meter:latest
+docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open **http://localhost:8765** — that's it for the default clear HTTP/1.1 deployment. The TLS
+Open **http://localhost:7246** — that's it for the default clear HTTP/1.1 deployment. The TLS
 overlay adds a dedicated HTTPS HTTP/1.1 target alongside native H2 and H3.
 For local browser testing, including Firefox's stricter handling of private-root
 HTTP/3 certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
@@ -70,14 +70,14 @@ services:
   graphite-meter:
     image: ghcr.io/zr-jb/graphite-meter:latest
     ports:
-      - "8765:8765"
+      - "7246:7246"
     restart: unless-stopped
 ```
 
 Enable all protocol targets with `container/docker-compose.tls.yml`. Set `GM_PUBLIC_HOST` and
 mount/provision a certificate in the overlay's complete `/etc/letsencrypt` volume (the complete
 tree is required because `live/` contains symlinks into `archive/`). H3 needs both TCP and UDP
-8444 reachable; the dedicated H1-TLS target uses TCP 8445.
+7249 reachable; the dedicated H1-TLS target uses TCP 7247.
 
 ### Podman + systemd (Quadlet)
 
@@ -91,10 +91,10 @@ Everything is optional; the defaults just work. The common knobs:
 
 | Env var              | Default                                 | What it does                                                                                                                                 |
 | -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR`         | `:8765`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
-| `GM_ENABLE_H1_TLS`   | off                                     | Enable dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, progress, and WSS latency on `GM_H1_TLS_ADDR` (`:8445/tcp`).                |
-| `GM_ENABLE_H2`       | off                                     | Enable the HTTP/2-only UI, discovery, probe, transfer, and progress listener on `GM_H2_ADDR` (`:8443/tcp`).                                 |
-| `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 probe, transfers, and progress on `GM_H3_ADDR` UDP plus the bootstrap-only TCP probe on the same port (`:8444`).               |
+| `GM_H1_ADDR`         | `:7246`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
+| `GM_ENABLE_H1_TLS`   | off                                     | Enable dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, progress, and WSS latency on `GM_H1_TLS_ADDR` (`:7247/tcp`).                |
+| `GM_ENABLE_H2`       | off                                     | Enable the HTTP/2-only UI, discovery, probe, transfer, and progress listener on `GM_H2_ADDR` (`:7248/tcp`).                                 |
+| `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 probe, transfers, and progress on `GM_H3_ADDR` UDP plus the bootstrap-only TCP probe on the same port (`:7249`).               |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by native H1-TLS/H2/H3; renewed files hot-reload.                                               |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
 | `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
@@ -117,7 +117,7 @@ Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](doc
 
 ```sh
 just goclient-build            # -> go/graphite-meter-client
-./go/graphite-meter-client -url https://your-server:8445 \
+./go/graphite-meter-client -url https://your-server:7247 \
   -throughput-target http1-tls -latency-target ws-http1-tls
 ```
 
@@ -134,7 +134,7 @@ progress is part of the selected throughput path. See `-throughput-target` and `
   client, and the cross-language `api/` contract fit together, plus the roadmap (WebTransport,
   multi-server testing).
 
-The short version: `git clone`, then `just dev`, then open http://localhost:8765.
+The short version: `git clone`, then `just dev`, then open http://localhost:7246.
 
 ## License
 
