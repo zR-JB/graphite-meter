@@ -106,6 +106,9 @@ Everything is optional; the defaults just work. The common knobs:
 | Env var              | Default                                 | What it does                                                                                                                                 |
 | -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GM_H1_ADDR`         | `:7246`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
+| `GM_H1_TLS_ADDR`     | `:7247`                                 | Dedicated HTTPS HTTP/1.1 and WSS listen address.                                                                                             |
+| `GM_H2_ADDR`         | `:7248`                                 | HTTP/2-only TLS listen address.                                                                                                              |
+| `GM_H3_ADDR`         | `:7249`                                 | HTTP/3 UDP and bootstrap-only TCP listen address.                                                                                            |
 | `GM_ENABLE_H1_TLS`   | off                                     | Enable dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, progress, and WSS latency on `GM_H1_TLS_ADDR` (`:7247/tcp`).                |
 | `GM_ENABLE_H2`       | off                                     | Enable the HTTP/2-only UI, discovery, probe, transfer, and progress listener on `GM_H2_ADDR` (`:7248/tcp`).                                 |
 | `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 probe, transfers, and progress on `GM_H3_ADDR` UDP plus the bootstrap-only TCP probe on the same port (`:7249`).               |
@@ -127,7 +130,7 @@ the browser-facing origin differ from the listener address.
 Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)
 for nginx, Caddy, and Traefik examples and the trust-chain rules.
 
-Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
+Full runtime and build-time reference: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
 
 > **Measuring multi-gigabit through the container?** Rootless Podman's user-mode networking
 > (pasta/slirp) can cap throughput well below your NIC — use host networking for full-rate LAN
@@ -151,8 +154,8 @@ progress is part of the selected throughput path. See `-throughput-target` and `
 - **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — toolchain, `just` recipes, build flags,
   building the image from source.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the server, the browser client, the TUI
-  client, and the cross-language `api/` contract fit together, plus the roadmap (WebTransport,
-  multi-server testing).
+  client, and the cross-language `api/` contract fit together, plus the roadmap (multi-server
+  testing and the Rust rewrite).
 
 The short version: `git clone`, then `just dev`, then open http://localhost:7246.
 

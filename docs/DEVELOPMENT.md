@@ -121,6 +121,7 @@ environment variables, which take precedence over defaults.
 | `GM_TRUSTED_PROXIES`                                                             | —           | —                                                         | Comma-separated trusted-proxy CIDRs. Forwarded client addresses and `X-Forwarded-Proto` are ignored unless the socket peer matches one of them. Invalid CIDRs fail startup. See [REVERSE_PROXY.md](REVERSE_PROXY.md).                                                                                     |
 | `GM_VERBOSE`                                                                     | `-verbose`  | off                                                       | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                                                                                                         |
 | `PUBLIC_H1_ORIGIN`, `PUBLIC_H1_TLS_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags | request host + listener port | Exact externally reachable transfer origins. Clear H1 must be `http`; all TLS targets must be `https`. |
+| `PUBLIC_TLS_ORIGIN` | — | — | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence. |
 
 The address and origin settings are deliberately different. `GM_*_ADDR` changes where Go listens;
 `PUBLIC_*_ORIGIN` only changes what `/preflight` advertises and never opens or moves a listener.

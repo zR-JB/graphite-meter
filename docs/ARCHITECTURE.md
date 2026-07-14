@@ -19,14 +19,14 @@ go/                           Go module: the measurement server + a native Bubbl
   internal/config/            Server env-var/flag configuration.
   internal/server/            Listener bootstrap, mux wiring.
   internal/endpoint/          One Go type per HTTP/WS route (preflight, download, upload, ping, ...).
-  internal/transport/         The Session abstraction (HTTP vs WebSocket vs, later, WebTransport).
+  internal/transport/         The Session abstraction (HTTP and WebSocket; WebTransport shape reserved).
   internal/wire/              Shared wire-protocol types (frames, opcodes, preflight structs).
   internal/goclient/          The native TUI client's measurement engine (shares the wire protocol).
   internal/static/            //go:embed wrapper that serves the built Svelte client.
 api/                          Cross-language contract, source of truth for client/server agreement:
                                  preflight schema/golden — logical discovery
                                  probe schema/golden     — selected-path evidence
-                                 wire.md / wire.testvectors.txt                — WS/WT message protocol
+                                 wire.md / wire.testvectors.txt                — message protocol + reserved WT shapes
 container/                    Deployment: image-based docker-compose.yml + quadlet unit (default),
                                the multi-stage Dockerfile, and build-from-source variants.
 ```
@@ -72,8 +72,8 @@ freezes one target for each role and verifies each target independently. Fetch t
 own probe, transfer, session, and NDJSON progress routes. Latency targets own a probe and ping
 route. The browser always fetches `/preflight` from the page origin; it never reconstructs target
 ports locally, and every subsequent HTTP or WebSocket URL comes from that discovery document.
-Today only WebSocket over dedicated H1 clear/TLS origins is advertised for latency;
-H2/H3 WebSockets and WebTransport remain unadvertised. WebSockets over H2 or H3 Extended CONNECT are specified by
+Only WebSocket over dedicated H1 clear/TLS origins is advertised for latency. H2/H3 WebSockets and
+WebTransport are not advertised. WebSockets over H2 or H3 Extended CONNECT are specified by
 [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441) and
 [RFC 9220](https://www.rfc-editor.org/rfc/rfc9220), but the current implementation uses the widely
 interoperable HTTP/1.1 Upgrade.
@@ -95,9 +95,9 @@ reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on tha
 | `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop. |
 | `/` (anything unmatched) | GET        | H1/H1-TLS/H2 UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
-No WebTransport channel is advertised and no route is mounted. The `webtransport-go` dependency
-and contract variants remain reserved for Stage 5; its HTTP/3 server wiring stays commented out
-until actual WebTransport endpoints exist and are advertised.
+No WebTransport channel is advertised and no route is mounted. Its dependency, schema variants,
+wire opcodes, and commented HTTP/3 configuration are retained as inactive contract surface; they
+do not describe a runtime capability.
 
 ### Server-authoritative upload accounting
 
@@ -114,7 +114,7 @@ aggregates after 30s.
 
 Plain request/response endpoints (`/preflight`, `/probe`, `/download`, `/upload`, and
 `/upload/progress`) are normal HTTP and not covered by a message protocol. The WebSocket latency
-bus (and future WebTransport latency counterparts) speaks a tiny ASCII protocol — one message per frame, no
+bus speaks a tiny ASCII protocol — one message per frame, no
 length prefix, `OP` or `OP,arg[,arg...]`, parsed by `indexOf(',')` slicing, never JSON. An unknown
 opcode or malformed frame gets a non-fatal `ERR,<code>,<text>` reply; the bus is never torn down
 for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpus:
@@ -126,7 +126,7 @@ for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpu
 | `READY`           | S→C       | `READY`                            | Bus is up.                                                                  |
 | `PING`            | C→S       | `PING,<id>`                        | Latency probe; `id` is a client-owned monotonic uint32.                     |
 | `PONG`            | S→C       | `PONG,<id>;TIME,<nanos>`           | Echo; `id` verbatim, server clock is diagnostics-only.                      |
-| `SIZE`            | C→S       | `SIZE,<bytes>`                     | WebTransport download-size request — reserved, no consumer yet.             |
+| `SIZE`            | C→S       | `SIZE,<bytes>`                     | Reserved WebTransport download-size request; no runtime consumer.           |
 | `BYE`             | C→S       | `BYE`                              | Graceful bus close.                                                         |
 | `ERR`             | S→C       | `ERR,<code>,<text>`                | Non-fatal protocol error.                                                   |
 
@@ -140,11 +140,11 @@ reported numbers — it never influences what the client reports.
 
 ### Session abstraction (`internal/transport`)
 
-Every endpoint is written once against a `Session` interface (`Context`, `Query`, `ClientIP`,
-`Proto`, `OpenDownloadSink`/`OpenUploadSource`, `Bus`), so it doesn't need to know whether it's
-running over HTTP or a WebSocket bus. Today two concrete sessions exist — `httpSession` (h1
-request/response) and `websocketSession` (message bus). A WebTransport session is named in the
-interface's doc comments as the intended third implementation but does not exist yet.
+Every endpoint is written once against a `Session` interface (`Context`, `Query`, `Proto`, `HTTP`,
+`OpenDownloadSink`/`OpenUploadSource`, `Bus`), so it doesn't need to know whether it's
+running over HTTP or a WebSocket bus. Two concrete sessions exist — `httpSession` (H1/H2/H3
+request/response) and `websocketSession` (message bus). The interface retains WebTransport-shaped
+stream and bus seams, but there is no WebTransport session implementation.
 
 `internal/config`, `internal/transport`, `internal/server`, `internal/static`, and
 `internal/endpoint/registry.go` have unit tests alongside the rest of `internal/endpoint`
@@ -214,9 +214,9 @@ A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage l
 real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 
 - **`RealBackend`** (`src/lib/runner/RealRunner.ts`) — the production engine, always used in a
-  release build. Negotiates a transport per stage (today this always resolves to `fetch`
-  streaming for transfer and WebSocket for latency, since the server never advertises
-  `webtransport`), spawns one Web Worker per parallel stream, and keeps an idle keepalive ping
+  release build. Negotiates a transport per stage: advertised targets resolve to `fetch`
+  streaming for transfer and WebSocket for latency. It spawns one Web Worker per parallel stream
+  and keeps an idle keepalive ping
   running between runs for the connectivity indicator.
 - **`DummyBackend`** (`src/lib/runner/dummy.ts`) — a synthetic engine for UI development and
   demos, with five canned network profiles (fiber/cable/lte/satellite/throttled) and support for
@@ -263,6 +263,8 @@ A production build has only Setup, so no tab bar is rendered at all.
 | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Duration preset | Medium  | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                  |
 | Bidirectional   | off     | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration. |
+| Throughput target | Current | Uses the page's verified HTTP target or selects an advertised Fetch target independently: H1 clear, H1 TLS, H2, or H3. Unavailable targets stay visible with the discovery reason. |
+| Latency target | Automatic | Selects an advertised WebSocket target independently: H1 clear or H1 TLS. Unavailable targets stay visible with the discovery reason. |
 
 **Setup — Results tier**
 
@@ -325,16 +327,13 @@ the throughput path.
 ### Testing
 
 Unit tests (`bun:test`, run via `just client-test`) cover pure `.ts` logic only — no component
-rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Covered so far:
-`compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
+rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Coverage includes
+`actions/sheetDrag.ts`, `compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
 test double, exercising the full phase-lifecycle/stall/early-finish/EMA behavior without a real
-network or worker), `runner/dummy.ts`, `state/persistence.ts`, `runner/workers/autosize.ts`,
-`runner/workers/backoff.ts`, `runner/workers/rttEstimator.ts`, `runner/real/streamPolicy.ts`,
-`runner/real/wire.ts`, `runner/real/backendPure.ts` (URL/median/ping-need/lane-stagger helpers
-split out of `RealRunner.ts`, so they're testable without pulling in
-`RealRunner.ts`'s build-time `BUILD` defines), `canvas/hoverInterp.ts` and `canvas/gaugeSweep.ts`
-(pure interpolation/mapping math split out of `ChartEngine.ts`/`GaugeEngine.ts`), `runner/evaluation.ts`,
-`runner/schedule.ts`, and `state/stageGuards.ts`. Follow `state/stageGuards.test.ts` as the style
+network or worker), `runner/RealRunner.ts`, `runner/dummy.ts`, `runner/evaluation.ts`,
+`runner/schedule.ts`, `runner/real/streamPolicy.ts`, `runner/real/wire.ts`, the worker policy
+helpers, `state/persistence.ts`, `state/stageGuards.ts`, and the canvas interpolation/mapping
+helpers. Follow `state/stageGuards.test.ts` as the style
 model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing files or classes
 entangled with I/O the same way `stageGuards.ts`/`backendPure.ts`/`hoverInterp.ts` were extracted,
 if it needs to be unit-tested in isolation.
@@ -345,13 +344,23 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 
 ---
 
-## Experimental and roadmap
+## Current experimental feature
 
 - **Chunked download** is an opt-in adaptive-chunk alternative to long streams.
-- **WebTransport** remains future work. It is neither mounted nor advertised; H3 throughput and
-  upload progress use fetch over QUIC, while latency independently uses an H1-TLS WebSocket.
-- **Server selection and simultaneous multi-server testing** remain future work. Protocol targets
-  in one discovery document are listeners of one logical server, not independent servers.
+
+## Reserved contract surface
+
+- **Reserved WebTransport contract** is intentionally inactive. It is neither mounted nor
+  advertised; H3 throughput and upload progress use fetch over QUIC, while latency independently
+  uses an H1-TLS WebSocket.
+
+## Roadmap
+
+- **Multi-server testing** — select one configured server or run against several servers in one
+  pass. Protocol targets in one discovery document currently remain listeners of one logical
+  server, not independent servers.
+- **Rust rewrite** — replace the Go server and native terminal client while preserving the shared
+  schemas, wire vectors, runtime behavior, and container interface.
 
 ## TLS security and lifecycle
 
