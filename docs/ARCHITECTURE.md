@@ -93,9 +93,9 @@ reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on tha
 | `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop. |
 | `/` (anything unmatched) | GET        | H1/H1-TLS/H2 UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
-No WebTransport channel is advertised and no route is mounted. The compatible
-`webtransport-go` HTTP/3 setup is present so adding it later does not require replacing the QUIC
-server, but this release makes no WebTransport capability claim.
+No WebTransport channel is advertised and no route is mounted. The `webtransport-go` dependency
+and contract variants remain reserved for Stage 5; its HTTP/3 server wiring stays commented out
+until actual WebTransport endpoints exist and are advertised.
 
 ### Server-authoritative upload accounting
 

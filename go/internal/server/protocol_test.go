@@ -12,7 +12,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	webtransport "github.com/quic-go/webtransport-go"
+	// webtransport "github.com/quic-go/webtransport-go" // Stage 5 coverage.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -136,7 +136,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
-	webtransport.ConfigureHTTP3Server(h3)
+	// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with WebTransport routes.
 	go h3.Serve(pc)
 	defer func() { _ = h3.Close(); _ = pc.Close() }()
 	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec

@@ -16,7 +16,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	webtransport "github.com/quic-go/webtransport-go"
+	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
@@ -217,7 +217,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
 		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
-		webtransport.ConfigureHTTP3Server(h3)
+		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
 		pc, err := net.ListenPacket("udp", cfg.H3Addr)
 		if err != nil {
 			closeOpened()
