@@ -18,12 +18,11 @@ import (
 // add is a lockless atomic on *uploadAgg; only first-touch create and sweep
 // delete take a shard mutex.
 //
-// An aggregate is created on first touch and deleted after explicit finalization
-// or by the TTL sweeper after an abandoned run.
+// An aggregate is created on first touch and retained through explicit
+// finalization so a reconnect can replay completion; the TTL sweeper deletes it.
 //
-// Creation is gated to ids minted at /upload/session (markIssued): a flood of
-// forged ids on this auth-less bus creates no state, closing both the cross-tab
-// progress-read leak and the maxLiveUploads-amplified DoS vector.
+// Creation consumes an id minted at /upload/session. Pending ids and live
+// aggregates have independent hard caps, while forged ids create no state.
 type UploadStore struct {
 	shards  [uploadShardCount]uploadShard
 	issued  sync.Map     // id (string) -> issue time (mono ns); consumed on first aggregate creation
@@ -123,8 +122,8 @@ func (s *UploadStore) shard(id string) *uploadShard {
 
 // Mint generates a fresh opaque upload-session token (128 bits of crypto entropy,
 // URL-safe so it rides ?id= without escaping), records it as issued, and returns
-// it. /upload/session calls this once per upload stage; only minted tokens can create an
-// aggregate, which is the store's primary abuse defence.
+// it. /upload/session calls this once per upload stage; only minted tokens can
+// create an aggregate.
 func (s *UploadStore) Mint() string {
 	for {
 		var b [16]byte
