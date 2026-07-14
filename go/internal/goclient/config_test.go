@@ -36,10 +36,11 @@ func TestTransferStreamPolicy(t *testing.T) {
 	if got := auto.Resolve("http1"); got != 6 {
 		t.Fatalf("automatic HTTP/1 streams = %d, want 6", got)
 	}
-	for _, protocol := range []string{"http2", "http3"} {
-		if got := auto.Resolve(protocol); got != 1 {
-			t.Errorf("automatic %s streams = %d, want 1", protocol, got)
-		}
+	if got := auto.Resolve("http2"); got != 1 {
+		t.Errorf("automatic HTTP/2 streams = %d, want 1", got)
+	}
+	if got := auto.Resolve("http3"); got != 3 {
+		t.Errorf("automatic HTTP/3 streams = %d, want 3", got)
 	}
 	forced := TransferStreamPolicy{Forced: 9}
 	for _, protocol := range []string{"http1", "http2", "http3"} {

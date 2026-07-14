@@ -20,6 +20,7 @@ type TransferStreamPolicy struct {
 
 const (
 	defaultAutomaticStreams = 6
+	defaultH3Streams        = 3
 	maxTransferStreams      = 128
 )
 
@@ -27,7 +28,10 @@ func (p TransferStreamPolicy) Resolve(protocol string) int {
 	if p.Forced > 0 {
 		return p.Forced
 	}
-	if protocol == "http2" || protocol == "http3" {
+	if protocol == "http3" {
+		return defaultH3Streams
+	}
+	if protocol == "http2" {
 		return 1
 	}
 	return p.AutomaticMax
@@ -37,7 +41,10 @@ func (p TransferStreamPolicy) Label(protocol string) string {
 	if p.Forced > 0 {
 		return fmt.Sprintf("Forced · %d per direction", p.Forced)
 	}
-	if protocol == "http2" || protocol == "http3" {
+	if protocol == "http3" {
+		return fmt.Sprintf("Automatic · %d per direction", defaultH3Streams)
+	}
+	if protocol == "http2" {
 		return "Automatic · 1 per direction"
 	}
 	if protocol == "http1" || protocol == "http1-clear" || protocol == "http1-tls" {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   BROWSER_CONNECTION_BUDGET,
+  HTTP3_DOWNLOAD_STREAMS,
   MULTIPLEXED_UPLOAD_STREAMS,
   describeTransferStreams,
   normalizeStreamCount,
@@ -9,19 +10,22 @@ import {
 
 const auto = { mode: "auto", count: 6 } as const;
 
-test("automatic H2 and H3 overlap finite upload requests", () => {
-  for (const protocol of ["http2", "http3"] as const) {
-    const base = {
-      protocol,
-      policy: auto,
-      transfer: ["down", "up"],
-      needsPing: true,
-    } as const;
-    expect(transferStreamCount({ ...base, dir: "down" })).toBe(1);
-    expect(transferStreamCount({ ...base, dir: "up" })).toBe(
+test("automatic multiplexed streams avoid per-stream transfer stalls", () => {
+  const base = {
+    policy: auto,
+    transfer: ["down", "up"],
+    needsPing: true,
+  } as const;
+  expect(transferStreamCount({ ...base, protocol: "http2", dir: "down" })).toBe(
+    1,
+  );
+  expect(transferStreamCount({ ...base, protocol: "http3", dir: "down" })).toBe(
+    HTTP3_DOWNLOAD_STREAMS,
+  );
+  for (const protocol of ["http2", "http3"] as const)
+    expect(transferStreamCount({ ...base, protocol, dir: "up" })).toBe(
       MULTIPLEXED_UPLOAD_STREAMS,
     );
-  }
 });
 
 test("automatic H1 reserves control connections and splits bidirectional capacity", () => {
@@ -70,7 +74,7 @@ test("forced policy is exact per direction and ignores protocol and browser budg
 
 test("stream diagnostics distinguish automatic and forced policy", () => {
   expect(describeTransferStreams(auto, "http3")).toBe(
-    `Automatic · 1 download / ${MULTIPLEXED_UPLOAD_STREAMS} upload`,
+    `Automatic · ${HTTP3_DOWNLOAD_STREAMS} download / ${MULTIPLEXED_UPLOAD_STREAMS} upload`,
   );
   expect(describeTransferStreams({ mode: "forced", count: 9 }, "http3")).toBe(
     "Forced · 9 per direction",
