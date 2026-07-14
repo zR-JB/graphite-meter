@@ -10,7 +10,7 @@ import type {
 
 export const BROWSER_CONNECTION_BUDGET = 6;
 export const MULTIPLEXED_UPLOAD_STREAMS = 3;
-export const HTTP3_DOWNLOAD_STREAMS = 3;
+export const HTTP3_DOWNLOAD_STREAMS = 1;
 export const MAX_FORCED_STREAMS = 128;
 
 export interface TransferStreamOptions {
