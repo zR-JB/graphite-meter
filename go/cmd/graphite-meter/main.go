@@ -1,6 +1,5 @@
-// Command graphite-meter is the measurement server: it serves the embedded
-// Svelte client and shared measurement endpoints over configured H1/H2/H3
-// listeners.
+// Command graphite-meter serves the embedded Svelte client on H1 and shared
+// measurement endpoints on configured H1/H2/H3 listeners.
 package main
 
 import (

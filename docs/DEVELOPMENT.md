@@ -112,7 +112,7 @@ environment variables, which take precedence over defaults.
 | -------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GM_H1_ADDR` | `-h1-addr` (`-addr` legacy alias) | `:7246` | Clear HTTP/1.1 UI and measurement listener. |
 | `GM_H1_TLS_ADDR` | `-h1-tls-addr` | `:7247` | Dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, and WebSockets. |
-| `GM_H2_ADDR` | `-h2-addr` | `:7248` | HTTP/2-only TLS listener for UI, discovery, probe, transfers, and upload progress. |
+| `GM_H2_ADDR` | `-h2-addr` | `:7248` | HTTP/2-only TLS listener for measurement probe, transfers, and upload progress. |
 | `GM_H3_ADDR` | `-h3-addr` | `:7249` | UDP HTTP/3 probe, transfers, and progress plus a TCP HTTP/1.1 Alt-Svc bootstrap probe only. |
 | `GM_ENABLE_H1_TLS` / `GM_ENABLE_H2` / `GM_ENABLE_H3` | matching flags | off | Enable the corresponding native TLS listeners. |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | `-tls-cert` / `-tls-key` | — | Matching PEM pair. Invalid dates, hostnames, and pairs fail startup; valid renewals hot-reload. |
@@ -153,7 +153,8 @@ GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
 ```
 
 That single command starts clear H1 on `7246/tcp`, TLS-only H1 on `7247/tcp`, H2-only TLS on
-`7248/tcp`, and the H3 bootstrap/QUIC pair on `7249/tcp` and `7249/udp`.
+`7248/tcp`, and the H3 bootstrap/QUIC pair on `7249/tcp` and `7249/udp`. Open the UI on
+`http://localhost:7246` or `https://localhost:7247`; the H2 and H3 ports are measurement-only.
 
 Browsers can apply additional certificate and root-policy checks to HTTP/3 beyond their normal
 HTTPS trust decision. Firefox has a confirmed

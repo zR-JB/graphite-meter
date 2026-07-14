@@ -19,7 +19,7 @@ services:
     ports:
       - "7246:7246" # HTTP/1.1 (default)
       # - "7247:7247/tcp"  # dedicated HTTPS HTTP/1.1 throughput + WSS latency
-      # - "7248:7248/tcp"  # HTTP/2-only UI, discovery, transfers, and progress
+      # - "7248:7248/tcp"  # HTTP/2-only measurement probe, transfers, and progress
       # - "7249:7249/tcp"  # HTTP/3 Alt-Svc bootstrap probe only
       # - "7249:7249/udp"  # HTTP/3 probe, transfers, and progress
     environment:

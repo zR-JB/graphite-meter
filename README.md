@@ -57,7 +57,8 @@ docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:la
 ```
 
 Open **http://localhost:7246** — that's it for the default clear HTTP/1.1 deployment. The TLS
-overlay adds a dedicated HTTPS HTTP/1.1 target alongside native H2 and H3.
+overlay adds the HTTPS UI at **https://localhost:7247** alongside native H2 and H3 measurement
+listeners. Open only `7246` or `7247` in a browser; `7248` and `7249` are strict test targets.
 For local browser testing, including browser-specific handling of private-root HTTP/3
 certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
 
@@ -110,7 +111,7 @@ Everything is optional; the defaults just work. The common knobs:
 | `GM_H2_ADDR`         | `:7248`                                 | HTTP/2-only TLS listen address.                                                                                                              |
 | `GM_H3_ADDR`         | `:7249`                                 | HTTP/3 UDP and bootstrap-only TCP listen address.                                                                                            |
 | `GM_ENABLE_H1_TLS`   | off                                     | Enable dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, progress, and WSS latency on `GM_H1_TLS_ADDR` (`:7247/tcp`).                |
-| `GM_ENABLE_H2`       | off                                     | Enable the HTTP/2-only UI, discovery, probe, transfer, and progress listener on `GM_H2_ADDR` (`:7248/tcp`).                                 |
+| `GM_ENABLE_H2`       | off                                     | Enable the HTTP/2-only measurement probe, transfer, and progress listener on `GM_H2_ADDR` (`:7248/tcp`).                                   |
 | `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 probe, transfers, and progress on `GM_H3_ADDR` UDP plus the bootstrap-only TCP probe on the same port (`:7249`).               |
 | `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by native H1-TLS/H2/H3; renewed files hot-reload.                                               |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |

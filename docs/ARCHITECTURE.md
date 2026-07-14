@@ -63,7 +63,7 @@ disabled to prevent POST replay.
 | --- | --- | --- |
 | `:7246/tcp` | HTTP/1.1 clear | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency. |
 | `:7247/tcp` | HTTP/1.1 TLS only | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
-| `:7248/tcp` | HTTP/2 only | H2 UI, discovery, probe, transfers, and upload progress. No H1 ALPN or WebSocket route. |
+| `:7248/tcp` | HTTP/2 only | H2 probe, transfers, and upload progress only. No UI, discovery, H1 ALPN, or WebSocket route. |
 | `:7249/udp` | HTTP/3 | H3 probe, transfers, and upload progress. |
 | `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets. |
 
@@ -81,6 +81,15 @@ interoperable HTTP/1.1 Upgrade.
 The dedicated H1-TLS listener is a real transfer target, not a control fallback. It exists because
 browsers cannot be forced to use H1 on an origin that advertises H2 through ALPN. Operators using a
 reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on that virtual host.
+HTTP/1.1 remains an active Internet Standard, and TLS security is independent of selecting H2;
+ALPN lets a browser negotiate the protocol the origin offers. Keeping the native SPA on H1 makes
+the control-plane entrypoint distinct from the H2 measurement target. A reverse proxy may still
+serve the H1 Go origin to browsers over H2 or H3, which is why the client records the actual page
+hop. Native H3 deliberately has no UI: browsers normally discover HTTP/3 from an existing HTTPS
+origin through Alt-Svc or HTTPS DNS records rather than treating a QUIC listener like a directly
+navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html),
+[RFC 7301](https://www.rfc-editor.org/rfc/rfc7301.html), and
+[RFC 9114 section 3.1](https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1).
 
 ### Routes
 
@@ -93,7 +102,7 @@ reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on tha
 | `/upload`                | POST       | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
 | `/ws/ping`               | WS upgrade | WebSocket               | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                                                           |
 | `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop. |
-| `/` (anything unmatched) | GET        | H1/H1-TLS/H2 UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
+| `/` (anything unmatched) | GET        | H1/H1-TLS UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
 No WebTransport channel is advertised and no route is mounted. Its dependency, schema variants,
 wire opcodes, and commented HTTP/3 configuration are retained as inactive contract surface; they
@@ -263,7 +272,7 @@ A production build has only Setup, so no tab bar is rendered at all.
 | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Duration preset | Medium  | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                  |
 | Bidirectional   | off     | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration. |
-| Throughput target | Current | Uses the page's verified HTTP target or selects an advertised Fetch target independently: H1 clear, H1 TLS, H2, or H3. Unavailable targets stay visible with the discovery reason. |
+| Throughput target | Same as this page | Requires an advertised target that exactly matches the page origin and browser-observed protocol, or selects H1 clear, H1 TLS, H2, or H3 independently. Unavailable targets stay visible with the discovery reason. |
 | Latency target | Automatic | Selects an advertised WebSocket target independently: H1 clear or H1 TLS. Unavailable targets stay visible with the discovery reason. |
 
 **Setup — Results tier**
