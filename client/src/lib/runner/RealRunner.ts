@@ -222,6 +222,7 @@ export class RealBackend implements RunnerBackend {
   /** The dedicated /upload/progress progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
   #progressReady: { finish: (ready: boolean) => void } | null = null;
+  #progressDone: (() => void) | null = null;
   /** Latest cumulative server byte count and previous measured snapshot. */
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
@@ -568,7 +569,7 @@ export class RealBackend implements RunnerBackend {
     this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
-    this.#teardownTransfer(); // clear any leftover lanes from a prior run
+    this.#discardTransfer(); // discard leftovers from a prior run
     this.#stalled = false;
     this.#testId = null;
     // Unique-per-run cache-buster. performance.now() avoids Date.now and is
@@ -631,17 +632,19 @@ export class RealBackend implements RunnerBackend {
     if (needsPings(activity)) this.#measureLatency(underLoad);
   }
 
-  /** A stage's measured window has ended (boundary, early finish, or run end).
-   *  Close/cancel the stage's connection(s); the core has already finalized its
-   *  result. */
-  onStageEnd(activity: PhaseActivity): void {
+  /** A measured stage ended. Drain its authoritative boundary sample before
+   *  the core reduces the result, then release its connections. */
+  onStageEnd(activity: PhaseActivity, flush = true): void | Promise<void> {
     void activity;
-    // The core has finalized this stage's result; release its connections. For
-    // download that means stopping + terminating the worker pool; for latency (or
-    // a transfer stage's loaded-latency pings) the ping worker + its socket.
-    this.#teardownTransfer();
-    this.#teardownLatency();
-    this.#stalled = false; // a stale latch must not swallow the next stage's stall
+    if (!flush) {
+      this.#discardTransfer();
+      this.#teardownLatency();
+      return;
+    }
+    return this.#teardownTransfer().then(() => {
+      this.#teardownLatency();
+      this.#stalled = false;
+    });
   }
 
   /** The run finished normally. Close anything still open. */
@@ -1488,28 +1491,41 @@ export class RealBackend implements RunnerBackend {
     if (delta > 0) {
       this.#setLaneStalled("up", false);
     }
+    if (msg.type === "complete") this.#progressDone?.();
   }
 
   /** Stop the progress worker after the POST lanes. It explicitly finalizes the
    *  session with DELETE and lets the stream receive the terminal complete record. */
-  #teardownProgress(): void {
+  #teardownProgress(finalize: boolean): Promise<void> {
     this.#progressReady?.finish(false);
     this.#progressReady = null;
     const w = this.#progressWorker;
     this.#progressWorker = null;
-    if (!w) return;
-    w.postMessage({ type: "stop" });
-    setTimeout(() => w.terminate(), PROGRESS_BYE_GRACE_MS);
+    if (!w) return Promise.resolve();
+    const worker = w;
+    if (!finalize) {
+      worker.terminate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, PROGRESS_BYE_GRACE_MS);
+      const self = this;
+      function done(): void {
+        clearTimeout(timer);
+        if (self.#progressDone === done) self.#progressDone = null;
+        worker.terminate();
+        resolve();
+      }
+      this.#progressDone = done;
+      worker.postMessage({ type: "stop" });
+    });
   }
 
-  /** Stop + terminate every direction's worker pool, aggregation timer, and any
-   *  pending lane-restart backoffs. Idempotent. */
-  #teardownTransfer(): void {
+  #stopTransferWorkers(): void {
     // Preserve the partial download cadence window at the stage boundary.
     const down = this.#lanes.down;
     if (down?.measuring && down.clientAggregation)
       this.#aggregateDownload(down, down.clientAggregation);
-    this.#transferActive = false;
     for (const state of Object.values(this.#lanes)) {
       if (!state) continue;
       const timer = state.clientAggregation?.timer;
@@ -1521,9 +1537,23 @@ export class RealBackend implements RunnerBackend {
         w.terminate();
       }
     }
+  }
+
+  /** Stop every POST lane, wait for the server's terminal upload count, then
+   *  release the stage state. */
+  async #teardownTransfer(): Promise<void> {
+    this.#stopTransferWorkers();
     // Stop the progress worker AFTER the POST lanes — BYE must follow the lanes
     // ending so the server's final count includes everything they drained.
-    this.#teardownProgress();
+    await this.#teardownProgress(true);
+    this.#transferActive = false;
+    this.#lanes = {};
+  }
+
+  #discardTransfer(): void {
+    this.#stopTransferWorkers();
+    void this.#teardownProgress(false);
+    this.#transferActive = false;
     this.#lanes = {};
   }
 
@@ -1557,7 +1587,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   #closeAll(): void {
-    this.#teardownTransfer();
+    this.#discardTransfer();
     this.#teardownLatency();
     this.#stalled = false;
     if (this.#abort) {

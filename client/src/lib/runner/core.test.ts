@@ -511,6 +511,38 @@ test("backend boundary flush is included before stage reduction", async () => {
   ).toBe(100);
 });
 
+test("asynchronous boundary flush completes before stage reduction", async () => {
+  let flushed!: () => void;
+  class FlushingBackend extends FakeBackend {
+    override onStageEnd(activity: PhaseActivity): Promise<void> {
+      super.onStageEnd(activity);
+      return new Promise((resolve) => {
+        flushed = () => {
+          this.host.ingestThroughput("down", 1000, 100, 0.1);
+          resolve();
+        };
+      });
+    }
+  }
+  const backend = new FlushingBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+  await core.start(makeConfig({ duration: { downloadMs: 100 } }));
+  advance(100);
+
+  expect(core.phase).toBe("download");
+  expect(events.some((e) => e.type === "complete")).toBe(false);
+  flushed();
+  await Promise.resolve();
+
+  const complete = events.find((e) => e.type === "complete");
+  expect(core.phase).toBe("complete");
+  expect(
+    complete?.type === "complete" && complete.result.download?.totalBytes,
+  ).toBe(100);
+});
+
 test("a real sample arriving mid-stall auto-resumes", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

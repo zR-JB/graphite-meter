@@ -177,8 +177,9 @@ export interface RunnerBackend {
    *  onStageBegin when the stage has no warmup window. */
   onStageMeasure(activity: PhaseActivity): void;
   /** The stage's measured window has ended (boundary, early finish, or run end).
-   *  Close the stage's connection(s); the core has already finalized its result. */
-  onStageEnd(activity: PhaseActivity): void;
+   *  Flush its final samples and close its connections. Result reduction waits
+   *  for the returned promise. */
+  onStageEnd(activity: PhaseActivity, flush?: boolean): void | Promise<void>;
   /** The run finished normally. Clean up anything still open. */
   onComplete(): void;
   /** The run was aborted by the user. Cancel in-flight I/O and clean up. */
@@ -475,32 +476,27 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const sameStage =
         prev !== null && prev.activity.stage === seg.activity.stage;
 
-      // The phase we're leaving has just finished — emit its final per-stage
-      // result before announcing the transition, so its card resolves now; and
-      // when leaving a stage entirely, close that stage's connections.
-      if (prev && !sameStage) this.#backend.onStageEnd(prev.activity);
-      this.#finalizeStage(this.#lastEmittedPhase);
+      const enter = (): void => {
+        this.#finalizeStage(this.#lastEmittedPhase);
 
-      const transition: PhaseTransition = {
-        from: this.#lastEmittedPhase,
-        to: seg.phase,
-        stage: seg.activity.stage,
-        t: seg.start,
-      };
-      this.#activeSeg = seg;
-      this.#lastEmittedPhase = seg.phase;
-      this.#setPhase(seg.phase);
-      this.emit({ type: "phase", transition });
-      this.#beginAdaptivePhase();
+        const transition: PhaseTransition = {
+          from: this.#lastEmittedPhase,
+          to: seg.phase,
+          stage: seg.activity.stage,
+          t: seg.start,
+        };
+        this.#activeSeg = seg;
+        this.#lastEmittedPhase = seg.phase;
+        this.#setPhase(seg.phase);
+        this.emit({ type: "phase", transition });
+        this.#beginAdaptivePhase();
 
-      if (sameStage) {
-        // Warmup window elapsed — measure on the connections already primed
-        // (unless the stage failed during priming and is being skipped).
-        if (!this.#stageFailures.has(seg.activity.stage))
-          this.#backend.onStageMeasure(seg.activity);
-      } else {
-        // New stage — open + prime its connection(s). When no warmup window
-        // precedes it (warmupMs<=0), begin measuring immediately on the same.
+        if (sameStage) {
+          if (!this.#stageFailures.has(seg.activity.stage))
+            this.#backend.onStageMeasure(seg.activity);
+          return;
+        }
+
         const preparation = this.#backend.onStageBegin(seg.activity);
         if (preparation) {
           const preparationId = ++this.#stagePreparationId;
@@ -544,10 +540,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         if (
           seg.phase !== "warmup" &&
           !this.#stageFailures.has(seg.activity.stage)
-        ) {
+        )
           this.#backend.onStageMeasure(seg.activity);
-        }
-      }
+      };
+
+      if (prev && !sameStage && this.#waitForStageEnd(prev.activity, enter))
+        return;
+      enter();
     }
 
     // Progress within the current phase (real coverage — never faked).
@@ -824,7 +823,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Close the stage's I/O and jump measured-time past its remaining timeline
     // so the next tick lands on the following stage (or the finish).
     if (this.#activeSeg?.activity.stage === stage) {
-      this.#backend.onStageEnd(this.#activeSeg.activity);
+      this.#backend.onStageEnd(this.#activeSeg.activity, false);
       this.#activeSeg = null;
     }
     this.resume();
@@ -921,6 +920,32 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#phase = p;
   }
 
+  #waitForStageEnd(activity: PhaseActivity, done: () => void): boolean {
+    const ending = this.#backend.onStageEnd(activity);
+    if (!ending) return false;
+    const preparationId = ++this.#stagePreparationId;
+    this.#stagePreparing = true;
+    void ending.then(
+      () => {
+        if (preparationId !== this.#stagePreparationId || !this.#tickTimer)
+          return;
+        this.#stagePreparing = false;
+        this.#lastRealNow = performance.now();
+        done();
+      },
+      (cause) => {
+        if (preparationId !== this.#stagePreparationId) return;
+        this.#stagePreparing = false;
+        this.fail(
+          "protocol-error",
+          `${activity.stage} finalization failed`,
+          cause,
+        );
+      },
+    );
+    return true;
+  }
+
   /** Fallback idle RTT for empty-sample results (the backend's hint, else 0). */
   #idleHint(): number {
     return this.#backend.idleHintMs?.() ?? 0;
@@ -958,44 +983,40 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= FINISH → RunResult ================= */
   #finish() {
-    if (this.#tickTimer) {
-      clearInterval(this.#tickTimer);
+    const complete = (): void => {
+      if (this.#tickTimer) clearInterval(this.#tickTimer);
       this.#tickTimer = null;
-    }
 
-    const cfg = this.#cfg!;
-    // The final measured phase ends here — finalize it like any other (the
-    // earlier phases finalized at their transitions), end its stage (close I/O),
-    // then assemble RunResult from the cached per-stage results so the aggregate
-    // and the per-stage events never disagree.
-    if (this.#activeSeg) this.#backend.onStageEnd(this.#activeSeg.activity);
-    this.#finalizeStage(this.#lastEmittedPhase);
-    // Actual wall-clock length, shortened when adaptive completion finishes early.
-    const actualMs = Math.max(0, performance.now() - this.#t0);
-    // Bidirectional has no per-stage event (it resolves at completion); reduce its
-    // two lanes here when the stage ran, else null.
-    const bidirectional =
-      cfg.stages.bidirectional && !this.#stageFailures.has("bidirectional")
-        ? this.#accum.bidirectionalResult()
-        : null;
-    const result = {
-      download: this.#dlResult,
-      upload: this.#ulResult,
-      bidirectional,
-      // Latency is always present in the aggregate: when the latency STAGE ran it
-      // was finalized as a stage result; otherwise compute it here from any
-      // under-load pings (bufferbloat still needs it).
-      latency:
-        this.#latResult ?? this.#accum.latencyResult(cfg, this.#idleHint()),
-      bufferbloat: this.#accum.bufferbloatGrade(this.#idleHint()),
-      startedAt: Date.now() - actualMs,
-      durationMs: actualMs,
+      const cfg = this.#cfg!;
+      this.#finalizeStage(this.#lastEmittedPhase);
+      const actualMs = Math.max(0, performance.now() - this.#t0);
+      const bidirectional =
+        cfg.stages.bidirectional && !this.#stageFailures.has("bidirectional")
+          ? this.#accum.bidirectionalResult()
+          : null;
+      const result = {
+        download: this.#dlResult,
+        upload: this.#ulResult,
+        bidirectional,
+        latency:
+          this.#latResult ?? this.#accum.latencyResult(cfg, this.#idleHint()),
+        bufferbloat: this.#accum.bufferbloatGrade(this.#idleHint()),
+        startedAt: Date.now() - actualMs,
+        durationMs: actualMs,
+      };
+
+      this.#setPhase("complete");
+      this.#lastEmittedPhase = "complete";
+      this.#backend.onComplete();
+      this.emit({ type: "complete", result });
     };
 
-    this.#setPhase("complete");
-    this.#lastEmittedPhase = "complete";
-    this.#backend.onComplete();
-    this.emit({ type: "complete", result });
+    if (
+      this.#activeSeg &&
+      this.#waitForStageEnd(this.#activeSeg.activity, complete)
+    )
+      return;
+    complete();
   }
 }
 

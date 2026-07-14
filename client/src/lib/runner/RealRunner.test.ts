@@ -441,6 +441,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       visualization: { throughputMaxBytesPerSec: "auto" },
     };
     const failures: string[] = [];
+    const uploadBytes: number[] = [];
     const host = {
       config,
       phase: "idle",
@@ -451,7 +452,9 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       failStage(_stage, _reason, message) {
         failures.push(message);
       },
-      ingestThroughput() {},
+      ingestThroughput(_dir, _rate, bytes) {
+        uploadBytes.push(bytes);
+      },
       ingestLatency() {},
       stall() {},
       resume() {},
@@ -492,7 +495,26 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       "upload",
     ]);
     expect(failures).toEqual([]);
-    backend.onAbort();
+    const activity: PhaseActivity = {
+      stage: "upload",
+      transfer: ["up"],
+      loadedLatency: false,
+    };
+    backend.onStageMeasure(activity);
+    progressWorker!.emit({ type: "bytes", n: 100, t: 100_000_000 });
+    progressWorker!.emit({ type: "bytes", n: 200, t: 200_000_000 });
+    const ending = backend.onStageEnd(activity);
+    if (!ending) throw new Error("upload finalization did not return a promise");
+    let ended = false;
+    void ending.then(() => (ended = true));
+    await Promise.resolve();
+    expect(ended).toBe(false);
+
+    progressWorker!.emit({ type: "complete", n: 300, t: 300_000_000 });
+    await ending;
+    expect(uploadBytes).toEqual([100, 100]);
+    expect(ended).toBe(true);
+    backend.onComplete();
   } finally {
     globalThis.fetch = realFetch;
     globalThis.Worker = realWorker;
