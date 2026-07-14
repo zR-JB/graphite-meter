@@ -14,10 +14,23 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 /* ---- pure helper functions ---- */
+
+func TestHTTP3ClientStartsAtMinimumPacketSize(t *testing.T) {
+	hc, closeClient := protocolClient(DefaultConfig(), "http3", func() *http.Transport { return &http.Transport{} })
+	defer closeClient()
+	tr, ok := hc.Transport.(*http3.Transport)
+	if !ok || tr.QUICConfig == nil {
+		t.Fatal("HTTP/3 client has no QUIC configuration")
+	}
+	if tr.QUICConfig.InitialPacketSize != 1200 {
+		t.Fatalf("initial packet size = %d, want 1200", tr.QUICConfig.InitialPacketSize)
+	}
+}
 
 func TestAdaptiveWarmup(t *testing.T) {
 	const base = 500 * time.Millisecond

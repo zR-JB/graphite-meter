@@ -14,6 +14,7 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -396,7 +397,7 @@ func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (
 func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {
 	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify} //nolint:gosec
 	if protocol == "http3" {
-		tr := &http3.Transport{TLSClientConfig: tlsConfig}
+		tr := &http3.Transport{TLSClientConfig: tlsConfig, QUICConfig: transport.NewQUICConfig()}
 		return &http.Client{Transport: tr}, func() { _ = tr.Close() }
 	}
 	tr := makeHTTP()
