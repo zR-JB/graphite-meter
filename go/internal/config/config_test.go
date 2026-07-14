@@ -111,6 +111,22 @@ func TestValidateOriginsAndAddresses(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsNonOriginURLParts(t *testing.T) {
+	for _, origin := range []string{
+		"https://user:pass@meter.example",
+		"https://meter.example?target=other",
+		"https://meter.example?",
+		"https://meter.example#fragment",
+		"https://:7248",
+	} {
+		c := Default()
+		c.PublicH2Origin = origin
+		if err := c.Validate(); err == nil {
+			t.Errorf("non-origin URL %q accepted", origin)
+		}
+	}
+}
+
 func TestLoadTrustedProxies(t *testing.T) {
 	t.Setenv("GM_TRUSTED_PROXIES", "10.0.0.0/8, 2001:db8::/32")
 	c, err := Load()

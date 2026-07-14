@@ -121,7 +121,7 @@ func (c Config) Validate() error {
 			continue
 		}
 		u, err := url.Parse(v.value)
-		if err != nil || u.Scheme != v.scheme || u.Host == "" || u.Path != "" {
+		if err != nil || u.Scheme != v.scheme || u.Hostname() == "" || u.Path != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 			return fmt.Errorf("%s must be an origin with %s scheme", v.name, v.scheme)
 		}
 	}
