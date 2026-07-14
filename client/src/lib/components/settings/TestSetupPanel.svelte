@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Settings test setup: stage selection, timing, endpoint, units, and
+  // Settings test setup: stage selection, timing, units, and
   // compensation controls bound directly into the app store.
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
   import type {
@@ -109,6 +109,52 @@
     store.config.transferStreams.mode = forced ? "forced" : "auto";
   }
 
+  const THROUGHPUT_TARGETS = [
+    {
+      value: "current",
+      label: "Current",
+      detail: "Use this page's verified HTTP",
+    },
+    { value: "http1-clear", label: "HTTP/1.1", detail: "Clear connection" },
+    {
+      value: "http1-tls",
+      label: "HTTP/1.1 TLS",
+      detail: "Dedicated secure connection",
+    },
+    { value: "http2", label: "HTTP/2", detail: "TLS multiplexing" },
+    { value: "http3", label: "HTTP/3", detail: "QUIC multiplexing" },
+  ] as const;
+  const LATENCY_TARGETS = [
+    { value: "auto", label: "Automatic", detail: "Match this page's security" },
+    { value: "ws-http1-clear", label: "WebSocket", detail: "Clear HTTP/1.1" },
+    {
+      value: "ws-http1-tls",
+      label: "Secure WebSocket",
+      detail: "TLS HTTP/1.1",
+    },
+  ] as const;
+
+  function targetUnavailable(value: string): boolean {
+    if (value === "current" || value === "auto") return false;
+    if (
+      value === "ws-http1-clear" &&
+      typeof location !== "undefined" &&
+      location.protocol === "https:"
+    )
+      return true;
+    return store.infra?.availableTargets?.[value] === false;
+  }
+
+  function unavailableReason(value: string): string {
+    if (
+      value === "ws-http1-clear" &&
+      typeof location !== "undefined" &&
+      location.protocol === "https:"
+    )
+      return "Blocked on HTTPS pages";
+    return "Not advertised by this server";
+  }
+
   /* Physical-path presets seed facts the browser cannot detect. */
   const PROFILE_OPTIONS: { value: ConnectionProfile; label: string }[] = [
     { value: "lan", label: "Local Ethernet (LAN)" },
@@ -179,60 +225,73 @@
 
   <section class="panel wide primary">
     <h3>Test plan</h3>
-    <label>
-      <span>Throughput target</span>
-      <select
-        disabled={running}
-        bind:value={store.config.transports.throughputTarget}
-      >
-        <option value="current">Fetch / current verified HTTP</option>
-        <option
-          value="http1-clear"
-          disabled={store.infra?.availableTargets?.["http1-clear"] === false}
-          >Fetch / HTTP/1.1 clear</option
-        >
-        <option
-          value="http1-tls"
-          disabled={store.infra?.availableTargets?.["http1-tls"] === false}
-          >Fetch / HTTP/1.1 TLS</option
-        >
-        <option
-          value="http2"
-          disabled={store.infra?.availableTargets?.http2 === false}
-          >Fetch / HTTP/2 TLS</option
-        >
-        <option
-          value="http3"
-          disabled={store.infra?.availableTargets?.http3 === false}
-          >Fetch / HTTP/3 QUIC</option
-        >
-      </select>
-    </label>
-    <label>
-      <span>Latency target</span>
-      <select
-        disabled={running}
-        bind:value={store.config.transports.latencyTarget}
-      >
-        <option value="auto">Follow page security</option>
-        <option
-          value="ws-http1-clear"
-          disabled={(typeof location !== "undefined" &&
-            location.protocol === "https:") ||
-            store.infra?.availableTargets?.["ws-http1-clear"] === false}
-          >WebSocket / HTTP/1.1 clear</option
-        >
-        <option
-          value="ws-http1-tls"
-          disabled={store.infra?.availableTargets?.["ws-http1-tls"] === false}
-          >WebSocket / HTTP/1.1 TLS</option
-        >
-      </select>
-    </label>
+    <fieldset class="target-field">
+      <legend>Throughput</legend>
+      <div class="target-grid">
+        {#each THROUGHPUT_TARGETS as target (target.value)}
+          {@const unavailable = targetUnavailable(target.value)}
+          <label
+            class="target-choice"
+            class:selected={store.config.transports.throughputTarget ===
+              target.value}
+            class:unavailable
+            class:locked={running}
+          >
+            <input
+              type="radio"
+              name="throughput-target"
+              value={target.value}
+              disabled={running || unavailable}
+              bind:group={store.config.transports.throughputTarget}
+            />
+            <span class="radio-dot" aria-hidden="true"></span>
+            <span class="target-copy">
+              <strong>{target.label}</strong>
+              <small
+                >{unavailable
+                  ? unavailableReason(target.value)
+                  : target.detail}</small
+              >
+            </span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset class="target-field">
+      <legend>Latency</legend>
+      <div class="target-grid">
+        {#each LATENCY_TARGETS as target (target.value)}
+          {@const unavailable = targetUnavailable(target.value)}
+          <label
+            class="target-choice"
+            class:selected={store.config.transports.latencyTarget ===
+              target.value}
+            class:unavailable
+            class:locked={running}
+          >
+            <input
+              type="radio"
+              name="latency-target"
+              value={target.value}
+              disabled={running || unavailable}
+              bind:group={store.config.transports.latencyTarget}
+            />
+            <span class="radio-dot" aria-hidden="true"></span>
+            <span class="target-copy">
+              <strong>{target.label}</strong>
+              <small
+                >{unavailable
+                  ? unavailableReason(target.value)
+                  : target.detail}</small
+              >
+            </span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
     <p class="hint">
-      Secure pages cannot select clear HTTP/1.1. TLS HTTP/1.1 remains a
-      parallel-request target. Latency is verified independently; upload
-      progress always uses the selected throughput path.
+      Availability comes from this server's discovery document. Throughput and
+      latency are selected independently; upload progress follows throughput.
     </p>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
@@ -644,6 +703,107 @@
     text-transform: uppercase;
   }
 
+  .target-field {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .target-field legend {
+    margin-bottom: 7px;
+    padding: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .target-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+    gap: 6px;
+  }
+  .target-choice {
+    position: relative;
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-height: 52px;
+    padding: 8px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      background var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
+  }
+  .target-choice:hover:not(.unavailable) {
+    border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+  }
+  .target-choice.selected {
+    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    background: var(--brand-soft);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--brand) 18%, transparent);
+  }
+  .target-choice.unavailable {
+    cursor: not-allowed;
+    opacity: 0.56;
+  }
+  .target-choice.locked {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+  .target-choice input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .target-choice:focus-within {
+    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    box-shadow: 0 0 0 3px var(--brand-soft);
+  }
+  .radio-dot {
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--text-soft);
+    border-radius: 50%;
+  }
+  .target-choice.selected .radio-dot {
+    border: 4px solid var(--brand-strong);
+    background: var(--surface-1);
+  }
+  .target-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .target-choice .target-copy strong {
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 780;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+  .target-choice .target-copy small {
+    overflow: hidden;
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: normal;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    text-transform: none;
+  }
   label,
   .field {
     display: grid;
@@ -827,6 +987,9 @@
   }
 
   @container (max-width: 360px) {
+    .target-grid {
+      grid-template-columns: 1fr;
+    }
     .two {
       grid-template-columns: 1fr;
     }
