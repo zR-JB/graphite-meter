@@ -130,7 +130,6 @@ function makeConfig(
     pingConcurrency: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
-    endpoint: { host: "auto", port: 443 },
     transports: {
       throughputTarget: "current",
       latencyTarget: "auto",

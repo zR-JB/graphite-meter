@@ -76,9 +76,7 @@ export function getRunner(): NetworkRunner {
     if (__GM_ALLOW_DUMMY__ && resolveEngine() === "dummy") {
       runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
     } else {
-      runner = new RunnerCore(
-        new RealBackend({ endpoint: store.config.endpoint }),
-      );
+      runner = new RunnerCore(new RealBackend());
     }
   }
   return runner;

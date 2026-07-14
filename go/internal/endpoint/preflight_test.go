@@ -44,6 +44,28 @@ func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 	}
 }
 
+func TestPreflightDerivesEveryDefaultListenerOrigin(t *testing.T) {
+	cfg := config.Default()
+	cfg.EnableH1TLS, cfg.EnableH2, cfg.EnableH3 = true, true, true
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://meter.example:7246/preflight", nil))
+	want := []string{
+		"http://meter.example:7246",
+		"https://meter.example:7247",
+		"https://meter.example:7248",
+		"https://meter.example:7249",
+	}
+	for i, target := range pf.Capabilities.ThroughputTargets {
+		if target.Origin != want[i] {
+			t.Errorf("throughput target %q origin = %q, want %q", target.ID, target.Origin, want[i])
+		}
+	}
+	for i, target := range pf.Capabilities.LatencyTargets {
+		if target.Origin != want[i] {
+			t.Errorf("latency target %q origin = %q, want %q", target.ID, target.Origin, want[i])
+		}
+	}
+}
+
 func TestPreflightOmitsDisabledTargets(t *testing.T) {
 	cfg := config.Default()
 	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://speed.example:7246/preflight", nil))

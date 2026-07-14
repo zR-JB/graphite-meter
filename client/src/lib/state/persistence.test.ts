@@ -16,7 +16,6 @@ const FAKE_CONFIG: RunnerConfig = {
   pingConcurrency: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
-  endpoint: { host: "auto", port: 443 },
   transports: { throughputTarget: "current", latencyTarget: "auto" },
   compensation: {
     profile: "lan",
@@ -88,6 +87,17 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(FAKE_CONFIG);
+});
+
+test("obsolete endpoint override cannot restore the old listener port", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { endpoint: { host: "localhost", port: 8765 } },
+    }),
+  );
+  expect(loadPersisted().config).toEqual(FAKE_CONFIG);
+  expect(loadPersisted().config).not.toHaveProperty("endpoint");
 });
 
 test("legacy parallel-stream ceiling migrates into automatic policy", () => {

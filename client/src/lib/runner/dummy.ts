@@ -171,8 +171,7 @@ export class DummyBackend implements RunnerBackend {
   }
 
   /* ================= PROBE ================= */
-  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
-    const endpoint = config.endpoint;
+  async probe(_config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
     signal?.throwIfAborted();
     const interval = 90;
     const pings = 4;
@@ -195,8 +194,6 @@ export class DummyBackend implements RunnerBackend {
       });
     }
 
-    const host =
-      endpoint.host === "auto" ? "edge-fra-03.graphite.net" : endpoint.host;
     const octet = () => Math.floor(this.#rand() * 254) + 1;
     return {
       clientIp: `${octet()}.${octet()}.${octet()}.${octet()}`,
@@ -204,8 +201,8 @@ export class DummyBackend implements RunnerBackend {
       clientIpSource: "socket",
       server: {
         name: "Graphite Edge — Frankfurt",
-        host,
-        port: endpoint.port,
+        host: "edge-fra-03.graphite.net",
+        port: 443,
         location: "Frankfurt, DE",
       },
       preTestPingMs: this.#spec.idleRttMs,

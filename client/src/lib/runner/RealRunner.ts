@@ -21,7 +21,6 @@ import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
 import { transferStreamCount } from "./real/streamPolicy";
 import {
-  resolveBase,
   httpToWs,
   median,
   needsPings,
@@ -33,7 +32,6 @@ import {
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
-  endpoint?: RunnerConfig["endpoint"];
   authToken?: string;
 }
 
@@ -267,13 +265,6 @@ export class RealBackend implements RunnerBackend {
     this.#host = host;
   }
 
-  /** Resolve the backend base: prefer the endpoint passed in, else construction. */
-  #resolveEndpoint(
-    passed?: RunnerConfig["endpoint"],
-  ): RunnerConfig["endpoint"] | undefined {
-    return passed ?? this.#opts.endpoint;
-  }
-
   #authHeaders(): HeadersInit | undefined {
     return this.#opts.authToken
       ? { authorization: `Bearer ${this.#opts.authToken}` }
@@ -317,7 +308,7 @@ export class RealBackend implements RunnerBackend {
 
   /* ================= PROBE ================= */
   /**
-   * TARGET: `GET {base}/preflight` (a.k.a. /config).
+   * TARGET: same-origin `GET /preflight`.
    * Resolve `InfraInfo` (client public IP, server identity, negotiated
    * protocol, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
    * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
@@ -326,8 +317,6 @@ export class RealBackend implements RunnerBackend {
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
   async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
-    const endpoint = config.endpoint;
-    const base = resolveBase(this.#resolveEndpoint(endpoint));
     this.#capabilities = null;
     this.#throughputTarget = null;
     this.#latencyTarget = null;
@@ -337,7 +326,7 @@ export class RealBackend implements RunnerBackend {
       // A logical server may restart with different public targets while the
       // SPA remains open, so every run resolves a fresh discovery document.
       const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-      const res = await fetch(`${base}/preflight${ident}`, {
+      const res = await fetch(`/preflight${ident}`, {
         method: "GET",
         cache: "no-store",
         headers: this.#authHeaders(),
@@ -464,9 +453,7 @@ export class RealBackend implements RunnerBackend {
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
-    const probeRtts = needsLatency
-      ? await this.#collectIdleRtts(endpoint, signal)
-      : [];
+    const probeRtts = needsLatency ? await this.#collectIdleRtts(signal) : [];
 
     return {
       clientIp: pathProbe.clientIp,
@@ -511,12 +498,9 @@ export class RealBackend implements RunnerBackend {
    *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
    *  worker to the 1/s idle cadence. Best-effort: resolves with whatever it
    *  gathered by the timeout, never rejects. */
-  #collectIdleRtts(
-    endpoint: RunnerConfig["endpoint"],
-    signal?: AbortSignal,
-  ): Promise<number[]> {
+  #collectIdleRtts(signal?: AbortSignal): Promise<number[]> {
     if (signal?.aborted) return Promise.resolve([]);
-    this.#startIdleKeepalive(endpoint, PROBE_PING_INTERVAL_MS);
+    this.#startIdleKeepalive(PROBE_PING_INTERVAL_MS);
     if (!this.#idleWorker) return Promise.resolve([]);
     return new Promise<number[]>((resolve) => {
       const finish = (): void => {
@@ -565,7 +549,6 @@ export class RealBackend implements RunnerBackend {
     // latency duties for the duration of the run (resumed in #closeAll on
     // completion/abort).
     this.#stopIdleKeepalive();
-    void this.#resolveEndpoint(config.endpoint);
     this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
@@ -743,9 +726,7 @@ export class RealBackend implements RunnerBackend {
     if (this.#lanes[dir]) throw new Error(`duplicate ${dir} prime`);
 
     const cfg = this.#host!.config!;
-    const base =
-      this.#throughputTarget?.origin ??
-      resolveBase(this.#resolveEndpoint(cfg.endpoint));
+    const base = this.#throughputTarget!.origin;
     const laneCount = this.#streamCount(activity, dir);
     const streams = laneCount;
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
@@ -1096,10 +1077,7 @@ export class RealBackend implements RunnerBackend {
    *  on-receive chain is OFF and the in-flight window tiny: the pacer alone
    *  drives sends, so this can never ping (or update the UI) faster than
    *  once per interval. */
-  #startIdleKeepalive(
-    endpoint?: RunnerConfig["endpoint"],
-    intervalMs = IDLE_PING_INTERVAL_MS,
-  ): void {
+  #startIdleKeepalive(intervalMs = IDLE_PING_INTERVAL_MS): void {
     const targetKey = `${throughputTargetKey(this.#throughputTarget)}\n${this.#latencyTarget?.id ?? ""}`;
     if (this.#idleActive && this.#idleTargetKey === targetKey) return;
     if (this.#idleActive) this.#stopIdleKeepalive();
@@ -1128,7 +1106,7 @@ export class RealBackend implements RunnerBackend {
         type: "stall",
         detail: e.message || "idle ping worker error",
       });
-      this.#scheduleIdleRespawn(endpoint, intervalMs);
+      this.#scheduleIdleRespawn(intervalMs);
     };
     w.postMessage({
       type: "start",
@@ -1167,16 +1145,13 @@ export class RealBackend implements RunnerBackend {
    *  handler in #startIdleKeepalive). One timer at a time; each failed attempt
    *  schedules the next, so the keepalive keeps knocking every IDLE_RESPAWN_MS
    *  until the server is back to serve the script. */
-  #scheduleIdleRespawn(
-    endpoint?: RunnerConfig["endpoint"],
-    intervalMs?: number,
-  ): void {
+  #scheduleIdleRespawn(intervalMs?: number): void {
     if (!this.#idleActive || this.#idleRespawnTimer) return;
     this.#idleRespawnTimer = setTimeout(() => {
       this.#idleRespawnTimer = null;
       if (!this.#idleActive) return; // a run started (or teardown) meanwhile
       this.#stopIdleKeepalive();
-      this.#startIdleKeepalive(endpoint, intervalMs);
+      this.#startIdleKeepalive(intervalMs);
     }, IDLE_RESPAWN_MS);
   }
 

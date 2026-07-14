@@ -151,10 +151,6 @@ export interface RunnerConfig {
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
-  endpoint: {
-    host: string;
-    port: number;
-  };
   /** Independently selected throughput and latency targets. */
   transports: {
     throughputTarget: ThroughputTargetSelection;

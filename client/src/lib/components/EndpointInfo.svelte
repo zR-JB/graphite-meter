@@ -54,15 +54,12 @@
         rows: [
           {
             label: "Node",
-            value: i?.server.name ?? store.config.endpoint.host,
+            value: i?.server.name ?? "—",
           },
           { label: "Location", value: i?.server.location ?? "—" },
           {
             label: "Endpoint",
-            value: endpointAddress(
-              i?.server.host ?? store.config.endpoint.host,
-              i?.server.port ?? store.config.endpoint.port,
-            ),
+            value: i ? endpointAddress(i.server.host, i.server.port) : "—",
           },
           { label: "Version", value: i?.engineVersion ?? "—" },
         ],

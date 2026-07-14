@@ -42,7 +42,6 @@ const BASE_CONFIG: RunnerConfig = {
   pingConcurrency: "instant",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
-  endpoint: { host: "auto", port: 443 },
   transports: { throughputTarget: "current", latencyTarget: "auto" },
   compensation: {
     profile: "lan",
@@ -618,17 +617,6 @@ test("probe: emits pre-test idle pings and reports the profile's idle RTT + prot
     expect(p.sample.t).toBeLessThan(0); // pre-test pings carry negative t
     expect(p.sample.underLoad).toBe(false);
   }
-}, 2000);
-
-test("probe: a non-auto host passes through unchanged", async () => {
-  const { backend } = makeBackend({ profile: "fiber", seed: 1 });
-  const info = await backend.probe({
-    ...BASE_CONFIG,
-    endpoint: { host: "example.test", port: 1234 },
-  });
-  expect(info.server.host).toBe("example.test");
-  expect(info.server.port).toBe(1234);
-  expect(info.protocolNegotiated).toBe("webtransport/h3"); // non-satellite branch
 }, 2000);
 
 /* ================= describe() ================= */

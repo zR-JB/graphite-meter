@@ -1,9 +1,7 @@
 import { test, expect } from "bun:test";
 import type { CoreHost } from "./core";
 import {
-  resolveBase,
   httpToWs,
-  wsToWss,
   median,
   needsPings,
   laneStaggerMs,
@@ -163,26 +161,6 @@ test("every fetch target combines with either H1 websocket latency target", () =
   }
 });
 
-/* ---------- resolveBase ---------- */
-
-test("resolveBase: undefined/auto/empty host all mean same-origin (relative)", () => {
-  expect(resolveBase(undefined)).toBe("");
-  expect(resolveBase({ host: "auto", port: 7246 })).toBe("");
-  expect(resolveBase({ host: "", port: 7246 })).toBe("");
-});
-
-test("resolveBase: builds an absolute http origin for a concrete host", () => {
-  expect(resolveBase({ host: "example.com", port: 7246 })).toBe(
-    "http://example.com:7246",
-  );
-});
-
-test("resolveBase: port 443 builds an https origin", () => {
-  expect(resolveBase({ host: "example.com", port: 443 })).toBe(
-    "https://example.com:443",
-  );
-});
-
 /* ---------- httpToWs ---------- */
 
 test("httpToWs: maps https:// to wss:// and http:// to ws://", () => {
@@ -194,17 +172,6 @@ test("httpToWs: passes through anything already ws(s):// or relative", () => {
   expect(httpToWs("wss://example.com")).toBe("wss://example.com");
   expect(httpToWs("ws://example.com")).toBe("ws://example.com");
   expect(httpToWs("")).toBe("");
-});
-
-/* ---------- wsToWss ---------- */
-
-test("wsToWss: upgrades ws:// to wss://", () => {
-  expect(wsToWss("ws://example.com:7246")).toBe("wss://example.com:7246");
-});
-
-test("wsToWss: leaves wss:// (or anything else) unchanged", () => {
-  expect(wsToWss("wss://example.com:443")).toBe("wss://example.com:443");
-  expect(wsToWss("")).toBe("");
 });
 
 /* ---------- median ---------- */
@@ -294,6 +261,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
   const realEntries = performance.getEntriesByName.bind(performance);
   const started: string[] = [];
+  const workerStarts: { kind: string; url: string }[] = [];
+  const fetchUrls: string[] = [];
   let preflights = 0;
   let progressWorker: FakeWorker | null = null;
   let pingWorker: FakeWorker | null = null;
@@ -315,8 +284,10 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       if (this.kind === "ping") pingWorker = this;
     }
 
-    postMessage(message: { type: string }): void {
+    postMessage(message: { type: string; url?: string }): void {
       if (message.type !== "start" && message.type !== "measure") return;
+      if (message.type === "start" && message.url)
+        workerStarts.push({ kind: this.kind, url: message.url });
       if (this.kind === "ping") {
         queueMicrotask(() =>
           this.emit({
@@ -376,6 +347,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       [{ nextHopProtocol: "http/1.1" }] as unknown as PerformanceEntry[];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
+      fetchUrls.push(url);
       if (url.includes("/preflight")) {
         preflights++;
         return Response.json(discovery(preflights > 1));
@@ -400,7 +372,6 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
         bidirectional: false,
       },
       skipLoadedLatencyWhenStageOff: true,
-      endpoint: { host: "meter.test", port: 7246 },
       transports: {
         throughputTarget: "http1-clear",
         latencyTarget: "auto",
@@ -471,6 +442,19 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     });
     const second = await secondProbe;
     expect(preflights).toBe(2);
+    const preflightUrls = fetchUrls.filter((url) => url.includes("/preflight"));
+    expect(preflightUrls).toHaveLength(2);
+    expect(
+      preflightUrls.every((url) =>
+        url.startsWith("/preflight?client=web&client_version="),
+      ),
+    ).toBe(true);
+    expect(
+      workerStarts
+        .filter(({ kind }) => kind === "ping")
+        .every(({ url }) => url === "ws://meter.test:7246/ws/ping"),
+    ).toBe(true);
+    expect(workerStarts.some(({ url }) => url.includes("8765"))).toBe(false);
     expect(first.availableTargets?.http2).toBe(false);
     expect(second.availableTargets?.http2).toBe(true);
 
@@ -482,6 +466,9 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     });
     for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
     expect(started).toEqual(["progress"]);
+    expect(workerStarts.at(-1)?.url).toBe(
+      "http://meter.test:7246/upload/progress?id=gmu_test",
+    );
 
     progressWorker!.emit({ type: "open" });
     await preparation;

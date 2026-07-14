@@ -6,7 +6,6 @@
  * ============================================================ */
 
 import type {
-  RunnerConfig,
   PhaseActivity,
   ProtocolTarget,
   ThroughputTargetSelection,
@@ -84,15 +83,6 @@ export function selectLatencyTarget(
   );
 }
 
-/** Resolve the fetch base URL for the backend. `host:"auto"` (or empty) means
- *  same-origin (relative requests) — the Stage-1 case where the Go server serves
- *  both the app and the API. A concrete host builds an absolute origin. */
-export function resolveBase(endpoint?: RunnerConfig["endpoint"]): string {
-  if (!endpoint || endpoint.host === "auto" || endpoint.host === "") return "";
-  const scheme = endpoint.port === 443 ? "https" : "http";
-  return `${scheme}://${endpoint.host}:${endpoint.port}`;
-}
-
 /** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything
  *  already ws(s):// (or relative) passes through unchanged. */
 export function httpToWs(origin: string): string {
@@ -101,15 +91,6 @@ export function httpToWs(origin: string): string {
   if (origin.startsWith("http://"))
     return "ws://" + origin.slice("http://".length);
   return origin;
-}
-
-/** Upgrade a ws:// base to wss://, unchanged otherwise. Used to force the
- *  latency bus encrypted when the page itself loaded over https, regardless
- *  of what scheme the server-advertised origin guessed at. */
-export function wsToWss(base: string): string {
-  return base.startsWith("ws://")
-    ? "wss://" + base.slice("ws://".length)
-    : base;
 }
 
 /** Median of a non-empty number list (used for the pre-test ping). */
