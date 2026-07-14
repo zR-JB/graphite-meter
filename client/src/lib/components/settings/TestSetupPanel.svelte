@@ -10,6 +10,11 @@
   import { applyConnectionProfile } from "../../compensation";
   import { tooltip, JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
+  import {
+    latencyOptionView,
+    testCombinationSummary,
+    throughputOptionView,
+  } from "../../runner/real/transportViewModel";
 
   interface Props {
     /** Mirrors store.isRunning — locks mid-run-unsafe inputs. */
@@ -112,8 +117,7 @@
   const THROUGHPUT_TARGETS = [
     {
       value: "current",
-      label: "Current",
-      detail: "Use this page's verified HTTP",
+      label: "Same as this page",
     },
     { value: "http1-clear", label: "HTTP/1.1", detail: "Clear connection" },
     {
@@ -125,7 +129,7 @@
     { value: "http3", label: "HTTP/3", detail: "QUIC multiplexing" },
   ] as const;
   const LATENCY_TARGETS = [
-    { value: "auto", label: "Automatic", detail: "Match this page's security" },
+    { value: "auto", label: "Match page security" },
     { value: "ws-http1-clear", label: "WebSocket", detail: "Clear HTTP/1.1" },
     {
       value: "ws-http1-tls",
@@ -134,26 +138,13 @@
     },
   ] as const;
 
-  function targetUnavailable(value: string): boolean {
-    if (value === "current" || value === "auto") return false;
-    if (
-      value === "ws-http1-clear" &&
-      typeof location !== "undefined" &&
-      location.protocol === "https:"
-    )
-      return true;
-    return store.infra?.availableTargets?.[value] === false;
-  }
-
-  function unavailableReason(value: string): string {
-    if (
-      value === "ws-http1-clear" &&
-      typeof location !== "undefined" &&
-      location.protocol === "https:"
-    )
-      return "Blocked on HTTPS pages";
-    return "Not advertised by this server";
-  }
+  const combinationSummary = $derived(
+    testCombinationSummary(
+      store.transportDiscovery,
+      store.config.transports.throughputTarget,
+      store.config.transports.latencyTarget,
+    ),
+  );
 
   /* Physical-path presets seed facts the browser cannot detect. */
   const PROFILE_OPTIONS: { value: ConnectionProfile; label: string }[] = [
@@ -225,33 +216,37 @@
 
   <section class="panel wide primary">
     <h3>Test plan</h3>
+    <p class="transport-intro">
+      Throughput carries download, upload, bidirectional traffic, and upload
+      progress. Latency carries idle and loaded-latency pings. The two paths are
+      selected independently and run together.
+    </p>
     <fieldset class="target-field">
       <legend>Throughput</legend>
       <div class="target-grid">
         {#each THROUGHPUT_TARGETS as target (target.value)}
-          {@const unavailable = targetUnavailable(target.value)}
+          {@const view = throughputOptionView(
+            store.transportDiscovery,
+            target.value,
+          )}
           <label
             class="target-choice"
             class:selected={store.config.transports.throughputTarget ===
               target.value}
-            class:unavailable
+            class:unavailable={view.disabled}
             class:locked={running}
           >
             <input
               type="radio"
               name="throughput-target"
               value={target.value}
-              disabled={running || unavailable}
+              disabled={running || view.disabled}
               bind:group={store.config.transports.throughputTarget}
             />
             <span class="radio-dot" aria-hidden="true"></span>
             <span class="target-copy">
               <strong>{target.label}</strong>
-              <small
-                >{unavailable
-                  ? unavailableReason(target.value)
-                  : target.detail}</small
-              >
+              <small>{view.detail}</small>
             </span>
           </label>
         {/each}
@@ -261,38 +256,39 @@
       <legend>Latency</legend>
       <div class="target-grid">
         {#each LATENCY_TARGETS as target (target.value)}
-          {@const unavailable = targetUnavailable(target.value)}
+          {@const view = latencyOptionView(
+            store.transportDiscovery,
+            target.value,
+          )}
           <label
             class="target-choice"
             class:selected={store.config.transports.latencyTarget ===
               target.value}
-            class:unavailable
+            class:unavailable={view.disabled}
             class:locked={running}
           >
             <input
               type="radio"
               name="latency-target"
               value={target.value}
-              disabled={running || unavailable}
+              disabled={running || view.disabled}
               bind:group={store.config.transports.latencyTarget}
             />
             <span class="radio-dot" aria-hidden="true"></span>
             <span class="target-copy">
               <strong>{target.label}</strong>
-              <small
-                >{unavailable
-                  ? unavailableReason(target.value)
-                  : target.detail}</small
-              >
+              <small>{view.detail}</small>
             </span>
           </label>
         {/each}
       </div>
     </fieldset>
-    <p class="hint">
-      Availability comes from this server's discovery document. Throughput and
-      latency are selected independently; upload progress follows throughput.
-    </p>
+    <div class="combination-summary" aria-live="polite">
+      <strong>Test combination</strong>
+      {#each combinationSummary as line}
+        <span>{line}</span>
+      {/each}
+    </div>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
         <button
@@ -703,6 +699,13 @@
     text-transform: uppercase;
   }
 
+  .transport-intro {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
   .target-field {
     display: grid;
     gap: 7px;
@@ -803,6 +806,23 @@
     line-height: 1.35;
     text-overflow: ellipsis;
     text-transform: none;
+  }
+  .combination-summary {
+    display: grid;
+    gap: 3px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.4;
+  }
+  .combination-summary strong {
+    color: var(--text);
+    font-family: inherit;
+    font-size: 10px;
   }
   label,
   .field {
