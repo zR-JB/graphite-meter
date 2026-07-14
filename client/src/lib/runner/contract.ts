@@ -370,6 +370,10 @@ export interface InfraInfo {
   clientIp: string;
   clientIpVersion: 4 | 6;
   clientIpSource: "socket" | "forwarded";
+  /** Independent H1/WebSocket latency path; it may select another address family. */
+  latencyClientIp?: string;
+  latencyClientIpVersion?: 4 | 6;
+  latencyClientIpSource?: "socket" | "forwarded";
   server: { name: string; host: string; port: number; location?: string };
   preTestPingMs: number;
   engineVersion: string;
@@ -379,6 +383,7 @@ export interface InfraInfo {
   selectedLatencyTarget?: string;
   selectedLatencyTransport?: TransportKind;
   verifiedLatencyProtocol?: string;
+  latencyProtocolNegotiated?: string;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;

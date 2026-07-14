@@ -544,7 +544,11 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       type: "samples",
       samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
     });
-    await secondProbe;
+    const info = await secondProbe;
+    expect(info.latencyClientIp).toBe("127.0.0.1");
+    expect(info.latencyClientIpVersion).toBe(4);
+    expect(info.latencyClientIpSource).toBe("socket");
+    expect(info.latencyProtocolNegotiated).toBe("http/1.1");
     expect(preflights).toBe(3);
     const preflightUrls = fetchUrls.filter((url) => url.includes("/preflight"));
     expect(preflightUrls).toHaveLength(3);

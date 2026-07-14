@@ -70,7 +70,9 @@ disabled to prevent POST replay.
 Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
 freezes one target for each role and verifies each target independently. Fetch throughput targets
 own probe, transfer, session, and NDJSON progress routes. Latency targets own a probe and ping
-route. The browser always fetches `/preflight` from the page origin; it never reconstructs target
+route. Their probes are separate connections and can therefore select different IPv4/IPv6 paths;
+the UI reports both instead of presenting the latency probe as a throughput fallback. The browser
+always fetches `/preflight` from the page origin; it never reconstructs target
 ports locally, and every subsequent HTTP or WebSocket URL comes from that discovery document.
 Only WebSocket over dedicated H1 clear/TLS origins is advertised for latency. H2/H3 WebSockets and
 WebTransport are not advertised. WebSockets over H2 or H3 Extended CONNECT are specified by
@@ -256,8 +258,9 @@ real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 - **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
   own worker pool, aggregation cadence, and stall tracking. Automatic HTTP/1.1 splits the
   available connection budget between directions after reserving the progress request and latency socket and applies the
-  configured ceiling to each share; automatic HTTP/2 and HTTP/3 use one download request and
-  three overlapping upload requests on one multiplexed connection. Forced policy starts the exact configured request count independently for each
+  configured ceiling to each share; automatic HTTP/2 uses one download request, HTTP/3 uses
+  three independent download streams, and both use three overlapping upload requests on one
+  multiplexed connection. Forced policy starts the exact configured request count independently for each
   direction and protocol. HTTP/1.1 requests over the browser's connection limit can be queued.
 
 ### Settings
@@ -290,7 +293,7 @@ A production build has only Setup, so no tab bar is rendered at all.
 | --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
 | Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                             |
 | Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                           |
-| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2/H3 use one download and three overlapping upload requests. Forced uses the configured count exactly for every protocol. |
+| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2 uses one download, H3 uses three downloads, and both use three overlapping uploads. Forced uses the configured count exactly for every protocol. |
 | Skip loaded latency when latency stage is off | on        |                                                                                                          |
 | Chunked download (experimental)               | off       | See Experimental features.                                                                               |
 
@@ -301,7 +304,7 @@ application framing, TLS/QUIC protection, packetization, optional tunnel encapsu
 Ethernet framing once. Reverse ACKs belong to the other full-duplex direction, while browser CPU,
 stability, ramp-up, ping timeouts, and proxy buffering describe achieved goodput or measurement
 quality rather than invisible protocol bytes, so none of them increases the estimate.
-The IP-family input defaults to the normalized client address reported by `/probe`; forwarding
+The IP-family input defaults to the normalized client address reported by the throughput probe; forwarding
 headers contribute only through a peer in `GM_TRUSTED_PROXIES`. The UI shows whether that evidence
 came from the socket or a trusted proxy and retains IPv4/IPv6 overrides because translation,
 overlays, and upstream load balancers can make the presented family ambiguous.
@@ -313,8 +316,8 @@ spike, packet loss, throughput drop, and connection drop (a full stall-then-resu
 
 ### The Endpoint info drawer
 
-The right-side drawer is a responsive read-only card grid: **Client** (normalized IP, address
-family and detection source from `/probe`, plus client build version), **Engine** (the wired
+The right-side drawer is a responsive read-only card grid: **Client** (separate throughput and
+latency IP families and detection sources, plus client build version), **Engine** (the wired
 runner's name, per-runner version, and its supported transports per role — latency vs throughput,
 from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
 `/preflight`), and **Connection** (selected target, browser-verified and server-observed protocols, transfer/latency

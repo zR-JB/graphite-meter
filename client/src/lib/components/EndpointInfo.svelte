@@ -26,9 +26,9 @@
       {
         title: "Client",
         rows: [
-          { label: "Address", value: i?.clientIp ?? "—" },
+          { label: "Throughput address", value: i?.clientIp ?? "—" },
           {
-            label: "Observed via",
+            label: "Throughput observed",
             value: i
               ? `IPv${i.clientIpVersion} · ${
                   i.clientIpSource === "forwarded"
@@ -36,6 +36,21 @@
                     : "Socket peer"
                 }`
               : "—",
+          },
+          {
+            label: "Latency address",
+            value: i?.latencyClientIp ?? "Not selected",
+          },
+          {
+            label: "Latency observed",
+            value:
+              i?.latencyClientIpVersion && i.latencyClientIpSource
+                ? `IPv${i.latencyClientIpVersion} · ${
+                    i.latencyClientIpSource === "forwarded"
+                      ? "Trusted proxy"
+                      : "Socket peer"
+                  }`
+                : "Not selected",
           },
           { label: "App version", value: BUILD.clientVersion },
         ],
@@ -72,10 +87,13 @@
             value: i?.selectedThroughputTarget ?? "Current origin",
           },
           {
-            label: "Verified browser",
+            label: "Throughput browser",
             value: i?.firstHopProtocol ?? "Scheme fallback",
           },
-          { label: "Server observed", value: i?.protocolNegotiated ?? "—" },
+          {
+            label: "Throughput server",
+            value: i?.protocolNegotiated ?? "—",
+          },
           {
             label: "Transfer path",
             value: `Fetch streams · ${i?.selectedThroughputProtocol ?? "—"}`,
@@ -87,8 +105,12 @@
               : "Unavailable",
           },
           {
-            label: "Verified latency",
+            label: "Latency browser",
             value: i?.verifiedLatencyProtocol ?? "Unavailable",
+          },
+          {
+            label: "Latency server",
+            value: i?.latencyProtocolNegotiated ?? "Unavailable",
           },
           {
             label: "Upload progress",

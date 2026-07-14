@@ -469,8 +469,8 @@
           </label>
         </div>
         <p class="hint">
-          Detected first hop: {store.infra?.firstHopProtocol ??
-            "scheme fallback"}. Client address: {store.infra
+          Detected throughput hop: {store.infra?.firstHopProtocol ??
+            "scheme fallback"}. Throughput client address: {store.infra
             ? `IPv${store.infra.clientIpVersion} via ${store.infra.clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`
             : "not detected"}. Proxy translation or overlays can make the
           address family differ from the physical path.
@@ -588,7 +588,7 @@
       onToggle={setForcedStreams}
       disabled={running}
       label="Force transfer stream count"
-      tooltip="Automatic uses the browser connection budget for HTTP/1.1. HTTP/2 and HTTP/3 use one download request and overlapping upload requests on one multiplexed connection. Forced starts the exact request count per active direction; HTTP/1.1 requests beyond the browser connection limit may queue."
+      tooltip="Automatic uses the browser connection budget for HTTP/1.1. HTTP/2 uses one download request, while HTTP/3 overlaps download requests to avoid per-stream flow-control limits; both overlap uploads on one multiplexed connection. Forced starts the exact request count per active direction; HTTP/1.1 requests beyond the browser connection limit may queue."
     />
     <label>
       <span
@@ -617,9 +617,9 @@
     {:else}
       <p class="hint">
         Automatic: HTTP/1.1 uses the available connection pool, capped at
-        {store.config.transferStreams.count} per direction; HTTP/2 and HTTP/3 use
-        one download request and three overlapping upload requests on their multiplexed
-        connection.
+        {store.config.transferStreams.count} per direction; HTTP/2 uses one download
+        request, HTTP/3 uses three, and both use three overlapping upload requests
+        on their multiplexed connection.
       </p>
     {/if}
     <Switch

@@ -310,8 +310,8 @@ export class RealBackend implements RunnerBackend {
   /* ================= PROBE ================= */
   /**
    * TARGET: same-origin `GET /preflight`.
-   * Resolve `InfraInfo` (client public IP, server identity, negotiated
-   * protocol, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
+   * Resolve `InfraInfo` (per-role client address, server identity, negotiated
+   * protocols, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
    * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
    * via host.emit for the sparkline. On failure, throw — wire.ts maps a probe
    * rejection to a `preflight-failed` error.
@@ -429,6 +429,7 @@ export class RealBackend implements RunnerBackend {
     }
 
     let verifiedLatencyProtocol: string | undefined;
+    let latencyPathProbe: Probe | undefined;
     if (needsLatency && this.#latencyTarget) {
       const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
       const latencyRes = await fetch(latencyURL, {
@@ -440,7 +441,7 @@ export class RealBackend implements RunnerBackend {
         throw new TransportUnavailableError(
           `latency probe returned HTTP ${latencyRes.status}`,
         );
-      await latencyRes.json();
+      latencyPathProbe = (await latencyRes.json()) as Probe;
       verifiedLatencyProtocol = (
         performance.getEntriesByName(latencyRes.url, "resource").at(-1) as
           PerformanceResourceTiming | undefined
@@ -448,6 +449,10 @@ export class RealBackend implements RunnerBackend {
       if (verifiedLatencyProtocol !== "http/1.1")
         throw new TransportUnavailableError(
           `latency target negotiated ${verifiedLatencyProtocol || "unknown"}, want http/1.1`,
+        );
+      if (latencyPathProbe.protocolNegotiated !== "http/1.1")
+        throw new TransportUnavailableError(
+          `latency server observed ${latencyPathProbe.protocolNegotiated}, want http/1.1`,
         );
     }
 
@@ -460,6 +465,9 @@ export class RealBackend implements RunnerBackend {
       clientIp: pathProbe.clientIp,
       clientIpVersion: pathProbe.clientIpVersion,
       clientIpSource: pathProbe.clientIpSource,
+      latencyClientIp: latencyPathProbe?.clientIp,
+      latencyClientIpVersion: latencyPathProbe?.clientIpVersion,
+      latencyClientIpSource: latencyPathProbe?.clientIpSource,
       server: {
         name: pf.server.name,
         host: pf.server.host,
@@ -474,6 +482,7 @@ export class RealBackend implements RunnerBackend {
       selectedLatencyTarget: this.#latencyTarget?.id,
       selectedLatencyTransport: this.#latencyTarget?.transport,
       verifiedLatencyProtocol,
+      latencyProtocolNegotiated: latencyPathProbe?.protocolNegotiated,
       firstHopProtocol,
       firstHopSecure: selected.tls,
     };
