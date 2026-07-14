@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"encoding/base64"
 	"sync"
 	"testing"
 	"time"
@@ -31,10 +32,12 @@ func TestUploadStoreMintAllocatesNoState(t *testing.T) {
 func TestUploadStoreRejectsTamperedAndExpiredID(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
-	tampered := id[:len(id)-1] + "A"
-	if tampered == id {
-		tampered = id[:len(id)-1] + "B"
+	raw, err := base64.RawURLEncoding.DecodeString(id[4:])
+	if err != nil {
+		t.Fatal(err)
 	}
+	raw[len(raw)-1] ^= 1
+	tampered := "gmu_" + base64.RawURLEncoding.EncodeToString(raw)
 	if _, ok := s.getOrCreate(tampered); ok {
 		t.Fatal("tampered id created an aggregate")
 	}
