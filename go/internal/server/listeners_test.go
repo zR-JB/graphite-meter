@@ -82,7 +82,9 @@ func TestH1MountsSPAAndDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(context.Background(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true})
+	mux := listenerMuxWithSPA(context.Background(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 	for _, path := range []string{"/", "/preflight"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))

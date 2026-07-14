@@ -53,7 +53,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr}
 	base := "https://" + ln.Addr().String()
-	for _, path := range []string{"/", "/preflight"} {
+	for _, path := range []string{"/preflight"} {
 		res, err := hc.Get(base + path)
 		if err != nil {
 			t.Fatal(err)

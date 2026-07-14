@@ -95,6 +95,10 @@ func (e protocolEndpoint) Handle(s transport.Session) error {
 }
 
 func listenerMux(ctx context.Context, e *endpoints, topology muxTopology) *http.ServeMux {
+	return listenerMuxWithSPA(ctx, e, topology, static.Handler())
+}
+
+func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler) *http.ServeMux {
 	reg := endpoint.NewRegistry()
 	if topology.discovery {
 		reg.RegisterHTTP("/preflight", e.preflight)
@@ -122,7 +126,7 @@ func listenerMux(ctx context.Context, e *endpoints, topology muxTopology) *http.
 	m := http.NewServeMux()
 	reg.Mount(ctx, m)
 	if topology.spa {
-		m.Handle("/", static.Handler())
+		m.Handle("/", spa)
 	}
 	return m
 }
