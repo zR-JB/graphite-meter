@@ -70,7 +70,9 @@ disabled to prevent POST replay.
 Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
 freezes one target for each role and verifies each target independently. Fetch throughput targets
 own probe, transfer, session, and NDJSON progress routes. Latency targets own a probe and ping
-route. Today only WebSocket over dedicated H1 clear/TLS origins is advertised for latency;
+route. The browser always fetches `/preflight` from the page origin; it never reconstructs target
+ports locally, and every subsequent HTTP or WebSocket URL comes from that discovery document.
+Today only WebSocket over dedicated H1 clear/TLS origins is advertised for latency;
 H2/H3 WebSockets and WebTransport remain unadvertised. WebSockets over H2 or H3 Extended CONNECT are specified by
 [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441) and
 [RFC 9220](https://www.rfc-editor.org/rfc/rfc9220), but the current implementation uses the widely
