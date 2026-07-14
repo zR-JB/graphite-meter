@@ -104,9 +104,9 @@ mostly lock-free per-id aggregate (`bytes` plus a monotonic first-byte time anch
 throughput is derived client-side as `Δbytes / Δserver-elapsed-time`; clients baseline both values
 when measurement begins, excluding warmup while retaining stalls, reconnects and lane turnaround.
 This avoids client event-loop timing artifacts without inflating results by removing pauses. IDs
-must have been minted by `/upload/session` — a
-flood of forged IDs on this otherwise auth-less, cookie-less bus creates no state. A background
-sweeper reaps idle aggregates after 30s.
+are short-lived HMAC-authenticated tokens minted without server-side session state; forged IDs and
+`/upload/session` floods therefore allocate no aggregate state. A background sweeper reaps idle
+aggregates after 30s.
 
 ### Wire protocol (message buses only)
 

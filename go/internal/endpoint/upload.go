@@ -81,7 +81,7 @@ func (u *Upload) Handle(s transport.Session) error {
 	}
 
 	// Resolve the test's shared aggregate from a server-minted ?id=; nil for an
-	// empty/unissued id or over the live cap, in which case this POST still
+	// empty/invalid id or over the live cap, in which case this POST still
 	// drains and counts, just not server-authoritatively. posts is a
 	// diagnostics gauge only — the TTL sweeper owns deletion.
 	var agg *uploadAgg

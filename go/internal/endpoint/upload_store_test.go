@@ -1,47 +1,47 @@
 package endpoint
 
 import (
-	"strconv"
 	"sync"
 	"testing"
 	"time"
 )
 
-// TestUploadStoreRejectsUnissuedID guards the abuse defence: an id the server never
-// minted at /upload/session cannot create an aggregate.
-func TestUploadStoreRejectsUnissuedID(t *testing.T) {
+func TestUploadStoreRejectsForgedID(t *testing.T) {
 	s := NewUploadStore()
 	if agg, ok := s.getOrCreate("never-minted"); ok || agg != nil {
-		t.Fatalf("getOrCreate on an unissued id = (%v, %v), want (nil, false)", agg, ok)
+		t.Fatalf("getOrCreate on a forged id = (%v, %v), want (nil, false)", agg, ok)
 	}
 	if s.live.Load() != 0 {
 		t.Errorf("live = %d after a rejected create, want 0", s.live.Load())
 	}
 }
 
-func TestUploadStoreBoundsPendingIDs(t *testing.T) {
+func TestUploadStoreMintAllocatesNoState(t *testing.T) {
 	s := NewUploadStore()
-	for i := 0; i < maxPendingUploads; i++ {
-		if !s.markIssued("pending-" + strconv.Itoa(i)) {
-			t.Fatalf("pending id %d below the cap was refused", i)
+	for i := 0; i < 10_000; i++ {
+		if s.Mint() == "" {
+			t.Fatalf("mint %d failed", i)
 		}
 	}
-	if s.markIssued("one-too-many") {
-		t.Fatal("pending id past the cap succeeded")
-	}
-	if got := s.pending.Load(); got != maxPendingUploads {
-		t.Fatalf("pending = %d, want %d", got, maxPendingUploads)
+	if s.live.Load() != 0 {
+		t.Fatalf("minting allocated %d live aggregates, want 0", s.live.Load())
 	}
 }
 
-func TestUploadStoreConsumesIssuedIDOnCreate(t *testing.T) {
+func TestUploadStoreRejectsTamperedAndExpiredID(t *testing.T) {
 	s := NewUploadStore()
-	s.markIssued("consume-me")
-	if _, ok := s.getOrCreate("consume-me"); !ok {
-		t.Fatal("aggregate creation failed")
+	id := s.Mint()
+	tampered := id[:len(id)-1] + "A"
+	if tampered == id {
+		tampered = id[:len(id)-1] + "B"
 	}
-	if s.isIssued("consume-me") || s.pending.Load() != 0 {
-		t.Fatal("issued id survived aggregate creation")
+	if _, ok := s.getOrCreate(tampered); ok {
+		t.Fatal("tampered id created an aggregate")
+	}
+	var nonce [16]byte
+	expired := s.signID(monoNanos()-int64(uploadTokenTTL)-int64(time.Second), nonce)
+	if _, ok := s.getOrCreate(expired); ok {
+		t.Fatal("expired id created an aggregate")
 	}
 }
 
@@ -49,13 +49,13 @@ func TestUploadStoreConsumesIssuedIDOnCreate(t *testing.T) {
 // carrying the same minted id all resolve to ONE aggregate, and that counting works.
 func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 	s := NewUploadStore()
-	s.markIssued("test-1")
+	id := s.Mint()
 
-	a, ok := s.getOrCreate("test-1")
+	a, ok := s.getOrCreate(id)
 	if !ok || a == nil {
 		t.Fatalf("first getOrCreate failed: ok=%v", ok)
 	}
-	b, ok := s.getOrCreate("test-1")
+	b, ok := s.getOrCreate(id)
 	if !ok || b != a {
 		t.Fatalf("second getOrCreate returned a different aggregate (%p vs %p)", b, a)
 	}
@@ -69,7 +69,7 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 		t.Errorf("bytes via the shared aggregate = %d, want 1500", got)
 	}
 
-	if got, ok := s.get("test-1"); !ok || got != a {
+	if got, ok := s.get(id); !ok || got != a {
 		t.Errorf("get returned (%p, %v), want the same aggregate", got, ok)
 	}
 }
@@ -79,8 +79,7 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 func TestUploadStoreCapRejectsCreate(t *testing.T) {
 	s := NewUploadStore()
 	for i := 0; i < maxLiveUploads; i++ {
-		id := "id-" + strconv.Itoa(i)
-		s.markIssued(id)
+		id := s.Mint()
 		if _, ok := s.getOrCreate(id); !ok {
 			t.Fatalf("create %d below the cap was refused", i)
 		}
@@ -88,8 +87,7 @@ func TestUploadStoreCapRejectsCreate(t *testing.T) {
 	if s.live.Load() != maxLiveUploads {
 		t.Fatalf("live = %d, want %d", s.live.Load(), maxLiveUploads)
 	}
-	s.markIssued("one-too-many")
-	if _, ok := s.getOrCreate("one-too-many"); ok {
+	if _, ok := s.getOrCreate(s.Mint()); ok {
 		t.Errorf("create past the cap succeeded, want refusal")
 	}
 }
@@ -98,23 +96,23 @@ func TestUploadStoreCapRejectsCreate(t *testing.T) {
 // sweeper deletes it and decrements the live count.
 func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	s := NewUploadStore()
-	s.markIssued("idle")
-	a, _ := s.getOrCreate("idle")
+	idleID := s.Mint()
+	a, _ := s.getOrCreate(idleID)
 	// Backdate the last touch well past the TTL (arithmetic is on the monotonic
 	// clock, so this holds regardless of how long the process has been up).
 	a.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
 
-	s.markIssued("fresh")
-	if _, ok := s.getOrCreate("fresh"); !ok {
+	freshID := s.Mint()
+	if _, ok := s.getOrCreate(freshID); !ok {
 		t.Fatal("fresh create failed")
 	}
 
 	s.sweep(uploadIDTTL)
 
-	if _, ok := s.get("idle"); ok {
+	if _, ok := s.get(idleID); ok {
 		t.Error("idle aggregate survived the sweep")
 	}
-	if _, ok := s.get("fresh"); !ok {
+	if _, ok := s.get(freshID); !ok {
 		t.Error("fresh aggregate was wrongly reaped")
 	}
 	if s.live.Load() != 1 {
@@ -122,8 +120,7 @@ func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	}
 }
 
-// TestUploadStoreMint checks minted ids are unique, issued (so getOrCreate accepts
-// them), and carry the opaque prefix.
+// TestUploadStoreMint checks minted ids are unique, authenticated, and opaque.
 func TestUploadStoreMint(t *testing.T) {
 	s := NewUploadStore()
 	seen := make(map[string]bool)
@@ -139,9 +136,6 @@ func TestUploadStoreMint(t *testing.T) {
 			t.Fatalf("Mint returned a duplicate id %q", id)
 		}
 		seen[id] = true
-		if !s.isIssued(id) {
-			t.Fatalf("minted id %q is not marked issued", id)
-		}
 		if _, ok := s.getOrCreate(id); !ok {
 			t.Fatalf("getOrCreate rejected the freshly minted id %q", id)
 		}
@@ -205,10 +199,10 @@ func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 // TestUploadStoreDeleteIdempotent checks a double delete never double-decrements live.
 func TestUploadStoreDeleteIdempotent(t *testing.T) {
 	s := NewUploadStore()
-	s.markIssued("d")
-	s.getOrCreate("d")
-	s.delete("d")
-	s.delete("d") // no-op
+	id := s.Mint()
+	s.getOrCreate(id)
+	s.delete(id)
+	s.delete(id) // no-op
 	s.delete("never-existed")
 	if s.live.Load() != 0 {
 		t.Errorf("live = %d after idempotent deletes, want 0", s.live.Load())
@@ -227,49 +221,21 @@ func TestUploadStoreSweepBoundary(t *testing.T) {
 	const margin = 50 * time.Millisecond
 	now := monoNanos()
 
-	s.markIssued("survivor")
-	survivor, _ := s.getOrCreate("survivor")
+	survivorID := s.Mint()
+	survivor, _ := s.getOrCreate(survivorID)
 	survivor.lastTouchMono.Store(now - int64(ttl) + int64(margin)) // idle age < ttl
 
-	s.markIssued("expired")
-	expired, _ := s.getOrCreate("expired")
+	expiredID := s.Mint()
+	expired, _ := s.getOrCreate(expiredID)
 	expired.lastTouchMono.Store(now - int64(ttl) - int64(margin)) // idle age > ttl
 
 	s.sweep(ttl)
 
-	if _, ok := s.get("survivor"); !ok {
+	if _, ok := s.get(survivorID); !ok {
 		t.Error("aggregate just inside the TTL was reaped, want survival")
 	}
-	if _, ok := s.get("expired"); ok {
+	if _, ok := s.get(expiredID); ok {
 		t.Error("aggregate just past the TTL survived, want reaping")
-	}
-}
-
-// TestUploadStoreIssuedPruneNeverStrandsExistingAggregate checks that pruning
-// a minted id from `issued` (issuedIDTTL) never affects an aggregate that
-// already exists for that id: getOrCreate returns the EXISTING aggregate
-// without re-checking issued, so a running test's later lanes are unaffected.
-func TestUploadStoreIssuedPruneNeverStrandsExistingAggregate(t *testing.T) {
-	s := NewUploadStore()
-	s.markIssued("running")
-	agg, ok := s.getOrCreate("running")
-	if !ok {
-		t.Fatal("initial create failed")
-	}
-
-	// Backdate the issued record past issuedIDTTL and prune it.
-	s.issued.Store("running", monoNanos()-int64(issuedIDTTL)-int64(time.Second))
-	s.sweep(uploadIDTTL)
-
-	if s.isIssued("running") {
-		t.Fatal("issued record was not pruned")
-	}
-	got, ok := s.get("running")
-	if !ok || got != agg {
-		t.Error("existing aggregate was stranded by issued pruning")
-	}
-	if _, ok := s.getOrCreate("running"); !ok {
-		t.Error("getOrCreate on a live id with a pruned issued record was refused")
 	}
 }
 
@@ -278,20 +244,21 @@ func TestUploadStoreIssuedPruneNeverStrandsExistingAggregate(t *testing.T) {
 // freeing a slot (delete or sweep) lets a new id through again.
 func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
 	s := NewUploadStore()
+	ids := make([]string, maxLiveUploads)
 	for i := 0; i < maxLiveUploads; i++ {
-		id := "id-" + strconv.Itoa(i)
-		s.markIssued(id)
+		id := s.Mint()
+		ids[i] = id
 		if _, ok := s.getOrCreate(id); !ok {
 			t.Fatalf("create %d below the cap was refused", i)
 		}
 	}
-	s.markIssued("blocked")
-	if _, ok := s.getOrCreate("blocked"); ok {
+	blocked := s.Mint()
+	if _, ok := s.getOrCreate(blocked); ok {
 		t.Fatal("create at the cap unexpectedly succeeded")
 	}
 
-	s.delete("id-0")
-	if _, ok := s.getOrCreate("blocked"); !ok {
+	s.delete(ids[0])
+	if _, ok := s.getOrCreate(blocked); !ok {
 		t.Error("create after a delete freed a slot was still refused")
 	}
 	if s.live.Load() != maxLiveUploads {
@@ -309,9 +276,8 @@ func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	const n = 200
 	ids := make([]string, n)
 	for i := range ids {
-		id := "race-" + strconv.Itoa(i)
+		id := s.Mint()
 		ids[i] = id
-		s.markIssued(id)
 		agg, _ := s.getOrCreate(id)
 		if i%2 == 0 {
 			// Half start already past the TTL so sweep can reap them

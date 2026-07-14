@@ -39,8 +39,11 @@ func TestUploadSessionMintsFreshID(t *testing.T) {
 	if a == b {
 		t.Fatalf("uploadId not unique across calls: %q", a)
 	}
-	if !store.isIssued(a) || !store.isIssued(b) {
-		t.Fatalf("minted ids not marked issued")
+	if !store.validID(a) || !store.validID(b) {
+		t.Fatal("minted ids failed authentication")
+	}
+	if store.live.Load() != 0 {
+		t.Fatalf("minting allocated %d live aggregates, want 0", store.live.Load())
 	}
 }
 

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 )
 
@@ -76,9 +75,8 @@ func TestUploadAggregatesByID(t *testing.T) {
 	}
 }
 
-// TestUploadUnissuedIDDoesNotAggregate checks the abuse path: a forged (unminted)
-// id drains-and-counts normally but creates no server-side aggregate.
-func TestUploadUnissuedIDDoesNotAggregate(t *testing.T) {
+// TestUploadForgedIDDoesNotAggregate checks that an unauthenticated id creates no state.
+func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 	store := NewUploadStore()
 	mux := http.NewServeMux()
 	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
@@ -139,19 +137,18 @@ func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 }
 
 // TestUploadOverCapIDStillDrainsWithoutAggregating checks the live-cap abuse
-// defense at the POST layer: an id minted (issued) but refused by
+// defense at the POST layer: an authenticated id refused by
 // getOrCreate because the store is already at maxLiveUploads still drains
 // and echoes normally — it just isn't server-authoritatively counted.
 func TestUploadOverCapIDStillDrainsWithoutAggregating(t *testing.T) {
 	store := NewUploadStore()
 	for i := 0; i < maxLiveUploads; i++ {
-		id := "filler-" + strconv.Itoa(i)
-		store.markIssued(id)
+		id := store.Mint()
 		if _, ok := store.getOrCreate(id); !ok {
 			t.Fatalf("filler create %d below the cap was refused", i)
 		}
 	}
-	id := store.Mint() // issued, but the store is already full
+	id := store.Mint()
 
 	mux := http.NewServeMux()
 	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
@@ -175,7 +172,7 @@ func TestUploadOverCapIDStillDrainsWithoutAggregating(t *testing.T) {
 		t.Errorf("echoed %d bytes, want %d (upload must still work over the cap)", echo.Bytes, n)
 	}
 	if _, ok := store.get(id); ok {
-		t.Error("an over-cap issued id unexpectedly got an aggregate")
+		t.Error("an over-cap id unexpectedly got an aggregate")
 	}
 }
 

@@ -2,8 +2,11 @@ package endpoint
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"hash/fnv"
 	"sync"
 	"sync/atomic"
@@ -21,13 +24,14 @@ import (
 // An aggregate is created on first touch and retained through explicit
 // finalization so a reconnect can replay completion; the TTL sweeper deletes it.
 //
-// Creation consumes an id minted at /upload/session. Pending ids and live
-// aggregates have independent hard caps, while forged ids create no state.
+// Creation requires a short-lived authenticated id minted at /upload/session.
+// Minting is stateless; only live aggregates consume bounded server memory.
 type UploadStore struct {
-	shards  [uploadShardCount]uploadShard
-	issued  sync.Map     // id (string) -> issue time (mono ns); consumed on first aggregate creation
-	pending atomic.Int32 // minted ids that have not created an aggregate yet
-	live    atomic.Int32 // live aggregates retained through completion replay
+	shards       [uploadShardCount]uploadShard
+	tokenKey     [sha256.Size]byte
+	tokenKeyOnce sync.Once
+	tokenKeyOK   bool
+	live         atomic.Int32 // live aggregates retained through completion replay
 }
 
 type uploadShard struct {
@@ -86,15 +90,11 @@ const (
 	// maxLiveUploads bounds the aggregate map so a burst of minted ids can't grow
 	// memory without bound.
 	maxLiveUploads = 1000
-	// maxPendingUploads independently bounds minted-but-unused session tokens.
-	maxPendingUploads = 1000
 	// uploadIDTTL: an aggregate idle this long (no chunk or progress tick) is
 	// reaped by the sweeper after abort, tab close, or crash.
 	uploadIDTTL = 30 * time.Second
-	// issuedIDTTL forgets a minted-but-unconsumed id after this long, so `issued`
-	// can't grow forever. Pruning it never breaks a running test — getOrCreate
-	// returns an existing aggregate without re-checking issued.
-	issuedIDTTL = 2 * time.Minute
+	// uploadTokenTTL limits how long a minted id may create its aggregate.
+	uploadTokenTTL = 2 * time.Minute
 	// uploadSweepInterval is how often RunSweeper scans for idle aggregates.
 	uploadSweepInterval = 5 * time.Second
 )
@@ -120,70 +120,60 @@ func (s *UploadStore) shard(id string) *uploadShard {
 	return &s.shards[h.Sum32()%uploadShardCount]
 }
 
-// Mint generates a fresh opaque upload-session token (128 bits of crypto entropy,
-// URL-safe so it rides ?id= without escaping), records it as issued, and returns
-// it. /upload/session calls this once per upload stage; only minted tokens can
-// create an aggregate.
+// Mint generates a URL-safe, authenticated upload-session token without storing
+// per-token state. /upload/session calls this once per upload stage.
 func (s *UploadStore) Mint() string {
-	for {
-		var b [16]byte
-		if _, err := rand.Read(b[:]); err != nil {
-			return ""
-		}
-		id := "gmu_" + base64.RawURLEncoding.EncodeToString(b[:])
-		if s.markIssued(id) {
-			return id
-		}
-		if s.pending.Load() >= maxPendingUploads {
-			return ""
-		}
+	if !s.ensureTokenKey() {
+		return ""
 	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return ""
+	}
+	return s.signID(monoNanos(), nonce)
 }
 
-// markIssued records that the server minted id at /upload/session, so a later POST/progress
-// carrying it may create an aggregate. Idempotent.
-func (s *UploadStore) markIssued(id string) bool {
-	if id == "" {
-		return false
-	}
-	for {
-		n := s.pending.Load()
-		if n >= maxPendingUploads || !s.pending.CompareAndSwap(n, n+1) {
-			if n >= maxPendingUploads {
-				return false
-			}
-			continue
-		}
-		if _, loaded := s.issued.LoadOrStore(id, monoNanos()); loaded {
-			s.pending.Add(-1)
-			return false
-		}
-		return true
-	}
+func (s *UploadStore) ensureTokenKey() bool {
+	s.tokenKeyOnce.Do(func() {
+		_, err := rand.Read(s.tokenKey[:])
+		s.tokenKeyOK = err == nil
+	})
+	return s.tokenKeyOK
 }
 
-func (s *UploadStore) consumeIssued(id string) bool {
-	if _, ok := s.issued.LoadAndDelete(id); !ok {
-		return false
-	}
-	s.pending.Add(-1)
-	return true
+func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
+	var payload [8 + len(nonce)]byte
+	binary.BigEndian.PutUint64(payload[:8], uint64(issued))
+	copy(payload[8:], nonce[:])
+	mac := hmac.New(sha256.New, s.tokenKey[:])
+	_, _ = mac.Write(payload[:])
+	return "gmu_" + base64.RawURLEncoding.EncodeToString(append(payload[:], mac.Sum(nil)...))
 }
 
-// isIssued reports whether id was minted by this server and not yet pruned.
-func (s *UploadStore) isIssued(id string) bool {
-	if id == "" {
+func (s *UploadStore) validID(id string) bool {
+	if len(id) < 4 || id[:4] != "gmu_" || !s.ensureTokenKey() {
 		return false
 	}
-	_, ok := s.issued.Load(id)
-	return ok
+	raw, err := base64.RawURLEncoding.DecodeString(id[4:])
+	if err != nil || len(raw) != 8+16+sha256.Size {
+		return false
+	}
+	payload, tag := raw[:24], raw[24:]
+	mac := hmac.New(sha256.New, s.tokenKey[:])
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(tag, mac.Sum(nil)) {
+		return false
+	}
+	issued := int64(binary.BigEndian.Uint64(payload[:8]))
+	now := monoNanos()
+	return issued > 0 && issued <= now && now-issued <= int64(uploadTokenTTL)
 }
 
 // getOrCreate returns the aggregate for id, creating it on first touch. It returns
-// (nil, false) when id is empty, was never minted (and no aggregate exists yet), or
+// (nil, false) when id is invalid (and no aggregate exists yet), or
 // the live-aggregate cap is reached. An EXISTING aggregate is always returned —
-// the issued gate and the cap apply only to the first create, so pruning `issued`
-// or hitting the cap mid-test never strands a running test's later lanes. Every
+// authentication and the cap apply only to the first create, so token expiry or
+// hitting the cap mid-test never strands a running test's later lanes. Every
 // successful call bumps lastTouchMono so an active id never looks idle to the sweeper.
 func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 	if id == "" {
@@ -196,7 +186,7 @@ func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 		agg.lastTouchMono.Store(monoNanos())
 		return agg, true
 	}
-	// First touch consumes the minted id and moves it into the bounded live map.
+	// Reserve a bounded live slot before doing token work.
 	for {
 		n := s.live.Load()
 		if n >= maxLiveUploads {
@@ -207,7 +197,7 @@ func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 			break
 		}
 	}
-	if !s.consumeIssued(id) {
+	if !s.validID(id) {
 		s.live.Add(-1)
 		sh.mu.Unlock()
 		return nil, false
@@ -254,9 +244,8 @@ func (s *UploadStore) delete(id string) {
 	sh.mu.Unlock()
 }
 
-// sweep reaps every aggregate idle longer than ttl and
-// forgets every minted id older than issuedIDTTL. It is the store's only deleter
-// of aggregate state; bytes are never lost because the sole authoritative read is
+// sweep reaps every aggregate idle longer than ttl. It is the store's only
+// deleter of aggregate state; bytes are never lost because the authoritative read is
 // the cumulative value at explicit finalization, long before idle reaping.
 func (s *UploadStore) sweep(ttl time.Duration) {
 	now := monoNanos()
@@ -272,15 +261,6 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 		}
 		sh.mu.Unlock()
 	}
-	issuedCutoff := now - int64(issuedIDTTL)
-	s.issued.Range(func(k, v any) bool {
-		if at, ok := v.(int64); ok && at < issuedCutoff {
-			if _, loaded := s.issued.LoadAndDelete(k); loaded {
-				s.pending.Add(-1)
-			}
-		}
-		return true
-	})
 }
 
 // RunSweeper reaps idle aggregates until ctx is cancelled. Start it once per store
