@@ -348,7 +348,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     __GM_BUILD_LABEL__: "test",
     __GM_CLIENT_VERSION__: "0.0.0-test",
   });
-  const { RealBackend } = await import("./RealRunner");
+  const { RealBackend, TransportUnavailableError } =
+    await import("./RealRunner");
   const realFetch = globalThis.fetch;
   const realWorker = globalThis.Worker;
   const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
@@ -531,6 +532,12 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     backend.attach(host);
 
     await backend.probe(config);
+    config.transports.throughputTarget = "http3";
+    await expect(backend.probe(config)).rejects.toBeInstanceOf(
+      TransportUnavailableError,
+    );
+    expect(discoveries.at(-1)?.throughput.http2.state).toBe("advertised");
+    config.transports.throughputTarget = "http1-clear";
     const secondProbe = backend.probe(config);
     for (let i = 0; i < 10; i++) await Promise.resolve();
     pingWorker!.emit({
@@ -538,9 +545,9 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
     });
     await secondProbe;
-    expect(preflights).toBe(2);
+    expect(preflights).toBe(3);
     const preflightUrls = fetchUrls.filter((url) => url.includes("/preflight"));
-    expect(preflightUrls).toHaveLength(2);
+    expect(preflightUrls).toHaveLength(3);
     expect(
       preflightUrls.every((url) =>
         url.startsWith("/preflight?client=web&client_version="),
@@ -553,7 +560,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     ).toBe(true);
     expect(workerStarts.some(({ url }) => url.includes("8765"))).toBe(false);
     expect(discoveries[0].throughput.http2.state).toBe("not-advertised");
-    expect(discoveries[1].throughput.http2.state).toBe("advertised");
+    expect(discoveries[2].throughput.http2.state).toBe("advertised");
 
     backend.onRunStart(config);
     const preparation = backend.onStageBegin({
