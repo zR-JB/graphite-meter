@@ -23,7 +23,14 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-const downloadBlockSize = 256 * 1024
+const (
+	downloadBlockSize   = 256 * 1024
+	h3InitialPacketSize = 1200 // Fits within the IPv6 minimum MTU after UDP and IP headers.
+)
+
+func h3QUICConfig() *quic.Config {
+	return &quic.Config{Allow0RTT: false, InitialPacketSize: h3InitialPacketSize}
+}
 
 type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.Endpoint
@@ -220,7 +227,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
-		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: h3QUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
 		pc, err := net.ListenPacket("udp", cfg.H3Addr)
 		if err != nil {

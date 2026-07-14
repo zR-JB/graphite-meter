@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	// webtransport "github.com/quic-go/webtransport-go" // Stage 5 coverage.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -154,7 +153,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: h3QUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 	// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with WebTransport routes.
 	go h3.Serve(pc)
 	defer func() { _ = h3.Close(); _ = pc.Close() }()
@@ -182,5 +181,15 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	res.Body.Close()
 	if len(body) != 1 {
 		t.Fatalf("download bytes = %d", len(body))
+	}
+}
+
+func TestHTTP3StartsAtMinimumPacketSize(t *testing.T) {
+	cfg := h3QUICConfig()
+	if cfg.InitialPacketSize != 1200 {
+		t.Fatalf("initial packet size = %d, want 1200", cfg.InitialPacketSize)
+	}
+	if cfg.DisablePathMTUDiscovery {
+		t.Fatal("path MTU discovery is disabled")
 	}
 }
