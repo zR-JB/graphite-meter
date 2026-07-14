@@ -21,6 +21,7 @@ cd graphite-meter
 
 ```sh
 just dev          # build the client (dev profile), embed it into the Go server, run it on :7246
+just prod         # same local workflow with the production client profile
 ```
 
 Open `http://localhost:7246`. `just dev` and `just prod` are the two "do everything" entrypoints
@@ -29,6 +30,11 @@ and are deliberately symmetric: each builds the Svelte client in its own profile
 differs. `just dev` includes the dummy runner (`?engine=dummy`) and the Developer settings tab by
 default; `just prod` builds a real-only, dev-tooling-stripped, version-stamped run instead (see
 below).
+
+Both commands are local source runs. Use `just dev` while developing UI behavior, `just prod` to
+exercise the real production browser bundle, and `just ci` to run the local validation used by CI.
+For an installed deployment, use the published container commands in the
+[README](../README.md#quick-start) or build a persistent binary with `just server-build-prod`.
 
 ## Naming
 
@@ -116,6 +122,12 @@ environment variables, which take precedence over defaults.
 | `GM_VERBOSE`                                                                     | `-verbose`  | off                                                       | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                                                                                                         |
 | `PUBLIC_H1_ORIGIN`, `PUBLIC_H1_TLS_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags | request host + listener port | Exact externally reachable transfer origins. Clear H1 must be `http`; all TLS targets must be `https`. |
 
+The address and origin settings are deliberately different. `GM_*_ADDR` changes where Go listens;
+`PUBLIC_*_ORIGIN` only changes what `/preflight` advertises and never opens or moves a listener.
+For direct local development, leave every public origin unset so discovery derives the request
+hostname plus the configured listener ports. Public origins are for reverse proxies, external
+container port mappings, or public hostnames that differ from the bind addresses.
+
 ### Local TLS and HTTP/3 certificates
 
 Use a locally trusted CA for browser testing. A bare self-signed leaf may be
@@ -136,10 +148,6 @@ mkcert -cert-file .dev-certs/localhost.pem \
 GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
   GM_TLS_CERT=../.dev-certs/localhost.pem \
   GM_TLS_KEY=../.dev-certs/localhost-key.pem \
-  PUBLIC_H1_ORIGIN=http://localhost:7246 \
-  PUBLIC_H1_TLS_ORIGIN=https://localhost:7247 \
-  PUBLIC_H2_ORIGIN=https://localhost:7248 \
-  PUBLIC_H3_ORIGIN=https://localhost:7249 \
   just prod
 ```
 

@@ -27,6 +27,22 @@ reported family is not guaranteed to describe every physical segment.
 the browser can reach. Any explicit public origin is advertised even when its corresponding native
 listener is disabled: the public target may be a proxy forwarding to the server's H1 listener.
 Native listener flags control local binds, not external target discovery.
+Conversely, a `PUBLIC_*_ORIGIN` override never changes a listener and is not checked for
+reachability; it is an operator assertion that clients can reach that exact origin.
+
+Start the server normally, then add only the public origins whose browser-facing scheme, host, or
+port differs from the native listener. For example, a proxy publishing every target on dedicated
+hostnames at port 443 might set:
+
+```sh
+PUBLIC_H1_TLS_ORIGIN=https://h1.meter.example.com \
+PUBLIC_H2_ORIGIN=https://h2.meter.example.com \
+PUBLIC_H3_ORIGIN=https://h3.meter.example.com \
+./graphite-meter
+```
+
+The proxy must route those origins to suitable local listeners. Do not copy these variables into a
+direct local run; without them, `/preflight` derives `localhost` and the configured listener ports.
 
 An advertised H1-TLS target must negotiate HTTP/1.1 at the browser-facing hop. Give it a dedicated
 port or virtual host whose ALPN policy does not offer H2. Advertising the same H2-enabled origin as

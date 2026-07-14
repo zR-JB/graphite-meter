@@ -61,6 +61,20 @@ overlay adds a dedicated HTTPS HTTP/1.1 target alongside native H2 and H3.
 For local browser testing, including Firefox's stricter handling of private-root
 HTTP/3 certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
 
+Use the command that matches the environment:
+
+| Purpose | Command |
+| --- | --- |
+| Local development run | `just dev` |
+| Local production-profile run | `just prod` |
+| Local run with H1-TLS, H2, and H3 | [Local TLS command](docs/DEVELOPMENT.md#local-tls-and-http3-certificates) |
+| Published clear-H1 deployment | `docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest` |
+| Published H1-TLS, H2, and H3 deployment | `GM_PUBLIC_HOST=meter.example.com docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d` |
+
+`just prod` builds the production browser profile but still runs the server from the source tree;
+it is not the published deployment workflow. The TLS Compose command requires a certificate under
+`/etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}` in the Compose `letsencrypt` volume.
+
 ### docker compose
 
 Use [`container/docker-compose.yml`](container/docker-compose.yml), or:
@@ -103,6 +117,12 @@ Everything is optional; the defaults just work. The common knobs:
 | `PUBLIC_H1_TLS_ORIGIN` / `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN` | derived from request host | Exact public TLS origins. Setting one advertises that external target even when its native listener is disabled.             |
 | `PUBLIC_TLS_ORIGIN` | — | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence. |
 | `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
+
+`GM_H1_ADDR`, `GM_H1_TLS_ADDR`, `GM_H2_ADDR`, and `GM_H3_ADDR` control the sockets the Go
+process opens. `PUBLIC_*_ORIGIN` variables do not change those sockets; they only override the
+client-visible origins returned by `/preflight`. Leave the public origins unset for a direct
+deployment. Set them only when a reverse proxy, container port mapping, or public hostname makes
+the browser-facing origin differ from the listener address.
 
 Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)
 for nginx, Caddy, and Traefik examples and the trust-chain rules.
