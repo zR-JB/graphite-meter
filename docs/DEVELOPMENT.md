@@ -136,9 +136,9 @@ not give an Alt-Svc HTTP/3 connection a usable certificate exception. The leaf
 must also cover every name used in the public origins; for the standard local
 setup that means `localhost`, `127.0.0.1`, and `::1`.
 
-[`mkcert`](https://github.com/FiloSottile/mkcert) installs a development CA and
-can install it into Firefox's NSS store when the platform's NSS tools are
-available. Restart browsers after installing the CA.
+[`mkcert`](https://github.com/FiloSottile/mkcert) installs a development CA into supported system
+and browser trust stores, including Firefox, Chrome, and Chromium. The exact stores depend on the
+platform and available NSS tools. Restart browsers after installing the CA.
 
 ```sh
 mkdir -p .dev-certs
@@ -154,11 +154,14 @@ GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
 That single command starts clear H1 on `7246/tcp`, TLS-only H1 on `7247/tcp`, H2-only TLS on
 `7248/tcp`, and the H3 bootstrap/QUIC pair on `7249/tcp` and `7249/udp`.
 
-Firefox has an [additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341):
-by default it disables HTTP/3 when the certificate chain contains a third-party root, even when
-that root is trusted for normal HTTPS. For a local development profile, open `about:config`, set
-`network.http.http3.disable_when_third_party_roots_found` to `false`, and
-restart Firefox. Do not weaken this setting in a normal browsing profile.
+Browsers can apply additional certificate and root-policy checks to HTTP/3 beyond their normal
+HTTPS trust decision. Firefox has a confirmed
+[additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341): by default it
+disables HTTP/3 when the certificate chain contains a third-party root, even when that root is
+trusted for normal HTTPS. For a local development profile, open `about:config`, set
+`network.http.http3.disable_when_third_party_roots_found` to `false`, and restart Firefox. Do not
+weaken this setting in a normal browsing profile. Chrome, Chromium, and other browsers perform
+similar policy checks; no browser-specific workaround is documented here without a confirmed path.
 
 The H3 bootstrap still needs `7249/tcp`, and QUIC needs `7249/udp`. A successful
 `curl --http3-only` or native-client request proves the server and UDP path, but

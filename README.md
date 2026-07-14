@@ -58,8 +58,8 @@ docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:la
 
 Open **http://localhost:7246** — that's it for the default clear HTTP/1.1 deployment. The TLS
 overlay adds a dedicated HTTPS HTTP/1.1 target alongside native H2 and H3.
-For local browser testing, including Firefox's stricter handling of private-root
-HTTP/3 certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
+For local browser testing, including browser-specific handling of private-root HTTP/3
+certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
 
 Use the command that matches the environment:
 
