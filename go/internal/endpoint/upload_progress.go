@@ -101,7 +101,6 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			n := uint64(agg.bytes.Load())
 			elapsed := uint64(agg.elapsedNanos(monoNanos()))
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
-			e.store.delete(id)
 			return nil
 		case <-heartbeat.C:
 			if _, err := w.Write([]byte("\n")); err != nil {

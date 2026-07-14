@@ -25,9 +25,10 @@ import (
 // forged ids on this auth-less bus creates no state, closing both the cross-tab
 // progress-read leak and the maxLiveUploads-amplified DoS vector.
 type UploadStore struct {
-	shards [uploadShardCount]uploadShard
-	issued sync.Map     // id (string) -> issue time (mono ns); only minted ids may create an agg
-	live   atomic.Int32 // count of live aggregates, bounding the map (maxLiveUploads)
+	shards  [uploadShardCount]uploadShard
+	issued  sync.Map     // id (string) -> issue time (mono ns); consumed on first aggregate creation
+	pending atomic.Int32 // minted ids that have not created an aggregate yet
+	live    atomic.Int32 // live aggregates retained through completion replay
 }
 
 type uploadShard struct {
@@ -86,6 +87,8 @@ const (
 	// maxLiveUploads bounds the aggregate map so a burst of minted ids can't grow
 	// memory without bound.
 	maxLiveUploads = 1000
+	// maxPendingUploads independently bounds minted-but-unused session tokens.
+	maxPendingUploads = 1000
 	// uploadIDTTL: an aggregate idle this long (no chunk or progress tick) is
 	// reaped by the sweeper after abort, tab close, or crash.
 	uploadIDTTL = 30 * time.Second
@@ -123,24 +126,49 @@ func (s *UploadStore) shard(id string) *uploadShard {
 // it. /upload/session calls this once per upload stage; only minted tokens can create an
 // aggregate, which is the store's primary abuse defence.
 func (s *UploadStore) Mint() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand failing is effectively fatal; return "" so the client simply
-		// runs without server-authoritative upload rather than getting a weak token.
-		return ""
+	for {
+		var b [16]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return ""
+		}
+		id := "gmu_" + base64.RawURLEncoding.EncodeToString(b[:])
+		if s.markIssued(id) {
+			return id
+		}
+		if s.pending.Load() >= maxPendingUploads {
+			return ""
+		}
 	}
-	id := "gmu_" + base64.RawURLEncoding.EncodeToString(b[:])
-	s.markIssued(id)
-	return id
 }
 
 // markIssued records that the server minted id at /upload/session, so a later POST/progress
 // carrying it may create an aggregate. Idempotent.
-func (s *UploadStore) markIssued(id string) {
+func (s *UploadStore) markIssued(id string) bool {
 	if id == "" {
-		return
+		return false
 	}
-	s.issued.Store(id, monoNanos())
+	for {
+		n := s.pending.Load()
+		if n >= maxPendingUploads || !s.pending.CompareAndSwap(n, n+1) {
+			if n >= maxPendingUploads {
+				return false
+			}
+			continue
+		}
+		if _, loaded := s.issued.LoadOrStore(id, monoNanos()); loaded {
+			s.pending.Add(-1)
+			return false
+		}
+		return true
+	}
+}
+
+func (s *UploadStore) consumeIssued(id string) bool {
+	if _, ok := s.issued.LoadAndDelete(id); !ok {
+		return false
+	}
+	s.pending.Add(-1)
+	return true
 }
 
 // isIssued reports whether id was minted by this server and not yet pruned.
@@ -169,15 +197,25 @@ func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 		agg.lastTouchMono.Store(monoNanos())
 		return agg, true
 	}
-	// First touch — gate creation on a minted id and the live cap.
-	if !s.isIssued(id) || s.live.Load() >= maxLiveUploads {
+	// First touch consumes the minted id and moves it into the bounded live map.
+	for {
+		n := s.live.Load()
+		if n >= maxLiveUploads {
+			sh.mu.Unlock()
+			return nil, false
+		}
+		if s.live.CompareAndSwap(n, n+1) {
+			break
+		}
+	}
+	if !s.consumeIssued(id) {
+		s.live.Add(-1)
 		sh.mu.Unlock()
 		return nil, false
 	}
 	agg := &uploadAgg{finished: make(chan struct{}), postsChanged: make(chan struct{}, 1)}
 	agg.lastTouchMono.Store(monoNanos())
 	sh.m[id] = agg
-	s.live.Add(1)
 	sh.mu.Unlock()
 	return agg, true
 }
@@ -238,7 +276,9 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 	issuedCutoff := now - int64(issuedIDTTL)
 	s.issued.Range(func(k, v any) bool {
 		if at, ok := v.(int64); ok && at < issuedCutoff {
-			s.issued.Delete(k)
+			if _, loaded := s.issued.LoadAndDelete(k); loaded {
+				s.pending.Add(-1)
+			}
 		}
 		return true
 	})

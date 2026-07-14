@@ -96,6 +96,14 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("progress GET did not terminate after explicit finalization")
 	}
+
+	// Completion is replayable until the aggregate TTL expires, so a dropped
+	// terminal response cannot strand a reconnecting client.
+	replay := httptest.NewRecorder()
+	h.ServeHTTP(replay, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
+	if !strings.Contains(replay.Body.String(), `"type":"complete","bytes":4096`) {
+		t.Fatalf("replayed body = %s", replay.Body.String())
+	}
 }
 
 func TestUploadProgressRejectsUnknownID(t *testing.T) {

@@ -19,6 +19,32 @@ func TestUploadStoreRejectsUnissuedID(t *testing.T) {
 	}
 }
 
+func TestUploadStoreBoundsPendingIDs(t *testing.T) {
+	s := NewUploadStore()
+	for i := 0; i < maxPendingUploads; i++ {
+		if !s.markIssued("pending-" + strconv.Itoa(i)) {
+			t.Fatalf("pending id %d below the cap was refused", i)
+		}
+	}
+	if s.markIssued("one-too-many") {
+		t.Fatal("pending id past the cap succeeded")
+	}
+	if got := s.pending.Load(); got != maxPendingUploads {
+		t.Fatalf("pending = %d, want %d", got, maxPendingUploads)
+	}
+}
+
+func TestUploadStoreConsumesIssuedIDOnCreate(t *testing.T) {
+	s := NewUploadStore()
+	s.markIssued("consume-me")
+	if _, ok := s.getOrCreate("consume-me"); !ok {
+		t.Fatal("aggregate creation failed")
+	}
+	if s.isIssued("consume-me") || s.pending.Load() != 0 {
+		t.Fatal("issued id survived aggregate creation")
+	}
+}
+
 // TestUploadStoreCreateIsIdempotent checks that POST and WS (or repeated lanes)
 // carrying the same minted id all resolve to ONE aggregate, and that counting works.
 func TestUploadStoreCreateIsIdempotent(t *testing.T) {
