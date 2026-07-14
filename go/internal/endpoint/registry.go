@@ -51,11 +51,6 @@ func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 	}
 }
 
-// HTTPHandler and WSHandler expose the common adapters to listener-specific
-// routing while endpoint implementations remain shared.
-func HTTPHandler(e Endpoint) http.Handler                       { return httpAdapter(e) }
-func WSHandler(parent context.Context, e Endpoint) http.Handler { return wsAdapter(parent, e) }
-
 // wsAdapter upgrades the request to a WebSocket and runs the endpoint against a
 // websocketSession exposing the message bus. Cross-origin upgrades are allowed
 // (InsecureSkipVerify) to mirror the permissive Access-Control-Allow-Origin: *

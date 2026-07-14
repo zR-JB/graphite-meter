@@ -61,7 +61,7 @@ func waitProgressText(t *testing.T, r *progressRecorder, part string) {
 func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	h := HTTPHandler(NewUploadProgress(store))
+	h := httpAdapter(NewUploadProgress(store))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx)
@@ -108,7 +108,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 
 func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	rec := httptest.NewRecorder()
-	HTTPHandler(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=forged", nil))
+	httpAdapter(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=forged", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", rec.Code)
 	}

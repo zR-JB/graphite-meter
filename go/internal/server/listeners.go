@@ -20,16 +20,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 const downloadBlockSize = 256 * 1024
-
-func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
-	mux := http.NewServeMux()
-	reg.Mount(ctx, mux)
-	mux.Handle("/", static.Handler())
-	return mux
-}
 
 type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.Endpoint
@@ -79,55 +73,57 @@ func publicH3Port(cfg *config.Config) string {
 }
 
 type muxTopology struct {
-	spa, discovery, latency bool
-	requiredProto           int
+	spa, discovery, latency, transfers, bootstrap bool
+	requiredProto                                 int
 }
 
-func fullMux(ctx context.Context, e *endpoints, topology muxTopology) *http.ServeMux {
-	m := http.NewServeMux()
+type protocolEndpoint struct {
+	endpoint.Endpoint
+	major int
+}
+
+func (e protocolEndpoint) Handle(s transport.Session) error {
+	w, r, ok := s.HTTP()
+	if !ok {
+		return transport.ErrUnsupported
+	}
+	if r.ProtoMajor != e.major {
+		http.NotFound(w, r)
+		return nil
+	}
+	return e.Endpoint.Handle(s)
+}
+
+func listenerMux(ctx context.Context, e *endpoints, topology muxTopology) *http.ServeMux {
+	reg := endpoint.NewRegistry()
 	if topology.discovery {
-		m.Handle("/preflight", endpoint.HTTPHandler(e.preflight))
+		reg.RegisterHTTP("/preflight", e.preflight)
 	}
-	m.Handle("/probe", endpoint.HTTPHandler(e.probe))
-	transfer := func(h endpoint.Endpoint) http.Handler {
-		base := endpoint.HTTPHandler(h)
-		if topology.requiredProto == 0 {
-			return base
-		}
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.ProtoMajor != topology.requiredProto {
-				http.NotFound(w, r)
-				return
+	probe := e.probe
+	if topology.bootstrap {
+		probe = e.bootstrapProbe
+	}
+	reg.RegisterHTTP("/probe", probe)
+	if topology.transfers {
+		transfer := func(h endpoint.Endpoint) endpoint.Endpoint {
+			if topology.requiredProto == 0 {
+				return h
 			}
-			base.ServeHTTP(w, r)
-		})
+			return protocolEndpoint{Endpoint: h, major: topology.requiredProto}
+		}
+		reg.RegisterHTTP("/download", transfer(e.download))
+		reg.RegisterHTTP("/upload/session", transfer(e.uploadSession))
+		reg.RegisterHTTP("/upload", transfer(e.upload))
+		reg.RegisterHTTP("/upload/progress", transfer(e.uploadProgress))
 	}
-	m.Handle("/download", transfer(e.download))
-	m.Handle("/upload/session", transfer(e.uploadSession))
-	m.Handle("/upload", transfer(e.upload))
-	m.Handle("/upload/progress", transfer(e.uploadProgress))
 	if topology.latency {
-		m.Handle("/ws/ping", endpoint.WSHandler(ctx, e.ping))
+		reg.RegisterWS("/ws/ping", e.ping)
 	}
+	m := http.NewServeMux()
+	reg.Mount(ctx, m)
 	if topology.spa {
 		m.Handle("/", static.Handler())
 	}
-	return m
-}
-
-func bootstrapMux(e *endpoints) *http.ServeMux {
-	m := http.NewServeMux()
-	m.Handle("/probe", endpoint.HTTPHandler(e.bootstrapProbe))
-	return m
-}
-
-func h3Mux(e *endpoints) *http.ServeMux {
-	m := http.NewServeMux()
-	m.Handle("/probe", endpoint.HTTPHandler(e.probe))
-	m.Handle("/download", endpoint.HTTPHandler(e.download))
-	m.Handle("/upload/session", endpoint.HTTPHandler(e.uploadSession))
-	m.Handle("/upload", endpoint.HTTPHandler(e.upload))
-	m.Handle("/upload/progress", endpoint.HTTPHandler(e.uploadProgress))
 	return m
 }
 
@@ -160,7 +156,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
-	h1 := baseServer(fullMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true}), h1p)
+	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
 	h1ln, err := net.Listen("tcp", cfg.H1Addr)
 	if err != nil {
 		return err
@@ -179,7 +175,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.EnableH1TLS {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
-		s := baseServer(fullMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, requiredProto: 1}), p)
+		s := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
 		ln, err := net.Listen("tcp", cfg.H1TLSAddr)
 		if err != nil {
 			closeOpened()
@@ -196,7 +192,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.EnableH2 {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
-		s := baseServer(fullMux(ctx, e, muxTopology{spa: true, discovery: true, requiredProto: 2}), p)
+		s := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, transfers: true, requiredProto: 2}), p)
 		ln, err := net.Listen("tcp", cfg.H2Addr)
 		if err != nil {
 			closeOpened()
@@ -212,7 +208,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.EnableH3 {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
-		bootstrap := baseServer(bootstrapMux(e), p)
+		bootstrap := baseServer(listenerMux(ctx, e, muxTopology{bootstrap: true}), p)
 		ln, err := net.Listen("tcp", cfg.H3Addr)
 		if err != nil {
 			closeOpened()
@@ -220,7 +216,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
-		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: h3Mux(e)}
+		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 		webtransport.ConfigureHTTP3Server(h3)
 		pc, err := net.ListenPacket("udp", cfg.H3Addr)
 		if err != nil {

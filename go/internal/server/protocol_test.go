@@ -40,7 +40,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	}
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
-	srv := baseServer(fullMux(ctx, e, muxTopology{discovery: true, latency: true, requiredProto: 1}), p)
+	srv := baseServer(listenerMux(ctx, e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
 	p.SetHTTP2(true)
-	srv := baseServer(fullMux(ctx, e, muxTopology{discovery: true, requiredProto: 2}), p)
+	srv := baseServer(listenerMux(ctx, e, muxTopology{discovery: true, transfers: true, requiredProto: 2}), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: h3Mux(e)}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: &quic.Config{Allow0RTT: false}, Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 	webtransport.ConfigureHTTP3Server(h3)
 	go h3.Serve(pc)
 	defer func() { _ = h3.Close(); _ = pc.Close() }()
