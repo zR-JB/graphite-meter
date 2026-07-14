@@ -359,8 +359,8 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 - **Multi-server testing** — select one configured server or run against several servers in one
   pass. Protocol targets in one discovery document currently remain listeners of one logical
   server, not independent servers.
-- **Rust rewrite** — replace the Go server and native terminal client while preserving the shared
-  schemas, wire vectors, runtime behavior, and container interface.
+- **Rust rewrite (speculative far future)** — replace the Go server and native terminal client while preserving the shared
+  schemas, wire vectors, runtime behavior, and container interface. Some promissing experiments showed s2n-quic with custom h3 adapter with good performance.
 
 ## TLS security and lifecycle
 
