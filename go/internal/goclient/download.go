@@ -11,15 +11,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time.Duration, start <-chan struct{}) (Result, error) {
-	path := r.preflight.Capabilities.Endpoints.Download
-	if path == "" {
-		path = wire.DefaultEndpoints().Download
-	}
+	path := r.routes().Download
 	base, err := r.endpoint(path)
 	if err != nil {
 		return Result{}, err
@@ -29,7 +24,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	var total atomic.Uint64
 	var wg sync.WaitGroup
 	stagger := r.laneStaggerStep()
-	for i := 0; i < r.cfg.ParallelStreams; i++ {
+	for i := 0; i < r.streams; i++ {
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
@@ -45,7 +40,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	case <-start:
 	}
 	measureCtx, cancel := context.WithTimeout(ctx, elapsed)
-	stats := r.sampleLocalRates(measureCtx, stage, Down, &total, r.cfg.ParallelStreams)
+	stats := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams)
 	cancel()
 	laneCancel()
 	wg.Wait()

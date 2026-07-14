@@ -29,3 +29,24 @@ the-next-step-will-harmonic-harp.md
 
 # Claude Code — personal, machine-local settings (shared settings.json is tracked)
 .claude/settings.local.json
+
+# Local TLS material must stay outside Git. Certificates are public, but
+# committing them encourages committing the matching private key later.
+.dev-certs/
+certs/
+certificates/
+letsencrypt/
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.csr
+*.p12
+*.pfx
+*.pkcs8
+*.jks
+*.keystore
+
+# Populated Tailscale-sidecar Quadlet environment files may contain auth keys.
+container/quadlet/tailscale-sidecar/*.env

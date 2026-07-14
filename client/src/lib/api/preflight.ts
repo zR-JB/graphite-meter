@@ -5,99 +5,69 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+export type ThroughputTarget = FetchThroughputTarget | WebTransportStreamsThroughputTarget;
+export type LatencyTarget = WebSocketLatencyTarget | WebTransportDatagramsLatencyTarget;
+
 /**
- * Response body of GET /preflight. The client maps the InfraInfo fields onto its InfraInfo type (client/src/lib/runner/contract.ts) and stashes `capabilities` for transport negotiation. The server serves/sinks raw bytes; this document carries no rates.
+ * Logical-server discovery returned by GET /preflight. Throughput and latency targets are independently selectable and independently verified.
  */
 export interface Preflight {
-  /**
-   * The normalized client IP resolved from the socket peer or a trusted forwarding chain.
-   */
-  clientIp: string;
-  /**
-   * Address family of clientIp. This is proxy-presented evidence and may differ from the physical path when address translation is involved.
-   */
-  clientIpVersion: 4 | 6;
-  /**
-   * Whether clientIp came from the direct socket peer or a header supplied through a configured trusted proxy.
-   */
-  clientIpSource: "socket" | "forwarded";
   server: {
     name: string;
     host: string;
     port: number;
-    /**
-     * Optional human/region label (e.g. "fra").
-     */
     location?: string;
   };
-  /**
-   * Optional server-side pre-test RTT hint in ms. 0 when no ping endpoint has run yet (e.g. Stage 1).
-   */
-  preTestPingMs: number;
-  /**
-   * Server build/engine version (ldflags-injected).
-   */
   engineVersion: string;
-  /**
-   * The HTTP protocol this preflight response was served over, e.g. "http/1.1", "h2", "h3".
-   */
-  protocolNegotiated: string;
-  /**
-   * What this server currently supports, so the client negotiates rather than assumes.
-   */
   capabilities: {
-    /**
-     * Externally-reachable origins the client should target per transport. Env-driven so the values are correct behind a reverse proxy. `null` means that origin is not enabled.
-     */
-    origins: {
-      /**
-       * HTTP/1.1 cleartext origin (default, e.g. http://host:8765).
-       */
-      h1: string | null;
-      /**
-       * HTTP/1.1+TLS origin (e.g. https://host:8443); null until enabled.
-       */
-      tls: string | null;
-      /**
-       * HTTP/3 + WebTransport origin (e.g. https://host:8443); null until enabled.
-       */
-      h3: string | null;
-    };
-    /**
-     * Which client-side transports this server can currently service. Honest per build stage.
-     */
-    transports: {
-      /**
-       * fetch streaming download+upload.
-       */
-      fetchStream: boolean;
-      /**
-       * WebSocket latency bus (/ws/ping).
-       */
-      websocket: boolean;
-      /**
-       * WebTransport datagrams + uni-streams.
-       */
-      webtransport: boolean;
-    };
-    /**
-     * Stable endpoint paths, advertised so the client never hardcodes them.
-     */
-    endpoints: {
-      download: string;
-      upload: string;
-      /**
-       * HTTP endpoint that mints an opaque upload-session token during upload warmup. The client echoes that token as ?id= on POST /upload and GET /ws/upload for that upload stage.
-       */
-      uploadSession: string;
-      wsPing: string;
-      /**
-       * WebSocket upload-progress bus: streams server-measured BYTES_RECEIVED/UPLOAD_COMPLETE for the test ?id=.
-       */
-      wsUpload: string;
-      wtPing: string;
-      wtDownload: string;
-      wtUpload: string;
-    };
+    throughputTargets: ThroughputTarget[];
+    latencyTargets: LatencyTarget[];
+  };
+}
+export interface FetchThroughputTarget {
+  id: string;
+  origin: string;
+  transport: "fetch-stream";
+  protocol: "http1" | "http2" | "http3";
+  tls: boolean;
+  routes: ThroughputRoutes;
+}
+export interface ThroughputRoutes {
+  probe: string;
+  download: string;
+  upload: string;
+  uploadSession: string;
+  uploadProgress: string;
+}
+export interface WebTransportStreamsThroughputTarget {
+  id: string;
+  origin: string;
+  transport: "webtransport-streams";
+  protocol: "http3";
+  tls: true;
+  routes: {
+    [k: string]: unknown;
+  };
+}
+export interface WebSocketLatencyTarget {
+  id: string;
+  origin: string;
+  transport: "websocket";
+  protocol: "http1";
+  tls: boolean;
+  routes: LatencyRoutes;
+}
+export interface LatencyRoutes {
+  probe: string;
+  ping: string;
+}
+export interface WebTransportDatagramsLatencyTarget {
+  id: string;
+  origin: string;
+  transport: "webtransport-datagrams";
+  protocol: "http3";
+  tls: true;
+  routes: {
+    [k: string]: unknown;
   };
 }

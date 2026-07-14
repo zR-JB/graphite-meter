@@ -37,6 +37,7 @@ export interface GaugeState {
  *  to the active phase via the same design tokens (no hardcoded color). */
 const PHASE_VAR: Record<Phase, string> = {
   idle: "--text-soft",
+  connecting: "--phase-warmup",
   warmup: "--phase-warmup",
   latency: "--phase-latency",
   download: "--phase-download",
@@ -203,6 +204,7 @@ export class GaugeEngine implements CanvasEngine {
   #animating(): boolean {
     const p = this.#lastPhase;
     if (
+      p === "connecting" ||
       p === "warmup" ||
       p === "latency" ||
       p === "download" ||

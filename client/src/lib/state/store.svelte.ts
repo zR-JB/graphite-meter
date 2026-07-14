@@ -5,6 +5,7 @@ import type {
   Phase,
   ConnectivityState,
   InfraInfo,
+  TransportDiscovery,
   EngineInfo,
   RunResult,
   RunnerConfig,
@@ -89,9 +90,12 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     bidirectionalMs: 10000,
   },
   pingConcurrency: "medium",
-  parallelStreams: 6,
+  transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
-  endpoint: { host: "auto", port: 443 },
+  transports: {
+    throughputTarget: "current",
+    latencyTarget: "auto",
+  },
   compensation: {
     profile: "lan",
     transport: "auto",
@@ -172,6 +176,7 @@ class AppStore {
 
   connectivity = $state<ConnectivityState>("connected");
   infra = $state<InfraInfo | null>(null);
+  transportDiscovery = $state<TransportDiscovery | null>(null);
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
   stageResults = $state<{
@@ -451,6 +456,9 @@ class AppStore {
 
   ingest = (e: RunnerEvent) => {
     switch (e.type) {
+      case "transportDiscovery":
+        this.transportDiscovery = e.discovery;
+        break;
       case "infra":
         this.infra = e.info;
         break;

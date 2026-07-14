@@ -4,9 +4,10 @@ Graphite Meter is a self-hosted internet speed-test tool. A Svelte 5 browser cli
 companion native Go terminal client) drive a small, high-throughput measurement server. The
 server's job is limited to serving and sinking raw **bytes** and echoing timestamps — every rate,
 unit, and statistic is derived on the client side. The explicit design goal is to compare
-transports honestly: the client always chooses the transport (HTTP/1.1 streams, WebSocket, and —
-once wired up — HTTP/3 / WebTransport), rather than letting the browser negotiate one behind the
-scenes.
+transports honestly: discovery identifies one logical server, then the client independently
+freezes a throughput target and a latency target for the run. Fetch throughput may use HTTP/1.1,
+HTTP/2, or HTTP/3; WebSockets remain a dedicated HTTP/1.1 latency transport. Upload progress is
+part of the selected throughput target and is never coupled to latency.
 
 ## Repository layout (monorepo)
 
@@ -18,22 +19,24 @@ go/                           Go module: the measurement server + a native Bubbl
   internal/config/            Server env-var/flag configuration.
   internal/server/            Listener bootstrap, mux wiring.
   internal/endpoint/          One Go type per HTTP/WS route (preflight, download, upload, ping, ...).
-  internal/transport/         The Session abstraction (HTTP vs WebSocket vs, later, WebTransport).
+  internal/transport/         The Session abstraction (HTTP and WebSocket; WebTransport shape reserved).
   internal/wire/              Shared wire-protocol types (frames, opcodes, preflight structs).
   internal/goclient/          The native TUI client's measurement engine (shares the wire protocol).
   internal/static/            //go:embed wrapper that serves the built Svelte client.
 api/                          Cross-language contract, source of truth for client/server agreement:
-                                 preflight.schema.json / preflight.golden.json  — GET /preflight shape
-                                 wire.md / wire.testvectors.txt                — WS/WT message protocol
+                                 preflight schema/golden — logical discovery
+                                 probe schema/golden     — selected-path evidence
+                                 wire.md / wire.testvectors.txt                — message protocol + reserved WT shapes
 container/                    Deployment: image-based docker-compose.yml + quadlet unit (default),
                                the multi-stage Dockerfile, and build-from-source variants.
 ```
 
 ## How it's built, at a glance
 
-- **Server** (`go/cmd/graphite-meter`): one Go binary. It streams/discards raw bytes on plain
-  HTTP/1.1 and runs two small WebSocket message buses for latency and upload progress. It embeds
-  the built Svelte client via `//go:embed`, so the whole app ships as a single static binary.
+- **Server** (`go/cmd/graphite-meter`): one Go binary. It streams/discards raw bytes and serves
+  authoritative NDJSON upload progress over the selected H1/H2/H3 throughput listener, while a
+  dedicated H1 WebSocket bus handles latency. It embeds the built Svelte client via `//go:embed`,
+  so the whole app ships as a single static binary.
 - **Browser client** (`client/`): a Svelte 5 app built around an engine-agnostic core
   (`RunnerCore`) that consumes events from a pluggable backend. The real backend talks to the Go
   server over `fetch`/streamed HTTP and WebSocket, doing all the actual measurement work off the
@@ -50,26 +53,62 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 ## The Go measurement server
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
-builds one shared immutable 256 KiB block of `crypto/rand` bytes at startup, wires every endpoint
-onto a `Registry`, and starts exactly one listener: plain HTTP/1.1 on `Config.H1Addr` (default
-`:8765`). `TCP_NODELAY` is forced on every accepted connection so a single ping frame never sits
-in Nagle's buffer waiting to coalesce.
+builds the random block, upload store, meters, and endpoint implementations once. Listener-specific
+muxes expose clear H1 on 7246/tcp, optional TLS-only H1 on 7247/tcp, optional H2 on 7248/tcp,
+and optional H3 on 7249/udp with a TLS H1 bootstrap on 7249/tcp. The H3 TCP surface has only
+`/probe`, so transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
+disabled to prevent POST replay.
+
+| Listener | Protocol | Owned surface |
+| --- | --- | --- |
+| `:7246/tcp` | HTTP/1.1 clear | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency. |
+| `:7247/tcp` | HTTP/1.1 TLS only | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
+| `:7248/tcp` | HTTP/2 only | H2 probe, transfers, and upload progress only. No UI, discovery, H1 ALPN, or WebSocket route. |
+| `:7249/udp` | HTTP/3 | H3 probe, transfers, and upload progress. |
+| `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets. |
+
+Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
+freezes one target for each role and verifies each target independently. Fetch throughput targets
+own probe, transfer, session, and NDJSON progress routes. Latency targets own a probe and ping
+route. Their probes are separate connections and can therefore select different IPv4/IPv6 paths;
+the UI reports both instead of presenting the latency probe as a throughput fallback. The browser
+always fetches `/preflight` from the page origin; it never reconstructs target
+ports locally, and every subsequent HTTP or WebSocket URL comes from that discovery document.
+Only WebSocket over dedicated H1 clear/TLS origins is advertised for latency. H2/H3 WebSockets and
+WebTransport are not advertised. WebSockets over H2 or H3 Extended CONNECT are specified by
+[RFC 8441](https://www.rfc-editor.org/rfc/rfc8441) and
+[RFC 9220](https://www.rfc-editor.org/rfc/rfc9220), but the current implementation uses the widely
+interoperable HTTP/1.1 Upgrade.
+
+The dedicated H1-TLS listener is a real transfer target, not a control fallback. It exists because
+browsers cannot be forced to use H1 on an origin that advertises H2 through ALPN. Operators using a
+reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on that virtual host.
+HTTP/1.1 remains an active Internet Standard, and TLS security is independent of selecting H2;
+ALPN lets a browser negotiate the protocol the origin offers. Keeping the native SPA on H1 makes
+the control-plane entrypoint distinct from the H2 measurement target. A reverse proxy may still
+serve the H1 Go origin to browsers over H2 or H3, which is why the client records the actual page
+hop. Native H3 deliberately has no UI: browsers normally discover HTTP/3 from an existing HTTPS
+origin through Alt-Svc or HTTPS DNS records rather than treating a QUIC listener like a directly
+navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html),
+[RFC 7301](https://www.rfc-editor.org/rfc/rfc7301.html), and
+[RFC 9114 section 3.1](https://www.rfc-editor.org/rfc/rfc9114.html#section-3.1).
 
 ### Routes
 
 | Path                     | Method     | Transport               | Purpose                                                                                                                                                                                                                      |
 | ------------------------ | ---------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET        | HTTP/1.1, JSON          | Server identity, negotiated protocol, and a `capabilities` block (advertised origins/transports/endpoint paths) the client negotiates against instead of hardcoding.                                                         |
-| `/download`              | GET        | HTTP/1.1, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
-| `/upload/session`        | POST       | HTTP/1.1, JSON          | Mints a short-lived, crypto-random `gmu_...` token (`{"uploadId": "..."}`) that correlates one upload stage's parallel POST lanes with its progress socket.                                                                  |
-| `/upload`                | POST       | HTTP/1.1, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
+| `/preflight`             | GET        | UI origins, JSON  | Logical server identity plus independent throughput and latency target catalogs. Refreshed before every run. |
+| `/probe`                 | GET        | selected H1/H2/H3       | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes. |
+| `/download`              | GET        | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
+| `/upload/session`        | POST       | selected throughput target, JSON | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream. |
+| `/upload`                | POST       | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
 | `/ws/ping`               | WS upgrade | WebSocket               | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                                                           |
-| `/ws/upload`             | WS upgrade | WebSocket               | Pushes the server-measured cumulative byte count for a `?id=` (`BYTES_RECEIVED`, then one final `UPLOAD_COMPLETE`) so upload throughput is judged by what the server actually received, not what the browser thinks it sent. |
-| `/` (anything unmatched) | GET        | HTTP/1.1                | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
+| `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop. |
+| `/` (anything unmatched) | GET        | H1/H1-TLS UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
 
-The `/preflight` response also advertises `/wt/ping`, `/wt/download`, `/wt/upload` as endpoint
-paths and a `webtransport` capability flag — those are placeholders for the not-yet-implemented
-WebTransport stage (see Roadmap); the flag is always `false` and no route is actually mounted.
+No WebTransport channel is advertised and no route is mounted. Its dependency, schema variants,
+wire opcodes, and commented HTTP/3 configuration are retained as inactive contract surface; they
+do not describe a runtime capability.
 
 ### Server-authoritative upload accounting
 
@@ -78,15 +117,15 @@ mostly lock-free per-id aggregate (`bytes` plus a monotonic first-byte time anch
 throughput is derived client-side as `Δbytes / Δserver-elapsed-time`; clients baseline both values
 when measurement begins, excluding warmup while retaining stalls, reconnects and lane turnaround.
 This avoids client event-loop timing artifacts without inflating results by removing pauses. IDs
-must have been minted by `/upload/session` — a
-flood of forged IDs on this otherwise auth-less, cookie-less bus creates no state. A background
-sweeper reaps idle aggregates after 30s.
+are short-lived HMAC-authenticated tokens minted without server-side session state; forged IDs and
+`/upload/session` floods therefore allocate no aggregate state. A background sweeper reaps idle
+aggregates after 30s.
 
 ### Wire protocol (message buses only)
 
-Plain request/response endpoints (`/preflight`, `/download`, `/upload`) are normal HTTP and not
-covered by a message protocol. The two WebSocket buses (and their future WebTransport
-counterparts) speak a tiny ASCII, comma-delimited protocol — one logical message per frame, no
+Plain request/response endpoints (`/preflight`, `/probe`, `/download`, `/upload`, and
+`/upload/progress`) are normal HTTP and not covered by a message protocol. The WebSocket latency
+bus speaks a tiny ASCII protocol — one message per frame, no
 length prefix, `OP` or `OP,arg[,arg...]`, parsed by `indexOf(',')` slicing, never JSON. An unknown
 opcode or malformed frame gets a non-fatal `ERR,<code>,<text>` reply; the bus is never torn down
 for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpus:
@@ -98,9 +137,7 @@ for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpu
 | `READY`           | S→C       | `READY`                            | Bus is up.                                                                  |
 | `PING`            | C→S       | `PING,<id>`                        | Latency probe; `id` is a client-owned monotonic uint32.                     |
 | `PONG`            | S→C       | `PONG,<id>;TIME,<nanos>`           | Echo; `id` verbatim, server clock is diagnostics-only.                      |
-| `SIZE`            | C→S       | `SIZE,<bytes>`                     | WebTransport download-size request — reserved, no consumer yet.             |
-| `BYTES_RECEIVED`  | S→C       | `BYTES_RECEIVED,<n>;TIME,<nanos>`  | Running server-measured upload total + elapsed clock.                       |
-| `UPLOAD_COMPLETE` | S→C       | `UPLOAD_COMPLETE,<n>;TIME,<nanos>` | Final upload total + elapsed clock, sent exactly once.                      |
+| `SIZE`            | C→S       | `SIZE,<bytes>`                     | Reserved WebTransport download-size request; no runtime consumer.           |
 | `BYE`             | C→S       | `BYE`                              | Graceful bus close.                                                         |
 | `ERR`             | S→C       | `ERR,<code>,<text>`                | Non-fatal protocol error.                                                   |
 
@@ -114,11 +151,11 @@ reported numbers — it never influences what the client reports.
 
 ### Session abstraction (`internal/transport`)
 
-Every endpoint is written once against a `Session` interface (`Context`, `Query`, `ClientIP`,
-`Proto`, `OpenDownloadSink`/`OpenUploadSource`, `Bus`), so it doesn't need to know whether it's
-running over HTTP or a WebSocket bus. Today two concrete sessions exist — `httpSession` (h1
-request/response) and `websocketSession` (message bus). A WebTransport session is named in the
-interface's doc comments as the intended third implementation but does not exist yet.
+Every endpoint is written once against a `Session` interface (`Context`, `Query`, `Proto`, `HTTP`,
+`OpenDownloadSink`/`OpenUploadSource`, `Bus`), so it doesn't need to know whether it's
+running over HTTP or a WebSocket bus. Two concrete sessions exist — `httpSession` (H1/H2/H3
+request/response) and `websocketSession` (message bus). The interface retains WebTransport-shaped
+stream and bus seams, but there is no WebTransport session implementation.
 
 `internal/config`, `internal/transport`, `internal/server`, `internal/static`, and
 `internal/endpoint/registry.go` have unit tests alongside the rest of `internal/endpoint`
@@ -139,10 +176,9 @@ client-side orchestration; the server has no special bidirectional mode, it's ju
 run concurrently during a transfer stage, to measure RTT-under-load / bufferbloat separately from
 the idle baseline).
 
-Transport: plain streamed HTTP GET/POST for bulk transfer (HTTP/2 is explicitly disabled on this
-client's `http.Transport`) and WebSocket for the ping and upload-progress buses. WebTransport is
-not attempted — the `SIZE` opcode exists in the shared wire package but this client never sends
-it.
+Transport: protocol-specific streamed HTTP GET/POST clients for throughput and its NDJSON upload
+progress, plus an independently selected HTTP/1.1 WebSocket for latency. WebTransport is not
+attempted — the `SIZE` opcode exists in the shared wire package but this client never sends it.
 
 To reduce measurement noise, the runner adaptively stretches warmup to roughly 10x the measured
 idle RTT (floor = configured warmup, ceiling 4s) so TCP slow start finishes before the measured
@@ -178,14 +214,20 @@ and dual exponential-moving-average smoothing (a fast ~700ms constant for the di
 slower ~1800ms constant for stability judgments) — both fed from the same raw samples, so the
 exact byte totals a run reports never drift from what smoothing displays.
 
+Each run enters a visible `connecting` phase while the selected target is probed and verified.
+Only after that succeeds does the measurement timeline start. Stage preparation may also be
+asynchronous: `RunnerCore` holds that stage at zero until `onStageBegin` resolves, then gives the
+primed connection the full configured warmup interval. Discovery, upload-session allocation, and
+other setup work therefore cannot silently consume measured or warmup time.
+
 A pluggable `RunnerBackend` supplies the actual samples via a 3-call-per-stage lifecycle
-(`onStageBegin` → prime/open connections, `onStageMeasure` → start pushing real samples on the
-_same_ primed connection, `onStageEnd`). Two backends exist:
+(`onStageBegin` → prime/open connections and signal readiness, `onStageMeasure` → start pushing
+real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 
 - **`RealBackend`** (`src/lib/runner/RealRunner.ts`) — the production engine, always used in a
-  release build. Negotiates a transport per stage (today this always resolves to `fetch`
-  streaming for transfer and WebSocket for latency, since the server never advertises
-  `webtransport`), spawns one Web Worker per parallel stream, and keeps an idle keepalive ping
+  release build. Negotiates a transport per stage: advertised targets resolve to `fetch`
+  streaming for transfer and WebSocket for latency. It spawns one Web Worker per parallel stream
+  and keeps an idle keepalive ping
   running between runs for the connectivity indicator.
 - **`DummyBackend`** (`src/lib/runner/dummy.ts`) — a synthetic engine for UI development and
   demos, with five canned network profiles (fiber/cable/lte/satellite/throttled) and support for
@@ -201,20 +243,25 @@ _same_ primed connection, `onStageEnd`). Two backends exist:
   with an in-flight transfer.
 - **Download** — `download-worker.ts`, one per parallel lane: a `fetch` GET with a streamed
   response read via a BYOB reader that reuses a single 1 MiB buffer (no per-chunk allocation —
-  this is the actual read-side ceiling at multi-gigabit rates). Lane count is auto-derived from
-  the browser's per-origin connection budget, capped by the user's configured ceiling.
+  this is the actual read-side ceiling at multi-gigabit rates). Automatic stream policy uses the
+  browser's per-origin connection budget, bounded by the configured H1 ceiling, and one request
+  stream for HTTP/2/HTTP/3.
 - **Upload** — `upload-worker.ts` builds one incompressible Blob "pool" via
   `crypto.getRandomValues` (generated once, then sliced with zero-copy views — never
   regenerated per request), and POSTs adaptively-sized slices toward a 500ms target
-  (`autosize.ts`). The reported throughput number is **server-authoritative**: the worker only
-  reports lane liveness, and a separate dedicated `/ws/upload` connection
+  (`autosize.ts`). Automatic H2/H3 uses three overlapping POST lanes so the connection keeps
+  carrying data while another finite request waits for its response. The shared 64 MiB reservoir
+  is divided across those lanes. The reported throughput number is **server-authoritative**: the worker only
+  reports lane liveness, and a separate dedicated `/upload/progress` fetch
   (`upload-progress-worker.ts`) is the sole source of the byte count and rate, exactly mirroring
   the server's elapsed-time clock described above.
 - **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
-  own worker pool, aggregation cadence, and stall tracking. The browser's per-origin connection
-  budget is split between the two directions (after reserving buses for the ping/upload-progress
-  channels), with the user's ceiling applied per direction exactly as it is for a standalone
-  download or upload stage.
+  own worker pool, aggregation cadence, and stall tracking. Automatic HTTP/1.1 splits the
+  available connection budget between directions after reserving the progress request and latency socket and applies the
+  configured ceiling to each share; automatic HTTP/2 uses one download request, HTTP/3 uses
+  three independent download streams, and both use three overlapping upload requests on one
+  multiplexed connection. Forced policy starts the exact configured request count independently for each
+  direction and protocol. HTTP/1.1 requests over the browser's connection limit can be queued.
 
 ### Settings
 
@@ -228,6 +275,8 @@ A production build has only Setup, so no tab bar is rendered at all.
 | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Duration preset | Medium  | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                  |
 | Bidirectional   | off     | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration. |
+| Throughput target | Same as this page | Requires an advertised target that exactly matches the page origin and browser-observed protocol, or selects H1 clear, H1 TLS, H2, or H3 independently. Unavailable targets stay visible with the discovery reason. |
+| Latency target | Automatic | Selects an advertised WebSocket target independently: H1 clear or H1 TLS. Unavailable targets stay visible with the discovery reason. |
 
 **Setup — Results tier**
 
@@ -240,22 +289,22 @@ A production build has only Setup, so no tab bar is rendered at all.
 
 **Setup — Advanced tier**
 
-| Setting                                       | Default | Notes                                                                        |
-| --------------------------------------------- | ------- | ---------------------------------------------------------------------------- |
-| Adaptive early finish                         | on      | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms). |
-| Ping velocity                                 | Medium  | Instant / Medium / Slow pacer.                                               |
-| Max parallel streams                          | 6       | Ceiling only — actual lane count is auto-derived.                            |
-| Skip loaded latency when latency stage is off | on      |                                                                              |
-| Chunked download (experimental)               | off     | See Experimental features.                                                   |
+| Setting                                       | Default   | Notes                                                                                                    |
+| --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
+| Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                             |
+| Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                           |
+| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2 uses one download, H3 uses three downloads, and both use three overlapping uploads. Forced uses the configured count exactly for every protocol. |
+| Skip loaded latency when latency stage is off | on        |                                                                                                          |
+| Chunked download (experimental)               | off       | See Experimental features.                                                                               |
 
 Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
-`PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while `/preflight`'s
-`protocolNegotiated` describes proxy→Go; the two are retained separately. The model composes
+`PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while the selected `/probe`'s
+`protocolNegotiated` describes what Go observed; the two are retained separately. The model composes
 application framing, TLS/QUIC protection, packetization, optional tunnel encapsulation, and
 Ethernet framing once. Reverse ACKs belong to the other full-duplex direction, while browser CPU,
 stability, ramp-up, ping timeouts, and proxy buffering describe achieved goodput or measurement
 quality rather than invisible protocol bytes, so none of them increases the estimate.
-The IP-family input defaults to the normalized client address reported by `/preflight`; forwarding
+The IP-family input defaults to the normalized client address reported by the throughput probe; forwarding
 headers contribute only through a peer in `GM_TRUSTED_PROXIES`. The UI shows whether that evidence
 came from the socket or a trusted proxy and retains IPv4/IPv6 overrides because translation,
 overlays, and upstream load balancers can make the presented family ambiguous.
@@ -267,15 +316,15 @@ spike, packet loss, throughput drop, and connection drop (a full stall-then-resu
 
 ### The Endpoint info drawer
 
-The right-side drawer is a responsive read-only card grid: **Client** (normalized IP, address
-family and detection source from `/preflight`, plus client build version), **Engine** (the wired
+The right-side drawer is a responsive read-only card grid: **Client** (separate throughput and
+latency IP families and detection sources, plus client build version), **Engine** (the wired
 runner's name, per-runner version, and its supported transports per role — latency vs throughput,
 from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
-`/preflight`), and **Connection** (browser-facing and backend protocols, active transfer/latency
-transports, stream ceiling, and pre-test ping). The
-`capabilities` object the server advertises (per-transport availability booleans, per-transport
-origin URLs, and every stable endpoint path) is richer than what's rendered — it's consumed
-internally for transport negotiation but not yet shown as a full matrix in the UI.
+`/preflight`), and **Connection** (selected target, browser-verified and server-observed protocols, transfer/latency
+transports, resolved automatic or forced stream policy, and pre-test ping). The
+`capabilities.throughputTargets` and `capabilities.latencyTargets` are resolved independently.
+The drawer shows both frozen ids and both verified protocols; upload progress is shown as part of
+the throughput path.
 
 ### Web Workers
 
@@ -283,23 +332,20 @@ internally for transport negotiation but not yet shown as a full matrix in the U
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                |
 | `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
-| `upload-progress-worker.ts` | The authoritative upload byte/rate source, over its own `/ws/upload` connection.                                                                     |
+| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                         |
 | `ping-worker.ts`            | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread.                                                               |
 | `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by both the upload worker and the experimental chunked-download path. |
 
 ### Testing
 
 Unit tests (`bun:test`, run via `just client-test`) cover pure `.ts` logic only — no component
-rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Covered so far:
-`compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
+rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Coverage includes
+`actions/sheetDrag.ts`, `compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
 test double, exercising the full phase-lifecycle/stall/early-finish/EMA behavior without a real
-network or worker), `runner/dummy.ts`, `state/persistence.ts`, `runner/workers/autosize.ts`,
-`runner/workers/backoff.ts`, `runner/workers/rttEstimator.ts`, `runner/real/laneBudget.ts`,
-`runner/real/wire.ts`, `runner/real/backendPure.ts` (URL/median/ping-need/lane-stagger helpers
-split out of `RealRunner.ts`, mirroring `laneBudget.ts`, so they're testable without pulling in
-`RealRunner.ts`'s build-time `BUILD` defines), `canvas/hoverInterp.ts` and `canvas/gaugeSweep.ts`
-(pure interpolation/mapping math split out of `ChartEngine.ts`/`GaugeEngine.ts`), `runner/evaluation.ts`,
-`runner/schedule.ts`, and `state/stageGuards.ts`. Follow `state/stageGuards.test.ts` as the style
+network or worker), `runner/RealRunner.ts`, `runner/dummy.ts`, `runner/evaluation.ts`,
+`runner/schedule.ts`, `runner/real/streamPolicy.ts`, `runner/real/wire.ts`, the worker policy
+helpers, `state/persistence.ts`, `state/stageGuards.ts`, and the canvas interpolation/mapping
+helpers. Follow `state/stageGuards.test.ts` as the style
 model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing files or classes
 entangled with I/O the same way `stageGuards.ts`/`backendPure.ts`/`hoverInterp.ts` were extracted,
 if it needs to be unit-tested in isolation.
@@ -310,58 +356,29 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 
 ---
 
-## Experimental / not-yet-usable-end-to-end features
+## Current experimental feature
 
-- **Chunked download** — an opt-in "Chunked download (experimental)" setting that requests a
-  sequence of adaptively-sized chunks on one connection instead of one long stream. Implemented
-  and usable today; explicitly labeled experimental because it's newer and less exercised than
-  the default long-stream path.
-- **WebTransport** — modeled as a transport option throughout the client's negotiation logic and
-  the `/preflight` capability schema (server and client both), but not implemented on either end:
-  the server never opens an HTTP/3 listener and always advertises `webtransport: false`; the
-  browser client throws on that transport kind if it's ever selected. See Roadmap.
-- **Server-selection seam** — both the runner contract and the real backend carry a stubbed
-  `listServers()` method for a future multi-server picker (see Roadmap); it throws today and no
-  UI consumes it yet.
-- **TLS / HTTP/2 / HTTP/3 server config fields** — `GM_H3_ADDR`, `GM_TLS_CERT`, `GM_TLS_KEY`,
-  `GM_ADVERTISE_H3`, `PUBLIC_TLS_ORIGIN`, `PUBLIC_H3_ORIGIN` all exist in `internal/config` and
-  are read at startup, but no TLS or HTTP/3 listener is ever started — setting them today has no
-  effect.
+- **Chunked download** is an opt-in adaptive-chunk alternative to long streams.
 
----
+## Reserved contract surface
+
+- **Reserved WebTransport contract** is intentionally inactive. It is neither mounted nor
+  advertised; H3 throughput and upload progress use fetch over QUIC, while latency independently
+  uses an H1-TLS WebSocket.
 
 ## Roadmap
 
-Everything below is planned, in roughly increasing order of how far out it is; none of it is
-implemented yet unless a section above says otherwise.
+- **Multi-server testing** — select one configured server or run against several servers in one
+  pass. Protocol targets in one discovery document currently remain listeners of one logical
+  server, not independent servers.
+- **Rust rewrite (speculative far future)** — replace the Go server and native terminal client while preserving the shared
+  schemas, wire vectors, runtime behavior, and container interface. Some promissing experiments showed s2n-quic with custom h3 adapter with good performance.
 
-1. **Multi-protocol server.** Today the server runs a single plain HTTP/1.1 listener. Planned work
-   adds native TLS termination and native HTTP/2 and HTTP/3 (QUIC) listeners as their own server
-   handler stacks/endpoints, addressable independently rather than only through an external
-   reverse proxy. The config surface for this already exists (`GM_H3_ADDR`, `GM_TLS_CERT`,
-   `GM_TLS_KEY`, `GM_ADVERTISE_H3`, `PUBLIC_TLS_ORIGIN`, `PUBLIC_H3_ORIGIN`) but is currently
-   inert.
-2. **A client-side protocol/transport selector.** Once the server speaks more than HTTP/1.1, the
-   browser client is planned to expose an explicit choice of which HTTP version to measure over —
-   HTTP/1.1, HTTP/2, or HTTP/3 — instead of only negotiating it implicitly from what the server
-   advertises. When HTTP/3 is selected, latency and throughput are planned to be configurable
-   _separately_, each independently able to choose WebTransport unreliable datagrams (for
-   loss-tolerant, minimal-overhead probing) instead of the existing reliable channel (WebSocket for
-   latency, fetch streams for throughput). Two seams for this already exist: the Settings
-   "Transport & security" preset (HTTP/1.1 / HTTPS / HTTP/2 / HTTP/3), which today only feeds the
-   overhead-compensation byte math, and the runner contract's `EngineInfo` (`runner.describe()`),
-   which carries per-role supported-transport lists (latency vs throughput) rendered in the
-   Endpoint info drawer — the selection UI will offer exactly those lists.
-3. **A server-selection UI.** Planned so the primary server — the one that serves the web page —
-   can be configured, via a TOML file or environment variables, with a list of other Graphite
-   Meter server instances running elsewhere. The browser client would then let the user pick which
-   configured server to actually run the test against, instead of always testing the server that
-   served the page. The runner contract already carries a stubbed `listServers()` method as a seam
-   for this; no UI consumes it yet.
-4. **Far future, speculative: simultaneous multi-server testing.** Running a test against several
-   configured servers at once, in a single pass, to compare routes or providers directly.
-5. **Far future, speculative: a Rust server implementation.** An alternative to the Go server,
-   using `s2n-quic-h3` for the QUIC/HTTP/3/WebTransport side. No `server-rs/` directory exists in
-   this checkout yet.
-6. **Far future, speculative: a native Rust TUI client**, as a Rust-side counterpart to the
-   existing Go Bubble Tea client.
+## TLS security and lifecycle
+
+H1-TLS, H2, and H3 are opt-in and fail before binding when the PEM pair is missing, mismatched,
+outside its validity window, or incompatible with a configured public TLS hostname. Private-key
+permissions and certificates expiring within 30 days produce warnings. Files are checked every
+minute and a complete valid renewal is swapped atomically; a partial or invalid renewal leaves the
+last valid certificate serving. No private-key bytes are logged. The Compose overlay mounts the
+complete Let's Encrypt tree read-only so `live/` symlinks into `archive/` remain usable.

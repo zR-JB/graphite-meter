@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -12,9 +13,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/coder/websocket"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type uploadSessionResponse struct {
@@ -41,7 +39,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	defer laneCancel()
 	var wg sync.WaitGroup
 	stagger := r.laneStaggerStep()
-	for i := 0; i < r.cfg.ParallelStreams; i++ {
+	for i := 0; i < r.streams; i++ {
 		wg.Add(1)
 		go func(lane int) {
 			defer wg.Done()
@@ -62,7 +60,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
-	stats := r.sampleServerUpload(ctx, stage, progress, r.cfg.ParallelStreams, elapsed, baselineN, baselineT)
+	stats := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT)
 	laneCancel()
 	wg.Wait()
 	progress.bye()
@@ -70,10 +68,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
-	path := r.preflight.Capabilities.Endpoints.UploadSession
-	if path == "" {
-		path = wire.DefaultEndpoints().UploadSession
-	}
+	path := r.routes().UploadSession
 	u, err := r.endpoint(path)
 	if err != nil {
 		return "", err
@@ -101,10 +96,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 }
 
 func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte) {
-	path := r.preflight.Capabilities.Endpoints.Upload
-	if path == "" {
-		path = wire.DefaultEndpoints().Upload
-	}
+	path := r.routes().Upload
 	base, err := r.endpoint(path)
 	if err != nil {
 		return
@@ -182,20 +174,27 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 func (b *cyclingBody) Close() error { return nil }
 
 type uploadProgress struct {
-	conn   *websocket.Conn
 	cancel context.CancelFunc
+	body   io.ReadCloser
+	client *http.Client
+	url    string
 	done   chan struct{}
+	ready  chan error
 	n      atomic.Uint64
 	t      atomic.Uint64
 	seq    atomic.Uint64
+	once   sync.Once
+}
+
+type uploadProgressEvent struct {
+	Type    string `json:"type"`
+	Bytes   uint64 `json:"bytes"`
+	Nanos   uint64 `json:"nanos"`
+	Message string `json:"message"`
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
-	path := r.preflight.Capabilities.Endpoints.WSUpload
-	if path == "" {
-		path = wire.DefaultEndpoints().WSUpload
-	}
-	base, err := wsEndpoint(r.cfg.BaseURL, path)
+	base, err := r.endpoint(r.routes().UploadProgress)
 	if err != nil {
 		return nil, err
 	}
@@ -206,32 +205,68 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 	q := u.Query()
 	q.Set("id", id)
 	u.RawQuery = q.Encode()
-	conn, _, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
+	readCtx, cancel := context.WithCancel(ctx)
+	req, err := http.NewRequestWithContext(readCtx, http.MethodGet, u.String(), nil)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-	readCtx, cancel := context.WithCancel(ctx)
-	p := &uploadProgress{conn: conn, cancel: cancel, done: make(chan struct{})}
-	_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})))
+	req.Header.Set("Accept", "application/x-ndjson")
+	res, err := r.http.Do(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		cancel()
+		defer res.Body.Close()
+		return nil, unexpectedStatus(res)
+	}
+	p := &uploadProgress{cancel: cancel, body: res.Body, client: r.http, url: u.String(), done: make(chan struct{}), ready: make(chan error, 1)}
 	go func() {
 		defer close(p.done)
-		for {
-			_, msg, err := conn.Read(readCtx)
-			if err != nil {
-				return
-			}
-			f, err := wire.Decode(string(msg))
-			if err != nil {
+		scanner := bufio.NewScanner(res.Body)
+		ready := false
+		for scanner.Scan() {
+			if len(scanner.Bytes()) == 0 {
 				continue
 			}
-			switch f.Op {
-			case wire.OpBytesReceived, wire.OpUploadComplete:
-				p.n.Store(f.N)
-				p.t.Store(f.Nanos)
+			var event uploadProgressEvent
+			if json.Unmarshal(scanner.Bytes(), &event) != nil {
+				continue
+			}
+			switch event.Type {
+			case "ready":
+				if !ready {
+					ready = true
+					p.ready <- nil
+				}
+			case "progress", "complete":
+				p.n.Store(event.Bytes)
+				p.t.Store(event.Nanos)
 				p.seq.Add(1)
+			case "error":
+				if !ready {
+					ready = true
+					p.ready <- fmt.Errorf("upload progress: %s", event.Message)
+				}
+				return
 			}
 		}
+		if !ready {
+			p.ready <- fmt.Errorf("upload progress closed before ready")
+		}
 	}()
+	select {
+	case err := <-p.ready:
+		if err != nil {
+			p.close()
+			return nil, err
+		}
+	case <-ctx.Done():
+		p.close()
+		return nil, ctx.Err()
+	}
 	return p, nil
 }
 
@@ -251,19 +286,27 @@ func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 }
 
 func (p *uploadProgress) close() {
-	p.cancel()
-	_ = p.conn.Close(websocket.StatusNormalClosure, "")
-	<-p.done
+	p.once.Do(func() {
+		p.cancel()
+		_ = p.body.Close()
+		<-p.done
+	})
 }
 
 func (p *uploadProgress) bye() {
-	_ = p.conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
-	timer := time.NewTimer(time.Second)
-	defer timer.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, p.url, nil)
+	if err == nil {
+		if res, doErr := p.client.Do(req); doErr == nil {
+			_ = res.Body.Close()
+		}
+	}
 	select {
 	case <-p.done:
-	case <-timer.C:
+	case <-ctx.Done():
 	}
+	p.close()
 }
 
 func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64) rateStats {

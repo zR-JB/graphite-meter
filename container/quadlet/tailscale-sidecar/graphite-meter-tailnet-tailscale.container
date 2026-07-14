@@ -1,0 +1,44 @@
+# Kernel-mode Tailscale sidecar and owner of the shared network namespace.
+
+[Unit]
+Description=Tailscale sidecar for Graphite Meter
+Wants=graphite-meter-tailnet.container
+Before=graphite-meter-tailnet.container
+StartLimitIntervalSec=0
+
+[Container]
+Image=docker.io/tailscale/tailscale:latest
+ContainerName=graphite-meter-tailnet.tailscale
+AutoUpdate=registry
+EnvironmentFile=./graphite-meter-tailnet-tailscale.env
+
+AddDevice=/dev/net/tun
+DropCapability=all
+AddCapability=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+
+Volume=graphite-meter-tailnet-state.volume:/var/lib/tailscale
+Volume=graphite-meter-tailnet-certs.volume:/certs
+
+# String-form Podman health checks run through /bin/sh, so TS_CERT_DOMAIN from
+# the environment file is expanded inside the container.
+HealthStartupCmd=test -n "$TS_CERT_DOMAIN" && tailscale cert --min-validity=168h --cert-file /certs/tls.crt --key-file /certs/tls.key "$TS_CERT_DOMAIN"
+HealthStartupInterval=2s
+HealthStartupRetries=60
+HealthStartupTimeout=30s
+HealthStartupSuccess=1
+
+HealthCmd=test -n "$TS_CERT_DOMAIN" && tailscale cert --min-validity=168h --cert-file /certs/tls.crt --key-file /certs/tls.key "$TS_CERT_DOMAIN"
+HealthInterval=12h
+HealthTimeout=60s
+HealthRetries=3
+HealthOnFailure=kill
+Notify=healthy
+
+[Service]
+Restart=always
+RestartSec=2
+TimeoutStartSec=5min
+
+[Install]
+WantedBy=default.target

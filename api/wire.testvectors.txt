@@ -23,16 +23,11 @@ decode | PONG,5;TIME,1234 | op=PONG;id=5;nanos=1234
 decode | SIZE,10000000 | op=SIZE;bytes=10000000
 decode | HI,wt | op=HI;proto=wt
 decode | BYE | op=BYE
-decode | BYTES_RECEIVED,1048576;TIME,1234 | op=BYTES_RECEIVED;n=1048576;nanos=1234
-decode | UPLOAD_COMPLETE,40000000;TIME,1234 | op=UPLOAD_COMPLETE;n=40000000;nanos=1234
 decode | ERR,bad_op,unknown | op=ERR;code=bad_op;text=unknown
 # malformed -> rejected
 decode | PNG,5 | ERR:bad_op
 decode | PING | ERR:bad_args
 decode | PING,abc | ERR:bad_args
-decode | BYTES_RECEIVED,1048576 | ERR:bad_args
-decode | UPLOAD_COMPLETE,40000000 | ERR:bad_args
-decode | BYTES_RECEIVED,1048576;TIME,abc | ERR:bad_args
 
 # --- encode ---
 encode | op=PING;id=5 | PING,5
@@ -43,6 +38,4 @@ encode | op=READY | READY
 encode | op=HI;proto=ws | HI,ws
 encode | op=BYE | BYE
 encode | op=SIZE;bytes=10000000 | SIZE,10000000
-encode | op=BYTES_RECEIVED;n=1048576;nanos=1234 | BYTES_RECEIVED,1048576;TIME,1234
-encode | op=UPLOAD_COMPLETE;n=40000000;nanos=1234 | UPLOAD_COMPLETE,40000000;TIME,1234
 encode | op=ERR;code=bad_op;text=unknown | ERR,bad_op,unknown

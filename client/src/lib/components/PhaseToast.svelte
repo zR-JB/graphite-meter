@@ -48,6 +48,8 @@
   /** Short uppercase eyebrow naming the lifecycle stage. */
   function kicker(p: typeof store.phase): string {
     switch (p) {
+      case "connecting":
+        return "Connecting";
       case "warmup":
         return "Warmup";
       case "latency":
@@ -72,6 +74,8 @@
   /** Plain-language message for the active phase. */
   function message(p: typeof store.phase): string {
     switch (p) {
+      case "connecting":
+        return "Verifying selected transport";
       case "warmup":
         return "Calibrating transport";
       case "latency":

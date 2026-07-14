@@ -8,25 +8,35 @@ import type {
   TransportRole,
   FlowDirection,
   PhaseActivity,
+  TransferStreamPolicy,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import type { Preflight } from "../api/preflight";
+import type {
+  FetchThroughputTarget,
+  Preflight,
+  WebSocketLatencyTarget,
+} from "../api/preflight";
+import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
-import { laneBudget, BROWSER_CONN_BUDGET } from "./real/laneBudget";
+import { transferStreamCount } from "./real/streamPolicy";
 import {
-  resolveBase,
   httpToWs,
-  wsToWss,
   median,
   needsPings,
   laneStaggerMs,
+  selectThroughputTarget,
+  selectLatencyTarget,
+  browserProtocolMatchesTarget,
+  classifyTransportDiscovery,
+  throughputTargetKey,
 } from "./real/backendPure";
 
 export interface RealBackendOptions {
-  endpoint?: RunnerConfig["endpoint"];
   authToken?: string;
 }
+
+export class TransportUnavailableError extends Error {}
 
 // Match the core/dummy cadence so both engines feed the UI at the same rate.
 const THROUGHPUT_CADENCE_MS = 60;
@@ -41,6 +51,7 @@ const EARLY_FAIL_RESTARTS = 3;
 const PING_ESTABLISH_TIMEOUT_MS = 3500;
 // A hung upload-session request should skip the stage, not ride into max-stall.
 const UPLOAD_SESSION_TIMEOUT_MS = 3000;
+const PROGRESS_ESTABLISH_TIMEOUT_MS = 3500;
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
@@ -73,7 +84,6 @@ const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   websocket: true,
   webtransport: false,
 };
-
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
   rtt: number;
@@ -120,7 +130,7 @@ interface LaneStreamState {
    *  down/up lane failure must report against "bidirectional", never the
    *  direction-derived "download"/"upload" name. */
   stage: PhaseActivity["stage"];
-  /** Lanes for this direction, derived by laneBudget() at prime time and
+  /** Lanes for this direction, resolved from the stream policy at prime time and
    *  cached here because the lane-restart path (#spawnWorker via
    *  #onWorkerError) has no `activity` in scope. */
   laneCount: number;
@@ -139,7 +149,7 @@ interface LaneStreamState {
    *  reports its own receive elapsed time, so the pool rate can be summed
    *  from matching per-lane numerators/denominators instead of a UI timer
    *  tick. Populated by download progress messages only — an upload lane
-   *  reports no bytes (the server /ws/upload channel is the sole source). */
+   *  reports no bytes (the server /upload/progress channel is the sole source). */
   /** Present only for client-counted download. Server-counted upload has no
    * local byte clock by construction. */
   clientAggregation: ClientByteAggregation | null;
@@ -173,6 +183,12 @@ export class RealBackend implements RunnerBackend {
    *  endpoint paths + which transports are available). Stashed here so later
    *  stages negotiate transports against what the server actually offers. */
   #capabilities: Preflight["capabilities"] | null = null;
+  /** Independent role bindings are frozen from probe until the next run. */
+  #throughputTarget: FetchThroughputTarget | null = null;
+  #latencyTarget: WebSocketLatencyTarget | null = null;
+  #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
+  #discoveryOrigin = "";
+  #discoveryProtocol: string | undefined;
 
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
    *  Bidirectional primes BOTH directions on the SAME stage (onStageBegin calls
@@ -199,11 +215,13 @@ export class RealBackend implements RunnerBackend {
 
   /* ---- server-authoritative upload state (Stage 3+) ---- */
   /** The upload-session id minted during upload warmup; appended as &id= on the
-   *  upload POST lanes AND the /ws/upload socket so the server correlates them.
+   *  upload POST lanes AND the /upload/progress stream so the server correlates them.
    *  null ⇒ the current upload stage has not been allocated yet. */
   #testId: string | null = null;
-  /** The dedicated /ws/upload progress worker (up stage only), or null. */
+  /** The dedicated /upload/progress progress worker (up stage only), or null. */
   #progressWorker: Worker | null = null;
+  #progressReady: { finish: (ready: boolean) => void } | null = null;
+  #progressDone: (() => void) | null = null;
   /** Latest cumulative server byte count and previous measured snapshot. */
   #srvN = 0;
   #srvPrevN = 0; // cumulative at the last delta fed into the live curve
@@ -229,6 +247,7 @@ export class RealBackend implements RunnerBackend {
    * active at the same time (stopped in onRunStart, restarted on run end). */
   #idleWorker: Worker | null = null;
   #idleActive = false;
+  #idleTargetKey = "";
   /** Set while probe() is harvesting the keepalive's first RTTs; `finish`
    *  resolves the preflight median wait (idempotent). */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
@@ -245,13 +264,6 @@ export class RealBackend implements RunnerBackend {
 
   attach(host: CoreHost): void {
     this.#host = host;
-  }
-
-  /** Resolve the backend base: prefer the endpoint passed in, else construction. */
-  #resolveEndpoint(
-    passed?: RunnerConfig["endpoint"],
-  ): RunnerConfig["endpoint"] | undefined {
-    return passed ?? this.#opts.endpoint;
   }
 
   #authHeaders(): HeadersInit | undefined {
@@ -297,60 +309,182 @@ export class RealBackend implements RunnerBackend {
 
   /* ================= PROBE ================= */
   /**
-   * TARGET: `GET {base}/preflight` (a.k.a. /config).
-   * Resolve `InfraInfo` (client public IP, server identity, negotiated
-   * protocol, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
+   * TARGET: same-origin `GET /preflight`.
+   * Resolve `InfraInfo` (per-role client address, server identity, negotiated
+   * protocols, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
    * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
    * via host.emit for the sparkline. On failure, throw — wire.ts maps a probe
    * rejection to a `preflight-failed` error.
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
-  async probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo> {
-    const base = resolveBase(this.#resolveEndpoint(endpoint));
-    let res: Response;
+  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+    this.#capabilities = null;
+    this.#throughputTarget = null;
+    this.#latencyTarget = null;
+    this.#discoveryProtocol = undefined;
+    let pf: Preflight;
     try {
-      // Identify the client to the server (version negotiation seam): a future
-      // server can key feature/compat decisions off these. Query params (not a
-      // custom header) so a cross-origin preflight GET stays a simple request.
+      // A logical server may restart with different public targets while the
+      // SPA remains open, so every run resolves a fresh discovery document.
       const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-      res = await fetch(`${base}/preflight${ident}`, {
+      const res = await fetch(`/preflight${ident}`, {
         method: "GET",
+        cache: "no-store",
         headers: this.#authHeaders(),
+        signal,
       });
+      if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
+      pf = (await res.json()) as Preflight;
+      this.#discoveryOrigin = new URL(res.url, location.href).origin;
+      this.#discoveryProtocol = (
+        performance.getEntriesByName(res.url, "resource").at(-1) as
+          PerformanceResourceTiming | undefined
+      )?.nextHopProtocol;
     } catch (cause) {
-      // Network-level failure (server down, DNS, CORS). wire.ts maps the
-      // rejection to a `preflight-failed` error.
       throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
-    if (!res.ok) {
-      throw new Error(`preflight returned HTTP ${res.status}`);
-    }
-    const pf = (await res.json()) as Preflight;
     this.#capabilities = pf.capabilities;
-    const timing = performance.getEntriesByName(res.url, "resource").at(-1) as
-      PerformanceResourceTiming | undefined;
-    const firstHopProtocol = timing?.nextHopProtocol || undefined;
+    const discovery = classifyTransportDiscovery(
+      pf.capabilities.throughputTargets,
+      pf.capabilities.latencyTargets,
+      this.#discoveryOrigin,
+      location.protocol === "https:",
+      this.#discoveryProtocol,
+    );
+    this.#host?.emit({ type: "transportDiscovery", discovery });
+    const selection = config.transports.throughputTarget;
+    const selected = selectThroughputTarget(discovery, selection);
+    if (!selected)
+      throw new TransportUnavailableError(`${selection} target unavailable`);
+    this.#throughputTarget = selected;
+    this.#latencyTarget = selectLatencyTarget(
+      discovery,
+      config.transports.latencyTarget,
+    );
+    const needsLatency =
+      config.stages.latency ||
+      (!config.skipLoadedLatencyWhenStageOff &&
+        (config.stages.download ||
+          config.stages.upload ||
+          config.stages.bidirectional));
+    if (needsLatency && !this.#latencyTarget)
+      throw new TransportUnavailableError(
+        `${config.transports.latencyTarget} latency target unavailable`,
+      );
+    if (!needsLatency) this.#latencyTarget = null;
+
+    const attempts = selected.protocol === "http3" ? 3 : 1;
+    const deadline = performance.now() + 2000;
+    let pathProbe: Probe | null = null;
+    let firstHopProtocol: string | undefined;
+    const probeCtl = new AbortController();
+    const probeSignal = signal
+      ? AbortSignal.any([signal, probeCtl.signal])
+      : probeCtl.signal;
+    const probeDeadline =
+      selected.protocol === "http3"
+        ? setTimeout(() => probeCtl.abort(), 2000)
+        : undefined;
+    try {
+      for (
+        let attempt = 0;
+        attempt < attempts && performance.now() < deadline;
+        attempt++
+      ) {
+        const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
+        const probeRes = await fetch(probeURL, {
+          cache: "no-store",
+          headers: this.#authHeaders(),
+          signal: probeSignal,
+        });
+        if (!probeRes.ok)
+          throw new Error(`probe returned HTTP ${probeRes.status}`);
+        pathProbe = (await probeRes.json()) as Probe;
+        const timing = performance
+          .getEntriesByName(probeRes.url, "resource")
+          .at(-1) as PerformanceResourceTiming | undefined;
+        firstHopProtocol = timing?.nextHopProtocol || undefined;
+        if (
+          selected.protocol !== "http3" ||
+          browserProtocolMatchesTarget(selected, firstHopProtocol)
+        )
+          break;
+      }
+    } catch (cause) {
+      if (selected.protocol === "http3")
+        throw new TransportUnavailableError("http3 transport unavailable", {
+          cause,
+        });
+      throw cause;
+    } finally {
+      if (probeDeadline !== undefined) clearTimeout(probeDeadline);
+    }
+    if (
+      !pathProbe ||
+      !browserProtocolMatchesTarget(selected, firstHopProtocol)
+    ) {
+      throw new TransportUnavailableError(
+        `${selected.protocol} transport unavailable`,
+      );
+    }
+
+    let verifiedLatencyProtocol: string | undefined;
+    let latencyPathProbe: Probe | undefined;
+    if (needsLatency && this.#latencyTarget) {
+      const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
+      const latencyRes = await fetch(latencyURL, {
+        cache: "no-store",
+        headers: this.#authHeaders(),
+        signal,
+      });
+      if (!latencyRes.ok)
+        throw new TransportUnavailableError(
+          `latency probe returned HTTP ${latencyRes.status}`,
+        );
+      latencyPathProbe = (await latencyRes.json()) as Probe;
+      verifiedLatencyProtocol = (
+        performance.getEntriesByName(latencyRes.url, "resource").at(-1) as
+          PerformanceResourceTiming | undefined
+      )?.nextHopProtocol;
+      if (verifiedLatencyProtocol !== "http/1.1")
+        throw new TransportUnavailableError(
+          `latency target negotiated ${verifiedLatencyProtocol || "unknown"}, want http/1.1`,
+        );
+      if (latencyPathProbe.protocolNegotiated !== "http/1.1")
+        throw new TransportUnavailableError(
+          `latency server observed ${latencyPathProbe.protocolNegotiated}, want http/1.1`,
+        );
+    }
 
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
-    const probeRtts = await this.#collectIdleRtts(endpoint);
+    const probeRtts = needsLatency ? await this.#collectIdleRtts(signal) : [];
 
     return {
-      clientIp: pf.clientIp,
-      clientIpVersion: pf.clientIpVersion,
-      clientIpSource: pf.clientIpSource,
+      clientIp: pathProbe.clientIp,
+      clientIpVersion: pathProbe.clientIpVersion,
+      clientIpSource: pathProbe.clientIpSource,
+      latencyClientIp: latencyPathProbe?.clientIp,
+      latencyClientIpVersion: latencyPathProbe?.clientIpVersion,
+      latencyClientIpSource: latencyPathProbe?.clientIpSource,
       server: {
         name: pf.server.name,
         host: pf.server.host,
         port: pf.server.port,
         location: pf.server.location,
       },
-      preTestPingMs: probeRtts.length ? median(probeRtts) : pf.preTestPingMs,
+      preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
       engineVersion: pf.engineVersion,
-      protocolNegotiated: pf.protocolNegotiated,
+      protocolNegotiated: pathProbe.protocolNegotiated,
+      selectedThroughputTarget: selected.id,
+      selectedThroughputProtocol: selected.protocol,
+      selectedLatencyTarget: this.#latencyTarget?.id,
+      selectedLatencyTransport: this.#latencyTarget?.transport,
+      verifiedLatencyProtocol,
+      latencyProtocolNegotiated: latencyPathProbe?.protocolNegotiated,
       firstHopProtocol,
-      firstHopSecure: new URL(res.url).protocol === "https:",
+      firstHopSecure: selected.tls,
     };
   }
 
@@ -358,13 +492,15 @@ export class RealBackend implements RunnerBackend {
    *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
    *  worker to the 1/s idle cadence. Best-effort: resolves with whatever it
    *  gathered by the timeout, never rejects. */
-  #collectIdleRtts(endpoint: RunnerConfig["endpoint"]): Promise<number[]> {
-    this.#startIdleKeepalive(endpoint, PROBE_PING_INTERVAL_MS);
+  #collectIdleRtts(signal?: AbortSignal): Promise<number[]> {
+    if (signal?.aborted) return Promise.resolve([]);
+    this.#startIdleKeepalive(PROBE_PING_INTERVAL_MS);
     if (!this.#idleWorker) return Promise.resolve([]);
     return new Promise<number[]>((resolve) => {
       const finish = (): void => {
         if (!this.#probeCollect) return;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", finish);
         const rtts = this.#probeCollect.rtts;
         this.#probeCollect = null;
         this.#idleWorker?.postMessage({
@@ -374,6 +510,7 @@ export class RealBackend implements RunnerBackend {
         resolve(rtts);
       };
       const timer = setTimeout(finish, PROBE_PING_TIMEOUT_MS);
+      signal?.addEventListener("abort", finish, { once: true });
       this.#probeCollect = { rtts: [], finish };
     });
   }
@@ -406,10 +543,10 @@ export class RealBackend implements RunnerBackend {
     // latency duties for the duration of the run (resumed in #closeAll on
     // completion/abort).
     this.#stopIdleKeepalive();
-    void this.#resolveEndpoint(config.endpoint);
+    this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
-    this.#teardownTransfer(); // clear any leftover lanes from a prior run
+    this.#discardTransfer(); // discard leftovers from a prior run
     this.#stalled = false;
     this.#testId = null;
     // Unique-per-run cache-buster. performance.now() avoids Date.now and is
@@ -417,7 +554,8 @@ export class RealBackend implements RunnerBackend {
     this.#cbSeed = `r${Math.round(performance.now())}`;
   }
 
-  onStageBegin(activity: PhaseActivity): void {
+  onStageBegin(activity: PhaseActivity): void | Promise<void> {
+    const preparations: Promise<void>[] = [];
     // The ping channel is ALWAYS a latency-role transport (websocket today) — it
     // runs on its OWN socket, never on the stage's transfer transport. Negotiate
     // it separately (and first) so a loaded transfer stage's fetch-stream kind can
@@ -447,9 +585,13 @@ export class RealBackend implements RunnerBackend {
         );
         return;
       }
-      for (const dir of activity.transfer)
-        this.#primeTransfer(kind, dir, activity);
+      for (const dir of activity.transfer) {
+        const preparation = this.#primeTransfer(kind, dir, activity);
+        if (preparation) preparations.push(preparation);
+      }
     }
+    if (preparations.length > 0)
+      return Promise.all(preparations).then(() => undefined);
   }
 
   /**
@@ -467,17 +609,19 @@ export class RealBackend implements RunnerBackend {
     if (needsPings(activity)) this.#measureLatency(underLoad);
   }
 
-  /** A stage's measured window has ended (boundary, early finish, or run end).
-   *  Close/cancel the stage's connection(s); the core has already finalized its
-   *  result. */
-  onStageEnd(activity: PhaseActivity): void {
+  /** A measured stage ended. Drain its authoritative boundary sample before
+   *  the core reduces the result, then release its connections. */
+  onStageEnd(activity: PhaseActivity, flush = true): void | Promise<void> {
     void activity;
-    // The core has finalized this stage's result; release its connections. For
-    // download that means stopping + terminating the worker pool; for latency (or
-    // a transfer stage's loaded-latency pings) the ping worker + its socket.
-    this.#teardownTransfer();
-    this.#teardownLatency();
-    this.#stalled = false; // a stale latch must not swallow the next stage's stall
+    if (!flush) {
+      this.#discardTransfer();
+      this.#teardownLatency();
+      return;
+    }
+    return this.#teardownTransfer().then(() => {
+      this.#teardownLatency();
+      this.#stalled = false;
+    });
   }
 
   /** The run finished normally. Close anything still open. */
@@ -498,7 +642,7 @@ export class RealBackend implements RunnerBackend {
     const host = this.#host!;
     for (const kind of this.#transportOrder(role)) {
       host.reportTransport({ kind, role, status: "negotiating" });
-      const unavailable = this.#transportUnavailableReason(kind);
+      const unavailable = this.#transportUnavailableReason(kind, role);
       if (!unavailable) {
         host.reportTransport({ kind, role, status: "established" });
         this.#activeTransport = kind;
@@ -514,20 +658,23 @@ export class RealBackend implements RunnerBackend {
     return null;
   }
 
-  #transportUnavailableReason(kind: TransportKind): string | null {
+  #transportUnavailableReason(
+    kind: TransportKind,
+    role: TransportRole,
+  ): string | null {
     if (!RUNNABLE_TRANSPORT[kind]) return "not supported by this client";
-    const t = this.#capabilities?.transports;
-    if (!t) return "not advertised by server";
-    let advertised = false;
+    if (!this.#throughputTarget) return "no selected transfer target";
+    let advertised: boolean;
     switch (kind) {
       case "fetch-stream":
-        advertised = t.fetchStream;
+        advertised = this.#throughputTarget.transport === "fetch-stream";
         break;
       case "websocket":
-        advertised = t.websocket;
+        advertised =
+          role === "latency" && this.#latencyTarget?.transport === "websocket";
         break;
       case "webtransport":
-        advertised = t.webtransport;
+        advertised = false;
         break;
     }
     return advertised ? null : "not advertised by server";
@@ -542,37 +689,21 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= PRIME (warmup window) — open, don't measure ================= */
-  /** Parallel POST lanes for `dir` this stage, derived from (phase, direction,
-   *  features, transport) — no manual count. On HTTP/1.1 each lane is its own
-   *  TCP connection filling the BDP, so we carve them from the per-origin pool
-   *  after reserving the buses this phase needs; a bidirectional stage further
-   *  splits that pool 50/50 between its two concurrent directions (see
-   *  laneBudget.ts). On a multiplexed transport every lane shares ONE
-   *  congestion window, so extra lanes buy no throughput — cap low. The
-   *  configured `parallelStreams` is only an upper ceiling (#laneCeiling),
-   *  applied PER DIRECTION — never a target, never applied to a combined total. */
-  #laneBudget(
-    activity: PhaseActivity,
-    kind: TransportKind,
-    dir: FlowDirection,
-  ): number {
-    return laneBudget({
-      kind,
+  /** Resolve one direction's transfer streams from the frozen protocol target
+   *  and the run's automatic/forced policy. */
+  #streamCount(activity: PhaseActivity, dir: FlowDirection): number {
+    if (!this.#throughputTarget)
+      throw new Error("transfer target not resolved");
+    return transferStreamCount({
+      protocol: this.#throughputTarget.protocol,
+      policy: this.#streamPolicy,
       transfer: activity.transfer,
       dir,
       needsPing: needsPings(activity),
-      ceiling: this.#laneCeiling(),
     });
   }
 
-  /** Advanced upper bound on lanes (repurposed `parallelStreams`); 0/unset ⇒ the
-   *  full connection budget, so the derived policy governs unconstrained. */
-  #laneCeiling(): number {
-    const max = this.#host!.config!.parallelStreams;
-    return max > 0 ? max : BROWSER_CONN_BUDGET;
-  }
-
-  /** Open `config.parallelStreams` transfer stream(s) for `dir` over `kind`
+  /** Open the resolved transfer stream(s) for `dir` over `kind`
    *  (`GET {path}/download?bytes=N` for "down", `POST {path}/upload` streamed body
    *  for "up", or webtransport) and run priming bytes to warm the path (TCP
    *  congestion window / BBR / TLS) — pushing NOTHING into the core. The stream(s)
@@ -581,7 +712,7 @@ export class RealBackend implements RunnerBackend {
     kind: TransportKind,
     dir: FlowDirection,
     activity: PhaseActivity,
-  ): void {
+  ): void | Promise<void> {
     if (kind !== "fetch-stream") throw new Error(`unsupported ${kind}`);
 
     // A stage names each direction once (bidirectional calls this twice, one
@@ -589,8 +720,8 @@ export class RealBackend implements RunnerBackend {
     if (this.#lanes[dir]) throw new Error(`duplicate ${dir} prime`);
 
     const cfg = this.#host!.config!;
-    const base = resolveBase(this.#resolveEndpoint(cfg.endpoint));
-    const laneCount = this.#laneBudget(activity, kind, dir);
+    const base = this.#throughputTarget!.origin;
+    const laneCount = this.#streamCount(activity, dir);
     const streams = laneCount;
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
     // half the warmup; 0 when there's no warmup (lanes spawn together rather than
@@ -639,20 +770,19 @@ export class RealBackend implements RunnerBackend {
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
-        const path = this.#capabilities?.endpoints.download ?? "/download";
+        const path = this.#throughputTarget?.routes.download ?? "/download";
         return chunkDownload
           ? `${base}${path}?cb=${cb}`
           : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
-      const path = this.#capabilities?.endpoints.upload ?? "/upload";
+      const path = this.#throughputTarget?.routes.upload ?? "/upload";
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
 
     if (dir === "up") {
       this.#testId = null;
-      void this.#primeUploadTransfer(dir, base, streams, url);
-      return;
+      return this.#primeUploadTransfer(dir, base, streams, url);
     }
 
     for (let i = 0; i < streams; i++) {
@@ -689,18 +819,21 @@ export class RealBackend implements RunnerBackend {
     const state = this.#lanes[dir];
     if (!this.#transferActive || !state) return;
     this.#testId = id;
+    // The progress stream is the authoritative upload meter. Establish it
+    // before any POST workers so forced H1 lanes cannot occupy every browser
+    // connection slot and queue the control channel behind the upload.
+    if (!(await this.#primeUploadProgress(state.stage))) return;
+    const readyState = this.#lanes[dir];
+    if (!this.#transferActive || !readyState) return;
     for (let i = 0; i < streams; i++) {
-      state.streamUrls[i] = url(i, id);
+      readyState.streamUrls[i] = url(i, id);
       this.#spawnLaneStaggered(dir, i);
     }
-    // Open the /ws/upload progress socket after the token exists. It is still part
-    // of warmup; measurement starts later via #measureTransfer.
-    this.#primeUploadProgress(state.stage);
   }
 
   async #mintUploadSession(base: string): Promise<string> {
     const path =
-      this.#capabilities?.endpoints.uploadSession ?? "/upload/session";
+      this.#throughputTarget?.routes.uploadSession ?? "/upload/session";
     // Own deadline + the run's abort: fetch must reject within the timeout even
     // when the request hangs, so the stage skips instead of max-stalling.
     const ctl = new AbortController();
@@ -727,40 +860,59 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Spawn the /ws/upload progress worker for the up stage. Resets the server
-   *  window anchors. The server count is the SOLE upload byte source now (no
-   *  client-side onprogress fallback): if there is no minted id or the server does
-   *  not advertise WebSocket, no server bytes ever arrive, so the up stage produces
-   *  no samples and the core's stall watchdog ends it cleanly (max-stall →
-   *  connection-lost) rather than shipping a client-counted number. */
-  #primeUploadProgress(stage: PhaseActivity["stage"]): void {
+  /** Establish the server-authoritative upload progress stream before starting
+   *  POST lanes. Upload cannot be measured honestly without this channel. */
+  #primeUploadProgress(stage: PhaseActivity["stage"]): Promise<boolean> {
     this.#resetUploadCounters();
 
-    const caps = this.#capabilities;
-    if (!this.#testId) return; // session mint already skipped the stage
-    if (!caps?.transports.websocket) {
+    if (!this.#testId) return Promise.resolve(false);
+    const target = this.#throughputTarget;
+    const progressRoute = target?.routes.uploadProgress;
+    if (!target || !progressRoute) {
       this.#host!.failStage(
         stage,
         "transport-unavailable",
-        "server offers no WebSocket progress bus — upload can't be measured",
+        "selected throughput target has no upload progress route",
       );
-      return;
+      return Promise.resolve(false);
     }
 
-    const wsUpload = caps.endpoints.wsUpload ?? "/ws/upload";
-    const url =
-      this.#resolveWsBase(this.#host!.config!.endpoint) +
-      wsUpload +
-      `?id=${encodeURIComponent(this.#testId)}`;
+    const url = `${target.origin}${progressRoute}?id=${encodeURIComponent(this.#testId)}`;
     const w = this.#progressWorkerInstance();
-    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void =>
+    const ready = new Promise<boolean>((resolve) => {
+      const finish = (established: boolean): void => {
+        if (this.#progressReady?.finish !== finish) return;
+        clearTimeout(timer);
+        this.#progressReady = null;
+        resolve(established);
+      };
+      const timer = setTimeout(() => {
+        this.#host!.failStage(
+          stage,
+          "connection-lost",
+          "upload progress channel could not be established",
+        );
+        finish(false);
+      }, PROGRESS_ESTABLISH_TIMEOUT_MS);
+      this.#progressReady = { finish };
+    });
+    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
+      if (e.data.type === "open") this.#progressReady?.finish(true);
       this.#onProgressMessage(e.data);
+    };
     w.onerror = (): void => {
       /* the worker owns reconnect; a hard worker error just means no server bytes
        * until it recovers, which the stall watchdog already covers. */
     };
-    w.postMessage({ type: "start", url });
+    w.postMessage({
+      type: "start",
+      url,
+      headers: this.#opts.authToken
+        ? { authorization: `Bearer ${this.#opts.authToken}` }
+        : undefined,
+    });
     this.#progressWorker = w;
+    return ready;
   }
 
   /** Spawn lane `i` at prime time, staggered by LANE_STAGGER_MS per index so the
@@ -815,8 +967,11 @@ export class RealBackend implements RunnerBackend {
     if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
 
     const cfg = this.#host!.config!;
-    const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
-    const url = this.#resolveWsBase(cfg.endpoint) + wsPing;
+    const channel = this.#latencyTarget;
+    const latencyRoute = channel?.routes.ping;
+    if (!channel || channel.transport !== "websocket" || !latencyRoute)
+      throw new Error("latency target not resolved");
+    const url = httpToWs(channel.origin) + latencyRoute;
     const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
 
     this.#latencyUnderLoad = false;
@@ -852,32 +1007,6 @@ export class RealBackend implements RunnerBackend {
       lossFloorMs: PING_LOSS_FLOOR_MS,
     });
     this.#pingWorker = w;
-  }
-
-  /** Resolve the ws(s):// base for the latency bus: prefer the advertised tls
-   *  origin, else h1, else the given endpoint base, else same-origin — each
-   *  mapped http→ws. Takes the endpoint explicitly so it is safe during
-   *  probe(), before the run config exists.
-   *
-   *  h1 is frequently a guess, not a considered decision — the server derives
-   *  it as `http://<Host>` whenever PUBLIC_H1_ORIGIN isn't set, with zero
-   *  awareness of a TLS-terminating reverse proxy in front of it. The page we
-   *  are RUNNING IN already knows its own scheme with certainty (the browser
-   *  enforced it), so if the page loaded over https, never hand back a ws://
-   *  base sourced from that guess — the browser would block it as mixed
-   *  content anyway. Upgrade to wss:// instead. */
-  #resolveWsBase(endpoint?: RunnerConfig["endpoint"]): string {
-    const tls = this.#capabilities?.origins.tls;
-    if (tls) return httpToWs(tls);
-    const pageIsSecure = location.protocol === "https:";
-    const h1 = this.#capabilities?.origins.h1;
-    if (h1) {
-      const ws = httpToWs(h1);
-      return pageIsSecure ? wsToWss(ws) : ws;
-    }
-    const base = resolveBase(this.#resolveEndpoint(endpoint));
-    if (base) return httpToWs(base);
-    return httpToWs(location.origin);
   }
 
   /** Handle a message from the ping worker. The worker reports already-computed
@@ -942,14 +1071,16 @@ export class RealBackend implements RunnerBackend {
    *  on-receive chain is OFF and the in-flight window tiny: the pacer alone
    *  drives sends, so this can never ping (or update the UI) faster than
    *  once per interval. */
-  #startIdleKeepalive(
-    endpoint?: RunnerConfig["endpoint"],
-    intervalMs = IDLE_PING_INTERVAL_MS,
-  ): void {
-    if (this.#idleActive || !this.#capabilities?.transports.websocket) return;
-    const wsPing = this.#capabilities?.endpoints.wsPing ?? "/ws/ping";
-    const url = this.#resolveWsBase(endpoint) + wsPing;
+  #startIdleKeepalive(intervalMs = IDLE_PING_INTERVAL_MS): void {
+    const targetKey = `${throughputTargetKey(this.#throughputTarget)}\n${this.#latencyTarget?.id ?? ""}`;
+    if (this.#idleActive && this.#idleTargetKey === targetKey) return;
+    if (this.#idleActive) this.#stopIdleKeepalive();
+    const channel = this.#latencyTarget;
+    const latencyRoute = channel?.routes.ping;
+    if (!channel || channel.transport !== "websocket" || !latencyRoute) return;
+    const url = httpToWs(channel.origin) + latencyRoute;
     this.#idleActive = true;
+    this.#idleTargetKey = targetKey;
     // Treat connectivity as unknown until this (fresh) worker proves the link:
     // its first samples then emit a "connected" edge. Crucial after a
     // connection-lost failure — the store latched the pulse offline, and
@@ -969,7 +1100,7 @@ export class RealBackend implements RunnerBackend {
         type: "stall",
         detail: e.message || "idle ping worker error",
       });
-      this.#scheduleIdleRespawn(endpoint, intervalMs);
+      this.#scheduleIdleRespawn(intervalMs);
     };
     w.postMessage({
       type: "start",
@@ -991,6 +1122,7 @@ export class RealBackend implements RunnerBackend {
    *  app is tearing down. Idempotent. */
   #stopIdleKeepalive(): void {
     this.#idleActive = false;
+    this.#idleTargetKey = "";
     if (this.#idleRespawnTimer) {
       clearTimeout(this.#idleRespawnTimer);
       this.#idleRespawnTimer = null;
@@ -1007,16 +1139,13 @@ export class RealBackend implements RunnerBackend {
    *  handler in #startIdleKeepalive). One timer at a time; each failed attempt
    *  schedules the next, so the keepalive keeps knocking every IDLE_RESPAWN_MS
    *  until the server is back to serve the script. */
-  #scheduleIdleRespawn(
-    endpoint?: RunnerConfig["endpoint"],
-    intervalMs?: number,
-  ): void {
+  #scheduleIdleRespawn(intervalMs?: number): void {
     if (!this.#idleActive || this.#idleRespawnTimer) return;
     this.#idleRespawnTimer = setTimeout(() => {
       this.#idleRespawnTimer = null;
       if (!this.#idleActive) return; // a run started (or teardown) meanwhile
       this.#stopIdleKeepalive();
-      this.#startIdleKeepalive(endpoint, intervalMs);
+      this.#startIdleKeepalive(intervalMs);
     }, IDLE_RESPAWN_MS);
   }
 
@@ -1151,7 +1280,7 @@ export class RealBackend implements RunnerBackend {
    *   • download `progress` → client-counted bytes drive the live curve: accrue
    *     into the aggregation window and clear any open stall.
    *   • upload `alive` → one POST completed; reset the lane's restart counter. The
-   *     server /ws/upload count is the SOLE upload byte source, so an upload lane
+   *     server /upload/progress count is the SOLE upload byte source, so an upload lane
    *     reports NO bytes and never drives the curve or resumes a stall here (the
    *     progress worker owns the up curve + its stall/resume — see #onProgressMessage).
    *   • `error` → stall + restart that single lane (#onWorkerError). */
@@ -1268,7 +1397,7 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** A message from the /ws/upload progress worker. The server count is the SOLE
+  /** A message from the /upload/progress progress worker. The server count is the SOLE
    *  upload byte source: `bytes`/`complete` feed the live curve and effective result.
    *  Because there is no client-side fallback, the socket dropping is the
    *  only thing that can leave the up stage without samples — so the worker's
@@ -1283,7 +1412,7 @@ export class RealBackend implements RunnerBackend {
     const state = this.#lanes.up;
     if (!this.#transferActive || !state) return; // late message after teardown
     if (msg.type === "stall") {
-      // The progress socket dropped: no server bytes until it reconnects. Freeze
+      // The progress stream dropped: no server bytes until it reconnects. Freeze
       // surface recovery immediately instead of waiting for the silence watchdog.
       if (state.measuring) this.#setLaneStalled("up", true, msg.detail);
       return;
@@ -1331,28 +1460,41 @@ export class RealBackend implements RunnerBackend {
     if (delta > 0) {
       this.#setLaneStalled("up", false);
     }
+    if (msg.type === "complete") this.#progressDone?.();
   }
 
-  /** Stop the /ws/upload worker: it sends BYE (the server's authoritative
-   *  finalizer) then closes; we terminate after a grace so BYE + UPLOAD_COMPLETE
-   *  can flush. The client headline was already set from the last reported rate,
-   *  so we never block on it. Idempotent. */
-  #teardownProgress(): void {
+  /** Stop the progress worker after the POST lanes. It explicitly finalizes the
+   *  session with DELETE and lets the stream receive the terminal complete record. */
+  #teardownProgress(finalize: boolean): Promise<void> {
+    this.#progressReady?.finish(false);
+    this.#progressReady = null;
     const w = this.#progressWorker;
     this.#progressWorker = null;
-    if (!w) return;
-    w.postMessage({ type: "stop" });
-    setTimeout(() => w.terminate(), PROGRESS_BYE_GRACE_MS);
+    if (!w) return Promise.resolve();
+    const worker = w;
+    if (!finalize) {
+      worker.terminate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(done, PROGRESS_BYE_GRACE_MS);
+      const self = this;
+      function done(): void {
+        clearTimeout(timer);
+        if (self.#progressDone === done) self.#progressDone = null;
+        worker.terminate();
+        resolve();
+      }
+      this.#progressDone = done;
+      worker.postMessage({ type: "stop" });
+    });
   }
 
-  /** Stop + terminate every direction's worker pool, aggregation timer, and any
-   *  pending lane-restart backoffs. Idempotent. */
-  #teardownTransfer(): void {
+  #stopTransferWorkers(): void {
     // Preserve the partial download cadence window at the stage boundary.
     const down = this.#lanes.down;
     if (down?.measuring && down.clientAggregation)
       this.#aggregateDownload(down, down.clientAggregation);
-    this.#transferActive = false;
     for (const state of Object.values(this.#lanes)) {
       if (!state) continue;
       const timer = state.clientAggregation?.timer;
@@ -1364,9 +1506,23 @@ export class RealBackend implements RunnerBackend {
         w.terminate();
       }
     }
+  }
+
+  /** Stop every POST lane, wait for the server's terminal upload count, then
+   *  release the stage state. */
+  async #teardownTransfer(): Promise<void> {
+    this.#stopTransferWorkers();
     // Stop the progress worker AFTER the POST lanes — BYE must follow the lanes
     // ending so the server's final count includes everything they drained.
-    this.#teardownProgress();
+    await this.#teardownProgress(true);
+    this.#transferActive = false;
+    this.#lanes = {};
+  }
+
+  #discardTransfer(): void {
+    this.#stopTransferWorkers();
+    void this.#teardownProgress(false);
+    this.#transferActive = false;
     this.#lanes = {};
   }
 
@@ -1400,7 +1556,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   #closeAll(): void {
-    this.#teardownTransfer();
+    this.#discardTransfer();
     this.#teardownLatency();
     this.#stalled = false;
     if (this.#abort) {

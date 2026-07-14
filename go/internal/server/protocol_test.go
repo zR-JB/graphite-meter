@@ -1,0 +1,196 @@
+package server
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"io"
+	"net"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/quic-go/quic-go/http3"
+	// webtransport "github.com/quic-go/webtransport-go" // Stage 5 coverage.
+	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
+)
+
+func protocolTestTLS(t *testing.T) (*config.Config, *certificateManager) {
+	t.Helper()
+	now := time.Now()
+	cert, key := writeCertificate(t, t.TempDir(), "server", "meter.example", now.Add(-time.Hour), now.Add(time.Hour))
+	cfg := config.Default()
+	cfg.TLSCert, cfg.TLSKey = cert, key
+	cm, err := newCertificateManager(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &cfg, cm
+}
+
+func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
+	cfg, cm := protocolTestTLS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e, err := buildEndpoints(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &http.Protocols{}
+	p.SetHTTP1(true)
+	srv := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go serve(tls.NewListener(ln, cm.tlsConfig("http/1.1")), srv)
+	defer srv.Close()
+	cp := &http.Protocols{}
+	cp.SetHTTP1(true)
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: cp} //nolint:gosec
+	defer tr.CloseIdleConnections()
+	hc := &http.Client{Transport: tr}
+	base := "https://" + ln.Addr().String()
+	for _, path := range []string{"/preflight"} {
+		res, err := hc.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d", path, res.StatusCode)
+		}
+	}
+	res, err := hc.Get(base + "/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe wire.Probe
+	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if probe.ProtocolNegotiated != "http/1.1" {
+		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+	}
+	res, err = hc.Get(base + "/download?bytes=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if len(body) != 1 {
+		t.Fatalf("download bytes = %d", len(body))
+	}
+}
+
+func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
+	cfg, cm := protocolTestTLS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e, err := buildEndpoints(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &http.Protocols{}
+	p.SetHTTP2(true)
+	srv := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go serve(tls.NewListener(ln, cm.tlsConfig("h2")), srv)
+	defer srv.Close()
+	cp := &http.Protocols{}
+	cp.SetHTTP2(true)
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: cp} //nolint:gosec
+	defer tr.CloseIdleConnections()
+	hc := &http.Client{Transport: tr}
+	base := "https://" + ln.Addr().String()
+	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
+		res, err := hc.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, res.StatusCode)
+		}
+	}
+	res, err := hc.Get(base + "/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe wire.Probe
+	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if probe.ProtocolNegotiated != "h2" {
+		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+	}
+	res, err = hc.Get(base + "/download?bytes=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if len(body) != 1 {
+		t.Fatalf("download bytes = %d", len(body))
+	}
+}
+
+func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
+	cfg, cm := protocolTestTLS(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e, err := buildEndpoints(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+	// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with WebTransport routes.
+	go h3.Serve(pc)
+	defer func() { _ = h3.Close(); _ = pc.Close() }()
+	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
+	defer tr.Close()
+	hc := &http.Client{Transport: tr}
+	base := "https://" + pc.LocalAddr().String()
+	res, err := hc.Get(base + "/probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe wire.Probe
+	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if probe.ProtocolNegotiated != "h3" {
+		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+	}
+	res, err = hc.Get(base + "/download?bytes=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if len(body) != 1 {
+		t.Fatalf("download bytes = %d", len(body))
+	}
+}
+
+func TestHTTP3StartsAtMinimumPacketSize(t *testing.T) {
+	cfg := transport.NewQUICConfig()
+	if cfg.InitialPacketSize != 1200 {
+		t.Fatalf("initial packet size = %d, want 1200", cfg.InitialPacketSize)
+	}
+	if cfg.DisablePathMTUDiscovery {
+		t.Fatal("path MTU discovery is disabled")
+	}
+}

@@ -7,42 +7,97 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
+
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	cfg = cfg.normalized()
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     false,
-		MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
-		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
-		MaxConnsPerHost:       0,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
-		ExpectContinueTimeout: cfg.ExpectContinueTimeout,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
-		// 256 KiB socket buffers (vs the 4 KiB default) so a saturated link moves
-		// each direction in large reads/writes instead of thousands of tiny
-		// syscalls — the upload write side felt this most (see uploadLane).
-		WriteBufferSize: 256 * 1024,
-		ReadBufferSize:  256 * 1024,
+	baseTransport := func() *http.Transport {
+		return &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:     false,
+			MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
+			MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+			MaxConnsPerHost:       0,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
+			ExpectContinueTimeout: cfg.ExpectContinueTimeout,
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
+			// 256 KiB socket buffers (vs the 4 KiB default) so a saturated link moves
+			// each direction in large reads/writes instead of thousands of tiny
+			// syscalls — the upload write side felt this most (see uploadLane).
+			WriteBufferSize: 256 * 1024,
+			ReadBufferSize:  256 * 1024,
+		}
 	}
-	defer tr.CloseIdleConnections()
-	hc := &http.Client{Transport: tr}
+	discoveryTransport := baseTransport()
+	defer discoveryTransport.CloseIdleConnections()
+	discoveryClient := &http.Client{Transport: discoveryTransport}
 
-	pf, err := getPreflight(ctx, hc, cfg.BaseURL)
+	pf, err := getPreflight(ctx, discoveryClient, cfg.BaseURL)
 	if err != nil {
 		emit(Event{Kind: EventError, At: time.Now(), Err: err})
 		return err
 	}
-	emit(Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf})
+	target, err := selectTarget(cfg, pf)
+	if err != nil {
+		emit(Event{Kind: EventError, At: time.Now(), Err: err})
+		return err
+	}
+	transfer, closeTransfer := protocolClient(cfg, target.Protocol, baseTransport)
+	defer closeTransfer()
+	probe, err := getProbe(ctx, transfer, target)
+	if err != nil {
+		emit(Event{Kind: EventError, At: time.Now(), Err: err})
+		return err
+	}
+	wsTransport := baseTransport()
+	wsp := &http.Protocols{}
+	wsp.SetHTTP1(true)
+	wsTransport.Protocols = wsp
+	defer wsTransport.CloseIdleConnections()
+	wsClient := &http.Client{Transport: wsTransport}
+	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
+	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
+	if latencyErr != nil && needsLatency {
+		return latencyErr
+	}
+	var latencyProbe *wire.Probe
+	if !needsLatency {
+		latencyTarget = nil
+	} else if latencyTarget != nil {
+		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)
+		if err != nil {
+			if needsLatency {
+				return err
+			}
+			latencyTarget = nil
+		} else {
+			latencyProbe = &p
+		}
+	}
+	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: targetProtocolEvidence(target.Protocol)}
+	if latencyTarget != nil {
+		event.LatencyTarget = latencyTarget.ID
+		event.LatencyProtocol = latencyProbe.ProtocolNegotiated
+	}
+	emit(event)
 
-	r := runner{cfg: cfg, http: hc, preflight: pf, emit: emit}
+	r := runner{
+		cfg: cfg, streams: cfg.TransferStreams.Resolve(target.Protocol),
+		http: transfer, websocketHTTP: wsClient,
+		target: target, latencyTarget: latencyTarget,
+		preflight: pf, probe: probe, emit: emit,
+	}
 	if cfg.Stages.Latency {
 		if err := r.runLatencyStage(ctx, "latency", false, cfg.LatencyDuration); err != nil {
 			return r.fail(err)
@@ -68,10 +123,15 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 }
 
 type runner struct {
-	cfg       Config
-	http      *http.Client
-	preflight wire.Preflight
-	emit      func(Event)
+	cfg           Config
+	streams       int
+	http          *http.Client
+	websocketHTTP *http.Client
+	target        *wire.ThroughputTarget
+	latencyTarget *wire.LatencyTarget
+	preflight     wire.Preflight
+	probe         wire.Probe
+	emit          func(Event)
 	// Idle RTT captured from the latency stage; used to stretch later stages'
 	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
 	idleRTT time.Duration
@@ -101,10 +161,10 @@ func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 // up to 128) spawns within half the warmup window — laneStagger is only the cap.
 // 0 ⇒ one lane or no warmup ⇒ spawn together.
 func (r *runner) laneStaggerStep() time.Duration {
-	if r.cfg.ParallelStreams <= 1 {
+	if r.streams <= 1 {
 		return 0
 	}
-	step := adaptiveWarmup(r.cfg.Warmup, r.idleRTT) / 2 / time.Duration(r.cfg.ParallelStreams-1)
+	step := adaptiveWarmup(r.cfg.Warmup, r.idleRTT) / 2 / time.Duration(r.streams-1)
 	if step > laneStagger {
 		step = laneStagger
 	}
@@ -257,5 +317,94 @@ func (r *runner) endpoint(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("empty endpoint path")
 	}
-	return httpEndpoint(r.cfg.BaseURL, path)
+	base := r.cfg.BaseURL
+	if r.target != nil {
+		base = r.target.Origin
+	}
+	return httpEndpoint(base, path)
+}
+
+func (r *runner) routes() wire.ThroughputRoutes {
+	if r.target != nil {
+		return r.target.Routes
+	}
+	return wire.DefaultThroughputRoutes()
+}
+
+func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
+	selection := cfg.ThroughputTarget
+	if selection == "auto" {
+		base, err := url.Parse(cfg.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		for i := range pf.Capabilities.ThroughputTargets {
+			t := &pf.Capabilities.ThroughputTargets[i]
+			if t.Transport != "fetch-stream" {
+				continue
+			}
+			u, _ := url.Parse(t.Origin)
+			if u.Scheme == base.Scheme && u.Host == base.Host {
+				return t, nil
+			}
+		}
+		for i := range pf.Capabilities.ThroughputTargets {
+			t := &pf.Capabilities.ThroughputTargets[i]
+			if t.Transport == "fetch-stream" {
+				return t, nil
+			}
+		}
+	}
+	for i := range pf.Capabilities.ThroughputTargets {
+		t := &pf.Capabilities.ThroughputTargets[i]
+		if t.Transport == "fetch-stream" && (t.ID == selection || (selection == "http1" && t.Protocol == "http1")) {
+			return t, nil
+		}
+	}
+	return nil, fmt.Errorf("%s target unavailable", selection)
+}
+
+func targetProtocolEvidence(protocol string) string {
+	switch protocol {
+	case "http1":
+		return "http/1.1"
+	case "http2":
+		return "h2"
+	case "http3":
+		return "h3"
+	default:
+		return protocol
+	}
+}
+
+func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (*wire.LatencyTarget, error) {
+	wantsTLS := strings.HasPrefix(base, "https://")
+	for i := range targets {
+		t := &targets[i]
+		if t.Transport != "websocket" || t.Protocol != "http1" {
+			continue
+		}
+		if selection != "auto" && t.ID == selection {
+			return t, nil
+		}
+		if selection == "auto" && t.TLS == wantsTLS {
+			return t, nil
+		}
+	}
+	return nil, fmt.Errorf("latency target %q unavailable", selection)
+}
+
+func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {
+	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify} //nolint:gosec
+	if protocol == "http3" {
+		tr := &http3.Transport{TLSClientConfig: tlsConfig, QUICConfig: transport.NewQUICConfig()}
+		return &http.Client{Transport: tr}, func() { _ = tr.Close() }
+	}
+	tr := makeHTTP()
+	tr.TLSClientConfig = tlsConfig
+	p := &http.Protocols{}
+	p.SetHTTP1(protocol == "http1")
+	p.SetHTTP2(protocol == "http2")
+	tr.Protocols = p
+	return &http.Client{Transport: tr}, tr.CloseIdleConnections
 }

@@ -1,16 +1,22 @@
 // Shared runner contract: phases, config, events, result shapes, and backend
 // interfaces used by both the UI and measurement engines.
 
+import type {
+  FetchThroughputTarget,
+  WebSocketLatencyTarget,
+} from "../api/preflight";
+
 /* ---------- Lifecycle ---------- */
 /* Phase sequence: every enabled stage is preceded by its own self-contained
  * `warmup` window, e.g. all stages on →
- *   idle → warmup → latency → warmup → download → warmup → upload → warmup → complete
+ *   idle → connecting → warmup → latency → warmup → download → warmup → upload → complete
  * A warmup is omitted when its stage is off or `duration.warmupMs <= 0`. There
  * is no standalone global warmup: each warmup primes only the stage that
  * follows it, so stages carry no cross-dependencies. See the warmup-contract
  * note below `RunnerConfig`. */
 export type Phase =
   | "idle"
+  | "connecting"
   | "warmup"
   | "latency"
   | "download"
@@ -24,6 +30,9 @@ export type Phase =
  *  so the core never infers direction from the phase — that lets a single
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
+export type ProtocolTarget = "http1" | "http2" | "http3";
+/** Advertised transfer target id; "current" resolves from the discovery hop. */
+export type ThroughputTargetSelection = string;
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by
@@ -113,6 +122,12 @@ export interface StabilitySnapshot {
   sampleCount: number; // usable samples in the confidence window
 }
 
+export interface TransferStreamPolicy {
+  mode: "auto" | "forced";
+  /** H1 per-direction ceiling in auto mode; exact count in forced mode. */
+  count: number;
+}
+
 /* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
   /** Enabled measured stages. `bidirectional` (concurrent down+up) defaults
@@ -137,11 +152,15 @@ export interface RunnerConfig {
     bidirectionalMs: number;
   };
   pingConcurrency: "instant" | "medium" | "slow"; // → interval map
-  parallelStreams: number; // advanced ceiling on derived per-phase lanes (1–6)
+  transferStreams: TransferStreamPolicy;
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
-  endpoint: { host: string; port: number };
+  /** Independently selected throughput and latency targets. */
+  transports: {
+    throughputTarget: ThroughputTargetSelection;
+    latencyTarget: "auto" | string;
+  };
   /** Wire-rate estimation. */
   compensation: OverheadCompensationConfig;
   /** Confidence-based early exit. */
@@ -351,17 +370,46 @@ export interface InfraInfo {
   clientIp: string;
   clientIpVersion: 4 | 6;
   clientIpSource: "socket" | "forwarded";
+  /** Independent H1/WebSocket latency path; it may select another address family. */
+  latencyClientIp?: string;
+  latencyClientIpVersion?: 4 | 6;
+  latencyClientIpSource?: "socket" | "forwarded";
   server: { name: string; host: string; port: number; location?: string };
   preTestPingMs: number;
   engineVersion: string;
   protocolNegotiated: string;
+  selectedThroughputTarget?: string;
+  selectedThroughputProtocol?: ProtocolTarget;
+  selectedLatencyTarget?: string;
+  selectedLatencyTransport?: TransportKind;
+  verifiedLatencyProtocol?: string;
+  latencyProtocolNegotiated?: string;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;
 }
 
+export type TransportDiscoveryState =
+  "advertised" | "browser-blocked" | "not-advertised";
+
+export interface DiscoveredTarget<T> {
+  state: TransportDiscoveryState;
+  target?: T;
+}
+
+/** Server-advertised transports classified against the page that will use
+ * them. Emitted as soon as /preflight completes, before selection or probing. */
+export interface TransportDiscovery {
+  pageOrigin: string;
+  pageSecure: boolean;
+  pageProtocol?: string;
+  throughput: Record<string, DiscoveredTarget<FetchThroughputTarget>>;
+  latency: Record<string, DiscoveredTarget<WebSocketLatencyTarget>>;
+}
+
 /* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
+  | { type: "transportDiscovery"; discovery: TransportDiscovery }
   | { type: "infra"; info: InfraInfo }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
@@ -425,10 +473,12 @@ export type RunnerAnomaly =
 
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
-  start(config: RunnerConfig): void;
+  /** Verify the selected target, then run. Emits `connecting` immediately so
+   *  asynchronous path verification is visible and cancellable. */
+  start(config: RunnerConfig): Promise<void>;
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
-  probe(endpoint: RunnerConfig["endpoint"]): Promise<InfraInfo>;
+  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (no I/O). */
   describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
@@ -447,7 +497,8 @@ export interface NetworkRunner {
  *  Connections are owned by the STAGE, not by the phase label. The core drives a
  *  three-call lifecycle per enabled stage (see `RunnerBackend` in core.ts), each
  *  call carrying the stage's resolved {@link PhaseActivity}:
- *    onStageBegin(activity)   — open + PRIME every connection the activity names
+ *    onStageBegin(activity)   — open + PRIME every connection the activity names;
+ *                               asynchronous preparation pauses the stage clock
  *                               (the `transfer` lanes, plus the ping channel when
  *                               `loadedLatency` or a latency stage). Fires at the
  *                               start of the stage's warmup window. No measuring.
@@ -456,8 +507,10 @@ export interface NetworkRunner {
  *                               immediately after onStageBegin when warmupMs<=0.
  *    onStageEnd(activity)     — the measured window ended (boundary, early finish,
  *                               or run end); close the stage's connection(s).
- *  Because begin/measure/end bracket ONE connection set, the warmup genuinely
- *  warms the wire the measurement runs over — there is no cold reconnect at the
+ *  The configured warmup begins only after asynchronous preparation resolves,
+ *  so it remains a minimum wire-warming interval rather than a deadline that
+ *  setup can consume. Because begin/measure/end bracket ONE connection set, the
+ *  warmup genuinely warms the wire the measurement runs over — there is no cold reconnect at the
  *  warmup→measure seam (the point of a warmup). Each enabled stage is
  *  still preceded by exactly one `"warmup"` window of `duration.warmupMs`
  *  (omitted when <= 0), emitted to the UI as the generic `"warmup"` phase; the

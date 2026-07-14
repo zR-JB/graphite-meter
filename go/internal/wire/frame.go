@@ -11,15 +11,9 @@ import (
 type Frame struct {
 	Op string // one of the Op* keyword constants (opcodes.go)
 	ID uint32 // PING / PONG — client-owned monotonic id, echoed verbatim
-	// Nanos is the TIME sub-field; meaning depends on Op:
-	//   • PONG: server's raw monotonic clock (ns), for the RTT echo.
-	//   • BYTES_RECEIVED / UPLOAD_COMPLETE: server elapsed time since this id's
-	//     first received byte, sampled alongside N. Clients baseline it when the
-	//     measured window begins, so warmup is excluded while measured stalls and
-	//     reconnects correctly reduce Δn/Δnanos.
+	// Nanos is PONG's server monotonic timestamp for diagnostics/skew only.
 	Nanos uint64
 	Bytes uint64 // SIZE — requested byte count
-	N     uint64 // BYTES_RECEIVED / UPLOAD_COMPLETE — server-measured byte total
 	Proto string // HI — "ws" | "wt"
 	Code  string // ERR — short error token
 	Text  string // ERR — human detail
@@ -98,20 +92,6 @@ func Decode(msg string) (Frame, error) {
 		}
 		return Frame{Op: OpHI, Proto: rest}, nil
 
-	case OpBytesReceived:
-		n, nanos, err := parseCountTime(rest, "BYTES_RECEIVED")
-		if err != nil {
-			return Frame{}, err
-		}
-		return Frame{Op: OpBytesReceived, N: n, Nanos: nanos}, nil
-
-	case OpUploadComplete:
-		n, nanos, err := parseCountTime(rest, "UPLOAD_COMPLETE")
-		if err != nil {
-			return Frame{}, err
-		}
-		return Frame{Op: OpUploadComplete, N: n, Nanos: nanos}, nil
-
 	case OpERR:
 		code, text := cut(rest, ',')
 		if code == "" {
@@ -139,33 +119,11 @@ func Encode(f Frame) string {
 		return OpSIZE + "," + u64(f.Bytes)
 	case OpHI:
 		return OpHI + "," + f.Proto
-	case OpBytesReceived:
-		return OpBytesReceived + "," + u64(f.N) + ";" + timeField + "," + u64(f.Nanos)
-	case OpUploadComplete:
-		return OpUploadComplete + "," + u64(f.N) + ";" + timeField + "," + u64(f.Nanos)
 	case OpERR:
 		return OpERR + "," + f.Code + "," + f.Text
 	default:
 		return ""
 	}
-}
-
-// parseCountTime parses the "<n>;TIME,<nanos>" body shared by BYTES_RECEIVED and
-// UPLOAD_COMPLETE (see Frame.Nanos for what the TIME value measures). op names
-// the frame for the error token.
-func parseCountTime(rest, op string) (n, nanos uint64, err error) {
-	nStr, tail := cut(rest, ';')
-	if n, ok := parseU64(nStr); ok {
-		key, nanosStr := cut(tail, ',')
-		if key != timeField {
-			return 0, 0, badArgs(op + " TIME")
-		}
-		if nanos, ok := parseU64(nanosStr); ok {
-			return n, nanos, nil
-		}
-		return 0, 0, badArgs(op + " nanos")
-	}
-	return 0, 0, badArgs(op + " n")
 }
 
 // cut splits s at the first occurrence of sep into (before, after). When sep is

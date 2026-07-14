@@ -40,9 +40,9 @@ const BASE_CONFIG: RunnerConfig = {
     bidirectionalMs: 10000,
   },
   pingConcurrency: "instant",
-  parallelStreams: 6,
+  transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
-  endpoint: { host: "auto", port: 443 },
+  transports: { throughputTarget: "current", latencyTarget: "auto" },
   compensation: {
     profile: "lan",
     transport: "auto",
@@ -602,7 +602,7 @@ test("a live anomaly is pruned once elapsed passes its window end", () => {
 
 test("probe: emits pre-test idle pings and reports the profile's idle RTT + protocol", async () => {
   const { backend, host } = makeBackend({ profile: "satellite", seed: 1 });
-  const info = await backend.probe({ host: "auto", port: 443 });
+  const info = await backend.probe(BASE_CONFIG);
 
   expect(info.preTestPingMs).toBeCloseTo(600, -1); // satellite idleRttMs
   expect(info.protocolNegotiated).toBe("h3 (QUIC)"); // satellite-only branch
@@ -617,14 +617,6 @@ test("probe: emits pre-test idle pings and reports the profile's idle RTT + prot
     expect(p.sample.t).toBeLessThan(0); // pre-test pings carry negative t
     expect(p.sample.underLoad).toBe(false);
   }
-}, 2000);
-
-test("probe: a non-auto host passes through unchanged", async () => {
-  const { backend } = makeBackend({ profile: "fiber", seed: 1 });
-  const info = await backend.probe({ host: "example.test", port: 1234 });
-  expect(info.server.host).toBe("example.test");
-  expect(info.server.port).toBe(1234);
-  expect(info.protocolNegotiated).toBe("webtransport/h3"); // non-satellite branch
 }, 2000);
 
 /* ================= describe() ================= */

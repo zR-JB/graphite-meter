@@ -1,6 +1,9 @@
 package goclient
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type StageSet struct {
 	Latency       bool
@@ -9,15 +12,58 @@ type StageSet struct {
 	Bidirectional bool
 }
 
+type TransferStreamPolicy struct {
+	AutomaticMax int
+	// Forced is exact per active direction. Zero selects automatic.
+	Forced int
+}
+
+const (
+	defaultAutomaticStreams = 6
+	defaultH3Streams        = 3
+	maxTransferStreams      = 128
+)
+
+func (p TransferStreamPolicy) Resolve(protocol string) int {
+	if p.Forced > 0 {
+		return p.Forced
+	}
+	if protocol == "http3" {
+		return defaultH3Streams
+	}
+	if protocol == "http2" {
+		return 1
+	}
+	return p.AutomaticMax
+}
+
+func (p TransferStreamPolicy) Label(protocol string) string {
+	if p.Forced > 0 {
+		return fmt.Sprintf("Forced · %d per direction", p.Forced)
+	}
+	if protocol == "http3" {
+		return fmt.Sprintf("Automatic · %d per direction", defaultH3Streams)
+	}
+	if protocol == "http2" {
+		return "Automatic · 1 per direction"
+	}
+	if protocol == "http1" || protocol == "http1-clear" || protocol == "http1-tls" {
+		return fmt.Sprintf("Automatic · up to %d per direction", p.AutomaticMax)
+	}
+	return "Automatic"
+}
+
 type Config struct {
 	BaseURL                string
+	ThroughputTarget       string
+	LatencyTarget          string
 	Stages                 StageSet
 	Warmup                 time.Duration
 	LatencyDuration        time.Duration
 	DownloadDuration       time.Duration
 	UploadDuration         time.Duration
 	BidirectionalDuration  time.Duration
-	ParallelStreams        int
+	TransferStreams        TransferStreamPolicy
 	PingInterval           time.Duration
 	LoadedLatency          bool
 	DownloadBytesPerStream int64
@@ -30,14 +76,16 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		BaseURL:                "http://127.0.0.1:8765",
+		BaseURL:                "http://127.0.0.1:7246",
+		ThroughputTarget:       "auto",
+		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
 		LatencyDuration:        4 * time.Second,
 		DownloadDuration:       10 * time.Second,
 		UploadDuration:         10 * time.Second,
 		BidirectionalDuration:  10 * time.Second,
-		ParallelStreams:        4,
+		TransferStreams:        TransferStreamPolicy{AutomaticMax: defaultAutomaticStreams},
 		PingInterval:           250 * time.Millisecond,
 		LoadedLatency:          true,
 		DownloadBytesPerStream: 64 * 1024 * 1024 * 1024,
@@ -50,7 +98,13 @@ func DefaultConfig() Config {
 
 func (c Config) normalized() Config {
 	if c.BaseURL == "" {
-		c.BaseURL = "http://127.0.0.1:8765"
+		c.BaseURL = "http://127.0.0.1:7246"
+	}
+	if c.ThroughputTarget == "" {
+		c.ThroughputTarget = "auto"
+	}
+	if c.LatencyTarget == "" {
+		c.LatencyTarget = "auto"
 	}
 	if c.Warmup < 0 {
 		c.Warmup = 0
@@ -67,11 +121,17 @@ func (c Config) normalized() Config {
 	if c.BidirectionalDuration <= 0 {
 		c.BidirectionalDuration = 10 * time.Second
 	}
-	if c.ParallelStreams < 1 {
-		c.ParallelStreams = 1
+	if c.TransferStreams.Forced < 0 {
+		c.TransferStreams.Forced = 0
 	}
-	if c.ParallelStreams > 128 {
-		c.ParallelStreams = 128
+	if c.TransferStreams.AutomaticMax < 1 {
+		c.TransferStreams.AutomaticMax = defaultAutomaticStreams
+	}
+	if c.TransferStreams.AutomaticMax > maxTransferStreams {
+		c.TransferStreams.AutomaticMax = maxTransferStreams
+	}
+	if c.TransferStreams.Forced > maxTransferStreams {
+		c.TransferStreams.Forced = maxTransferStreams
 	}
 	if c.PingInterval <= 0 {
 		c.PingInterval = 250 * time.Millisecond

@@ -1,14 +1,16 @@
 # Graphite Meter — Message-Bus Wire Protocol (normative)
 
-This spec governs the **message-based channels only**: the WebSocket latency bus (`/ws/ping`),
-WebTransport datagrams (`/wt/ping`), and the `SIZE` control on `/wt/download`. The plain
-request/response HTTP endpoints (`/preflight`, `/download`, `/upload`) are **not** covered here — they
-use normal HTTP (query params, status codes, streaming bodies).
+This spec governs the **message-based channels only**. The WebSocket latency bus (`/ws/ping`)
+implements it. WebTransport datagrams (`/wt/ping`) and the `SIZE` control for `/wt/download` are
+reserved contract entries; no WebTransport route is mounted or advertised. The plain
+request/response HTTP endpoints (`/preflight`, `/probe`, `/download`, `/upload/session`, `/upload`,
+`/upload/progress`) are **not** covered here — they use normal HTTP (query params, status codes,
+streaming bodies).
 
-It is frozen before implementation. Every Go / TS / (future) Rust encoder and decoder MUST agree with
-the shared conformance corpus `api/wire.testvectors.txt`. The opcode keywords are additionally pinned
-as a shared constant table in each language (`go/internal/wire/opcodes.go`,
-`client/src/lib/runner/real/wire.ts`).
+The Go and TypeScript implementations MUST agree with the shared conformance corpus
+`api/wire.testvectors.txt`; the Rust rewrite must preserve the same contract. The opcode keywords
+are additionally pinned as a shared constant table in each implemented language
+(`go/internal/wire/opcodes.go`, `client/src/lib/runner/real/wire.ts`).
 
 ## Framing
 
@@ -28,8 +30,6 @@ as a shared constant table in each language (`go/internal/wire/opcodes.go`,
 | C→S | `PING,<id>` | ws, wt-dgram | Latency probe. `<id>` = client-owned monotonic **uint32** counter (see Ids). |
 | S→C | `PONG,<id>;TIME,<nanos>` | ws, wt-dgram | Echo. `<id>` copied **verbatim**. `<nanos>` = server monotonic clock (uint64 ns) at receive — **diagnostics/skew only**. RTT is measured purely client-side as `recv − send` using the client's own clock. |
 | C→S | `SIZE,<bytes>` | wt (download) | Request `<bytes>` (uint64) on the next opened uni-stream. The WebTransport analogue of `GET /download?bytes=N`. |
-| S→C | `BYTES_RECEIVED,<n>;TIME,<nanos>` | ws/wt (upload) | Server-measured running byte count. `<n>` is the cumulative drained total; `<nanos>` is monotonic elapsed time since the first byte received for this upload id, sampled alongside `<n>`. Clients baseline both values when measurement begins, excluding warmup while retaining measured stalls, reconnects and request turnaround in `Δn / Δnanos`. This server clock avoids client event-loop and frame-arrival jitter. |
-| S→C | `UPLOAD_COMPLETE,<n>;TIME,<nanos>` | ws/wt (upload) | Final server-measured byte total with the final elapsed time. Same `;TIME` semantics as `BYTES_RECEIVED`. |
 | C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
 | S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
 
@@ -47,15 +47,15 @@ as a shared constant table in each language (`go/internal/wire/opcodes.go`,
 - On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>` it computes
   `rtt = now() − pending[id]`, deletes the entry, and immediately sends the next `PING` (the
   on-receive→send-next chain).
-- **Loss** is detected only on the **unreliable** WT-datagram bus (TCP/WebSocket retransmit, hiding
-  loss): a ping still pending after `lossTimeoutMs = max(3 × p95RTT, 50ms)` is reported lost and removed.
-- A small **in-flight window** (1–4 pings) keeps a single dropped datagram from deadlocking the chain;
-  an interval pacer is the floor and the on-receive fast-send is the no-loss fast path.
+- A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
+  not physical packet loss because TCP retransmits. The reserved unreliable WT-datagram channel is
+  the contract shape that can expose datagram loss directly.
+- A small **in-flight window** (1–4 pings) keeps one delayed or missing response from deadlocking
+  the chain; an interval pacer is the floor and the on-receive send is the responsive fast path.
 
 ## Why text, not binary
 
 The reference demos already sustain thousands of pings/sec at sub-ms latency; the cost is dominated by
 the network RTT and the WS/datagram syscall, not the ~8-byte ASCII parse. Text is debuggable in a
-packet capture and trivially cross-language. A binary fast-path can later hide behind the same `Frame`
-type in each language's `wire` module if profiling ever demands it, without changing this spec's
-semantics.
+packet capture and trivially cross-language. A binary fast-path can hide behind the same `Frame` type
+in each language's `wire` module if profiling demands it, without changing this spec's semantics.

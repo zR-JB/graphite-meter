@@ -10,14 +10,13 @@
 
 import type { NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
-import { adaptiveWarmupMs } from "./schedule";
 // NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
 // GM_CLIENT_ALLOW_DUMMY=0), Rollup deletes the branch, this import becomes
 // unused, and — because dummy.ts is side-effect-free — the whole module is
 // tree-shaken out. Keep dummy.ts free of top-level side effects or it'll stay.
 import { DummyBackend } from "./dummy";
-import { RealBackend } from "./RealRunner";
+import { RealBackend, TransportUnavailableError } from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
@@ -35,11 +34,8 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** Which sample source the app is wired to. `dummy` synthesizes samples (the
- *  default, so the app works with no server); `real` talks to the live Go
- *  backend. The real engine is built out stage by stage — Stage 1 implements
- *  only `probe()`, so a `real` run currently lights up the infra panel but
- *  cannot Engage yet. */
+/** Which sample source the app is wired to. `dummy` synthesizes samples for
+ *  development; `real` talks to the live Go backend. */
 type EngineKind = "dummy" | "real";
 
 const ENGINE_STORAGE_KEY = "gm.engine";
@@ -80,9 +76,7 @@ export function getRunner(): NetworkRunner {
     if (__GM_ALLOW_DUMMY__ && resolveEngine() === "dummy") {
       runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
     } else {
-      runner = new RunnerCore(
-        new RealBackend({ endpoint: store.config.endpoint }),
-      );
+      runner = new RunnerCore(new RealBackend());
     }
   }
   return runner;
@@ -94,13 +88,16 @@ export async function bootRunner() {
   store.engineInfo = r.describe();
   unsub = r.on((e) => store.ingest(e));
   try {
-    const info = await r.probe(store.config.endpoint);
+    const info = await r.probe(store.config);
     store.ingest({ type: "infra", info });
   } catch (cause) {
     store.ingest({
       type: "error",
       error: {
-        reason: "preflight-failed",
+        reason:
+          cause instanceof TransportUnavailableError
+            ? "transport-unavailable"
+            : "preflight-failed",
         message: "Probe failed",
         phase: "idle",
         cause,
@@ -115,36 +112,23 @@ export function engage() {
     return;
   }
   store.reset();
-  // Stretch warmup to the measured RTT so slow-start finishes before measuring
-  // (the user's configured warmup stays the floor). Mutates the throwaway snapshot
-  // only — the persisted setting is untouched.
   const cfg = $state.snapshot(store.config);
-  cfg.duration = {
-    ...cfg.duration,
-    warmupMs: adaptiveWarmupMs(
-      cfg.duration.warmupMs,
-      store.infra?.preTestPingMs ?? 0,
-    ),
-  };
-  if (store.infra) {
-    getRunner().start(cfg);
-    return;
-  }
-  // No successful preflight yet (server was down at boot?) — re-check the
-  // server's capabilities before running instead of failing every stage.
+  // start() enters a visible connecting phase immediately, then resolves the
+  // selected target before starting the measurement clock.
   getRunner()
-    .probe(cfg.endpoint)
-    .then((info) => {
-      store.ingest({ type: "infra", info });
-      getRunner().start(cfg);
-    })
+    .start(cfg)
     .catch((cause) => {
+      // An abort invalidates the pending start and resolves it without error.
+      if (store.phase === "aborted") return;
       store.ingest({
         type: "error",
         error: {
-          reason: "preflight-failed",
+          reason:
+            cause instanceof TransportUnavailableError
+              ? "transport-unavailable"
+              : "preflight-failed",
           message: "Couldn't reach the server",
-          phase: "idle",
+          phase: "connecting",
           cause,
         },
       });

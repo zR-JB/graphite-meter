@@ -17,7 +17,7 @@ import (
 // When the request carries a server-minted ?id=, each drained chunk is also added
 // to that test's shared per-id aggregate (across all its parallel POST lanes), so
 // the SERVER's drained count — not the browser's upload.onprogress — becomes the
-// authoritative upload result, read live by the /ws/upload progress bus. Without
+// authoritative upload result, read live by the /upload/progress progress bus. Without
 // an id it behaves exactly as before (client self-counts).
 type Upload struct {
 	meter *Meter       // optional verbose per-second logger; nil unless -verbose
@@ -81,15 +81,15 @@ func (u *Upload) Handle(s transport.Session) error {
 	}
 
 	// Resolve the test's shared aggregate from a server-minted ?id=; nil for an
-	// empty/unissued id or over the live cap, in which case this POST still
+	// empty/invalid id or over the live cap, in which case this POST still
 	// drains and counts, just not server-authoritatively. posts is a
 	// diagnostics gauge only — the TTL sweeper owns deletion.
 	var agg *uploadAgg
 	if u.store != nil {
 		if a, ok := u.store.getOrCreate(s.Query().Get("id")); ok {
 			agg = a
-			agg.posts.Add(1)
-			defer agg.posts.Add(-1)
+			agg.changePosts(1)
+			defer agg.changePosts(-1)
 		}
 	}
 

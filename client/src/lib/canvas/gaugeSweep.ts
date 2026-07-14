@@ -37,6 +37,7 @@ export function sweepTarget(s: SweepTargetInput): number {
       const scale = s.scaleBytesPerSec > 0 ? s.scaleBytesPerSec : 1;
       return clamp01(s.valueBytesPerSec / scale);
     }
+    case "connecting":
     case "warmup":
       return 0.3; // indeterminate — connection probe, no meaningful rate yet
     case "latency": {

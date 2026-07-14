@@ -5,6 +5,7 @@
   import { pointerIntent } from "../actions/pointerIntent";
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
+  import { describeTransferStreams } from "../runner/real/streamPolicy";
 
   const infra = $derived(store.infra);
   const engine = $derived(store.engineInfo);
@@ -25,9 +26,9 @@
       {
         title: "Client",
         rows: [
-          { label: "Address", value: i?.clientIp ?? "—" },
+          { label: "Throughput address", value: i?.clientIp ?? "—" },
           {
-            label: "Observed via",
+            label: "Throughput observed",
             value: i
               ? `IPv${i.clientIpVersion} · ${
                   i.clientIpSource === "forwarded"
@@ -35,6 +36,21 @@
                     : "Socket peer"
                 }`
               : "—",
+          },
+          {
+            label: "Latency address",
+            value: i?.latencyClientIp ?? "Not selected",
+          },
+          {
+            label: "Latency observed",
+            value:
+              i?.latencyClientIpVersion && i.latencyClientIpSource
+                ? `IPv${i.latencyClientIpVersion} · ${
+                    i.latencyClientIpSource === "forwarded"
+                      ? "Trusted proxy"
+                      : "Socket peer"
+                  }`
+                : "Not selected",
           },
           { label: "App version", value: BUILD.clientVersion },
         ],
@@ -53,15 +69,12 @@
         rows: [
           {
             label: "Node",
-            value: i?.server.name ?? store.config.endpoint.host,
+            value: i?.server.name ?? "—",
           },
           { label: "Location", value: i?.server.location ?? "—" },
           {
             label: "Endpoint",
-            value: endpointAddress(
-              i?.server.host ?? store.config.endpoint.host,
-              i?.server.port ?? store.config.endpoint.port,
-            ),
+            value: i ? endpointAddress(i.server.host, i.server.port) : "—",
           },
           { label: "Version", value: i?.engineVersion ?? "—" },
         ],
@@ -70,15 +83,45 @@
         title: "Connection",
         rows: [
           {
-            label: "Browser hop",
+            label: "Throughput target",
+            value: i?.selectedThroughputTarget ?? "Current origin",
+          },
+          {
+            label: "Throughput browser",
             value: i?.firstHopProtocol ?? "Scheme fallback",
           },
-          { label: "Backend hop", value: i?.protocolNegotiated ?? "—" },
-          { label: "Transfer", value: "HTTP streams" },
-          { label: "Latency", value: "WebSocket" },
+          {
+            label: "Throughput server",
+            value: i?.protocolNegotiated ?? "—",
+          },
+          {
+            label: "Transfer path",
+            value: `Fetch streams · ${i?.selectedThroughputProtocol ?? "—"}`,
+          },
+          {
+            label: "Latency target",
+            value: i?.selectedLatencyTarget
+              ? `${i.selectedLatencyTransport} · ${i.selectedLatencyTarget}`
+              : "Unavailable",
+          },
+          {
+            label: "Latency browser",
+            value: i?.verifiedLatencyProtocol ?? "Unavailable",
+          },
+          {
+            label: "Latency server",
+            value: i?.latencyProtocolNegotiated ?? "Unavailable",
+          },
+          {
+            label: "Upload progress",
+            value: "Selected throughput path · NDJSON",
+          },
           {
             label: "Streams",
-            value: `Automatic · up to ${store.config.parallelStreams}`,
+            value: describeTransferStreams(
+              store.config.transferStreams,
+              i?.selectedThroughputProtocol,
+            ),
           },
           {
             label: "Pre-test ping",

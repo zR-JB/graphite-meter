@@ -16,7 +16,7 @@
  *
  * ── fetch both ways; the asymmetry is the body, not the API ──
  * Both directions use `fetch` (see upload-worker.ts) — the upload needs no
- * progress events; the server's /ws/upload count is authoritative there.
+ * progress events; the server's /upload/progress count is authoritative there.
  * What still differs is which side streams:
  *   • Download = fetch + body.getReader(): the only way to read-and-DISCARD a
  *     streamed RESPONSE at O(1) memory. XHR buffers the whole response

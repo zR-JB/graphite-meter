@@ -7,7 +7,7 @@
  * gzip/br, so incompressibility holds) and
  * POSTs a zero-copy `pool.slice(0, n)` of it in a loop over plain HTTP/1.1 via
  * `fetch`. The SERVER drains + counts the bytes and relays the authoritative count
- * over /ws/upload (see upload-progress-worker.ts); this worker just keeps the lane
+ * over /upload/progress (see upload-progress-worker.ts); this worker just keeps the lane
  * saturated and is otherwise measurement-blind.
  *
  * ── Why the POST size adapts (dial-up → multi-Gbit in one tool) ──
@@ -35,9 +35,9 @@
  * browser/proxy send buffer — it can lag the wire but never lead it). So this
  * worker reports only lane liveness: one `{type:'alive'}` per completed POST
  * (proving the lane recovered, for the restart logic) and `{type:'error'}` on a
- * failed POST. It NEVER reports bytes — the /ws/upload count is the sole source.
+ * failed POST. It NEVER reports bytes — the /upload/progress count is the sole source.
  * The 100 ms server frames carry the authoritative byte/time snapshots; a
- * dropped progress socket reconnects without removing that gap from the result.
+ * dropped progress stream reconnects without removing that gap from the result.
  *
  * ── Why fetch here mirrors download-worker.ts ──
  * Download = fetch + body.getReader(): read-and-DISCARD a streamed RESPONSE at
@@ -81,7 +81,7 @@ type InMsg =
     }
   | { type: "stop" };
 /** `alive` = one POST drained by the server (lane is live; NO byte count — the
- *  /ws/upload socket carries the authoritative count). `error` drives lane restart. */
+ *  /upload/progress stream carries the authoritative count). `error` drives lane restart. */
 type OutMsg =
   { type: "alive" } | { type: "error"; recoverable: boolean; detail: string };
 
@@ -274,7 +274,7 @@ async function run(url: string): Promise<void> {
         return; // RealBackend decides whether to restart this lane
       }
       // One full slice was drained by the server: the lane is alive. NO bytes — the
-      // /ws/upload count is authoritative; this only resets the restart counter.
+      // /upload/progress count is authoritative; this only resets the restart counter.
       post({ type: "alive" });
       ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
         sentBytes,

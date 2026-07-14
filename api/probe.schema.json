@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://graphite-meter/api/probe.schema.json",
+  "title": "Probe",
+  "description": "Connection-specific evidence returned by GET /probe on a selected target.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["clientIp", "clientIpVersion", "clientIpSource", "protocolNegotiated"],
+  "properties": {
+    "clientIp": { "type": "string" },
+    "clientIpVersion": { "type": "integer", "enum": [4, 6] },
+    "clientIpSource": { "type": "string", "enum": ["socket", "forwarded"] },
+    "protocolNegotiated": { "type": "string", "enum": ["http/1.1", "h2", "h3"] }
+  }
+}

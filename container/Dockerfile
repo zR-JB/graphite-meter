@@ -75,8 +75,9 @@ RUN CGO_ENABLED=0 go build \
 # ---------------------------------------------------------------------------
 FROM scratch
 COPY --from=server /graphite-meter /graphite-meter
-# HTTP/1.1 (default). TLS + HTTP/3 (WebTransport) land in Stage 5:
-EXPOSE 8765/tcp
-# EXPOSE 8443/tcp
-# EXPOSE 8443/udp
+EXPOSE 7246/tcp
+EXPOSE 7247/tcp
+EXPOSE 7248/tcp
+EXPOSE 7249/tcp
+EXPOSE 7249/udp
 ENTRYPOINT ["/graphite-meter"]

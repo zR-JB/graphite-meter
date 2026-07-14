@@ -14,6 +14,9 @@ Two ways to run it:
   `Image=graphite-meter.build`, so a start builds first, then runs. Requires
   **Podman 5.0+** (`.build` unit support).
 
+For an isolated server using the published image and reachable only through its
+own Tailscale identity, see [`tailscale-sidecar/`](./tailscale-sidecar/).
+
 ## Default: run the published image
 
 ```sh
@@ -25,7 +28,7 @@ systemctl --user daemon-reload
 systemctl --user start graphite-meter.service
 ```
 
-Then open <http://localhost:8765>.
+Then open <http://localhost:7246>.
 
 **Rootful:** copy to `/etc/containers/systemd/`, then
 `sudo systemctl daemon-reload && sudo systemctl start graphite-meter.service`.

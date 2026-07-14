@@ -10,56 +10,122 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
-// stubEndpoint is a minimal endpoint.Endpoint that writes a fixed body, used
-// to tell "the registered endpoint ran" apart from "the static handler ran"
-// without depending on any real endpoint's behavior.
-type stubEndpoint struct{ body string }
-
-func (e stubEndpoint) ID() string                          { return "stub" }
-func (e stubEndpoint) Capabilities() endpoint.Capabilities { return endpoint.Capabilities{HTTP: true} }
-func (e stubEndpoint) Handle(s transport.Session) error {
-	w, _, _ := s.HTTP()
-	_, err := io.WriteString(w, e.body)
-	return err
-}
-
-func TestBuildMuxMountsRegisteredEndpoint(t *testing.T) {
-	reg := endpoint.NewRegistry()
-	reg.RegisterHTTP("/fake", stubEndpoint{body: "fake-endpoint-response"})
-
-	mux := BuildMux(context.Background(), reg)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/fake", nil)
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+func TestH3BootstrapCannotServeTransfers(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := rec.Body.String(); got != "fake-endpoint-response" {
-		t.Fatalf("body = %q, want the registered endpoint's response", got)
+	mux := listenerMux(context.Background(), e, muxTopology{bootstrap: true})
+	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d", path, rec.Code)
+		}
 	}
 }
 
-func TestBuildMuxFallsThroughToStaticAtRoot(t *testing.T) {
-	reg := endpoint.NewRegistry()
-	reg.RegisterHTTP("/fake", stubEndpoint{body: "fake-endpoint-response"})
-
-	mux := BuildMux(context.Background(), reg)
-
+func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := listenerMux(context.Background(), e, muxTopology{transfers: true, requiredProto: 2})
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("h1 transfer status = %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("H2 websocket status = %d", rec.Code)
+	}
+}
 
-	// Any path other than a registered one must reach the static handler, not
-	// the registered endpoint — regardless of what the static handler itself
-	// decides to serve for "/" (that logic is embed_test.go's job).
-	if got := rec.Body.String(); got == "fake-endpoint-response" {
-		t.Fatalf("body = %q, want the static handler's response, not the endpoint's", got)
+func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := listenerMux(context.Background(), e, muxTopology{transfers: true, requiredProto: 2})
+	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", path, rec.Code)
+		}
+	}
+	for _, path := range []string{"/probe", "/download?bytes=1", "/upload/session", "/upload", "/upload/progress"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
+		mux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusNotFound && path != "/upload/progress" {
+			t.Errorf("%s is not mounted", path)
+		}
+	}
+}
+
+func TestH1MountsSPAAndDiscovery(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := listenerMuxWithSPA(context.Background(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, path := range []string{"/", "/preflight"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want 200", path, rec.Code)
+		}
+	}
+}
+
+func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1 := listenerMux(context.Background(), e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1})
+	rec := httptest.NewRecorder()
+	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("H1 latency websocket is not mounted")
+	}
+	h3 := listenerMux(context.Background(), e, muxTopology{transfers: true})
+	rec = httptest.NewRecorder()
+	h3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=unknown", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("H3 upload progress is not mounted")
+	}
+}
+
+func TestPublicH3Port(t *testing.T) {
+	cfg := config.Default()
+	if got := publicH3Port(&cfg); got != "7249" {
+		t.Fatalf("default port = %q", got)
+	}
+	cfg.PublicH3Origin = "https://meter.example:18444"
+	if got := publicH3Port(&cfg); got != "18444" {
+		t.Fatalf("public port = %q", got)
+	}
+	cfg.PublicH3Origin = "https://meter.example"
+	if got := publicH3Port(&cfg); got != "443" {
+		t.Fatalf("default TLS port = %q", got)
 	}
 }
 

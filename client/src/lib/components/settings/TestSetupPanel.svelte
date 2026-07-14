@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Settings test setup: stage selection, timing, endpoint, units, and
+  // Settings test setup: stage selection, timing, units, and
   // compensation controls bound directly into the app store.
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
   import type {
@@ -10,6 +10,11 @@
   import { applyConnectionProfile } from "../../compensation";
   import { tooltip, JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
+  import {
+    latencyOptionView,
+    testCombinationSummary,
+    throughputOptionView,
+  } from "../../runner/real/transportViewModel";
 
   interface Props {
     /** Mirrors store.isRunning — locks mid-run-unsafe inputs. */
@@ -105,6 +110,42 @@
     store.config.visualization.throughputMaxBytesPerSec = toBytesPerSec(n);
   }
 
+  function setForcedStreams(forced: boolean) {
+    store.config.transferStreams.mode = forced ? "forced" : "auto";
+  }
+
+  const THROUGHPUT_TARGETS = [
+    {
+      value: "current",
+      label: "Same as this page",
+    },
+    { value: "http1-clear", label: "HTTP/1.1", detail: "Clear connection" },
+    {
+      value: "http1-tls",
+      label: "HTTP/1.1 TLS",
+      detail: "Dedicated secure connection",
+    },
+    { value: "http2", label: "HTTP/2", detail: "TLS multiplexing" },
+    { value: "http3", label: "HTTP/3", detail: "QUIC multiplexing" },
+  ] as const;
+  const LATENCY_TARGETS = [
+    { value: "auto", label: "Match page security" },
+    { value: "ws-http1-clear", label: "WebSocket", detail: "Clear HTTP/1.1" },
+    {
+      value: "ws-http1-tls",
+      label: "Secure WebSocket",
+      detail: "TLS HTTP/1.1",
+    },
+  ] as const;
+
+  const combinationSummary = $derived(
+    testCombinationSummary(
+      store.transportDiscovery,
+      store.config.transports.throughputTarget,
+      store.config.transports.latencyTarget,
+    ),
+  );
+
   /* Physical-path presets seed facts the browser cannot detect. */
   const PROFILE_OPTIONS: { value: ConnectionProfile; label: string }[] = [
     { value: "lan", label: "Local Ethernet (LAN)" },
@@ -175,6 +216,79 @@
 
   <section class="panel wide primary">
     <h3>Test plan</h3>
+    <p class="transport-intro">
+      Throughput carries download, upload, bidirectional traffic, and upload
+      progress. Latency carries idle and loaded-latency pings. The two paths are
+      selected independently and run together.
+    </p>
+    <fieldset class="target-field">
+      <legend>Throughput</legend>
+      <div class="target-grid">
+        {#each THROUGHPUT_TARGETS as target (target.value)}
+          {@const view = throughputOptionView(
+            store.transportDiscovery,
+            target.value,
+          )}
+          <label
+            class="target-choice"
+            class:selected={store.config.transports.throughputTarget ===
+              target.value}
+            class:unavailable={view.disabled}
+            class:locked={running}
+          >
+            <input
+              type="radio"
+              name="throughput-target"
+              value={target.value}
+              disabled={running || view.disabled}
+              bind:group={store.config.transports.throughputTarget}
+            />
+            <span class="radio-dot" aria-hidden="true"></span>
+            <span class="target-copy">
+              <strong>{target.label}</strong>
+              <small>{view.detail}</small>
+            </span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
+    <fieldset class="target-field">
+      <legend>Latency</legend>
+      <div class="target-grid">
+        {#each LATENCY_TARGETS as target (target.value)}
+          {@const view = latencyOptionView(
+            store.transportDiscovery,
+            target.value,
+          )}
+          <label
+            class="target-choice"
+            class:selected={store.config.transports.latencyTarget ===
+              target.value}
+            class:unavailable={view.disabled}
+            class:locked={running}
+          >
+            <input
+              type="radio"
+              name="latency-target"
+              value={target.value}
+              disabled={running || view.disabled}
+              bind:group={store.config.transports.latencyTarget}
+            />
+            <span class="radio-dot" aria-hidden="true"></span>
+            <span class="target-copy">
+              <strong>{target.label}</strong>
+              <small>{view.detail}</small>
+            </span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
+    <div class="combination-summary" aria-live="polite">
+      <strong>Test combination</strong>
+      {#each combinationSummary as line}
+        <span>{line}</span>
+      {/each}
+    </div>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESET_KEYS as k (k)}
         <button
@@ -355,8 +469,8 @@
           </label>
         </div>
         <p class="hint">
-          Detected first hop: {store.infra?.firstHopProtocol ??
-            "scheme fallback"}. Client address: {store.infra
+          Detected throughput hop: {store.infra?.firstHopProtocol ??
+            "scheme fallback"}. Throughput client address: {store.infra
             ? `IPv${store.infra.clientIpVersion} via ${store.infra.clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`
             : "not detected"}. Proxy translation or overlays can make the
           address family differ from the physical path.
@@ -469,20 +583,45 @@
         <option value="slow">Slow</option>
       </select>
     </label>
+    <Switch
+      checked={store.config.transferStreams.mode === "forced"}
+      onToggle={setForcedStreams}
+      disabled={running}
+      label="Force transfer stream count"
+      tooltip="Automatic uses the browser connection budget for HTTP/1.1. HTTP/2 uses one download request, while HTTP/3 overlaps download requests to avoid per-stream flow-control limits; both overlap uploads on one multiplexed connection. Forced starts the exact request count per active direction; HTTP/1.1 requests beyond the browser connection limit may queue."
+    />
     <label>
-      <span>Max parallel streams</span>
+      <span
+        use:tooltip={store.config.transferStreams.mode === "forced"
+          ? "Exact request streams started for every active transfer direction."
+          : "Maximum HTTP/1.1 streams allowed per active direction. HTTP/2 and HTTP/3 choose protocol-safe request concurrency automatically."}
+        >{store.config.transferStreams.mode === "forced"
+          ? "Streams per direction"
+          : "Max H1 streams per direction"}</span
+      >
       <input
         type="number"
         min="1"
-        max="6"
+        max="128"
         step="1"
         disabled={running}
-        bind:value={store.config.parallelStreams}
+        bind:value={store.config.transferStreams.count}
       />
     </label>
-    <p class="hint">
-      Lanes are chosen automatically per phase; this only caps the maximum.
-    </p>
+    {#if store.config.transferStreams.mode === "forced"}
+      <p class="hint">
+        Starts exactly {store.config.transferStreams.count} per active direction.
+        HTTP/1.1 requests beyond the browser's per-origin connection limit may queue;
+        HTTP/2 and HTTP/3 multiplex them.
+      </p>
+    {:else}
+      <p class="hint">
+        Automatic: HTTP/1.1 uses the available connection pool, capped at
+        {store.config.transferStreams.count} per direction; HTTP/2 uses one download
+        request, HTTP/3 uses three, and both use three overlapping upload requests
+        on their multiplexed connection.
+      </p>
+    {/if}
     <Switch
       disabled={running}
       bind:checked={store.config.skipLoadedLatencyWhenStageOff}
@@ -560,6 +699,131 @@
     text-transform: uppercase;
   }
 
+  .transport-intro {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  .target-field {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .target-field legend {
+    margin-bottom: 7px;
+    padding: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .target-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+    gap: 6px;
+  }
+  .target-choice {
+    position: relative;
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-height: 52px;
+    padding: 8px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      background var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
+  }
+  .target-choice:hover:not(.unavailable) {
+    border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+  }
+  .target-choice.selected {
+    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    background: var(--brand-soft);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--brand) 18%, transparent);
+  }
+  .target-choice.unavailable {
+    cursor: not-allowed;
+    opacity: 0.56;
+  }
+  .target-choice.locked {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+  .target-choice input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .target-choice:focus-within {
+    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    box-shadow: 0 0 0 3px var(--brand-soft);
+  }
+  .radio-dot {
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--text-soft);
+    border-radius: 50%;
+  }
+  .target-choice.selected .radio-dot {
+    border: 4px solid var(--brand-strong);
+    background: var(--surface-1);
+  }
+  .target-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .target-choice .target-copy strong {
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 780;
+    letter-spacing: normal;
+    text-transform: none;
+  }
+  .target-choice .target-copy small {
+    overflow: hidden;
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: normal;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    text-transform: none;
+  }
+  .combination-summary {
+    display: grid;
+    gap: 3px;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.4;
+  }
+  .combination-summary strong {
+    color: var(--text);
+    font-family: inherit;
+    font-size: 10px;
+  }
   label,
   .field {
     display: grid;
@@ -743,6 +1007,9 @@
   }
 
   @container (max-width: 360px) {
+    .target-grid {
+      grid-template-columns: 1fr;
+    }
     .two {
       grid-template-columns: 1fr;
     }

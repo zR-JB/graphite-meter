@@ -1,227 +1,104 @@
 package endpoint
 
 import (
-	"crypto/tls"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// TestPreflightAdvertisesUploadSession checks that /preflight advertises the
-// upload warmup token endpoint without minting a token globally.
-func TestPreflightAdvertisesUploadSession(t *testing.T) {
+func TestPreflightAdvertisesConfiguredTargets(t *testing.T) {
 	cfg := config.Default()
-	mux := http.NewServeMux()
-	mux.Handle("/preflight", httpAdapter(NewPreflight(&cfg)))
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	res, err := http.Get(srv.URL + "/preflight")
-	if err != nil {
-		t.Fatalf("get: %v", err)
+	cfg.EnableH1TLS, cfg.EnableH2, cfg.EnableH3 = true, true, true
+	cfg.PublicH1Origin = "http://meter.example:7246"
+	cfg.PublicH1TLSOrigin = "https://meter.example:7247"
+	cfg.PublicH2Origin = "https://meter.example:7248"
+	cfg.PublicH3Origin = "https://meter.example:7249"
+	req := httptest.NewRequest(http.MethodGet, "http://discovery.example:7246/preflight", nil)
+	pf := NewPreflight(&cfg).build(req)
+	if len(pf.Capabilities.ThroughputTargets) != 4 || len(pf.Capabilities.LatencyTargets) != 2 {
+		t.Fatalf("capabilities = %+v", pf.Capabilities)
 	}
-	defer res.Body.Close()
-	var raw map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
-		t.Fatalf("decode raw: %v", err)
-	}
-	if _, present := raw["uploadId"]; present {
-		t.Errorf("uploadId present in preflight, want omitted")
-	}
-	var pf wire.Preflight
-	body, _ := json.Marshal(raw)
-	if err := json.Unmarshal(body, &pf); err != nil {
-		t.Fatalf("decode struct: %v", err)
-	}
-	if pf.Capabilities.Endpoints.UploadSession != "/upload/session" {
-		t.Errorf("uploadSession = %q, want /upload/session", pf.Capabilities.Endpoints.UploadSession)
-	}
-	if pf.Capabilities.Endpoints.WSUpload != "/ws/upload" {
-		t.Errorf("wsUpload = %q, want /ws/upload", pf.Capabilities.Endpoints.WSUpload)
-	}
-}
-
-// TestPreflightOriginsBehindTLSProxy checks that a request forwarded from a
-// TLS-terminating reverse proxy gets a populated `tls` origin, so the client
-// has a real wss(-mappable) origin to prefer over the always-http `h1`.
-func TestPreflightOriginsBehindTLSProxy(t *testing.T) {
-	cfg := config.Default()
-	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
-	pf := NewPreflight(&cfg)
-
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
-	req.Host = "speed.example:8765"
-	body := pf.build(&fakeSession{}, req)
-	if body.Capabilities.Origins.TLS != nil {
-		t.Fatalf("tls origin = %v, want nil without X-Forwarded-Proto", *body.Capabilities.Origins.TLS)
-	}
-
-	req.Header.Set("X-Forwarded-Proto", "https")
-	body = pf.build(&fakeSession{}, req)
-	if body.Capabilities.Origins.TLS == nil {
-		t.Fatal("tls origin = nil, want derived https origin with X-Forwarded-Proto: https")
-	}
-	if want := "https://speed.example:8765"; *body.Capabilities.Origins.TLS != want {
-		t.Errorf("tls origin = %q, want %q", *body.Capabilities.Origins.TLS, want)
-	}
-	// h1 stays cleartext regardless — the two fields are independent.
-	if *body.Capabilities.Origins.H1 != "http://speed.example:8765" {
-		t.Errorf("h1 origin = %q, want unchanged http://", *body.Capabilities.Origins.H1)
-	}
-}
-
-// TestPreflightOriginsPublicTLSOriginWins checks that an explicit
-// PUBLIC_TLS_ORIGIN override always wins over the X-Forwarded-Proto
-// derivation.
-func TestPreflightOriginsPublicTLSOriginWins(t *testing.T) {
-	cfg := config.Default()
-	cfg.PublicTLSOrigin = "https://configured.example:9443"
-	pf := NewPreflight(&cfg)
-
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
-	req.Host = "speed.example:8765"
-	req.Header.Set("X-Forwarded-Proto", "https")
-	body := pf.build(&fakeSession{}, req)
-	if got, want := *body.Capabilities.Origins.TLS, cfg.PublicTLSOrigin; got != want {
-		t.Errorf("tls origin = %q, want configured override %q", got, want)
-	}
-}
-
-// TestPreflightOriginsBaseline checks the no-config, no-proxy baseline: h1 is
-// derived from the request Host, and tls/h3 are both omitted.
-func TestPreflightOriginsBaseline(t *testing.T) {
-	cfg := config.Default()
-	pf := NewPreflight(&cfg)
-
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
-	req.Host = "speed.example:8765"
-	body := pf.build(&fakeSession{}, req)
-
-	if got, want := *body.Capabilities.Origins.H1, "http://speed.example:8765"; got != want {
-		t.Errorf("h1 origin = %q, want %q", got, want)
-	}
-	if body.Capabilities.Origins.TLS != nil {
-		t.Errorf("tls origin = %q, want nil with no config and no proxy header", *body.Capabilities.Origins.TLS)
-	}
-	if body.Capabilities.Origins.H3 != nil {
-		t.Errorf("h3 origin = %q, want nil without PUBLIC_H3_ORIGIN", *body.Capabilities.Origins.H3)
-	}
-}
-
-// TestPreflightOriginsH3WhenConfigured checks PublicH3Origin, unexercised by
-// the other origin tests, is surfaced verbatim.
-func TestPreflightOriginsH3WhenConfigured(t *testing.T) {
-	cfg := config.Default()
-	cfg.PublicH3Origin = "https://speed.example:443"
-	pf := NewPreflight(&cfg)
-
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example:8765/preflight", nil)
-	req.Host = "speed.example:8765"
-	body := pf.build(&fakeSession{}, req)
-
-	if body.Capabilities.Origins.H3 == nil {
-		t.Fatal("h3 origin = nil, want the configured PUBLIC_H3_ORIGIN")
-	}
-	if got, want := *body.Capabilities.Origins.H3, cfg.PublicH3Origin; got != want {
-		t.Errorf("h3 origin = %q, want %q", got, want)
-	}
-}
-
-// TestPreflightCapabilitiesTransportFlags locks the advertised transport
-// flags: fetch-stream and WebSocket are live, WebTransport is not yet mounted.
-func TestPreflightCapabilitiesTransportFlags(t *testing.T) {
-	cfg := config.Default()
-	pf := NewPreflight(&cfg)
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-	body := pf.build(&fakeSession{}, req)
-
-	got := body.Capabilities.Transports
-	want := wire.Transports{FetchStream: true, WebSocket: true, WebTransport: false}
-	if got != want {
-		t.Errorf("Transports = %+v, want %+v", got, want)
-	}
-}
-
-func TestPreflightClientAddress(t *testing.T) {
-	cfg := config.Default()
-	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-	req.RemoteAddr = "10.0.0.2:1234"
-	req.Header.Set("Forwarded", `for="[2001:db8::4]:443"`)
-
-	body := NewPreflight(&cfg).build(&fakeSession{}, req)
-	if body.ClientIP != "2001:db8::4" || body.ClientIPVersion != 6 || body.ClientIPSource != "forwarded" {
-		t.Fatalf("client address = %s/IPv%d/%s", body.ClientIP, body.ClientIPVersion, body.ClientIPSource)
-	}
-}
-
-// TestRequestIsTLSDirectConnection checks r.TLS set (a direct TLS
-// connection, no proxy involved) is honored independently of any header.
-func TestRequestIsTLSDirectConnection(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "https://speed.example/preflight", nil)
-	req.TLS = &tls.ConnectionState{}
-	if !requestIsTLS(req, nil) {
-		t.Error("requestIsTLS = false with r.TLS set, want true")
-	}
-}
-
-// TestRequestIsTLSMultiHopTakesFirstEntry checks that a comma-separated
-// X-Forwarded-Proto (a chain of proxies) is read only at its first entry —
-// documented as "only the first hop is read" — regardless of what later
-// hops in the chain say.
-func TestRequestIsTLSMultiHopTakesFirstEntry(t *testing.T) {
-	cases := []struct {
-		name  string
-		proto string
-		want  bool
+	want := []struct {
+		id, origin, protocol string
+		tls                  bool
 	}{
-		{"first-hop-https", "https, http", true},
-		{"first-hop-http", "http, https", false},
-		{"single-https-with-space", " https ", true},
+		{"http1-clear", cfg.PublicH1Origin, "http1", false},
+		{"http1-tls", cfg.PublicH1TLSOrigin, "http1", true},
+		{"http2", cfg.PublicH2Origin, "http2", true},
+		{"http3", cfg.PublicH3Origin, "http3", true},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-			req.Header.Set("X-Forwarded-Proto", tc.proto)
-			trusted := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
-			if got := requestIsTLS(req, trusted); got != tc.want {
-				t.Errorf("requestIsTLS(X-Forwarded-Proto=%q) = %v, want %v", tc.proto, got, tc.want)
-			}
-		})
+	for i, transfer := range pf.Capabilities.ThroughputTargets {
+		if transfer.ID != want[i].id || transfer.Origin != want[i].origin || transfer.Transport != "fetch-stream" || transfer.Protocol != want[i].protocol || transfer.TLS != want[i].tls {
+			t.Errorf("transfer %d = %+v", i, transfer)
+		}
 	}
-}
-
-func TestRequestIsTLSIgnoresUntrustedHeader(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-	req.Header.Set("X-Forwarded-Proto", "https")
-	if requestIsTLS(req, nil) {
-		t.Error("requestIsTLS = true for an untrusted forwarding header")
+	for i, latency := range pf.Capabilities.LatencyTargets {
+		if latency.Transport != "websocket" || latency.Protocol != "http1" || latency.Origin != want[i].origin {
+			t.Errorf("latency target %d = %+v", i, latency)
+		}
+		if latency.ID != []string{"ws-http1-clear", "ws-http1-tls"}[i] {
+			t.Errorf("latency target %d id = %q", i, latency.ID)
+		}
 	}
 }
 
-// TestHostPortDefaultsWhenNoPort checks a bare hostname (no ":port") in Host
-// defaults to port 80 rather than erroring or leaving it zero.
-func TestHostPortDefaultsWhenNoPort(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-	req.Host = "speed.example"
-	host, port := hostPort(req)
-	if host != "speed.example" || port != 80 {
-		t.Errorf("hostPort(%q) = (%q, %d), want (%q, 80)", req.Host, host, port, "speed.example")
+func TestPreflightDerivesEveryDefaultListenerOrigin(t *testing.T) {
+	cfg := config.Default()
+	cfg.EnableH1TLS, cfg.EnableH2, cfg.EnableH3 = true, true, true
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://meter.example:7246/preflight", nil))
+	want := []string{
+		"http://meter.example:7246",
+		"https://meter.example:7247",
+		"https://meter.example:7248",
+		"https://meter.example:7249",
+	}
+	for i, target := range pf.Capabilities.ThroughputTargets {
+		if target.Origin != want[i] {
+			t.Errorf("throughput target %q origin = %q, want %q", target.ID, target.Origin, want[i])
+		}
+	}
+	for i, target := range pf.Capabilities.LatencyTargets {
+		if target.Origin != want[i] {
+			t.Errorf("latency target %q origin = %q, want %q", target.ID, target.Origin, want[i])
+		}
 	}
 }
 
-// TestHostPortDefaultsOnMalformedPort checks a non-numeric port component
-// also defaults to 80 rather than propagating the parse error.
-func TestHostPortDefaultsOnMalformedPort(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "http://speed.example/preflight", nil)
-	req.Host = "speed.example:notaport"
-	host, port := hostPort(req)
-	if host != "speed.example" || port != 80 {
-		t.Errorf("hostPort(%q) = (%q, %d), want (%q, 80)", req.Host, host, port, "speed.example")
+func TestPreflightOmitsDisabledTargets(t *testing.T) {
+	cfg := config.Default()
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://speed.example:7246/preflight", nil))
+	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
+		t.Fatalf("disabled TLS capabilities advertised: %+v", pf.Capabilities)
+	}
+	if got := pf.Capabilities.ThroughputTargets[0].Origin; got != "http://speed.example:7246" {
+		t.Fatalf("h1 = %q", got)
+	}
+}
+
+func TestPreflightAdvertisesExternalProxyTargetsWithoutNativeTLS(t *testing.T) {
+	cfg := config.Default()
+	cfg.PublicH1TLSOrigin = "https://h1.example"
+	cfg.PublicH2Origin = "https://meter.example"
+	cfg.PublicH3Origin = "https://quic.example"
+	pf := NewPreflight(&cfg).build(httptest.NewRequest(http.MethodGet, "http://internal:7246/preflight", nil))
+	for i, want := range []string{"http://internal:7246", cfg.PublicH1TLSOrigin, cfg.PublicH2Origin, cfg.PublicH3Origin} {
+		if got := pf.Capabilities.ThroughputTargets[i].Origin; got != want {
+			t.Errorf("external transfer %d = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestHostPortDefaultsByTLS(t *testing.T) {
+	for _, tc := range []struct {
+		url  string
+		want int
+	}{{"http://speed.example/preflight", 80}, {"https://speed.example/preflight", 443}} {
+		req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+		_, got := hostPort(req)
+		if got != tc.want {
+			t.Errorf("%s port = %d", tc.url, got)
+		}
 	}
 }

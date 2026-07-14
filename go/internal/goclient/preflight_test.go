@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestHTTPEndpoint(t *testing.T) {
@@ -25,6 +27,65 @@ func TestHTTPEndpoint(t *testing.T) {
 			t.Errorf("httpEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
 		}
 	}
+}
+
+func TestSelectTarget(t *testing.T) {
+	webTransport := testTransfer("wt-http3", "https://meter:7249", "http3", true)
+	webTransport.Transport = "webtransport-streams"
+	h1 := testTransfer("http1-clear", "http://meter:7246", "http1", false)
+	h2 := testTransfer("http2", "https://meter:7248", "http2", true)
+	custom := testTransfer("edge-h2", "https://edge.example", "http2", true)
+	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{webTransport, h1, h2, custom}}}
+	for _, tc := range []struct{ protocol, base, want string }{
+		{"auto", "https://meter:7249", "http1-clear"},
+		{"auto", "http://meter:7246", "http1-clear"},
+		{"http2", "http://discovery", "http2"},
+		{"edge-h2", "http://discovery", "edge-h2"},
+	} {
+		got, err := selectTarget(Config{ThroughputTarget: tc.protocol, BaseURL: tc.base}, pf)
+		if err != nil || got.ID != tc.want {
+			t.Errorf("select %s = %+v, %v", tc.protocol, got, err)
+		}
+	}
+	if _, err := selectTarget(Config{ThroughputTarget: "http3"}, pf); err == nil {
+		t.Fatal("unavailable H3 selected")
+	}
+}
+
+func TestTargetProtocolEvidence(t *testing.T) {
+	for protocol, want := range map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"} {
+		if got := targetProtocolEvidence(protocol); got != want {
+			t.Errorf("targetProtocolEvidence(%q) = %q, want %q", protocol, got, want)
+		}
+	}
+}
+
+func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
+	targets := []wire.LatencyTarget{
+		testChannel("ws-http1-clear", "http://meter:7246", false),
+		testChannel("ws-http1-tls", "https://meter:7247", true),
+	}
+	auto, err := selectLatencyTarget("auto", "https://meter:7248", targets)
+	if err != nil || auto.ID != "ws-http1-tls" {
+		t.Fatalf("automatic target = %+v, %v", auto, err)
+	}
+	explicit, err := selectLatencyTarget("ws-http1-clear", "http://meter:7246", targets)
+	if err != nil || explicit.ID != "ws-http1-clear" {
+		t.Fatalf("explicit target = %+v, %v", explicit, err)
+	}
+}
+
+func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
+	return wire.ThroughputTarget{ID: id, Origin: origin, Transport: "fetch-stream", Protocol: protocol, TLS: tls, Routes: wire.DefaultThroughputRoutes()}
+}
+
+func testChannel(id, origin string, tls bool) wire.LatencyTarget {
+	return wire.LatencyTarget{ID: id, Origin: origin, Transport: "websocket", Protocol: "http1", TLS: tls, Routes: wire.DefaultLatencyRoutes()}
+}
+
+func attachTestLatencyTarget(r *runner, origin string) {
+	c := testChannel("test-ws", origin, false)
+	r.latencyTarget = &c
 }
 
 func TestWSEndpoint(t *testing.T) {
@@ -52,7 +113,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"clientIp":"1.2.3.4","server":{"name":"srv","host":"h","port":8765},"preTestPingMs":12.5,"engineVersion":"1.0","protocolNegotiated":"h1"}`))
+			w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","capabilities":{"transfers":[],"channels":[]}}`))
 		}))
 		defer srv.Close()
 
@@ -60,14 +121,11 @@ func TestGetPreflight(t *testing.T) {
 		if err != nil {
 			t.Fatalf("getPreflight() error: %v", err)
 		}
-		if pf.ClientIP != "1.2.3.4" {
-			t.Errorf("ClientIP = %q, want 1.2.3.4", pf.ClientIP)
-		}
-		if pf.Server.Name != "srv" || pf.Server.Port != 8765 {
+		if pf.Server.Name != "srv" || pf.Server.Port != 7246 {
 			t.Errorf("Server = %+v, unexpected", pf.Server)
 		}
-		if pf.PreTestPingMs != 12.5 {
-			t.Errorf("PreTestPingMs = %v, want 12.5", pf.PreTestPingMs)
+		if pf.EngineVersion != "1.0" {
+			t.Errorf("EngineVersion = %q", pf.EngineVersion)
 		}
 	})
 

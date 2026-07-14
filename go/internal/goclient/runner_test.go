@@ -14,10 +14,23 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 /* ---- pure helper functions ---- */
+
+func TestHTTP3ClientStartsAtMinimumPacketSize(t *testing.T) {
+	hc, closeClient := protocolClient(DefaultConfig(), "http3", func() *http.Transport { return &http.Transport{} })
+	defer closeClient()
+	tr, ok := hc.Transport.(*http3.Transport)
+	if !ok || tr.QUICConfig == nil {
+		t.Fatal("HTTP/3 client has no QUIC configuration")
+	}
+	if tr.QUICConfig.InitialPacketSize != 1200 {
+		t.Fatalf("initial packet size = %d, want 1200", tr.QUICConfig.InitialPacketSize)
+	}
+}
 
 func TestAdaptiveWarmup(t *testing.T) {
 	const base = 500 * time.Millisecond
@@ -56,7 +69,7 @@ func TestLaneStaggerStep(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &runner{cfg: Config{ParallelStreams: c.streams, Warmup: c.warmup}, idleRTT: c.idleRTT}
+			r := &runner{cfg: Config{Warmup: c.warmup}, streams: c.streams, idleRTT: c.idleRTT}
 			if got := r.laneStaggerStep(); got != c.want {
 				t.Errorf("laneStaggerStep() = %v, want %v", got, c.want)
 			}
@@ -205,6 +218,7 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -218,13 +232,24 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 
 /* ---- Run() stage-orchestration end-to-end ---- */
 
+func mountDiscovery(mux *http.ServeMux) {
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		origin := "http://" + r.Host
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test", Host: r.Host, Port: 80}, EngineVersion: "test", Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
+			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
+		}})
+	})
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+	})
+}
+
 func newDownloadOnlyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	})
+	mountDiscovery(mux)
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
 		if err != nil || n <= 0 {
@@ -245,7 +270,7 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 		Stages:                 StageSet{Download: true},
 		Warmup:                 0,
 		DownloadDuration:       300 * time.Millisecond,
-		ParallelStreams:        1,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
@@ -280,13 +305,53 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 	}
 }
 
+func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
+	var origin string
+	var probeRequestProtocol string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Preflight{
+			Server: wire.ServerInfo{Name: "proxy", Host: r.Host, Port: 443},
+			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+				testTransfer("http2", origin, "http2", true),
+			}},
+		})
+	})
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		probeRequestProtocol = r.Proto
+		_ = json.NewEncoder(w).Encode(wire.Probe{
+			ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket",
+			ProtocolNegotiated: "http/1.1", // proxy-to-Go evidence
+		})
+	})
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 64*1024))
+	})
+	srv := httptest.NewUnstartedServer(mux)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	origin = srv.URL
+
+	cfg := Config{
+		BaseURL: origin, ThroughputTarget: "http2", Stages: StageSet{Download: true},
+		DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true,
+		TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := Run(ctx, cfg, func(Event) {}); err != nil {
+		t.Fatalf("Run through H2 proxy with H1 downstream evidence: %v", err)
+	}
+	if probeRequestProtocol != "HTTP/2.0" {
+		t.Fatalf("client-to-proxy probe used %q, want HTTP/2.0", probeRequestProtocol)
+	}
+}
+
 func newLatencyOnlyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	})
+	mountDiscovery(mux)
 	mux.Handle("/ws/ping", echoPingHandler())
 	return httptest.NewServer(mux)
 }
@@ -301,7 +366,7 @@ func TestRunLatencyStageEndToEnd(t *testing.T) {
 		Warmup:          0,
 		LatencyDuration: 200 * time.Millisecond,
 		PingInterval:    20 * time.Millisecond,
-		ParallelStreams: 1,
+		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}
 
 	var mu sync.Mutex
@@ -337,7 +402,7 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 		Stages:                 StageSet{Download: true},
 		Warmup:                 3 * time.Second,
 		DownloadDuration:       3 * time.Second,
-		ParallelStreams:        1,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
@@ -381,10 +446,7 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 	started := time.Now()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte("{}"))
-	})
+	mountDiscovery(mux)
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
 		if err != nil || n <= 0 {
@@ -409,51 +471,13 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 			}
 		}
 	})
-	mux.HandleFunc("/ws/upload", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		ctx := r.Context()
-		bye := make(chan struct{})
-		go func() {
-			for {
-				_, msg, err := conn.Read(ctx)
-				if err != nil {
-					close(bye)
-					return
-				}
-				if f, derr := wire.Decode(string(msg)); derr == nil && f.Op == wire.OpBYE {
-					close(bye)
-					return
-				}
-			}
-		}()
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-bye:
-				n, active := uploaded.Load(), uint64(time.Since(started))
-				_ = conn.Write(context.Background(), websocket.MessageText,
-					[]byte(wire.Encode(wire.Frame{Op: wire.OpUploadComplete, N: n, Nanos: active})))
-				return
-			case <-ticker.C:
-				n, active := uploaded.Load(), uint64(time.Since(started))
-				_ = conn.Write(ctx, websocket.MessageText,
-					[]byte(wire.Encode(wire.Frame{Op: wire.OpBytesReceived, N: n, Nanos: active})))
-			}
-		}
-	})
+	mountFakeProgress(mux, &uploaded, started)
 	return httptest.NewServer(mux)
 }
 
 // TestRunBidirectionalStageEndToEnd checks the download and upload lanes run
 // concurrently without interfering: each reports its own non-zero Result, at
-// both a single stream and the ParallelStreams clamp ceiling from
+// both a single forced stream and the forced-stream clamp ceiling from
 // Config.normalized().
 func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	cases := []struct {
@@ -473,7 +497,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 				Stages:                 StageSet{Bidirectional: true},
 				Warmup:                 0,
 				BidirectionalDuration:  500 * time.Millisecond,
-				ParallelStreams:        c.streams,
+				TransferStreams:        TransferStreamPolicy{Forced: c.streams},
 				DownloadBytesPerStream: 16 * 1024,
 			}
 
@@ -543,8 +567,8 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	cfg := Config{BaseURL: srv.URL, ParallelStreams: 1, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -1,108 +1,282 @@
-// Package server wires the registry + static handler into the shared mux and
-// runs the listener. Only HTTP/1.1 is served today; TLS/h3 (WebTransport) are
-// reserved for a later stage — see docs/ARCHITECTURE.md#roadmap.
+// Package server builds one measurement core and mounts it on protocol-specific listeners.
 package server
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
+	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// downloadBlockSize is the shared immutable download block: 256 KiB — large
-// enough to defeat transport compression while staying L2-cache friendly.
 const downloadBlockSize = 256 * 1024
 
-// BuildMux constructs the shared mux: registered endpoints + the static client
-// at "/". ctx is the server's run context, bounding every WebSocket bus
-// handler's lifetime.
-func BuildMux(ctx context.Context, reg *endpoint.Registry) *http.ServeMux {
-	mux := http.NewServeMux()
-	reg.Mount(ctx, mux)
-	mux.Handle("/", static.Handler())
-	return mux
+type endpoints struct {
+	preflight, probe, bootstrapProbe endpoint.Endpoint
+	download, uploadSession, upload  endpoint.Endpoint
+	ping, uploadProgress             endpoint.Endpoint
 }
 
-// Run starts the server and blocks until ctx is cancelled, then shuts down
-// gracefully.
-func Run(ctx context.Context, cfg *config.Config) error {
-	// One shared immutable block of incompressible random bytes, filled once:
-	// every download serves slices of it, never regenerating per request.
+type service struct {
+	name, addr, network string
+	run                 func() error
+	stop                func(context.Context) error
+}
+
+func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error) {
 	block := make([]byte, downloadBlockSize)
 	if _, err := rand.Read(block); err != nil {
-		return err
+		return nil, err
 	}
-
-	// Verbose mode: one per-direction throughput logger, each draining its own
-	// 1 Hz goroutine for the run's lifetime. Nil when off — the endpoints'
-	// meter calls are then cheap no-ops.
 	var dlMeter, ulMeter *endpoint.Meter
 	if cfg.Verbose {
-		dlMeter = endpoint.NewMeter("server:download")
-		ulMeter = endpoint.NewMeter("server:upload")
+		dlMeter, ulMeter = endpoint.NewMeter("server:download"), endpoint.NewMeter("server:upload")
 		go dlMeter.Run(ctx)
 		go ulMeter.Run(ctx)
-		log.Printf("[gm:server] verbose throughput logging enabled")
 	}
+	store := endpoint.NewUploadStore()
+	go store.RunSweeper(ctx)
+	h3Port := publicH3Port(cfg)
+	return &endpoints{
+		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
+		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store),
+		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store),
+	}, nil
+}
 
-	// uploadStore correlates an upload's POST lanes with its /ws/upload progress
-	// socket (same minted ?id=, separate connections) into one authoritative
-	// drained-byte count; its sweeper reaps idle test state.
-	uploadStore := endpoint.NewUploadStore()
-	go uploadStore.RunSweeper(ctx)
-
-	reg := endpoint.NewRegistry()
-	reg.RegisterHTTP("/preflight", endpoint.NewPreflight(cfg))
-	reg.RegisterHTTP("/download", endpoint.NewDownload(block, dlMeter))
-	reg.RegisterHTTP("/upload/session", endpoint.NewUploadSession(uploadStore))
-	reg.RegisterHTTP("/upload", endpoint.NewUpload(ulMeter, uploadStore))
-	reg.RegisterWS("/ws/ping", endpoint.NewPing())
-	reg.RegisterWS("/ws/upload", endpoint.NewUploadProgress(uploadStore))
-
-	mux := BuildMux(ctx, reg)
-
-	srv := &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		// Go already defaults NoDelay=true, but a /ws/ping latency frame must
-		// never sit in Nagle's buffer, so make TCP_NODELAY explicit rather than
-		// relying on the default.
-		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			if tc, ok := c.(*net.TCPConn); ok {
-				_ = tc.SetNoDelay(true)
+func publicH3Port(cfg *config.Config) string {
+	if cfg.PublicH3Origin != "" {
+		u, err := url.Parse(cfg.PublicH3Origin)
+		if err == nil {
+			if port := u.Port(); port != "" {
+				return port
 			}
-			return ctx
-		},
+			return "443"
+		}
 	}
+	_, port, _ := net.SplitHostPort(cfg.H3Addr)
+	return port
+}
 
-	ln, err := net.Listen("tcp", cfg.H1Addr)
+type muxTopology struct {
+	spa, discovery, latency, transfers, bootstrap bool
+	requiredProto                                 int
+}
+
+type protocolEndpoint struct {
+	endpoint.Endpoint
+	major int
+}
+
+func (e protocolEndpoint) Handle(s transport.Session) error {
+	w, r, ok := s.HTTP()
+	if !ok {
+		return transport.ErrUnsupported
+	}
+	if r.ProtoMajor != e.major {
+		http.NotFound(w, r)
+		return nil
+	}
+	return e.Endpoint.Handle(s)
+}
+
+func listenerMux(ctx context.Context, e *endpoints, topology muxTopology) *http.ServeMux {
+	return listenerMuxWithSPA(ctx, e, topology, static.Handler())
+}
+
+func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler) *http.ServeMux {
+	reg := endpoint.NewRegistry()
+	if topology.discovery {
+		reg.RegisterHTTP("/preflight", e.preflight)
+	}
+	probe := e.probe
+	if topology.bootstrap {
+		probe = e.bootstrapProbe
+	}
+	reg.RegisterHTTP("/probe", probe)
+	if topology.transfers {
+		transfer := func(h endpoint.Endpoint) endpoint.Endpoint {
+			if topology.requiredProto == 0 {
+				return h
+			}
+			return protocolEndpoint{Endpoint: h, major: topology.requiredProto}
+		}
+		reg.RegisterHTTP("/download", transfer(e.download))
+		reg.RegisterHTTP("/upload/session", transfer(e.uploadSession))
+		reg.RegisterHTTP("/upload", transfer(e.upload))
+		reg.RegisterHTTP("/upload/progress", transfer(e.uploadProgress))
+	}
+	if topology.latency {
+		reg.RegisterWS("/ws/ping", e.ping)
+	}
+	m := http.NewServeMux()
+	reg.Mount(ctx, m)
+	if topology.spa {
+		m.Handle("/", spa)
+	}
+	return m
+}
+
+func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+		if tc, ok := c.(*net.TCPConn); ok {
+			_ = tc.SetNoDelay(true)
+		}
+		return ctx
+	}}
+}
+
+// Run binds every configured listener only after certificate validation and
+// shuts the logical server down as one unit.
+func Run(ctx context.Context, cfg *config.Config) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	var cm *certificateManager
+	var err error
+	if cfg.EnableH1TLS || cfg.EnableH2 || cfg.EnableH3 {
+		if cm, err = newCertificateManager(cfg); err != nil {
+			return err
+		}
+		go cm.run(ctx)
+	}
+	e, err := buildEndpoints(ctx, cfg)
 	if err != nil {
 		return err
 	}
+	h1p := &http.Protocols{}
+	h1p.SetHTTP1(true)
+	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
+	h1ln, err := net.Listen("tcp", cfg.H1Addr)
+	if err != nil {
+		return err
+	}
+	opened := []io.Closer{h1ln}
+	closeOpened := func() {
+		for _, c := range opened {
+			_ = c.Close()
+		}
+	}
+	services := []service{{
+		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.H1Addr, network: "tcp",
+		run: func() error { return serve(h1ln, h1) }, stop: h1.Shutdown,
+	}}
 
-	// Graceful shutdown on ctx cancel.
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
+	if cfg.EnableH1TLS {
+		p := &http.Protocols{}
+		p.SetHTTP1(true)
+		s := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
+		ln, err := net.Listen("tcp", cfg.H1TLSAddr)
+		if err != nil {
+			closeOpened()
+			return err
+		}
+		opened = append(opened, ln)
+		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		services = append(services, service{
+			name: "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
+			addr: cfg.H1TLSAddr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+		})
+	}
 
-	log.Printf("graphite-meter %s listening on %s (http/1.1)", cfg.EngineVersion, cfg.H1Addr)
-	return serve(ln, srv)
+	if cfg.EnableH2 {
+		p := &http.Protocols{}
+		p.SetHTTP2(true)
+		s := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
+		ln, err := net.Listen("tcp", cfg.H2Addr)
+		if err != nil {
+			closeOpened()
+			return err
+		}
+		opened = append(opened, ln)
+		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2"))
+		services = append(services, service{
+			name: "HTTPS HTTP/2: measurement probe, transfers, progress only",
+			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+		})
+	}
+	if cfg.EnableH3 {
+		p := &http.Protocols{}
+		p.SetHTTP1(true)
+		bootstrap := baseServer(listenerMux(ctx, e, muxTopology{bootstrap: true}), p)
+		ln, err := net.Listen("tcp", cfg.H3Addr)
+		if err != nil {
+			closeOpened()
+			return err
+		}
+		opened = append(opened, ln)
+		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
+		pc, err := net.ListenPacket("udp", cfg.H3Addr)
+		if err != nil {
+			closeOpened()
+			return err
+		}
+		opened = append(opened, pc)
+		services = append(services,
+			service{
+				name: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only",
+				addr: cfg.H3Addr, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
+			},
+			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.H3Addr, network: "udp", run: func() error {
+				err := h3.Serve(pc)
+				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+					return nil
+				}
+				return err
+			}, stop: func(ctx context.Context) error { err := h3.Shutdown(ctx); _ = pc.Close(); return err }})
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, len(services))
+	for _, svc := range services {
+		svc := svc
+		log.Printf("graphite-meter %s listening on %s/%s (%s)", cfg.EngineVersion, svc.addr, svc.network, svc.name)
+		go func() {
+			if err := svc.run(); err != nil {
+				errs <- fmt.Errorf("%s: %w", svc.name, err)
+				cancel()
+			} else {
+				errs <- nil
+			}
+		}()
+	}
+	select {
+	case <-runCtx.Done():
+	case err := <-errs:
+		if err != nil {
+			cancel()
+			shutdown(services)
+			return err
+		}
+	}
+	shutdown(services)
+	return nil
 }
 
-// serve runs srv over an already-created listener, so tests can drive it
-// against an ephemeral port. Mirrors ListenAndServe's error handling: a
-// listener close is the expected shutdown path, not a failure.
+func shutdown(services []service) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, s := range services {
+		_ = s.stop(ctx)
+	}
+}
+
 func serve(ln net.Listener, srv *http.Server) error {
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

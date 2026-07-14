@@ -109,7 +109,13 @@
   const display = $derived.by(() => {
     const p = store.phase;
     if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
-    if (p === "idle" || p === "error" || p === "aborted" || p === "warmup")
+    if (
+      p === "idle" ||
+      p === "connecting" ||
+      p === "error" ||
+      p === "aborted" ||
+      p === "warmup"
+    )
       return EMPTY_DISPLAY;
     if (p === "complete") return completedDisplay;
     return {
@@ -134,6 +140,8 @@
     switch (store.phase) {
       case "idle":
         return "Press Engage to start your speed test";
+      case "connecting":
+        return "Verifying the selected protocol…";
       case "warmup":
         return "Checking your connection…";
       default:

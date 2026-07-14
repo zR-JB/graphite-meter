@@ -26,6 +26,7 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 			mu.Unlock()
 		}
 	}}
+	attachTestLatencyTarget(r, srv.URL)
 
 	start := make(chan struct{})
 	close(start)
@@ -76,6 +77,7 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
 
 	start := make(chan struct{})
 	close(start)
@@ -140,6 +142,7 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
 
 	start := make(chan struct{})
 	close(start)
@@ -181,6 +184,7 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
 
 	start := make(chan struct{}) // never closed: measurement never begins
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

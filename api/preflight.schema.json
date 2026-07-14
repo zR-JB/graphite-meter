@@ -2,34 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://graphite-meter/api/preflight.schema.json",
   "title": "Preflight",
-  "description": "Response body of GET /preflight. The client maps the InfraInfo fields onto its InfraInfo type (client/src/lib/runner/contract.ts) and stashes `capabilities` for transport negotiation. The server serves/sinks raw bytes; this document carries no rates.",
+  "description": "Logical-server discovery returned by GET /preflight. Throughput and latency targets are independently selectable and independently verified.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "clientIp",
-    "clientIpVersion",
-    "clientIpSource",
-    "server",
-    "preTestPingMs",
-    "engineVersion",
-    "protocolNegotiated",
-    "capabilities"
-  ],
+  "required": ["server", "engineVersion", "capabilities"],
   "properties": {
-    "clientIp": {
-      "type": "string",
-      "description": "The normalized client IP resolved from the socket peer or a trusted forwarding chain."
-    },
-    "clientIpVersion": {
-      "type": "integer",
-      "enum": [4, 6],
-      "description": "Address family of clientIp. This is proxy-presented evidence and may differ from the physical path when address translation is involved."
-    },
-    "clientIpSource": {
-      "type": "string",
-      "enum": ["socket", "forwarded"],
-      "description": "Whether clientIp came from the direct socket peer or a header supplied through a configured trusted proxy."
-    },
     "server": {
       "type": "object",
       "additionalProperties": false,
@@ -38,66 +15,86 @@
         "name": { "type": "string" },
         "host": { "type": "string" },
         "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "location": { "type": "string", "description": "Optional human/region label (e.g. \"fra\")." }
+        "location": { "type": "string" }
       }
     },
-    "preTestPingMs": {
-      "type": "number",
-      "minimum": 0,
-      "description": "Optional server-side pre-test RTT hint in ms. 0 when no ping endpoint has run yet (e.g. Stage 1)."
-    },
-    "engineVersion": {
-      "type": "string",
-      "description": "Server build/engine version (ldflags-injected)."
-    },
-    "protocolNegotiated": {
-      "type": "string",
-      "description": "The HTTP protocol this preflight response was served over, e.g. \"http/1.1\", \"h2\", \"h3\"."
-    },
+    "engineVersion": { "type": "string" },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
-      "description": "What this server currently supports, so the client negotiates rather than assumes.",
-      "required": ["origins", "transports", "endpoints"],
+      "required": ["throughputTargets", "latencyTargets"],
       "properties": {
-        "origins": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Externally-reachable origins the client should target per transport. Env-driven so the values are correct behind a reverse proxy. `null` means that origin is not enabled.",
-          "required": ["h1", "tls", "h3"],
-          "properties": {
-            "h1": { "type": ["string", "null"], "description": "HTTP/1.1 cleartext origin (default, e.g. http://host:8765)." },
-            "tls": { "type": ["string", "null"], "description": "HTTP/1.1+TLS origin (e.g. https://host:8443); null until enabled." },
-            "h3": { "type": ["string", "null"], "description": "HTTP/3 + WebTransport origin (e.g. https://host:8443); null until enabled." }
-          }
-        },
-        "transports": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Which client-side transports this server can currently service. Honest per build stage.",
-          "required": ["fetchStream", "websocket", "webtransport"],
-          "properties": {
-            "fetchStream": { "type": "boolean", "description": "fetch streaming download+upload." },
-            "websocket": { "type": "boolean", "description": "WebSocket latency bus (/ws/ping)." },
-            "webtransport": { "type": "boolean", "description": "WebTransport datagrams + uni-streams." }
-          }
-        },
-        "endpoints": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Stable endpoint paths, advertised so the client never hardcodes them.",
-          "required": ["download", "upload", "uploadSession", "wsPing", "wsUpload", "wtPing", "wtDownload", "wtUpload"],
-          "properties": {
-            "download": { "type": "string" },
-            "upload": { "type": "string" },
-            "uploadSession": { "type": "string", "description": "HTTP endpoint that mints an opaque upload-session token during upload warmup. The client echoes that token as ?id= on POST /upload and GET /ws/upload for that upload stage." },
-            "wsPing": { "type": "string" },
-            "wsUpload": { "type": "string", "description": "WebSocket upload-progress bus: streams server-measured BYTES_RECEIVED/UPLOAD_COMPLETE for the test ?id=." },
-            "wtPing": { "type": "string" },
-            "wtDownload": { "type": "string" },
-            "wtUpload": { "type": "string" }
-          }
-        }
+        "throughputTargets": { "type": "array", "items": { "$ref": "#/$defs/throughputTarget" } },
+        "latencyTargets": { "type": "array", "items": { "$ref": "#/$defs/latencyTarget" } }
+      }
+    }
+  },
+  "$defs": {
+    "throughputTarget": {
+      "oneOf": [
+        { "$ref": "#/$defs/fetchThroughputTarget" },
+        { "$ref": "#/$defs/webTransportStreamsThroughputTarget" }
+      ]
+    },
+    "fetchThroughputTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
+        "transport": { "const": "fetch-stream" }, "protocol": { "enum": ["http1", "http2", "http3"] },
+        "tls": { "type": "boolean" }, "routes": { "$ref": "#/$defs/throughputRoutes" }
+      }
+    },
+    "webTransportStreamsThroughputTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
+        "transport": { "const": "webtransport-streams" }, "protocol": { "const": "http3" },
+        "tls": { "const": true }, "routes": { "type": "object" }
+      }
+    },
+    "throughputRoutes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["probe", "download", "upload", "uploadSession", "uploadProgress"],
+      "properties": {
+        "probe": { "type": "string" },
+        "download": { "type": "string" },
+        "upload": { "type": "string" },
+        "uploadSession": { "type": "string" },
+        "uploadProgress": { "type": "string" }
+      }
+    },
+    "latencyTarget": {
+      "oneOf": [
+        { "$ref": "#/$defs/webSocketLatencyTarget" },
+        { "$ref": "#/$defs/webTransportDatagramsLatencyTarget" }
+      ]
+    },
+    "webSocketLatencyTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
+        "transport": { "const": "websocket" }, "protocol": { "const": "http1" },
+        "tls": { "type": "boolean" }, "routes": { "$ref": "#/$defs/latencyRoutes" }
+      }
+    },
+    "webTransportDatagramsLatencyTarget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
+        "transport": { "const": "webtransport-datagrams" }, "protocol": { "const": "http3" },
+        "tls": { "const": true }, "routes": { "type": "object" }
+      }
+    },
+    "latencyRoutes": {
+      "type": "object", "additionalProperties": false,
+      "required": ["probe", "ping"],
+      "properties": {
+        "probe": { "type": "string" }, "ping": { "type": "string" }
       }
     }
   }

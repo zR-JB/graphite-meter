@@ -26,16 +26,20 @@ const (
 )
 
 type Event struct {
-	Kind       EventKind
-	At         time.Time
-	Stage      string
-	Direction  Direction
-	Message    string
-	Preflight  *wire.Preflight
-	Throughput ThroughputSample
-	Latency    LatencySample
-	Result     *Result
-	Err        error
+	Kind                                EventKind
+	At                                  time.Time
+	Stage                               string
+	Direction                           Direction
+	Message                             string
+	ThroughputTarget, LatencyTarget     string
+	ThroughputProtocol, LatencyProtocol string
+	Preflight                           *wire.Preflight
+	Probe                               *wire.Probe
+	LatencyProbe                        *wire.Probe
+	Throughput                          ThroughputSample
+	Latency                             LatencySample
+	Result                              *Result
+	Err                                 error
 }
 
 type ThroughputSample struct {

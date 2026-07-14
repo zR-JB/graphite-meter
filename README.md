@@ -43,9 +43,9 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
   any Graphite Meter server.
 - **Modern, responsive UI** — dark and light themes, equally at home on a phone and a
   desktop.
-- **Built for what's next** — an engine-agnostic runner core and a transport-negotiating wire
-  contract, designed so HTTP/3 + WebTransport measurement slots in as another runner rather than
-  a rewrite in the future.
+- **Independent throughput and latency transports** — Fetch throughput can use HTTP/1.1 clear,
+  HTTP/1.1 TLS, HTTP/2, or HTTP/3; latency independently uses WebSocket over dedicated
+  HTTP/1.1 clear or TLS. Both targets are verified and frozen for the run.
 - **Free and open source** — AGPL-3.0.
 
 ## Quick start
@@ -53,12 +53,28 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
 Run the published image (multi-arch: amd64 + arm64):
 
 ```sh
-docker run -d --name graphite-meter -p 8765:8765 ghcr.io/zr-jb/graphite-meter:latest
+docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-Open **http://localhost:8765** — that's it. The server listens on a single TCP port (`8765`) for
-the web UI and all measurement traffic. Pin a version tag (`:0.1.0`, `:0.1`) for reproducible
-deploys.
+Open **http://localhost:7246** — that's it for the default clear HTTP/1.1 deployment. The TLS
+overlay adds the HTTPS UI at **https://localhost:7247** alongside native H2 and H3 measurement
+listeners. Open only `7246` or `7247` in a browser; `7248` and `7249` are strict test targets.
+For local browser testing, including browser-specific handling of private-root HTTP/3
+certificates, see [Local TLS and HTTP/3 certificates](docs/DEVELOPMENT.md#local-tls-and-http3-certificates).
+
+Use the command that matches the environment:
+
+| Purpose | Command |
+| --- | --- |
+| Local development run | `just dev` |
+| Local production-profile run | `just prod` |
+| Local run with H1-TLS, H2, and H3 | [Local TLS command](docs/DEVELOPMENT.md#local-tls-and-http3-certificates) |
+| Published clear-H1 deployment | `docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest` |
+| Published H1-TLS, H2, and H3 deployment | `GM_PUBLIC_HOST=meter.example.com docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d` |
+
+`just prod` builds the production browser profile but still runs the server from the source tree;
+it is not the published deployment workflow. The TLS Compose command requires a certificate under
+`/etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}` in the Compose `letsencrypt` volume.
 
 ### docker compose
 
@@ -69,9 +85,14 @@ services:
   graphite-meter:
     image: ghcr.io/zr-jb/graphite-meter:latest
     ports:
-      - "8765:8765"
+      - "7246:7246"
     restart: unless-stopped
 ```
+
+Enable all protocol targets with `container/docker-compose.tls.yml`. Set `GM_PUBLIC_HOST` and
+mount/provision a certificate in the overlay's complete `/etc/letsencrypt` volume (the complete
+tree is required because `live/` contains symlinks into `archive/`). H3 needs both TCP and UDP
+7249 reachable; the dedicated H1-TLS target uses TCP 7247.
 
 ### Podman + systemd (Quadlet)
 
@@ -85,18 +106,32 @@ Everything is optional; the defaults just work. The common knobs:
 
 | Env var              | Default                                 | What it does                                                                                                                                 |
 | -------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR`         | `:8765`                                 | Listen address.                                                                                                                              |
+| `GM_H1_ADDR`         | `:7246`                                 | Clear HTTP/1.1 listen address.                                                                                                               |
+| `GM_H1_TLS_ADDR`     | `:7247`                                 | Dedicated HTTPS HTTP/1.1 and WSS listen address.                                                                                             |
+| `GM_H2_ADDR`         | `:7248`                                 | HTTP/2-only TLS listen address.                                                                                                              |
+| `GM_H3_ADDR`         | `:7249`                                 | HTTP/3 UDP and bootstrap-only TCP listen address.                                                                                            |
+| `GM_ENABLE_H1_TLS`   | off                                     | Enable dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, progress, and WSS latency on `GM_H1_TLS_ADDR` (`:7247/tcp`).                |
+| `GM_ENABLE_H2`       | off                                     | Enable the HTTP/2-only measurement probe, transfer, and progress listener on `GM_H2_ADDR` (`:7248/tcp`).                                   |
+| `GM_ENABLE_H3`       | off                                     | Enable HTTP/3 probe, transfers, and progress on `GM_H3_ADDR` UDP plus the bootstrap-only TCP probe on the same port (`:7249`).               |
+| `GM_TLS_CERT` / `GM_TLS_KEY` | —                              | Matching, currently valid PEM pair required by native H1-TLS/H2/H3; renewed files hot-reload.                                               |
 | `GM_SERVER_NAME`     | `graphite-meter`                        | Server name shown in the client.                                                                                                             |
 | `GM_SERVER_LOCATION` | —                                       | Location label shown in the client (e.g. `fra`).                                                                                             |
 | `GM_TRUSTED_PROXIES` | —                                       | Comma-separated proxy CIDRs allowed to supply client IP and scheme forwarding headers.                                                       |
 | `PUBLIC_H1_ORIGIN`   | derived from request                    | Public origin to advertise — set behind a reverse proxy.                                                                                     |
-| `PUBLIC_TLS_ORIGIN`  | derived from trusted forwarded `https`  | Public encrypted origin (WebSocket bus uses `wss://`) — auto-detected behind a proxy in `GM_TRUSTED_PROXIES`; set explicitly if needed.     |
+| `PUBLIC_H1_TLS_ORIGIN` / `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN` | derived from request host | Exact public TLS origins. Setting one advertises that external target even when its native listener is disabled.             |
+| `PUBLIC_TLS_ORIGIN` | — | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence. |
 | `GM_VERBOSE`         | off                                     | Per-second server-side throughput/connection logging.                                                                                        |
+
+`GM_H1_ADDR`, `GM_H1_TLS_ADDR`, `GM_H2_ADDR`, and `GM_H3_ADDR` control the sockets the Go
+process opens. `PUBLIC_*_ORIGIN` variables do not change those sockets; they only override the
+client-visible origins returned by `/preflight`. Leave the public origins unset for a direct
+deployment. Set them only when a reverse proxy, container port mapping, or public hostname makes
+the browser-facing origin differ from the listener address.
 
 Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)
 for nginx, Caddy, and Traefik examples and the trust-chain rules.
 
-Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
+Full runtime and build-time reference: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
 
 > **Measuring multi-gigabit through the container?** Rootless Podman's user-mode networking
 > (pasta/slirp) can cap throughput well below your NIC — use host networking for full-rate LAN
@@ -106,22 +141,24 @@ Full reference (flags, reserved TLS/HTTP-3 variables): [docs/DEVELOPMENT.md](doc
 
 ```sh
 just goclient-build            # -> go/graphite-meter-client
-./go/graphite-meter-client -url http://your-server:8765
+./go/graphite-meter-client -url https://your-server:7247 \
+  -throughput-target http1-tls -latency-target ws-http1-tls
 ```
 
 An interactive TUI with the same stages (latency, download, upload, bidirectional, loaded
 latency), server presets, and live telemetry — ideal for headless boxes and for pushing rates a
-browser can't.
+browser can't. Throughput and latency targets are independently selected and verified; upload
+progress is part of the selected throughput path. See `-throughput-target` and `-latency-target`.
 
 ## Building from source & contributing
 
 - **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — toolchain, `just` recipes, build flags,
   building the image from source.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the server, the browser client, the TUI
-  client, and the cross-language `api/` contract fit together, plus the roadmap (HTTP/3 /
-  WebTransport, multi-server testing).
+  client, and the cross-language `api/` contract fit together, plus the roadmap (multi-server
+  testing and the Rust rewrite).
 
-The short version: `git clone`, then `just dev`, then open http://localhost:8765.
+The short version: `git clone`, then `just dev`, then open http://localhost:7246.
 
 ## License
 

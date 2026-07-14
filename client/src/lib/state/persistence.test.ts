@@ -14,9 +14,9 @@ const FAKE_CONFIG: RunnerConfig = {
     bidirectionalMs: 10000,
   },
   pingConcurrency: "medium",
-  parallelStreams: 4,
+  transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
-  endpoint: { host: "auto", port: 443 },
+  transports: { throughputTarget: "current", latencyTarget: "auto" },
   compensation: {
     profile: "lan",
     transport: "auto",
@@ -87,6 +87,71 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(FAKE_CONFIG);
+});
+
+test("obsolete endpoint override cannot restore the old listener port", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { endpoint: { host: "localhost", port: 8765 } },
+    }),
+  );
+  expect(loadPersisted().config).toEqual(FAKE_CONFIG);
+  expect(loadPersisted().config).not.toHaveProperty("endpoint");
+});
+
+test("legacy parallel-stream ceiling migrates into automatic policy", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ config: { parallelStreams: 2 } }),
+  );
+  expect(loadPersisted().config.transferStreams).toEqual({
+    mode: "auto",
+    count: 2,
+  });
+});
+
+test("legacy protocol selection migrates to a transfer target", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ config: { endpoint: { protocol: "http1" } } }),
+  );
+  expect(loadPersisted().config.transports).toEqual({
+    throughputTarget: "http1-clear",
+    latencyTarget: "auto",
+  });
+});
+
+test("legacy role bindings migrate and obsolete progress selection is dropped", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: {
+        transports: {
+          transfer: "http3",
+          latency: "ws-http1-tls",
+          uploadProgress: "ws-http3",
+        },
+      },
+    }),
+  );
+  expect(loadPersisted().config.transports).toEqual({
+    throughputTarget: "http3",
+    latencyTarget: "ws-http1-tls",
+  });
+});
+
+test("invalid forced stream settings are normalized", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { transferStreams: { mode: "forced", count: 999.4 } },
+    }),
+  );
+  expect(loadPersisted().config.transferStreams).toEqual({
+    mode: "forced",
+    count: 128,
+  });
 });
 
 test("corrupt (non-JSON) stored value: falls back to defaults without throwing", () => {

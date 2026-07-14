@@ -9,120 +9,83 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-const (
-	schemaPath = "../../../api/preflight.schema.json"
-	goldenPath = "../../../api/preflight.golden.json"
-)
-
-// compileSchema loads api/preflight.schema.json — the single source of truth
-// for Surface A — and compiles it.
-func compileSchema(t *testing.T) *jsonschema.Schema {
+func schema(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
-	raw, err := os.ReadFile(schemaPath)
+	raw, err := os.ReadFile("../../../api/" + name + ".schema.json")
 	if err != nil {
-		t.Fatalf("read schema: %v", err)
+		t.Fatal(err)
 	}
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
 	if err != nil {
-		t.Fatalf("unmarshal schema: %v", err)
+		t.Fatal(err)
 	}
 	c := jsonschema.NewCompiler()
-	if err := c.AddResource("preflight.schema.json", doc); err != nil {
-		t.Fatalf("add resource: %v", err)
+	if err := c.AddResource(name+".schema.json", doc); err != nil {
+		t.Fatal(err)
 	}
-	sch, err := c.Compile("preflight.schema.json")
+	s, err := c.Compile(name + ".schema.json")
 	if err != nil {
-		t.Fatalf("compile schema: %v", err)
+		t.Fatal(err)
 	}
-	return sch
+	return s
 }
 
-// validate checks JSON bytes against the schema.
-func validate(t *testing.T, sch *jsonschema.Schema, data []byte) {
+func valid(t *testing.T, s *jsonschema.Schema, data []byte) {
 	t.Helper()
-	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	v, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
-		t.Fatalf("unmarshal instance: %v", err)
+		t.Fatal(err)
 	}
-	if err := sch.Validate(inst); err != nil {
-		t.Fatalf("schema validation failed:\n%v\ninstance: %s", err, data)
+	if err := s.Validate(v); err != nil {
+		t.Fatalf("schema validation: %v\n%s", err, data)
 	}
 }
 
-// TestGoldenMatchesSchema guards the checked-in example body.
-func TestGoldenMatchesSchema(t *testing.T) {
-	sch := compileSchema(t)
-	golden, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
+func TestGoldenConformance(t *testing.T) {
+	for _, name := range []string{"preflight", "probe"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile("../../../api/" + name + ".golden.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			valid(t, schema(t, name), data)
+		})
 	}
-	validate(t, sch, golden)
 }
 
-// TestStructMarshalsToValidSchema guards the hand-written Go struct: anything it
-// can produce must satisfy the schema. This is the drift detector — rename a
-// field or a json tag and this fails.
-func TestStructMarshalsToValidSchema(t *testing.T) {
-	sch := compileSchema(t)
-
-	h1 := "http://speed.example:8765"
-	p := Preflight{
-		ClientIP:        "198.51.100.4",
-		ClientIPVersion: 4,
-		ClientIPSource:  "socket",
-		Server: ServerInfo{
-			Name:     "graphite-meter",
-			Host:     "speed.example",
-			Port:     8765,
-			Location: "ams",
-		},
-		PreTestPingMs:      0,
-		EngineVersion:      "0.1.0-test",
-		ProtocolNegotiated: "http/1.1",
-		Capabilities: Capabilities{
-			Origins:    Origins{H1: &h1, TLS: nil, H3: nil},
-			Transports: Transports{FetchStream: false, WebSocket: false, WebTransport: false},
-			Endpoints:  DefaultEndpoints(),
-		},
+func TestStructConformance(t *testing.T) {
+	h1 := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:7246", Transport: "fetch-stream", Protocol: "http1", Routes: DefaultThroughputRoutes()}
+	ws := LatencyTarget{ID: "ws-http1-clear", Origin: h1.Origin, Transport: "websocket", Protocol: "http1", Routes: DefaultLatencyRoutes()}
+	values := []struct {
+		name  string
+		value any
+	}{
+		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter", Host: "speed.example", Port: 7246}, EngineVersion: "test", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{h1}, LatencyTargets: []LatencyTarget{ws}}}},
+		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}},
 	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	for _, tc := range values {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			valid(t, schema(t, tc.name), data)
+		})
 	}
-	validate(t, sch, data)
-
-	// Server.Location is omitempty: omitting it must still validate.
-	p.Server.Location = ""
-	data, err = json.Marshal(p)
-	if err != nil {
-		t.Fatalf("marshal (no location): %v", err)
-	}
-	validate(t, sch, data)
 }
 
-// TestGoldenRoundTripsThroughStruct ensures the golden decodes into the struct
-// and re-encodes to a schema-valid document (no field lost in translation).
-func TestGoldenRoundTripsThroughStruct(t *testing.T) {
-	sch := compileSchema(t)
-	golden, err := os.ReadFile(goldenPath)
+func TestGoldenRoundTrips(t *testing.T) {
+	var pf Preflight
+	data, err := os.ReadFile("../../../api/preflight.golden.json")
 	if err != nil {
-		t.Fatalf("read golden: %v", err)
+		t.Fatal(err)
 	}
-	var p Preflight
-	if err := json.Unmarshal(golden, &p); err != nil {
-		t.Fatalf("unmarshal golden into struct: %v", err)
+	if err := json.Unmarshal(data, &pf); err != nil {
+		t.Fatal(err)
 	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		t.Fatalf("re-marshal: %v", err)
+	if got := pf.Capabilities.LatencyTargets[0].Routes.Ping; got != "/ws/ping" {
+		t.Fatal("websocket route lost")
 	}
-	validate(t, sch, data)
-
-	// Spot-check a couple of fields survived the round-trip.
-	if p.Capabilities.Endpoints.WTPing != "/wt/ping" {
-		t.Errorf("wtPing = %q, want /wt/ping", p.Capabilities.Endpoints.WTPing)
-	}
-	if p.Capabilities.Origins.TLS != nil {
-		t.Errorf("tls origin = %v, want null", *p.Capabilities.Origins.TLS)
-	}
+	data, _ = json.Marshal(pf)
+	valid(t, schema(t, "preflight"), data)
 }

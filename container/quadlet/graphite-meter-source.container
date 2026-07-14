@@ -15,10 +15,15 @@ ContainerName=graphite-meter
 # dependency on graphite-meter-build.service.
 Image=graphite-meter.build
 
-# HTTP/1.1 (default). TLS + HTTP/3 (WebTransport) land in a later stage.
-PublishPort=8765:8765
-# PublishPort=8443:8443/tcp
-# PublishPort=8443:8443/udp
+# Clear HTTP/1.1 default; enable only the TLS targets you need.
+PublishPort=7246:7246
+# Dedicated HTTPS HTTP/1.1 throughput + WSS latency:
+# PublishPort=7247:7247/tcp
+# HTTP/2 only:
+# PublishPort=7248:7248/tcp
+# HTTP/3 bootstrap probe only (TCP) and throughput (UDP):
+# PublishPort=7249:7249/tcp
+# PublishPort=7249:7249/udp
 
 # On rootless Podman, user-mode networking can use pasta and
 # significantly reduce throughput. For better performance, uncomment:
@@ -29,8 +34,16 @@ PublishPort=8765:8765
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
-# Environment=PUBLIC_H1_ORIGIN=http://speed.example:8765
-# Environment=GM_ADVERTISE_H3=0
+# Environment=PUBLIC_H1_ORIGIN=http://speed.example:7246
+# Environment=PUBLIC_H1_TLS_ORIGIN=https://speed.example:7247
+# Environment=PUBLIC_H2_ORIGIN=https://speed.example:7248
+# Environment=PUBLIC_H3_ORIGIN=https://speed.example:7249
+# Environment=GM_ENABLE_H1_TLS=true
+# Environment=GM_ENABLE_H2=true
+# Environment=GM_ENABLE_H3=true
+# Environment=GM_TLS_CERT=/etc/letsencrypt/live/graphite-meter/fullchain.pem
+# Environment=GM_TLS_KEY=/etc/letsencrypt/live/graphite-meter/privkey.pem
+# Volume=/etc/letsencrypt:/etc/letsencrypt:ro
 # Environment=GM_VERBOSE=1
 
 [Service]

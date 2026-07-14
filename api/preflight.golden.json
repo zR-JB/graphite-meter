@@ -1,36 +1,40 @@
 {
-  "clientIp": "203.0.113.7",
-  "clientIpVersion": 4,
-  "clientIpSource": "socket",
   "server": {
     "name": "graphite-meter",
     "host": "speed.example",
-    "port": 8765,
+    "port": 7246,
     "location": "fra"
   },
-  "preTestPingMs": 0,
-  "engineVersion": "0.1.0",
-  "protocolNegotiated": "http/1.1",
+  "engineVersion": "0.1.0-test",
   "capabilities": {
-    "origins": {
-      "h1": "http://speed.example:8765",
-      "tls": null,
-      "h3": null
-    },
-    "transports": {
-      "fetchStream": true,
-      "websocket": true,
-      "webtransport": false
-    },
-    "endpoints": {
-      "download": "/download",
-      "upload": "/upload",
-      "uploadSession": "/upload/session",
-      "wsPing": "/ws/ping",
-      "wsUpload": "/ws/upload",
-      "wtPing": "/wt/ping",
-      "wtDownload": "/wt/download",
-      "wtUpload": "/wt/upload"
-    }
+    "throughputTargets": [
+      {
+        "id": "http1-clear",
+        "origin": "http://speed.example:7246",
+        "transport": "fetch-stream",
+        "protocol": "http1",
+        "tls": false,
+        "routes": {
+          "probe": "/probe",
+          "download": "/download",
+          "upload": "/upload",
+          "uploadSession": "/upload/session",
+          "uploadProgress": "/upload/progress"
+        }
+      }
+    ],
+    "latencyTargets": [
+      {
+        "id": "ws-http1-clear",
+        "origin": "http://speed.example:7246",
+        "transport": "websocket",
+        "protocol": "http1",
+        "tls": false,
+        "routes": {
+          "probe": "/probe",
+          "ping": "/ws/ping"
+        }
+      }
+    ]
   }
 }
