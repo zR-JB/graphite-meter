@@ -504,7 +504,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     progressWorker!.emit({ type: "bytes", n: 100, t: 100_000_000 });
     progressWorker!.emit({ type: "bytes", n: 200, t: 200_000_000 });
     const ending = backend.onStageEnd(activity);
-    if (!ending) throw new Error("upload finalization did not return a promise");
+    if (!ending)
+      throw new Error("upload finalization did not return a promise");
     let ended = false;
     void ending.then(() => (ended = true));
     await Promise.resolve();
