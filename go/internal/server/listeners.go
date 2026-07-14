@@ -192,7 +192,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.EnableH2 {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
-		s := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, transfers: true, requiredProto: 2}), p)
+		s := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
 		ln, err := net.Listen("tcp", cfg.H2Addr)
 		if err != nil {
 			closeOpened()
@@ -201,7 +201,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2"))
 		services = append(services, service{
-			name: "HTTPS HTTP/2: UI, discovery, probe, transfers, progress",
+			name: "HTTPS HTTP/2: measurement probe, transfers, progress only",
 			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
 		})
 	}

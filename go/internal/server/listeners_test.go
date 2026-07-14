@@ -35,7 +35,7 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(context.Background(), e, muxTopology{discovery: true, transfers: true, requiredProto: 2})
+	mux := listenerMux(context.Background(), e, muxTopology{transfers: true, requiredProto: 2})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
@@ -46,6 +46,49 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("H2 websocket status = %d", rec.Code)
+	}
+}
+
+func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := listenerMux(context.Background(), e, muxTopology{transfers: true, requiredProto: 2})
+	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", path, rec.Code)
+		}
+	}
+	for _, path := range []string{"/probe", "/download?bytes=1", "/upload/session", "/upload", "/upload/progress"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
+		mux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusNotFound && path != "/upload/progress" {
+			t.Errorf("%s is not mounted", path)
+		}
+	}
+}
+
+func TestH1MountsSPAAndDiscovery(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := listenerMux(context.Background(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true})
+	for _, path := range []string{"/", "/preflight"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s status = %d, want 200", path, rec.Code)
+		}
 	}
 }
 

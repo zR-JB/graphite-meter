@@ -40,7 +40,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	}
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
-	srv := baseServer(listenerMux(ctx, e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
+	srv := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +53,16 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr}
 	base := "https://" + ln.Addr().String()
+	for _, path := range []string{"/", "/preflight"} {
+		res, err := hc.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d", path, res.StatusCode)
+		}
+	}
 	res, err := hc.Get(base + "/probe")
 	if err != nil {
 		t.Fatal(err)
@@ -85,14 +95,13 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &http.Protocols{}
-	p.SetHTTP1(true)
 	p.SetHTTP2(true)
-	srv := baseServer(listenerMux(ctx, e, muxTopology{discovery: true, transfers: true, requiredProto: 2}), p)
+	srv := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	go serve(tls.NewListener(ln, cm.tlsConfig("h2", "http/1.1")), srv)
+	go serve(tls.NewListener(ln, cm.tlsConfig("h2")), srv)
 	defer srv.Close()
 	cp := &http.Protocols{}
 	cp.SetHTTP2(true)
@@ -100,6 +109,16 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr}
 	base := "https://" + ln.Addr().String()
+	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
+		res, err := hc.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, res.StatusCode)
+		}
+	}
 	res, err := hc.Get(base + "/probe")
 	if err != nil {
 		t.Fatal(err)
