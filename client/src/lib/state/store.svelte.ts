@@ -384,7 +384,7 @@ class AppStore {
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
       this.liveTransferBytesPerSec,
-      this.runConfig.compensation,
+      this.config.compensation,
       this.phase === "upload" ? "upload" : "download",
       this.runConnections.throughput.browserProtocol,
       this.runConnections.throughput.target?.tls,
@@ -396,7 +396,7 @@ class AppStore {
     estimateResultCompensation(
       this.stageResults.download,
       "download",
-      this.runConfig.compensation,
+      this.config.compensation,
       this.runConnections.throughput.browserProtocol,
       this.runConnections.throughput.target?.tls,
       this.runConnections.throughput.clientIpVersion,
@@ -407,7 +407,7 @@ class AppStore {
     estimateResultCompensation(
       this.stageResults.upload,
       "upload",
-      this.runConfig.compensation,
+      this.config.compensation,
       this.runConnections.throughput.browserProtocol,
       this.runConnections.throughput.target?.tls,
       this.runConnections.throughput.clientIpVersion,

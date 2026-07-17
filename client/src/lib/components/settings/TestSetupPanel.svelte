@@ -208,6 +208,7 @@
     <Switch
       checked={store.config.stages.bidirectional}
       onToggle={setBidirectional}
+      disabled={running && store.phaseStage === "bidirectional"}
       label="Include concurrent download + upload"
     />
     {#if durationMode === "custom"}
@@ -236,7 +237,9 @@
       </div>
     {/if}
     {#if running}
-      <p class="hint">Durations and unstarted stages update this run live.</p>
+      <p class="hint">
+        Active and future durations, plus unstarted stages, update this run.
+      </p>
     {/if}
   </section>
 

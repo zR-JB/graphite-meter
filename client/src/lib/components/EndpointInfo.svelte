@@ -83,7 +83,7 @@
           store.runConfig.transferStreams,
           store.infra?.selectedThroughputProtocol,
         ),
-        compensation: store.runConfig.compensation,
+        compensation: store.config.compensation,
       },
       null,
       2,
@@ -212,8 +212,8 @@
         <div>
           <dt>Compensation</dt>
           <dd>
-            {store.runConfig.compensation.profile} · {store.runConfig
-              .compensation.transport}
+            {store.config.compensation.profile} · {store.config.compensation
+              .transport}
           </dd>
         </div>
       </dl>
