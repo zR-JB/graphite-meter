@@ -1,12 +1,4 @@
-/* ============================================================
- * Dummy Backend — test harness, simulation, live anomaly injection
- * Deterministic-seedable development sample source. It implements
- * only the engine-specific part of a run — producing synthetic
- * throughput/latency samples — and pushes them into the shared
- * RunnerCore, which owns the timeline, evaluation, and event
- * stream. A real engine is the same shape with real I/O in place
- * of the synthesis below; swapping it touches only wire.ts.
- * ============================================================ */
+// Deterministic development sample source.
 
 import type {
   RunnerConfig,
@@ -17,7 +9,7 @@ import type {
   FlowDirection,
   PhaseActivity,
 } from "./contract";
-import type { CoreHost, RunnerBackend, TickContext } from "./core";
+import type { CoreHost, RunnerBackend } from "./core";
 import { BUILD } from "../buildenv";
 
 export interface DummyOptions {
@@ -102,7 +94,16 @@ const PING_INTERVAL: Record<PingCadence, number> = {
   slow: 600,
 };
 
-const THROUGHPUT_CADENCE_MS = 60; // ≈16Hz
+const THROUGHPUT_CADENCE_MS = 100;
+
+export interface DummySampleContext {
+  activity: PhaseActivity;
+  measuring: boolean;
+  elapsed: number;
+  segStart: number;
+  segEnd: number;
+  realNow: number;
+}
 
 /* ---------- Live anomaly defaults ----------
  * Construction-time anomalies (DummyOptions.anomalies) fire at phase fractions.
@@ -142,11 +143,12 @@ export class DummyBackend implements RunnerBackend {
   #rand: () => number;
   #host: CoreHost | null = null;
 
-  // Real-time cadence gates (sim-only): throughput at ~16Hz, pings at the
-  // configured interval — gated on REAL time so the early-finish glide doesn't
-  // dump a whole tail's worth of samples at once.
+  // Wall-time gates prevent adaptive glides from emitting sample bursts.
   #lastThroughputAt = -Infinity;
   #lastPingAt = -Infinity;
+  #sampleTimer: ReturnType<typeof setTimeout> | null = null;
+  #activity: PhaseActivity | null = null;
+  #segmentStart = 0;
 
   // Live, dev-injected anomalies. Each is an absolute [start,end) window
   // on the effective timeline; the synthesis hooks read this list.
@@ -293,32 +295,48 @@ export class DummyBackend implements RunnerBackend {
 
   /* ================= LIFECYCLE (core → backend) ================= */
   onRunStart(_config: RunnerConfig): void {
-    // Reset per-run synthesis state. The core owns the timeline + clock.
+    this.#stopSamples();
     this.#lastThroughputAt = -Infinity;
     this.#lastPingAt = -Infinity;
     this.#liveAnomalies = [];
     this.#dropEndReal = 0;
   }
 
-  // The dummy simulates rather than opening sockets, so the stage connection
-  // lifecycle is a no-op; a real backend opens/primes in onStageBegin, starts
-  // measuring in onStageMeasure, and closes in onStageEnd.
-  onStageBegin(_activity: PhaseActivity): void {}
-  onStageMeasure(_activity: PhaseActivity): void {}
-  onStageEnd(_activity: PhaseActivity): void {}
-  onComplete(): void {}
-  onAbort(): void {}
+  onStageBegin(_activity: PhaseActivity): void {
+    this.#stopSamples();
+  }
+
+  onStageMeasure(activity: PhaseActivity): void {
+    const host = this.#host;
+    const cfg = host?.config;
+    if (!host || !cfg) return;
+    this.#stopSamples();
+    this.#activity = activity;
+    this.#segmentStart = host.elapsed;
+    this.#scheduleSample(0);
+  }
+
+  onStageEnd(_activity: PhaseActivity): void {
+    this.#stopSamples();
+  }
+
+  onComplete(): void {
+    this.#stopSamples();
+  }
+
+  onAbort(): void {
+    this.#stopSamples();
+  }
 
   /** Fallback idle RTT for an empty-sample run — the profile's idle ping. */
   idleHintMs(): number {
     return this.#spec.idleRttMs;
   }
 
-  /* ================= PER-TICK SYNTHESIS ================= */
-  onTick(ctx: TickContext): void {
+  sample(ctx: DummySampleContext): void {
     const cfg = this.#host?.config;
     if (!cfg) return;
-    const { activity, isWarmup, elapsed, segStart, segEnd, realNow } = ctx;
+    const { activity, measuring, elapsed, segStart, segEnd, realNow } = ctx;
 
     // Account dead air as zero-byte wall time without falsely resuming delivery.
     if (this.#dropEndReal > 0) {
@@ -338,7 +356,7 @@ export class DummyBackend implements RunnerBackend {
     // The warmup window primes real connections; the dummy has none, so it emits
     // nothing until measurement begins — mirroring a real backend, which only
     // starts pushing samples at onStageMeasure.
-    if (isWarmup) return;
+    if (!measuring) return;
 
     // Throughput on the stage's transfer lanes (none for the latency stage; both
     // lanes for bidirectional). Cadence gated on REAL time so the early-finish
@@ -369,6 +387,51 @@ export class DummyBackend implements RunnerBackend {
       this.#lastPingAt = realNow;
       this.#synthLatency(activity, elapsed, segStart, segEnd);
     }
+  }
+
+  #scheduleSample(delay: number): void {
+    this.#sampleTimer = setTimeout(() => {
+      this.#sampleTimer = null;
+      const host = this.#host;
+      const activity = this.#activity;
+      const cfg = host?.config;
+      if (!host || !activity || !cfg || host.phase !== activity.stage) return;
+      const now = performance.now();
+      this.sample({
+        activity,
+        measuring: true,
+        elapsed: host.elapsed,
+        segStart: this.#segmentStart,
+        segEnd: this.#segmentStart + cfg.duration[`${activity.stage}Ms`],
+        realNow: now,
+      });
+      const pingActive =
+        activity.stage === "latency" ||
+        (activity.transfer.length > 0 && activity.loadedLatency);
+      const pingInterval = pingActive
+        ? PING_INTERVAL[
+            activity.stage === "latency"
+              ? cfg.pingCadence
+              : cfg.loadedPingCadence
+          ]
+        : Infinity;
+      const next = Math.min(
+        activity.transfer.length
+          ? this.#lastThroughputAt + THROUGHPUT_CADENCE_MS
+          : Infinity,
+        pingActive ? this.#lastPingAt + pingInterval : Infinity,
+        this.#dropEndReal > 0
+          ? Math.min(this.#dropEndReal, now + 100)
+          : Infinity,
+      );
+      if (Number.isFinite(next)) this.#scheduleSample(Math.max(1, next - now));
+    }, delay);
+  }
+
+  #stopSamples(): void {
+    if (this.#sampleTimer) clearTimeout(this.#sampleTimer);
+    this.#sampleTimer = null;
+    this.#activity = null;
   }
 
   /* ---------- Throughput sample synthesis ---------- */
@@ -471,9 +534,7 @@ export class DummyBackend implements RunnerBackend {
     const host = this.#host;
     if (!host || !host.config || host.phase === "idle") return;
 
-    // Connection-drop is modelled as a real stall, not a synthesis tweak: stall
-    // the core now and open a real-time dead-air window
-    // that onTick lifts with resume(). No magnitude — it's a full drop.
+    // Connection drops use wall time so adaptive timeline glides cannot shorten them.
     if (a.kind === "connection-drop") {
       const durationMs =
         a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;
