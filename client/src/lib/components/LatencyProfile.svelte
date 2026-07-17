@@ -36,7 +36,7 @@
   const lanes = $derived(store.latencyLanes);
 
   const enabledLanes = $derived(
-    lanes.filter((l) => store.config.stages[l.key]),
+    lanes.filter((l) => store.runConfig.stages[l.key]),
   );
 
   const domain = $derived.by(() => {
@@ -178,7 +178,7 @@
         class="lane"
         data-tone={meta.tone}
         data-active={lane.active}
-        data-enabled={store.config.stages[lane.key]}
+        data-enabled={store.runConfig.stages[lane.key]}
       >
         <div class="lane-meta">
           <span>{meta.label}</span>

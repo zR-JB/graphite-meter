@@ -1,285 +1,286 @@
 <script lang="ts">
-  // Responsive endpoint facts for the info drawer. Probe-dependent values
-  // remain visibly pending until the handshake resolves.
   import { store } from "../state/store.svelte";
-  import { pointerIntent } from "../actions/pointerIntent";
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
 
-  const infra = $derived(store.infra);
-  const engine = $derived(store.engineInfo);
+  const connections = $derived(
+    store.isRunning ? store.runConnections : store.connections,
+  );
+  const server = $derived(
+    store.transportDiscovery?.server ?? store.infra?.server,
+  );
+  let copied = $state(false);
 
-  type Fact = { label: string; value: string | string[] };
-  type Card = { title: string; rows: Fact[] };
-
-  function endpointAddress(host: string, port: number): string {
-    const address =
-      host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-    return `${address}:${port}`;
+  function status(state: string) {
+    return state === "verified"
+      ? "Ready"
+      : state[0].toUpperCase() + state.slice(1);
   }
 
-  const cards = $derived.by<Card[]>(() => {
-    const i = infra;
-    const e = engine;
-    return [
+  function clientEvidence(role: "throughput" | "latency") {
+    const connection = connections[role];
+    if (!connection.clientIp) return "Pending";
+    const source =
+      connection.clientIpSource === "forwarded"
+        ? "trusted proxy"
+        : "socket peer";
+    return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
+  }
+
+  function report() {
+    return JSON.stringify(
       {
-        title: "Client",
-        rows: [
-          { label: "Throughput address", value: i?.clientIp ?? "—" },
-          {
-            label: "Throughput observed",
-            value: i
-              ? `IPv${i.clientIpVersion} · ${
-                  i.clientIpSource === "forwarded"
-                    ? "Trusted proxy"
-                    : "Socket peer"
-                }`
-              : "—",
-          },
-          {
-            label: "Latency address",
-            value: i?.latencyClientIp ?? "Not selected",
-          },
-          {
-            label: "Latency observed",
-            value:
-              i?.latencyClientIpVersion && i.latencyClientIpSource
-                ? `IPv${i.latencyClientIpVersion} · ${
-                    i.latencyClientIpSource === "forwarded"
-                      ? "Trusted proxy"
-                      : "Socket peer"
-                  }`
-                : "Not selected",
-          },
-          { label: "App version", value: BUILD.clientVersion },
-        ],
+        clientVersion: BUILD.clientVersion,
+        server,
+        generation: store.transportDiscovery?.generation,
+        throughput: connections.throughput,
+        latency: connections.latency,
+        preTestPingMs: store.infra?.preTestPingMs,
+        streams: describeTransferStreams(
+          store.runConfig.transferStreams,
+          store.infra?.selectedThroughputProtocol,
+        ),
+        compensation: store.config.compensation,
       },
-      {
-        title: "Engine",
-        rows: [
-          { label: "Runner", value: e?.name ?? "—" },
-          { label: "Version", value: e?.version ?? "—" },
-          { label: "Latency", value: e?.latencyTransports ?? "—" },
-          { label: "Transfer", value: e?.throughputTransports ?? "—" },
-        ],
-      },
-      {
-        title: "Server",
-        rows: [
-          {
-            label: "Node",
-            value: i?.server.name ?? "—",
-          },
-          { label: "Location", value: i?.server.location ?? "—" },
-          {
-            label: "Endpoint",
-            value: i ? endpointAddress(i.server.host, i.server.port) : "—",
-          },
-          { label: "Version", value: i?.engineVersion ?? "—" },
-        ],
-      },
-      {
-        title: "Connection",
-        rows: [
-          {
-            label: "Throughput target",
-            value: i?.selectedThroughputTarget ?? "Current origin",
-          },
-          {
-            label: "Throughput browser",
-            value: i?.firstHopProtocol ?? "Scheme fallback",
-          },
-          {
-            label: "Throughput server",
-            value: i?.protocolNegotiated ?? "—",
-          },
-          {
-            label: "Transfer path",
-            value: `Fetch streams · ${i?.selectedThroughputProtocol ?? "—"}`,
-          },
-          {
-            label: "Latency target",
-            value: i?.selectedLatencyTarget
-              ? `${i.selectedLatencyTransport} · ${i.selectedLatencyTarget}`
-              : "Unavailable",
-          },
-          {
-            label: "Latency browser",
-            value: i?.verifiedLatencyProtocol ?? "Unavailable",
-          },
-          {
-            label: "Latency server",
-            value: i?.latencyProtocolNegotiated ?? "Unavailable",
-          },
-          {
-            label: "Upload progress",
-            value: "Selected throughput path · NDJSON",
-          },
-          {
-            label: "Streams",
-            value: describeTransferStreams(
-              store.config.transferStreams,
-              i?.selectedThroughputProtocol,
-            ),
-          },
-          {
-            label: "Pre-test ping",
-            value: i ? `${fmtMs(i.preTestPingMs)} ms` : "—",
-          },
-        ],
-      },
-    ];
-  });
+      null,
+      2,
+    );
+  }
+
+  async function copyReport() {
+    await navigator.clipboard.writeText(report());
+    copied = true;
+    window.setTimeout(() => (copied = false), 1500);
+  }
 </script>
 
-<section class="infra">
-  <div class="grid">
-    {#each cards as c (c.title)}
-      <article class="card" use:pointerIntent>
-        <h4>{c.title}</h4>
+<section class="endpoint">
+  <article class="server">
+    <div>
+      <span>Server</span>
+      <strong>{server?.name ?? "Checking server"}</strong>
+      <small>{server?.location ?? "Location unavailable"}</small>
+    </div>
+    <div>
+      <span>Version</span>
+      <strong>{store.transportDiscovery?.engineVersion ?? "—"}</strong>
+      <small>Client {BUILD.clientVersion}</small>
+    </div>
+    <div>
+      <span>Pre-test RTT</span>
+      <strong
+        >{store.infra ? `${fmtMs(store.infra.preTestPingMs)} ms` : "—"}</strong
+      >
+      <small>Selected latency path</small>
+    </div>
+  </article>
+
+  <div class="paths">
+    {#each ["throughput", "latency"] as role}
+      {@const connection = connections[role as "throughput" | "latency"]}
+      <article class="path">
+        <header>
+          <div>
+            <span>{role}</span>
+            <strong>{connection.label}</strong>
+          </div>
+          <mark data-state={connection.validation}
+            >{status(connection.validation)}</mark
+          >
+        </header>
+        <p>{connection.summary}</p>
         <dl>
-          {#each c.rows as row (row.label)}
-            <div>
-              <dt>{row.label}</dt>
-              <dd>
-                {#if Array.isArray(row.value)}
-                  <span class="values">
-                    {#each row.value as value (value)}
-                      <span>{value}</span>
-                    {/each}
-                  </span>
-                {:else}
-                  {row.value}
-                {/if}
-              </dd>
-            </div>
-          {/each}
+          <div>
+            <dt>Browser-facing</dt>
+            <dd>{connection.browserProtocol ?? "Pending"}</dd>
+          </div>
+          <div>
+            <dt>Server-observed</dt>
+            <dd>{connection.serverProtocol ?? "Pending"}</dd>
+          </div>
+          <div>
+            <dt>Client</dt>
+            <dd>{clientEvidence(role as "throughput" | "latency")}</dd>
+          </div>
         </dl>
       </article>
     {/each}
   </div>
 
-  {#if !infra}
-    <p class="hint">
-      Probe pending — values populate once the handshake resolves.
-    </p>
-  {/if}
+  <details>
+    <summary>Diagnostics</summary>
+    <div class="diagnostics">
+      <dl>
+        <div>
+          <dt>Generation</dt>
+          <dd>{store.transportDiscovery?.generation ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Throughput target</dt>
+          <dd>
+            {connections.throughput.target?.id ??
+              connections.throughput.selection}
+          </dd>
+        </div>
+        <div>
+          <dt>Throughput origin</dt>
+          <dd>{connections.throughput.target?.origin ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Latency target</dt>
+          <dd>
+            {connections.latency.target?.id ?? connections.latency.selection}
+          </dd>
+        </div>
+        <div>
+          <dt>Latency origin</dt>
+          <dd>{connections.latency.target?.origin ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Upload progress</dt>
+          <dd>Selected throughput path · NDJSON</dd>
+        </div>
+        <div>
+          <dt>Streams</dt>
+          <dd>
+            {describeTransferStreams(
+              store.runConfig.transferStreams,
+              store.infra?.selectedThroughputProtocol,
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Compensation</dt>
+          <dd>
+            {store.config.compensation.profile} · {store.config.compensation
+              .transport}
+          </dd>
+        </div>
+      </dl>
+      <button type="button" onclick={copyReport}
+        >{copied ? "Copied" : "Copy diagnostic report"}</button
+      >
+      <span class="sr-status" aria-live="polite"
+        >{copied ? "Diagnostic report copied" : ""}</span
+      >
+    </div>
+  </details>
 </section>
 
 <style>
-  .infra {
+  .endpoint {
     display: grid;
-    gap: 14px;
-    container-type: inline-size;
-  }
-
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
     gap: 12px;
   }
-
-  .card {
-    position: relative;
+  .server,
+  .paths {
     display: grid;
-    align-content: start;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
     gap: 10px;
+  }
+  article,
+  details {
     min-width: 0;
+    padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background:
-      linear-gradient(180deg, var(--surface-2), transparent),
-      var(--surface-inset);
+    background: var(--surface-inset);
     box-shadow: var(--elev-recess);
-    padding: var(--space-3);
-    overflow: clip;
-    transition:
-      transform var(--dur-hover) var(--ease-out),
-      border-color var(--dur-hover) var(--ease-out);
   }
-  /* Radial hover driven by pointerIntent's --intent-x / --intent-y. */
-  .card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0;
-    background: radial-gradient(
-      200px circle at var(--intent-x, 50%) var(--intent-y, 0),
-      var(--brand-soft),
-      transparent 70%
-    );
-    transition: opacity var(--dur-hover) var(--ease-out);
+  .server > div,
+  header > div {
+    display: grid;
+    gap: 3px;
   }
-  .card:hover {
-    transform: translateY(-1px);
-    border-color: var(--border-strong);
-  }
-  .card:hover::before {
-    opacity: 1;
-  }
-  .card > * {
-    position: relative;
-    z-index: 1;
-  }
-
-  h4 {
-    margin: 0;
+  span,
+  dt,
+  small {
     color: var(--text-soft);
     font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
+  }
+  strong {
+    color: var(--text);
+    font-size: 12px;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  header span {
+    font-weight: 800;
+    letter-spacing: 0.1em;
     text-transform: uppercase;
+  }
+  mark {
+    align-self: start;
+    padding: 3px 6px;
+    border-radius: 999px;
+    background: var(--warn-soft);
+    color: var(--warn);
+    font-size: 9px;
+  }
+  mark[data-state="verified"] {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  p {
+    margin: 10px 0;
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    font-size: 10px;
   }
   dl {
     display: grid;
-    gap: 8px;
+    gap: 7px;
     margin: 0;
   }
   dl div {
     display: grid;
-    grid-template-columns: minmax(88px, max-content) minmax(0, 1fr);
-    gap: 12px;
-    align-items: baseline;
-  }
-  dt {
-    color: var(--text-soft);
-    font-size: 11px;
-    font-weight: 700;
+    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
+    gap: 10px;
   }
   dd {
-    margin: 0;
     min-width: 0;
+    margin: 0;
     color: var(--text);
     font-family: var(--font-mono);
-    font-size: 11px;
-    overflow-wrap: anywhere; /* transport lists / long hosts wrap, not clip */
+    font-size: 10px;
+    overflow-wrap: anywhere;
   }
-
-  .values {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 6px;
+  summary {
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
   }
-  .values span {
-    padding: 2px 5px;
-    border-radius: var(--radius-xs);
+  .diagnostics {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  button {
+    justify-self: start;
+    min-height: 34px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
     background: var(--surface-1);
-    white-space: nowrap;
+    color: var(--text);
+    padding: 6px 10px;
+    cursor: pointer;
   }
-
+  .sr-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
   @container (max-width: 300px) {
     dl div {
       grid-template-columns: 1fr;
-      gap: 3px;
+      gap: 2px;
     }
-  }
-
-  .hint {
-    margin: 0;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
   }
 </style>

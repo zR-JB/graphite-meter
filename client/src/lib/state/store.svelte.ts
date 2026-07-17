@@ -22,6 +22,8 @@ import type {
 } from "../runner/contract";
 import {
   presentConnections,
+  type ConnectionPresentation,
+  type ConnectionRole,
   type ConnectionValidation,
 } from "../runner/connectionModel";
 import {
@@ -195,6 +197,10 @@ class AppStore {
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
   activeConfig = $state<RunnerConfig | null>(null);
+  activeConnections = $state<Record<
+    ConnectionRole,
+    ConnectionPresentation
+  > | null>(null);
   connectionValidation = $state<ConnectionValidation>({
     throughput: { selection: "current", state: "stale" },
     latency: { selection: "auto", state: "stale" },
@@ -208,6 +214,7 @@ class AppStore {
     ),
   );
   runConfig = $derived(this.activeConfig ?? this.config);
+  runConnections = $derived(this.activeConnections ?? this.connections);
   unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
@@ -587,6 +594,7 @@ class AppStore {
     this.result = null;
     this.error = null;
     this.activeConfig = null;
+    this.activeConnections = null;
     this.startEpoch = 0;
     this.runSeq++;
   }

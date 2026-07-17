@@ -110,14 +110,16 @@
   }
 
   const pingShow = $derived(
-    store.config.stages.latency && (ping.active || ping.has),
+    store.runConfig.stages.latency && (ping.active || ping.has),
   );
   const dlShow = $derived(
-    store.config.stages.download && (dl.active || dl.has),
+    store.runConfig.stages.download && (dl.active || dl.has),
   );
-  const ulShow = $derived(store.config.stages.upload && (ul.active || ul.has));
+  const ulShow = $derived(
+    store.runConfig.stages.upload && (ul.active || ul.has),
+  );
   const bidiShow = $derived(
-    store.config.stages.bidirectional && (bidi.active || bidi.has),
+    store.runConfig.stages.bidirectional && (bidi.active || bidi.has),
   );
 
   const dlShown = $derived(store.toUnit(dl.measuredBytesPerSec));

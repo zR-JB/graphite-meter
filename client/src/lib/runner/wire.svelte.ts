@@ -30,6 +30,8 @@ let booted = false;
 let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
   null;
 let lastSelectionKey = "";
+let pendingValidation = false;
+let hiddenAt = 0;
 
 // Mirror the persisted dev toggle into the (main-thread) debug logger, live.
 // Workers are separate module graphs — they're told the value in their `start`
@@ -41,8 +43,20 @@ if (typeof window !== "undefined") {
     $effect(() => {
       const key = connectionKey(store.config);
       const running = store.isRunning;
-      if (!booted || running || key === lastSelectionKey) return;
-      lastSelectionKey = key;
+      if (!booted) return;
+      if (key !== lastSelectionKey) {
+        lastSelectionKey = key;
+        pendingValidation = true;
+        if (running) {
+          markValidation(
+            "stale",
+            "Draft changed; validation resumes after this run.",
+          );
+          return;
+        }
+      }
+      if (running || !pendingValidation) return;
+      pendingValidation = false;
       queueMicrotask(() => void validateConnections());
     });
   });
@@ -166,7 +180,12 @@ function refreshAfterTransition() {
 }
 
 function refreshAfterVisibility() {
-  if (document.visibilityState === "visible") refreshAfterTransition();
+  if (document.visibilityState === "hidden") {
+    hiddenAt = Date.now();
+  } else if (hiddenAt && Date.now() - hiddenAt >= CONNECTION_FRESH_MS) {
+    hiddenAt = 0;
+    refreshAfterTransition();
+  }
 }
 
 export async function bootRunner() {
@@ -187,12 +206,14 @@ export function engage() {
   }
   store.reset();
   const cfg = $state.snapshot(store.config);
-  store.activeConfig = structuredClone(cfg);
   const key = connectionKey(cfg);
   const start = async () => {
     const info = preparedIsFresh(key)
       ? prepared!.info
       : await validateConnections();
+    if (!preparedIsFresh(key)) return;
+    store.activeConfig = structuredClone(cfg);
+    store.activeConnections = $state.snapshot(store.connections);
     await getRunner().start(cfg, info);
   };
   start().catch((cause) => {
