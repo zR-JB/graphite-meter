@@ -16,11 +16,17 @@ Malformed, `unknown`, and obfuscated values fall back to the socket peer. IPv4,
 IPv6, optional ports, quoted/bracketed values, and IPv4-mapped IPv6 are
 normalized with Go's `net/netip` package.
 
-The resolved address is diagnostic evidence only. It is never used for
-authentication or authorization. The selected target's `/probe` reports the normalized address,
+The resolved address is not authentication or authorization. It identifies the client for
+per-client measurement admission and is also reported as diagnostic evidence. IPv4 clients are
+grouped by exact address and IPv6 clients by `/64`. The selected target's `/probe` reports the normalized address,
 its family, and whether it came from the socket or a trusted header. A proxy can
 translate between IPv4 and IPv6 or traverse an overlay/load balancer, so the
 reported family is not guaranteed to describe every physical segment.
+
+Connection admission runs before HTTP headers exist. A trusted proxy is therefore exempt from the
+direct-peer ceiling but still counts against the global connection ceiling. Apply connection,
+handshake, UDP packet-rate, and bandwidth policy at the public proxy or firewall as well; the
+application cannot throttle measurement bandwidth without corrupting the result.
 
 `/preflight` is logical discovery and does not claim which protocol a later target uses. Set
 `PUBLIC_H1_ORIGIN`, `PUBLIC_H1_TLS_ORIGIN`, `PUBLIC_H2_ORIGIN`, and `PUBLIC_H3_ORIGIN` to origins
