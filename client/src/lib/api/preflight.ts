@@ -19,6 +19,7 @@ export interface Preflight {
     location?: string;
   };
   engineVersion: string;
+  generation: string;
   capabilities: {
     throughputTargets: ThroughputTarget[];
     latencyTargets: LatencyTarget[];

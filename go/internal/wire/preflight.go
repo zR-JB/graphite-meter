@@ -5,6 +5,7 @@ package wire
 type Preflight struct {
 	Server        ServerInfo   `json:"server"`
 	EngineVersion string       `json:"engineVersion"`
+	Generation    string       `json:"generation"`
 	Capabilities  Capabilities `json:"capabilities"`
 }
 
