@@ -52,4 +52,9 @@ func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
 	fs.StringVar(&cfg.ServerName, "name", cfg.ServerName, "server name advertised in /preflight")
 	fs.StringVar(&cfg.ServerLocation, "location", cfg.ServerLocation, "server location label")
 	fs.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "log per-second download/upload throughput")
+	fs.IntVar(&cfg.MaxActiveMeasurements, "max-active-measurements", cfg.MaxActiveMeasurements, "maximum concurrent measurement handlers")
+	fs.IntVar(&cfg.MaxActiveMeasurementsPerClient, "max-active-measurements-per-client", cfg.MaxActiveMeasurementsPerClient, "maximum concurrent measurement handlers per client")
+	fs.IntVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "maximum concurrent TCP and QUIC connections")
+	fs.IntVar(&cfg.MaxConnectionsPerClient, "max-connections-per-client", cfg.MaxConnectionsPerClient, "maximum concurrent connections per direct client")
+	fs.DurationVar(&cfg.MaxOperationDuration, "max-operation-duration", cfg.MaxOperationDuration, "maximum measurement operation lifetime")
 }

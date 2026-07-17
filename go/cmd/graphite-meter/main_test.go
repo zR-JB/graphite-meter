@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"testing"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
@@ -28,6 +29,19 @@ func TestH1AddressFlags(t *testing.T) {
 				t.Fatalf("H1Addr = %q, want %q", cfg.H1Addr, tc.want)
 			}
 		})
+	}
+}
+
+func TestAdmissionFlags(t *testing.T) {
+	cfg := config.Default()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	err := fs.Parse([]string{"-max-active-measurements", "80", "-max-active-measurements-per-client", "20", "-max-connections", "160", "-max-connections-per-client", "40", "-max-operation-duration", "2m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxActiveMeasurements != 80 || cfg.MaxActiveMeasurementsPerClient != 20 || cfg.MaxConnections != 160 || cfg.MaxConnectionsPerClient != 40 || cfg.MaxOperationDuration != 2*time.Minute {
+		t.Fatalf("admission flags = %+v", cfg)
 	}
 }
 

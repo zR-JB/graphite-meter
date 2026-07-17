@@ -6,7 +6,9 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var EngineVersion = "0.0.0-dev"
@@ -20,10 +22,21 @@ type Config struct {
 	ServerName, ServerLocation, EngineVersion string
 	Verbose                                   bool
 	TrustedProxies                            []netip.Prefix
+	MaxActiveMeasurements                     int
+	MaxActiveMeasurementsPerClient            int
+	MaxConnections                            int
+	MaxConnectionsPerClient                   int
+	MaxOperationDuration                      time.Duration
 }
 
 func Default() Config {
-	return Config{H1Addr: ":7246", H1TLSAddr: ":7247", H2Addr: ":7248", H3Addr: ":7249", ServerName: "graphite-meter", EngineVersion: EngineVersion}
+	return Config{
+		H1Addr: ":7246", H1TLSAddr: ":7247", H2Addr: ":7248", H3Addr: ":7249",
+		ServerName: "graphite-meter", EngineVersion: EngineVersion,
+		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
+		MaxConnections: 512, MaxConnectionsPerClient: 64,
+		MaxOperationDuration: 5 * time.Minute,
+	}
 }
 
 func Load() (Config, error) {
@@ -58,6 +71,24 @@ func Load() (Config, error) {
 	if c.Verbose, err = envBool("GM_VERBOSE", false); err != nil {
 		return Config{}, err
 	}
+	for _, e := range []struct {
+		name string
+		dst  *int
+	}{
+		{"GM_MAX_ACTIVE_MEASUREMENTS", &c.MaxActiveMeasurements},
+		{"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", &c.MaxActiveMeasurementsPerClient},
+		{"GM_MAX_CONNECTIONS", &c.MaxConnections},
+		{"GM_MAX_CONNECTIONS_PER_CLIENT", &c.MaxConnectionsPerClient},
+	} {
+		if *e.dst, err = envInt(e.name, *e.dst); err != nil {
+			return Config{}, err
+		}
+	}
+	if v := os.Getenv("GM_MAX_OPERATION_DURATION"); v != "" {
+		if c.MaxOperationDuration, err = time.ParseDuration(v); err != nil {
+			return Config{}, fmt.Errorf("GM_MAX_OPERATION_DURATION: %w", err)
+		}
+	}
 	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
 		for _, raw := range strings.Split(v, ",") {
 			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
@@ -85,7 +116,41 @@ func envBool(name string, fallback bool) (bool, error) {
 	}
 }
 
+func envInt(name string, fallback int) (int, error) {
+	v, ok := os.LookupEnv(name)
+	if !ok {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	return n, nil
+}
+
 func (c Config) Validate() error {
+	for _, v := range []struct {
+		name  string
+		value int
+	}{
+		{"GM_MAX_ACTIVE_MEASUREMENTS", c.MaxActiveMeasurements},
+		{"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", c.MaxActiveMeasurementsPerClient},
+		{"GM_MAX_CONNECTIONS", c.MaxConnections},
+		{"GM_MAX_CONNECTIONS_PER_CLIENT", c.MaxConnectionsPerClient},
+	} {
+		if v.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", v.name)
+		}
+	}
+	if c.MaxActiveMeasurementsPerClient > c.MaxActiveMeasurements {
+		return fmt.Errorf("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS")
+	}
+	if c.MaxConnectionsPerClient > c.MaxConnections {
+		return fmt.Errorf("GM_MAX_CONNECTIONS_PER_CLIENT must not exceed GM_MAX_CONNECTIONS")
+	}
+	if c.MaxOperationDuration <= 0 {
+		return fmt.Errorf("GM_MAX_OPERATION_DURATION must be greater than zero")
+	}
 	if c.H1Addr == "" {
 		return fmt.Errorf("GM_H1_ADDR must not be empty")
 	}

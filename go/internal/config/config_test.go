@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestDefault(t *testing.T) {
@@ -12,6 +13,40 @@ func TestDefault(t *testing.T) {
 	}
 	if c.EnableH1TLS || c.EnableH2 || c.EnableH3 {
 		t.Fatal("TLS protocols enabled by default")
+	}
+	if c.MaxActiveMeasurements != 256 || c.MaxActiveMeasurementsPerClient != 32 || c.MaxConnections != 512 || c.MaxConnectionsPerClient != 64 || c.MaxOperationDuration != 5*time.Minute {
+		t.Fatalf("admission defaults = %+v", c)
+	}
+}
+
+func TestLoadAdmissionEnvironment(t *testing.T) {
+	t.Setenv("GM_MAX_ACTIVE_MEASUREMENTS", "80")
+	t.Setenv("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "20")
+	t.Setenv("GM_MAX_CONNECTIONS", "160")
+	t.Setenv("GM_MAX_CONNECTIONS_PER_CLIENT", "40")
+	t.Setenv("GM_MAX_OPERATION_DURATION", "2m")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxActiveMeasurements != 80 || c.MaxActiveMeasurementsPerClient != 20 || c.MaxConnections != 160 || c.MaxConnectionsPerClient != 40 || c.MaxOperationDuration != 2*time.Minute {
+		t.Fatalf("admission config = %+v", c)
+	}
+}
+
+func TestValidateAdmissionLimits(t *testing.T) {
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.MaxActiveMeasurements = 0 },
+		func(c *Config) { c.MaxActiveMeasurementsPerClient = c.MaxActiveMeasurements + 1 },
+		func(c *Config) { c.MaxConnections = -1 },
+		func(c *Config) { c.MaxConnectionsPerClient = c.MaxConnections + 1 },
+		func(c *Config) { c.MaxOperationDuration = 0 },
+	} {
+		c := Default()
+		mutate(&c)
+		if err := c.Validate(); err == nil {
+			t.Fatalf("invalid admission config accepted: %+v", c)
+		}
 	}
 }
 
