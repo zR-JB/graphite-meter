@@ -36,12 +36,12 @@
         generation: store.transportDiscovery?.generation,
         throughput: connections.throughput,
         latency: connections.latency,
-        preTestPingMs: store.infra?.preTestPingMs,
+        preTestPingMs: connections.latency.preTestPingMs,
         streams: describeTransferStreams(
           store.runConfig.transferStreams,
           store.infra?.selectedThroughputProtocol,
         ),
-        compensation: store.config.compensation,
+        compensation: store.runConfig.compensation,
       },
       null,
       2,
@@ -70,7 +70,9 @@
     <div>
       <span>Pre-test RTT</span>
       <strong
-        >{store.infra ? `${fmtMs(store.infra.preTestPingMs)} ms` : "—"}</strong
+        >{connections.latency.preTestPingMs !== undefined
+          ? `${fmtMs(connections.latency.preTestPingMs)} ms`
+          : "—"}</strong
       >
       <small>Selected latency path</small>
     </div>
@@ -153,8 +155,8 @@
         <div>
           <dt>Compensation</dt>
           <dd>
-            {store.config.compensation.profile} · {store.config.compensation
-              .transport}
+            {store.runConfig.compensation.profile} · {store.runConfig
+              .compensation.transport}
           </dd>
         </div>
       </dl>

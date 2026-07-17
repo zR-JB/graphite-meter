@@ -43,6 +43,7 @@ export interface ConnectionPresentation {
   clientIp?: string;
   clientIpVersion?: 4 | 6;
   clientIpSource?: "socket" | "forwarded";
+  preTestPingMs?: number;
   verifiedAt?: number;
 }
 
@@ -206,6 +207,8 @@ export function presentConnections(
           ? evidence.clientIpSource
           : evidence.latencyClientIpSource
         : undefined,
+      preTestPingMs:
+        evidence && role === "latency" ? evidence.preTestPingMs : undefined,
       verifiedAt: currentEvidence ? status.verifiedAt : undefined,
     };
   };

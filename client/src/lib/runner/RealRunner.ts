@@ -325,6 +325,7 @@ export class RealBackend implements RunnerBackend {
     role?: ConnectionRole,
   ): Promise<InfraInfo> {
     const previous = this.#probeInfo;
+    if (role !== "throughput") this.#stopIdleKeepalive();
     this.#capabilities = null;
     this.#throughputTarget = null;
     this.#latencyTarget = null;

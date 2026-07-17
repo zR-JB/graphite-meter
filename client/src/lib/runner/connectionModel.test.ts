@@ -130,6 +130,7 @@ test("presentation keeps browser and server protocol boundaries distinct", () =>
   expect(model.throughput.browserProtocol).toBe("h2");
   expect(model.throughput.serverProtocol).toBe("http/1.1");
   expect(model.latency.summary).toBe("WebSocket · HTTP/1.1 · TLS");
+  expect(model.latency.preTestPingMs).toBe(4);
 });
 
 test("old evidence never appears under a new selection or generation", () => {
@@ -153,6 +154,9 @@ test("old evidence never appears under a new selection or generation", () => {
   expect(
     presentConnections(cfg, fixture(), validation, infra).throughput
       .serverProtocol,
+  ).toBeUndefined();
+  expect(
+    presentConnections(cfg, fixture(), validation, infra).latency.preTestPingMs,
   ).toBeUndefined();
 });
 

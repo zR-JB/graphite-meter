@@ -64,6 +64,7 @@ if (typeof window !== "undefined") {
       const running = store.isRunning;
       if (!booted) return;
       if (changed.length) {
+        if (changed.includes("latency")) store.idleLatency = [];
         for (const role of changed)
           lastRoleKeys[role] = connectionRoleKey(store.config, role);
         pendingValidation = true;
