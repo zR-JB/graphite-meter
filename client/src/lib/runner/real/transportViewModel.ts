@@ -14,13 +14,6 @@ export interface TransportOptionView {
   detail: string;
 }
 
-const protocolLabel = (protocol: FetchThroughputTarget["protocol"]) =>
-  protocol === "http1"
-    ? "HTTP/1.1"
-    : protocol === "http2"
-      ? "HTTP/2"
-      : "HTTP/3";
-
 function advertisedDetail(
   entry: DiscoveredTarget<FetchThroughputTarget | WebSocketLatencyTarget>,
   discovery: TransportDiscovery,
@@ -49,7 +42,7 @@ export function throughputOptionView(
     return target
       ? {
           disabled: false,
-          detail: `Resolved to ${protocolLabel(target.protocol)}${target.tls ? " over TLS" : " clear"}.`,
+          detail: "Uses this page's connection.",
         }
       : {
           disabled: true,
@@ -76,7 +69,7 @@ export function latencyOptionView(
     return target
       ? {
           disabled: false,
-          detail: `${discovery.pageSecure ? "HTTPS" : "HTTP"} page → ${target.tls ? "secure " : "clear "}WebSocket over HTTP/1.1.`,
+          detail: "Uses the same security as this page.",
         }
       : {
           disabled: true,

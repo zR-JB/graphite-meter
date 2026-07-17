@@ -179,6 +179,24 @@ test("role cache keys isolate throughput from latency preparation", () => {
   );
 });
 
+test("automatic and explicit selections share an identity when they resolve to the same target", () => {
+  const automatic = config();
+  const explicit = config();
+  explicit.transports.throughputTarget = "http2";
+  explicit.transports.latencyTarget = "ws-http1-tls";
+  const discovery = fixture();
+
+  expect(connectionRoleKey(automatic, "throughput", discovery)).toBe(
+    connectionRoleKey(explicit, "throughput", discovery),
+  );
+  expect(connectionRoleKey(automatic, "latency", discovery)).toBe(
+    connectionRoleKey(explicit, "latency", discovery),
+  );
+  expect(connectionKey(automatic, discovery)).toBe(
+    connectionKey(explicit, discovery),
+  );
+});
+
 test("probe failure and stale evidence remain retryable presentation states", () => {
   const cfg = config();
   cfg.transports.throughputTarget = "http2";

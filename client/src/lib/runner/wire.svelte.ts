@@ -60,14 +60,20 @@ if (typeof window !== "undefined") {
     $effect(() => setDebugLogging(store.debugLogging));
     $effect(() => {
       const changed = CONNECTION_ROLES.filter(
-        (role) => connectionRoleKey(store.config, role) !== lastRoleKeys[role],
+        (role) =>
+          connectionRoleKey(store.config, role, store.transportDiscovery) !==
+          lastRoleKeys[role],
       );
       const running = store.isRunning;
       if (!booted) return;
       if (changed.length) {
         if (changed.includes("latency")) store.idleLatency = [];
         for (const role of changed)
-          lastRoleKeys[role] = connectionRoleKey(store.config, role);
+          lastRoleKeys[role] = connectionRoleKey(
+            store.config,
+            role,
+            store.transportDiscovery,
+          );
         pendingValidation = true;
         if (running) {
           markValidation(
@@ -154,6 +160,7 @@ function markValidation(
   for (const role of roles)
     next[role] = {
       selection: connectionSelection(store.config, role),
+      identity: connectionRoleKey(store.config, role, store.transportDiscovery),
       state,
       message,
       verifiedAt,
@@ -174,7 +181,7 @@ export async function validateConnections(
   force = false,
   requestedRole?: ConnectionRole,
 ): Promise<InfraInfo> {
-  const key = connectionKey(store.config);
+  const key = connectionKey(store.config, store.transportDiscovery);
   if (!force && preparedIsFresh(key)) return prepared!.info;
   if (validating.length) markValidation(validating, "stale");
   validationAbort?.abort();
@@ -182,6 +189,7 @@ export async function validateConnections(
     store.config,
     store.connectionValidation,
     requestedRole,
+    store.transportDiscovery,
   );
   const abort = new AbortController();
   validationAbort = abort;
@@ -202,7 +210,11 @@ export async function validateConnections(
       generation && generation !== info.discoveryGeneration
         ? CONNECTION_ROLES
         : roles;
-    prepared = { key, info, verifiedAt };
+    prepared = {
+      key: connectionKey(store.config, store.transportDiscovery),
+      info,
+      verifiedAt,
+    };
     store.ingest({ type: "infra", info });
     markValidation(verifiedRoles, "verified", undefined, verifiedAt);
     return info;
@@ -258,7 +270,11 @@ export async function bootRunner() {
   unsub = r.on(ingestRunnerEvent);
   booted = true;
   for (const role of CONNECTION_ROLES)
-    lastRoleKeys[role] = connectionRoleKey(store.config, role);
+    lastRoleKeys[role] = connectionRoleKey(
+      store.config,
+      role,
+      store.transportDiscovery,
+    );
   window.addEventListener("online", refreshAfterTransition);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
   await validateConnections().catch(() => {});
@@ -271,12 +287,12 @@ export function engage() {
   }
   store.reset();
   const cfg = $state.snapshot(store.config);
-  const key = connectionKey(cfg);
+  const key = connectionKey(cfg, store.transportDiscovery);
   const start = async () => {
     const info = preparedIsFresh(key)
       ? prepared!.info
       : await validateConnections();
-    if (!preparedIsFresh(key)) return;
+    if (!preparedIsFresh(connectionKey(cfg, store.transportDiscovery))) return;
     store.activeConfig = structuredClone(cfg);
     store.activeConnections = $state.snapshot(store.connections);
     await getRunner().start(cfg, info);

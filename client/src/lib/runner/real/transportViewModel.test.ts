@@ -67,10 +67,10 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
     "h2",
   );
   expect(throughputOptionView(catalog, "current").detail).toBe(
-    "Resolved to HTTP/2 over TLS.",
+    "Uses this page's connection.",
   );
   expect(latencyOptionView(catalog, "auto").detail).toBe(
-    "HTTPS page → secure WebSocket over HTTP/1.1.",
+    "Uses the same security as this page.",
   );
   expect(
     throughputOptionView({ ...catalog, pageOrigin: "https://proxy" }, "current")

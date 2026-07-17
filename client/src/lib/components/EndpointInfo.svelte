@@ -64,6 +64,11 @@
       ? `Fetch streams over ${connections.throughput.summary.replace("Fetch stream · ", "")}`
       : "Pending",
   );
+  const serverInstance = $derived.by(() => {
+    const value = store.transportDiscovery?.generation;
+    if (!value || value === "dummy") return value ?? "—";
+    return `${value.slice(0, 8)}…`;
+  });
 
   function report() {
     return JSON.stringify(
@@ -182,25 +187,14 @@
     <div class="diagnostics">
       <dl>
         <div>
-          <dt>Generation</dt>
-          <dd>{store.transportDiscovery?.generation ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Throughput target</dt>
-          <dd>
-            {connections.throughput.target?.id ??
-              connections.throughput.selection}
+          <dt>Server instance</dt>
+          <dd title={store.transportDiscovery?.generation ?? undefined}>
+            {serverInstance}
           </dd>
         </div>
         <div>
           <dt>Throughput origin</dt>
           <dd>{connections.throughput.target?.origin ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Latency target</dt>
-          <dd>
-            {connections.latency.target?.id ?? connections.latency.selection}
-          </dd>
         </div>
         <div>
           <dt>Latency origin</dt>
@@ -223,6 +217,10 @@
           </dd>
         </div>
       </dl>
+      <p class="diagnostic-note">
+        Server instance changes when the backend restarts; it is not a build or
+        Git version. Origins are the endpoints used by the measurement.
+      </p>
       <button type="button" onclick={copyReport}
         >{copied ? "Copied" : "Copy diagnostic report"}</button
       >
@@ -352,6 +350,12 @@
     display: grid;
     gap: 12px;
     padding: var(--space-3);
+  }
+  .diagnostic-note {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    line-height: 1.5;
   }
   button {
     justify-self: start;

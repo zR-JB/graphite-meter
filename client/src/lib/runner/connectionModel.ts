@@ -19,6 +19,7 @@ export type { ConnectionRole } from "./contract";
 
 export interface RoleValidation {
   selection: string;
+  identity?: string;
   state: ConnectionValidationState;
   verifiedAt?: number;
   message?: string;
@@ -63,24 +64,30 @@ export function validationRoles(
   config: RunnerConfig,
   validation: ConnectionValidation,
   requestedRole?: ConnectionRole,
+  discovery?: TransportDiscovery | null,
 ): ConnectionRole[] {
   const roles = requestedRole ? [requestedRole] : [...CONNECTION_ROLES];
   for (const role of CONNECTION_ROLES) {
     const status = validation[role];
+    const matches = status.identity
+      ? status.identity === connectionRoleKey(config, role, discovery)
+      : status.selection === connectionSelection(config, role);
     if (
       !roles.includes(role) &&
-      (status.state === "stale" ||
-        status.selection !== connectionSelection(config, role))
+      (status.state === "stale" || !matches)
     )
       roles.push(role);
   }
   return roles;
 }
 
-export function connectionKey(config: RunnerConfig): string {
+export function connectionKey(
+  config: RunnerConfig,
+  discovery?: TransportDiscovery | null,
+): string {
   return JSON.stringify({
-    throughput: config.transports.throughputTarget,
-    latency: config.transports.latencyTarget,
+    throughput: connectionRoleKey(config, "throughput", discovery),
+    latency: connectionRoleKey(config, "latency", discovery),
     needsLatency:
       config.stages.latency ||
       (!config.skipLoadedLatencyWhenStageOff &&
@@ -93,11 +100,19 @@ export function connectionKey(config: RunnerConfig): string {
 export function connectionRoleKey(
   config: RunnerConfig,
   role: ConnectionRole,
+  discovery?: TransportDiscovery | null,
 ): string {
+  const selection = connectionSelection(config, role);
+  const target = discovery
+    ? role === "throughput"
+      ? selectThroughputTarget(discovery, selection)
+      : selectLatencyTarget(discovery, selection)
+    : null;
+  const identity = target ? JSON.stringify(target) : selection;
   return role === "throughput"
-    ? connectionSelection(config, role)
+    ? identity
     : JSON.stringify({
-        selection: config.transports.latencyTarget,
+        identity,
         needed:
           config.stages.latency ||
           (!config.skipLoadedLatencyWhenStageOff &&
@@ -166,9 +181,12 @@ export function presentConnections(
         : selectLatencyTarget(discovery, selection)
       : null;
     const status = validation[role];
+    const evidenceMatches = status.identity
+      ? status.identity === connectionRoleKey(config, role, discovery)
+      : status.selection === selection;
     const currentEvidence =
       status.state === "verified" &&
-      status.selection === selection &&
+      evidenceMatches &&
       infra?.discoveryGeneration === discovery?.generation;
     const evidence = currentEvidence ? infra : null;
     return {
