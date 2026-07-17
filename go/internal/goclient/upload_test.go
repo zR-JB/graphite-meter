@@ -307,3 +307,52 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 		t.Error("reported TotalBytes = 0, want > 0")
 	}
 }
+
+func TestUploadProgressWaitNext(t *testing.T) {
+	t.Run("already advanced", func(t *testing.T) {
+		progress := &uploadProgress{done: make(chan struct{}), changed: make(chan struct{}, 1)}
+		progress.seq.Store(2)
+		if !progress.waitNext(context.Background(), 1) {
+			t.Fatal("waitNext rejected an available update")
+		}
+	})
+
+	t.Run("notification", func(t *testing.T) {
+		progress := &uploadProgress{done: make(chan struct{}), changed: make(chan struct{}, 1)}
+		result := make(chan bool, 1)
+		go func() { result <- progress.waitNext(context.Background(), 0) }()
+		progress.seq.Store(1)
+		progress.changed <- struct{}{}
+		if !<-result {
+			t.Fatal("waitNext ignored a progress edge")
+		}
+	})
+
+	t.Run("cancellation", func(t *testing.T) {
+		progress := &uploadProgress{done: make(chan struct{}), changed: make(chan struct{}, 1)}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if progress.waitNext(ctx, 0) {
+			t.Fatal("waitNext succeeded after cancellation")
+		}
+	})
+
+	t.Run("terminal", func(t *testing.T) {
+		done := make(chan struct{})
+		close(done)
+		progress := &uploadProgress{done: done, changed: make(chan struct{}, 1)}
+		if progress.waitNext(context.Background(), 0) {
+			t.Fatal("waitNext succeeded after the progress stream closed")
+		}
+	})
+
+	t.Run("final update", func(t *testing.T) {
+		done := make(chan struct{})
+		close(done)
+		progress := &uploadProgress{done: done, changed: make(chan struct{}, 1)}
+		progress.seq.Store(1)
+		if !progress.waitNext(context.Background(), 0) {
+			t.Fatal("waitNext dropped the final progress update")
+		}
+	})
+}

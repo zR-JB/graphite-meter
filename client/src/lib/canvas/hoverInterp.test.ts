@@ -47,3 +47,21 @@ test("interpolateAt: single-sample array only matches its own t", () => {
   expect(interpolateAt(one, 5, pick)).toBe(42);
   expect(interpolateAt(one, 6, pick)).toBeNull();
 });
+
+test("interpolateAt: large histories use logarithmic lookup", () => {
+  const history = Array.from({ length: 100_000 }, (_, t) => ({
+    t,
+    v: t,
+  }));
+  let examined = 0;
+  const observed = new Proxy(history, {
+    get(target, property, receiver) {
+      if (typeof property === "string" && /^\d+$/.test(property)) examined++;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const value = interpolateAt(observed, 50_000.5, pick);
+
+  expect(value).toBe(50_000.5);
+  expect(examined).toBeLessThan(24);
+});

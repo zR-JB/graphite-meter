@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -66,6 +67,22 @@ func TestDownloadExactByteCount(t *testing.T) {
 	}
 }
 
+func TestDownloadFirstByte(t *testing.T) {
+	srv, _ := newDownloadServer(testBlockSize)
+	defer srv.Close()
+	client := srv.Client()
+	client.Timeout = 2 * time.Second
+	res, err := client.Get(srv.URL + "/download?bytes=" + strconv.FormatInt(maxBytes, 10))
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer res.Body.Close()
+	one := make([]byte, 1)
+	if _, err := io.ReadFull(res.Body, one); err != nil {
+		t.Fatalf("first byte: %v", err)
+	}
+}
+
 func TestDownloadDeterministicAndIncompressible(t *testing.T) {
 	srv, block := newDownloadServer(testBlockSize)
 	defer srv.Close()
@@ -112,6 +129,27 @@ func TestDownloadDefaultsAndClamps(t *testing.T) {
 	}
 	if got := parseBytes("0"); got != 0 {
 		t.Errorf("zero → %d, want 0", got)
+	}
+}
+
+func BenchmarkDownloadBlockSize(b *testing.B) {
+	const size = 64 << 20
+	for _, blockSize := range []int{64 << 10, 256 << 10, 1 << 20} {
+		b.Run(strconv.Itoa(blockSize), func(b *testing.B) {
+			download := NewDownload(randomBlock(blockSize), nil)
+			session := &fakeSession{
+				ctx:   context.Background(),
+				query: "bytes=" + strconv.Itoa(size),
+				sink:  io.Discard,
+			}
+			b.SetBytes(size)
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if err := download.Handle(session); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 
@@ -165,8 +203,8 @@ func (f *fakeSession) Context() context.Context                         { return
 func (f *fakeSession) Query() (v url.Values)                            { v, _ = url.ParseQuery(f.query); return }
 func (f *fakeSession) Proto() transport.Proto                           { return transport.ProtoH1 }
 func (f *fakeSession) HTTP() (http.ResponseWriter, *http.Request, bool) { return nil, nil, false }
-func (f *fakeSession) OpenDownloadSink() (io.Writer, transport.FlushFunc, error) {
-	return f.sink, func() error { return nil }, nil
+func (f *fakeSession) OpenDownloadSink() (io.Writer, error) {
+	return f.sink, nil
 }
 func (f *fakeSession) OpenUploadSource() (io.Reader, error) { return nil, transport.ErrUnsupported }
 func (f *fakeSession) Bus() (transport.MessageBus, bool)    { return nil, false }

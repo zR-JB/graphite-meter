@@ -1,5 +1,5 @@
 import { test, expect, mock } from "bun:test";
-import type { CoreHost, TickContext } from "./core";
+import type { CoreHost } from "./core";
 import type {
   RunnerConfig,
   RunnerEvent,
@@ -8,7 +8,7 @@ import type {
   StallInfo,
   Phase,
 } from "./contract";
-import type { DummyOptions } from "./dummy";
+import type { DummyOptions, DummySampleContext } from "./dummy";
 
 // dummy.ts reads BUILD.clientVersion, which buildenv.ts fills in from Vite
 // `define` tokens (__GM_*__) at bundle time — they don't exist under plain
@@ -70,9 +70,6 @@ const BASE_CONFIG: RunnerConfig = {
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
-/** A CoreHost double: records every sample/event pushed by the backend and
- *  exposes mutable config/phase/elapsed so a test can drive the backend
- *  through onTick/injectAnomaly exactly as core.ts would, without a timer. */
 class MockHost implements CoreHost {
   #config: RunnerConfig | null;
   #phase: Phase = "idle";
@@ -164,12 +161,11 @@ function makeBackend(opts: DummyOptions, host = new MockHost()) {
 
 function tick(
   backend: DummyBackendInstance,
-  overrides: Partial<TickContext>,
+  overrides: Partial<DummySampleContext>,
 ): void {
-  backend.onTick!({
-    phase: "download",
+  backend.sample({
     activity: DOWNLOAD_ACTIVITY,
-    isWarmup: false,
+    measuring: true,
     elapsed: 0,
     segStart: 0,
     segEnd: 10000,
@@ -178,10 +174,6 @@ function tick(
   });
 }
 
-/** Drive `n` throughput ticks, spaced past the ramp-up and past the throughput
- *  cadence gate (60ms), starting deep enough into the phase (2s in) that the
- *  logistic ramp has fully saturated — isolating the plateau/jitter behavior
- *  the profile table controls. */
 function collectThroughput(
   backend: DummyBackendInstance,
   host: MockHost,
@@ -190,7 +182,7 @@ function collectThroughput(
 ): number[] {
   host.setPhase(activity.stage);
   for (let i = 0; i < n; i++) {
-    const t = 2000 + i * 60;
+    const t = 2000 + i * 100;
     tick(backend, {
       activity,
       elapsed: t,
@@ -242,7 +234,6 @@ test("unloaded and loaded stages use their independent ping cadences", () => {
   for (let t = 80; t <= 640; t += 80) {
     tick(unloaded.backend, {
       activity: LATENCY_ACTIVITY,
-      phase: "latency",
       realNow: t,
       elapsed: t,
     });
@@ -336,12 +327,12 @@ test("idleHintMs reflects the active profile's idle RTT ordering", () => {
 
 /* ================= Lifecycle contract ================= */
 
-test("onTick during warmup pushes no samples", () => {
+test("sampling during warmup pushes no samples", () => {
   const { backend, host } = makeBackend({ profile: "fiber", seed: 1 });
   host.setPhase("download");
   tick(backend, {
     activity: DOWNLOAD_ACTIVITY,
-    isWarmup: true,
+    measuring: false,
     elapsed: 5000,
     realNow: 5000,
   });
@@ -349,12 +340,12 @@ test("onTick during warmup pushes no samples", () => {
   expect(host.latency).toHaveLength(0);
 });
 
-test("onTick after warmup (isWarmup: false) pushes throughput samples", () => {
+test("measurement sampling pushes throughput samples", () => {
   const { backend, host } = makeBackend({ profile: "fiber", seed: 1 });
   host.setPhase("download");
   tick(backend, {
     activity: DOWNLOAD_ACTIVITY,
-    isWarmup: false,
+    measuring: true,
     elapsed: 2000,
     realNow: 2000,
   });
@@ -375,13 +366,19 @@ test("a latency-only activity (no transfer lanes) never produces throughput samp
   expect(host.latency.length).toBeGreaterThan(0);
 });
 
-test("onStageBegin/onStageMeasure/onStageEnd are no-ops (dummy simulates, never opens real I/O)", () => {
+test("stage lifecycle starts and stops scheduled samples", async () => {
   const { backend, host } = makeBackend({ profile: "fiber", seed: 1 });
-  expect(() => backend.onStageBegin(DOWNLOAD_ACTIVITY)).not.toThrow();
-  expect(() => backend.onStageMeasure(DOWNLOAD_ACTIVITY)).not.toThrow();
-  expect(() => backend.onStageEnd(DOWNLOAD_ACTIVITY)).not.toThrow();
-  expect(host.throughput).toHaveLength(0);
-  expect(host.events).toHaveLength(0);
+  host.setPhase("download");
+  host.setElapsed(2000);
+  backend.onStageBegin(DOWNLOAD_ACTIVITY);
+  backend.onStageMeasure(DOWNLOAD_ACTIVITY);
+  await Bun.sleep(20);
+  expect(host.throughput.length).toBeGreaterThan(0);
+
+  backend.onStageEnd(DOWNLOAD_ACTIVITY);
+  const stopped = host.throughput.length;
+  await Bun.sleep(120);
+  expect(host.throughput).toHaveLength(stopped);
 });
 
 test("onRunStart resets the throughput/ping cadence gates so the next tick fires immediately", () => {
@@ -392,12 +389,9 @@ test("onRunStart resets the throughput/ping cadence gates so the next tick fires
   expect(host.throughput.length).toBeGreaterThan(0);
   const firstCount = host.throughput.length;
 
-  // A tick 1ms later (well under the 60ms cadence) produces nothing more.
   tick(backend, { activity: DOWNLOAD_ACTIVITY, elapsed: 2001, realNow: 1001 });
   expect(host.throughput.length).toBe(firstCount);
 
-  // onRunStart resets the gate to -Infinity; the very next tick fires again
-  // even though realNow barely advanced.
   backend.onRunStart(BASE_CONFIG);
   tick(backend, { activity: DOWNLOAD_ACTIVITY, elapsed: 2002, realNow: 1002 });
   expect(host.throughput.length).toBeGreaterThan(firstCount);

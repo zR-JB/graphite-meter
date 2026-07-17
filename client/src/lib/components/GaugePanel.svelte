@@ -1,9 +1,11 @@
 <script lang="ts">
-  // Gauge stage: owns the canvas instrument, headline metric, run status, and
-  // compact/final result area below the dial.
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
+  import {
+    presentation,
+    type PresentationHandle,
+  } from "../canvas/presentation";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -11,12 +13,8 @@
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
 
-  // Latency visibility follows the stage config, so reload/reset land on the
-  // same panel layout instead of depending on transient phase state.
   const showLatency = $derived(store.latencyEnabled);
 
-  // Reserve the compact result strip area while idle/running; completion swaps
-  // in the full grid without changing the gauge's vertical contract.
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
     if (store.phase === "idle") return "none";
@@ -26,18 +24,20 @@
   const etaMs = $derived(store.totalEtaMs);
 
   let canvasEl = $state<HTMLCanvasElement>();
+  let stageEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
+  let decayPresentation: PresentationHandle;
 
   const STALL_DECAY_MS = 800;
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
   let nowWall = $state(performance.now());
-  // Presentation only: when samples stall, ease the live number/needle toward
-  // zero. No synthetic sample enters the store or result accumulator.
   const stallDecay = $derived.by(() => {
     if (store.measuring || !store.stalledSince) return 1;
-    const since = nowWall - store.stalledSince;
-    return Math.min(1, Math.max(0, 1 - since / STALL_DECAY_MS));
+    return Math.min(
+      1,
+      Math.max(0, 1 - (nowWall - store.stalledSince) / STALL_DECAY_MS),
+    );
   });
   const decayedBytesPerSec = $derived(
     store.liveTransferBytesPerSec * stallDecay,
@@ -62,8 +62,6 @@
     }
   });
 
-  // Completion must display the reducer's authoritative result, not freeze the
-  // last presentation-smoothed live sample.
   $effect(() => {
     if (store.phase !== "complete") return;
     const metric = store.finalMetric;
@@ -82,8 +80,6 @@
 
   const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
 
-  // Latency uses a small fixed 1-2-5-ish ladder so the dial scale is legible and
-  // stable while still giving the observed peak a little headroom.
   const latencyScaleMs = $derived.by(() => {
     let peak = store.infra?.preTestPingMs ?? 0;
     for (const s of store.latency)
@@ -175,8 +171,6 @@
   );
 
   $effect(() => {
-    // The canvas engine pulls state lazily, so wake it when reactive inputs that
-    // affect drawing change.
     void store.phase;
     void store.throughput.length;
     void store.latency.length;
@@ -189,33 +183,43 @@
     engine?.wake();
   });
 
-  let decayRaf = 0;
   $effect(() => {
-    const easing = store.isRunning && !store.measuring;
-    if (!easing) {
-      if (decayRaf) cancelAnimationFrame(decayRaf);
-      decayRaf = 0;
-      return;
-    }
-    const loop = () => {
-      nowWall = performance.now();
-      engine?.wake();
-      decayRaf = requestAnimationFrame(loop);
-    };
-    decayRaf = requestAnimationFrame(loop);
-    return () => {
-      if (decayRaf) cancelAnimationFrame(decayRaf);
-      decayRaf = 0;
-    };
+    void store.measuring;
+    void store.stalledSince;
+    decayPresentation?.invalidate();
   });
 
+  function advanceDecay(now: number) {
+    if (store.measuring || !store.stalledSince) return false;
+    nowWall = now;
+    engine?.wake();
+    return now - store.stalledSince < STALL_DECAY_MS;
+  }
+
   let a11y = $state("");
+  let pendingA11y = "";
+  let a11yTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastA11yAt = -Infinity;
+  let lastA11yPhase = "";
   $effect(() => {
     const s = statusText;
-    void store.phase;
-    a11y = s
-      ? s
-      : untrack(() => `${display.value} ${display.unit}, phase ${store.phase}`);
+    const phase = store.phase;
+    pendingA11y = s || `${display.value} ${display.unit}, phase ${phase}`;
+    const commit = () => {
+      a11y = pendingA11y;
+      lastA11yAt = performance.now();
+      lastA11yPhase = phase;
+      a11yTimer = null;
+    };
+    if (!store.isRunning || phase !== lastA11yPhase) {
+      if (a11yTimer) clearTimeout(a11yTimer);
+      commit();
+    } else if (!a11yTimer) {
+      a11yTimer = setTimeout(
+        commit,
+        Math.max(0, 1000 - (performance.now() - lastA11yAt)),
+      );
+    }
   });
 
   onMount(() => {
@@ -231,18 +235,14 @@
             : decayedBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs,
-        // Five quarter labels (0 … full scale) — memoized above: ms during the
-        // latency phase or a latency-resolved end state, else throughput.
         ticks: gaugeTicks,
         rtt: finalMetric?.kind === "latency" ? finalMetric.ms : store.liveRtt,
-        pingCount: store.latency.length,
         completedKind,
       };
     });
     engine.attach(canvasEl!);
-    engine.start();
+    decayPresentation = presentation.register(stageEl!, advanceDecay);
 
-    // invalidateTheme repaints synchronously, so theme/resize need no wake().
     const mo = new MutationObserver(() => engine.invalidateTheme());
     mo.observe(document.documentElement, {
       attributes: true,
@@ -252,36 +252,19 @@
     const ro = new ResizeObserver(() => engine.invalidateTheme());
     ro.observe(canvasEl!);
 
-    const tick = setInterval(() => {
-      // Prefer the guided copy when there's no live number (idle/warmup/error),
-      // otherwise announce the measured metric (factual only — no verdict).
-      a11y = statusText
-        ? statusText
-        : `${display.value} ${display.unit}, phase ${store.phase}`;
-    }, 1000);
-
     return () => {
+      if (a11yTimer) clearTimeout(a11yTimer);
       engine.destroy();
+      decayPresentation.destroy();
       mo.disconnect();
       ro.disconnect();
-      clearInterval(tick);
     };
   });
 </script>
 
 <section class="gauge-panel">
-  <!-- Hero instrument — gauge, Engage, the stage selector, and (optionally)
-       the latency profile are all placed via ONE named-area CSS Grid inside
-       a single container-query context. Their arrangement flips ATOMICALLY at
-       one breakpoint (see .instrument's @container rule below) instead of
-       several independent thresholds, and the shared gauge+latency row gets an
-       explicit, content-independent track size so toggling the latency panel
-       on/off can never change the gauge's height:
-         Desktop (wide): gauge+latency side by side, Engage below them,
-           Test Stages at the very bottom (keeps the space below the
-           gauge from looking empty).
-         Mobile (narrow/stacked): Test Stages at the very top, then gauge,
-           then Engage, then the latency panel below. -->
+  <!-- One container-query grid switches the complete instrument layout and
+       keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
     <div class="stage-head">
       <div class="controls-head">
@@ -296,7 +279,7 @@
       <StageTrack />
     </div>
 
-    <div class="stage">
+    <div bind:this={stageEl} class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       <div class="metric-wrap">
         <span class="gauge-value">{display.value}</span>

@@ -1,11 +1,7 @@
 <script lang="ts">
-  /* ============================================================
-   * <RunButton> — the master action (label: "Engage")
-   * Toggles engage/abort against the runner via the wire seam.
-   * ============================================================ */
+  // Primary start/abort action.
   import { store } from "../state/store.svelte";
   import { engage } from "../runner/wire.svelte";
-  import { pointerIntent } from "../actions/pointerIntent";
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
@@ -30,7 +26,6 @@
   class:running={store.isRunning}
   aria-label={label}
   onclick={engage}
-  use:pointerIntent
   use:tooltip={store.isRunning
     ? "Stop the test (Space / Esc)"
     : resolved
@@ -77,38 +72,9 @@
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
-  /* Pointer-follow shimmer: a soft radial highlight centered on the
-     cursor via pointerIntent's --intent-x/--intent-y. Defaults to the button
-     center (50%/50%) until the pointer arrives, fades in on hover. Purely
-     decorative — disabled under reduced motion. */
-  .engage::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    opacity: 0;
-    background: radial-gradient(
-      180px circle at var(--intent-x, 50%) var(--intent-y, 50%),
-      color-mix(in srgb, var(--brand-strong) 70%, white) 0%,
-      transparent 60%
-    );
-    transition: opacity var(--dur-hover) var(--ease-out);
-  }
-  .engage:hover::after {
-    opacity: 0.5;
-  }
-  .engage.running::after {
-    display: none;
-  }
   .engage:hover {
     transform: translateY(-1px);
     filter: brightness(1.04);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .engage::after {
-      display: none;
-    }
   }
   .engage.running {
     background: var(--err-soft);

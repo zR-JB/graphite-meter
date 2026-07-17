@@ -166,24 +166,6 @@ export function niceDomain(
   return { min, max: min + span, span };
 }
 
-export function countUp(
-  from: number,
-  to: number,
-  durMs: number,
-  onTick: (v: number) => void,
-): () => void {
-  const start = performance.now();
-  let raf = 0;
-  const ease = (t: number) => 1 - Math.pow(1 - t, 3); // matches --ease-out feel
-  const loop = (now: number) => {
-    const t = Math.min(1, (now - start) / durMs);
-    onTick(from + (to - from) * ease(t));
-    if (t < 1) raf = requestAnimationFrame(loop);
-  };
-  raf = requestAnimationFrame(loop);
-  return () => cancelAnimationFrame(raf);
-}
-
 function ceil125(v: number): number {
   const exp = Math.floor(Math.log10(v));
   const base = 10 ** exp;

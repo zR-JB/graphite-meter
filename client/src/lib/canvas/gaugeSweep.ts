@@ -1,8 +1,4 @@
-/* ============================================================
- * Gauge sweep math — the phase → 0-1 dial fraction mapping and the
- * fraction → arc-angle conversion behind GaugeEngine's #step/#draw. Pure so
- * it's unit-testable without a canvas.
- * ============================================================ */
+// Pure dial mapping and interpolation.
 
 import type { Phase } from "../runner/contract";
 
@@ -66,4 +62,19 @@ export function angleForFraction(
   arcSweep: number,
 ): number {
   return arcStart + arcSweep * clamp01(fraction);
+}
+
+export function interpolateSweep(
+  current: number,
+  target: number,
+  elapsedMs: number,
+  reducedMotion: boolean,
+): { value: number; active: boolean } {
+  const delta = target - current;
+  if (reducedMotion || Math.abs(delta) < 0.002)
+    return { value: target, active: false };
+  return {
+    value: current + delta * (1 - Math.exp(-Math.min(100, elapsedMs) / 100)),
+    active: true,
+  };
 }

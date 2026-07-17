@@ -1,11 +1,5 @@
-/* ============================================================
- * The Graphite Meter — ChartEngine
- * Dual-axis timeseries: throughput area (left axis, phase-tinted)
- * + latency line (right axis, signal/warn-for-loaded). Live
- * scrolling viewport, eased zoom-out on complete, time grid,
- * bufferbloat shading, and hover scrub. Pulls store ring buffers
- * each frame via its own rAF loop.
- * ============================================================ */
+// Dual-axis timeseries. It redraws only for data, camera, theme, size, or hover
+// invalidations; the shared presentation scheduler owns the frame clock.
 
 import type {
   Phase,
@@ -14,7 +8,8 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
-import { interpolateAt } from "./hoverInterp";
+import { interpolateAt, lowerBoundAt } from "./hoverInterp";
+import { presentation, type PresentationHandle } from "./presentation";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -78,11 +73,12 @@ interface PhaseSpan {
   t1: number; // Infinity while open
 }
 
+type ThroughputLane = "download" | "upload" | "bidiDown" | "bidiUp";
+
 const PAD_L = 46;
 const PAD_R = 46;
 const PAD_T = 12;
 const PAD_B = 18;
-const FOLLOW = 0.18; // viewport lerp factor
 
 interface ThemeColors {
   download: string;
@@ -126,8 +122,10 @@ export class ChartEngine implements CanvasEngine {
   #fmt: ChartFormatters;
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
-  #raf = 0;
-  #running = false;
+  #scene: HTMLCanvasElement | null = null;
+  #sceneCtx: CanvasRenderingContext2D | null = null;
+  #sceneDirty = true;
+  #presentation: PresentationHandle | null = null;
 
   #dpr = 1;
   #w = 0;
@@ -141,19 +139,12 @@ export class ChartEngine implements CanvasEngine {
     rttMax: 50,
   };
   #vpInit = false;
-  #vpSettled = false; // true once the camera lerp has converged on its target
 
-  // Cached area-fill gradients. They depend only on the phase color + plot
-  // height, so they're rebuilt only when the height changes or the theme is
-  // re-resolved (which resets #gradH) — never per frame.
+  // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
   #gradH = -1;
-  // Phase timeline, tracked from phase-change events. COSMETIC ONLY: it drives
-  // the bottom phase ribbon and the live camera's start edge. Data attribution
-  // (throughput area + per-phase stats) keys off each sample's own `phase` tag,
-  // NOT this — the ribbon still needs a transition timeline because sample-less
-  // phases (warmup) produce no tagged samples to reconstruct it from.
+  // Samples own data attribution; spans retain sample-free warmup boundaries.
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
@@ -161,6 +152,17 @@ export class ChartEngine implements CanvasEngine {
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
   #hasThroughputScale = false;
   #p95Cache = { len: -1, tMin: 0, v: 0 };
+  #indexedThroughput = 0;
+  #lastIndexedThroughput: ThroughputSample | undefined;
+  #indexedLatency = 0;
+  #lastIndexedLatency: LatencySample | undefined;
+  #throughputByLane: Record<ThroughputLane, ThroughputSample[]> = {
+    download: [],
+    upload: [],
+    bidiDown: [],
+    bidiUp: [],
+  };
+  #latencyByPhase = new Map<Phase, LatencySample[]>();
 
   #c: ThemeColors = {
     download: "#6db0b8",
@@ -188,30 +190,24 @@ export class ChartEngine implements CanvasEngine {
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
     this.#ctx = canvas.getContext("2d");
+    this.#scene = document.createElement("canvas");
+    this.#sceneCtx = this.#scene.getContext("2d");
+    this.#presentation = presentation.register(canvas, this.#render);
     this.invalidateTheme();
   }
 
-  start(): void {
-    this.wake();
-  }
-
-  /** Re-arm the loop if it has parked. No-op while already running. */
   wake(): void {
-    if (this.#running || !this.#ctx) return;
-    this.#running = true;
-    this.#raf = requestAnimationFrame(this.#loop);
-  }
-
-  stop(): void {
-    this.#running = false;
-    if (this.#raf) cancelAnimationFrame(this.#raf);
-    this.#raf = 0;
+    this.#sceneDirty = true;
+    this.#presentation?.invalidate();
   }
 
   destroy(): void {
-    this.stop();
+    this.#presentation?.destroy();
+    this.#presentation = null;
     this.#canvas = null;
     this.#ctx = null;
+    this.#scene = null;
+    this.#sceneCtx = null;
     this.#spans = [];
   }
 
@@ -225,21 +221,20 @@ export class ChartEngine implements CanvasEngine {
     this.#canvas.width = Math.round(this.#w * this.#dpr);
     this.#canvas.height = Math.round(this.#h * this.#dpr);
     this.#ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
+    if (this.#scene && this.#sceneCtx) {
+      this.#scene.width = this.#canvas.width;
+      this.#scene.height = this.#canvas.height;
+      this.#sceneCtx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
+    }
     this.#resolveColors();
-    // Resizing the backing store wipes it — repaint NOW (the ResizeObserver
-    // fires between layout and paint) so the chart never blanks mid-resize.
-    this.#draw();
+    this.wake();
   }
 
   setHover(x: number | null): void {
     this.#hoverX = x;
-    this.wake(); // the loop may be parked (idle/result) — redraw the guideline
+    this.#presentation?.invalidate();
   }
 
-  /** Hover readout under the cursor (for the DOM chip). Snaps to the time
-   *  under the pointer, then LINEARLY INTERPOLATES the series value between
-   *  the two bracketing samples (not nearest-only) so the readout tracks
-   *  the signal between sample ticks instead of stair-stepping. */
   hoverInfo(): HoverInfo | null {
     if (this.#hoverX == null) return null;
     const plotW = this.#w - PAD_L - PAD_R;
@@ -248,34 +243,25 @@ export class ChartEngine implements CanvasEngine {
     const frac = (x - PAD_L) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
-    // Bidirectional carries two concurrent lanes (down + up) under one phase
-    // tag — mixing them into a single series would interpolate BETWEEN a down
-    // sample and an up sample as if they were the same line (they don't even
-    // share a cadence: download ticks locally, upload ticks off the server
-    // channel), so split by `dir` and report each lane separately instead.
-    const bidi = this.#spanAt(t)?.phase === "bidirectional";
-    const bytesPerSec = bidi
-      ? null
-      : this.#hoverValue(data.throughput, t, (s) => s.bytesPerSec);
-    const downBytesPerSec = bidi
-      ? this.#hoverValue(
-          data.throughput.filter((s) => s.dir === "down"),
-          t,
-          (s) => s.bytesPerSec,
-        )
-      : null;
-    const upBytesPerSec = bidi
-      ? this.#hoverValue(
-          data.throughput.filter((s) => s.dir === "up"),
-          t,
-          (s) => s.bytesPerSec,
-        )
-      : null;
-    const rtt = this.#hoverValue(
-      data.latency.filter((s) => !s.lost),
+    this.#indexData(data);
+    const bytesPerSec =
+      interpolateAt(this.#throughputByLane.download, t, (s) => s.bytesPerSec) ??
+      interpolateAt(this.#throughputByLane.upload, t, (s) => s.bytesPerSec);
+    const downBytesPerSec = interpolateAt(
+      this.#throughputByLane.bidiDown,
       t,
-      (s) => s.rttMs,
+      (s) => s.bytesPerSec,
     );
+    const upBytesPerSec = interpolateAt(
+      this.#throughputByLane.bidiUp,
+      t,
+      (s) => s.bytesPerSec,
+    );
+    let rtt: number | null = null;
+    for (const lane of this.#latencyByPhase.values()) {
+      rtt = interpolateAt(lane, t, (s) => s.rttMs);
+      if (rtt != null) break;
+    }
     if (
       bytesPerSec == null &&
       downBytesPerSec == null &&
@@ -291,27 +277,6 @@ export class ChartEngine implements CanvasEngine {
       upBytesPerSec,
       rtt,
     };
-  }
-
-  #hoverValue<T extends { t: number; phase: Phase }>(
-    arr: T[],
-    t: number,
-    pick: (s: T) => number,
-  ): number | null {
-    const span = this.#spanAt(t);
-    if (!span) return null;
-    return interpolateAt(
-      arr.filter((s) => s.phase === span.phase),
-      t,
-      pick,
-    );
-  }
-
-  #spanAt(t: number): PhaseSpan | null {
-    for (const span of this.#spans) {
-      if (t >= span.t0 && t <= span.t1) return span;
-    }
-    return null;
   }
 
   #resolveColors(): void {
@@ -339,8 +304,6 @@ export class ChartEngine implements CanvasEngine {
     this.#gradH = -1; // colors changed → rebuild cached gradients on next draw
   }
 
-  /** Cached vertical area-fill gradient for a transfer phase. Rebuilt only when
-   *  the plot height changes or the theme is re-resolved (#gradH reset). */
   #areaGrad(
     ctx: CanvasRenderingContext2D,
     phase: "download" | "upload",
@@ -364,35 +327,15 @@ export class ChartEngine implements CanvasEngine {
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
 
-  #loop = (): void => {
-    if (!this.#running) return;
-    this.#update();
-    this.#draw();
-    if (this.#animating()) {
-      this.#raf = requestAnimationFrame(this.#loop);
-    } else {
-      // Camera settled and no live phase feeding the chart — park so the GPU
-      // can idle. setHover()/wake() re-arm it for hover scrub or a new run.
-      this.#running = false;
-      this.#raf = 0;
+  #render = (): boolean => {
+    if (this.#sceneDirty) {
+      this.#update();
+      this.#drawScene();
+      this.#sceneDirty = false;
     }
+    this.#compose();
+    return false;
   };
-
-  /** True while the chart still has motion in flight. Live phases scroll the
-   *  viewport continuously; idle/result phases animate only until the camera
-   *  lerp settles, then the loop parks. */
-  #animating(): boolean {
-    const p = this.#lastPhase;
-    if (
-      p === "warmup" ||
-      p === "latency" ||
-      p === "download" ||
-      p === "upload" ||
-      p === "bidirectional"
-    )
-      return true;
-    return !this.#vpSettled;
-  }
 
   #latestT(d: ChartData): number {
     const a = d.throughput.length ? d.throughput[d.throughput.length - 1].t : 0;
@@ -400,9 +343,6 @@ export class ChartEngine implements CanvasEngine {
     return Math.max(a, b);
   }
 
-  /** Drop all accumulated per-run state. Called when the store's runSeq
-   *  changes (reset/engage/return-home) so nothing from a prior run — phase
-   *  spans, the settled camera, result overlays — can bleed into the next. */
   #resetRunState(): void {
     this.#spans = [];
     this.#lastPhase = null;
@@ -410,16 +350,22 @@ export class ChartEngine implements CanvasEngine {
     this.#result = false;
     this.#hasThroughputScale = false;
     this.#p95Cache = { len: -1, tMin: 0, v: 0 };
+    this.#indexedThroughput = 0;
+    this.#lastIndexedThroughput = undefined;
+    this.#indexedLatency = 0;
+    this.#lastIndexedLatency = undefined;
+    for (const lane of Object.values(this.#throughputByLane)) lane.length = 0;
+    this.#latencyByPhase.clear();
   }
 
   #update(): void {
     const d = this.#get();
 
-    // New run → clear everything accumulated from the previous one.
     if (d.runSeq !== this.#runSeq) {
       this.#runSeq = d.runSeq;
       this.#resetRunState();
     }
+    this.#indexData(d);
 
     // Track exact runner-owned boundaries. Sample timestamps cannot represent
     // a sample-free warmup and therefore are not a phase clock.
@@ -433,8 +379,6 @@ export class ChartEngine implements CanvasEngine {
       this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
 
-      // A live phase is a new chart window. Cut at its exact boundary so the
-      // previous stage cannot remain visible while the camera eases forward.
       if (this.#vpInit) this.#vp.tMin = Math.max(this.#vp.tMin, phaseStart);
     }
 
@@ -443,11 +387,9 @@ export class ChartEngine implements CanvasEngine {
       d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
     this.#result = complete;
 
-    // Target viewport.
     let tMin: number;
     let tMax: number;
     if (complete) {
-      // Frozen result view: settle the camera to the whole timeline.
       tMin = 0;
       tMax = Math.max(latest * 1.02, 1000);
     } else {
@@ -457,30 +399,21 @@ export class ChartEngine implements CanvasEngine {
       tMax = Math.max(latest + 2000, phaseStart + 4000);
     }
 
-    // Throughput axis ceiling: follow the gauge's shared scale verbatim so the
-    // two instruments are identically scaled (dwell-filtered + tiered upstream).
     const bytesPerSecMax =
       d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
     this.#hasThroughputScale =
       d.scaleBytesPerSec !== sharedThroughputScale(0) ||
       d.throughput.length > 0;
 
-    // Latency axis. Live → simple 0-based nice ceiling (stable while scrolling).
-    // Result → centered, weighted, nice-step domain (shared `niceDomain`), so
-    // a flat latency band fills the lane instead of hugging the floor.
     let rttMin = 0;
     let rttMax: number;
     if (complete) {
       const rtts: number[] = [];
       for (const s of d.latency) if (!s.lost) rtts.push(s.rttMs);
-      // floor:1 matches LatencyProfile — scale down to a 1 ms span on a fast
-      // LAN/localhost rather than bottoming out at a 20 ms step.
       const dom = niceDomain(rtts, { floor: 1 });
       rttMin = dom.min;
       rttMax = dom.max;
     } else {
-      // Cached: the sort in #p95In only reruns when a sample lands or the
-      // window has drifted meaningfully — not on all 60 camera frames/s.
       if (
         d.latency.length !== this.#p95Cache.len ||
         Math.abs(tMin - this.#p95Cache.tMin) > 500
@@ -498,34 +431,16 @@ export class ChartEngine implements CanvasEngine {
     if (!this.#vpInit) {
       this.#vp = { ...target };
       this.#vpInit = true;
-      this.#vpSettled = true;
     } else {
-      // Lerp each axis toward target; snap (and flag unsettled) per-axis so the
-      // loop knows when the camera has converged and can park. Epsilons are in
-      // each axis's own units — sub-pixel for time, ~0.05% for the rate scale.
-      let settled = true;
-      const ease = (cur: number, tgt: number, eps: number): number => {
-        const next = cur + (tgt - cur) * FOLLOW;
-        if (Math.abs(tgt - next) <= eps) return tgt;
-        settled = false;
-        return next;
-      };
-      this.#vp.tMin = ease(this.#vp.tMin, target.tMin, 0.5);
-      this.#vp.tMax = ease(this.#vp.tMax, target.tMax, 0.5);
-      this.#vp.bytesPerSecMax = ease(
-        this.#vp.bytesPerSecMax,
-        target.bytesPerSecMax,
-        Math.max(1, target.bytesPerSecMax * 0.0005),
-      );
-      this.#vp.rttMin = ease(this.#vp.rttMin, target.rttMin, 0.05);
-      this.#vp.rttMax = ease(this.#vp.rttMax, target.rttMax, 0.05);
-      this.#vpSettled = settled;
+      this.#vp = target;
     }
   }
 
   #p95In(arr: LatencySample[], t0: number, t1: number): number {
     const v: number[] = [];
-    for (const s of arr) if (!s.lost && s.t >= t0 && s.t <= t1) v.push(s.rttMs);
+    const lo = lowerBoundAt(arr, t0);
+    const hi = lowerBoundAt(arr, t1);
+    for (let i = lo; i < hi; i++) if (!arr[i].lost) v.push(arr[i].rttMs);
     if (!v.length) return 0;
     v.sort((a, b) => a - b);
     return v[Math.min(v.length - 1, Math.ceil(0.95 * v.length) - 1)];
@@ -548,8 +463,8 @@ export class ChartEngine implements CanvasEngine {
     return PAD_T + (1 - (rtt - this.#vp.rttMin) / span) * plotH;
   }
 
-  #draw(): void {
-    const ctx = this.#ctx;
+  #drawScene(): void {
+    const ctx = this.#sceneCtx;
     if (!ctx) return;
     const d = this.#get();
     ctx.clearRect(0, 0, this.#w, this.#h);
@@ -560,6 +475,23 @@ export class ChartEngine implements CanvasEngine {
     if (d.latencyEnabled) this.#drawLatency(ctx, d.latency);
     this.#drawPhases(ctx);
     this.#drawAxesLabels(ctx, d.latencyEnabled);
+  }
+
+  #compose(): void {
+    const ctx = this.#ctx;
+    if (!ctx || !this.#scene) return;
+    ctx.clearRect(0, 0, this.#w, this.#h);
+    ctx.drawImage(
+      this.#scene,
+      0,
+      0,
+      this.#scene.width,
+      this.#scene.height,
+      0,
+      0,
+      this.#w,
+      this.#h,
+    );
     this.#drawHover(ctx);
   }
 
@@ -574,8 +506,6 @@ export class ChartEngine implements CanvasEngine {
     return null;
   }
 
-  /** Per-phase throughput average overlay — drawn only in the frozen result
-   *  view: a dashed average rule plus a small "avg" tag per transfer phase. */
   #drawPhaseStats(
     ctx: CanvasRenderingContext2D,
     all: ThroughputSample[],
@@ -586,7 +516,6 @@ export class ChartEngine implements CanvasEngine {
       if (x1 <= x0) continue;
       const yAvg = this.#yL(stat.avg);
 
-      // Clean dashed average rule (no busy min→max band).
       ctx.save();
       ctx.strokeStyle = stat.stroke;
       ctx.globalAlpha = 0.8;
@@ -598,8 +527,6 @@ export class ChartEngine implements CanvasEngine {
       ctx.stroke();
       ctx.restore();
 
-      // avg pill on a solid chip so the label never blends into the line it
-      // sits on. Faceplate-styled: panel fill + hairline in the phase colour.
       const label = `avg ${this.#fmt.throughput(stat.avg)}`;
       ctx.font = '700 9px "JetBrains Mono", monospace';
       ctx.textAlign = "left";
@@ -628,8 +555,6 @@ export class ChartEngine implements CanvasEngine {
 
   #phaseStats(all: ThroughputSample[]): PhaseStat[] {
     const out: PhaseStat[] = [];
-    // Group by the sample's own phase tag (not a re-derived time window) so the
-    // per-phase stats attribute samples exactly as the engine reduces them.
     for (const phase of ["download", "upload"] as const) {
       const seg = all.filter((s) => s.phase === phase);
       const average = this.#get().resultRates[phase];
@@ -642,10 +567,6 @@ export class ChartEngine implements CanvasEngine {
         ),
       );
     }
-    // Bidirectional carries two concurrent lanes tagged by `dir`, not `phase` —
-    // split them so each still gets its own average overlay, drawn in the
-    // existing download/upload colors (matches #drawThroughput's two-line
-    // rendering for this phase, rather than one combined line).
     for (const dir of ["down", "up"] as const) {
       const seg = all.filter(
         (s) => s.phase === "bidirectional" && s.dir === dir,
@@ -664,7 +585,6 @@ export class ChartEngine implements CanvasEngine {
     return out;
   }
 
-  /** Build the shared result overlay for one throughput lane. */
   #reduceStat(
     seg: ThroughputSample[],
     stroke: string,
@@ -678,9 +598,6 @@ export class ChartEngine implements CanvasEngine {
     };
   }
 
-  /** Phase ribbon — a thin colour-coded strip in the bottom gutter mapping the
-   *  timeline to its phases (colours match the throughput area), plus a small
-   *  phase label per segment in the frozen result view. */
   #PHASE_NAME: Partial<Record<Phase, string>> = {
     warmup: "WARM-UP",
     latency: "PING",
@@ -691,8 +608,6 @@ export class ChartEngine implements CanvasEngine {
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
     const ry = this.#h - PAD_B + 4;
-    // Warmup recurs before every transfer stage but shares one colour, so we
-    // label only the first warmup — repeating "WARM-UP" just adds clutter.
     let warmupLabelled = false;
     for (const s of this.#spans) {
       const color = this.#phaseColor(s.phase);
@@ -711,7 +626,6 @@ export class ChartEngine implements CanvasEngine {
       ctx.roundRect(x0, ry, w, 3, 1.5);
       ctx.fill();
 
-      // Name the segment in the static result view (room + no scroll).
       const isRepeatWarmup = s.phase === "warmup" && warmupLabelled;
       if (this.#result && w > 56 && !isRepeatWarmup) {
         ctx.globalAlpha = 0.62;
@@ -740,9 +654,6 @@ export class ChartEngine implements CanvasEngine {
     const step = this.#niceTimeStep((this.#vp.tMax - this.#vp.tMin) / 5);
     const startT = Math.ceil(this.#vp.tMin / step) * step;
 
-    // Quad-ruled minor grid — a faint 4-division subdivision of each major
-    // cell, underneath the labelled lines. Graph paper, not a chrome track.
-    // All minor lines share one path/stroke (one raster pass, not ~40).
     ctx.lineWidth = 1;
     ctx.strokeStyle = this.#c.grid;
     ctx.globalAlpha = 0.55;
@@ -764,7 +675,6 @@ export class ChartEngine implements CanvasEngine {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Labelled major lines — one batched path, labels filled alongside.
     ctx.strokeStyle = this.#c.grid;
     ctx.fillStyle = this.#c.textSoft;
     ctx.font = '10px "JetBrains Mono", monospace';
@@ -790,9 +700,6 @@ export class ChartEngine implements CanvasEngine {
     ctx.stroke();
   }
 
-  /** Trace a smoothed path through `pts` from the current point. Midpoint-
-   *  quadratic: each sample is a control point and the curve passes through
-   *  the segment midpoints — smooth, overshoot-free, cheap. */
   #smoothTo(
     ctx: CanvasRenderingContext2D,
     pts: { x: number; y: number }[],
@@ -806,25 +713,58 @@ export class ChartEngine implements CanvasEngine {
     ctx.lineTo(last.x, last.y);
   }
 
-  /** The samples + styling for one drawn curve. Bidirectional carries two
-   *  concurrent lanes under one phase tag, so it's split by `dir` and drawn
-   *  with the SAME download/upload colors as the standalone phases — two
-   *  lines, not one combined line — for visual consistency across the chart. */
+  #indexData(data: ChartData): void {
+    const all = data.throughput;
+    if (
+      all.length < this.#indexedThroughput ||
+      (all.length === this.#indexedThroughput &&
+        all.at(-1) !== this.#lastIndexedThroughput)
+    ) {
+      this.#indexedThroughput = 0;
+      for (const lane of Object.values(this.#throughputByLane)) lane.length = 0;
+    }
+    for (let i = this.#indexedThroughput; i < all.length; i++) {
+      const sample = all[i];
+      const lane: ThroughputLane =
+        sample.phase === "bidirectional"
+          ? sample.dir === "down"
+            ? "bidiDown"
+            : "bidiUp"
+          : sample.phase;
+      this.#throughputByLane[lane].push(sample);
+    }
+    this.#indexedThroughput = all.length;
+    this.#lastIndexedThroughput = all.at(-1);
+
+    const latency = data.latency;
+    if (
+      latency.length < this.#indexedLatency ||
+      (latency.length === this.#indexedLatency &&
+        latency.at(-1) !== this.#lastIndexedLatency)
+    ) {
+      this.#indexedLatency = 0;
+      this.#latencyByPhase.clear();
+    }
+    for (let i = this.#indexedLatency; i < latency.length; i++) {
+      const sample = latency[i];
+      if (sample.lost) continue;
+      const lane = this.#latencyByPhase.get(sample.phase) ?? [];
+      if (!lane.length) this.#latencyByPhase.set(sample.phase, lane);
+      lane.push(sample);
+    }
+    this.#indexedLatency = latency.length;
+    this.#lastIndexedLatency = latency.at(-1);
+  }
+
   #throughputLanes(): {
-    match: (s: ThroughputSample) => boolean;
+    samples: ThroughputSample[];
     area: "download" | "upload";
   }[] {
     return [
-      { match: (s) => s.phase === "download", area: "download" },
-      { match: (s) => s.phase === "upload", area: "upload" },
-      {
-        match: (s) => s.phase === "bidirectional" && s.dir === "down",
-        area: "download",
-      },
-      {
-        match: (s) => s.phase === "bidirectional" && s.dir === "up",
-        area: "upload",
-      },
+      { samples: this.#throughputByLane.download, area: "download" },
+      { samples: this.#throughputByLane.upload, area: "upload" },
+      { samples: this.#throughputByLane.bidiDown, area: "download" },
+      { samples: this.#throughputByLane.bidiUp, area: "upload" },
     ];
   }
 
@@ -836,34 +776,21 @@ export class ChartEngine implements CanvasEngine {
     const bot = this.#h - PAD_B;
     const tMin = this.#vp.tMin;
     const tMax = this.#vp.tMax;
-    // Each lane's samples run contiguous and time-ordered (download/upload
-    // each run once per phase; bidirectional's down/up subsets likewise, since
-    // both directions are pushed for the same single phase span). Samples
-    // outside the viewport are culled, keeping one bridging sample per edge
-    // for path continuity — while the live camera tracks the current phase,
-    // earlier phases cost nothing.
     for (const lane of this.#throughputLanes()) {
       const stroke =
         lane.area === "download" ? this.#c.download : this.#c.upload;
       const pts: { x: number; y: number }[] = [];
-      let leftEdge: ThroughputSample | null = null;
-      for (const s of all) {
-        if (!lane.match(s)) continue;
-        if (s.t < tMin) {
-          leftEdge = s;
-          continue;
-        }
-        if (!pts.length && leftEdge)
-          pts.push({
-            x: this.#x(leftEdge.t),
-            y: this.#yL(leftEdge.bytesPerSec),
-          });
+      const lo = Math.max(0, lowerBoundAt(lane.samples, tMin) - 1);
+      const hi = Math.min(
+        lane.samples.length,
+        lowerBoundAt(lane.samples, tMax) + 1,
+      );
+      for (let i = lo; i < hi; i++) {
+        const s = lane.samples[i];
         pts.push({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) });
-        if (s.t > tMax) break;
       }
       if (pts.length < 2) continue;
 
-      // Filled area under a smoothed top edge, soft vertical gradient (cached).
       ctx.fillStyle = this.#areaGrad(ctx, lane.area);
       ctx.beginPath();
       ctx.moveTo(pts[0].x, bot);
@@ -873,7 +800,6 @@ export class ChartEngine implements CanvasEngine {
       ctx.closePath();
       ctx.fill();
 
-      // Smoothed stroke on top.
       ctx.strokeStyle = stroke;
       ctx.lineWidth = 1.75;
       ctx.lineJoin = "round";
@@ -888,17 +814,8 @@ export class ChartEngine implements CanvasEngine {
   #drawLatency(ctx: CanvasRenderingContext2D, all: LatencySample[]): void {
     if (all.length < 2) return;
     ctx.lineWidth = 1;
-    // Cull to the viewport (plus one bridging sample per edge) — the segment
-    // logic below then only walks what is actually visible.
-    let lo = 0;
-    while (lo < all.length && all[lo].t < this.#vp.tMin) lo++;
-    if (lo > 0) lo--;
-    let hi = lo;
-    while (hi < all.length && all[hi].t <= this.#vp.tMax) hi++;
-    if (hi < all.length) hi++;
-    // Use raw latency points and mild smoothing so the curve is continuous
-    // without hiding the point measurements. Break on a lost ping, phase
-    // boundary, or under-load colour transition.
+    const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
+    const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
     let prevPhase: Phase | null = null;
     const segment: Array<{ t: number; rttMs: number; underLoad: boolean }> = [];
     const drawSegment = (): void => {

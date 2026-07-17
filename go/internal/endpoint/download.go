@@ -47,7 +47,7 @@ func (d *Download) Handle(s transport.Session) error {
 		h.Set("Content-Length", strconv.FormatInt(n, 10))
 	}
 
-	sink, flush, err := s.OpenDownloadSink()
+	sink, err := s.OpenDownloadSink()
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,6 @@ func (d *Download) Handle(s transport.Session) error {
 		if werr != nil {
 			return nil // client disconnect mid-stream is normal; stop quietly
 		}
-		_ = flush()
 	}
 	return nil
 }

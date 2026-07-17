@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -204,6 +205,25 @@ func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 func TestDiscardSinkHasNoReaderFrom(t *testing.T) {
 	if _, ok := io.Writer(discardSink{}).(io.ReaderFrom); ok {
 		t.Error("discardSink must not implement io.ReaderFrom")
+	}
+}
+
+func BenchmarkUploadBufferSize(b *testing.B) {
+	const size = 64 << 20
+	source := bytes.Repeat([]byte{1}, size)
+	for _, bufferSize := range []int{32 << 10, 256 << 10, 1 << 20} {
+		b.Run(strconv.Itoa(bufferSize), func(b *testing.B) {
+			buffer := make([]byte, bufferSize)
+			reader := bytes.NewReader(source)
+			b.SetBytes(size)
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				reader.Reset(source)
+				if _, err := io.CopyBuffer(discardSink{}, io.LimitReader(reader, size), buffer); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
 

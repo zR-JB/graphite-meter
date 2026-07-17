@@ -46,7 +46,7 @@ func TestWebSocketSession(t *testing.T) {
 			srvErrs <- fmt.Errorf("HTTP() ok = true, want false")
 		}
 
-		if _, _, err := sess.OpenDownloadSink(); err != ErrUnsupported {
+		if _, err := sess.OpenDownloadSink(); err != ErrUnsupported {
 			srvErrs <- fmt.Errorf("OpenDownloadSink() err = %v, want ErrUnsupported", err)
 		}
 

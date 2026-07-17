@@ -49,7 +49,7 @@ func main() {
 	cfg.Stages = parseStages(stages)
 	cfg.PingInterval = parsePing(ping)
 
-	p := tea.NewProgram(newModel(cfg))
+	p := tea.NewProgram(newModel(cfg), tea.WithFPS(20))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
 		os.Exit(1)
@@ -90,29 +90,13 @@ func parsePing(raw string) time.Duration {
 	}
 }
 
-type eventMsg goclient.Event
+type eventsMsg []goclient.Event
 type doneMsg struct{ err error }
 type preparationMsg struct {
 	seq        int
 	connection *goclient.PreparedConnection
 	err        error
 }
-
-// frameMsg drives the live-telemetry animation clock: while a run is active a
-// frameTick reschedules itself so the displayed rates ease toward their targets
-// at ~25 fps independent of the 100 ms throughput samples.
-type frameMsg time.Time
-
-// frameInterval is the animation cadence. ~25 fps is smooth in a terminal while
-// leaving the render cheap (identical frames are dropped by the renderer).
-const frameInterval = 40 * time.Millisecond
-
-func frameTick() tea.Cmd {
-	return tea.Tick(frameInterval, func(t time.Time) tea.Msg { return frameMsg(t) })
-}
-
-// spinnerFrames is the braille throbber shown next to the active stage.
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type mode int
 
@@ -192,15 +176,7 @@ type model struct {
 	peaks   map[goclient.Direction]float64
 	results []goclient.Result
 	latency goclient.LatencySample
-
-	// Display-only animation state (rates/peaks above stay authoritative).
-	// smoothRate is an EWMA of the raw samples — the easing target; dispRate is
-	// the per-frame eased value actually rendered, so both the bar and the number
-	// glide instead of stepping with each 100 ms sample.
-	smoothRate map[goclient.Direction]float64
-	dispRate   map[goclient.Direction]float64
-	frame      int  // animation frame counter (drives the spinner)
-	animating  bool // a frameTick loop is in flight
+	summary string
 }
 
 func newModel(cfg goclient.Config) model {
@@ -212,8 +188,6 @@ func newModel(cfg goclient.Config) model {
 		prepareStatus: "checking",
 		rates:         map[goclient.Direction]goclient.ThroughputSample{},
 		peaks:         map[goclient.Direction]float64{},
-		smoothRate:    map[goclient.Direction]float64{},
-		dispRate:      map[goclient.Direction]float64{},
 	}
 }
 
@@ -238,13 +212,24 @@ func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg))
 }
 
-func waitEvent(events <-chan goclient.Event) tea.Cmd {
+func waitEvents(events <-chan goclient.Event) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := <-events
 		if !ok {
 			return nil
 		}
-		return eventMsg(e)
+		batch := []goclient.Event{e}
+		for {
+			select {
+			case e, ok := <-events:
+				if !ok {
+					return eventsMsg(batch)
+				}
+				batch = append(batch, e)
+			default:
+				return eventsMsg(batch)
+			}
+		}
 	}
 }
 
@@ -276,24 +261,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prepared = msg.connection
 		}
 		return m, nil
-	case frameMsg:
-		if m.mode != modeRun {
-			m.animating = false
-			return m, nil
+	case eventsMsg:
+		for _, event := range msg {
+			m.apply(event)
 		}
-		m.animate()
-		// Once the run is done and the bars have settled, stop the clock; a rerun
-		// restarts it. Until then keep ticking so motion stays smooth.
-		if m.complete && m.settled() {
-			m.animating = false
-			return m, nil
-		}
-		return m, frameTick()
-	case eventMsg:
-		e := goclient.Event(msg)
-		m.apply(e)
 		if m.mode == modeRun && m.err == nil {
-			return m, waitEvent(m.events)
+			return m, waitEvents(m.events)
 		}
 	case doneMsg:
 		if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
@@ -604,18 +577,11 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.complete = false
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
 	m.peaks = map[goclient.Direction]float64{}
-	m.smoothRate = map[goclient.Direction]float64{}
-	m.dispRate = map[goclient.Direction]float64{}
-	m.frame = 0
 	m.results = nil
 	m.latency = goclient.LatencySample{}
 	m.notice = "Run started. Press c or esc to cancel."
-	cmds := []tea.Cmd{waitEvent(events), waitDone(done)}
-	if !m.animating {
-		m.animating = true
-		cmds = append(cmds, frameTick())
-	}
-	return m, tea.Batch(cmds...)
+	m.refreshSummary()
+	return m, tea.Batch(waitEvents(events), waitDone(done))
 }
 
 func (m *model) apply(e goclient.Event) {
@@ -636,21 +602,15 @@ func (m *model) apply(e goclient.Event) {
 			m.server = fmt.Sprintf("%s %s:%d %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Host, e.Preflight.Server.Port, e.Preflight.Server.Location, e.Message, observed)
 			m.status = "connected"
 		}
+		m.refreshSummary()
 	case goclient.EventStage:
 		m.stage = e.Stage
 		m.status = e.Message
+		m.refreshSummary()
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
 		if e.Throughput.BytesPerSec > m.peaks[e.Direction] {
 			m.peaks[e.Direction] = e.Throughput.BytesPerSec
-		}
-		// Fold the noisy 100 ms sample into an EWMA the animation eases toward, so
-		// the bar and number don't jump with every tick.
-		const alpha = 0.35
-		if prev := m.smoothRate[e.Direction]; prev > 0 {
-			m.smoothRate[e.Direction] = prev + alpha*(e.Throughput.BytesPerSec-prev)
-		} else {
-			m.smoothRate[e.Direction] = e.Throughput.BytesPerSec
 		}
 	case goclient.EventLatency:
 		m.latency = e.Latency
@@ -661,44 +621,16 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventComplete:
 		m.status = "complete"
 		m.complete = true
+		m.refreshSummary()
 	case goclient.EventError:
 		m.err = e.Err
 		m.status = "error"
+		m.refreshSummary()
 	}
 }
 
-// animate advances one animation frame: each direction's displayed rate eases a
-// fraction of the way toward its EWMA target, giving ~25 fps glide instead of
-// 100 ms steps. It touches only display state.
-func (m *model) animate() {
-	const ease = 0.2
-	m.frame++
-	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
-		target := m.smoothRate[dir]
-		cur := m.dispRate[dir]
-		next := cur + ease*(target-cur)
-		// Snap to the target once within 0.05% (or 1 B/s) so the value comes fully
-		// to rest — including a rate decaying toward zero — and settled() can fire.
-		d := target - next
-		if d < 0 {
-			d = -d
-		}
-		if d < 0.0005*target+1 {
-			next = target
-		}
-		m.dispRate[dir] = next
-	}
-}
-
-// settled reports whether every displayed rate has reached its target — the cue
-// to stop the animation clock after a run completes.
-func (m model) settled() bool {
-	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
-		if m.dispRate[dir] != m.smoothRate[dir] {
-			return false
-		}
-	}
-	return true
+func (m *model) refreshSummary() {
+	m.summary = m.summaryView(0)
 }
 
 func (m model) rowCount() int {
@@ -1004,7 +936,11 @@ func (m model) runView(w int) string {
 		rightW = w - leftW - 2
 	}
 
-	summary := panelStyle.Width(leftW).Render(m.summaryView(leftW - 4))
+	summaryBody := m.summary
+	if summaryBody == "" {
+		summaryBody = m.summaryView(leftW - 4)
+	}
+	summary := panelStyle.Width(leftW).Render(summaryBody)
 	live := panelStyle.Width(rightW).Render(m.liveView(rightW - 4))
 	var b strings.Builder
 	if w >= 96 {
@@ -1035,7 +971,7 @@ func (m model) summaryView(w int) string {
 	case m.complete:
 		mark = successStyle.Render("✓ ")
 	case m.stage != "":
-		mark = accentStyle.Render(spinnerFrames[m.frame%len(spinnerFrames)] + " ")
+		mark = accentStyle.Render("• ")
 	}
 	lines := []string{
 		accentStyle.Render("Session"),
@@ -1060,8 +996,8 @@ func (m model) liveView(w int) string {
 	scale := m.rateScale()
 	lines := []string{
 		accentStyle.Render("Live Telemetry"),
-		rateLine("download", m.dispRate[goclient.Down], scale, w),
-		rateLine("upload  ", m.dispRate[goclient.Up], scale, w),
+		rateLine("download", m.rates[goclient.Down].BytesPerSec, scale, w),
+		rateLine("upload  ", m.rates[goclient.Up].BytesPerSec, scale, w),
 		latencyLine(m.latency),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

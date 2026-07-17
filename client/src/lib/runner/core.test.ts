@@ -12,36 +12,33 @@ import type {
 // ---------------------------------------------------------------------------
 // Fake clock + captured tick callback.
 //
-// core.ts drives everything off a real `setInterval(() => this.#tick(), 20)`
-// plus `performance.now()`. Both are monkey-patched here so a test can drive
-// the tick loop deterministically and instantly: `advance(ms)` fakes `ms` of
-// wall-clock passing and fires exactly one master tick, mirroring one real
-// `setInterval` callback firing after that much real time.
+// The runner uses one deadline timer plus performance.now(). Both are patched
+// so tests can advance the measured clock deterministically.
 // ---------------------------------------------------------------------------
 let fakeNow = 0;
 let tickCallback: (() => void) | null = null;
 
 const realNow = performance.now.bind(performance);
-const realSetInterval = globalThis.setInterval;
-const realClearInterval = globalThis.clearInterval;
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
 
 beforeEach(() => {
   fakeNow = 0;
   tickCallback = null;
   performance.now = () => fakeNow;
-  globalThis.setInterval = ((fn: () => void) => {
+  globalThis.setTimeout = ((fn: () => void) => {
     tickCallback = fn;
-    return 1 as unknown as ReturnType<typeof setInterval>;
-  }) as typeof setInterval;
-  globalThis.clearInterval = (() => {
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {
     tickCallback = null;
-  }) as typeof clearInterval;
+  }) as typeof clearTimeout;
 });
 
 afterEach(() => {
   performance.now = realNow;
-  globalThis.setInterval = realSetInterval;
-  globalThis.clearInterval = realClearInterval;
+  globalThis.setTimeout = realSetTimeout;
+  globalThis.clearTimeout = realClearTimeout;
 });
 
 /** Advance the fake wall clock by `ms` and fire one master tick. */
@@ -50,13 +47,7 @@ function advance(ms: number): void {
   tickCallback?.();
 }
 
-// ---------------------------------------------------------------------------
-// Fake backend: a push-style RunnerBackend test double. It records the
-// 3-call stage lifecycle (begin/measure/end) plus run-level calls, and leaves
-// `onTick` undefined — samples arrive only when a test calls the CoreHost
-// methods (ingestThroughput/ingestLatency/stall/resume) directly on the core,
-// exactly like a real network backend pushing from its own callbacks.
-// ---------------------------------------------------------------------------
+// Records stage lifecycle calls; tests push samples through its host.
 class FakeBackend implements RunnerBackend {
   host!: CoreHost;
   calls: string[] = [];
@@ -756,6 +747,26 @@ test("adaptive completion can be disabled before a stable stage arms", async () 
 // ---------------------------------------------------------------------------
 // Dual EMA (display vs stability) from the same raw samples
 // ---------------------------------------------------------------------------
+
+test("raw samples reduce at source cadence while display events stay at 10 Hz", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig());
+
+  for (let i = 0; i < 50; i++) {
+    fakeNow += 20;
+    core.ingestThroughput("down", 1000, 20, 0.02);
+  }
+  expect(events.filter((event) => event.type === "throughput").length).toBe(10);
+
+  advance(1000);
+  const complete = events.find((event) => event.type === "complete");
+  expect(
+    complete?.type === "complete" && complete.result.download?.totalBytes,
+  ).toBe(1000);
+});
 
 test("display (fast) and stability (slow) EMAs both derive from the same raw samples without drifting from exact totals", async () => {
   const backend = new FakeBackend();

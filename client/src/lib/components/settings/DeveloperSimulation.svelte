@@ -1,19 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <DeveloperSimulation> — Settings › Developer › Simulation
-   * Dev-only affordance: injects LIVE anomalies into the running
-   * engine via wire.injectAnomaly. Each fires relative to the
-   * current moment in the active phase, so the buttons are only
-   * enabled while a run is in flight (`running`).
-   *
-   * Split out of <DeveloperPanel> so it sits behind its own module
-   * boundary: a build with GM_CLIENT_ALLOW_DUMMY=0 never imports it
-   * (see DeveloperPanel's {#if __GM_ALLOW_DUMMY__}), so this file —
-   * and the injectAnomaly path it is the sole importer of — is
-   * tree-shaken out of the bundle.
-   * ============================================================ */
+  // Dev-only anomaly controls, tree-shaken from real-only builds.
   import { injectAnomaly } from "../../runner/wire.svelte";
-  import { pointerIntent } from "../../actions/pointerIntent";
   import { tooltip } from "../../actions/tooltip";
   import type { RunnerAnomaly } from "../../runner/contract";
 
@@ -76,7 +63,7 @@
 
 <div class="grid">
   {#each CARDS as c (c.kind)}
-    <article class="card" use:pointerIntent={{ disabled: !running }}>
+    <article class="card">
       <h4>{c.title}</h4>
       <p>{c.desc}</p>
       <button
@@ -147,25 +134,9 @@
       transform var(--dur-hover) var(--ease-out),
       border-color var(--dur-hover) var(--ease-out);
   }
-  .card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0;
-    background: radial-gradient(
-      180px circle at var(--intent-x, 50%) var(--intent-y, 0),
-      var(--brand-soft),
-      transparent 70%
-    );
-    transition: opacity var(--dur-hover) var(--ease-out);
-  }
   .card:hover {
     transform: translateY(-1px);
     border-color: var(--border-strong);
-  }
-  .card:hover::before {
-    opacity: 1;
   }
   .card > * {
     position: relative;

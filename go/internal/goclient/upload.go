@@ -188,16 +188,17 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 func (b *cyclingBody) Close() error { return nil }
 
 type uploadProgress struct {
-	cancel context.CancelFunc
-	body   io.ReadCloser
-	client *http.Client
-	url    string
-	done   chan struct{}
-	ready  chan error
-	n      atomic.Uint64
-	t      atomic.Uint64
-	seq    atomic.Uint64
-	once   sync.Once
+	cancel  context.CancelFunc
+	body    io.ReadCloser
+	client  *http.Client
+	url     string
+	done    chan struct{}
+	ready   chan error
+	n       atomic.Uint64
+	t       atomic.Uint64
+	seq     atomic.Uint64
+	changed chan struct{}
+	once    sync.Once
 }
 
 type uploadProgressEvent struct {
@@ -236,7 +237,7 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 		defer res.Body.Close()
 		return nil, unexpectedStatus(res)
 	}
-	p := &uploadProgress{cancel: cancel, body: res.Body, client: r.http, url: u.String(), done: make(chan struct{}), ready: make(chan error, 1)}
+	p := &uploadProgress{cancel: cancel, body: res.Body, client: r.http, url: u.String(), done: make(chan struct{}), ready: make(chan error, 1), changed: make(chan struct{}, 1)}
 	go func() {
 		defer close(p.done)
 		scanner := bufio.NewScanner(res.Body)
@@ -259,6 +260,10 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 				p.n.Store(event.Bytes)
 				p.t.Store(event.Nanos)
 				p.seq.Add(1)
+				select {
+				case p.changed <- struct{}{}:
+				default:
+				}
 			case "error":
 				if !ready {
 					ready = true
@@ -285,15 +290,13 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 }
 
 func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
 	for p.seq.Load() <= after {
 		select {
 		case <-ctx.Done():
 			return false
 		case <-p.done:
-			return false
-		case <-ticker.C:
+			return p.seq.Load() > after
+		case <-p.changed:
 		}
 	}
 	return true

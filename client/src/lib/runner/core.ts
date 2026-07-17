@@ -38,75 +38,25 @@ import {
 import { RunAccumulator } from "./evaluation";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 
-const TICK_MS = 20; // master loop resolution
-const STABILITY_CADENCE_MS = 100; // ≈10Hz — pip emit rate (predicate runs every tick)
+const RUNNER_DEADLINE_MS = 100;
+const STABILITY_CADENCE_MS = 100;
 
-/* ---------- Stall watchdog / max-stall — measured-time model ----------
- * The backend SHOULD bracket dead air with explicit host.stall()/resume(), but
- * a push backend can also simply go silent on a drop. The watchdog is the
- * fallback: in a MEASURED phase, if no real sample has arrived for longer than
- * STALL_WATCHDOG_MS the core auto-stalls; the next real byte sample resumes.
- * MAX_STALL_MS bounds patience — a stall that
- * outlives it is escalated to a terminal connection-lost failure rather than
- * accruing dead air forever. Both are wall-clock, never measured-time. */
+// Stall deadlines use wall time; result accounting retains the dead-air duration.
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
 const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
 
-/* ---------- Throughput de-aliasing (single smoothing point) ----------
- * Per-tick samples carry a MEASUREMENT ARTIFACT — worker→main postMessage
- * jitter aliasing the ~60ms aggregation tick — not real throughput variance.
- * The core low-passes it ONCE here, at the single chokepoint every consumer
- * reads from (the stability accumulator AND the emitted sample), so there is
- * exactly one smoothed source of truth. Byte TOTALS stay exact (raw
- * bytesDelta is untouched); only the RATE is filtered, via an EMA that
- * preserves the mean.
- *
- * TWO smoothings, because the two consumers have opposite needs:
- *   • DISPLAY (gauge/chart) uses a SHORT tau so the curve tracks a real
- *     line's ramp — up and down — instead of trailing it.
- *   • STABILITY (confidence / early-exit) uses a
- *     LONGER tau: its coefficients (TRANSFER_VARIANCE_K, stabilityThreshold)
- *     are tuned to that variance — a shorter tau would roughly double
- *     per-tick variance and the phase would stop early-exiting on a
- *     moderately noisy link.
- * Both taus stay well under the ~700ms postMessage-aliasing period, so both
- * still remove the artifact; byte totals stay raw either way. */
+// Display and stability filter the same raw rate at different time constants.
+// Exact byte and duration accounting never uses either filtered value.
 const THROUGHPUT_DISPLAY_TAU_MS = 700;
 const THROUGHPUT_STABILITY_TAU_MS = 1800;
 
-/** Per-direction dt-aware EMA state (one store per smoothing purpose). */
 type TpEma = {
   down: { v: number; t: number } | null;
   up: { v: number; t: number } | null;
 };
 
-/** Per-tick context handed to a pull-style backend so it can synthesize the
- *  samples due this tick. `realNow` lets a backend gate sample cadence on real
- *  time (e.g. during the glide, virtual time races but real time does not). */
-export interface TickContext {
-  phase: Segment["phase"];
-  /** The active stage's resolved activity (transfer lanes + loaded latency) —
-   *  the backend reads which samples to synthesize from this, never from config. */
-  activity: PhaseActivity;
-  /** True during the priming window (`phase === "warmup"`): a pull backend
-   *  produces NO measured samples yet, matching a real backend's onStageMeasure. */
-  isWarmup: boolean;
-  /** absolute virtual ms since run start */
-  elapsed: number;
-  segStart: number;
-  segEnd: number;
-  /** performance.now() captured this tick */
-  realNow: number;
-}
-
-/** The handle a backend uses to push observations / emit events into the core. */
 export interface CoreHost {
-  /** Push one throughput observation. `liveBytesPerSec` is the backend's
-   *  presentation/stability signal; exact result accounting uses only
-   *  `bytesDelta / durationSec`. Direction
-   *  travels WITH the sample (no phase-inference), so the bidirectional phase
-   *  can carry concurrent down + up samples. The core stamps elapsed,
-   *  accumulates it into the matching lane, and emits the throughput event. */
+  // Rates drive presentation/stability; bytesDelta and durationSec remain authoritative.
   ingestThroughput(
     dir: FlowDirection,
     liveBytesPerSec: number,
@@ -114,93 +64,46 @@ export interface CoreHost {
     durationSec: number,
     serverAuthoritative?: boolean,
   ): void;
-  /** Push a measured ping: RTT, whether captured under load, and whether lost. */
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
-  /** Signal a NON-terminal link stall: the link went quiet and the backend is
-   *  hoping to reconnect. Elapsed time continues, but the phase cannot finalize
-   *  until delivery resumes or max-stall fails the run. */
+  // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
-  /** Clear a stall: measured-time accrual resumes and a `resume` event fires.
-   *  No-op if not stalled. (A real sample arriving in ingest* auto-resumes too.) */
   resume(): void;
-  /** Report a transport-negotiation step (which connection method, and whether
-   *  it is negotiating / established / failed). The core simply re-emits it as
-   *  a `transport` event — negotiation logic lives entirely in the backend. */
   reportTransport(attempt: TransportAttempt): void;
-  /** Emit a raw event directly (pre-test pings during probe, connectivity, …).
-   *  Bypasses accumulation — use ingest* for measured run samples. */
+  // Direct events bypass measurement accumulation.
   emit(e: RunnerEvent): void;
-  /** Report an unrecoverable failure; the core ends the run into "error",
-   *  attaching the current phase + any partial results. The backend supplies
-   *  the category, a human message, and (optionally) the original thrown value.
-   *  `user-abort` is NOT a failure — call abort() for that. */
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
-  /** Report that ONE stage cannot run (capability missing / transport failed /
-   *  connection never established). The core closes the stage's I/O, skips its
-   *  remaining timeline, emits `stageSkipped`, and continues with the next
-   *  stage. Escalates to fail() only when nothing was measured and nothing is
-   *  left to run. */
+  // A stage failure skips only that stage unless no usable work remains.
   failStage(
     stage: TransportRole,
     reason: StageFailure["reason"],
     message: string,
   ): void;
-  /** The active config, or null when idle. */
   readonly config: RunnerConfig | null;
-  /** The current lifecycle phase. */
   readonly phase: Phase;
-  /** Absolute virtual ms since run start (the run clock) — for time-anchored
-   *  backend logic such as live anomaly windows. */
+  // Virtual run time, distinct from backend wall-clock deadlines.
   readonly elapsed: number;
 }
 
-/** A pluggable sample source + connection manager. The core drives it; it only
- *  reacts and pushes samples back through the {@link CoreHost}. */
 export interface RunnerBackend {
-  /** Receive the host handle (push samples / emit through it). Called once. */
   attach(host: CoreHost): void;
-  /** Pre-test handshake; resolves InfraInfo. MAY emit a few pre-test `latency`
-   *  samples (underLoad:false, negative `t`) via the host for the sparkline. */
+  // Probe may emit negative-timestamp pre-run latency events through host.emit.
   probe(
     config: RunnerConfig,
     signal?: AbortSignal,
     role?: ConnectionRole,
   ): Promise<InfraInfo>;
-  /** Static engine identity + transport capabilities (see EngineInfo). */
   describe(): EngineInfo;
-  /** A run is starting with this config. Per-stage priming happens in
-   *  onStageBegin; reset any per-run state here. */
   onRunStart(config: RunnerConfig): void;
-  /** A stage is beginning — before its warmup clock starts (or before the stage
-   *  itself when warmupMs<=0). Open + PRIME every connection `activity` names (the
-   *  transfer lanes, plus the ping channel when loadedLatency or a latency
-   *  stage), but do NOT push measured samples yet. Returning a promise holds
-   *  the stage clock at zero until preparation is complete. */
+  // Preparation may be asynchronous; the stage clock remains parked until it resolves.
   onStageBegin(activity: PhaseActivity): void | Promise<void>;
-  /** The stage's warmup window has elapsed; the connections primed in
-   *  onStageBegin are warm. START measuring on the SAME connections — never
-   *  reopen them (that discards the warmup). Fires immediately after
-   *  onStageBegin when the stage has no warmup window. */
+  // Measurement continues on the connections primed by onStageBegin.
   onStageMeasure(activity: PhaseActivity): void;
-  /** The stage's measured window has ended (boundary, early finish, or run end).
-   *  Flush its final samples and close its connections. Result reduction waits
-   *  for the returned promise. */
+  // Result reduction waits for asynchronous final samples and shutdown.
   onStageEnd(activity: PhaseActivity, flush?: boolean): void | Promise<void>;
-  /** The run finished normally. Clean up anything still open. */
   onComplete(): void;
-  /** The run was aborted by the user. Cancel in-flight I/O and clean up. */
   onAbort(): void;
-  /** OPTIONAL pull hook: called every tick for the active phase. A synthesizing
-   *  backend produces samples here; a network backend leaves it undefined and
-   *  pushes from its own callbacks instead. */
-  onTick?(ctx: TickContext): void;
-  /** OPTIONAL — react to a live stage-set change (open/close future-stage I/O).
-   *  The core has already rebuilt the timeline before calling this. */
   onReconfigure?(stages: RunnerConfig["stages"]): void;
-  /** OPTIONAL — fallback idle RTT, used only when a run yields no usable latency
-   *  samples (e.g. the profile/preflight ping). */
   idleHintMs?(): number;
-  /** OPTIONAL — fire a live dev anomaly; real engines may omit it. */
   injectAnomaly?(a: RunnerAnomaly): void;
 }
 
@@ -210,8 +113,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #backend: RunnerBackend;
   #cfg: RunnerConfig | null = null;
 
-  // ---- run-time state ----
-  #tickTimer: ReturnType<typeof setInterval> | null = null;
+  #tickTimer: ReturnType<typeof setTimeout> | null = null;
+  #running = false;
   #prepareAbort: AbortController | null = null;
   #runGeneration = 0;
   #t0 = 0; // performance.now() at run start
@@ -220,24 +123,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #lastEmittedPhase: Phase = "idle";
   #stagePreparing = false;
   #stagePreparationId = 0;
-  // The segment currently driving the run, or null before the first tick / after
-  // it ends. Backend stage lifecycle keys off this segment's STAGE identity (its
-  // `activity.stage`), not the phase label — so the warmup→measure seam (same
-  // stage) is told to MEASURE, while a stage boundary (different stage) ends the
-  // old stage and begins the new one.
   #activeSeg: Segment | null = null;
   #lastStabilityAt = -Infinity;
+  #lastThroughputDisplayAt: Record<FlowDirection, number> = {
+    down: -Infinity,
+    up: -Infinity,
+  };
+  #lastLatencyDisplayAt = -Infinity;
   #bytesCumulative = 0;
 
-  // ---- measured test-time clock + early-finish glide ----
-  // The tick loop advances MEASURED TEST-TIME at wall rate. Connection stalls
-  // count toward effective throughput, but a phase cannot finalize until data
-  // resumes or the max-stall timeout fails the run.
-  // When a measured phase becomes confidently stable an early-finish "glide" is
-  // armed for that segment: measured-time is driven along an eased curve to the
-  // phase's end over a short real-time window (adaptive.glideMs), so it crosses
-  // seg.end — and eventually #totalMs — sooner. The progress marker visibly
-  // accelerates and the run genuinely finishes early, without faking coverage.
+  // Stalls remain in measured elapsed time but block finalization and adaptive glides.
   #measuredElapsed = 0;
   #lastRealNow = 0;
   #glideArmedForSeg = -1; // segment index a glide is armed for, or -1
@@ -245,32 +140,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #glideFromMeasured = 0;
   #glideTargetMeasured = 0;
 
-  // ---- measuring / stall gate — three unbraided quantities ----
-  // `#measuring` gates adaptive glides and finalization; it flips false on stall
-  // and true on resume.
-  // `#lastSampleWall` is the wall-clock of the last real sample, read by the
-  // watchdog. `#stalledSinceWall` is when the current stall began (0 = not
-  // stalled), read by the max-stall escalation. All wall-clock, never measured.
   #measuring = true;
   #lastSampleWall = 0;
   #stalledSinceWall = 0;
   #stallInfo: StallInfo | null = null;
 
-  // ---- throughput de-aliasing EMA (the single smoothing point) ----
-  // Per-direction (down/up run concurrently in bidirectional), dt-aware, and
-  // reseeded whenever the measured phase changes so one stage's rate never
-  // bleeds into the next. See THROUGHPUT_SMOOTH_TAU_MS.
   #tpEma: TpEma = { down: null, up: null }; // display-smoothed (fast)
   #tpEmaStable: TpEma = { down: null, up: null }; // stability-smoothed (slow)
   #tpEmaPhase: Phase = "idle";
-  /** Verbose: last 1 Hz de-alias log time per direction, so the raw-vs-smoothed
-   *  comparison logs at a readable cadence rather than every ~16 Hz sample. */
   #dbgTpLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
-  // ---- per-stage failures (stage skipped, run continues) ----
   #stageFailures = new Map<TransportRole, StageFailure>();
 
-  // ---- evaluation + result bookkeeping ----
   #accum = new RunAccumulator();
   #dlResult: ThroughputResult | null = null;
   #ulResult: ThroughputResult | null = null;
@@ -321,7 +202,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= START ================= */
   async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
-    if (this.#tickTimer || this.#prepareAbort) this.abort();
+    if (this.#running || this.#prepareAbort) this.abort();
     const generation = ++this.#runGeneration;
     const prepareAbort = new AbortController();
     this.#prepareAbort = prepareAbort;
@@ -369,16 +250,21 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#t0 = performance.now();
     this.#lastRealNow = this.#t0;
     this.#lastSampleWall = this.#t0; // arm the watchdog from run start
+    this.#running = true;
 
     this.#backend.onRunStart(config);
-    this.#tickTimer = setInterval(() => this.#tick(), TICK_MS);
     this.#tick(); // emit the first transition immediately
+    this.#armTick();
   }
 
   #resetRunState() {
+    this.#running = false;
     this.#lastEmittedPhase = "idle";
     this.#activeSeg = null;
     this.#lastStabilityAt = -Infinity;
+    this.#lastThroughputDisplayAt.down = -Infinity;
+    this.#lastThroughputDisplayAt.up = -Infinity;
+    this.#lastLatencyDisplayAt = -Infinity;
     this.#bytesCumulative = 0;
     this.#stageFailures.clear();
     this.#accum.reset();
@@ -404,12 +290,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= ABORT ================= */
   abort(): void {
-    if (!this.#tickTimer && !this.#prepareAbort) return;
+    if (!this.#running && !this.#prepareAbort) return;
     this.#runGeneration++;
     this.#prepareAbort?.abort();
     this.#prepareAbort = null;
-    if (this.#tickTimer) clearInterval(this.#tickTimer);
+    if (this.#tickTimer) clearTimeout(this.#tickTimer);
     this.#tickTimer = null;
+    this.#running = false;
     this.#stagePreparing = false;
     this.#stagePreparationId++;
     const from = this.#phase;
@@ -428,7 +315,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= LIVE RECONFIGURE ================= */
   reconfigure(config: LiveRunConfig): void {
-    if (!this.#tickTimer || !this.#cfg) return;
+    if (!this.#running || !this.#cfg) return;
     const activeBefore = this.#activeSeg;
     const stagesChanged = Object.keys(config.stages).some(
       (stage) =>
@@ -444,22 +331,52 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     );
     this.#segments = segments;
     this.#totalMs = totalMs;
+    this.#glideArmedForSeg = -1;
     const activeAfter = segmentAt(segments, this.#measuredElapsed);
     if (
       activeBefore &&
       activeAfter &&
       activeAfter.phase === activeBefore.phase &&
       activeAfter.activity.stage === activeBefore.activity.stage
-    )
+    ) {
       this.#activeSeg = activeAfter;
-    // Segment indices shifted under us — drop any armed glide so it re-arms
-    // against the rebuilt array on a later tick.
-    this.#glideArmedForSeg = -1;
+      if (activeAfter.phase !== "warmup") this.#updateStability();
+    }
     if (stagesChanged) this.#backend.onReconfigure?.(config.stages);
     this.#tick();
   }
 
   /* ================= MASTER TICK ================= */
+  #armTick(): void {
+    if (!this.#tickTimer && this.#running && !this.#stagePreparing)
+      this.#scheduleTick();
+  }
+
+  #scheduleTick(): void {
+    const seg = segmentAt(this.#segments, this.#measuredElapsed);
+    const now = performance.now();
+    const deadlines = [
+      RUNNER_DEADLINE_MS,
+      seg ? seg.end - this.#measuredElapsed : RUNNER_DEADLINE_MS,
+    ];
+    if (this.#isMeasuredPhase(this.#phase)) {
+      deadlines.push(
+        this.#measuring
+          ? this.#lastSampleWall + STALL_WATCHDOG_MS - now
+          : this.#stalledSinceWall + MAX_STALL_MS - now,
+      );
+    }
+    this.#tickTimer = setTimeout(
+      () => {
+        this.#tickTimer = null;
+        if (!this.#running) return;
+        this.#tick();
+        this.#armTick();
+      },
+      Math.max(1, Math.min(...deadlines)),
+    );
+  }
+
   #tick() {
     // Advance measured time at wall rate so dead air remains in throughput.
     const now = performance.now();
@@ -523,10 +440,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
           this.#stagePreparing = true;
           void preparation.then(
             () => {
-              if (
-                preparationId !== this.#stagePreparationId ||
-                !this.#tickTimer
-              )
+              if (preparationId !== this.#stagePreparationId || !this.#running)
                 return;
               this.#stagePreparing = false;
               this.#lastRealNow = performance.now();
@@ -536,6 +450,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
               )
                 this.#backend.onStageMeasure(seg.activity);
               this.#tick();
+              this.#armTick();
             },
             (cause) => {
               if (preparationId !== this.#stagePreparationId) return;
@@ -581,62 +496,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       phaseBudgetMs,
       measuring: this.#measuring,
     });
-
-    // Let a pull-style backend synthesize the samples due this tick. They flow
-    // back in through ingestThroughput / ingestLatency before stability is read
-    // below, so the just-pushed samples are in the confidence window. A push
-    // (network) backend leaves onTick undefined and feeds samples on its own.
-    this.#backend.onTick?.({
-      phase: seg.phase,
-      activity: seg.activity,
-      isWarmup: seg.phase === "warmup",
-      elapsed,
-      segStart: seg.start,
-      segEnd: seg.end,
-      realNow: now,
-    });
-
-    // Stability is computed ONCE per tick for the active measured phase and
-    // drives BOTH the live pip (emitted, throttled) and the early-finish glide
-    // — one signal, no second meaning to reconcile.
-    if (
-      seg.phase === "latency" ||
-      seg.phase === "download" ||
-      seg.phase === "upload" ||
-      seg.phase === "bidirectional"
-    ) {
-      const conf: ConfidenceScore | LatencyConfidenceScore =
-        this.#accum.confidence(seg.phase);
-      // Track the trailing stable run FIRST so the emitted band reflects the
-      // hysteretic latched state (entering stable takes a higher bar than
-      // leaving — the pip and the stable window don't flicker).
-      const stable = this.#accum.trackStableRun(
-        seg.phase,
-        conf.score,
-        this.#cfg!.adaptive,
-      );
-      // The `stability` snapshot only models the three single-lane stages; the
-      // bidirectional phase still drives the early-stop glide off the combined
-      // rate but emits no live pip (it has no single-lane stability signal).
-      if (
-        seg.phase !== "bidirectional" &&
-        now - this.#lastStabilityAt >= STABILITY_CADENCE_MS
-      ) {
-        this.#lastStabilityAt = now;
-        this.emit({
-          type: "stability",
-          snapshot: {
-            phase: seg.phase,
-            score: conf.score,
-            band: bandForState(stable, conf.score),
-            sampleCount: conf.sampleCount,
-          },
-        });
-      }
-      // Adaptive early finish: once confidently stable, arm a glide that
-      // accelerates measured-time to the segment boundary.
-      this.#maybeArmGlide(seg, elapsed, conf);
-    }
   }
 
   /* ================= SAMPLE INGEST (CoreHost) ================= */
@@ -686,6 +545,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       durationSec,
       serverAuthoritative,
     );
+    this.#updateStability();
     if (debugEnabled()) {
       const now = performance.now();
       if (now - this.#dbgTpLogAt[dir] >= 1000) {
@@ -699,16 +559,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         });
       }
     }
-    this.emit({
-      type: "throughput",
-      sample: {
-        t: this.#measuredElapsed,
-        bytesPerSec: display,
-        bytesCumulative: this.#bytesCumulative,
-        dir,
-        phase, // narrowed to the transfer subset by the guard above
-      },
-    });
+    const now = performance.now();
+    if (now - this.#lastThroughputDisplayAt[dir] >= RUNNER_DEADLINE_MS) {
+      this.#lastThroughputDisplayAt[dir] = now;
+      this.emit({
+        type: "throughput",
+        sample: {
+          t: this.#measuredElapsed,
+          bytesPerSec: display,
+          bytesCumulative: this.#bytesCumulative,
+          dir,
+          phase,
+        },
+      });
+    }
   }
 
   /** One dt-aware EMA step on a per-direction store: seeded on the first sample
@@ -746,16 +610,50 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // still move. Only the latency-only stage uses them as its liveness signal.
     if (phase === "latency") this.#noteRealSample();
     this.#accum.pushLatency(rttMs, underLoad, lost);
-    this.emit({
-      type: "latency",
-      sample: {
-        t: this.#measuredElapsed,
-        rttMs,
-        underLoad,
-        lost,
-        phase: this.#phase,
-      },
-    });
+    if (phase === "latency") this.#updateStability();
+    const now = performance.now();
+    if (now - this.#lastLatencyDisplayAt >= RUNNER_DEADLINE_MS) {
+      this.#lastLatencyDisplayAt = now;
+      this.emit({
+        type: "latency",
+        sample: {
+          t: this.#measuredElapsed,
+          rttMs,
+          underLoad,
+          lost,
+          phase: this.#phase,
+        },
+      });
+    }
+  }
+
+  #updateStability(): void {
+    const seg = this.#activeSeg;
+    if (!seg || seg.phase === "warmup") return;
+    const conf: ConfidenceScore | LatencyConfidenceScore =
+      this.#accum.confidence(seg.phase);
+    const stable = this.#accum.trackStableRun(
+      seg.phase,
+      conf.score,
+      this.#cfg!.adaptive,
+    );
+    const now = performance.now();
+    if (
+      seg.phase !== "bidirectional" &&
+      now - this.#lastStabilityAt >= STABILITY_CADENCE_MS
+    ) {
+      this.#lastStabilityAt = now;
+      this.emit({
+        type: "stability",
+        snapshot: {
+          phase: seg.phase,
+          score: conf.score,
+          band: bandForState(stable, conf.score),
+          sampleCount: conf.sampleCount,
+        },
+      });
+    }
+    this.#maybeArmGlide(seg, this.#measuredElapsed, conf);
   }
 
   /* ================= STALL / RESUME (CoreHost) ================= */
@@ -836,7 +734,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     reason: StageFailure["reason"],
     message: string,
   ): void {
-    if (!this.#tickTimer || this.#stageFailures.has(stage)) return;
+    if (!this.#running || this.#stageFailures.has(stage)) return;
     const failure: StageFailure = { stage, reason, message };
     this.#stageFailures.set(stage, failure);
 
@@ -864,9 +762,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
     if (this.#phase === "error") return;
     if (this.#tickTimer) {
-      clearInterval(this.#tickTimer);
+      clearTimeout(this.#tickTimer);
       this.#tickTimer = null;
     }
+    this.#running = false;
     // Cancel the backend's in-flight I/O (and let it restart its idle
     // keepalive) — an errored run must not leave lanes streaming.
     this.#backend.onAbort();
@@ -888,6 +787,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ---------- phase helpers ---------- */
   #beginAdaptivePhase() {
+    this.#lastStabilityAt = -Infinity;
+    this.#lastLatencyDisplayAt = -Infinity;
+    this.#lastThroughputDisplayAt.down = -Infinity;
+    this.#lastThroughputDisplayAt.up = -Infinity;
     this.#glideArmedForSeg = -1; // a new phase never inherits the prior glide
     this.#accum.beginPhase();
   }
@@ -947,11 +850,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stagePreparing = true;
     void ending.then(
       () => {
-        if (preparationId !== this.#stagePreparationId || !this.#tickTimer)
+        if (preparationId !== this.#stagePreparationId || !this.#running)
           return;
         this.#stagePreparing = false;
         this.#lastRealNow = performance.now();
         done();
+        this.#armTick();
       },
       (cause) => {
         if (preparationId !== this.#stagePreparationId) return;
@@ -1004,8 +908,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   /* ================= FINISH → RunResult ================= */
   #finish() {
     const complete = (): void => {
-      if (this.#tickTimer) clearInterval(this.#tickTimer);
+      if (this.#tickTimer) clearTimeout(this.#tickTimer);
       this.#tickTimer = null;
+      this.#running = false;
 
       const cfg = this.#cfg!;
       this.#finalizeStage(this.#lastEmittedPhase);

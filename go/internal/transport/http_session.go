@@ -38,24 +38,11 @@ func (s *httpSession) HTTP() (http.ResponseWriter, *http.Request, bool) {
 	return s.w, s.r, true
 }
 
-// OpenDownloadSink yields the ResponseWriter as the byte sink plus a flush that
-// drains the HTTP write buffer (so streamed bytes reach the client promptly
-// instead of pooling); a no-op when the writer is not an http.Flusher. The
-// download endpoint writes slices of the shared RNG block into this sink — a
-// WebTransport SendStream will satisfy the same seam (docs/ARCHITECTURE.md#roadmap).
-func (s *httpSession) OpenDownloadSink() (io.Writer, FlushFunc, error) {
-	flush := func() error { return nil }
-	if f, ok := s.w.(http.Flusher); ok {
-		flush = func() error { f.Flush(); return nil }
-	}
-	return s.w, flush, nil
+func (s *httpSession) OpenDownloadSink() (io.Writer, error) {
+	return s.w, nil
 }
 
-// OpenUploadSource yields the request body as the byte source to drain and
-// count (the client streams generated incompressible bytes into it). The upload
-// endpoint copies it to io.Discard through a pooled scratch buffer — counting,
-// never accumulating. A WebTransport RecvStream will satisfy the same seam
-// (docs/ARCHITECTURE.md#roadmap).
+// OpenUploadSource yields the request body for the upload endpoint to count.
 func (s *httpSession) OpenUploadSource() (io.Reader, error) {
 	if s.r.Body == nil {
 		return nil, ErrUnsupported
