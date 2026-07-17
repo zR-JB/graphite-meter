@@ -12,15 +12,18 @@ test("settings stay editable during a run and expose accessible connection state
     settings.getByText("Ready", { exact: true }).first(),
   ).toBeVisible();
   await expect(
-    settings.getByText("Upload progress follows the throughput path."),
+    settings.getByText("Fetch streams over HTTP/1.1 · clear"),
+  ).toBeVisible();
+  await expect(
+    settings.getByLabel("Maximum H1 streams per direction"),
   ).toBeVisible();
 
   const advanced = settings.locator("summary", {
-    hasText: "Advanced run timing",
+    hasText: "Customize the compensation model",
   });
   await advanced.focus();
   await advanced.press("Enter");
-  await expect(settings.getByLabel("Unloaded ping cadence")).toBeVisible();
+  await expect(settings.getByLabel("Connection profile")).toBeVisible();
 
   const accessibility = await new AxeBuilder({ page })
     .include('[aria-label="Settings"]')
@@ -31,6 +34,9 @@ test("settings stay editable during a run and expose accessible connection state
   await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible();
   await expect(settings.getByRole("button", { name: "short" })).toBeEnabled();
   await expect(settings.getByLabel("Unloaded ping cadence")).toBeEnabled();
+  await expect(
+    settings.getByLabel("Maximum H1 streams per direction"),
+  ).toBeEnabled();
   await expect(
     settings.locator('input[name="throughput-target"]:checked'),
   ).toBeEnabled();
@@ -45,6 +51,15 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
 
   await expect(
     endpoint.getByText("Fetch stream · HTTP/1.1 · clear"),
+  ).toBeVisible();
+  await expect(
+    endpoint.getByText("WebTransport streams · Fetch streams"),
+  ).toBeVisible();
+  await expect(
+    endpoint.getByText("WebTransport datagrams · WebSocket"),
+  ).toBeVisible();
+  await expect(
+    endpoint.getByText("Fetch streams over HTTP/1.1 · clear"),
   ).toBeVisible();
   const summary = endpoint.locator("summary", { hasText: "Diagnostics" });
   await summary.focus();

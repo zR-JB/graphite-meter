@@ -91,26 +91,3 @@ export function latencyOptionView(
       : "Not offered in /preflight.",
   };
 }
-
-function targetHost(target: { origin: string }): string {
-  return new URL(target.origin).host;
-}
-
-export function testCombinationSummary(
-  discovery: TransportDiscovery | null,
-  throughputSelection: string,
-  latencySelection: string,
-): string[] {
-  if (!discovery) return ["Checking server transports…"];
-  const throughput = selectThroughputTarget(discovery, throughputSelection);
-  const latency = selectLatencyTarget(discovery, latencySelection);
-  return [
-    throughput
-      ? `Throughput: ${protocolLabel(throughput.protocol)} · ${throughput.tls ? "TLS" : "clear"} · ${targetHost(throughput)}`
-      : "Throughput: unresolved — choose an offered target",
-    latency
-      ? `Latency: WebSocket · HTTP/1.1 ${latency.tls ? "TLS" : "clear"} · ${targetHost(latency)}`
-      : "Latency: unresolved — choose an offered target",
-    "Upload progress follows the throughput path",
-  ];
-}

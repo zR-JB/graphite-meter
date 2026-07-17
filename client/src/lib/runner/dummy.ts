@@ -283,8 +283,8 @@ export class DummyBackend implements RunnerBackend {
     return {
       name: "dummy",
       version: BUILD.clientVersion,
-      latencyTransports: ["webtransport", "websocket"],
-      throughputTransports: ["webtransport", "fetch-streams"],
+      latencyTransports: ["webtransport-datagrams", "websocket"],
+      throughputTransports: ["webtransport-streams", "fetch-streams"],
     };
   }
 

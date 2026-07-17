@@ -51,19 +51,36 @@
   ) {
     return DURATION_KEYS.every((key) => a[key] === b[key]);
   }
-  const durationPreset = $derived.by<Preset>(() => {
+  function presetFromDuration(): Preset {
     for (const key of ["short", "medium", "long"] as const)
       if (sameDuration(store.config.duration, DURATION_PRESETS[key]))
         return key;
     return "custom";
-  });
+  }
+  let durationMode = $state<Preset>(presetFromDuration());
   function setPreset(preset: Preset) {
+    durationMode = preset;
     if (preset !== "custom")
       store.config.duration = { ...DURATION_PRESETS[preset] };
   }
   function setBidirectional(enabled: boolean) {
     store.config.stages.bidirectional = enabled;
     applyStageChange();
+  }
+  const presetCells = $derived.by(() => {
+    const preset = durationMode;
+    if (preset === "custom") return [];
+    const fields = store.config.stages.bidirectional
+      ? DURATION_FIELDS
+      : DURATION_FIELDS.filter(([key]) => key !== "bidirectionalMs");
+    return fields.map(([key, label]) => ({
+      label,
+      value: `${+(DURATION_PRESETS[preset][key] / 1000).toFixed(1)}s`,
+    }));
+  });
+
+  function setForcedStreams(forced: boolean) {
+    store.config.transferStreams.mode = forced ? "forced" : "auto";
   }
 
   const vizAuto = $derived(
@@ -127,28 +144,43 @@
       (!store.latencyEnabled ||
         store.connections.latency.validation === "verified"),
   );
+  const uploadProgressPath = $derived(
+    store.connections.throughput.target
+      ? `Fetch streams over ${store.connections.throughput.summary.replace("Fetch stream · ", "")}`
+      : "Waiting for the throughput path",
+  );
 </script>
 
-<div class="settings">
-  <section class="panel primary">
-    <h3>Connections</h3>
-    <ConnectionPicker
-      role="throughput"
-      options={THROUGHPUT_TARGETS}
-      {running}
-    />
-    <ConnectionPicker role="latency" options={LATENCY_TARGETS} {running} />
-    <p class="hint">Upload progress follows the throughput path.</p>
+<div class="setup-grid">
+  <h2 class="tier-label">Test</h2>
+
+  <section class="panel wide primary">
+    <div class="section-heading">
+      <h3>Connection paths</h3>
+      <span class="readiness-badge" class:ready aria-live="polite">
+        {ready ? "Ready" : "Checking paths"}
+      </span>
+    </div>
+    <p class="intro">
+      Throughput carries downloads, uploads, and upload progress. Latency uses
+      its own independently selected path.
+    </p>
+    <ConnectionPicker role="throughput" options={THROUGHPUT_TARGETS} />
+    <ConnectionPicker role="latency" options={LATENCY_TARGETS} />
+    <div class="path-note">
+      <span>Upload progress</span>
+      <strong>{uploadProgressPath}</strong>
+    </div>
   </section>
 
   <section class="panel">
-    <h3>Run setup</h3>
+    <h3>Duration &amp; stages</h3>
     <div class="seg" role="group" aria-label="Duration preset">
       {#each PRESETS as preset}
         <button
           type="button"
-          class:active={durationPreset === preset}
-          aria-pressed={durationPreset === preset}
+          class:active={durationMode === preset}
+          aria-pressed={durationMode === preset}
           onclick={() => setPreset(preset)}>{preset}</button
         >
       {/each}
@@ -156,54 +188,78 @@
     <Switch
       checked={store.config.stages.bidirectional}
       onToggle={setBidirectional}
-      label="Include concurrent download and upload"
+      label="Include concurrent download + upload"
     />
+    {#if durationMode === "custom"}
+      <div class="duration-fields">
+        {#each DURATION_FIELDS.filter(([key]) => store.config.stages.bidirectional || key !== "bidirectionalMs") as [key, label]}
+          <label>
+            <span>{label} ms</span>
+            <input
+              type="number"
+              min="0"
+              step="500"
+              bind:value={store.config.duration[key]}
+            />
+          </label>
+        {/each}
+      </div>
+    {:else}
+      <div class="dur-summary">
+        {#each presetCells as cell}
+          <div class="dur-cell">
+            <span>{cell.label}</span>
+            <strong>{cell.value}</strong>
+          </div>
+        {/each}
+      </div>
+    {/if}
     {#if running}
       <p class="hint">
-        Stage toggles can update the unstarted schedule. Other edits are saved
-        for the next run.
+        Unstarted stages update live. Other edits are kept for the next run.
       </p>
     {/if}
   </section>
 
   <section class="panel">
-    <h3>Stream policy</h3>
+    <h3>Transfer streams</h3>
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
-      onToggle={(forced) =>
-        (store.config.transferStreams.mode = forced ? "forced" : "auto")}
-      label="Force stream count"
+      onToggle={setForcedStreams}
+      label="Force exact stream count"
+      tooltip="Automatic caps HTTP/1.1 at the configured maximum while choosing protocol-safe concurrency for HTTP/2 and HTTP/3. Forced starts the exact count per active direction."
     />
+    <label>
+      <span
+        >{store.config.transferStreams.mode === "forced"
+          ? "Streams per direction"
+          : "Maximum H1 streams per direction"}</span
+      >
+      <input
+        type="number"
+        min="1"
+        max="128"
+        step="1"
+        bind:value={store.config.transferStreams.count}
+      />
+    </label>
     {#if store.config.transferStreams.mode === "forced"}
-      <label>
-        <span>Streams per direction</span>
-        <input
-          type="number"
-          min="1"
-          max="128"
-          bind:value={store.config.transferStreams.count}
-        />
-      </label>
+      <p class="hint">
+        Starts exactly {store.config.transferStreams.count} requests per active direction.
+        Browser connection limits may queue HTTP/1.1 requests.
+      </p>
     {:else}
       <p class="hint">
-        Automatic uses the verified protocol and browser connection budget.
+        Automatic caps HTTP/1.1 at {store.config.transferStreams.count}. HTTP/2
+        and HTTP/3 choose safe multiplexed request counts automatically.
       </p>
     {/if}
   </section>
 
-  <section class="panel readiness" aria-live="polite">
-    <h3>Start readiness</h3>
-    <strong class:ready
-      >{ready ? "Ready" : "Waiting for connection checks"}</strong
-    >
-    <span>Throughput: {store.connections.throughput.validation}</span>
-    {#if store.latencyEnabled}<span
-        >Latency: {store.connections.latency.validation}</span
-      >{/if}
-  </section>
+  <h2 class="tier-label">Results</h2>
 
   <section class="panel">
-    <h3>Display</h3>
+    <h3>Display units</h3>
     <div class="two">
       <div class="field">
         <span>Rate</span>
@@ -240,10 +296,17 @@
         </div>
       </div>
     </div>
+    <p class="hint">
+      Applies to every displayed rate; measurement values are unchanged.
+    </p>
+  </section>
+
+  <section class="panel">
+    <h3>Gauge scale</h3>
     <Switch
       checked={vizAuto}
       onToggle={setVizAuto}
-      label="Automatic chart scale"
+      label="Scale throughput automatically"
     />
     {#if !vizAuto}
       <label>
@@ -256,63 +319,88 @@
         />
       </label>
     {/if}
-    <Switch
-      bind:checked={store.showWireEstimates}
-      label="Show wire-rate estimates"
-      tooltip={JARGON.wireRate}
-    />
+    <p class="hint">
+      Sets the gauge and chart ceiling. Automatic follows the measured peak.
+    </p>
   </section>
 
-  <details class="advanced">
-    <summary>Advanced run timing</summary>
-    <div class="body">
-      <div class="fields">
-        {#each DURATION_FIELDS as [key, label]}
+  <section class="panel wide">
+    <h3>Wire-rate estimates</h3>
+    <Switch
+      bind:checked={store.showWireEstimates}
+      label="Include wire-rate estimates in result cards"
+      tooltip={JARGON.wireRate}
+    />
+    <p class="hint">
+      Forward-direction Ethernet estimate from protocol bytes only.
+    </p>
+    <details class="advanced top-level">
+      <summary>Customize the compensation model</summary>
+      <div class="disclosure-body">
+        <div class="two">
           <label>
-            <span>{label} ms</span>
-            <input
-              type="number"
-              min="0"
-              step="500"
-              bind:value={store.config.duration[key]}
-            />
+            <span use:tooltip={JARGON.compProfile}>Connection profile</span>
+            <select
+              bind:value={store.config.compensation.profile}
+              onchange={reseedProfile}
+            >
+              {#each PROFILES as option}<option value={option.value}
+                  >{option.label}</option
+                >{/each}
+            </select>
           </label>
-        {/each}
+          <label>
+            <span>Transport override</span>
+            <select bind:value={store.config.compensation.transport}>
+              {#each COMPENSATION_TRANSPORTS as option}<option
+                  value={option.value}>{option.label}</option
+                >{/each}
+            </select>
+          </label>
+        </div>
+        <details class="advanced">
+          <summary>Advanced — raw byte accounting</summary>
+          <div class="disclosure-body nested">
+            <label>
+              <span>IP version</span>
+              <select bind:value={store.config.compensation.params.ipVersion}>
+                <option value="auto">Automatic</option>
+                <option value={4}>IPv4 override</option>
+                <option value={6}>IPv6 override</option>
+              </select>
+            </label>
+            <div class="fields">
+              {#each COMPENSATION_NUMBERS as [key, label, min, max, step]}
+                <label
+                  ><span>{label}</span><input
+                    type="number"
+                    {min}
+                    {max}
+                    {step}
+                    bind:value={store.config.compensation.params[key]}
+                  /></label
+                >
+              {/each}
+            </div>
+            <Switch
+              bind:checked={store.config.compensation.params.vlanTagged}
+              label="VLAN tagged (+4B/frame)"
+            />
+          </div>
+        </details>
       </div>
-      <label>
-        <span>Unloaded ping cadence</span>
-        <select bind:value={store.config.pingCadence}>
-          <option value="instant">80 ms</option><option value="medium"
-            >250 ms</option
-          ><option value="slow">600 ms</option>
-        </select>
-      </label>
-      <label>
-        <span>Loaded ping cadence</span>
-        <select bind:value={store.config.loadedPingCadence}>
-          <option value="instant">80 ms</option><option value="medium"
-            >250 ms</option
-          ><option value="slow">600 ms</option>
-        </select>
-      </label>
-      <Switch
-        bind:checked={store.config.skipLoadedLatencyWhenStageOff}
-        label="Skip loaded latency when latency is off"
-      />
-      <Switch
-        bind:checked={store.config.experimentalChunkedDownload}
-        label="Chunked download (experimental)"
-      />
-    </div>
-  </details>
+    </details>
+  </section>
 
-  <details class="advanced">
-    <summary>Adaptive completion</summary>
-    <div class="body">
-      <Switch
-        bind:checked={store.config.adaptive.enabled}
-        label="Finish stable stages early"
-      />
+  <h2 class="tier-label">Advanced</h2>
+
+  <section class="panel">
+    <h3>Early finish</h3>
+    <Switch
+      bind:checked={store.config.adaptive.enabled}
+      label="Finish stable stages early"
+    />
+    {#if store.config.adaptive.enabled}
       <div class="fields">
         <label
           ><span>Minimum coverage</span><input
@@ -342,82 +430,83 @@
           /></label
         >
       </div>
-    </div>
-  </details>
+    {/if}
+    <p class="hint">Stops a stable stage before its full duration expires.</p>
+  </section>
 
-  <details class="advanced">
-    <summary>Wire-rate assumptions</summary>
-    <div class="body">
-      <div class="two">
-        <label>
-          <span use:tooltip={JARGON.compProfile}>Connection profile</span>
-          <select
-            bind:value={store.config.compensation.profile}
-            onchange={reseedProfile}
-          >
-            {#each PROFILES as option}<option value={option.value}
-                >{option.label}</option
-              >{/each}
-          </select>
-        </label>
-        <label>
-          <span>Transport override</span>
-          <select bind:value={store.config.compensation.transport}>
-            {#each COMPENSATION_TRANSPORTS as option}<option
-                value={option.value}>{option.label}</option
-              >{/each}
-          </select>
-        </label>
-      </div>
-      <label>
-        <span>IP version</span>
-        <select bind:value={store.config.compensation.params.ipVersion}>
-          <option value="auto">Automatic</option><option value={4}>IPv4</option
-          ><option value={6}>IPv6</option>
-        </select>
-      </label>
-      <div class="fields">
-        {#each COMPENSATION_NUMBERS as [key, label, min, max, step]}
-          <label
-            ><span>{label}</span><input
-              type="number"
-              {min}
-              {max}
-              {step}
-              bind:value={store.config.compensation.params[key]}
-            /></label
-          >
-        {/each}
-      </div>
-      <Switch
-        bind:checked={store.config.compensation.params.vlanTagged}
-        label="VLAN tagged"
-      />
-    </div>
-  </details>
+  <section class="panel">
+    <h3>Latency timing</h3>
+    <label>
+      <span>Unloaded ping cadence</span>
+      <select bind:value={store.config.pingCadence}>
+        <option value="instant">Instant (80 ms)</option>
+        <option value="medium">Medium (250 ms)</option>
+        <option value="slow">Slow (600 ms)</option>
+      </select>
+    </label>
+    <label>
+      <span>Loaded ping cadence</span>
+      <select bind:value={store.config.loadedPingCadence}>
+        <option value="instant">Instant (80 ms)</option>
+        <option value="medium">Medium (250 ms)</option>
+        <option value="slow">Slow (600 ms)</option>
+      </select>
+    </label>
+    <Switch
+      bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      label="Skip loaded latency when latency is off"
+    />
+  </section>
+
+  <section class="panel">
+    <h3>Download engine</h3>
+    <Switch
+      bind:checked={store.config.experimentalChunkedDownload}
+      label="Chunked download (experimental)"
+    />
+    <p class="hint">
+      Uses adaptive chunks instead of one long request per lane.
+    </p>
+  </section>
 </div>
 
 <style>
-  .settings {
+  .setup-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
     gap: 12px;
+    container-type: inline-size;
   }
-  .panel,
-  .advanced {
+  .panel {
     display: grid;
     align-content: start;
     gap: 12px;
     min-width: 0;
-    padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background: var(--surface-inset);
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent),
+      var(--surface-inset);
+    padding: var(--space-3);
     box-shadow: var(--elev-recess);
   }
-  .primary,
-  .advanced {
+  .wide,
+  .tier-label {
     grid-column: 1 / -1;
+  }
+  .primary {
+    border-color: color-mix(in srgb, var(--brand) 24%, var(--border));
+  }
+  .tier-label {
+    margin: 4px 0 -4px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .tier-label:first-child {
+    margin-top: 0;
   }
   h3 {
     margin: 0;
@@ -426,6 +515,31 @@
     font-weight: 850;
     letter-spacing: 0.13em;
     text-transform: uppercase;
+  }
+  .section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .readiness-badge {
+    flex: none;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: var(--warn-soft);
+    color: var(--warn);
+    font-size: 9px;
+    font-weight: 750;
+  }
+  .readiness-badge.ready {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  .intro {
+    margin: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    line-height: 1.5;
   }
   label,
   .field {
@@ -438,9 +552,10 @@
     color: var(--text-soft);
     font-size: 10px;
     font-weight: 800;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  input,
+  input[type="number"],
   select {
     width: 100%;
     min-height: 36px;
@@ -450,6 +565,16 @@
     color: var(--text);
     padding: 7px 9px;
     font-family: var(--font-mono);
+    font-size: 12px;
+    outline: none;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
+  }
+  input:focus-visible,
+  select:focus-visible {
+    border-color: color-mix(in srgb, var(--brand) 56%, var(--border));
+    box-shadow: 0 0 0 3px var(--brand-soft);
   }
   .seg {
     display: flex;
@@ -466,8 +591,17 @@
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-soft);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 700;
     cursor: pointer;
     text-transform: capitalize;
+    transition:
+      background var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  button:hover {
+    color: var(--text);
   }
   button.active {
     background: var(--brand-soft);
@@ -479,28 +613,110 @@
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 10px;
   }
-  .hint,
-  .readiness span {
+  .hint {
     margin: 0;
     color: var(--text-soft);
+    font-family: var(--font-mono);
     font-size: 10px;
-    line-height: 1.45;
+    line-height: 1.55;
   }
-  .readiness strong {
-    color: var(--warn);
+  .path-note {
+    display: grid;
+    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
+    gap: 12px;
+    align-items: baseline;
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
   }
-  .readiness strong.ready {
-    color: var(--ok);
+  .path-note span {
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 700;
   }
-  summary {
+  .path-note strong {
     color: var(--text);
-    font-size: 12px;
-    font-weight: 800;
-    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
   }
-  .body {
+  .duration-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+  }
+  .dur-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+    gap: 6px;
+  }
+  .dur-cell {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+  }
+  .dur-cell span {
+    overflow: hidden;
+    color: var(--text-soft);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .dur-cell strong {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .advanced {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-1);
+  }
+  .advanced summary {
+    cursor: pointer;
+    padding: 10px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    user-select: none;
+  }
+  .advanced summary:hover {
+    color: var(--text);
+  }
+  .advanced[open] > summary {
+    border-bottom: 1px solid var(--border);
+  }
+  .advanced.top-level {
+    border: 0;
+    background: transparent;
+  }
+  .advanced.top-level[open] > summary {
+    border-bottom: 1px solid var(--border);
+  }
+  .disclosure-body {
     display: grid;
     gap: 12px;
     margin-top: 12px;
+  }
+  .disclosure-body.nested {
+    margin: 10px;
+  }
+  @container (max-width: 360px) {
+    .two,
+    .path-note {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
   }
 </style>

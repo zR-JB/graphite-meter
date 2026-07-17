@@ -14,9 +14,8 @@
   interface Props {
     role: ConnectionRole;
     options: readonly Option[];
-    running?: boolean;
   }
-  let { role, options, running = false }: Props = $props();
+  let { role, options }: Props = $props();
 
   const selected = $derived(
     role === "throughput"
@@ -51,6 +50,7 @@
     {#each options as item (item.value)}
       {@const view = option(item.value)}
       <label
+        class="choice"
         class:selected={selected === item.value}
         class:unavailable={view.disabled}
       >
@@ -62,7 +62,8 @@
           disabled={view.disabled}
           onchange={() => select(item.value)}
         />
-        <span>
+        <span class="radio-dot" aria-hidden="true"></span>
+        <span class="copy">
           <strong>{item.label}</strong>
           <small>{view.detail}</small>
         </span>
@@ -70,17 +71,14 @@
     {/each}
   </div>
   <div
-    class="status"
+    class="validation"
     class:error={connection.validation === "failed"}
     aria-live="polite"
   >
     <span class="dot" data-state={connection.validation}></span>
-    <span>
+    <span class="validation-copy">
       <strong>{status}</strong>
       <small>{connection.message ?? connection.summary}</small>
-      {#if running}<small
-          >Edits affect an unconsumed path or the next run.</small
-        >{/if}
     </span>
     {#if connection.validation === "failed" || connection.validation === "stale"}
       <button type="button" onclick={() => void validateConnections(true, role)}
@@ -93,7 +91,7 @@
 <style>
   fieldset {
     display: grid;
-    gap: 8px;
+    gap: 7px;
     min-width: 0;
     margin: 0;
     padding: 0;
@@ -101,64 +99,123 @@
   }
   legend {
     margin-bottom: 7px;
+    padding: 0;
     color: var(--text-soft);
     font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.1em;
+    font-weight: 800;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .options {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
     gap: 6px;
   }
-  label {
+  .choice {
+    position: relative;
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr);
-    gap: 8px;
     align-items: center;
-    min-height: 48px;
-    padding: 8px;
+    gap: 8px;
+    min-height: 52px;
+    padding: 8px 9px;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: var(--surface-1);
     cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      background var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
   }
-  label.selected {
+  .choice:hover:not(.unavailable) {
+    border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+  }
+  .choice.selected {
     border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
     background: var(--brand-soft);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in srgb, var(--brand) 18%, transparent);
   }
-  label.unavailable {
-    opacity: 0.5;
+  .choice.unavailable {
+    opacity: 0.56;
     cursor: not-allowed;
   }
-  label span,
-  .status span {
+  .choice input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .choice:focus-within {
+    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    box-shadow: 0 0 0 3px var(--brand-soft);
+  }
+  .radio-dot {
+    grid-column: 1;
+    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--text-soft);
+    border-radius: 50%;
+  }
+  .choice.selected .radio-dot {
+    border: 4px solid var(--brand-strong);
+    background: var(--surface-1);
+  }
+  .copy {
+    grid-column: 2;
     display: grid;
     gap: 2px;
     min-width: 0;
   }
-  strong {
+  .copy strong {
+    color: var(--text);
     font-size: 11px;
+    font-weight: 780;
   }
-  small {
+  .copy small {
+    overflow: hidden;
     color: var(--text-soft);
+    font-family: var(--font-mono);
     font-size: 9px;
+    font-weight: 500;
     line-height: 1.35;
+    text-overflow: ellipsis;
   }
-  .status {
+  .validation {
     display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto;
+    grid-template-columns: 7px minmax(0, 1fr) auto;
     gap: 8px;
     align-items: center;
-    min-height: 34px;
-    padding: 7px 9px;
-    border-radius: var(--radius-sm);
-    background: var(--surface-inset);
+    min-height: 28px;
+    padding: 2px 3px;
+  }
+  .validation-copy {
+    display: flex;
+    min-width: 0;
+    gap: 6px;
+    align-items: baseline;
+  }
+  .validation-copy strong {
+    flex: none;
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 750;
+  }
+  .validation-copy small {
+    overflow: hidden;
+    min-width: 0;
+    color: var(--text-soft);
+    font-size: 10px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--text-soft);
   }
@@ -172,11 +229,20 @@
     background: var(--warn);
   }
   button {
-    min-height: 30px;
+    min-height: 28px;
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     background: var(--surface-1);
     color: var(--text);
+    padding: 4px 9px;
+    font-family: var(--font-sans);
+    font-size: 10px;
+    font-weight: 700;
     cursor: pointer;
+  }
+  @container (max-width: 360px) {
+    .options {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

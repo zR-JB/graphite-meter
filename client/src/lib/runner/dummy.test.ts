@@ -660,9 +660,9 @@ test("describe: static engine identity and capability surface", () => {
   const { backend } = makeBackend({ profile: "fiber", seed: 1 });
   const info = backend.describe();
   expect(info.name).toBe("dummy");
-  expect(info.latencyTransports).toContain("webtransport");
+  expect(info.latencyTransports).toContain("webtransport-datagrams");
   expect(info.latencyTransports).toContain("websocket");
-  expect(info.throughputTransports).toContain("webtransport");
+  expect(info.throughputTransports).toContain("webtransport-streams");
   expect(info.throughputTransports).toContain("fetch-streams");
   expect(info.throughputTransports).not.toContain("websocket"); // never a byte-transfer lane
 });

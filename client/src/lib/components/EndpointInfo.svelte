@@ -3,6 +3,7 @@
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
+  import { pointerIntent } from "../actions/pointerIntent";
 
   const connections = $derived(
     store.isRunning ? store.runConnections : store.connections,
@@ -10,6 +11,7 @@
   const server = $derived(
     store.transportDiscovery?.server ?? store.infra?.server,
   );
+  const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
   function status(state: string) {
@@ -27,6 +29,41 @@
         : "socket peer";
     return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
   }
+
+  function protocolEvidence(role: "throughput" | "latency") {
+    const connection = connections[role];
+    if (!connection.browserProtocol && !connection.serverProtocol)
+      return "Pending";
+    if (connection.browserProtocol === connection.serverProtocol)
+      return `${connection.browserProtocol} · browser and server`;
+    return `Browser ${connection.browserProtocol ?? "unknown"} · server ${connection.serverProtocol ?? "unknown"}`;
+  }
+
+  function capability(value: string, role: "throughput" | "latency") {
+    if (value === "fetch-streams") return "Fetch streams";
+    if (value === "websocket") return "WebSocket";
+    if (value === "webtransport-streams") return "WebTransport streams";
+    if (value === "webtransport-datagrams") return "WebTransport datagrams";
+    if (value === "webtransport")
+      return role === "throughput"
+        ? "WebTransport streams"
+        : "WebTransport datagrams";
+    return value;
+  }
+
+  function capabilities(role: "throughput" | "latency") {
+    const values =
+      role === "throughput"
+        ? engine?.throughputTransports
+        : engine?.latencyTransports;
+    return values?.map((value) => capability(value, role)).join(" · ") ?? "—";
+  }
+
+  const uploadProgressPath = $derived(
+    connections.throughput.target
+      ? `Fetch streams over ${connections.throughput.summary.replace("Fetch stream · ", "")}`
+      : "Pending",
+  );
 
   function report() {
     return JSON.stringify(
@@ -55,62 +92,92 @@
   }
 </script>
 
-<section class="endpoint">
-  <article class="server">
-    <div>
-      <span>Server</span>
-      <strong>{server?.name ?? "Checking server"}</strong>
-      <small>{server?.location ?? "Location unavailable"}</small>
-    </div>
-    <div>
-      <span>Version</span>
-      <strong>{store.transportDiscovery?.engineVersion ?? "—"}</strong>
-      <small>Client {BUILD.clientVersion}</small>
-    </div>
-    <div>
-      <span>Pre-test RTT</span>
-      <strong
-        >{connections.latency.preTestPingMs !== undefined
-          ? `${fmtMs(connections.latency.preTestPingMs)} ms`
-          : "—"}</strong
-      >
-      <small>Selected latency path</small>
-    </div>
-  </article>
+<section class="infra">
+  <div class="grid">
+    <article class="card" use:pointerIntent>
+      <h3>Server</h3>
+      <dl>
+        <div>
+          <dt>Node</dt>
+          <dd>{server?.name ?? "Checking server"}</dd>
+        </div>
+        <div>
+          <dt>Location</dt>
+          <dd>{server?.location ?? "Unavailable"}</dd>
+        </div>
+        <div>
+          <dt>Version</dt>
+          <dd>{store.transportDiscovery?.engineVersion ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Client</dt>
+          <dd>{BUILD.clientVersion}</dd>
+        </div>
+      </dl>
+    </article>
 
-  <div class="paths">
+    <article class="card" use:pointerIntent>
+      <h3>Measurement engine</h3>
+      <dl>
+        <div>
+          <dt>Runner</dt>
+          <dd>{engine?.name ?? "—"} · {engine?.version ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Throughput</dt>
+          <dd>{capabilities("throughput")}</dd>
+        </div>
+        <div>
+          <dt>Latency</dt>
+          <dd>{capabilities("latency")}</dd>
+        </div>
+      </dl>
+    </article>
+
     {#each ["throughput", "latency"] as role}
-      {@const connection = connections[role as "throughput" | "latency"]}
-      <article class="path">
+      {@const typedRole = role as "throughput" | "latency"}
+      {@const connection = connections[typedRole]}
+      <article class="card path" use:pointerIntent>
         <header>
-          <div>
-            <span>{role}</span>
-            <strong>{connection.label}</strong>
-          </div>
+          <h3>{role} path</h3>
           <mark data-state={connection.validation}
             >{status(connection.validation)}</mark
           >
         </header>
-        <p>{connection.summary}</p>
         <dl>
           <div>
-            <dt>Browser-facing</dt>
-            <dd>{connection.browserProtocol ?? "Pending"}</dd>
+            <dt>Selected</dt>
+            <dd>{connection.summary}</dd>
           </div>
           <div>
-            <dt>Server-observed</dt>
-            <dd>{connection.serverProtocol ?? "Pending"}</dd>
+            <dt>Protocol</dt>
+            <dd>{protocolEvidence(typedRole)}</dd>
           </div>
           <div>
             <dt>Client</dt>
-            <dd>{clientEvidence(role as "throughput" | "latency")}</dd>
+            <dd>{clientEvidence(typedRole)}</dd>
           </div>
+          {#if typedRole === "throughput"}
+            <div>
+              <dt>Upload progress</dt>
+              <dd>{uploadProgressPath}</dd>
+            </div>
+          {:else}
+            <div>
+              <dt>Pre-test RTT</dt>
+              <dd>
+                {connection.preTestPingMs !== undefined
+                  ? `${fmtMs(connection.preTestPingMs)} ms`
+                  : "Pending"}
+              </dd>
+            </div>
+          {/if}
         </dl>
       </article>
     {/each}
   </div>
 
-  <details>
+  <details class="diagnostics-card">
     <summary>Diagnostics</summary>
     <div class="diagnostics">
       <dl>
@@ -140,10 +207,6 @@
           <dd>{connections.latency.target?.origin ?? "—"}</dd>
         </div>
         <div>
-          <dt>Upload progress</dt>
-          <dd>Selected throughput path · NDJSON</dd>
-        </div>
-        <div>
           <dt>Streams</dt>
           <dd>
             {describeTransferStreams(
@@ -171,49 +234,64 @@
 </section>
 
 <style>
-  .endpoint {
+  .infra {
     display: grid;
+    gap: 14px;
+    container-type: inline-size;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
     gap: 12px;
   }
-  .server,
-  .paths {
+  .card,
+  .diagnostics-card {
+    position: relative;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+    align-content: start;
     gap: 10px;
-  }
-  article,
-  details {
     min-width: 0;
-    padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background: var(--surface-inset);
+    background:
+      linear-gradient(180deg, var(--surface-2), transparent),
+      var(--surface-inset);
+    padding: var(--space-3);
     box-shadow: var(--elev-recess);
+    overflow: clip;
   }
-  .server > div,
-  header > div {
-    display: grid;
-    gap: 3px;
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    background: radial-gradient(
+      200px circle at var(--intent-x, 50%) var(--intent-y, 0),
+      var(--brand-soft),
+      transparent 70%
+    );
+    transition: opacity var(--dur-hover) var(--ease-out);
   }
-  span,
-  dt,
-  small {
+  .card:hover::before {
+    opacity: 1;
+  }
+  .card > * {
+    position: relative;
+    z-index: 1;
+  }
+  h3 {
+    margin: 0;
     color: var(--text-soft);
     font-size: 10px;
-  }
-  strong {
-    color: var(--text);
-    font-size: 12px;
+    font-weight: 850;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
   }
   header {
     display: flex;
     justify-content: space-between;
     gap: 8px;
-  }
-  header span {
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
   }
   mark {
     align-self: start;
@@ -222,16 +300,11 @@
     background: var(--warn-soft);
     color: var(--warn);
     font-size: 9px;
+    font-weight: 700;
   }
   mark[data-state="verified"] {
     background: var(--ok-soft);
     color: var(--ok);
-  }
-  p {
-    margin: 10px 0;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
   }
   dl {
     display: grid;
@@ -241,26 +314,44 @@
   dl div {
     display: grid;
     grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-    gap: 10px;
+    gap: 12px;
+    align-items: baseline;
+  }
+  dt {
+    color: var(--text-soft);
+    font-size: 11px;
+    font-weight: 700;
   }
   dd {
     min-width: 0;
     margin: 0;
     color: var(--text);
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11px;
     overflow-wrap: anywhere;
   }
-  summary {
-    color: var(--text);
-    font-size: 12px;
-    font-weight: 800;
+  .diagnostics-card {
+    padding: 0;
+  }
+  .diagnostics-card summary {
     cursor: pointer;
+    padding: var(--space-3);
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 850;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+  }
+  .diagnostics-card[open] summary {
+    border-bottom: 1px solid var(--border);
+  }
+  .diagnostics-card summary:hover {
+    color: var(--text);
   }
   .diagnostics {
     display: grid;
     gap: 12px;
-    margin-top: 12px;
+    padding: var(--space-3);
   }
   button {
     justify-self: start;
@@ -270,6 +361,9 @@
     background: var(--surface-1);
     color: var(--text);
     padding: 6px 10px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 700;
     cursor: pointer;
   }
   .sr-status {
