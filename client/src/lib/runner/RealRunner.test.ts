@@ -356,6 +356,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   const realEntries = performance.getEntriesByName.bind(performance);
   const started: string[] = [];
   const workerStarts: { kind: string; url: string }[] = [];
+  const pingMessages: Record<string, unknown>[] = [];
   const fetchUrls: string[] = [];
   let preflights = 0;
   let progressWorker: FakeWorker | null = null;
@@ -378,7 +379,10 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       if (this.kind === "ping") pingWorker = this;
     }
 
-    postMessage(message: { type: string; url?: string }): void {
+    postMessage(
+      message: { type: string; url?: string } & Record<string, unknown>,
+    ): void {
+      if (this.kind === "ping") pingMessages.push(message);
       if (message.type !== "start" && message.type !== "measure") return;
       if (message.type === "start" && message.url)
         workerStarts.push({ kind: this.kind, url: message.url });
@@ -478,7 +482,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
         uploadMs: 1,
         bidirectionalMs: 1,
       },
-      pingConcurrency: "medium",
+      pingCadence: "instant",
+      loadedPingCadence: "medium",
       experimentalChunkedDownload: false,
       compensation: {
         profile: "loopback",
@@ -567,6 +572,38 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     expect(discoveries[2].throughput.http2.state).toBe("advertised");
 
     backend.onRunStart(config);
+    const unloaded: PhaseActivity = {
+      stage: "latency",
+      transfer: [],
+      loadedLatency: false,
+    };
+    backend.onStageBegin(unloaded);
+    expect(pingMessages.at(-1)).toMatchObject({
+      type: "start",
+      intervalMs: 80,
+      maxInFlight: 16,
+    });
+    backend.onStageMeasure(unloaded);
+    expect(pingMessages.at(-1)).toEqual({ type: "measure" });
+    await backend.onStageEnd(unloaded);
+
+    const loaded: PhaseActivity = {
+      stage: "download",
+      transfer: ["down"],
+      loadedLatency: true,
+    };
+    backend.onStageBegin(loaded);
+    expect(pingMessages.at(-1)).toMatchObject({
+      type: "start",
+      intervalMs: 250,
+      maxInFlight: 2,
+    });
+    backend.onStageMeasure(loaded);
+    expect(pingMessages.at(-1)).toEqual({ type: "measure" });
+    await backend.onStageEnd(loaded);
+    started.length = 0;
+    uploadBytes.length = 0;
+
     const preparation = backend.onStageBegin({
       stage: "upload",
       transfer: ["up"],

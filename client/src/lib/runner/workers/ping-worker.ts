@@ -10,13 +10,12 @@
  * with exactly the transfer we're measuring against. The worker reports only
  * computed { rtt, lost } samples; raw frames never cross the thread boundary.
  *
- * ── Dynamic send (accurate from sub-1 ms to seconds of RTT) ──
- *   • On-receive chain (fast path): each PONG immediately triggers the next PING
- *     when a slot is free — back-to-back sampling on low-RTT links. A minGap
- *     ceiling caps the flood (~1 kHz) so sub-ms links stay fast but sane.
- *   • Pacer floor: a steady interval also sends when a slot is free, so high-RTT
- *     links keep MULTIPLE pings on the wire at once instead of collapsing to one
- *     sample per RTT. Each ping carries its own id, so out-of-order pongs match.
+ * ── Cadenced send (accurate from sub-1 ms to seconds of RTT) ──
+ *   • A start-to-start scheduler enforces the configured minimum interval. A
+ *     PONG can free capacity and resume an overdue sender, but never starts an
+ *     early PING or a catch-up burst.
+ *   • Multiple pings may remain in flight on high-RTT links. Each carries its
+ *     own id, so out-of-order pongs match.
  *   • maxInFlight cap: bounds wire spam AND memory.
  *
  * ── Robustness to abrupt change (AP / WiFi→mobile handoff) ──
@@ -48,39 +47,21 @@ import {
   type RttEstimate,
 } from "./rttEstimator";
 import { nextBackoff } from "./backoff";
+import { PingScheduler } from "./pingScheduler";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
- *  reporting on for the SAME warmed socket AND swaps the live cadence to the
- *  phase's mode; `stop` closes everything.
- *
- *  The cadence is mode-dependent: the idle latency stage wants the tightest
- *  sampling (on-receive chain, full in-flight window) to find the true min
- *  RTT, but during a transfer that chain sprays hundreds of tiny PINGs/sec
- *  upstream and starves the download's ACKs on an asymmetric line — a loaded
- *  distribution needs only a few samples/sec, so under load the chain is off
- *  and a sparse pacer drives sends. Each cadence field is optional: omitted
- *  (the warmup `start`) keeps the `start` tuning. */
+ *  reporting on for the SAME warmed socket; `stop` closes everything. */
 type InMsg =
   | {
       type: "start";
       url: string;
       intervalMs: number;
       maxInFlight: number;
-      minGapMs: number;
       reportGapMs: number;
       lossK: number;
       lossFloorMs: number;
     }
-  | {
-      type: "measure";
-      /** Loaded phases pass false to stop the PONG→PING chain (the spam source);
-       *  idle passes true. Omitted ⇒ leave as-is. */
-      chainOnReceive?: boolean;
-      /** Swap the in-flight cap live (loaded → small, e.g. 2). Omitted ⇒ leave. */
-      maxInFlight?: number;
-      /** Swap the pacer floor live; restarts the pacer timer. Omitted ⇒ leave. */
-      intervalMs?: number;
-    }
+  | { type: "measure" }
   | { type: "stop" };
 
 /** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
@@ -113,22 +94,17 @@ let ws: WebSocket | null = null;
 let measuring = false;
 let stopped = false;
 
-// Tuning — set on `start`, partly re-tuned per phase on `measure`.
+// Tuning — fixed for the lifetime of the stage-owned worker.
 let intervalMs = 250;
 let maxInFlight = 16;
-let minGapMs = 1;
 let reportGapMs = 20;
 let lossK = 4;
 let lossFloorMs = 250;
-/** On-receive chaining (PONG → next PING). True for warmup + idle latency;
- *  flipped off under load so the chain can't spam the uplink during a transfer. */
-let chainOnReceive = true;
 
 // Send/pending state.
 const pending = new Map<number, number>(); // id → sendTime (performance.now())
 const graveyard = new Map<number, number>(); // evicted id → sendTime (late-pong learning)
 let nextId = 0; // client-owned monotonic uint32
-let lastSendAt = 0;
 let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
 let outbox: { rtt: number; lost: boolean }[] = [];
 
@@ -140,13 +116,11 @@ let backoff = 0;
 let stalledOut = false; // a `stall` emitted, not yet matched by `resume`
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+let scheduler: PingScheduler | null = null;
+
 // Long-lived timers (started once, survive reconnects).
-let pacer: ReturnType<typeof setInterval> | null = null;
 let sweeper: ReturnType<typeof setInterval> | null = null;
 let flusher: ReturnType<typeof setInterval> | null = null;
-// One-shot: a send deferred because the minGap ceiling hadn't lifted yet (see
-// maybeSend). At most one is ever pending.
-let gapTimer: ReturnType<typeof setTimeout> | null = null;
 
 ctx.onmessage = (e: MessageEvent<InMsg>): void => {
   const m = e.data;
@@ -155,27 +129,21 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       url = m.url;
       intervalMs = m.intervalMs;
       maxInFlight = m.maxInFlight;
-      minGapMs = m.minGapMs;
       reportGapMs = m.reportGapMs;
       lossK = m.lossK;
       lossFloorMs = m.lossFloorMs;
+      scheduler = new PingScheduler(intervalMs, (now) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+        if (pending.size >= maxInFlight) return false;
+        sendPing(now);
+        return true;
+      });
       ensureTimers();
       connect();
       break;
     case "measure":
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
-      // Swap to the phase's cadence (idle = tight, loaded = sparse). Each field
-      // is optional so an omitted one keeps the warmup `start` tuning.
-      if (m.chainOnReceive !== undefined) chainOnReceive = m.chainOnReceive;
-      if (m.maxInFlight !== undefined) maxInFlight = m.maxInFlight;
-      if (m.intervalMs !== undefined && m.intervalMs !== intervalMs) {
-        intervalMs = m.intervalMs;
-        restartPacer(); // the pacer floor runs at intervalMs — re-arm it live
-      }
-      // The cap may have shrunk; nothing to evict, but if it GREW, nudge so the
-      // window refills without waiting a full pacer interval.
-      maybeSend(performance.now());
       break;
     case "stop":
       teardown();
@@ -201,8 +169,8 @@ function connect(): void {
     // Optional warmup hello — the server replies READY (ignored). Then start the
     // chain immediately so the wire is warm before `measure` flips reporting on.
     trySend(encode({ op: "HI", proto: "ws" }));
-    lastSendAt = 0;
-    sendPing(performance.now());
+    scheduler?.reset();
+    scheduler?.start();
   };
   ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
   // onerror is always followed by onclose for WebSocket — handle reconnect once,
@@ -213,6 +181,7 @@ function connect(): void {
 function onDisconnect(detail: string): void {
   if (stopped) return;
   ws = null;
+  scheduler?.stop();
   // The socket is gone — its in-flight pings died with it. Drop them silently:
   // a connection gap is not per-packet loss (the `stall` represents the gap).
   pending.clear();
@@ -230,19 +199,10 @@ function scheduleReconnect(detail: string): void {
 }
 
 function ensureTimers(): void {
-  // Pacer floor: keep pings flowing when the on-receive chain is starved (or off).
-  pacer ??= setInterval(() => maybeSend(performance.now()), intervalMs);
   // Eviction sweep: drop pings stalled past the adaptive timeout.
   sweeper ??= setInterval(sweep, Math.max(lossFloorMs, intervalMs));
   // Batch flush.
   flusher ??= setInterval(flush, FLUSH_MS);
-}
-
-/** Re-arm the pacer at the current intervalMs (the loaded mode raises it so the
- *  floor — now the sole send driver with the chain off — paces sparsely). */
-function restartPacer(): void {
-  if (pacer !== null) clearInterval(pacer);
-  pacer = setInterval(() => maybeSend(performance.now()), intervalMs);
 }
 
 function onFrame(data: unknown): void {
@@ -270,9 +230,7 @@ function onFrame(data: unknown): void {
       lastReportAt = recv;
       outbox.push({ rtt, lost: false });
     }
-    // On-receive chain — the fast path on idle, but OFF under load (the pacer
-    // floor drives sends instead, so we don't spam the uplink mid-transfer).
-    if (chainOnReceive) maybeSend(recv);
+    scheduler?.nudge();
     return;
   }
 
@@ -283,31 +241,9 @@ function onFrame(data: unknown): void {
   if (late !== undefined) {
     graveyard.delete(f.id);
     rttEstimate = observeRtt(rttEstimate, recv - late);
-    maybeSend(recv);
+    scheduler?.nudge();
   }
   // else: unknown / duplicate id — ignore.
-}
-
-function maybeSend(now: number): void {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  if (pending.size >= maxInFlight) return; // cap: bound wire spam + memory
-  const wait = minGapMs - (now - lastSendAt);
-  if (wait > 0) {
-    // Within the rate ceiling. DON'T drop the send — on a sub-ms link the RTT is
-    // below minGap, so the on-receive chain (PONG → maybeSend) always lands here
-    // and would collapse to the pacer floor (~1 send/intervalMs ≈ 12 Hz). Defer
-    // it to the instant the ceiling lifts so the chain sustains the intended
-    // ~1/minGap kHz. One pending timer suffices: any other maybeSend in the gap
-    // window is a no-op until it fires.
-    if (gapTimer === null) {
-      gapTimer = setTimeout(() => {
-        gapTimer = null;
-        maybeSend(performance.now());
-      }, wait);
-    }
-    return;
-  }
-  sendPing(now);
 }
 
 function sendPing(now: number): void {
@@ -315,7 +251,6 @@ function sendPing(now: number): void {
   nextId = (nextId + 1) >>> 0; // uint32 wrap — the in-flight window is tiny, so a
   // wrapped id can never collide with a still-pending one.
   pending.set(id, now);
-  lastSendAt = now;
   trySend(encode({ op: "PING", id }));
 }
 
@@ -342,7 +277,7 @@ function sweep(): void {
   // Nudge ONLY when an eviction freed a slot the cap was blocking on. An
   // unconditional nudge would add a send per sweep tick on top of the pacer,
   // breaking the paced (chain-off) modes' send rate.
-  if (evicted) maybeSend(now);
+  if (evicted) scheduler?.nudge();
 }
 
 /** Stash an evicted id so a late pong can still teach the estimator. Bounded
@@ -367,10 +302,10 @@ function teardown(): void {
   measuring = false;
   if (reconnectTimer !== null) clearTimeout(reconnectTimer);
   reconnectTimer = null;
-  if (gapTimer !== null) clearTimeout(gapTimer);
-  gapTimer = null;
-  for (const t of [pacer, sweeper, flusher]) if (t !== null) clearInterval(t);
-  pacer = sweeper = flusher = null;
+  scheduler?.stop();
+  scheduler = null;
+  for (const t of [sweeper, flusher]) if (t !== null) clearInterval(t);
+  sweeper = flusher = null;
   flush(); // emit any tail
   pending.clear();
   graveyard.clear();

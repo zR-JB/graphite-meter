@@ -39,7 +39,8 @@ const BASE_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingConcurrency: "instant",
+  pingCadence: "instant",
+  loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
   transports: { throughputTarget: "current", latencyTarget: "auto" },
@@ -149,6 +150,11 @@ const LATENCY_ACTIVITY: PhaseActivity = {
   transfer: [],
   loadedLatency: false,
 };
+const LOADED_DOWNLOAD_ACTIVITY: PhaseActivity = {
+  stage: "download",
+  transfer: ["down"],
+  loadedLatency: true,
+};
 
 function makeBackend(opts: DummyOptions, host = new MockHost()) {
   const backend = new DummyBackend(opts);
@@ -220,6 +226,35 @@ function relStd(xs: number[]): number {
   const variance = mean(xs.map((x) => (x - m) ** 2));
   return Math.sqrt(variance) / m;
 }
+
+test("unloaded and loaded stages use their independent ping cadences", () => {
+  const config = structuredClone(BASE_CONFIG);
+  config.pingCadence = "instant";
+  config.loadedPingCadence = "slow";
+  const unloaded = makeBackend(
+    { profile: "fiber", seed: 1 },
+    new MockHost(config),
+  );
+  const loaded = makeBackend(
+    { profile: "fiber", seed: 1 },
+    new MockHost(config),
+  );
+  for (let t = 80; t <= 640; t += 80) {
+    tick(unloaded.backend, {
+      activity: LATENCY_ACTIVITY,
+      phase: "latency",
+      realNow: t,
+      elapsed: t,
+    });
+    tick(loaded.backend, {
+      activity: LOADED_DOWNLOAD_ACTIVITY,
+      realNow: t,
+      elapsed: t,
+    });
+  }
+  expect(unloaded.host.latency).toHaveLength(8);
+  expect(loaded.host.latency).toHaveLength(1);
+});
 
 /* ================= Profile characteristics ================= */
 
@@ -494,7 +529,7 @@ test("injectAnomaly packet-loss: raises loss probability to the default 60% with
   host.setPhase("download");
   host.setElapsed(1000);
   // Widen the window (magnitude stays default 0.6) so enough pings land inside
-  // it to estimate a probability — "instant" pingConcurrency only samples
+  // it to estimate a probability — the instant unloaded cadence only samples
   // every 80ms, and the default 900ms window barely fits ~11.
   backend.injectAnomaly!({ kind: "packet-loss", durationMs: 20000 });
 

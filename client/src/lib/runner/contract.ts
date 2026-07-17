@@ -33,6 +33,7 @@ export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3";
 /** Advertised transfer target id; "current" resolves from the discovery hop. */
 export type ThroughputTargetSelection = string;
+export type PingCadence = "instant" | "medium" | "slow";
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by
@@ -151,7 +152,10 @@ export interface RunnerConfig {
     uploadMs: number;
     bidirectionalMs: number;
   };
-  pingConcurrency: "instant" | "medium" | "slow"; // → interval map
+  /** PING wire cadence for the unloaded latency stage, including warmup. */
+  pingCadence: PingCadence;
+  /** PING wire cadence during transfer stages, including warmup. */
+  loadedPingCadence: PingCadence;
   transferStreams: TransferStreamPolicy;
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */

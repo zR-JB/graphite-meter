@@ -13,7 +13,8 @@ const FAKE_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingConcurrency: "medium",
+  pingCadence: "instant",
+  loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
   transports: { throughputTarget: "current", latencyTarget: "auto" },
@@ -87,6 +88,24 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(FAKE_CONFIG);
+});
+
+test("legacy ping concurrency becomes unloaded cadence with the new loaded default", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ config: { pingConcurrency: "slow" } }),
+  );
+  const config = loadPersisted().config;
+  expect(config.pingCadence).toBe("slow");
+  expect(config.loadedPingCadence).toBe("medium");
+  expect(config).not.toHaveProperty("pingConcurrency");
+});
+
+test("new installations use instant unloaded and medium loaded cadence", () => {
+  expect(loadPersisted().config).toMatchObject({
+    pingCadence: "instant",
+    loadedPingCadence: "medium",
+  });
 });
 
 test("obsolete endpoint override cannot restore the old listener port", () => {

@@ -251,8 +251,11 @@ real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 - **Latency** — a dedicated ping WebSocket run entirely inside `ping-worker.ts`, off the main
   thread so JS jank on the page never pollutes RTT. Implements an adaptive RFC-6298-style loss
   timeout, a "late-pong graveyard" so one delayed reply doesn't falsely register as loss, an
-  on-receive fast path for idle sampling, and a sparser pacer under load so pings don't compete
-  with an in-flight transfer.
+  in-flight cap, and a start-to-start cadence scheduler. PONG arrival can release saturated
+  capacity and resume an overdue send, but cannot advance the next scheduled PING or create a
+  catch-up burst. Worker-to-main batching and sample downsampling do not affect wire pacing.
+  The unloaded or loaded cadence is selected when that stage's channel opens, applies throughout
+  warmup and measurement, and is not changed when measurement enables reporting.
 - **Download** — `download-worker.ts`, one per parallel lane: a `fetch` GET with a streamed
   response read via a BYOB reader that reuses a single 1 MiB buffer (no per-chunk allocation —
   this is the actual read-side ceiling at multi-gigabit rates). Automatic stream policy uses the
@@ -304,10 +307,14 @@ A production build has only Setup, so no tab bar is rendered at all.
 | Setting                                       | Default   | Notes                                                                                                                                                                                                                            |
 | --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                                                                                                                                                     |
-| Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                                                                                                                                                   |
+| Unloaded ping cadence                         | Instant   | 80ms; Medium is 250ms and Slow is 600ms. Applies to latency-stage warmup and measurement.                                                                                                                                        |
+| Loaded ping cadence                           | Medium    | 250ms; Instant is 80ms and Slow is 600ms. Applies to warmup and loaded-latency measurement during download, upload, and bidirectional stages.                                                                                    |
 | Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2 uses one download, H3 uses three downloads, and both use three overlapping uploads. Forced uses the configured count exactly for every protocol. |
 | Skip loaded latency when latency stage is off | on        |                                                                                                                                                                                                                                  |
 | Chunked download (experimental)               | off       | See Experimental features.                                                                                                                                                                                                       |
+
+Pre-test probe pings and the between-run connectivity keepalive use fixed internal cadences; neither
+selector changes them.
 
 Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
 `PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while the selected `/probe`'s
