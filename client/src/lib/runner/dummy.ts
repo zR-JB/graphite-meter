@@ -174,6 +174,60 @@ export class DummyBackend implements RunnerBackend {
   /* ================= PROBE ================= */
   async probe(_config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
     signal?.throwIfAborted();
+    const pageOrigin =
+      typeof location === "undefined" ? "http://localhost" : location.origin;
+    const secure = pageOrigin.startsWith("https:");
+    const throughputId = secure ? "http1-tls" : "http1-clear";
+    const latencyId = secure ? "ws-http1-tls" : "ws-http1-clear";
+    this.#host?.emit({
+      type: "transportDiscovery",
+      discovery: {
+        generation: "dummy",
+        engineVersion: "dummy-1.0.0",
+        server: {
+          name: "Graphite Edge — Frankfurt",
+          host: "edge-fra-03.graphite.net",
+          port: 443,
+          location: "Frankfurt, DE",
+        },
+        fetchedAt: Date.now(),
+        pageOrigin,
+        pageSecure: secure,
+        pageProtocol: "http/1.1",
+        throughput: {
+          [throughputId]: {
+            state: "advertised",
+            target: {
+              id: throughputId,
+              origin: pageOrigin,
+              transport: "fetch-stream",
+              protocol: "http1",
+              tls: secure,
+              routes: {
+                probe: "/probe",
+                download: "/download",
+                upload: "/upload",
+                uploadSession: "/upload/session",
+                uploadProgress: "/upload/progress",
+              },
+            },
+          },
+        },
+        latency: {
+          [latencyId]: {
+            state: "advertised",
+            target: {
+              id: latencyId,
+              origin: pageOrigin,
+              transport: "websocket",
+              protocol: "http1",
+              tls: secure,
+              routes: { probe: "/probe", ping: "/ws/ping" },
+            },
+          },
+        },
+      },
+    });
     const interval = 90;
     const pings = 4;
     // Emit a few pre-test pings so the sparkline has something to show. These
@@ -209,8 +263,15 @@ export class DummyBackend implements RunnerBackend {
       preTestPingMs: this.#spec.idleRttMs,
       engineVersion: "dummy-1.0.0",
       discoveryGeneration: "dummy",
-      protocolNegotiated:
-        this.#opts.profile === "satellite" ? "h3 (QUIC)" : "webtransport/h3",
+      protocolNegotiated: "http/1.1",
+      selectedThroughputTarget: throughputId,
+      selectedThroughputProtocol: "http1",
+      selectedLatencyTarget: latencyId,
+      selectedLatencyTransport: "websocket",
+      verifiedLatencyProtocol: "http/1.1",
+      latencyProtocolNegotiated: "http/1.1",
+      firstHopProtocol: "http/1.1",
+      firstHopSecure: secure,
     };
   }
 
