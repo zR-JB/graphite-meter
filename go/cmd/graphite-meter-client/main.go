@@ -92,6 +92,11 @@ func parsePing(raw string) time.Duration {
 
 type eventMsg goclient.Event
 type doneMsg struct{ err error }
+type preparationMsg struct {
+	seq        int
+	connection *goclient.PreparedConnection
+	err        error
+}
 
 // frameMsg drives the live-telemetry animation clock: while a run is active a
 // frameTick reschedules itself so the displayed rates ease toward their targets
@@ -127,7 +132,7 @@ const (
 	sectionCount
 )
 
-var sectionLabels = []string{"Servers", "Stages", "Timing", "Network", "Run"}
+var sectionLabels = []string{"Server", "Run setup", "Timing", "Connections", "Start"}
 
 type editKind int
 
@@ -178,6 +183,10 @@ type model struct {
 	throughputProtocol, latencyProtocol string
 	err                                 error
 	complete                            bool
+	prepared                            *goclient.PreparedConnection
+	prepareSeq                          int
+	prepareStatus                       string
+	prepareError                        string
 
 	rates   map[goclient.Direction]goclient.ThroughputSample
 	peaks   map[goclient.Direction]float64
@@ -196,18 +205,37 @@ type model struct {
 
 func newModel(cfg goclient.Config) model {
 	return model{
-		cfg:        cfg,
-		mode:       modeConfigure,
-		notice:     "Choose a server, tune the profile, then press r to run.",
-		rates:      map[goclient.Direction]goclient.ThroughputSample{},
-		peaks:      map[goclient.Direction]float64{},
-		smoothRate: map[goclient.Direction]float64{},
-		dispRate:   map[goclient.Direction]float64{},
+		cfg:           cfg,
+		mode:          modeConfigure,
+		notice:        "Choose a server while the selected paths are checked.",
+		prepareSeq:    1,
+		prepareStatus: "checking",
+		rates:         map[goclient.Direction]goclient.ThroughputSample{},
+		peaks:         map[goclient.Direction]float64{},
+		smoothRate:    map[goclient.Direction]float64{},
+		dispRate:      map[goclient.Direction]float64{},
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return prepareConnection(m.prepareSeq, m.cfg)
+}
+
+func prepareConnection(seq int, cfg goclient.Config) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		connection, err := goclient.Prepare(ctx, cfg)
+		return preparationMsg{seq: seq, connection: connection, err: err}
+	}
+}
+
+func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m.prepareSeq++
+	m.prepareStatus = "checking"
+	m.prepareError = ""
+	m.prepared = nil
+	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg))
 }
 
 func waitEvent(events <-chan goclient.Event) tea.Cmd {
@@ -234,6 +262,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case preparationMsg:
+		if msg.seq != m.prepareSeq {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.prepareStatus = "failed"
+			m.prepareError = msg.err.Error()
+			m.prepared = nil
+		} else {
+			m.prepareStatus = "ready"
+			m.prepareError = ""
+			m.prepared = msg.connection
+		}
+		return m, nil
 	case frameMsg:
 		if m.mode != modeRun {
 			m.animating = false
@@ -313,9 +355,17 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.row = clamp(m.row+1, 0, m.rowCount()-1)
 	case "enter", " ":
-		return m.activate()
+		before := m.cfg
+		updated, cmd := m.activate()
+		next := updated.(model)
+		if next.mode == modeConfigure && next.edit.kind == editNone && next.cfg != before {
+			return next.reprepare(cmd)
+		}
+		return next, cmd
 	case "r":
 		return m.startRun()
+	case "v":
+		return m.reprepare(nil)
 	case "esc":
 		m.notice = "Configuration kept. Press q to quit or r to run."
 	}
@@ -334,7 +384,11 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.edit = editState{}
 		return m, nil
 	case "enter":
+		before := m.cfg
 		m.commitEdit()
+		if m.cfg != before {
+			return m.reprepare(nil)
+		}
 		return m, nil
 	case "backspace", "ctrl+h":
 		if len(m.edit.value) > 0 {
@@ -520,8 +574,15 @@ func (m model) startRun() (model, tea.Cmd) {
 	done := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	cfg := m.cfg
+	prepared := m.prepared
 	go func() {
-		done <- goclient.Run(ctx, cfg, func(e goclient.Event) {
+		run := goclient.Run
+		if prepared.FreshFor(cfg) {
+			run = func(ctx context.Context, cfg goclient.Config, emit func(goclient.Event)) error {
+				return goclient.RunPrepared(ctx, cfg, prepared, emit)
+			}
+		}
+		done <- run(ctx, cfg, func(e goclient.Event) {
 			select {
 			case events <- e:
 			case <-ctx.Done():
@@ -858,12 +919,18 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
+	throughput := targetChoiceLabel(m.cfg.ThroughputTarget)
+	latency := targetChoiceLabel(m.cfg.LatencyTarget)
+	if m.prepared.FreshFor(m.cfg) {
+		throughput = m.prepared.ThroughputSummary()
+		latency = m.prepared.LatencySummary()
+	}
 	rows := []string{
-		valueLine("Throughput", m.cfg.ThroughputTarget, "selected target"),
-		valueLine("Latency", m.cfg.LatencyTarget, "independent target"),
+		valueLine("Throughput", throughput, "independent path"),
+		valueLine("Latency", latency, "independent path"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
 		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputTarget), "0 automatic; 1–128 forced"),
-		toggleLine("Skip TLS verification", m.cfg.InsecureSkipTLSVerify, "for local/self-signed certs"),
+		toggleLine("Unsafe: skip TLS verification", m.cfg.InsecureSkipTLSVerify, "advanced; all native TLS requests"),
 		warnStyle.Render("Reset to defaults"),
 	}
 	if m.edit.field == "auto-streams" {
@@ -872,12 +939,17 @@ func (m model) networkView(w int) string {
 	if m.edit.field == "streams" {
 		rows[3] = valueLine("Streams", m.edit.value+"█", "editing")
 	}
-	return m.listWithTitle("Network", rows, w)
+	return m.listWithTitle("Connections", rows, w)
 }
 
 func (m model) runMenuView(w int) string {
-	rows := []string{successStyle.Render("Start measurement")}
-	return m.listWithTitle("Ready", rows, w)
+	label := "Start measurement · " + m.prepareStatus
+	if m.prepareStatus == "ready" {
+		label = successStyle.Render(label)
+	} else if m.prepareStatus == "failed" {
+		label = warnStyle.Render(label)
+	}
+	return m.listWithTitle("Connection readiness", []string{label}, w)
 }
 
 func (m model) listWithTitle(title string, rows []string, w int) string {
@@ -898,17 +970,25 @@ func (m model) menuLine(i int, s string, w int) string {
 }
 
 func (m model) planView(w int) string {
+	throughput := "Checking"
+	latency := "Checking"
+	observed := ""
+	if m.prepared.FreshFor(m.cfg) {
+		throughput = m.prepared.ThroughputSummary()
+		latency = m.prepared.LatencySummary()
+		observed = m.prepared.Probe.ProtocolNegotiated
+	}
 	lines := []string{
-		accentStyle.Render("Current Plan"),
-		labelStyle.Render("Server   ") + valueStyle.Render(m.cfg.BaseURL),
-		labelStyle.Render("Stages   ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
-		labelStyle.Render("Streams  ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.cfg.ThroughputTarget)),
-		labelStyle.Render("Warmup   ") + valueStyle.Render(m.cfg.Warmup.String()),
-		labelStyle.Render("Ping     ") + valueStyle.Render(m.cfg.PingInterval.String()),
-		labelStyle.Render("Loaded   ") + valueStyle.Render(boolLabel(m.cfg.LoadedLatency)),
-		labelStyle.Render("TLS      ") + valueStyle.Render(tlsLabel(m.cfg.InsecureSkipTLSVerify)),
+		accentStyle.Render("Resolved Plan"),
+		labelStyle.Render("Status     ") + valueStyle.Render(m.prepareStatus),
+		labelStyle.Render("Throughput ") + valueStyle.Render(throughput),
+		labelStyle.Render("Latency    ") + valueStyle.Render(latency),
+		labelStyle.Render("Observed   ") + valueStyle.Render(emptyDash(observed)),
 		"",
 		mutedStyle.Render("Run order"),
+	}
+	if m.prepareError != "" {
+		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("Press v to retry."), "")
 	}
 	for _, line := range runOrder(m.cfg) {
 		lines = append(lines, "  "+line)
@@ -1061,7 +1141,23 @@ func (m model) helpView() string {
 	if m.mode == modeRun {
 		return mutedStyle.Render("c/esc cancel • m menus after finish • r rerun after finish • q quit")
 	}
-	return mutedStyle.Render("tab switch menu • ↑/↓ select • enter edit/toggle/select • r run • q quit")
+	return mutedStyle.Render("tab switch menu • ↑/↓ select • enter edit/toggle/select • v recheck • r run • q quit")
+}
+
+func targetChoiceLabel(target string) string {
+	labels := map[string]string{
+		"auto":           "Automatic",
+		"http1-clear":    "HTTP/1.1 · clear",
+		"http1-tls":      "HTTP/1.1 · TLS",
+		"http2":          "HTTP/2 · TLS",
+		"http3":          "HTTP/3 · QUIC",
+		"ws-http1-clear": "WebSocket · HTTP/1.1 · clear",
+		"ws-http1-tls":   "WebSocket · HTTP/1.1 · TLS",
+	}
+	if label := labels[target]; label != "" {
+		return label
+	}
+	return target
 }
 
 func activePreset(url string) int {
