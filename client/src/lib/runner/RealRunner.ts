@@ -106,6 +106,7 @@ type ProgressOutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
+  | { type: "fatal"; detail: string }
   | { type: "stall"; detail: string }
   | { type: "resume" };
 
@@ -1411,6 +1412,19 @@ export class RealBackend implements RunnerBackend {
   #onProgressMessage(msg: ProgressOutMsg): void {
     const state = this.#lanes.up;
     if (!this.#transferActive || !state) return; // late message after teardown
+    if (msg.type === "fatal") {
+      this.#progressReady?.finish(false);
+      if (state.measuring) {
+        this.#host!.fail(
+          "connection-lost",
+          `upload progress failed: ${msg.detail}`,
+          msg.detail,
+        );
+      } else {
+        this.#host!.failStage(state.stage, "connection-lost", msg.detail);
+      }
+      return;
+    }
     if (msg.type === "stall") {
       // The progress stream dropped: no server bytes until it reconnects. Freeze
       // surface recovery immediately instead of waiting for the silence watchdog.

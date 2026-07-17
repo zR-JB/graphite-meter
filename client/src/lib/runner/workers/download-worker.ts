@@ -81,6 +81,10 @@ type OutMsg =
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "error"; recoverable: boolean; detail: string };
 
+export function recoverableDownloadStatus(status: number): boolean {
+  return status !== 429 && status !== 503;
+}
+
 // Narrow `self` to the dedicated-worker scope so postMessage/onmessage type
 // cleanly under the combined DOM + WebWorker libs.
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -214,7 +218,7 @@ async function run(url: string): Promise<void> {
       if (!res.ok || !res.body) {
         post({
           type: "error",
-          recoverable: true,
+          recoverable: recoverableDownloadStatus(res.status),
           detail: `HTTP ${res.status}`,
         });
         return;

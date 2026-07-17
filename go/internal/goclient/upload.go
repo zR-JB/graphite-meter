@@ -38,6 +38,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	laneCtx, laneCancel := context.WithCancel(ctx)
 	defer laneCancel()
 	var wg sync.WaitGroup
+	laneErr := make(chan error, r.streams)
 	stagger := r.laneStaggerStep()
 	for i := 0; i < r.streams; i++ {
 		wg.Add(1)
@@ -46,13 +47,22 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
-			r.uploadLane(laneCtx, id, lane, bodyBlock)
+			if err := r.uploadLane(laneCtx, id, lane, bodyBlock); err != nil {
+				select {
+				case laneErr <- err:
+				default:
+				}
+			}
 		}(i)
 	}
 
 	select {
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
+	case err := <-laneErr:
+		laneCancel()
+		wg.Wait()
+		return Result{}, err
 	case <-start:
 	}
 	if !progress.waitNext(ctx, progress.seq.Load()) {
@@ -60,11 +70,11 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
-	stats := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT)
+	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT, laneErr)
 	laneCancel()
 	wg.Wait()
 	progress.bye()
-	return stats.result(stage, Up, true), nil
+	return stats.result(stage, Up, true), sampleErr
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
@@ -95,16 +105,16 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 	return out.UploadID, nil
 }
 
-func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte) {
+func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte) error {
 	path := r.routes().Upload
 	base, err := r.endpoint(path)
 	if err != nil {
-		return
+		return err
 	}
 	for ctx.Err() == nil {
 		u, err := url.Parse(base)
 		if err != nil {
-			return
+			return err
 		}
 		q := u.Query()
 		q.Set("id", id)
@@ -119,20 +129,24 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
 		if err != nil {
-			return
+			return err
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = r.cfg.UploadBytesPerStream
 		res, err := r.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return
+				return nil
 			}
 			continue
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			return unexpectedStatus(res)
+		}
 	}
+	return nil
 }
 
 // cyclingBody is a request body that repeats block until it has emitted limit
@@ -309,7 +323,7 @@ func (p *uploadProgress) bye() {
 	p.close()
 }
 
-func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64) rateStats {
+func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64, laneErr <-chan error) (rateStats, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	timer := time.NewTimer(duration)
@@ -328,9 +342,11 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 	for {
 		select {
 		case <-ctx.Done():
-			return finish()
+			return finish(), ctx.Err()
 		case <-timer.C:
-			return finish()
+			return finish(), nil
+		case err := <-laneErr:
+			return finish(), err
 		case now := <-ticker.C:
 			n := p.n.Load()
 			active := p.t.Load()
