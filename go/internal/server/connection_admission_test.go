@@ -27,6 +27,10 @@ func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	if _, ok := a.acquire(testAddr("192.0.2.3:1")); ok {
 		t.Fatal("global overflow admitted")
 	}
+	stats := a.stats()
+	if stats.active != 2 || stats.peak != 2 || stats.rejectedGlobal != 1 || stats.rejectedClient != 1 {
+		t.Fatalf("stats = %+v", stats)
+	}
 	releaseA()
 	releaseA()
 	if release, ok := a.acquire(testAddr("192.0.2.1:3")); !ok {

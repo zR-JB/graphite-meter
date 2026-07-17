@@ -11,12 +11,15 @@ import (
 )
 
 type requestAdmission struct {
-	mu          sync.Mutex
-	active      int
-	byClient    map[string]int
-	globalMax   int
-	clientMax   int
-	maxLifetime time.Duration
+	mu             sync.Mutex
+	active         int
+	byClient       map[string]int
+	globalMax      int
+	clientMax      int
+	maxLifetime    time.Duration
+	peak           int
+	rejectedGlobal uint64
+	rejectedClient uint64
 }
 
 func newRequestAdmission(globalMax, clientMax int, maxLifetime time.Duration) *requestAdmission {
@@ -38,12 +41,17 @@ func (a *requestAdmission) acquire(key string) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.byClient[key] >= a.clientMax {
+		a.rejectedClient++
 		return nil, http.StatusTooManyRequests
 	}
 	if a.active >= a.globalMax {
+		a.rejectedGlobal++
 		return nil, http.StatusServiceUnavailable
 	}
 	a.active++
+	if a.active > a.peak {
+		a.peak = a.active
+	}
 	a.byClient[key]++
 	return func() {
 		a.mu.Lock()
@@ -54,6 +62,17 @@ func (a *requestAdmission) acquire(key string) (release func(), status int) {
 		}
 		a.mu.Unlock()
 	}, 0
+}
+
+type admissionStats struct {
+	active, peak                   int
+	rejectedGlobal, rejectedClient uint64
+}
+
+func (a *requestAdmission) stats() admissionStats {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient}
 }
 
 func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.Handler {

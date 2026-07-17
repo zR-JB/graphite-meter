@@ -11,12 +11,15 @@ import (
 )
 
 type connectionAdmission struct {
-	mu        sync.Mutex
-	active    int
-	byClient  map[string]int
-	globalMax int
-	clientMax int
-	trusted   []netip.Prefix
+	mu             sync.Mutex
+	active         int
+	byClient       map[string]int
+	globalMax      int
+	clientMax      int
+	trusted        []netip.Prefix
+	peak           int
+	rejectedGlobal uint64
+	rejectedClient uint64
 }
 
 func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *connectionAdmission {
@@ -44,10 +47,18 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 	key := socketKey(addr, a.trusted)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.active >= a.globalMax || key != "" && a.byClient[key] >= a.clientMax {
+	if a.active >= a.globalMax {
+		a.rejectedGlobal++
+		return nil, false
+	}
+	if key != "" && a.byClient[key] >= a.clientMax {
+		a.rejectedClient++
 		return nil, false
 	}
 	a.active++
+	if a.active > a.peak {
+		a.peak = a.active
+	}
 	if key != "" {
 		a.byClient[key]++
 	}
@@ -65,6 +76,12 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 			a.mu.Unlock()
 		})
 	}, true
+}
+
+func (a *connectionAdmission) stats() admissionStats {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient}
 }
 
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {

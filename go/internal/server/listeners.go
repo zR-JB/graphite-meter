@@ -172,6 +172,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
+	if cfg.Verbose {
+		go runAdmissionLog(ctx, e.admission, connections)
+	}
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
 	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
@@ -293,6 +296,22 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	shutdown(services)
 	return nil
+}
+
+func runAdmissionLog(ctx context.Context, requests *requestAdmission, connections *connectionAdmission) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r, c := requests.stats(), connections.stats()
+			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d global + %d client; connections %d active / %d peak, rejected %d global + %d client",
+				r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
+				c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
+		}
+	}
 }
 
 func shutdown(services []service) {

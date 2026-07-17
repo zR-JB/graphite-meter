@@ -4,9 +4,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
@@ -56,6 +62,10 @@ func TestRequestAdmissionGlobalLimit(t *testing.T) {
 	if _, status := a.acquire("192.0.2.2"); status != http.StatusServiceUnavailable {
 		t.Fatalf("global rejection = %d", status)
 	}
+	stats := a.stats()
+	if stats.active != 1 || stats.peak != 1 || stats.rejectedGlobal != 1 {
+		t.Fatalf("stats = %+v", stats)
+	}
 }
 
 func TestClientKeyGroupsIPv6ByPrefix(t *testing.T) {
@@ -65,6 +75,16 @@ func TestClientKeyGroupsIPv6ByPrefix(t *testing.T) {
 	b.RemoteAddr = "[2001:db8:1::ffff]:2"
 	if clientKey(a, nil) != clientKey(b, nil) {
 		t.Fatalf("same /64 produced %q and %q", clientKey(a, nil), clientKey(b, nil))
+	}
+}
+
+func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.0.2:1234"
+	r.Header.Set("X-Forwarded-For", "198.51.100.9")
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	if got := clientKey(r, trusted); got != "198.51.100.9" {
+		t.Fatalf("client key = %q", got)
 	}
 }
 
@@ -80,5 +100,57 @@ func TestRequestAdmissionLifetime(t *testing.T) {
 	case <-done:
 	default:
 		t.Fatal("handler did not observe lifetime deadline")
+	}
+}
+
+func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
+	a := newRequestAdmission(1, 1, time.Minute)
+	release, status := a.acquire("occupied")
+	if status != 0 {
+		t.Fatal("failed to occupy admission slot")
+	}
+	defer release()
+	srv := httptest.NewServer(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("rejected WebSocket reached handler")
+	}), nil))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, res, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err == nil {
+		t.Fatal("saturated WebSocket upgrade succeeded")
+	}
+	if res == nil || res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") != "1" {
+		t.Fatalf("upgrade response = %#v", res)
+	}
+}
+
+type deadlineEndpoint struct{}
+
+func (deadlineEndpoint) ID() string { return "deadline" }
+func (deadlineEndpoint) Capabilities() endpoint.Capabilities {
+	return endpoint.Capabilities{WebSocket: true}
+}
+func (deadlineEndpoint) Handle(s transport.Session) error {
+	<-s.Context().Done()
+	return nil
+}
+
+func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
+	e := &endpoints{
+		ping:      deadlineEndpoint{},
+		admission: newRequestAdmission(1, 1, 20*time.Millisecond),
+	}
+	srv := httptest.NewServer(listenerMux(context.Background(), e, muxTopology{latency: true}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/ping", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
+		t.Fatalf("WebSocket lifetime close = %v", err)
 	}
 }
