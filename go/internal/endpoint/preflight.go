@@ -1,6 +1,8 @@
 package endpoint
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -15,11 +17,20 @@ import (
 
 // Preflight serves logical-server discovery. It deliberately ignores the
 // request protocol; the selected target's /probe reports path evidence.
-type Preflight struct{ cfg *config.Config }
+type Preflight struct {
+	cfg        *config.Config
+	generation string
+}
 
-func NewPreflight(cfg *config.Config) *Preflight { return &Preflight{cfg: cfg} }
-func (p *Preflight) ID() string                  { return "preflight" }
-func (p *Preflight) Capabilities() Capabilities  { return Capabilities{HTTP: true} }
+func NewPreflight(cfg *config.Config) *Preflight {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		panic(err)
+	}
+	return &Preflight{cfg: cfg, generation: hex.EncodeToString(id[:])}
+}
+func (p *Preflight) ID() string                 { return "preflight" }
+func (p *Preflight) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 
 func (p *Preflight) Handle(s transport.Session) error {
 	w, r, ok := s.HTTP()
@@ -55,6 +66,7 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	return wire.Preflight{
 		Server:        wire.ServerInfo{Name: p.cfg.ServerName, Host: host, Port: port, Location: p.cfg.ServerLocation},
 		EngineVersion: p.cfg.EngineVersion,
+		Generation:    p.generation,
 		Capabilities:  wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency},
 	}
 }

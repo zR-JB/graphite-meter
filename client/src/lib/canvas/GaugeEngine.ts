@@ -31,6 +31,7 @@ export interface GaugeState {
   ticks: string[];
   rtt: number;
   pingCount: number;
+  completedKind: "speed" | "latency";
 }
 
 /** Phase → accent token. Mirrors the gauge panel's mapping so the dial tints
@@ -87,7 +88,6 @@ export class GaugeEngine implements CanvasEngine {
   #fill = 0; // slower follower (reduced-motion)
   #scale = 1; // absolute throughput scale (bytes/s) for normalization
   #ticks: string[] = []; // quarter labels in the active unit
-  #frozen = 0; // sweep value held through the complete phase
   #lastPing = 0;
   #lastRippleAt = 0; // timestamp of the last emitted ripple (throttle gate)
   #ripples: number[] = []; // start timestamps of active ping ripples
@@ -224,8 +224,6 @@ export class GaugeEngine implements CanvasEngine {
     this.#ticks = s.ticks;
 
     if (s.phase !== this.#lastPhase) {
-      // Freeze the dial where it ended when entering `complete`.
-      if (s.phase === "complete") this.#frozen = this.#ema;
       this.#resolveColors(s.phase);
       this.#lastPhase = s.phase;
     }
@@ -241,7 +239,7 @@ export class GaugeEngine implements CanvasEngine {
       scaleBytesPerSec: this.#scale,
       latencyScaleMs: s.latencyScaleMs,
       rtt: s.rtt,
-      frozenFraction: this.#frozen,
+      completedKind: s.completedKind,
     });
 
     this.#target = target;

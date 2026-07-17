@@ -193,8 +193,8 @@
   --border-strong: rgba(43, 44, 40, 0.22);
 
   --text: #26272a;
-  --text-muted: #575c5f;
-  --text-soft: #85898d;
+  --text-muted: #454a4d;
+  --text-soft: #505559;
   --text-inverse: #f6f5f1;
 
   --brand: #2f717a;
@@ -213,7 +213,7 @@
   --phase-bidirectional: #6d5e94;
   --phase-complete: #445f79;
 
-  --ok: #326350;
+  --ok: #285443;
   --ok-soft: rgba(50, 99, 80, 0.13);
   --warn: #6f5426;
   --warn-soft: rgba(111, 84, 38, 0.13);

@@ -226,6 +226,32 @@ func TestTLSLabel(t *testing.T) {
 	}
 }
 
+func TestTargetChoiceLabel(t *testing.T) {
+	if got := targetChoiceLabel("ws-http1-tls"); got != "WebSocket · HTTP/1.1 · TLS" {
+		t.Fatalf("targetChoiceLabel() = %q", got)
+	}
+	if got := targetChoiceLabel("custom-target"); got != "custom-target" {
+		t.Fatalf("custom target label = %q", got)
+	}
+}
+
+func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.prepareSeq = 2
+
+	updated, _ := m.Update(preparationMsg{seq: 1, err: errors.New("old")})
+	m = updated.(model)
+	if m.prepareStatus != "checking" {
+		t.Fatalf("stale preparation changed status to %q", m.prepareStatus)
+	}
+
+	updated, _ = m.Update(preparationMsg{seq: 2, err: errors.New("unreachable")})
+	m = updated.(model)
+	if m.prepareStatus != "failed" || !strings.Contains(m.prepareError, "unreachable") {
+		t.Fatalf("failure state = %q %q", m.prepareStatus, m.prepareError)
+	}
+}
+
 func TestCheckbox(t *testing.T) {
 	if got := checkbox(true); got != "●" {
 		t.Errorf("checkbox(true) = %q, want ●", got)

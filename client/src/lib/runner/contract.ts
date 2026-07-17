@@ -31,9 +31,10 @@ export type Phase =
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3";
+export type ConnectionRole = "throughput" | "latency";
 /** Advertised transfer target id; "current" resolves from the discovery hop. */
 export type ThroughputTargetSelection = string;
-export type PingCadence = "instant" | "medium" | "slow";
+export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by
@@ -381,6 +382,7 @@ export interface InfraInfo {
   server: { name: string; host: string; port: number; location?: string };
   preTestPingMs: number;
   engineVersion: string;
+  discoveryGeneration: string;
   protocolNegotiated: string;
   selectedThroughputTarget?: string;
   selectedThroughputProtocol?: ProtocolTarget;
@@ -404,6 +406,10 @@ export interface DiscoveredTarget<T> {
 /** Server-advertised transports classified against the page that will use
  * them. Emitted as soon as /preflight completes, before selection or probing. */
 export interface TransportDiscovery {
+  generation: string;
+  engineVersion: string;
+  server: { name: string; host: string; port: number; location?: string };
+  fetchedAt: number;
   pageOrigin: string;
   pageSecure: boolean;
   pageProtocol?: string;
@@ -475,22 +481,31 @@ export type RunnerAnomaly =
   // scenario visually testable with the dummy.
   | { kind: "connection-drop"; durationMs?: number };
 
+/** Settings the core can safely apply after a run has started. Connection and
+ * worker construction remain fixed; these only reshape the remaining timeline
+ * or its completion rule. */
+export type LiveRunConfig = Pick<
+  RunnerConfig,
+  "stages" | "duration" | "adaptive"
+>;
+
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
   /** Verify the selected target, then run. Emits `connecting` immediately so
    *  asynchronous path verification is visible and cancellable. */
-  start(config: RunnerConfig): Promise<void>;
+  start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
-  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;
+  probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (no I/O). */
   describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
-  /** Apply a live change to the enabled stage set mid-run — only future
-   *  (not-yet-started) stages are affected, so toggling one off shortens the
-   *  remaining run. OPTIONAL so a minimal engine can omit live reconfigure;
-   *  no-op when idle. */
-  reconfigureStages?(stages: RunnerConfig["stages"]): void;
+  /** Apply settings that are safe to change during a run. */
+  reconfigure?(config: LiveRunConfig): void;
   /** OPTIONAL — fire a live anomaly into an in-flight run. Kept
    *  optional so a minimal real engine need not implement it. */
   injectAnomaly?(a: RunnerAnomaly): void;

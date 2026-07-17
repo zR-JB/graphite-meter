@@ -3,6 +3,7 @@
 
 import type {
   NetworkRunner,
+  LiveRunConfig,
   RunnerConfig,
   RunnerEvent,
   RunnerAnomaly,
@@ -10,6 +11,7 @@ import type {
   Phase,
   PhaseTransition,
   InfraInfo,
+  ConnectionRole,
   EngineInfo,
   ThroughputResult,
   LatencyResult,
@@ -29,7 +31,7 @@ import {
 import {
   buildSegments,
   adaptiveWarmupMs,
-  rebuildTail,
+  reconfigureTimeline,
   segmentAt,
   type Segment,
 } from "./schedule";
@@ -159,7 +161,11 @@ export interface RunnerBackend {
   attach(host: CoreHost): void;
   /** Pre-test handshake; resolves InfraInfo. MAY emit a few pre-test `latency`
    *  samples (underLoad:false, negative `t`) via the host for the sparkline. */
-  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;
+  probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (see EngineInfo). */
   describe(): EngineInfo;
   /** A run is starting with this config. Per-stage priming happens in
@@ -297,8 +303,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     for (const h of this.#handlers) h(e);
   }
 
-  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
-    return this.#backend.probe(config, signal);
+  probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo> {
+    return this.#backend.probe(config, signal, role);
   }
 
   describe(): EngineInfo {
@@ -310,7 +320,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   /* ================= START ================= */
-  async start(config: RunnerConfig): Promise<void> {
+  async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
     if (this.#tickTimer || this.#prepareAbort) this.abort();
     const generation = ++this.#runGeneration;
     const prepareAbort = new AbortController();
@@ -325,14 +335,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       transition: { from, to: "connecting", stage: null, t: 0 },
     });
 
-    let info: InfraInfo;
-    try {
-      info = await this.probe(config, prepareAbort.signal);
-    } catch (cause) {
-      if (generation !== this.#runGeneration || prepareAbort.signal.aborted)
-        return;
-      this.#prepareAbort = null;
-      throw cause;
+    let info = prepared;
+    if (!info) {
+      try {
+        info = await this.probe(config, prepareAbort.signal);
+      } catch (cause) {
+        if (generation !== this.#runGeneration || prepareAbort.signal.aborted)
+          return;
+        this.#prepareAbort = null;
+        throw cause;
+      }
     }
     if (generation !== this.#runGeneration) return;
     this.#prepareAbort = null;
@@ -414,29 +426,37 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  /* ================= LIVE STAGE RECONFIGURE ================= */
-  /**
-   * Apply a live change to the enabled stage set mid-run. Only FUTURE segments
-   * (those starting after the current elapsed) are rebuilt; the current and past
-   * phases are untouched, so toggling a not-yet-started stage off simply shortens
-   * the remaining timeline. No-op when idle (the next start() snapshot already
-   * reflects the change).
-   */
-  reconfigureStages(stages: RunnerConfig["stages"]): void {
+  /* ================= LIVE RECONFIGURE ================= */
+  reconfigure(config: LiveRunConfig): void {
     if (!this.#tickTimer || !this.#cfg) return;
-    this.#cfg = { ...this.#cfg, stages };
+    const activeBefore = this.#activeSeg;
+    const stagesChanged = Object.keys(config.stages).some(
+      (stage) =>
+        config.stages[stage as keyof RunnerConfig["stages"]] !==
+        this.#cfg!.stages[stage as keyof RunnerConfig["stages"]],
+    );
+    this.#cfg = { ...this.#cfg, ...config };
 
-    const { segments, totalMs } = rebuildTail(
+    const { segments, totalMs } = reconfigureTimeline(
       this.#segments,
       this.#measuredElapsed,
       this.#cfg,
     );
     this.#segments = segments;
     this.#totalMs = totalMs;
+    const activeAfter = segmentAt(segments, this.#measuredElapsed);
+    if (
+      activeBefore &&
+      activeAfter &&
+      activeAfter.phase === activeBefore.phase &&
+      activeAfter.activity.stage === activeBefore.activity.stage
+    )
+      this.#activeSeg = activeAfter;
     // Segment indices shifted under us — drop any armed glide so it re-arms
     // against the rebuilt array on a later tick.
     this.#glideArmedForSeg = -1;
-    this.#backend.onReconfigure?.(stages);
+    if (stagesChanged) this.#backend.onReconfigure?.(config.stages);
+    this.#tick();
   }
 
   /* ================= MASTER TICK ================= */

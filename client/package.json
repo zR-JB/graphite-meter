@@ -13,10 +13,13 @@
     "check:client": "svelte-check --tsconfig ./tsconfig.check.json",
     "check:node": "tsc --noEmit -p ./tsconfig.node.json",
     "test": "bun test",
+    "test:e2e": "playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tsconfig/svelte": "^5.0.4",

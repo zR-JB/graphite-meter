@@ -18,8 +18,14 @@ import type {
   StallInfo,
   TransportAttempt,
   TransportRole,
+  ConnectionRole,
   StageFailure,
 } from "../runner/contract";
+import {
+  presentConnections,
+  type ConnectionPresentation,
+  type ConnectionValidation,
+} from "../runner/connectionModel";
 import {
   estimateLiveCompensation,
   estimateResultCompensation,
@@ -89,7 +95,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingCadence: "instant",
+  pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
@@ -190,6 +196,25 @@ class AppStore {
   startEpoch = $state(0);
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
+  activeConfig = $state<RunnerConfig | null>(null);
+  activeConnections = $state<Record<
+    ConnectionRole,
+    ConnectionPresentation
+  > | null>(null);
+  connectionValidation = $state<ConnectionValidation>({
+    throughput: { selection: "current", state: "stale" },
+    latency: { selection: "auto", state: "stale" },
+  });
+  connections = $derived(
+    presentConnections(
+      this.config,
+      this.transportDiscovery,
+      this.connectionValidation,
+      this.infra,
+    ),
+  );
+  runConfig = $derived(this.activeConfig ?? this.config);
+  runConnections = $derived(this.activeConnections ?? this.connections);
   unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
@@ -361,9 +386,9 @@ class AppStore {
       this.liveTransferBytesPerSec,
       this.config.compensation,
       this.phase === "upload" ? "upload" : "download",
-      this.infra?.firstHopProtocol,
-      this.infra?.firstHopSecure,
-      this.infra?.clientIpVersion,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
     ),
   );
 
@@ -372,9 +397,9 @@ class AppStore {
       this.stageResults.download,
       "download",
       this.config.compensation,
-      this.infra?.firstHopProtocol,
-      this.infra?.firstHopSecure,
-      this.infra?.clientIpVersion,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
     ),
   );
 
@@ -383,9 +408,9 @@ class AppStore {
       this.stageResults.upload,
       "upload",
       this.config.compensation,
-      this.infra?.firstHopProtocol,
-      this.infra?.firstHopSecure,
-      this.infra?.clientIpVersion,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
     ),
   );
 
@@ -568,6 +593,8 @@ class AppStore {
     this.stageFailures = {};
     this.result = null;
     this.error = null;
+    this.activeConfig = null;
+    this.activeConnections = null;
     this.startEpoch = 0;
     this.runSeq++;
   }

@@ -13,7 +13,7 @@ const FAKE_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingCadence: "instant",
+  pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
@@ -101,10 +101,23 @@ test("legacy ping concurrency becomes unloaded cadence with the new loaded defau
   expect(config).not.toHaveProperty("pingConcurrency");
 });
 
-test("new installations use instant unloaded and medium loaded cadence", () => {
+test("new installations use reply-driven unloaded and medium loaded cadence", () => {
   expect(loadPersisted().config).toMatchObject({
-    pingCadence: "instant",
+    pingCadence: "reply-driven",
     loadedPingCadence: "medium",
+  });
+});
+
+test("old instant cadences migrate to reply-driven", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { pingCadence: "instant", loadedPingCadence: "instant" },
+    }),
+  );
+  expect(loadPersisted().config).toMatchObject({
+    pingCadence: "reply-driven",
+    loadedPingCadence: "reply-driven",
   });
 });
 

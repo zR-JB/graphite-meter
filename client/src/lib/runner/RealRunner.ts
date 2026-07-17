@@ -10,6 +10,7 @@ import type {
   FlowDirection,
   PhaseActivity,
   TransferStreamPolicy,
+  ConnectionRole,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type {
@@ -59,16 +60,20 @@ const LANE_STAGGER_MS = 75;
 const PROGRESS_BYE_GRACE_MS = 1000;
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PING_INTERVAL: Record<PingCadence, number> = {
-  instant: 80,
+const PING_LOSS_K = 4;
+const PING_LOSS_FLOOR_MS = 250;
+const FIXED_PING_INTERVAL: Record<
+  Exclude<PingCadence, "reply-driven">,
+  number
+> = {
+  fast: 80,
   medium: 250,
   slow: 600,
 };
 const PING_MAX_IN_FLIGHT = 16;
+const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
 const PING_REPORT_GAP_MS = 20;
-const PING_LOSS_K = 4;
-const PING_LOSS_FLOOR_MS = 250;
 
 // One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
 const IDLE_PING_INTERVAL_MS = 1000;
@@ -189,6 +194,7 @@ export class RealBackend implements RunnerBackend {
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;
+  #probeInfo: InfraInfo | null = null;
 
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
    *  Bidirectional primes BOTH directions on the SAME stage (onStageBegin calls
@@ -317,7 +323,13 @@ export class RealBackend implements RunnerBackend {
    * rejection to a `preflight-failed` error.
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
-  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+  async probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo> {
+    const previous = this.#probeInfo;
+    if (role !== "throughput") this.#stopIdleKeepalive();
     this.#capabilities = null;
     this.#throughputTarget = null;
     this.#latencyTarget = null;
@@ -351,7 +363,14 @@ export class RealBackend implements RunnerBackend {
       location.protocol === "https:",
       this.#discoveryProtocol,
     );
+    Object.assign(discovery, {
+      generation: pf.generation,
+      engineVersion: pf.engineVersion,
+      server: pf.server,
+      fetchedAt: Date.now(),
+    });
     this.#host?.emit({ type: "transportDiscovery", discovery });
+    if (previous?.discoveryGeneration !== pf.generation) role = undefined;
     const selection = config.transports.throughputTarget;
     const selected = selectThroughputTarget(discovery, selection);
     if (!selected)
@@ -375,62 +394,95 @@ export class RealBackend implements RunnerBackend {
 
     const attempts = selected.protocol === "http3" ? 3 : 1;
     const deadline = performance.now() + 2000;
-    let pathProbe: Probe | null = null;
-    let firstHopProtocol: string | undefined;
-    const probeCtl = new AbortController();
-    const probeSignal = signal
-      ? AbortSignal.any([signal, probeCtl.signal])
-      : probeCtl.signal;
-    const probeDeadline =
-      selected.protocol === "http3"
-        ? setTimeout(() => probeCtl.abort(), 2000)
-        : undefined;
-    try {
-      for (
-        let attempt = 0;
-        attempt < attempts && performance.now() < deadline;
-        attempt++
-      ) {
-        const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
-        const probeRes = await fetch(probeURL, {
-          cache: "no-store",
-          headers: this.#authHeaders(),
-          signal: probeSignal,
-        });
-        if (!probeRes.ok)
-          throw new Error(`probe returned HTTP ${probeRes.status}`);
-        pathProbe = (await probeRes.json()) as Probe;
-        const timing = performance
-          .getEntriesByName(probeRes.url, "resource")
-          .at(-1) as PerformanceResourceTiming | undefined;
-        firstHopProtocol = timing?.nextHopProtocol || undefined;
-        if (
-          selected.protocol !== "http3" ||
-          browserProtocolMatchesTarget(selected, firstHopProtocol)
-        )
-          break;
+    let pathProbe: {
+      clientIp: string;
+      clientIpVersion: 4 | 6;
+      clientIpSource: "socket" | "forwarded";
+      protocolNegotiated: string;
+    } | null =
+      role === "latency" && previous
+        ? {
+            clientIp: previous.clientIp,
+            clientIpVersion: previous.clientIpVersion,
+            clientIpSource: previous.clientIpSource,
+            protocolNegotiated: previous.protocolNegotiated,
+          }
+        : null;
+    let firstHopProtocol =
+      role === "latency" ? previous?.firstHopProtocol : undefined;
+    if (role !== "latency") {
+      const probeCtl = new AbortController();
+      const probeSignal = signal
+        ? AbortSignal.any([signal, probeCtl.signal])
+        : probeCtl.signal;
+      const probeDeadline =
+        selected.protocol === "http3"
+          ? setTimeout(() => probeCtl.abort(), 2000)
+          : undefined;
+      try {
+        for (
+          let attempt = 0;
+          attempt < attempts && performance.now() < deadline;
+          attempt++
+        ) {
+          const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
+          const probeRes = await fetch(probeURL, {
+            cache: "no-store",
+            headers: this.#authHeaders(),
+            signal: probeSignal,
+          });
+          if (!probeRes.ok)
+            throw new Error(`probe returned HTTP ${probeRes.status}`);
+          pathProbe = (await probeRes.json()) as Probe;
+          const timing = performance
+            .getEntriesByName(probeRes.url, "resource")
+            .at(-1) as PerformanceResourceTiming | undefined;
+          firstHopProtocol = timing?.nextHopProtocol || undefined;
+          if (
+            selected.protocol !== "http3" ||
+            browserProtocolMatchesTarget(selected, firstHopProtocol)
+          )
+            break;
+        }
+      } catch (cause) {
+        if (selected.protocol === "http3")
+          throw new TransportUnavailableError("http3 transport unavailable", {
+            cause,
+          });
+        throw cause;
+      } finally {
+        if (probeDeadline !== undefined) clearTimeout(probeDeadline);
       }
-    } catch (cause) {
-      if (selected.protocol === "http3")
-        throw new TransportUnavailableError("http3 transport unavailable", {
-          cause,
-        });
-      throw cause;
-    } finally {
-      if (probeDeadline !== undefined) clearTimeout(probeDeadline);
+      if (
+        !pathProbe ||
+        !browserProtocolMatchesTarget(selected, firstHopProtocol)
+      )
+        throw new TransportUnavailableError(
+          `${selected.protocol} transport unavailable`,
+        );
     }
-    if (
-      !pathProbe ||
-      !browserProtocolMatchesTarget(selected, firstHopProtocol)
-    ) {
-      throw new TransportUnavailableError(
-        `${selected.protocol} transport unavailable`,
-      );
-    }
+    if (!pathProbe)
+      throw new TransportUnavailableError("throughput evidence unavailable");
 
-    let verifiedLatencyProtocol: string | undefined;
-    let latencyPathProbe: Probe | undefined;
-    if (needsLatency && this.#latencyTarget) {
+    let verifiedLatencyProtocol =
+      role === "throughput" ? previous?.verifiedLatencyProtocol : undefined;
+    let latencyPathProbe:
+      | {
+          clientIp: string;
+          clientIpVersion: 4 | 6;
+          clientIpSource: "socket" | "forwarded";
+          protocolNegotiated: string;
+        }
+      | undefined =
+      role === "throughput" && previous?.latencyClientIp
+        ? {
+            clientIp: previous.latencyClientIp,
+            clientIpVersion: previous.latencyClientIpVersion!,
+            clientIpSource: previous.latencyClientIpSource!,
+            protocolNegotiated: previous.latencyProtocolNegotiated!,
+          }
+        : undefined;
+    if (needsLatency && this.#latencyTarget && role !== "throughput") {
       const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
       const latencyRes = await fetch(latencyURL, {
         cache: "no-store",
@@ -459,9 +511,12 @@ export class RealBackend implements RunnerBackend {
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
-    const probeRtts = needsLatency ? await this.#collectIdleRtts(signal) : [];
+    const probeRtts =
+      needsLatency && role !== "throughput"
+        ? await this.#collectIdleRtts(signal)
+        : [];
 
-    return {
+    const info: InfraInfo = {
       clientIp: pathProbe.clientIp,
       clientIpVersion: pathProbe.clientIpVersion,
       clientIpSource: pathProbe.clientIpSource,
@@ -474,8 +529,11 @@ export class RealBackend implements RunnerBackend {
         port: pf.server.port,
         location: pf.server.location,
       },
-      preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
+      preTestPingMs: probeRtts.length
+        ? median(probeRtts)
+        : (previous?.preTestPingMs ?? 0),
       engineVersion: pf.engineVersion,
+      discoveryGeneration: pf.generation,
       protocolNegotiated: pathProbe.protocolNegotiated,
       selectedThroughputTarget: selected.id,
       selectedThroughputProtocol: selected.protocol,
@@ -486,11 +544,13 @@ export class RealBackend implements RunnerBackend {
       firstHopProtocol,
       firstHopSecure: selected.tls,
     };
+    this.#probeInfo = info;
+    return info;
   }
 
   /** Start the idle keepalive at the brisk probe cadence and resolve with its
    *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
-   *  worker to the 1/s idle cadence. Best-effort: resolves with whatever it
+   *  worker to the sparse liveness cadence. Best-effort: resolves with whatever it
    *  gathered by the timeout, never rejects. */
   #collectIdleRtts(signal?: AbortSignal): Promise<number[]> {
     if (signal?.aborted) return Promise.resolve([]);
@@ -973,7 +1033,12 @@ export class RealBackend implements RunnerBackend {
       throw new Error("latency target not resolved");
     const url = httpToWs(channel.origin) + latencyRoute;
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
-    const intervalMs = PING_INTERVAL[cadence];
+    const replyDriven = cadence === "reply-driven";
+    // Reply-driven uses this only for its loss sweep; its sends are driven by
+    // PONGs and the worker's adaptive backup.
+    const intervalMs = replyDriven
+      ? PING_LOSS_FLOOR_MS
+      : FIXED_PING_INTERVAL[cadence];
 
     this.#latencyUnderLoad = false;
     this.#pingActive = true;
@@ -1001,9 +1066,15 @@ export class RealBackend implements RunnerBackend {
       type: "start",
       url,
       intervalMs,
-      maxInFlight: isLatencyStage
-        ? PING_MAX_IN_FLIGHT
-        : PING_LOADED_MAX_IN_FLIGHT,
+      replyDriven,
+      maxInFlight: replyDriven
+        ? Math.min(
+            PING_REPLY_MAX_IN_FLIGHT,
+            isLatencyStage ? PING_MAX_IN_FLIGHT : PING_LOADED_MAX_IN_FLIGHT,
+          )
+        : isLatencyStage
+          ? PING_MAX_IN_FLIGHT
+          : PING_LOADED_MAX_IN_FLIGHT,
       reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
@@ -1106,6 +1177,7 @@ export class RealBackend implements RunnerBackend {
       type: "start",
       url,
       intervalMs,
+      replyDriven: false,
       maxInFlight: 2,
       reportGapMs: 0, // paced sends are already sparse — report every sample
       lossK: PING_LOSS_K,

@@ -39,7 +39,7 @@ const BASE_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingCadence: "instant",
+  pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
@@ -229,7 +229,7 @@ function relStd(xs: number[]): number {
 
 test("unloaded and loaded stages use their independent ping cadences", () => {
   const config = structuredClone(BASE_CONFIG);
-  config.pingCadence = "instant";
+  config.pingCadence = "fast";
   config.loadedPingCadence = "slow";
   const unloaded = makeBackend(
     { profile: "fiber", seed: 1 },
@@ -529,12 +529,12 @@ test("injectAnomaly packet-loss: raises loss probability to the default 60% with
   host.setPhase("download");
   host.setElapsed(1000);
   // Widen the window (magnitude stays default 0.6) so enough pings land inside
-  // it to estimate a probability — the instant unloaded cadence only samples
+  // it to estimate a probability — the fast unloaded cadence only samples
   // every 80ms, and the default 900ms window barely fits ~11.
   backend.injectAnomaly!({ kind: "packet-loss", durationMs: 20000 });
 
   for (let i = 0; i < 150; i++) {
-    const t = 1000 + i * 80; // matches the "instant" ping cadence exactly
+    const t = 1000 + i * 80; // matches the fast ping cadence exactly
     tick(backend, { activity: LATENCY_ACTIVITY, elapsed: t, realNow: t });
   }
   const lost = host.latency.filter((s) => s.lost).length;
@@ -640,7 +640,7 @@ test("probe: emits pre-test idle pings and reports the profile's idle RTT + prot
   const info = await backend.probe(BASE_CONFIG);
 
   expect(info.preTestPingMs).toBeCloseTo(600, -1); // satellite idleRttMs
-  expect(info.protocolNegotiated).toBe("h3 (QUIC)"); // satellite-only branch
+  expect(info.protocolNegotiated).toBe("http/1.1");
   expect(info.clientIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/);
   expect(info.server.host).toBe("edge-fra-03.graphite.net"); // "auto" resolves
 
@@ -660,9 +660,9 @@ test("describe: static engine identity and capability surface", () => {
   const { backend } = makeBackend({ profile: "fiber", seed: 1 });
   const info = backend.describe();
   expect(info.name).toBe("dummy");
-  expect(info.latencyTransports).toContain("webtransport");
+  expect(info.latencyTransports).toContain("webtransport-datagrams");
   expect(info.latencyTransports).toContain("websocket");
-  expect(info.throughputTransports).toContain("webtransport");
+  expect(info.throughputTransports).toContain("webtransport-streams");
   expect(info.throughputTransports).toContain("fetch-streams");
   expect(info.throughputTransports).not.toContain("websocket"); // never a byte-transfer lane
 });

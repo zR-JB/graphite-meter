@@ -8,7 +8,7 @@ const base: SweepTargetInput = {
   scaleBytesPerSec: 1000,
   latencyScaleMs: 100,
   rtt: 0,
-  frozenFraction: 0,
+  completedKind: "speed",
 };
 
 test("clamp01 bounds to [0,1]", () => {
@@ -84,14 +84,33 @@ test("sweepTarget: idle holds a fixed indeterminate position", () => {
   expect(sweepTarget({ ...base, phase: "idle" })).toBe(0.1);
 });
 
-test("sweepTarget: complete holds the last live position", () => {
+test("sweepTarget: completed throughput remains normalized to the current scale", () => {
   expect(
     sweepTarget({
       ...base,
       phase: "complete",
-      frozenFraction: 0.2,
+      valueBytesPerSec: 200,
     }),
   ).toBe(0.2);
+  expect(
+    sweepTarget({
+      ...base,
+      phase: "complete",
+      valueBytesPerSec: 200,
+      scaleBytesPerSec: 400,
+    }),
+  ).toBe(0.5);
+});
+
+test("sweepTarget: completed latency uses the latency scale", () => {
+  expect(
+    sweepTarget({
+      ...base,
+      phase: "complete",
+      completedKind: "latency",
+      rtt: 25,
+    }),
+  ).toBe(0.25);
 });
 
 test("sweepTarget: aborted/error hold a fixed low position", () => {

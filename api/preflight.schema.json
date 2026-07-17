@@ -5,7 +5,7 @@
   "description": "Logical-server discovery returned by GET /preflight. Throughput and latency targets are independently selectable and independently verified.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["server", "engineVersion", "capabilities"],
+  "required": ["server", "engineVersion", "generation", "capabilities"],
   "properties": {
     "server": {
       "type": "object",
@@ -19,6 +19,7 @@
       }
     },
     "engineVersion": { "type": "string" },
+    "generation": { "type": "string", "minLength": 1 },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,

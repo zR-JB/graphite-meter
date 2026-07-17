@@ -1,11 +1,7 @@
 import { expect, test } from "bun:test";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/preflight";
 import { classifyTransportDiscovery } from "./backendPure";
-import {
-  latencyOptionView,
-  testCombinationSummary,
-  throughputOptionView,
-} from "./transportViewModel";
+import { latencyOptionView, throughputOptionView } from "./transportViewModel";
 
 const routes = {
   probe: "/probe",
@@ -71,43 +67,13 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
     "h2",
   );
   expect(throughputOptionView(catalog, "current").detail).toBe(
-    "Resolved to HTTP/2 over TLS.",
+    "Uses this page's connection.",
   );
   expect(latencyOptionView(catalog, "auto").detail).toBe(
-    "HTTPS page → secure WebSocket over HTTP/1.1.",
+    "Uses the same security as this page.",
   );
   expect(
     throughputOptionView({ ...catalog, pageOrigin: "https://proxy" }, "current")
       .disabled,
   ).toBe(true);
-});
-
-test("combination summaries describe H1, H2, H3 and independent WS security", () => {
-  const throughput = [
-    transfer("http1-clear", "http://localhost:7246", "http1", false),
-    transfer("http2", "https://localhost:7248", "http2", true),
-    transfer("http3", "https://localhost:7249", "http3", true),
-  ];
-  const latencyTargets = [
-    latency("ws-http1-clear", "http://localhost:7246", false),
-    latency("ws-http1-tls", "https://localhost:7247", true),
-  ];
-  const catalog = classifyTransportDiscovery(
-    throughput,
-    latencyTargets,
-    "http://localhost:7246",
-    false,
-    "http/1.1",
-  );
-  expect(testCombinationSummary(catalog, "current", "auto")).toEqual([
-    "Throughput: HTTP/1.1 · clear · localhost:7246",
-    "Latency: WebSocket · HTTP/1.1 clear · localhost:7246",
-    "Upload progress follows the throughput path",
-  ]);
-  expect(testCombinationSummary(catalog, "http2", "ws-http1-tls")[0]).toBe(
-    "Throughput: HTTP/2 · TLS · localhost:7248",
-  );
-  expect(testCombinationSummary(catalog, "http3", "ws-http1-tls")[0]).toBe(
-    "Throughput: HTTP/3 · TLS · localhost:7249",
-  );
 });

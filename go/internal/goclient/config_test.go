@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -176,5 +178,33 @@ func TestConfigNormalized(t *testing.T) {
 				t.Errorf("got %v, want %v", got, want)
 			}
 		})
+	}
+}
+
+func TestPreparedConnectionFreshnessAndLabels(t *testing.T) {
+	cfg := DefaultConfig()
+	prepared := &PreparedConnection{
+		ThroughputTarget: wire.ThroughputTarget{Transport: "fetch-stream", Protocol: "http2", TLS: true},
+		LatencyTarget:    &wire.LatencyTarget{Transport: "websocket", Protocol: "http1", TLS: false},
+		VerifiedAt:       time.Now(),
+		configKey:        preparationKey(cfg.normalized()),
+	}
+	if !prepared.FreshFor(cfg) {
+		t.Fatal("fresh matching preparation was rejected")
+	}
+	if got := prepared.ThroughputSummary(); got != "Fetch stream · HTTP/2 · TLS" {
+		t.Fatalf("ThroughputSummary() = %q", got)
+	}
+	if got := prepared.LatencySummary(); got != "WebSocket · HTTP/1.1 · clear" {
+		t.Fatalf("LatencySummary() = %q", got)
+	}
+
+	cfg.LatencyTarget = "ws-http1-tls"
+	if prepared.FreshFor(cfg) {
+		t.Fatal("preparation survived a target change")
+	}
+	prepared.VerifiedAt = time.Now().Add(-preparationFreshness - time.Second)
+	if prepared.FreshFor(DefaultConfig()) {
+		t.Fatal("expired preparation was accepted")
 	}
 }

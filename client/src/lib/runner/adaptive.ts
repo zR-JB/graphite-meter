@@ -7,6 +7,7 @@
  * ============================================================ */
 
 import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
+import { median } from "./stats";
 
 /* ---------- Stability-score coefficients ----------
  * The stability score is  1 − (varianceRatio·K1 + slopeRatio·K2),
@@ -16,20 +17,21 @@ import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
  * has ramped up, a plateau that's merely noisy is common and mostly
  * harmless, while a sustained drift up or down means it hasn't
  * actually settled yet and is the stronger signal to withhold an
- * early exit on. Latency weighs loss (×3.6) far above variance
- * (×2.4): a single dropped ping in the window is a much stronger
- * sign of an unstable link than ordinary RTT jitter, so it should
- * dominate the score. */
+ * early exit on. Latency uses median absolute deviation so an isolated
+ * right-tail RTT spike does not poison an otherwise steady path. */
 
 /** Transfer stability: how hard sample-to-mean variance is penalized. */
 const TRANSFER_VARIANCE_K = 2.2;
 /** Transfer stability: how hard a first-vs-last segment drift is penalized. */
 const TRANSFER_SLOPE_K = 1.4;
 
-/** Latency stability: how hard RTT variance is penalized. */
-const LATENCY_VARIANCE_K = 2.4;
+/** Latency stability: how hard sustained RTT jitter is penalized. */
+const LATENCY_JITTER_K = 1.2;
 /** Latency stability: how hard packet loss within the window is penalized. */
 const LATENCY_LOSS_K = 3.6;
+/** Below this baseline, small timer/network noise is treated in absolute ms
+ * rather than magnified by division through a tiny loopback/LAN RTT. */
+const LATENCY_JITTER_FLOOR_MS = 20;
 
 /** Only the most recent N samples feed the confidence window — older
  *  samples from a phase's ramp-up would otherwise depress stability. */
@@ -108,8 +110,10 @@ export interface ConfidenceScore {
 
 export interface LatencyConfidenceScore extends Omit<
   ConfidenceScore,
-  "slopeRatio"
+  "slopeRatio" | "varianceRatio"
 > {
+  /** median absolute RTT deviation / max(median RTT, jitter floor). */
+  jitterRatio: number;
   /** fraction of the windowed pings that were lost. */
   lossRatio: number;
 }
@@ -153,36 +157,38 @@ export function transferConfidence(
 }
 
 /**
- * Latency confidence from a window of unloaded RTT values plus the loss count
- * over the same window. Stability falls with jitter (variance) and any loss.
+ * Latency confidence from unloaded ping outcomes. RTT and loss use the same
+ * trailing window; robust median deviation ignores isolated tail spikes while
+ * sustained jitter and packet loss still lower confidence.
  */
 export function latencyConfidence(
-  rttValues: number[],
-  windowSampleCount: number,
-  lostInWindow: number,
+  outcomes: (number | null)[],
 ): LatencyConfidenceScore {
-  const values = rttValues.slice(-CONFIDENCE_WINDOW);
+  const window = outcomes.slice(-CONFIDENCE_WINDOW);
+  const values = window.filter((value): value is number => value !== null);
   if (values.length < 2) {
     return {
       score: 0,
-      varianceRatio: 1,
+      jitterRatio: 1,
       lossRatio: 1,
       sampleCount: values.length,
     };
   }
 
-  const avg = mean(values);
-  const varianceRatio = avg > 0 ? standardDeviation(values) / avg : 1;
-  const lossRatio =
-    windowSampleCount > 0 ? lostInWindow / windowSampleCount : 0;
+  const center = median(values);
+  const jitterMs = median(values.map((value) => Math.abs(value - center)));
+  const jitterRatio = jitterMs / Math.max(center, LATENCY_JITTER_FLOOR_MS);
+  const lossRatio = window.length
+    ? window.filter((value) => value === null).length / window.length
+    : 0;
 
   const score = clamp(
-    1 - varianceRatio * LATENCY_VARIANCE_K - lossRatio * LATENCY_LOSS_K,
+    1 - jitterRatio * LATENCY_JITTER_K - lossRatio * LATENCY_LOSS_K,
     0,
     1,
   );
 
-  return { score, varianceRatio, lossRatio, sampleCount: values.length };
+  return { score, jitterRatio, lossRatio, sampleCount: values.length };
 }
 
 /* ---------- Early-exit predicate ---------- */

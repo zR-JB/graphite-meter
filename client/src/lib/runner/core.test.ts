@@ -72,6 +72,7 @@ class FakeBackend implements RunnerBackend {
       server: { name: "fake", host: "fake", port: 0 },
       preTestPingMs: 0,
       engineVersion: "test",
+      discoveryGeneration: "test",
       protocolNegotiated: "fake",
     });
   }
@@ -127,7 +128,7 @@ function makeConfig(
       bidirectionalMs: 0,
       ...overrides.duration,
     },
-    pingCadence: "instant",
+    pingCadence: "reply-driven",
     loadedPingCadence: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
@@ -377,6 +378,21 @@ test("target verification is a visible phase and abort prevents a late run start
 
   expect(core.phase).toBe("aborted");
   expect(backend.calls).toEqual(["abort"]);
+});
+
+test("a prepared selection starts without probing again", async () => {
+  class PreparedBackend extends FakeBackend {
+    override probe(): Promise<InfraInfo> {
+      throw new Error("unexpected probe");
+    }
+  }
+  const backend = new PreparedBackend();
+  const prepared = await new FakeBackend().probe();
+  const core = new RunnerCore(backend);
+
+  await core.start(makeConfig(), prepared);
+
+  expect(backend.calls.slice(0, 2)).toEqual(["runStart", "begin:download"]);
 });
 
 test("asynchronous stage preparation cannot consume the warmup budget", async () => {
@@ -659,6 +675,82 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   // The run only reaches "complete" once the ramp has consumed the full
   // nominal 5000ms budget (fakeNow tracks exactly N * 100 = 5000 here).
   expect(core.phase).toBe("complete");
+});
+
+test("duration changes resize the active stage and finish immediately when its new budget has passed", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({ duration: { downloadMs: 2000 } });
+  await core.start(cfg);
+  advance(600);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: { ...cfg.duration, downloadMs: 500 },
+    adaptive: cfg.adaptive,
+  });
+
+  expect(core.phase).toBe("complete");
+});
+
+test("extending the active duration keeps the stage running to the new budget", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({ duration: { downloadMs: 500 } });
+  await core.start(cfg);
+  advance(400);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: { ...cfg.duration, downloadMs: 1000 },
+    adaptive: cfg.adaptive,
+  });
+  advance(100);
+  expect(core.phase).toBe("download");
+  advance(500);
+  expect(core.phase).toBe("complete");
+});
+
+test("adaptive completion can be enabled after a stable stage has started", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({
+    duration: { downloadMs: 2000 },
+    adaptive: { enabled: false, minTransferSamples: 5 },
+  });
+  await core.start(cfg);
+  advance(400);
+  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: cfg.duration,
+    adaptive: { ...cfg.adaptive, enabled: true },
+  });
+  advance(cfg.adaptive.glideMs);
+
+  expect(core.phase).toBe("complete");
+});
+
+test("adaptive completion can be disabled before a stable stage arms", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({
+    duration: { downloadMs: 2000 },
+    adaptive: { enabled: true, minTransferSamples: 5 },
+  });
+  await core.start(cfg);
+  advance(400);
+  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: cfg.duration,
+    adaptive: { ...cfg.adaptive, enabled: false },
+  });
+  advance(cfg.adaptive.glideMs * 2);
+
+  expect(core.phase).toBe("download");
 });
 
 // ---------------------------------------------------------------------------

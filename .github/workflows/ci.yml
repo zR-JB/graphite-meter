@@ -175,6 +175,10 @@ jobs:
         run: bun run check
       - name: Tests
         run: bun test
+      - name: Install browser
+        run: bunx playwright install --with-deps chromium
+      - name: Browser accessibility
+        run: bun run test:e2e
 
   smoke:
     name: Smoke
@@ -216,6 +220,7 @@ jobs:
           curl -fsS http://localhost:7246/preflight | tee /tmp/preflight.json
           jq -e '
             .engineVersion == "0.0.0-ci"
+            and (.generation | type == "string" and length > 0)
             and .capabilities.throughputTargets == [{
               "id": "http1-clear",
               "origin": "http://localhost:7246",

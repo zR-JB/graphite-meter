@@ -135,6 +135,7 @@
         if (
           tag === "BUTTON" ||
           tag === "A" ||
+          tag === "SUMMARY" ||
           t.getAttribute("role") === "button"
         )
           return;

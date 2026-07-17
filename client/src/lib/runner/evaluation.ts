@@ -58,9 +58,7 @@ export class RunAccumulator {
 
   // ---- per-phase confidence windows (reset each measured phase) ----
   #phaseBytesPerSec: number[] = [];
-  #phaseRtts: number[] = [];
-  #phasePings = 0;
-  #phasePingsLost = 0;
+  #phaseLatency: (number | null)[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
   // Each holds the index into its phase's sample array where the *current*
@@ -125,9 +123,7 @@ export class RunAccumulator {
   /** Reset the per-phase confidence windows when a measured phase begins. */
   beginPhase(): void {
     this.#phaseBytesPerSec = [];
-    this.#phaseRtts = [];
-    this.#phasePings = 0;
-    this.#phasePingsLost = 0;
+    this.#phaseLatency = [];
     // Per-lane latest only matters within the bidi phase; clear on phase entry
     // so a fresh bidi phase doesn't combine against a stale lane value.
     this.#biLastDown = 0;
@@ -186,9 +182,7 @@ export class RunAccumulator {
       if (underLoad) this.#loadedRtts.push(rttMs);
       else this.#idleRtts.push(rttMs);
     }
-    this.#phasePings++;
-    if (lost) this.#phasePingsLost++;
-    else if (!underLoad) this.#phaseRtts.push(rttMs);
+    if (!underLoad) this.#phaseLatency.push(lost ? null : rttMs);
   }
 
   /* ================= STABILITY ================= */
@@ -198,11 +192,7 @@ export class RunAccumulator {
    *  result selection all read. */
   confidence(phase: StagePhase): ConfidenceScore | LatencyConfidenceScore {
     return phase === "latency"
-      ? latencyConfidence(
-          this.#phaseRtts,
-          this.#phasePings,
-          this.#phasePingsLost,
-        )
+      ? latencyConfidence(this.#phaseLatency)
       : transferConfidence(this.#phaseBytesPerSec);
   }
 

@@ -8,7 +8,14 @@
  * a frozen, non-reactive config into the engine) is compiled.
  * ============================================================ */
 
-import type { NetworkRunner, RunnerAnomaly } from "./contract";
+import type {
+  ConnectionRole,
+  InfraInfo,
+  LiveRunConfig,
+  NetworkRunner,
+  RunnerAnomaly,
+  RunnerEvent,
+} from "./contract";
 import { RunnerCore } from "./core";
 // NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
@@ -20,9 +27,29 @@ import { RealBackend, TransportUnavailableError } from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
+import {
+  CONNECTION_FRESH_MS,
+  CONNECTION_ROLES,
+  connectionKey,
+  connectionRoleKey,
+  connectionSelection,
+  validationRoles,
+} from "./connectionModel";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
+let validationAbort: AbortController | null = null;
+let validationSeq = 0;
+let booted = false;
+let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
+  null;
+let lastRoleKeys: Record<ConnectionRole, string> = {
+  throughput: "",
+  latency: "",
+};
+let pendingValidation = false;
+let hiddenAt = 0;
+let validating: ConnectionRole[] = [];
 
 // Mirror the persisted dev toggle into the (main-thread) debug logger, live.
 // Workers are separate module graphs — they're told the value in their `start`
@@ -31,6 +58,42 @@ let unsub: (() => void) | null = null;
 if (typeof window !== "undefined") {
   $effect.root(() => {
     $effect(() => setDebugLogging(store.debugLogging));
+    $effect(() => {
+      const changed = CONNECTION_ROLES.filter(
+        (role) =>
+          connectionRoleKey(store.config, role, store.transportDiscovery) !==
+          lastRoleKeys[role],
+      );
+      const running = store.isRunning;
+      if (!booted) return;
+      if (changed.length) {
+        if (changed.includes("latency")) store.idleLatency = [];
+        for (const role of changed)
+          lastRoleKeys[role] = connectionRoleKey(
+            store.config,
+            role,
+            store.transportDiscovery,
+          );
+        pendingValidation = true;
+        if (running) {
+          markValidation(
+            changed,
+            "stale",
+            "Draft changed; validation resumes after this run.",
+          );
+          return;
+        }
+      }
+      if (running || !pendingValidation) return;
+      pendingValidation = false;
+      queueMicrotask(
+        () =>
+          void validateConnections(
+            false,
+            changed.length === 1 ? changed[0] : undefined,
+          ).catch(() => {}),
+      );
+    });
   });
 }
 
@@ -82,28 +145,139 @@ export function getRunner(): NetworkRunner {
   return runner;
 }
 
-/** Call once on app mount. Probes infra, subscribes store to events. */
+function validationMessage(cause: unknown): string {
+  if (cause instanceof TransportUnavailableError) return cause.message;
+  return cause instanceof Error ? cause.message : "Connection check failed";
+}
+
+function markValidation(
+  roles: ConnectionRole[],
+  state: "checking" | "verified" | "failed" | "stale",
+  message?: string,
+  verifiedAt?: number,
+) {
+  const next = { ...store.connectionValidation };
+  for (const role of roles)
+    next[role] = {
+      selection: connectionSelection(store.config, role),
+      identity: connectionRoleKey(store.config, role, store.transportDiscovery),
+      state,
+      message,
+      verifiedAt,
+    };
+  store.connectionValidation = next;
+}
+
+function preparedIsFresh(key: string): boolean {
+  return !!(
+    prepared &&
+    prepared.key === key &&
+    Date.now() - prepared.verifiedAt <= CONNECTION_FRESH_MS &&
+    prepared.info.discoveryGeneration === store.transportDiscovery?.generation
+  );
+}
+
+export async function validateConnections(
+  force = false,
+  requestedRole?: ConnectionRole,
+): Promise<InfraInfo> {
+  const key = connectionKey(store.config, store.transportDiscovery);
+  if (!force && preparedIsFresh(key)) return prepared!.info;
+  if (validating.length) markValidation(validating, "stale");
+  validationAbort?.abort();
+  const roles = validationRoles(
+    store.config,
+    store.connectionValidation,
+    requestedRole,
+    store.transportDiscovery,
+  );
+  const abort = new AbortController();
+  validationAbort = abort;
+  const seq = ++validationSeq;
+  validating = roles;
+  markValidation(roles, "checking");
+  const generation = store.transportDiscovery?.generation;
+  try {
+    const info = await getRunner().probe(
+      $state.snapshot(store.config),
+      abort.signal,
+      roles.length === 1 ? roles[0] : undefined,
+    );
+    if (abort.signal.aborted || seq !== validationSeq)
+      throw new DOMException("Aborted", "AbortError");
+    const verifiedAt = Date.now();
+    const verifiedRoles =
+      generation && generation !== info.discoveryGeneration
+        ? CONNECTION_ROLES
+        : roles;
+    prepared = {
+      key: connectionKey(store.config, store.transportDiscovery),
+      info,
+      verifiedAt,
+    };
+    store.ingest({ type: "infra", info });
+    markValidation(verifiedRoles, "verified", undefined, verifiedAt);
+    return info;
+  } catch (cause) {
+    if (abort.signal.aborted || seq !== validationSeq) throw cause;
+    prepared = null;
+    markValidation(roles, "failed", validationMessage(cause));
+    throw cause;
+  } finally {
+    if (validationAbort === abort) {
+      validationAbort = null;
+      validating = [];
+    }
+  }
+}
+
+function ingestRunnerEvent(event: RunnerEvent) {
+  if (
+    event.type === "error" &&
+    [
+      "connection-lost",
+      "timeout",
+      "preflight-failed",
+      "transport-unavailable",
+    ].includes(event.error.reason)
+  ) {
+    prepared = null;
+    markValidation(
+      CONNECTION_ROLES,
+      "stale",
+      "Connection changed; check again.",
+    );
+  }
+  store.ingest(event);
+}
+
+function refreshAfterTransition() {
+  if (!store.isRunning) void validateConnections(true).catch(() => {});
+}
+
+function refreshAfterVisibility() {
+  if (document.visibilityState === "hidden") {
+    hiddenAt = Date.now();
+  } else if (hiddenAt && Date.now() - hiddenAt >= CONNECTION_FRESH_MS) {
+    hiddenAt = 0;
+    refreshAfterTransition();
+  }
+}
+
 export async function bootRunner() {
   const r = getRunner();
   store.engineInfo = r.describe();
-  unsub = r.on((e) => store.ingest(e));
-  try {
-    const info = await r.probe(store.config);
-    store.ingest({ type: "infra", info });
-  } catch (cause) {
-    store.ingest({
-      type: "error",
-      error: {
-        reason:
-          cause instanceof TransportUnavailableError
-            ? "transport-unavailable"
-            : "preflight-failed",
-        message: "Probe failed",
-        phase: "idle",
-        cause,
-      },
-    });
-  }
+  unsub = r.on(ingestRunnerEvent);
+  booted = true;
+  for (const role of CONNECTION_ROLES)
+    lastRoleKeys[role] = connectionRoleKey(
+      store.config,
+      role,
+      store.transportDiscovery,
+    );
+  window.addEventListener("online", refreshAfterTransition);
+  document.addEventListener("visibilitychange", refreshAfterVisibility);
+  await validateConnections().catch(() => {});
 }
 
 export function engage() {
@@ -113,26 +287,32 @@ export function engage() {
   }
   store.reset();
   const cfg = $state.snapshot(store.config);
-  // start() enters a visible connecting phase immediately, then resolves the
-  // selected target before starting the measurement clock.
-  getRunner()
-    .start(cfg)
-    .catch((cause) => {
-      // An abort invalidates the pending start and resolves it without error.
-      if (store.phase === "aborted") return;
-      store.ingest({
-        type: "error",
-        error: {
-          reason:
-            cause instanceof TransportUnavailableError
-              ? "transport-unavailable"
-              : "preflight-failed",
-          message: "Couldn't reach the server",
-          phase: "connecting",
-          cause,
-        },
-      });
+  const key = connectionKey(cfg, store.transportDiscovery);
+  const start = async () => {
+    const info = preparedIsFresh(key)
+      ? prepared!.info
+      : await validateConnections();
+    if (!preparedIsFresh(connectionKey(cfg, store.transportDiscovery))) return;
+    store.activeConfig = structuredClone(cfg);
+    store.activeConnections = $state.snapshot(store.connections);
+    await getRunner().start(cfg, info);
+  };
+  start().catch((cause) => {
+    // An abort invalidates the pending start and resolves it without error.
+    if (store.phase === "aborted") return;
+    store.ingest({
+      type: "error",
+      error: {
+        reason:
+          cause instanceof TransportUnavailableError
+            ? "transport-unavailable"
+            : "preflight-failed",
+        message: "Couldn't reach the server",
+        phase: "connecting",
+        cause,
+      },
     });
+  });
 }
 
 /**
@@ -144,6 +324,7 @@ export function engage() {
 export function returnToStart() {
   if (store.isRunning) getRunner().abort();
   store.reset();
+  void validateConnections(true).catch(() => {});
 }
 
 /**
@@ -151,9 +332,17 @@ export function returnToStart() {
  * future-stage toggle actually shortens the run. No-op when idle or
  * when the active engine doesn't support live reconfigure.
  */
-export function applyStageChange() {
+export function applyLiveRunConfig() {
   if (!store.isRunning) return;
-  getRunner().reconfigureStages?.($state.snapshot(store.config.stages));
+  const config = $state.snapshot(store.config);
+  const live: LiveRunConfig = {
+    stages: config.stages,
+    duration: config.duration,
+    adaptive: config.adaptive,
+  };
+  getRunner().reconfigure?.(live);
+  if (store.activeConfig)
+    store.activeConfig = { ...store.activeConfig, ...live };
 }
 
 /**
@@ -166,6 +355,11 @@ export function injectAnomaly(a: RunnerAnomaly) {
 }
 
 export function teardownRunner() {
+  booted = false;
+  validationAbort?.abort();
+  validationAbort = null;
+  window.removeEventListener("online", refreshAfterTransition);
+  document.removeEventListener("visibilitychange", refreshAfterVisibility);
   unsub?.();
   unsub = null;
 }

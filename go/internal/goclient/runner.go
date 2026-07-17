@@ -18,49 +18,97 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func Run(ctx context.Context, cfg Config, emit func(Event)) error {
-	cfg = cfg.normalized()
-	baseTransport := func() *http.Transport {
-		return &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			ForceAttemptHTTP2:     false,
-			MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
-			MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
-			MaxConnsPerHost:       0,
-			IdleConnTimeout:       90 * time.Second,
-			ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
-			ExpectContinueTimeout: cfg.ExpectContinueTimeout,
-			TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
-			// 256 KiB socket buffers (vs the 4 KiB default) so a saturated link moves
-			// each direction in large reads/writes instead of thousands of tiny
-			// syscalls — the upload write side felt this most (see uploadLane).
-			WriteBufferSize: 256 * 1024,
-			ReadBufferSize:  256 * 1024,
-		}
+type PreparedConnection struct {
+	Preflight        wire.Preflight
+	ThroughputTarget wire.ThroughputTarget
+	LatencyTarget    *wire.LatencyTarget
+	Probe            wire.Probe
+	LatencyProbe     *wire.Probe
+	VerifiedAt       time.Time
+	configKey        string
+}
+
+const preparationFreshness = 30 * time.Second
+
+func preparationKey(cfg Config) string {
+	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
+	return fmt.Sprintf("%s\n%s\n%s\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, needsLatency)
+}
+
+func (p *PreparedConnection) FreshFor(cfg Config) bool {
+	return p != nil && p.configKey == preparationKey(cfg.normalized()) && time.Since(p.VerifiedAt) <= preparationFreshness
+}
+
+func connectionSummary(transport, protocol string, tls bool) string {
+	protocolLabel := map[string]string{"http1": "HTTP/1.1", "http2": "HTTP/2", "http3": "HTTP/3"}[protocol]
+	if protocolLabel == "" {
+		protocolLabel = protocol
 	}
-	discoveryTransport := baseTransport()
+	mechanism := "Fetch stream"
+	if transport == "websocket" {
+		mechanism = "WebSocket"
+	}
+	security := "clear"
+	if tls {
+		security = "TLS"
+	}
+	return fmt.Sprintf("%s · %s · %s", mechanism, protocolLabel, security)
+}
+
+func (p *PreparedConnection) ThroughputSummary() string {
+	if p == nil {
+		return "Not checked"
+	}
+	t := p.ThroughputTarget
+	return connectionSummary(t.Transport, t.Protocol, t.TLS)
+}
+
+func (p *PreparedConnection) LatencySummary() string {
+	if p == nil || p.LatencyTarget == nil {
+		return "Not selected"
+	}
+	t := p.LatencyTarget
+	return connectionSummary(t.Transport, t.Protocol, t.TLS)
+}
+
+func baseTransport(cfg Config) *http.Transport {
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       0,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
+		ExpectContinueTimeout: cfg.ExpectContinueTimeout,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
+		WriteBufferSize:       256 * 1024,
+		ReadBufferSize:        256 * 1024,
+	}
+}
+
+func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
+	cfg = cfg.normalized()
+	discoveryTransport := baseTransport(cfg)
 	defer discoveryTransport.CloseIdleConnections()
 	discoveryClient := &http.Client{Transport: discoveryTransport}
 
 	pf, err := getPreflight(ctx, discoveryClient, cfg.BaseURL)
 	if err != nil {
-		emit(Event{Kind: EventError, At: time.Now(), Err: err})
-		return err
+		return nil, err
 	}
 	target, err := selectTarget(cfg, pf)
 	if err != nil {
-		emit(Event{Kind: EventError, At: time.Now(), Err: err})
-		return err
+		return nil, err
 	}
-	transfer, closeTransfer := protocolClient(cfg, target.Protocol, baseTransport)
+	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
 	defer closeTransfer()
 	probe, err := getProbe(ctx, transfer, target)
 	if err != nil {
-		emit(Event{Kind: EventError, At: time.Now(), Err: err})
-		return err
+		return nil, err
 	}
-	wsTransport := baseTransport()
+	wsTransport := baseTransport(cfg)
 	wsp := &http.Protocols{}
 	wsp.SetHTTP1(true)
 	wsTransport.Protocols = wsp
@@ -69,7 +117,7 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
 	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
 	if latencyErr != nil && needsLatency {
-		return latencyErr
+		return nil, latencyErr
 	}
 	var latencyProbe *wire.Probe
 	if !needsLatency {
@@ -77,18 +125,47 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	} else if latencyTarget != nil {
 		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)
 		if err != nil {
-			if needsLatency {
-				return err
-			}
-			latencyTarget = nil
+			return nil, err
 		} else {
 			latencyProbe = &p
 		}
 	}
+	return &PreparedConnection{Preflight: pf, ThroughputTarget: *target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
+}
+
+func Run(ctx context.Context, cfg Config, emit func(Event)) error {
+	prepared, err := Prepare(ctx, cfg)
+	if err != nil {
+		emit(Event{Kind: EventError, At: time.Now(), Err: err})
+		return err
+	}
+	return RunPrepared(ctx, cfg, prepared, emit)
+}
+
+func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, emit func(Event)) error {
+	cfg = cfg.normalized()
+	if prepared == nil || prepared.configKey != preparationKey(cfg) || time.Since(prepared.VerifiedAt) > preparationFreshness {
+		return Run(ctx, cfg, emit)
+	}
+	target := &prepared.ThroughputTarget
+	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
+	defer closeTransfer()
+	wsTransport := baseTransport(cfg)
+	wsp := &http.Protocols{}
+	wsp.SetHTTP1(true)
+	wsTransport.Protocols = wsp
+	defer wsTransport.CloseIdleConnections()
+	wsClient := &http.Client{Transport: wsTransport}
+	pf := prepared.Preflight
+	probe := prepared.Probe
+	latencyTarget := prepared.LatencyTarget
+	latencyProbe := prepared.LatencyProbe
 	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: targetProtocolEvidence(target.Protocol)}
 	if latencyTarget != nil {
 		event.LatencyTarget = latencyTarget.ID
-		event.LatencyProtocol = latencyProbe.ProtocolNegotiated
+		if latencyProbe != nil {
+			event.LatencyProtocol = latencyProbe.ProtocolNegotiated
+		}
 	}
 	emit(event)
 

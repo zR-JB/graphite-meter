@@ -10,10 +10,10 @@
  * with exactly the transfer we're measuring against. The worker reports only
  * computed { rtt, lost } samples; raw frames never cross the thread boundary.
  *
- * ── Cadenced send (accurate from sub-1 ms to seconds of RTT) ──
- *   • A start-to-start scheduler enforces the configured minimum interval. A
- *     PONG can free capacity and resume an overdue sender, but never starts an
- *     early PING or a catch-up burst.
+ * ── Send policy (accurate from sub-1 ms to seconds of RTT) ──
+ *   • Fixed modes enforce their configured start-to-start interval.
+ *   • Reply-driven mode sends on each PONG. A conservative RTT-derived backup
+ *     pacer keeps the chain alive when a reply disappears.
  *   • Multiple pings may remain in flight on high-RTT links. Each carries its
  *     own id, so out-of-order pongs match.
  *   • maxInFlight cap: bounds wire spam AND memory.
@@ -56,12 +56,13 @@ type InMsg =
       type: "start";
       url: string;
       intervalMs: number;
+      replyDriven: boolean;
       maxInFlight: number;
       reportGapMs: number;
       lossK: number;
       lossFloorMs: number;
     }
-  | { type: "measure" }
+  | { type: "measure"; intervalMs?: number }
   | { type: "stop" };
 
 /** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
@@ -88,14 +89,19 @@ const RECONNECT_MIN_MS = 100;
 const RECONNECT_MAX_MS = 2_000;
 /** Recently-evicted ids kept for late-pong learning (bounded, FIFO). */
 const GRAVEYARD_MAX = 64;
+const REPLY_BACKUP_INITIAL_MS = 250;
+const REPLY_BACKUP_FLOOR_MS = 8;
+const REPLY_BACKUP_CEIL_MS = 1_000;
 
 let url = "";
 let ws: WebSocket | null = null;
 let measuring = false;
 let stopped = false;
 
-// Tuning — fixed for the lifetime of the stage-owned worker.
+// Tuning — stage workers keep this fixed; the idle worker settles from probe
+// pacing to its one-second keepalive interval.
 let intervalMs = 250;
+let replyDriven = false;
 let maxInFlight = 16;
 let reportGapMs = 20;
 let lossK = 4;
@@ -105,6 +111,7 @@ let lossFloorMs = 250;
 const pending = new Map<number, number>(); // id → sendTime (performance.now())
 const graveyard = new Map<number, number>(); // evicted id → sendTime (late-pong learning)
 let nextId = 0; // client-owned monotonic uint32
+let replyHeadId: number | null = null;
 let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
 let outbox: { rtt: number; lost: boolean }[] = [];
 
@@ -128,20 +135,30 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
     case "start":
       url = m.url;
       intervalMs = m.intervalMs;
+      replyDriven = m.replyDriven;
       maxInFlight = m.maxInFlight;
       reportGapMs = m.reportGapMs;
       lossK = m.lossK;
       lossFloorMs = m.lossFloorMs;
-      scheduler = new PingScheduler(intervalMs, (now) => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-        if (pending.size >= maxInFlight) return false;
-        sendPing(now);
-        return true;
-      });
+      scheduler = new PingScheduler(
+        replyDriven
+          ? { kind: "reply-driven", backupDelayMs: replyBackupDelay }
+          : { kind: "fixed", intervalMs },
+        (now) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+          if (pending.size >= maxInFlight) return false;
+          sendPing(now);
+          return true;
+        },
+      );
       ensureTimers();
       connect();
       break;
     case "measure":
+      if (m.intervalMs !== undefined) {
+        intervalMs = m.intervalMs;
+        scheduler?.setInterval(intervalMs);
+      }
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
       break;
@@ -166,8 +183,8 @@ function connect(): void {
       stalledOut = false;
     }
     post({ type: "open" });
-    // Optional warmup hello — the server replies READY (ignored). Then start the
-    // chain immediately so the wire is warm before `measure` flips reporting on.
+    // Optional warmup hello — the server replies READY (ignored). Start pinging
+    // immediately so the wire is warm before `measure` flips reporting on.
     trySend(encode({ op: "HI", proto: "ws" }));
     scheduler?.reset();
     scheduler?.start();
@@ -221,16 +238,13 @@ function onFrame(data: unknown): void {
     pending.delete(f.id);
     const rtt = recv - sent;
     rttEstimate = observeRtt(rttEstimate, rtt); // ALWAYS — keeps the loss-timeout estimator accurate
-    // Downsample the UI-bound stream: on a fast link the on-receive chain fires
-    // far faster than any chart needs (~1 kHz on localhost), so report at most
-    // one sample per reportGapMs. The pings stay fast (responsiveness + a full
-    // in-flight window); only what crosses to the main thread is capped, so
-    // host.ingestLatency isn't called thousands of times/sec.
+    // Reply-driven localhost sampling can outrun the UI. Only downsample what
+    // crosses the worker boundary; wire pacing and RTT timestamps stay intact.
     if (measuring && recv - lastReportAt >= reportGapMs) {
       lastReportAt = recv;
       outbox.push({ rtt, lost: false });
     }
-    scheduler?.nudge();
+    if (!replyDriven || f.id === replyHeadId) scheduler?.complete();
     return;
   }
 
@@ -241,7 +255,6 @@ function onFrame(data: unknown): void {
   if (late !== undefined) {
     graveyard.delete(f.id);
     rttEstimate = observeRtt(rttEstimate, recv - late);
-    scheduler?.nudge();
   }
   // else: unknown / duplicate id — ignore.
 }
@@ -251,7 +264,18 @@ function sendPing(now: number): void {
   nextId = (nextId + 1) >>> 0; // uint32 wrap — the in-flight window is tiny, so a
   // wrapped id can never collide with a still-pending one.
   pending.set(id, now);
+  if (replyDriven) replyHeadId = id;
   trySend(encode({ op: "PING", id }));
+}
+
+function replyBackupDelay(): number {
+  if (!rttEstimate.haveRtt) return REPLY_BACKUP_INITIAL_MS;
+  return lossTimeout(
+    rttEstimate,
+    lossK,
+    REPLY_BACKUP_FLOOR_MS,
+    REPLY_BACKUP_CEIL_MS,
+  );
 }
 
 function trySend(msg: string): void {
@@ -266,18 +290,19 @@ function sweep(): void {
   const now = performance.now();
   const timeout = lossTimeout(rttEstimate, lossK, lossFloorMs, LOSS_CEIL_MS);
   let evicted = false;
+  let replyHeadEvicted = false;
   for (const [id, sent] of pending) {
     if (now - sent > timeout) {
       pending.delete(id);
       rememberEvicted(id, sent);
       evicted = true;
+      if (id === replyHeadId) replyHeadEvicted = true;
       if (measuring) outbox.push({ rtt: now - sent, lost: true });
     }
   }
-  // Nudge ONLY when an eviction freed a slot the cap was blocking on. An
-  // unconditional nudge would add a send per sweep tick on top of the pacer,
-  // breaking the paced (chain-off) modes' send rate.
-  if (evicted) scheduler?.nudge();
+  // A timed-out request completes one chain step. Fixed pacing still respects
+  // its boundary; reply-driven pacing replaces it immediately.
+  if (evicted && (!replyDriven || replyHeadEvicted)) scheduler?.complete();
 }
 
 /** Stash an evicted id so a late pong can still teach the estimator. Bounded
@@ -309,6 +334,7 @@ function teardown(): void {
   flush(); // emit any tail
   pending.clear();
   graveyard.clear();
+  replyHeadId = null;
   try {
     ws?.close(1000, "");
   } catch {

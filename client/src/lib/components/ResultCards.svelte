@@ -110,14 +110,16 @@
   }
 
   const pingShow = $derived(
-    store.config.stages.latency && (ping.active || ping.has),
+    store.runConfig.stages.latency && (ping.active || ping.has),
   );
   const dlShow = $derived(
-    store.config.stages.download && (dl.active || dl.has),
+    store.runConfig.stages.download && (dl.active || dl.has),
   );
-  const ulShow = $derived(store.config.stages.upload && (ul.active || ul.has));
+  const ulShow = $derived(
+    store.runConfig.stages.upload && (ul.active || ul.has),
+  );
   const bidiShow = $derived(
-    store.config.stages.bidirectional && (bidi.active || bidi.has),
+    store.runConfig.stages.bidirectional && (bidi.active || bidi.has),
   );
 
   const dlShown = $derived(store.toUnit(dl.measuredBytesPerSec));
@@ -127,7 +129,7 @@
   const showWire = $derived(store.showWireEstimates);
 
   type CardWire =
-    | { kind: "lift"; num: string; pct: string; range: string }
+    | { kind: "lift"; num: string; pct: string }
     | { kind: "flat"; text: string }
     | null;
   interface CardVM {
@@ -151,8 +153,6 @@
     has: boolean;
     multiplier: number;
     estimatedBytesPerSec: number;
-    lowerBytesPerSec: number;
-    upperBytesPerSec: number;
     available: boolean;
   }): CardWire {
     if (!showWire) return null;
@@ -163,7 +163,6 @@
         kind: "lift",
         num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
         pct: pctLift(m.multiplier),
-        range: `${fmtSpeed(store.toUnit(m.lowerBytesPerSec))}–${fmtSpeed(store.toUnit(m.upperBytesPerSec))}`,
       };
     return { kind: "flat", text: m.has ? "no overhead applied" : "" };
   }
@@ -229,9 +228,7 @@
         score: ping.score,
         num: ping.has ? fmtMs(ping.ms) : dash,
         unit: "ms",
-        wire: showWire
-          ? { kind: "flat", text: "latency — uncompensated" }
-          : null,
+        wire: null,
       });
     return out;
   });
@@ -275,9 +272,6 @@
           <span class="est-tag" use:tooltip={JARGON.wireRate}
             >wire {c.wire.pct}</span
           >
-          {#if c.wire.range}
-            <span class="est-flat">({c.wire.range})</span>
-          {/if}
         {:else}
           <span class="est-flat">{c.wire.text}</span>
         {/if}

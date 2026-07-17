@@ -482,7 +482,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
         uploadMs: 1,
         bidirectionalMs: 1,
       },
-      pingCadence: "instant",
+      pingCadence: "reply-driven",
       loadedPingCadence: "medium",
       experimentalChunkedDownload: false,
       compensation: {
@@ -550,6 +550,10 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
     });
     const info = await secondProbe;
+    expect(pingMessages).toContainEqual({
+      type: "measure",
+      intervalMs: 1000,
+    });
     expect(info.latencyClientIp).toBe("127.0.0.1");
     expect(info.latencyClientIpVersion).toBe(4);
     expect(info.latencyClientIpSource).toBe("socket");
@@ -571,6 +575,20 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     expect(discoveries[0].throughput.http2.state).toBe("not-advertised");
     expect(discoveries[2].throughput.http2.state).toBe("advertised");
 
+    let fetchStart = fetchUrls.length;
+    await backend.probe(config, undefined, "throughput");
+    expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
+
+    fetchStart = fetchUrls.length;
+    const latencyProbe = backend.probe(config, undefined, "latency");
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    pingWorker!.emit({
+      type: "samples",
+      samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
+    });
+    await latencyProbe;
+    expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
+
     backend.onRunStart(config);
     const unloaded: PhaseActivity = {
       stage: "latency",
@@ -580,8 +598,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     backend.onStageBegin(unloaded);
     expect(pingMessages.at(-1)).toMatchObject({
       type: "start",
-      intervalMs: 80,
-      maxInFlight: 16,
+      replyDriven: true,
+      maxInFlight: 4,
     });
     backend.onStageMeasure(unloaded);
     expect(pingMessages.at(-1)).toEqual({ type: "measure" });
@@ -596,6 +614,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     expect(pingMessages.at(-1)).toMatchObject({
       type: "start",
       intervalMs: 250,
+      replyDriven: false,
       maxInFlight: 2,
     });
     backend.onStageMeasure(loaded);
