@@ -127,7 +127,8 @@ function makeConfig(
       bidirectionalMs: 0,
       ...overrides.duration,
     },
-    pingConcurrency: "medium",
+    pingCadence: "instant",
+    loadedPingCadence: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
     transports: {

@@ -93,6 +93,13 @@ export function loadPersisted(): PersistedState {
   // Version 1 originally stored a numeric IP family. Preserve that explicit
   // expert choice now that the setting also supports automatic detection.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  const legacyPingCadence = parsedConfig?.pingConcurrency;
+  if (
+    legacyPingCadence === "instant" ||
+    legacyPingCadence === "medium" ||
+    legacyPingCadence === "slow"
+  )
+    merged.config.pingCadence = legacyPingCadence;
   const legacyTransports = isPlainObject(parsedConfig?.transports)
     ? parsedConfig.transports
     : null;

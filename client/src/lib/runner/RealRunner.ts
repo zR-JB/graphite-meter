@@ -2,6 +2,7 @@
 // pushes only measured wire samples into RunnerCore.
 import type {
   RunnerConfig,
+  PingCadence,
   InfraInfo,
   EngineInfo,
   TransportKind,
@@ -58,13 +59,12 @@ const LANE_STAGGER_MS = 75;
 const PROGRESS_BYE_GRACE_MS = 1000;
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
+const PING_INTERVAL: Record<PingCadence, number> = {
   instant: 80,
   medium: 250,
   slow: 600,
 };
 const PING_MAX_IN_FLIGHT = 16;
-const PING_LOADED_INTERVAL_MS = 120;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
 const PING_REPORT_GAP_MS = 20;
 const PING_LOSS_K = 4;
@@ -972,7 +972,8 @@ export class RealBackend implements RunnerBackend {
     if (!channel || channel.transport !== "websocket" || !latencyRoute)
       throw new Error("latency target not resolved");
     const url = httpToWs(channel.origin) + latencyRoute;
-    const intervalMs = PING_INTERVAL[cfg.pingConcurrency];
+    const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
+    const intervalMs = PING_INTERVAL[cadence];
 
     this.#latencyUnderLoad = false;
     this.#pingActive = true;
@@ -1000,7 +1001,9 @@ export class RealBackend implements RunnerBackend {
       type: "start",
       url,
       intervalMs,
-      maxInFlight: PING_MAX_IN_FLIGHT,
+      maxInFlight: isLatencyStage
+        ? PING_MAX_IN_FLIGHT
+        : PING_LOADED_MAX_IN_FLIGHT,
       reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
@@ -1536,7 +1539,8 @@ export class RealBackend implements RunnerBackend {
 
   /** Begin measuring on the already-open ping channel (opened in
    *  #primeLatencyChannel). RTT = now − sent; an unacked / timed-out ping is
-   *  `lost`. Push at the config.pingConcurrency interval via
+   *  `lost`. The channel retains the cadence selected when its stage warmup
+   *  began; measurement only enables reporting via
    *  host.ingestLatency(rtt, underLoad, lost) — `underLoad` is true when the
    *  pings run concurrently with a transfer (bufferbloat). */
   #measureLatency(underLoad: boolean): void {
@@ -1545,20 +1549,7 @@ export class RealBackend implements RunnerBackend {
     // warmup). underLoad tags every forwarded sample: true when these pings run
     // concurrently with a transfer (bufferbloat), false for the idle stage.
     this.#latencyUnderLoad = underLoad;
-    const cfg = this.#host!.config!;
-    this.#pingWorker?.postMessage(
-      underLoad
-        ? {
-            type: "measure",
-            maxInFlight: PING_LOADED_MAX_IN_FLIGHT,
-            intervalMs: PING_LOADED_INTERVAL_MS,
-          }
-        : {
-            type: "measure",
-            maxInFlight: PING_MAX_IN_FLIGHT,
-            intervalMs: PING_INTERVAL[cfg.pingConcurrency],
-          },
-    );
+    this.#pingWorker?.postMessage({ type: "measure" });
   }
 
   #closeAll(): void {

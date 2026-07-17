@@ -50,8 +50,7 @@ import { nextBackoff } from "./backoff";
 import { PingScheduler } from "./pingScheduler";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
- *  reporting on for the SAME warmed socket; `stop` closes everything. Cadence
- *  fields remain optional while callers transition to stage-owned tuning. */
+ *  reporting on for the SAME warmed socket; `stop` closes everything. */
 type InMsg =
   | {
       type: "start";
@@ -62,13 +61,7 @@ type InMsg =
       lossK: number;
       lossFloorMs: number;
     }
-  | {
-      type: "measure";
-      /** Swap the in-flight cap live (loaded → small, e.g. 2). Omitted ⇒ leave. */
-      maxInFlight?: number;
-      /** Swap the pacer floor live; restarts the pacer timer. Omitted ⇒ leave. */
-      intervalMs?: number;
-    }
+  | { type: "measure" }
   | { type: "stop" };
 
 /** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
@@ -101,7 +94,7 @@ let ws: WebSocket | null = null;
 let measuring = false;
 let stopped = false;
 
-// Tuning — set on `start`, partly re-tuned per phase on `measure`.
+// Tuning — fixed for the lifetime of the stage-owned worker.
 let intervalMs = 250;
 let maxInFlight = 16;
 let reportGapMs = 20;
@@ -151,16 +144,6 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
     case "measure":
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
-      // Swap to the phase's cadence (idle = tight, loaded = sparse). Each field
-      // is optional so an omitted one keeps the warmup `start` tuning.
-      if (m.maxInFlight !== undefined) maxInFlight = m.maxInFlight;
-      if (m.intervalMs !== undefined && m.intervalMs !== intervalMs) {
-        intervalMs = m.intervalMs;
-        scheduler.setInterval(intervalMs);
-      }
-      // The cap may have shrunk; nothing to evict, but if it GREW, nudge so the
-      // window refills without waiting a full pacer interval.
-      scheduler.nudge();
       break;
     case "stop":
       teardown();

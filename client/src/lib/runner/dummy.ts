@@ -10,6 +10,7 @@
 
 import type {
   RunnerConfig,
+  PingCadence,
   RunnerAnomaly,
   InfraInfo,
   EngineInfo,
@@ -92,7 +93,7 @@ const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
   }, // ~9.5/4.5 Mbit/s
 };
 
-const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
+const PING_INTERVAL: Record<PingCadence, number> = {
   instant: 80,
   medium: 250,
   slow: 600,
@@ -295,7 +296,10 @@ export class DummyBackend implements RunnerBackend {
     const pingActive =
       activity.stage === "latency" ||
       (activity.transfer.length > 0 && activity.loadedLatency);
-    const pingInterval = PING_INTERVAL[cfg.pingConcurrency];
+    const pingInterval =
+      PING_INTERVAL[
+        activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence
+      ];
     if (pingActive && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
       this.#synthLatency(activity, elapsed, segStart, segEnd);

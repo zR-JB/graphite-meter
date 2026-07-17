@@ -576,13 +576,26 @@
   <section class="panel">
     <h3>Connections &amp; Timing</h3>
     <label>
-      <span>Ping velocity</span>
-      <select disabled={running} bind:value={store.config.pingConcurrency}>
-        <option value="instant">Instant</option>
-        <option value="medium">Medium</option>
-        <option value="slow">Slow</option>
+      <span>Unloaded ping cadence</span>
+      <select disabled={running} bind:value={store.config.pingCadence}>
+        <option value="instant">Instant (80 ms)</option>
+        <option value="medium">Medium (250 ms)</option>
+        <option value="slow">Slow (600 ms)</option>
       </select>
     </label>
+    <p class="hint">Applies to latency warmup and unloaded measurement.</p>
+    <label>
+      <span>Loaded ping cadence</span>
+      <select disabled={running} bind:value={store.config.loadedPingCadence}>
+        <option value="instant">Instant (80 ms)</option>
+        <option value="medium">Medium (250 ms)</option>
+        <option value="slow">Slow (600 ms)</option>
+      </select>
+    </label>
+    <p class="hint">
+      Applies to warmup and loaded-latency measurement during download, upload,
+      and bidirectional stages.
+    </p>
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
       onToggle={setForcedStreams}
