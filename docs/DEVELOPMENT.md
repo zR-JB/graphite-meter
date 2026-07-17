@@ -67,6 +67,29 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just goclient-run`      | `go run`s the native TUI client against a running server.                                                                                                        |
 | `just container-build`   | `docker build -f container/Dockerfile -t graphite-meter:latest .`                                                                                                |
 
+## Browser ping-cadence capture
+
+Use a loopback or quiet LAN target to verify application-level `/ws/ping` pacing independently of
+worker reporting and chart updates:
+
+1. Run `just dev`, open the browser client, disable adaptive early finish, and set the latency
+   duration to exactly 4000ms. Leave warmup enabled so the capture also shows that the same socket
+   and cadence continue across the warmup-to-measurement boundary.
+2. In browser developer tools, open Network, select the `/ws/ping` WebSocket, and view its Messages
+   or Frames. Clear the frame list at the latency measurement boundary, or count only outbound
+   `PING,<id>` frames whose timestamps fall inside that four-second measured window. Exclude `HI`
+   and the preceding warmup PINGs.
+3. Repeat with Unloaded ping cadence set to Instant (80ms), Medium (250ms), and Slow (600ms).
+   Expect roughly 50, 16, and 6–7 outbound PING frames respectively. A one-timer-boundary difference
+   is normal when a frame lands exactly on a window edge.
+4. Repeat the fixed-window count during download or upload with loaded latency enabled, changing
+   only Loaded ping cadence. Expect the same three counts. This validates that the transfer-stage
+   warmup and measurement use the loaded selector while the unloaded selector remains independent.
+
+Immediate loopback PONGs must not increase these counts. Pending-window saturation or RTT longer
+than the cadence may reduce them, but recovery must not produce early sends or catch-up bursts.
+Pre-test probes and the idle connectivity keepalive are intentionally outside both controls.
+
 `just prod` and `just client-build-prod` accept the `GM_CLIENT_*` knobs inline to produce a
 configurable build instead of the real-only default, e.g.:
 
