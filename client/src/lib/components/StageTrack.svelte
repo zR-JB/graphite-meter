@@ -2,7 +2,7 @@
   // Stage rail: maps store/core stage state into toggleable progress segments
   // for latency, download, upload, and optional bidirectional.
   import { MEASURED_STAGES, store, type StageKey } from "../state/store.svelte";
-  import { applyStageChange } from "../runner/wire.svelte";
+  import { applyLiveRunConfig } from "../runner/wire.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 
@@ -47,7 +47,7 @@
   }
 
   function onToggle(stage: StageKey) {
-    if (store.toggleStage(stage)) applyStageChange();
+    if (store.toggleStage(stage)) applyLiveRunConfig();
   }
 
   function lockReason(stage: StageKey, state: SegState): string | null {
@@ -161,7 +161,7 @@
           : "Bidirectional — running."}
       disabled={!store.canDisableBidirectional()}
       onclick={() => {
-        if (store.disableBidirectional()) applyStageChange();
+        if (store.disableBidirectional()) applyLiveRunConfig();
       }}
     >
       <div class="seg-bar" aria-hidden="true">

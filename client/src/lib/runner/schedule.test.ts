@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildSegments, rebuildTail } from "./schedule";
+import { buildSegments, reconfigureTimeline } from "./schedule";
 import type { RunnerConfig } from "./contract";
 
 // A minimal but complete RunnerConfig fixture. store.svelte.ts's DEFAULT_CONFIG
@@ -93,7 +93,7 @@ test("bidirectional gets its own warmup segment when warmupMs > 0", () => {
   expect(segments.map((s) => s.phase)).toEqual(["warmup", "bidirectional"]);
 });
 
-test("rebuildTail appends a not-yet-started bidirectional stage when enabled mid-run", () => {
+test("reconfigureTimeline appends a not-yet-started bidirectional stage when enabled mid-run", () => {
   const before = cfg({
     stages: { ...BASE_CONFIG.stages, bidirectional: false },
   });
@@ -101,11 +101,11 @@ test("rebuildTail appends a not-yet-started bidirectional stage when enabled mid
   const after = cfg({
     stages: { ...BASE_CONFIG.stages, bidirectional: true },
   });
-  const rebuilt = rebuildTail(segments, 0, after);
+  const rebuilt = reconfigureTimeline(segments, 0, after);
   expect(rebuilt.segments.some((s) => s.phase === "bidirectional")).toBe(true);
 });
 
-test("rebuildTail drops a not-yet-started bidirectional stage when disabled mid-run", () => {
+test("reconfigureTimeline drops a not-yet-started bidirectional stage when disabled mid-run", () => {
   const before = cfg({
     stages: { ...BASE_CONFIG.stages, bidirectional: true },
   });
@@ -113,6 +113,32 @@ test("rebuildTail drops a not-yet-started bidirectional stage when disabled mid-
   const after = cfg({
     stages: { ...BASE_CONFIG.stages, bidirectional: false },
   });
-  const rebuilt = rebuildTail(segments, 0, after);
+  const rebuilt = reconfigureTimeline(segments, 0, after);
   expect(rebuilt.segments.some((s) => s.phase === "bidirectional")).toBe(false);
+});
+
+test("reconfigureTimeline resizes the active stage from its original start", () => {
+  const before = cfg({
+    stages: {
+      latency: false,
+      download: true,
+      upload: false,
+      bidirectional: false,
+    },
+    duration: { ...BASE_CONFIG.duration, warmupMs: 0, downloadMs: 10000 },
+  });
+  const { segments } = buildSegments(before);
+  const shortened = reconfigureTimeline(
+    segments,
+    3000,
+    cfg({ ...before, duration: { ...before.duration, downloadMs: 5000 } }),
+  );
+  expect(shortened.segments[0]).toMatchObject({ start: 0, end: 5000 });
+
+  const expired = reconfigureTimeline(
+    segments,
+    3000,
+    cfg({ ...before, duration: { ...before.duration, downloadMs: 2000 } }),
+  );
+  expect(expired.totalMs).toBe(3000);
 });

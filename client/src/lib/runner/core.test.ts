@@ -677,6 +677,82 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   expect(core.phase).toBe("complete");
 });
 
+test("duration changes resize the active stage and finish immediately when its new budget has passed", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({ duration: { downloadMs: 2000 } });
+  await core.start(cfg);
+  advance(600);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: { ...cfg.duration, downloadMs: 500 },
+    adaptive: cfg.adaptive,
+  });
+
+  expect(core.phase).toBe("complete");
+});
+
+test("extending the active duration keeps the stage running to the new budget", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({ duration: { downloadMs: 500 } });
+  await core.start(cfg);
+  advance(400);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: { ...cfg.duration, downloadMs: 1000 },
+    adaptive: cfg.adaptive,
+  });
+  advance(100);
+  expect(core.phase).toBe("download");
+  advance(500);
+  expect(core.phase).toBe("complete");
+});
+
+test("adaptive completion can be enabled after a stable stage has started", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({
+    duration: { downloadMs: 2000 },
+    adaptive: { enabled: false, minTransferSamples: 5 },
+  });
+  await core.start(cfg);
+  advance(400);
+  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: cfg.duration,
+    adaptive: { ...cfg.adaptive, enabled: true },
+  });
+  advance(cfg.adaptive.glideMs);
+
+  expect(core.phase).toBe("complete");
+});
+
+test("adaptive completion can be disabled before a stable stage arms", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const cfg = makeConfig({
+    duration: { downloadMs: 2000 },
+    adaptive: { enabled: true, minTransferSamples: 5 },
+  });
+  await core.start(cfg);
+  advance(400);
+  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: cfg.duration,
+    adaptive: { ...cfg.adaptive, enabled: false },
+  });
+  advance(cfg.adaptive.glideMs * 2);
+
+  expect(core.phase).toBe("download");
+});
+
 // ---------------------------------------------------------------------------
 // Dual EMA (display vs stability) from the same raw samples
 // ---------------------------------------------------------------------------

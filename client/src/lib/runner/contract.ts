@@ -481,6 +481,14 @@ export type RunnerAnomaly =
   // scenario visually testable with the dummy.
   | { kind: "connection-drop"; durationMs?: number };
 
+/** Settings the core can safely apply after a run has started. Connection and
+ * worker construction remain fixed; these only reshape the remaining timeline
+ * or its completion rule. */
+export type LiveRunConfig = Pick<
+  RunnerConfig,
+  "stages" | "duration" | "adaptive"
+>;
+
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
   /** Verify the selected target, then run. Emits `connecting` immediately so
@@ -496,11 +504,8 @@ export interface NetworkRunner {
   /** Static engine identity + transport capabilities (no I/O). */
   describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
-  /** Apply a live change to the enabled stage set mid-run — only future
-   *  (not-yet-started) stages are affected, so toggling one off shortens the
-   *  remaining run. OPTIONAL so a minimal engine can omit live reconfigure;
-   *  no-op when idle. */
-  reconfigureStages?(stages: RunnerConfig["stages"]): void;
+  /** Apply settings that are safe to change during a run. */
+  reconfigure?(config: LiveRunConfig): void;
   /** OPTIONAL — fire a live anomaly into an in-flight run. Kept
    *  optional so a minimal real engine need not implement it. */
   injectAnomaly?(a: RunnerAnomaly): void;

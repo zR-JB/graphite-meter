@@ -3,6 +3,7 @@
 
 import type {
   NetworkRunner,
+  LiveRunConfig,
   RunnerConfig,
   RunnerEvent,
   RunnerAnomaly,
@@ -30,7 +31,7 @@ import {
 import {
   buildSegments,
   adaptiveWarmupMs,
-  rebuildTail,
+  reconfigureTimeline,
   segmentAt,
   type Segment,
 } from "./schedule";
@@ -425,29 +426,37 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  /* ================= LIVE STAGE RECONFIGURE ================= */
-  /**
-   * Apply a live change to the enabled stage set mid-run. Only FUTURE segments
-   * (those starting after the current elapsed) are rebuilt; the current and past
-   * phases are untouched, so toggling a not-yet-started stage off simply shortens
-   * the remaining timeline. No-op when idle (the next start() snapshot already
-   * reflects the change).
-   */
-  reconfigureStages(stages: RunnerConfig["stages"]): void {
+  /* ================= LIVE RECONFIGURE ================= */
+  reconfigure(config: LiveRunConfig): void {
     if (!this.#tickTimer || !this.#cfg) return;
-    this.#cfg = { ...this.#cfg, stages };
+    const activeBefore = this.#activeSeg;
+    const stagesChanged = Object.keys(config.stages).some(
+      (stage) =>
+        config.stages[stage as keyof RunnerConfig["stages"]] !==
+        this.#cfg!.stages[stage as keyof RunnerConfig["stages"]],
+    );
+    this.#cfg = { ...this.#cfg, ...config };
 
-    const { segments, totalMs } = rebuildTail(
+    const { segments, totalMs } = reconfigureTimeline(
       this.#segments,
       this.#measuredElapsed,
       this.#cfg,
     );
     this.#segments = segments;
     this.#totalMs = totalMs;
+    const activeAfter = segmentAt(segments, this.#measuredElapsed);
+    if (
+      activeBefore &&
+      activeAfter &&
+      activeAfter.phase === activeBefore.phase &&
+      activeAfter.activity.stage === activeBefore.activity.stage
+    )
+      this.#activeSeg = activeAfter;
     // Segment indices shifted under us — drop any armed glide so it re-arms
     // against the rebuilt array on a later tick.
     this.#glideArmedForSeg = -1;
-    this.#backend.onReconfigure?.(stages);
+    if (stagesChanged) this.#backend.onReconfigure?.(config.stages);
+    this.#tick();
   }
 
   /* ================= MASTER TICK ================= */

@@ -6,7 +6,7 @@
     RunnerConfig,
   } from "../../runner/contract";
   import { applyConnectionProfile } from "../../compensation";
-  import { applyStageChange } from "../../runner/wire.svelte";
+  import { applyLiveRunConfig } from "../../runner/wire.svelte";
   import { tooltip, JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
@@ -60,12 +60,33 @@
   let durationMode = $state<Preset>(presetFromDuration());
   function setPreset(preset: Preset) {
     durationMode = preset;
-    if (preset !== "custom")
+    if (preset !== "custom") {
       store.config.duration = { ...DURATION_PRESETS[preset] };
+      applyLiveRunConfig();
+    }
+  }
+  function setDuration(key: (typeof DURATION_KEYS)[number], event: Event) {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    if (!Number.isFinite(value) || value < 0) return;
+    store.config.duration[key] = value;
+    applyLiveRunConfig();
   }
   function setBidirectional(enabled: boolean) {
     store.config.stages.bidirectional = enabled;
-    applyStageChange();
+    applyLiveRunConfig();
+  }
+  function setAdaptiveEnabled(enabled: boolean) {
+    store.config.adaptive.enabled = enabled;
+    applyLiveRunConfig();
+  }
+  function setAdaptiveNumber(
+    key: "minCoverageRatio" | "stabilityThreshold" | "glideMs",
+    event: Event,
+  ) {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    if (!Number.isFinite(value)) return;
+    store.config.adaptive[key] = value;
+    applyLiveRunConfig();
   }
   const presetCells = $derived.by(() => {
     const preset = durationMode;
@@ -144,11 +165,6 @@
       (!store.latencyEnabled ||
         store.connections.latency.validation === "verified"),
   );
-  const uploadProgressPath = $derived(
-    store.connections.throughput.target
-      ? `Fetch streams over ${store.connections.throughput.summary.replace("Fetch stream · ", "")}`
-      : "Waiting for the throughput path",
-  );
 </script>
 
 <div class="setup-grid">
@@ -165,12 +181,16 @@
       Throughput carries downloads, uploads, and upload progress. Latency uses
       its own independently selected path.
     </p>
-    <ConnectionPicker role="throughput" options={THROUGHPUT_TARGETS} />
-    <ConnectionPicker role="latency" options={LATENCY_TARGETS} />
-    <div class="path-note">
-      <span>Upload progress</span>
-      <strong>{uploadProgressPath}</strong>
-    </div>
+    <ConnectionPicker
+      role="throughput"
+      options={THROUGHPUT_TARGETS}
+      locked={running}
+    />
+    <ConnectionPicker
+      role="latency"
+      options={LATENCY_TARGETS}
+      locked={running}
+    />
   </section>
 
   <section class="panel">
@@ -199,7 +219,8 @@
               type="number"
               min="0"
               step="500"
-              bind:value={store.config.duration[key]}
+              value={store.config.duration[key]}
+              oninput={(event) => setDuration(key, event)}
             />
           </label>
         {/each}
@@ -215,9 +236,7 @@
       </div>
     {/if}
     {#if running}
-      <p class="hint">
-        Unstarted stages update live. Other edits are kept for the next run.
-      </p>
+      <p class="hint">Durations and unstarted stages update this run live.</p>
     {/if}
   </section>
 
@@ -226,6 +245,7 @@
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
       onToggle={setForcedStreams}
+      disabled={running}
       label="Force exact stream count"
       tooltip="Automatic caps HTTP/1.1 at the configured maximum while choosing protocol-safe concurrency for HTTP/2 and HTTP/3. Forced starts the exact count per active direction."
     />
@@ -240,6 +260,7 @@
         min="1"
         max="128"
         step="1"
+        disabled={running}
         bind:value={store.config.transferStreams.count}
       />
     </label>
@@ -397,7 +418,8 @@
   <section class="panel">
     <h3>Early finish</h3>
     <Switch
-      bind:checked={store.config.adaptive.enabled}
+      checked={store.config.adaptive.enabled}
+      onToggle={setAdaptiveEnabled}
       label="Finish stable stages early"
     />
     {#if store.config.adaptive.enabled}
@@ -408,7 +430,8 @@
             min="0.25"
             max="1"
             step="0.01"
-            bind:value={store.config.adaptive.minCoverageRatio}
+            value={store.config.adaptive.minCoverageRatio}
+            oninput={(event) => setAdaptiveNumber("minCoverageRatio", event)}
           /></label
         >
         <label
@@ -417,7 +440,8 @@
             min="0.5"
             max="0.99"
             step="0.01"
-            bind:value={store.config.adaptive.stabilityThreshold}
+            value={store.config.adaptive.stabilityThreshold}
+            oninput={(event) => setAdaptiveNumber("stabilityThreshold", event)}
           /></label
         >
         <label
@@ -426,7 +450,8 @@
             min="300"
             max="1500"
             step="50"
-            bind:value={store.config.adaptive.glideMs}
+            value={store.config.adaptive.glideMs}
+            oninput={(event) => setAdaptiveNumber("glideMs", event)}
           /></label
         >
       </div>
@@ -438,7 +463,7 @@
     <h3>Latency timing</h3>
     <label>
       <span>Unloaded ping cadence</span>
-      <select bind:value={store.config.pingCadence}>
+      <select bind:value={store.config.pingCadence} disabled={running}>
         <option value="instant">Instant (80 ms)</option>
         <option value="medium">Medium (250 ms)</option>
         <option value="slow">Slow (600 ms)</option>
@@ -446,7 +471,7 @@
     </label>
     <label>
       <span>Loaded ping cadence</span>
-      <select bind:value={store.config.loadedPingCadence}>
+      <select bind:value={store.config.loadedPingCadence} disabled={running}>
         <option value="instant">Instant (80 ms)</option>
         <option value="medium">Medium (250 ms)</option>
         <option value="slow">Slow (600 ms)</option>
@@ -454,6 +479,7 @@
     </label>
     <Switch
       bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      disabled={running}
       label="Skip loaded latency when latency is off"
     />
   </section>
@@ -462,6 +488,7 @@
     <h3>Download engine</h3>
     <Switch
       bind:checked={store.config.experimentalChunkedDownload}
+      disabled={running}
       label="Chunked download (experimental)"
     />
     <p class="hint">
@@ -620,27 +647,6 @@
     font-size: 10px;
     line-height: 1.55;
   }
-  .path-note {
-    display: grid;
-    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-    gap: 12px;
-    align-items: baseline;
-    padding: 9px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-1);
-  }
-  .path-note span {
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 700;
-  }
-  .path-note strong {
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 600;
-  }
   .duration-fields {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -713,8 +719,7 @@
     margin: 10px;
   }
   @container (max-width: 360px) {
-    .two,
-    .path-note {
+    .two {
       grid-template-columns: 1fr;
       gap: 4px;
     }

@@ -11,6 +11,7 @@
 import type {
   ConnectionRole,
   InfraInfo,
+  LiveRunConfig,
   NetworkRunner,
   RunnerAnomaly,
   RunnerEvent,
@@ -315,9 +316,17 @@ export function returnToStart() {
  * future-stage toggle actually shortens the run. No-op when idle or
  * when the active engine doesn't support live reconfigure.
  */
-export function applyStageChange() {
+export function applyLiveRunConfig() {
   if (!store.isRunning) return;
-  getRunner().reconfigureStages?.($state.snapshot(store.config.stages));
+  const config = $state.snapshot(store.config);
+  const live: LiveRunConfig = {
+    stages: config.stages,
+    duration: config.duration,
+    adaptive: config.adaptive,
+  };
+  getRunner().reconfigure?.(live);
+  if (store.activeConfig)
+    store.activeConfig = { ...store.activeConfig, ...live };
 }
 
 /**

@@ -14,8 +14,9 @@
   interface Props {
     role: ConnectionRole;
     options: readonly Option[];
+    locked?: boolean;
   }
-  let { role, options }: Props = $props();
+  let { role, options, locked = false }: Props = $props();
 
   const selected = $derived(
     role === "throughput"
@@ -52,14 +53,14 @@
       <label
         class="choice"
         class:selected={selected === item.value}
-        class:unavailable={view.disabled}
+        class:unavailable={view.disabled || locked}
       >
         <input
           type="radio"
           name={`${role}-target`}
           value={item.value}
           checked={selected === item.value}
-          disabled={view.disabled}
+          disabled={view.disabled || locked}
           onchange={() => select(item.value)}
         />
         <span class="radio-dot" aria-hidden="true"></span>
@@ -77,10 +78,10 @@
   >
     <span class="dot" data-state={connection.validation}></span>
     <span class="validation-copy">
-      <strong>{status}</strong>
+      <strong>{locked ? "In use" : status}</strong>
       <small>{connection.message ?? connection.summary}</small>
     </span>
-    {#if connection.validation === "failed" || connection.validation === "stale"}
+    {#if !locked && (connection.validation === "failed" || connection.validation === "stale")}
       <button type="button" onclick={() => void validateConnections(true, role)}
         >Retry</button
       >

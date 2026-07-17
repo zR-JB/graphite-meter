@@ -111,17 +111,33 @@ export function buildSegments(config: RunnerConfig): Timeline {
   return { segments: segs, totalMs: cursor };
 }
 
-/** Apply a live change to the enabled stage set mid-run. Only FUTURE segments
- *  (those starting after the current elapsed) are rebuilt; the current and past
- *  phases are untouched, so toggling a not-yet-started stage off simply shortens
- *  the remaining timeline. `config` must already carry the updated `stages`. */
-export function rebuildTail(
+function durationFor(phase: StagePhase, config: RunnerConfig): number {
+  return config.duration[`${phase}Ms`];
+}
+
+/** Rebuild the unfinished timeline after a safe live config change. Past
+ * segments keep their actual boundaries, the active segment adopts its new
+ * duration from its original start, and future stages are rebuilt normally. */
+export function reconfigureTimeline(
   segments: Segment[],
   elapsed: number,
   config: RunnerConfig,
 ): Timeline {
-  // Keep every segment that has already started; rebuild the tail.
-  const kept = segments.filter((s) => s.start <= elapsed);
+  const active = segmentAt(segments, elapsed);
+  const kept = active
+    ? segments.filter((s) => s.start < active.start)
+    : segments.filter((s) => s.end <= elapsed);
+
+  if (active) {
+    const duration =
+      active.phase === "warmup"
+        ? config.duration.warmupMs
+        : durationFor(active.phase, config);
+    kept.push({
+      ...active,
+      end: Math.max(elapsed, active.start + duration),
+    });
+  }
   let cursor = kept.length ? kept[kept.length - 1].end : 0;
 
   const dur = config.duration;
