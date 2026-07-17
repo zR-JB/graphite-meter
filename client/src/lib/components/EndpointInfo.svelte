@@ -218,8 +218,8 @@
         </div>
       </dl>
       <p class="diagnostic-note">
-        Server instance changes when the backend restarts; it is not a build or
-        Git version. Origins are the endpoints used by the measurement.
+        Server instance changes when the backend restarts. Origins are the
+        endpoints used by the measurement.
       </p>
       <button type="button" onclick={copyReport}
         >{copied ? "Copied" : "Copy diagnostic report"}</button
