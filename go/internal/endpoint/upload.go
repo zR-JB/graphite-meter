@@ -3,6 +3,7 @@ package endpoint
 import (
 	"io"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -20,8 +21,9 @@ import (
 // authoritative upload result, read live by the /upload/progress progress bus. Without
 // an id it behaves exactly as before (client self-counts).
 type Upload struct {
-	meter *Meter       // optional verbose per-second logger; nil unless -verbose
-	store *UploadStore // optional per-id aggregate; nil disables server-authoritative counting
+	meter   *Meter       // optional verbose per-second logger; nil unless -verbose
+	store   *UploadStore // optional per-id aggregate; nil disables server-authoritative counting
+	trusted []netip.Prefix
 }
 
 // uploadReadTimeout bounds a single stuck POST's body read so a half-open lane
@@ -31,8 +33,12 @@ const uploadReadTimeout = 120 * time.Second
 
 // NewUpload builds the upload endpoint. meter may be nil (no verbose logging);
 // store may be nil (no server-authoritative per-id counting).
-func NewUpload(meter *Meter, store *UploadStore) *Upload {
-	return &Upload{meter: meter, store: store}
+func NewUpload(meter *Meter, store *UploadStore, trusted ...[]netip.Prefix) *Upload {
+	u := &Upload{meter: meter, store: store}
+	if len(trusted) > 0 {
+		u.trusted = trusted[0]
+	}
+	return u
 }
 
 func (u *Upload) ID() string                 { return "upload" }
@@ -75,22 +81,35 @@ func (s discardSink) Write(p []byte) (int, error) {
 // Handle drains the upload source, counting bytes. A clean EOF echoes the count
 // as JSON; a mid-stream cancel (client aborted the measurement) stops quietly.
 func (u *Upload) Handle(s transport.Session) error {
-	src, err := s.OpenUploadSource()
-	if err != nil {
-		return err
-	}
-
 	// Resolve the test's shared aggregate from a server-minted ?id=; nil for an
 	// empty/invalid id or over the live cap, in which case this POST still
 	// drains and counts, just not server-authoritatively. posts is a
 	// diagnostics gauge only — the TTL sweeper owns deletion.
 	var agg *uploadAgg
 	if u.store != nil {
-		if a, ok := u.store.getOrCreate(s.Query().Get("id")); ok {
+		id := s.Query().Get("id")
+		if id != "" {
+			owner := ""
+			if _, r, ok := s.HTTP(); ok {
+				owner = uploadOwner(r, u.trusted)
+			}
+			a, access := u.store.getOrCreateFor(id, owner)
+			if access != uploadAccessOK {
+				if w, _, ok := s.HTTP(); ok {
+					writeUploadAccessError(w, access)
+					return nil
+				}
+				return transport.ErrUnsupported
+			}
 			agg = a
 			agg.changePosts(1)
 			defer agg.changePosts(-1)
 		}
+	}
+
+	src, err := s.OpenUploadSource()
+	if err != nil {
+		return err
 	}
 
 	// Bound a single stuck POST's body read (idiomatic per-request deadline via the

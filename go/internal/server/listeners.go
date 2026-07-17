@@ -11,9 +11,11 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -28,6 +30,8 @@ type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.Endpoint
 	download, uploadSession, upload  endpoint.Endpoint
 	ping, uploadProgress             endpoint.Endpoint
+	admission                        *requestAdmission
+	trustedProxies                   []netip.Prefix
 }
 
 type service struct {
@@ -52,8 +56,10 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 	h3Port := publicH3Port(cfg)
 	return &endpoints{
 		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
-		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store),
-		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store),
+		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store, cfg.TrustedProxies),
+		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
+		admission:      newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration),
+		trustedProxies: cfg.TrustedProxies,
 	}, nil
 }
 
@@ -122,11 +128,19 @@ func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology,
 	if topology.latency {
 		reg.RegisterWS("/ws/ping", e.ping)
 	}
-	m := http.NewServeMux()
-	reg.Mount(ctx, m)
+	inner := http.NewServeMux()
+	reg.Mount(ctx, inner)
 	if topology.spa {
-		m.Handle("/", spa)
+		inner.Handle("/", spa)
 	}
+	if e.admission == nil {
+		return inner
+	}
+	m := http.NewServeMux()
+	for _, path := range []string{"/download", "/upload", "/upload/progress", "/ws/ping"} {
+		m.Handle(path, e.admission.wrap(inner, e.trustedProxies))
+	}
+	m.Handle("/", inner)
 	return m
 }
 
@@ -157,6 +171,10 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
+	if cfg.Verbose {
+		go runAdmissionLog(ctx, e.admission, connections)
+	}
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
 	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
@@ -172,7 +190,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	services := []service{{
 		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.H1Addr, network: "tcp",
-		run: func() error { return serve(h1ln, h1) }, stop: h1.Shutdown,
+		run: func() error { return serve(admittedListener{Listener: h1ln, admission: connections}, h1) }, stop: h1.Shutdown,
 	}}
 
 	if cfg.EnableH1TLS {
@@ -185,7 +203,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
 		services = append(services, service{
 			name: "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
 			addr: cfg.H1TLSAddr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
@@ -202,7 +220,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2"))
+		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("h2"))
 		services = append(services, service{
 			name: "HTTPS HTTP/2: measurement probe, transfers, progress only",
 			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
@@ -218,7 +236,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
 		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
 		pc, err := net.ListenPacket("udp", cfg.H3Addr)
@@ -227,18 +245,29 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, pc)
+		quicTransport := &quic.Transport{Conn: pc, ConnContext: connections.connContext}
+		quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
+		if err != nil {
+			closeOpened()
+			return err
+		}
 		services = append(services,
 			service{
 				name: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only",
 				addr: cfg.H3Addr, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
 			},
 			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.H3Addr, network: "udp", run: func() error {
-				err := h3.Serve(pc)
+				err := h3.ServeListener(quicListener)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 					return nil
 				}
 				return err
-			}, stop: func(ctx context.Context) error { err := h3.Shutdown(ctx); _ = pc.Close(); return err }})
+			}, stop: func(ctx context.Context) error {
+				err := h3.Shutdown(ctx)
+				_ = quicListener.Close()
+				_ = quicTransport.Close()
+				return err
+			}})
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -267,6 +296,22 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	shutdown(services)
 	return nil
+}
+
+func runAdmissionLog(ctx context.Context, requests *requestAdmission, connections *connectionAdmission) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r, c := requests.stats(), connections.stats()
+			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d global + %d client; connections %d active / %d peak, rejected %d global + %d client",
+				r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
+				c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
+		}
+	}
 }
 
 func shutdown(services []service) {

@@ -59,13 +59,13 @@ and optional H3 on 7249/udp with a TLS H1 bootstrap on 7249/tcp. The H3 TCP surf
 `/probe`, so transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
 disabled to prevent POST replay.
 
-| Listener | Protocol | Owned surface |
-| --- | --- | --- |
-| `:7246/tcp` | HTTP/1.1 clear | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency. |
-| `:7247/tcp` | HTTP/1.1 TLS only | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
-| `:7248/tcp` | HTTP/2 only | H2 probe, transfers, and upload progress only. No UI, discovery, H1 ALPN, or WebSocket route. |
-| `:7249/udp` | HTTP/3 | H3 probe, transfers, and upload progress. |
-| `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets. |
+| Listener    | Protocol               | Owned surface                                                                                       |
+| ----------- | ---------------------- | --------------------------------------------------------------------------------------------------- |
+| `:7246/tcp` | HTTP/1.1 clear         | UI, discovery, probe, transfers, upload progress, and clear WebSocket latency.                      |
+| `:7247/tcp` | HTTP/1.1 TLS only      | HTTPS UI, discovery, probe, transfers, upload progress, and WSS latency. ALPN offers only HTTP/1.1. |
+| `:7248/tcp` | HTTP/2 only            | H2 probe, transfers, and upload progress only. No UI, discovery, H1 ALPN, or WebSocket route.       |
+| `:7249/udp` | HTTP/3                 | H3 probe, transfers, and upload progress.                                                           |
+| `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets.                 |
 
 Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
 freezes one target for each role and verifies each target independently. Fetch throughput targets
@@ -95,16 +95,16 @@ navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/r
 
 ### Routes
 
-| Path                     | Method     | Transport               | Purpose                                                                                                                                                                                                                      |
-| ------------------------ | ---------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET        | UI origins, JSON  | Logical server identity plus independent throughput and latency target catalogs. Refreshed before every run. |
-| `/probe`                 | GET        | selected H1/H2/H3       | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes. |
-| `/download`              | GET        | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                        |
-| `/upload/session`        | POST       | selected throughput target, JSON | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream. |
-| `/upload`                | POST       | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                   |
-| `/ws/ping`               | WS upgrade | WebSocket               | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                                                           |
-| `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop. |
-| `/` (anything unmatched) | GET        | H1/H1-TLS UI listeners | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                              |
+| Path                     | Method       | Transport                            | Purpose                                                                                                                                                                                         |
+| ------------------------ | ------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/preflight`             | GET          | UI origins, JSON                     | Logical server identity plus independent throughput and latency target catalogs. Refreshed before every run.                                                                                    |
+| `/probe`                 | GET          | selected H1/H2/H3                    | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes.                                                                           |
+| `/download`              | GET          | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                           |
+| `/upload/session`        | POST         | selected throughput target, JSON     | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream.                                                                                              |
+| `/upload`                | POST         | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                      |
+| `/ws/ping`               | WS upgrade   | WebSocket                            | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                              |
+| `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON   | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop.            |
+| `/` (anything unmatched) | GET          | H1/H1-TLS UI listeners               | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it). |
 
 No WebTransport channel is advertised and no route is mounted. Its dependency, schema variants,
 wire opcodes, and commented HTTP/3 configuration are retained as inactive contract surface; they
@@ -131,15 +131,27 @@ opcode or malformed frame gets a non-fatal `ERR,<code>,<text>` reply; the bus is
 for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpus:
 `api/wire.testvectors.txt` (every language's encoder/decoder must match it).
 
-| Opcode            | Direction | Shape                              | Meaning                                                                     |
-| ----------------- | --------- | ---------------------------------- | --------------------------------------------------------------------------- |
-| `HI`              | C→S       | `HI,<proto>`                       | Optional hello (`proto` ∈ `ws`/`wt`); lets the bus be primed during warmup. |
-| `READY`           | S→C       | `READY`                            | Bus is up.                                                                  |
-| `PING`            | C→S       | `PING,<id>`                        | Latency probe; `id` is a client-owned monotonic uint32.                     |
-| `PONG`            | S→C       | `PONG,<id>;TIME,<nanos>`           | Echo; `id` verbatim, server clock is diagnostics-only.                      |
-| `SIZE`            | C→S       | `SIZE,<bytes>`                     | Reserved WebTransport download-size request; no runtime consumer.           |
-| `BYE`             | C→S       | `BYE`                              | Graceful bus close.                                                         |
-| `ERR`             | S→C       | `ERR,<code>,<text>`                | Non-fatal protocol error.                                                   |
+| Opcode  | Direction | Shape                    | Meaning                                                                     |
+| ------- | --------- | ------------------------ | --------------------------------------------------------------------------- |
+| `HI`    | C→S       | `HI,<proto>`             | Optional hello (`proto` ∈ `ws`/`wt`); lets the bus be primed during warmup. |
+| `READY` | S→C       | `READY`                  | Bus is up.                                                                  |
+| `PING`  | C→S       | `PING,<id>`              | Latency probe; `id` is a client-owned monotonic uint32.                     |
+| `PONG`  | S→C       | `PONG,<id>;TIME,<nanos>` | Echo; `id` verbatim, server clock is diagnostics-only.                      |
+| `SIZE`  | C→S       | `SIZE,<bytes>`           | Reserved WebTransport download-size request; no runtime consumer.           |
+| `BYE`   | C→S       | `BYE`                    | Graceful bus close.                                                         |
+| `ERR`   | S→C       | `ERR,<code>,<text>`      | Non-fatal protocol error.                                                   |
+
+### Admission guardrails (`internal/server`)
+
+One shared controller bounds established TCP/QUIC connections before TLS or QUIC setup and another
+bounds active download, upload, progress, and latency handlers across every listener. HTTP clients
+use the trusted-proxy-aware address resolver; direct sockets use the peer address. IPv4 is keyed by
+address and IPv6 by `/64`. Request slots carry a hard lifetime and are released on every completion
+or cancellation path. Per-client exhaustion returns `429`, global exhaustion returns `503`, and
+verbose mode reports active, peak, and rejected counts without logging every hostile request.
+
+Upload aggregates retain their separate 1,000-entry global cap, add a 32-entry per-client cap, and
+allow only one progress stream per id. Progress heartbeats do not extend aggregate TTL.
 
 ### Meter (`internal/endpoint/meter.go`)
 
@@ -271,12 +283,12 @@ A production build has only Setup, so no tab bar is rendered at all.
 
 **Setup — Test tier**
 
-| Setting         | Default | Notes                                                                                                                                            |
-| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Duration preset | Medium  | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                  |
-| Bidirectional   | off     | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration. |
+| Setting           | Default           | Notes                                                                                                                                                                                                               |
+| ----------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Duration preset   | Medium            | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                                                                                     |
+| Bidirectional     | off               | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration.                                                                    |
 | Throughput target | Same as this page | Requires an advertised target that exactly matches the page origin and browser-observed protocol, or selects H1 clear, H1 TLS, H2, or H3 independently. Unavailable targets stay visible with the discovery reason. |
-| Latency target | Automatic | Selects an advertised WebSocket target independently: H1 clear or H1 TLS. Unavailable targets stay visible with the discovery reason. |
+| Latency target    | Automatic         | Selects an advertised WebSocket target independently: H1 clear or H1 TLS. Unavailable targets stay visible with the discovery reason.                                                                               |
 
 **Setup — Results tier**
 
@@ -289,13 +301,13 @@ A production build has only Setup, so no tab bar is rendered at all.
 
 **Setup — Advanced tier**
 
-| Setting                                       | Default   | Notes                                                                                                    |
-| --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
-| Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                             |
-| Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                           |
+| Setting                                       | Default   | Notes                                                                                                                                                                                                                            |
+| --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                                                                                                                                                     |
+| Ping velocity                                 | Medium    | Instant / Medium / Slow pacer.                                                                                                                                                                                                   |
 | Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2 uses one download, H3 uses three downloads, and both use three overlapping uploads. Forced uses the configured count exactly for every protocol. |
-| Skip loaded latency when latency stage is off | on        |                                                                                                          |
-| Chunked download (experimental)               | off       | See Experimental features.                                                                               |
+| Skip loaded latency when latency stage is off | on        |                                                                                                                                                                                                                                  |
+| Chunked download (experimental)               | off       | See Experimental features.                                                                                                                                                                                                       |
 
 Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
 `PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while the selected `/probe`'s
@@ -332,7 +344,7 @@ the throughput path.
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                |
 | `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
-| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                         |
+| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                       |
 | `ping-worker.ts`            | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread.                                                               |
 | `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by both the upload worker and the experimental chunked-download path. |
 

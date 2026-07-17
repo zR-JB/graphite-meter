@@ -3,6 +3,7 @@ package endpoint
 import (
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -11,11 +12,20 @@ import (
 // UploadProgress streams the selected throughput target's authoritative upload
 // counter as NDJSON. The initial ready record is flushed before upload lanes are
 // allowed to start; blank lines are heartbeats and never carry measurement data.
-type UploadProgress struct{ store *UploadStore }
+type UploadProgress struct {
+	store   *UploadStore
+	trusted []netip.Prefix
+}
 
-func NewUploadProgress(store *UploadStore) *UploadProgress { return &UploadProgress{store: store} }
-func (e *UploadProgress) ID() string                       { return "upload-progress" }
-func (e *UploadProgress) Capabilities() Capabilities       { return Capabilities{HTTP: true} }
+func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadProgress {
+	e := &UploadProgress{store: store}
+	if len(trusted) > 0 {
+		e.trusted = trusted[0]
+	}
+	return e
+}
+func (e *UploadProgress) ID() string                 { return "upload-progress" }
+func (e *UploadProgress) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 
 const (
 	uploadProgressTick      = 100 * time.Millisecond
@@ -46,9 +56,10 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return transport.ErrUnsupported
 	}
 	id := r.URL.Query().Get("id")
+	owner := uploadOwner(r, e.trusted)
 	if r.Method == http.MethodDelete {
-		if !e.store.finish(id) {
-			http.Error(w, "unknown upload id", http.StatusNotFound)
+		if access := e.store.finishFor(id, owner); access != uploadAccessOK {
+			writeUploadAccessError(w, access)
 			return nil
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -75,12 +86,16 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return true
 	}
 
-	agg, exists := e.store.getOrCreate(id)
-	if !exists {
-		w.WriteHeader(http.StatusBadRequest)
-		emit(uploadProgressEvent{Type: "error", Message: "unknown upload id"})
+	agg, access := e.store.getOrCreateForActivity(id, owner, false)
+	if access != uploadAccessOK {
+		writeUploadAccessError(w, access)
 		return nil
 	}
+	if !agg.progressActive.CompareAndSwap(false, true) {
+		http.Error(w, "upload progress already connected", http.StatusConflict)
+		return nil
+	}
+	defer agg.progressActive.Store(false)
 	if !emit(uploadProgressEvent{Type: "ready"}) {
 		return nil
 	}
@@ -93,6 +108,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 	for {
 		select {
 		case <-r.Context().Done():
+			return nil
+		case <-agg.expired:
 			return nil
 		case <-agg.finished:
 			if !waitForUploadPosts(r.Context().Done(), agg) {
@@ -108,7 +125,6 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			}
 			flusher.Flush()
 		case <-tick.C:
-			agg.lastTouchMono.Store(monoNanos())
 			n := uint64(agg.bytes.Load())
 			elapsed := uint64(agg.elapsedNanos(monoNanos()))
 			if n != lastBytes {

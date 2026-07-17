@@ -95,6 +95,46 @@ func TestUploadStoreCapRejectsCreate(t *testing.T) {
 	}
 }
 
+func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
+	s := NewUploadStore()
+	owner := "192.0.2.1"
+	var first string
+	for i := 0; i < maxLiveUploadsPerClient; i++ {
+		id := s.Mint()
+		if i == 0 {
+			first = id
+		}
+		if _, access := s.getOrCreateFor(id, owner); access != uploadAccessOK {
+			t.Fatalf("owner create %d = %v", i, access)
+		}
+	}
+	if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessClientFull {
+		t.Fatalf("owner overflow = %v", access)
+	}
+	if _, access := s.getOrCreateFor(first, "192.0.2.2"); access != uploadAccessOwnerMismatch {
+		t.Fatalf("owner mismatch = %v", access)
+	}
+	if _, access := s.getOrCreateFor(s.Mint(), "192.0.2.2"); access != uploadAccessOK {
+		t.Fatalf("independent owner rejected = %v", access)
+	}
+}
+
+func TestUploadStoreSweepReleasesOwnerCapacity(t *testing.T) {
+	s := NewUploadStore()
+	owner := "192.0.2.1"
+	for i := 0; i < maxLiveUploadsPerClient; i++ {
+		agg, access := s.getOrCreateFor(s.Mint(), owner)
+		if access != uploadAccessOK {
+			t.Fatal(access)
+		}
+		agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
+	}
+	s.sweep(uploadIDTTL)
+	if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessOK {
+		t.Fatalf("owner capacity not released: %v", access)
+	}
+}
+
 // TestUploadStoreSweepReapsIdle ages an aggregate past the TTL and checks the
 // sweeper deletes it and decrements the live count.
 func TestUploadStoreSweepReapsIdle(t *testing.T) {
@@ -120,6 +160,23 @@ func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	}
 	if s.live.Load() != 1 {
 		t.Errorf("live = %d after sweeping one of two, want 1", s.live.Load())
+	}
+}
+
+func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
+	s := NewUploadStore()
+	id := s.Mint()
+	agg, _ := s.getOrCreate(id)
+	agg.changePosts(1)
+	agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
+	s.sweep(uploadIDTTL)
+	if _, ok := s.get(id); !ok {
+		t.Fatal("active upload was reaped")
+	}
+	agg.changePosts(-1)
+	s.sweep(uploadIDTTL)
+	if _, ok := s.get(id); ok {
+		t.Fatal("idle upload survived after its final post exited")
 	}
 }
 

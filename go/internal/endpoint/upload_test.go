@@ -136,11 +136,9 @@ func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	}
 }
 
-// TestUploadOverCapIDStillDrainsWithoutAggregating checks the live-cap abuse
-// defense at the POST layer: an authenticated id refused by
-// getOrCreate because the store is already at maxLiveUploads still drains
-// and echoes normally — it just isn't server-authoritatively counted.
-func TestUploadOverCapIDStillDrainsWithoutAggregating(t *testing.T) {
+// TestUploadOverCapIDIsRejected ensures a saturated authoritative aggregate
+// store never degrades into a plausible client-counted upload result.
+func TestUploadOverCapIDIsRejected(t *testing.T) {
 	store := NewUploadStore()
 	for i := 0; i < maxLiveUploads; i++ {
 		id := store.Mint()
@@ -155,21 +153,14 @@ func TestUploadOverCapIDStillDrainsWithoutAggregating(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	const n = 4096
-	res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(make([]byte, n)))
+	res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(make([]byte, 4096)))
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
 	defer res.Body.Close()
 
-	var echo struct {
-		Bytes int64 `json:"bytes"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&echo); err != nil {
-		t.Fatalf("decode echo: %v", err)
-	}
-	if echo.Bytes != n {
-		t.Errorf("echoed %d bytes, want %d (upload must still work over the cap)", echo.Bytes, n)
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", res.StatusCode)
 	}
 	if _, ok := store.get(id); ok {
 		t.Error("an over-cap id unexpectedly got an aggregate")

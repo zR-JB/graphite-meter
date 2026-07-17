@@ -171,6 +171,17 @@ func TestUploadLaneDrainsBytes(t *testing.T) {
 	}
 }
 
+func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	r := &runner{cfg: Config{BaseURL: srv.URL, UploadBytesPerStream: 1024}, http: srv.Client()}
+	if err := r.uploadLane(context.Background(), "test-id", 0, make([]byte, 1024)); err == nil {
+		t.Fatal("HTTP 503 did not fail the upload lane")
+	}
+}
+
 // newAbruptCloseUploadServer reads a little of each request's body then
 // aborts the handler, dropping the connection without ever sending a
 // response — simulating a server that vanishes mid-transfer rather than one

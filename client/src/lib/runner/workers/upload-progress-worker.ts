@@ -10,6 +10,7 @@ type OutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
+  | { type: "fatal"; detail: string }
   | { type: "stall"; detail: string }
   | { type: "resume" };
 type ProgressEvent = {
@@ -34,6 +35,10 @@ let stalledOut = false;
 let backoff = 0;
 let lastN = 0;
 
+export function terminalProgressStatus(status: number): boolean {
+  return (status >= 400 && status < 500) || status === 503;
+}
+
 ctx.onmessage = (event: MessageEvent<InMsg>): void => {
   if (event.data.type === "start") {
     url = event.data.url;
@@ -57,7 +62,18 @@ async function run(): Promise<void> {
         headers: { ...headers, accept: "application/x-ndjson" },
         signal: controller.signal,
       });
-      if (!response.ok || !response.body)
+      if (!response.ok) {
+        if (terminalProgressStatus(response.status)) {
+          post({
+            type: "fatal",
+            detail: `progress returned HTTP ${response.status}`,
+          });
+          stopped = true;
+          return;
+        }
+        throw new Error(`progress returned HTTP ${response.status}`);
+      }
+      if (!response.body)
         throw new Error(`progress returned HTTP ${response.status}`);
       await readEvents(response.body);
     } catch (error) {
@@ -125,7 +141,12 @@ async function readEvents(body: ReadableStream<Uint8Array>): Promise<void> {
           return;
         }
       } else if (event.type === "error") {
-        throw new Error(event.message || "upload progress error");
+        post({
+          type: "fatal",
+          detail: event.message || "upload progress error",
+        });
+        stopped = true;
+        return;
       }
     }
     if (done) return;

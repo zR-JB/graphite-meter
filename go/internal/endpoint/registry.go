@@ -70,7 +70,13 @@ func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 		// docs). Bound the bus with a context derived from the SERVER's run context
 		// (not Background): cancelled when Handle returns AND on srv.Shutdown, so a
 		// handler parked in conn.Read/Write unblocks at shutdown instead of hanging.
-		ctx, cancel := context.WithCancel(parent)
+		var ctx context.Context
+		var cancel context.CancelFunc
+		if deadline, ok := r.Context().Deadline(); ok {
+			ctx, cancel = context.WithDeadline(parent, deadline)
+		} else {
+			ctx, cancel = context.WithCancel(parent)
+		}
 		defer cancel()
 		defer conn.CloseNow()
 

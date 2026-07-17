@@ -23,6 +23,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	defer laneCancel()
 	var total atomic.Uint64
 	var wg sync.WaitGroup
+	laneErr := make(chan error, r.streams)
 	stagger := r.laneStaggerStep()
 	for i := 0; i < r.streams; i++ {
 		wg.Add(1)
@@ -31,28 +32,37 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
-			r.downloadLane(laneCtx, base, lane, &total)
+			if err := r.downloadLane(laneCtx, base, lane, &total); err != nil {
+				select {
+				case laneErr <- err:
+				default:
+				}
+			}
 		}(i)
 	}
 	select {
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
+	case err := <-laneErr:
+		laneCancel()
+		wg.Wait()
+		return Result{}, err
 	case <-start:
 	}
 	measureCtx, cancel := context.WithTimeout(ctx, elapsed)
-	stats := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams)
+	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams, laneErr)
 	cancel()
 	laneCancel()
 	wg.Wait()
-	return stats.result(stage, Down, false), nil
+	return stats.result(stage, Down, false), err
 }
 
-func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64) {
+func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64) error {
 	buf := make([]byte, 1024*1024)
 	for ctx.Err() == nil {
 		u, err := url.Parse(base)
 		if err != nil {
-			return
+			return err
 		}
 		q := u.Query()
 		q.Set("bytes", strconv.FormatInt(r.cfg.DownloadBytesPerStream, 10))
@@ -61,18 +71,19 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 		u.RawQuery = q.Encode()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		if err != nil {
-			return
+			return err
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				return
+				return nil
 			}
 			continue
 		}
 		if res.StatusCode != http.StatusOK {
+			err := unexpectedStatus(res)
 			_ = res.Body.Close()
-			return
+			return err
 		}
 		for {
 			n, readErr := res.Body.Read(buf)
@@ -84,17 +95,18 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 				if errors.Is(readErr, io.EOF) {
 					break
 				}
-				return
+				return readErr
 			}
 			if ctx.Err() != nil {
 				_ = res.Body.Close()
-				return
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
-func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int) rateStats {
+func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int, laneErr <-chan error) (rateStats, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	lastN := total.Load()
@@ -106,7 +118,10 @@ func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Directi
 		select {
 		case <-ctx.Done():
 			stats.setWindow(total.Load()-baseline, time.Since(startT))
-			return stats
+			return stats, nil
+		case err := <-laneErr:
+			stats.setWindow(total.Load()-baseline, time.Since(startT))
+			return stats, err
 		case now := <-ticker.C:
 			n := total.Load()
 			delta := n - lastN

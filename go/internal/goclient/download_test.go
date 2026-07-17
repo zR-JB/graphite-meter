@@ -102,6 +102,18 @@ func TestMeasureDownloadReportsBytes(t *testing.T) {
 	}
 }
 
+func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	r := &runner{cfg: Config{DownloadBytesPerStream: 1024}, http: srv.Client()}
+	var total atomic.Uint64
+	if err := r.downloadLane(context.Background(), srv.URL, 0, &total); err == nil {
+		t.Fatal("HTTP 429 did not fail the download lane")
+	}
+}
+
 // TestMeasureDownloadContextCancelStopsEarly checks that cancelling mid-measurement
 // returns well before the configured elapsed window, and that the lane goroutines
 // are joined (no hang) rather than left running.

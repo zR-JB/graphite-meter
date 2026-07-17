@@ -112,7 +112,60 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `"type":"error"`) {
+	if !strings.Contains(rec.Body.String(), "unknown upload id") {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	h := httpAdapter(NewUploadProgress(store))
+	ctx, cancel := context.WithCancel(context.Background())
+	rec := newProgressRecorder()
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx))
+		close(done)
+	}()
+	waitProgressText(t, rec, `{"type":"ready"}`)
+
+	duplicate := httptest.NewRecorder()
+	h.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
+	if duplicate.Code != http.StatusConflict {
+		t.Fatalf("duplicate status = %d", duplicate.Code)
+	}
+	cancel()
+	<-done
+}
+
+func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	h := httpAdapter(NewUploadProgress(store))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := newProgressRecorder()
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx))
+		close(done)
+	}()
+	waitProgressText(t, rec, `{"type":"ready"}`)
+	agg, _ := store.get(id)
+	old := monoNanos() - int64(2*uploadIDTTL)
+	agg.lastTouchMono.Store(old)
+	time.Sleep(2 * uploadProgressTick)
+	if got := agg.lastTouchMono.Load(); got != old {
+		t.Fatalf("progress tick refreshed last touch: got %d want %d", got, old)
+	}
+	store.sweep(uploadIDTTL)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reaped aggregate did not close its progress stream")
+	}
+	if _, ok := store.get(id); ok {
+		t.Fatal("idle aggregate survived without upload activity")
 	}
 }
