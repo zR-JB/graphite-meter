@@ -18,12 +18,12 @@ import type {
   StallInfo,
   TransportAttempt,
   TransportRole,
+  ConnectionRole,
   StageFailure,
 } from "../runner/contract";
 import {
   presentConnections,
   type ConnectionPresentation,
-  type ConnectionRole,
   type ConnectionValidation,
 } from "../runner/connectionModel";
 import {
@@ -384,11 +384,11 @@ class AppStore {
   liveCompensation = $derived<CompensationEstimate>(
     estimateLiveCompensation(
       this.liveTransferBytesPerSec,
-      this.config.compensation,
+      this.runConfig.compensation,
       this.phase === "upload" ? "upload" : "download",
-      this.infra?.firstHopProtocol,
-      this.infra?.firstHopSecure,
-      this.infra?.clientIpVersion,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
     ),
   );
 
@@ -396,10 +396,10 @@ class AppStore {
     estimateResultCompensation(
       this.stageResults.download,
       "download",
-      this.config.compensation,
-      this.infra?.firstHopProtocol,
-      this.infra?.firstHopSecure,
-      this.infra?.clientIpVersion,
+      this.runConfig.compensation,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
     ),
   );
 
@@ -407,10 +407,10 @@ class AppStore {
     estimateResultCompensation(
       this.stageResults.upload,
       "upload",
-      this.config.compensation,
-      this.infra?.firstHopProtocol,
-      this.infra?.firstHopSecure,
-      this.infra?.clientIpVersion,
+      this.runConfig.compensation,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
     ),
   );
 

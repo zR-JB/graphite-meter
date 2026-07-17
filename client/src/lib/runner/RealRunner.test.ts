@@ -571,6 +571,20 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     expect(discoveries[0].throughput.http2.state).toBe("not-advertised");
     expect(discoveries[2].throughput.http2.state).toBe("advertised");
 
+    let fetchStart = fetchUrls.length;
+    await backend.probe(config, undefined, "throughput");
+    expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
+
+    fetchStart = fetchUrls.length;
+    const latencyProbe = backend.probe(config, undefined, "latency");
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    pingWorker!.emit({
+      type: "samples",
+      samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
+    });
+    await latencyProbe;
+    expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
+
     backend.onRunStart(config);
     const unloaded: PhaseActivity = {
       stage: "latency",

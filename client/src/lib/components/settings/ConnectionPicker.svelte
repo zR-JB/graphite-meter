@@ -83,7 +83,7 @@
         >{/if}
     </span>
     {#if connection.validation === "failed" || connection.validation === "stale"}
-      <button type="button" onclick={() => void validateConnections(true)}
+      <button type="button" onclick={() => void validateConnections(true, role)}
         >Retry</button
       >
     {/if}

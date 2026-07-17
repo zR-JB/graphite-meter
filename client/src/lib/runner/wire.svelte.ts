@@ -8,7 +8,13 @@
  * a frozen, non-reactive config into the engine) is compiled.
  * ============================================================ */
 
-import type { InfraInfo, NetworkRunner, RunnerAnomaly } from "./contract";
+import type {
+  ConnectionRole,
+  InfraInfo,
+  NetworkRunner,
+  RunnerAnomaly,
+  RunnerEvent,
+} from "./contract";
 import { RunnerCore } from "./core";
 // NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
@@ -20,7 +26,14 @@ import { RealBackend, TransportUnavailableError } from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
-import { CONNECTION_FRESH_MS, connectionKey } from "./connectionModel";
+import {
+  CONNECTION_FRESH_MS,
+  CONNECTION_ROLES,
+  connectionKey,
+  connectionRoleKey,
+  connectionSelection,
+  validationRoles,
+} from "./connectionModel";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
@@ -29,9 +42,13 @@ let validationSeq = 0;
 let booted = false;
 let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
   null;
-let lastSelectionKey = "";
+let lastRoleKeys: Record<ConnectionRole, string> = {
+  throughput: "",
+  latency: "",
+};
 let pendingValidation = false;
 let hiddenAt = 0;
+let validating: ConnectionRole[] = [];
 
 // Mirror the persisted dev toggle into the (main-thread) debug logger, live.
 // Workers are separate module graphs — they're told the value in their `start`
@@ -41,14 +58,18 @@ if (typeof window !== "undefined") {
   $effect.root(() => {
     $effect(() => setDebugLogging(store.debugLogging));
     $effect(() => {
-      const key = connectionKey(store.config);
+      const changed = CONNECTION_ROLES.filter(
+        (role) => connectionRoleKey(store.config, role) !== lastRoleKeys[role],
+      );
       const running = store.isRunning;
       if (!booted) return;
-      if (key !== lastSelectionKey) {
-        lastSelectionKey = key;
+      if (changed.length) {
+        for (const role of changed)
+          lastRoleKeys[role] = connectionRoleKey(store.config, role);
         pendingValidation = true;
         if (running) {
           markValidation(
+            changed,
             "stale",
             "Draft changed; validation resumes after this run.",
           );
@@ -57,7 +78,13 @@ if (typeof window !== "undefined") {
       }
       if (running || !pendingValidation) return;
       pendingValidation = false;
-      queueMicrotask(() => void validateConnections());
+      queueMicrotask(
+        () =>
+          void validateConnections(
+            false,
+            changed.length === 1 ? changed[0] : undefined,
+          ).catch(() => {}),
+      );
     });
   });
 }
@@ -116,24 +143,20 @@ function validationMessage(cause: unknown): string {
 }
 
 function markValidation(
+  roles: ConnectionRole[],
   state: "checking" | "verified" | "failed" | "stale",
   message?: string,
   verifiedAt?: number,
 ) {
-  store.connectionValidation = {
-    throughput: {
-      selection: store.config.transports.throughputTarget,
+  const next = { ...store.connectionValidation };
+  for (const role of roles)
+    next[role] = {
+      selection: connectionSelection(store.config, role),
       state,
       message,
       verifiedAt,
-    },
-    latency: {
-      selection: store.config.transports.latencyTarget,
-      state,
-      message,
-      verifiedAt,
-    },
-  };
+    };
+  store.connectionValidation = next;
 }
 
 function preparedIsFresh(key: string): boolean {
@@ -145,34 +168,73 @@ function preparedIsFresh(key: string): boolean {
   );
 }
 
-export async function validateConnections(force = false): Promise<InfraInfo> {
+export async function validateConnections(
+  force = false,
+  requestedRole?: ConnectionRole,
+): Promise<InfraInfo> {
   const key = connectionKey(store.config);
   if (!force && preparedIsFresh(key)) return prepared!.info;
+  if (validating.length) markValidation(validating, "stale");
   validationAbort?.abort();
+  const roles = validationRoles(
+    store.config,
+    store.connectionValidation,
+    requestedRole,
+  );
   const abort = new AbortController();
   validationAbort = abort;
   const seq = ++validationSeq;
-  markValidation("checking");
+  validating = roles;
+  markValidation(roles, "checking");
+  const generation = store.transportDiscovery?.generation;
   try {
     const info = await getRunner().probe(
       $state.snapshot(store.config),
       abort.signal,
+      roles.length === 1 ? roles[0] : undefined,
     );
     if (abort.signal.aborted || seq !== validationSeq)
       throw new DOMException("Aborted", "AbortError");
     const verifiedAt = Date.now();
+    const verifiedRoles =
+      generation && generation !== info.discoveryGeneration
+        ? CONNECTION_ROLES
+        : roles;
     prepared = { key, info, verifiedAt };
     store.ingest({ type: "infra", info });
-    markValidation("verified", undefined, verifiedAt);
+    markValidation(verifiedRoles, "verified", undefined, verifiedAt);
     return info;
   } catch (cause) {
     if (abort.signal.aborted || seq !== validationSeq) throw cause;
     prepared = null;
-    markValidation("failed", validationMessage(cause));
+    markValidation(roles, "failed", validationMessage(cause));
     throw cause;
   } finally {
-    if (validationAbort === abort) validationAbort = null;
+    if (validationAbort === abort) {
+      validationAbort = null;
+      validating = [];
+    }
   }
+}
+
+function ingestRunnerEvent(event: RunnerEvent) {
+  if (
+    event.type === "error" &&
+    [
+      "connection-lost",
+      "timeout",
+      "preflight-failed",
+      "transport-unavailable",
+    ].includes(event.error.reason)
+  ) {
+    prepared = null;
+    markValidation(
+      CONNECTION_ROLES,
+      "stale",
+      "Connection changed; check again.",
+    );
+  }
+  store.ingest(event);
 }
 
 function refreshAfterTransition() {
@@ -191,9 +253,10 @@ function refreshAfterVisibility() {
 export async function bootRunner() {
   const r = getRunner();
   store.engineInfo = r.describe();
-  unsub = r.on((e) => store.ingest(e));
+  unsub = r.on(ingestRunnerEvent);
   booted = true;
-  lastSelectionKey = connectionKey(store.config);
+  for (const role of CONNECTION_ROLES)
+    lastRoleKeys[role] = connectionRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
   await validateConnections().catch(() => {});

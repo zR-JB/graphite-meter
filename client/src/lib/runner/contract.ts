@@ -31,6 +31,7 @@ export type Phase =
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3";
+export type ConnectionRole = "throughput" | "latency";
 /** Advertised transfer target id; "current" resolves from the discovery hop. */
 export type ThroughputTargetSelection = string;
 export type PingCadence = "instant" | "medium" | "slow";
@@ -487,7 +488,11 @@ export interface NetworkRunner {
   start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
-  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;
+  probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (no I/O). */
   describe(): EngineInfo;
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe

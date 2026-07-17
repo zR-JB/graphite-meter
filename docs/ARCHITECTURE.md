@@ -74,6 +74,12 @@ route. Their probes are separate connections and can therefore select different 
 the UI reports both instead of presenting the latency probe as a throughput fallback. The browser
 always fetches `/preflight` from the page origin; it never reconstructs target
 ports locally, and every subsequent HTTP or WebSocket URL comes from that discovery document.
+The browser joins discovery, selection, and probe evidence in one connection model. It validates
+both roles at startup, revalidates only the changed role for ordinary selection changes, and
+keeps successful evidence for at most 30 seconds. A discovery generation change, connection
+failure, reset, explicit retry, or relevant network/visibility transition invalidates that
+evidence. Start reuses a fresh unchanged preparation; run inputs are snapshotted at that boundary,
+so settings remain editable while a run consumes the frozen values.
 Only WebSocket over dedicated H1 clear/TLS origins is advertised for latency. H2/H3 WebSockets and
 WebTransport are not advertised. WebSockets over H2 or H3 Extended CONNECT are specified by
 [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441) and
@@ -97,7 +103,7 @@ navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/r
 
 | Path                     | Method       | Transport                            | Purpose                                                                                                                                                                                         |
 | ------------------------ | ------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET          | UI origins, JSON                     | Logical server identity plus independent throughput and latency target catalogs. Refreshed before every run.                                                                                    |
+| `/preflight`             | GET          | UI origins, JSON                     | Logical server identity, process generation, and independent throughput and latency target catalogs. Refreshed by the bounded preparation lifecycle.                                            |
 | `/probe`                 | GET          | selected H1/H2/H3                    | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes.                                                                           |
 | `/download`              | GET          | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                           |
 | `/upload/session`        | POST         | selected throughput target, JSON     | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream.                                                                                              |
@@ -335,15 +341,12 @@ spike, packet loss, throughput drop, and connection drop (a full stall-then-resu
 
 ### The Endpoint info drawer
 
-The right-side drawer is a responsive read-only card grid: **Client** (separate throughput and
-latency IP families and detection sources, plus client build version), **Engine** (the wired
-runner's name, per-runner version, and its supported transports per role — latency vs throughput,
-from `runner.describe()`), **Server** (node, location, endpoint, and server build version from
-`/preflight`), and **Connection** (selected target, browser-verified and server-observed protocols, transfer/latency
-transports, resolved automatic or forced stream policy, and pre-test ping). The
-`capabilities.throughputTargets` and `capabilities.latencyTargets` are resolved independently.
-The drawer shows both frozen ids and both verified protocols; upload progress is shown as part of
-the throughput path.
+The right-side drawer reads the live connection model. Its default view shows server identity,
+the independently selected throughput and latency paths, readiness, relevant browser-facing and
+server-observed protocol evidence, client address evidence, and pre-test RTT. Raw target IDs,
+origins, routes, discovery generation, stream policy, engine capabilities, and compensation
+assumptions are available in an expandable, copyable diagnostic report rather than repeated in
+the primary summary.
 
 ### Web Workers
 

@@ -10,6 +10,7 @@ import type {
   Phase,
   PhaseTransition,
   InfraInfo,
+  ConnectionRole,
   EngineInfo,
   ThroughputResult,
   LatencyResult,
@@ -159,7 +160,11 @@ export interface RunnerBackend {
   attach(host: CoreHost): void;
   /** Pre-test handshake; resolves InfraInfo. MAY emit a few pre-test `latency`
    *  samples (underLoad:false, negative `t`) via the host for the sparkline. */
-  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;
+  probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo>;
   /** Static engine identity + transport capabilities (see EngineInfo). */
   describe(): EngineInfo;
   /** A run is starting with this config. Per-stage priming happens in
@@ -297,8 +302,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     for (const h of this.#handlers) h(e);
   }
 
-  probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
-    return this.#backend.probe(config, signal);
+  probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo> {
+    return this.#backend.probe(config, signal, role);
   }
 
   describe(): EngineInfo {

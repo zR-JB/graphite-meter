@@ -6,6 +6,8 @@ import type {
 import type { InfraInfo, RunnerConfig } from "./contract";
 import {
   connectionKey,
+  connectionRoleKey,
+  validationRoles,
   presentConnections,
   type ConnectionValidation,
 } from "./connectionModel";
@@ -161,4 +163,52 @@ test("connection cache key changes only for preparation inputs", () => {
   expect(connectionKey(a)).toBe(connectionKey(b));
   b.transports.latencyTarget = "ws-http1-clear";
   expect(connectionKey(a)).not.toBe(connectionKey(b));
+});
+
+test("role cache keys isolate throughput from latency preparation", () => {
+  const a = config();
+  const b = config();
+  b.transports.throughputTarget = "http2";
+  expect(connectionRoleKey(a, "latency")).toBe(connectionRoleKey(b, "latency"));
+  expect(connectionRoleKey(a, "throughput")).not.toBe(
+    connectionRoleKey(b, "throughput"),
+  );
+});
+
+test("probe failure and stale evidence remain retryable presentation states", () => {
+  const cfg = config();
+  cfg.transports.throughputTarget = "http2";
+  const failed: ConnectionValidation = {
+    throughput: {
+      selection: "http2",
+      state: "failed",
+      message: "probe timed out",
+    },
+    latency: { selection: "auto", state: "stale" },
+  };
+
+  const model = presentConnections(cfg, fixture(), failed, null);
+  expect(model.throughput.availability).toBe("advertised");
+  expect(model.throughput.validation).toBe("failed");
+  expect(model.throughput.message).toBe("probe timed out");
+  expect(model.latency.validation).toBe("stale");
+});
+
+test("validation retries only the changed role and carries an aborted stale role", () => {
+  const cfg = config();
+  const validation: ConnectionValidation = {
+    throughput: { selection: "current", state: "verified" },
+    latency: { selection: "auto", state: "verified" },
+  };
+  cfg.transports.throughputTarget = "http2";
+  expect(validationRoles(cfg, validation, "throughput")).toEqual([
+    "throughput",
+  ]);
+
+  validation.throughput = { selection: "http2", state: "stale" };
+  cfg.transports.latencyTarget = "ws-http1-tls";
+  expect(validationRoles(cfg, validation, "latency")).toEqual([
+    "latency",
+    "throughput",
+  ]);
 });

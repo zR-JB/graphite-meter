@@ -1,4 +1,9 @@
-import type { InfraInfo, RunnerConfig, TransportDiscovery } from "./contract";
+import type {
+  ConnectionRole,
+  InfraInfo,
+  RunnerConfig,
+  TransportDiscovery,
+} from "./contract";
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
@@ -10,7 +15,7 @@ import {
 
 export type ConnectionValidationState =
   "checking" | "verified" | "failed" | "stale";
-export type ConnectionRole = "throughput" | "latency";
+export type { ConnectionRole } from "./contract";
 
 export interface RoleValidation {
   selection: string;
@@ -42,6 +47,34 @@ export interface ConnectionPresentation {
 }
 
 export const CONNECTION_FRESH_MS = 30_000;
+export const CONNECTION_ROLES: ConnectionRole[] = ["throughput", "latency"];
+
+export function connectionSelection(
+  config: RunnerConfig,
+  role: ConnectionRole,
+): string {
+  return role === "throughput"
+    ? config.transports.throughputTarget
+    : config.transports.latencyTarget;
+}
+
+export function validationRoles(
+  config: RunnerConfig,
+  validation: ConnectionValidation,
+  requestedRole?: ConnectionRole,
+): ConnectionRole[] {
+  const roles = requestedRole ? [requestedRole] : [...CONNECTION_ROLES];
+  for (const role of CONNECTION_ROLES) {
+    const status = validation[role];
+    if (
+      !roles.includes(role) &&
+      (status.state === "stale" ||
+        status.selection !== connectionSelection(config, role))
+    )
+      roles.push(role);
+  }
+  return roles;
+}
 
 export function connectionKey(config: RunnerConfig): string {
   return JSON.stringify({
@@ -54,6 +87,23 @@ export function connectionKey(config: RunnerConfig): string {
           config.stages.upload ||
           config.stages.bidirectional)),
   });
+}
+
+export function connectionRoleKey(
+  config: RunnerConfig,
+  role: ConnectionRole,
+): string {
+  return role === "throughput"
+    ? connectionSelection(config, role)
+    : JSON.stringify({
+        selection: config.transports.latencyTarget,
+        needed:
+          config.stages.latency ||
+          (!config.skipLoadedLatencyWhenStageOff &&
+            (config.stages.download ||
+              config.stages.upload ||
+              config.stages.bidirectional)),
+      });
 }
 
 function protocolLabel(protocol: string): string {

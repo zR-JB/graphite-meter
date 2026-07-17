@@ -10,6 +10,7 @@ import type {
   FlowDirection,
   PhaseActivity,
   TransferStreamPolicy,
+  ConnectionRole,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type {
@@ -189,6 +190,7 @@ export class RealBackend implements RunnerBackend {
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;
+  #probeInfo: InfraInfo | null = null;
 
   /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
    *  Bidirectional primes BOTH directions on the SAME stage (onStageBegin calls
@@ -317,7 +319,12 @@ export class RealBackend implements RunnerBackend {
    * rejection to a `preflight-failed` error.
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
-  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+  async probe(
+    config: RunnerConfig,
+    signal?: AbortSignal,
+    role?: ConnectionRole,
+  ): Promise<InfraInfo> {
+    const previous = this.#probeInfo;
     this.#capabilities = null;
     this.#throughputTarget = null;
     this.#latencyTarget = null;
@@ -358,6 +365,7 @@ export class RealBackend implements RunnerBackend {
       fetchedAt: Date.now(),
     });
     this.#host?.emit({ type: "transportDiscovery", discovery });
+    if (previous?.discoveryGeneration !== pf.generation) role = undefined;
     const selection = config.transports.throughputTarget;
     const selected = selectThroughputTarget(discovery, selection);
     if (!selected)
@@ -381,62 +389,95 @@ export class RealBackend implements RunnerBackend {
 
     const attempts = selected.protocol === "http3" ? 3 : 1;
     const deadline = performance.now() + 2000;
-    let pathProbe: Probe | null = null;
-    let firstHopProtocol: string | undefined;
-    const probeCtl = new AbortController();
-    const probeSignal = signal
-      ? AbortSignal.any([signal, probeCtl.signal])
-      : probeCtl.signal;
-    const probeDeadline =
-      selected.protocol === "http3"
-        ? setTimeout(() => probeCtl.abort(), 2000)
-        : undefined;
-    try {
-      for (
-        let attempt = 0;
-        attempt < attempts && performance.now() < deadline;
-        attempt++
-      ) {
-        const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
-        const probeRes = await fetch(probeURL, {
-          cache: "no-store",
-          headers: this.#authHeaders(),
-          signal: probeSignal,
-        });
-        if (!probeRes.ok)
-          throw new Error(`probe returned HTTP ${probeRes.status}`);
-        pathProbe = (await probeRes.json()) as Probe;
-        const timing = performance
-          .getEntriesByName(probeRes.url, "resource")
-          .at(-1) as PerformanceResourceTiming | undefined;
-        firstHopProtocol = timing?.nextHopProtocol || undefined;
-        if (
-          selected.protocol !== "http3" ||
-          browserProtocolMatchesTarget(selected, firstHopProtocol)
-        )
-          break;
+    let pathProbe: {
+      clientIp: string;
+      clientIpVersion: 4 | 6;
+      clientIpSource: "socket" | "forwarded";
+      protocolNegotiated: string;
+    } | null =
+      role === "latency" && previous
+        ? {
+            clientIp: previous.clientIp,
+            clientIpVersion: previous.clientIpVersion,
+            clientIpSource: previous.clientIpSource,
+            protocolNegotiated: previous.protocolNegotiated,
+          }
+        : null;
+    let firstHopProtocol =
+      role === "latency" ? previous?.firstHopProtocol : undefined;
+    if (role !== "latency") {
+      const probeCtl = new AbortController();
+      const probeSignal = signal
+        ? AbortSignal.any([signal, probeCtl.signal])
+        : probeCtl.signal;
+      const probeDeadline =
+        selected.protocol === "http3"
+          ? setTimeout(() => probeCtl.abort(), 2000)
+          : undefined;
+      try {
+        for (
+          let attempt = 0;
+          attempt < attempts && performance.now() < deadline;
+          attempt++
+        ) {
+          const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
+          const probeRes = await fetch(probeURL, {
+            cache: "no-store",
+            headers: this.#authHeaders(),
+            signal: probeSignal,
+          });
+          if (!probeRes.ok)
+            throw new Error(`probe returned HTTP ${probeRes.status}`);
+          pathProbe = (await probeRes.json()) as Probe;
+          const timing = performance
+            .getEntriesByName(probeRes.url, "resource")
+            .at(-1) as PerformanceResourceTiming | undefined;
+          firstHopProtocol = timing?.nextHopProtocol || undefined;
+          if (
+            selected.protocol !== "http3" ||
+            browserProtocolMatchesTarget(selected, firstHopProtocol)
+          )
+            break;
+        }
+      } catch (cause) {
+        if (selected.protocol === "http3")
+          throw new TransportUnavailableError("http3 transport unavailable", {
+            cause,
+          });
+        throw cause;
+      } finally {
+        if (probeDeadline !== undefined) clearTimeout(probeDeadline);
       }
-    } catch (cause) {
-      if (selected.protocol === "http3")
-        throw new TransportUnavailableError("http3 transport unavailable", {
-          cause,
-        });
-      throw cause;
-    } finally {
-      if (probeDeadline !== undefined) clearTimeout(probeDeadline);
+      if (
+        !pathProbe ||
+        !browserProtocolMatchesTarget(selected, firstHopProtocol)
+      )
+        throw new TransportUnavailableError(
+          `${selected.protocol} transport unavailable`,
+        );
     }
-    if (
-      !pathProbe ||
-      !browserProtocolMatchesTarget(selected, firstHopProtocol)
-    ) {
-      throw new TransportUnavailableError(
-        `${selected.protocol} transport unavailable`,
-      );
-    }
+    if (!pathProbe)
+      throw new TransportUnavailableError("throughput evidence unavailable");
 
-    let verifiedLatencyProtocol: string | undefined;
-    let latencyPathProbe: Probe | undefined;
-    if (needsLatency && this.#latencyTarget) {
+    let verifiedLatencyProtocol =
+      role === "throughput" ? previous?.verifiedLatencyProtocol : undefined;
+    let latencyPathProbe:
+      | {
+          clientIp: string;
+          clientIpVersion: 4 | 6;
+          clientIpSource: "socket" | "forwarded";
+          protocolNegotiated: string;
+        }
+      | undefined =
+      role === "throughput" && previous?.latencyClientIp
+        ? {
+            clientIp: previous.latencyClientIp,
+            clientIpVersion: previous.latencyClientIpVersion!,
+            clientIpSource: previous.latencyClientIpSource!,
+            protocolNegotiated: previous.latencyProtocolNegotiated!,
+          }
+        : undefined;
+    if (needsLatency && this.#latencyTarget && role !== "throughput") {
       const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
       const latencyRes = await fetch(latencyURL, {
         cache: "no-store",
@@ -465,9 +506,12 @@ export class RealBackend implements RunnerBackend {
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
-    const probeRtts = needsLatency ? await this.#collectIdleRtts(signal) : [];
+    const probeRtts =
+      needsLatency && role !== "throughput"
+        ? await this.#collectIdleRtts(signal)
+        : [];
 
-    return {
+    const info: InfraInfo = {
       clientIp: pathProbe.clientIp,
       clientIpVersion: pathProbe.clientIpVersion,
       clientIpSource: pathProbe.clientIpSource,
@@ -480,7 +524,9 @@ export class RealBackend implements RunnerBackend {
         port: pf.server.port,
         location: pf.server.location,
       },
-      preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
+      preTestPingMs: probeRtts.length
+        ? median(probeRtts)
+        : (previous?.preTestPingMs ?? 0),
       engineVersion: pf.engineVersion,
       discoveryGeneration: pf.generation,
       protocolNegotiated: pathProbe.protocolNegotiated,
@@ -493,6 +539,8 @@ export class RealBackend implements RunnerBackend {
       firstHopProtocol,
       firstHopSecure: selected.tls,
     };
+    this.#probeInfo = info;
+    return info;
   }
 
   /** Start the idle keepalive at the brisk probe cadence and resolve with its
