@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"time"
 
@@ -28,6 +29,8 @@ type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.Endpoint
 	download, uploadSession, upload  endpoint.Endpoint
 	ping, uploadProgress             endpoint.Endpoint
+	admission                        *requestAdmission
+	trustedProxies                   []netip.Prefix
 }
 
 type service struct {
@@ -54,6 +57,8 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
 		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store),
 		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store),
+		admission:      newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration),
+		trustedProxies: cfg.TrustedProxies,
 	}, nil
 }
 
@@ -122,11 +127,19 @@ func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology,
 	if topology.latency {
 		reg.RegisterWS("/ws/ping", e.ping)
 	}
-	m := http.NewServeMux()
-	reg.Mount(ctx, m)
+	inner := http.NewServeMux()
+	reg.Mount(ctx, inner)
 	if topology.spa {
-		m.Handle("/", spa)
+		inner.Handle("/", spa)
 	}
+	if e.admission == nil {
+		return inner
+	}
+	m := http.NewServeMux()
+	for _, path := range []string{"/download", "/upload", "/upload/progress", "/ws/ping"} {
+		m.Handle(path, e.admission.wrap(inner, e.trustedProxies))
+	}
+	m.Handle("/", inner)
 	return m
 }
 
