@@ -967,11 +967,11 @@ func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
 	m.events = events
 	m.complete = true
 
-	got, cmd := m.Update(eventMsg(goclient.Event{
+	got, cmd := m.Update(eventsMsg{{
 		Kind:   goclient.EventResult,
 		Stage:  "bidirectional",
 		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24},
-	}))
+	}})
 	if cmd == nil {
 		t.Fatal("completed runs must keep waiting for buffered events")
 	}
@@ -1000,17 +1000,12 @@ func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
 	}
 }
 
-func TestThroughputSmoothingAndScale(t *testing.T) {
+func TestThroughputRateAndScale(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	// First sample seeds the EWMA; a second pulls it toward the new value but
-	// not all the way (alpha 0.35), while peak/raw rate stay authoritative.
 	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
-	if m.smoothRate[goclient.Down] != 100 {
-		t.Fatalf("first sample should seed EWMA to 100, got %v", m.smoothRate[goclient.Down])
-	}
 	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 200}})
-	if got := m.smoothRate[goclient.Down]; got <= 100 || got >= 200 {
-		t.Errorf("EWMA should sit between old and new sample, got %v", got)
+	if got := m.rates[goclient.Down].BytesPerSec; got != 200 {
+		t.Errorf("rate = %v, want latest authoritative sample", got)
 	}
 	// rateScale is the larger peak across both directions.
 	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 50}})
@@ -1019,40 +1014,15 @@ func TestThroughputSmoothingAndScale(t *testing.T) {
 	}
 }
 
-func TestAnimateEasesAndSettles(t *testing.T) {
+func TestEventsMsgAppliesBatch(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.smoothRate[goclient.Down] = 1000
-	// One frame moves partway (ease 0.2), not instantly to target.
-	m.animate()
-	if m.dispRate[goclient.Down] <= 0 || m.dispRate[goclient.Down] >= 1000 {
-		t.Fatalf("after one frame dispRate should be between 0 and target, got %v", m.dispRate[goclient.Down])
-	}
-	if m.frame != 1 {
-		t.Errorf("frame counter = %d, want 1", m.frame)
-	}
-	// Enough frames converge exactly to target, so settled() reports true.
-	for i := 0; i < 200 && !m.settled(); i++ {
-		m.animate()
-	}
-	if !m.settled() {
-		t.Fatalf("dispRate did not settle: disp=%v target=%v", m.dispRate[goclient.Down], m.smoothRate[goclient.Down])
-	}
-}
-
-func TestFrameMsgLoopStopsOutsideRun(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.mode = modeRun
-	_, cmd := m.Update(frameMsg(time.Now()))
-	if cmd == nil {
-		t.Error("frameMsg during a run should reschedule the next frame")
-	}
-	m.mode = modeConfigure
-	next, cmd := m.Update(frameMsg(time.Now()))
-	if cmd != nil {
-		t.Error("frameMsg outside a run should not reschedule")
-	}
-	if next.(model).animating {
-		t.Error("leaving run mode should clear the animating flag")
+	got, _ := m.Update(eventsMsg{
+		{Kind: goclient.EventStage, Stage: "download"},
+		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 1000}},
+	})
+	mm := got.(model)
+	if mm.stage != "download" || mm.rates[goclient.Down].BytesPerSec != 1000 {
+		t.Fatalf("batch was not applied atomically: stage=%q rates=%+v", mm.stage, mm.rates)
 	}
 }
 
@@ -1144,26 +1114,123 @@ func TestUpdate_DoneMsg(t *testing.T) {
 	}
 }
 
-func TestUpdate_EventMsg(t *testing.T) {
+func TestUpdate_EventsMsg(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
 
-	got, cmd := m.Update(eventMsg(goclient.Event{Kind: goclient.EventStage, Stage: "x"}))
+	got, cmd := m.Update(eventsMsg{
+		{Kind: goclient.EventStage, Stage: "x"},
+		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 42}},
+	})
 	mm := got.(model)
 	if mm.stage != "x" {
 		t.Errorf("stage = %q, want x", mm.stage)
+	}
+	if mm.rates[goclient.Down].BytesPerSec != 42 {
+		t.Errorf("rate = %v, want 42", mm.rates[goclient.Down].BytesPerSec)
 	}
 	if cmd == nil {
 		t.Error("expected a non-nil cmd to keep waiting for more events")
 	}
 
-	got, cmd = mm.Update(eventMsg(goclient.Event{Kind: goclient.EventComplete}))
+	got, cmd = mm.Update(eventsMsg{{Kind: goclient.EventComplete}})
 	mm = got.(model)
 	if !mm.complete {
 		t.Error("expected complete after EventComplete")
 	}
 	if cmd == nil {
 		t.Error("expected a non-nil cmd to drain buffered events after completion")
+	}
+}
+
+func TestWaitEventsDrainsBuffered(t *testing.T) {
+	events := make(chan goclient.Event, 3)
+	for i := 0; i < cap(events); i++ {
+		events <- goclient.Event{Kind: goclient.EventStage, Stage: string(rune('0' + i))}
+	}
+	close(events)
+	msg, ok := waitEvents(events)().(eventsMsg)
+	if !ok || len(msg) != cap(events) {
+		t.Fatalf("waitEvents returned %T with %d events", msg, len(msg))
+	}
+}
+
+func BenchmarkUpdateEventBatch(b *testing.B) {
+	events := make(eventsMsg, 64)
+	for i := range events {
+		direction := goclient.Down
+		if i%2 == 1 {
+			direction = goclient.Up
+		}
+		events[i] = goclient.Event{
+			Kind:       goclient.EventThroughput,
+			Direction:  direction,
+			Throughput: goclient.ThroughputSample{BytesPerSec: float64(100_000_000 + i)},
+		}
+	}
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.events = make(chan goclient.Event)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		next, _ := m.Update(events)
+		m = next.(model)
+	}
+}
+
+var benchmarkView string
+
+func BenchmarkViewConfigure(b *testing.B) {
+	m := newModel(goclient.DefaultConfig())
+	m.width = 100
+	m.height = 30
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkView = m.View()
+	}
+}
+
+func BenchmarkViewTransfer(b *testing.B) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.width = 100
+	m.height = 30
+	m.stage = "bidirectional"
+	m.status = "measure"
+	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000, TotalBytes: 1 << 30}
+	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000, TotalBytes: 1 << 30}
+	m.peaks[goclient.Down] = 140_000_000
+	m.peaks[goclient.Up] = 80_000_000
+	m.latency = goclient.LatencySample{RTT: 3 * time.Millisecond}
+	m.refreshSummary()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkView = m.View()
+	}
+}
+
+func BenchmarkViewComplete(b *testing.B) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.width = 100
+	m.height = 30
+	m.complete = true
+	m.status = "complete"
+	m.results = []goclient.Result{{
+		Stage:      "download",
+		Direction:  goclient.Down,
+		MeanBps:    125_000_000,
+		PeakBps:    140_000_000,
+		TotalBytes: 1 << 30,
+	}}
+	m.refreshSummary()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkView = m.View()
 	}
 }
