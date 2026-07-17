@@ -66,7 +66,6 @@ const PING_INTERVAL: Record<RunnerConfig["pingConcurrency"], number> = {
 const PING_MAX_IN_FLIGHT = 16;
 const PING_LOADED_INTERVAL_MS = 120;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
-const PING_MIN_GAP_MS = 1;
 const PING_REPORT_GAP_MS = 20;
 const PING_LOSS_K = 4;
 const PING_LOSS_FLOOR_MS = 250;
@@ -1002,7 +1001,6 @@ export class RealBackend implements RunnerBackend {
       url,
       intervalMs,
       maxInFlight: PING_MAX_IN_FLIGHT,
-      minGapMs: PING_MIN_GAP_MS,
       reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
@@ -1069,9 +1067,7 @@ export class RealBackend implements RunnerBackend {
    *  available. Started by probe() (at the brisk preflight cadence) and again
    *  after every run ends (via #closeAll, from onComplete/onAbort), so the
    *  connectivity pill stays live whenever the app isn't mid-test. The
-   *  on-receive chain is OFF and the in-flight window tiny: the pacer alone
-   *  drives sends, so this can never ping (or update the UI) faster than
-   *  once per interval. */
+   *  uses a tiny in-flight window and a fixed internal cadence. */
   #startIdleKeepalive(intervalMs = IDLE_PING_INTERVAL_MS): void {
     const targetKey = `${throughputTargetKey(this.#throughputTarget)}\n${this.#latencyTarget?.id ?? ""}`;
     if (this.#idleActive && this.#idleTargetKey === targetKey) return;
@@ -1108,14 +1104,12 @@ export class RealBackend implements RunnerBackend {
       url,
       intervalMs,
       maxInFlight: 2,
-      minGapMs: PING_MIN_GAP_MS,
       reportGapMs: 0, // paced sends are already sparse — report every sample
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
     });
-    // Report immediately (no warmup window), pacer-driven only — the
-    // on-receive chain would otherwise ping at ~1 kHz.
-    w.postMessage({ type: "measure", chainOnReceive: false });
+    // Report immediately (there is no keepalive warmup window).
+    w.postMessage({ type: "measure" });
     this.#idleWorker = w;
   }
 
@@ -1556,13 +1550,11 @@ export class RealBackend implements RunnerBackend {
       underLoad
         ? {
             type: "measure",
-            chainOnReceive: false,
             maxInFlight: PING_LOADED_MAX_IN_FLIGHT,
             intervalMs: PING_LOADED_INTERVAL_MS,
           }
         : {
             type: "measure",
-            chainOnReceive: true,
             maxInFlight: PING_MAX_IN_FLIGHT,
             intervalMs: PING_INTERVAL[cfg.pingConcurrency],
           },
