@@ -79,14 +79,16 @@ worker reporting and chart updates:
    or Frames. Clear the frame list at the latency measurement boundary, or count only outbound
    `PING,<id>` frames whose timestamps fall inside that four-second measured window. Exclude `HI`
    and the preceding warmup PINGs.
-3. Repeat with Unloaded ping cadence set to Instant (80ms), Medium (250ms), and Slow (600ms).
+3. Repeat with Unloaded ping cadence set to Fast (80ms), Medium (250ms), and Slow (600ms).
    Expect roughly 50, 16, and 6–7 outbound PING frames respectively. A one-timer-boundary difference
    is normal when a frame lands exactly on a window edge.
 4. Repeat the fixed-window count during download or upload with loaded latency enabled, changing
    only Loaded ping cadence. Expect the same three counts. This validates that the transfer-stage
    warmup and measurement use the loaded selector while the unloaded selector remains independent.
 
-Immediate loopback PONGs must not increase these counts. Pending-window saturation or RTT longer
+Immediate loopback PONGs must not increase the fixed-cadence counts. Reply-driven should send the
+next PING immediately after each PONG; if a reply is missing, its RTT-derived backup may open up to
+four unloaded requests or two loaded requests before pausing. Pending-window saturation or RTT longer
 than the cadence may reduce them, but recovery must not produce early sends or catch-up bursts.
 Pre-test probes and the idle connectivity keepalive are intentionally outside both controls.
 

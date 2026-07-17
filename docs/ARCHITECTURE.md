@@ -257,9 +257,10 @@ real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 - **Latency** — a dedicated ping WebSocket run entirely inside `ping-worker.ts`, off the main
   thread so JS jank on the page never pollutes RTT. Implements an adaptive RFC-6298-style loss
   timeout, a "late-pong graveyard" so one delayed reply doesn't falsely register as loss, an
-  in-flight cap, and a start-to-start cadence scheduler. PONG arrival can release saturated
-  capacity and resume an overdue send, but cannot advance the next scheduled PING or create a
-  catch-up burst. Worker-to-main batching and sample downsampling do not affect wire pacing.
+  in-flight cap, fixed start-to-start pacing, and a reply-driven mode. Reply-driven sends the next
+  PING as soon as a PONG arrives; a conservative RTT-derived backup keeps it alive after a missing
+  reply, while caps of four unloaded or two loaded requests bound a badly underestimated path.
+  Worker-to-main batching and sample downsampling do not affect wire pacing.
   The unloaded or loaded cadence is selected when that stage's channel opens, applies throughout
   warmup and measurement, and is not changed when measurement enables reporting.
 - **Download** — `download-worker.ts`, one per parallel lane: a `fetch` GET with a streamed
@@ -313,8 +314,8 @@ A production build has only Setup, so no tab bar is rendered at all.
 | Setting                                       | Default   | Notes                                                                                                                                                                                                                            |
 | --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                                                                                                                                                     |
-| Unloaded ping cadence                         | Instant   | 80ms; Medium is 250ms and Slow is 600ms. Applies to latency-stage warmup and measurement.                                                                                                                                        |
-| Loaded ping cadence                           | Medium    | 250ms; Instant is 80ms and Slow is 600ms. Applies to warmup and loaded-latency measurement during download, upload, and bidirectional stages.                                                                                    |
+| Unloaded ping cadence                         | Reply-driven | Sends on each PONG with a bounded adaptive backup. Fast is 80ms, Medium is 250ms, and Slow is 600ms. Applies to latency-stage warmup and measurement.                                                                          |
+| Loaded ping cadence                           | Medium       | Reply-driven is available explicitly; fixed Fast/Medium/Slow cadences are 80/250/600ms. Applies to warmup and loaded-latency measurement during transfer stages.                                                              |
 | Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2 uses one download, H3 uses three downloads, and both use three overlapping uploads. Forced uses the configured count exactly for every protocol. |
 | Skip loaded latency when latency stage is off | on        |                                                                                                                                                                                                                                  |
 | Chunked download (experimental)               | off       | See Experimental features.                                                                                                                                                                                                       |
