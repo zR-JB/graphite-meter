@@ -61,7 +61,7 @@ type InMsg =
       lossK: number;
       lossFloorMs: number;
     }
-  | { type: "measure" }
+  | { type: "measure"; intervalMs?: number }
   | { type: "stop" };
 
 /** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
@@ -142,6 +142,10 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       connect();
       break;
     case "measure":
+      if (m.intervalMs !== undefined) {
+        intervalMs = m.intervalMs;
+        scheduler?.setInterval(intervalMs);
+      }
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
       break;

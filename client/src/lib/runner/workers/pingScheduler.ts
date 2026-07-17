@@ -17,7 +17,7 @@ export class PingScheduler {
   #running = false;
 
   constructor(
-    private readonly intervalMs: number,
+    private intervalMs: number,
     private readonly send: (now: number) => boolean,
     private readonly clock: PingSchedulerClock = systemClock,
   ) {}
@@ -36,6 +36,13 @@ export class PingScheduler {
   reset(): void {
     this.stop();
     this.#lastSendAt = null;
+  }
+
+  /** Change cadence without resetting the last-send boundary or sending a
+   * catch-up ping. */
+  setInterval(intervalMs: number): void {
+    this.intervalMs = intervalMs;
+    if (this.#running) this.#trySend();
   }
 
   /** Capacity became available. Send now only when the cadence is already due. */

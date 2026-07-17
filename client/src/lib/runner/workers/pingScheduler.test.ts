@@ -135,3 +135,16 @@ test("stop and reset leave no live send timer", () => {
   h.scheduler.start();
   expect(h.socket.sent.map((send) => send.at)).toEqual([0, 1000]);
 });
+
+test("cadence can settle after a fast probe without an early send", () => {
+  const h = harness(120);
+  h.scheduler.start();
+  h.clock.advance(120);
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 120]);
+
+  h.scheduler.setInterval(1000);
+  h.clock.advance(999);
+  expect(h.socket.sent).toHaveLength(2);
+  h.clock.advance(1);
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 120, 1120]);
+});

@@ -550,6 +550,10 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
     });
     const info = await secondProbe;
+    expect(pingMessages).toContainEqual({
+      type: "measure",
+      intervalMs: 1000,
+    });
     expect(info.latencyClientIp).toBe("127.0.0.1");
     expect(info.latencyClientIpVersion).toBe(4);
     expect(info.latencyClientIpSource).toBe("socket");

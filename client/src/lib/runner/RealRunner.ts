@@ -546,7 +546,7 @@ export class RealBackend implements RunnerBackend {
 
   /** Start the idle keepalive at the brisk probe cadence and resolve with its
    *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
-   *  worker to the 1/s idle cadence. Best-effort: resolves with whatever it
+   *  worker to the sparse liveness cadence. Best-effort: resolves with whatever it
    *  gathered by the timeout, never rejects. */
   #collectIdleRtts(signal?: AbortSignal): Promise<number[]> {
     if (signal?.aborted) return Promise.resolve([]);
