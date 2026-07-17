@@ -401,10 +401,28 @@
     overscroll-behavior: contain;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    padding-right: var(--space-1);
+    padding-right: var(--space-2);
     scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+  .panel-body::-webkit-scrollbar {
+    width: 10px;
+  }
+  .panel-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .panel-body::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: var(--border-strong);
+    background-clip: padding-box;
+  }
+  .panel-body::-webkit-scrollbar-thumb:hover {
+    background: var(--text-soft);
+    background-clip: padding-box;
   }
 </style>

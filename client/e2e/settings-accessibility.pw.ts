@@ -66,7 +66,7 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
     endpoint.getByText("Server instance", { exact: true }),
   ).toBeVisible();
   await expect(endpoint.locator(".diagnostic-note")).toContainText(
-    "not a build or Git version",
+    "changes when the backend restarts",
   );
   await expect(endpoint.getByText("Throughput origin")).toBeVisible();
   await expect(endpoint.getByText("Latency origin")).toBeVisible();
