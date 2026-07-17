@@ -91,6 +91,13 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.
 		defer release()
 		ctx, cancel := context.WithTimeout(r.Context(), a.maxLifetime)
 		defer cancel()
+		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != "/ws/ping" {
+			controller := http.NewResponseController(w)
+			_ = controller.SetReadDeadline(deadline)
+			_ = controller.SetWriteDeadline(deadline)
+			defer controller.SetReadDeadline(time.Time{})
+			defer controller.SetWriteDeadline(time.Time{})
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

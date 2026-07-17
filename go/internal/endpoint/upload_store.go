@@ -56,6 +56,7 @@ type uploadAgg struct {
 	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
 	postsChanged   chan struct{}
 	finished       chan struct{} // explicitly closed by DELETE /upload/progress
+	expired        chan struct{} // closed when idle state is reaped
 	finishOnce     sync.Once
 	progressActive atomic.Bool
 	owner          string
@@ -198,6 +199,10 @@ const (
 )
 
 func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
+	return s.getOrCreateForActivity(id, owner, true)
+}
+
+func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*uploadAgg, uploadAccess) {
 	if id == "" {
 		return nil, uploadAccessInvalid
 	}
@@ -209,7 +214,9 @@ func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess
 			return nil, uploadAccessOwnerMismatch
 		}
 		sh.mu.Unlock()
-		agg.lastTouchMono.Store(monoNanos())
+		if touch {
+			agg.lastTouchMono.Store(monoNanos())
+		}
 		return agg, uploadAccessOK
 	}
 	if !s.validID(id) {
@@ -237,7 +244,7 @@ func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess
 		s.byOwner[owner]++
 		s.ownersMu.Unlock()
 	}
-	agg := &uploadAgg{finished: make(chan struct{}), postsChanged: make(chan struct{}, 1), owner: owner}
+	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), postsChanged: make(chan struct{}, 1), owner: owner}
 	agg.lastTouchMono.Store(monoNanos())
 	sh.m[id] = agg
 	sh.mu.Unlock()
@@ -293,6 +300,7 @@ func (s *UploadStore) delete(id string) {
 	sh.mu.Lock()
 	if agg, ok := sh.m[id]; ok {
 		delete(sh.m, id)
+		close(agg.expired)
 		s.live.Add(-1)
 		s.releaseOwner(agg)
 	}
@@ -309,8 +317,9 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 		sh := &s.shards[i]
 		sh.mu.Lock()
 		for id, agg := range sh.m {
-			if agg.lastTouchMono.Load() < aggCutoff {
+			if agg.posts.Load() == 0 && agg.lastTouchMono.Load() < aggCutoff {
 				delete(sh.m, id)
+				close(agg.expired)
 				s.live.Add(-1)
 				s.releaseOwner(agg)
 			}

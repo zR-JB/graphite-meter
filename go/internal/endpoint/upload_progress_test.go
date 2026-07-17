@@ -144,6 +144,7 @@ func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -158,9 +159,12 @@ func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	if got := agg.lastTouchMono.Load(); got != old {
 		t.Fatalf("progress tick refreshed last touch: got %d want %d", got, old)
 	}
-	cancel()
-	<-done
 	store.sweep(uploadIDTTL)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reaped aggregate did not close its progress stream")
+	}
 	if _, ok := store.get(id); ok {
 		t.Fatal("idle aggregate survived without upload activity")
 	}

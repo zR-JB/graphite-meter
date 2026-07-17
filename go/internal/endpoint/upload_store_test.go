@@ -163,6 +163,23 @@ func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	}
 }
 
+func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
+	s := NewUploadStore()
+	id := s.Mint()
+	agg, _ := s.getOrCreate(id)
+	agg.changePosts(1)
+	agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
+	s.sweep(uploadIDTTL)
+	if _, ok := s.get(id); !ok {
+		t.Fatal("active upload was reaped")
+	}
+	agg.changePosts(-1)
+	s.sweep(uploadIDTTL)
+	if _, ok := s.get(id); ok {
+		t.Fatal("idle upload survived after its final post exited")
+	}
+}
+
 // TestUploadStoreMint checks minted ids are unique, authenticated, and opaque.
 func TestUploadStoreMint(t *testing.T) {
 	s := NewUploadStore()

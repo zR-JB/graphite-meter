@@ -86,7 +86,7 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return true
 	}
 
-	agg, access := e.store.getOrCreateFor(id, owner)
+	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {
 		writeUploadAccessError(w, access)
 		return nil
@@ -108,6 +108,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 	for {
 		select {
 		case <-r.Context().Done():
+			return nil
+		case <-agg.expired:
 			return nil
 		case <-agg.finished:
 			if !waitForUploadPosts(r.Context().Done(), agg) {

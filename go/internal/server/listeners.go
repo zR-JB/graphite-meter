@@ -246,7 +246,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 		opened = append(opened, pc)
 		quicTransport := &quic.Transport{Conn: pc, ConnContext: connections.connContext}
-		quicListener, err := quicTransport.Listen(h3.TLSConfig, h3.QUICConfig)
+		quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
 		if err != nil {
 			closeOpened()
 			return err
