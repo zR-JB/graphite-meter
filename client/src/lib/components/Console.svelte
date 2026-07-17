@@ -187,7 +187,7 @@
 >
   <!-- TOPBAR -->
   <header
-    class="zone topbar flex items-center gap-3 px-4 border-b border-border"
+    class="zone topbar flex items-center gap-3 border-b border-border px-4"
   >
     <button
       type="button"
@@ -240,14 +240,14 @@
        compact so the simple default fits the viewport without vertical scroll.
        The instrument cluster morphs between live/partial-results/final-grid
        states; advancing a phase never resizes this section. -->
-  <section class="zone stage min-w-0 overflow-y-auto flex flex-col">
+  <section class="zone stage flex min-w-0 flex-col overflow-y-auto">
     <GaugePanel />
     <ThroughputChart />
   </section>
 
   <!-- STATUS BAR -->
   <footer
-    class="zone status flex items-center gap-4 px-4 border-t border-border bg-surface-1 font-mono text-soft"
+    class="zone status flex items-center gap-4 border-t border-border bg-surface-1 px-4 font-mono text-soft"
   >
     <StatusBar />
     <ShortcutHints />
