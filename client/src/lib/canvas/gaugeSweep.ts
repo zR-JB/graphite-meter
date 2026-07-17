@@ -20,34 +20,40 @@ export interface SweepTargetInput {
   latencyScaleMs: number;
   /** Current RTT (ms) during the latency phase. */
   rtt: number;
-  /** Where the dial was when `complete` was entered. */
-  frozenFraction: number;
+  /** Metric represented after completion. */
+  completedKind: "speed" | "latency";
 }
 
 /** The 0-1 sweep fraction the dial eases toward for the given frame's state.
  *  Mirrors GaugeEngine's per-phase target: a transfer phase reads the
  *  absolute value/scale ratio, latency reads RTT/latencyScale, warmup/idle/
- *  aborted/error hold fixed indeterminate positions, and complete holds where
- *  the live dial ended. */
+ *  aborted/error hold fixed indeterminate positions, and complete normalizes
+ *  the authoritative final metric against the current display scale. */
 export function sweepTarget(s: SweepTargetInput): number {
+  const throughput = () => {
+    const scale = s.scaleBytesPerSec > 0 ? s.scaleBytesPerSec : 1;
+    return clamp01(s.valueBytesPerSec / scale);
+  };
+  const latency = () => {
+    const scale = s.latencyScaleMs > 0 ? s.latencyScaleMs : 1;
+    return clamp01(s.rtt / scale);
+  };
   switch (s.phase) {
     case "download":
     case "upload":
     case "bidirectional": {
-      const scale = s.scaleBytesPerSec > 0 ? s.scaleBytesPerSec : 1;
-      return clamp01(s.valueBytesPerSec / scale);
+      return throughput();
     }
     case "connecting":
     case "warmup":
       return 0.3; // indeterminate — connection probe, no meaningful rate yet
     case "latency": {
-      const scale = s.latencyScaleMs > 0 ? s.latencyScaleMs : 1;
-      return clamp01(s.rtt / scale);
+      return latency();
     }
     case "idle":
       return 0.1;
     case "complete":
-      return s.frozenFraction;
+      return s.completedKind === "latency" ? latency() : throughput();
     default:
       return 0.05; // aborted / error
   }

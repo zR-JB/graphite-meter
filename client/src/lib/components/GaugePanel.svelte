@@ -222,16 +222,21 @@
     engine = new GaugeEngine(() => {
       const p = store.phase;
       const scale = store.displayScaleBytesPerSec;
+      const finalMetric = p === "complete" ? store.finalMetric : null;
       return {
         phase: p,
-        valueBytesPerSec: decayedBytesPerSec,
+        valueBytesPerSec:
+          finalMetric?.kind === "speed"
+            ? finalMetric.bytesPerSec
+            : decayedBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs,
         // Five quarter labels (0 … full scale) — memoized above: ms during the
         // latency phase or a latency-resolved end state, else throughput.
         ticks: gaugeTicks,
-        rtt: store.liveRtt,
+        rtt: finalMetric?.kind === "latency" ? finalMetric.ms : store.liveRtt,
         pingCount: store.latency.length,
+        completedKind,
       };
     });
     engine.attach(canvasEl!);
