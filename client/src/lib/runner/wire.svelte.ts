@@ -8,7 +8,7 @@
  * a frozen, non-reactive config into the engine) is compiled.
  * ============================================================ */
 
-import type { NetworkRunner, RunnerAnomaly } from "./contract";
+import type { InfraInfo, NetworkRunner, RunnerAnomaly } from "./contract";
 import { RunnerCore } from "./core";
 // NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
@@ -20,9 +20,16 @@ import { RealBackend, TransportUnavailableError } from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
+import { CONNECTION_FRESH_MS, connectionKey } from "./connectionModel";
 
 let runner: NetworkRunner | null = null;
 let unsub: (() => void) | null = null;
+let validationAbort: AbortController | null = null;
+let validationSeq = 0;
+let booted = false;
+let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
+  null;
+let lastSelectionKey = "";
 
 // Mirror the persisted dev toggle into the (main-thread) debug logger, live.
 // Workers are separate module graphs — they're told the value in their `start`
@@ -31,6 +38,13 @@ let unsub: (() => void) | null = null;
 if (typeof window !== "undefined") {
   $effect.root(() => {
     $effect(() => setDebugLogging(store.debugLogging));
+    $effect(() => {
+      const key = connectionKey(store.config);
+      const running = store.isRunning;
+      if (!booted || running || key === lastSelectionKey) return;
+      lastSelectionKey = key;
+      queueMicrotask(() => void validateConnections());
+    });
   });
 }
 
@@ -82,28 +96,88 @@ export function getRunner(): NetworkRunner {
   return runner;
 }
 
-/** Call once on app mount. Probes infra, subscribes store to events. */
+function validationMessage(cause: unknown): string {
+  if (cause instanceof TransportUnavailableError) return cause.message;
+  return cause instanceof Error ? cause.message : "Connection check failed";
+}
+
+function markValidation(
+  state: "checking" | "verified" | "failed" | "stale",
+  message?: string,
+  verifiedAt?: number,
+) {
+  store.connectionValidation = {
+    throughput: {
+      selection: store.config.transports.throughputTarget,
+      state,
+      message,
+      verifiedAt,
+    },
+    latency: {
+      selection: store.config.transports.latencyTarget,
+      state,
+      message,
+      verifiedAt,
+    },
+  };
+}
+
+function preparedIsFresh(key: string): boolean {
+  return !!(
+    prepared &&
+    prepared.key === key &&
+    Date.now() - prepared.verifiedAt <= CONNECTION_FRESH_MS &&
+    prepared.info.discoveryGeneration === store.transportDiscovery?.generation
+  );
+}
+
+export async function validateConnections(force = false): Promise<InfraInfo> {
+  const key = connectionKey(store.config);
+  if (!force && preparedIsFresh(key)) return prepared!.info;
+  validationAbort?.abort();
+  const abort = new AbortController();
+  validationAbort = abort;
+  const seq = ++validationSeq;
+  markValidation("checking");
+  try {
+    const info = await getRunner().probe(
+      $state.snapshot(store.config),
+      abort.signal,
+    );
+    if (abort.signal.aborted || seq !== validationSeq)
+      throw new DOMException("Aborted", "AbortError");
+    const verifiedAt = Date.now();
+    prepared = { key, info, verifiedAt };
+    store.ingest({ type: "infra", info });
+    markValidation("verified", undefined, verifiedAt);
+    return info;
+  } catch (cause) {
+    if (abort.signal.aborted || seq !== validationSeq) throw cause;
+    prepared = null;
+    markValidation("failed", validationMessage(cause));
+    throw cause;
+  } finally {
+    if (validationAbort === abort) validationAbort = null;
+  }
+}
+
+function refreshAfterTransition() {
+  if (!store.isRunning) void validateConnections(true).catch(() => {});
+}
+
+function refreshAfterVisibility() {
+  if (document.visibilityState === "visible") refreshAfterTransition();
+}
+
 export async function bootRunner() {
   const r = getRunner();
   store.engineInfo = r.describe();
   unsub = r.on((e) => store.ingest(e));
-  try {
-    const info = await r.probe(store.config);
-    store.ingest({ type: "infra", info });
-  } catch (cause) {
-    store.ingest({
-      type: "error",
-      error: {
-        reason:
-          cause instanceof TransportUnavailableError
-            ? "transport-unavailable"
-            : "preflight-failed",
-        message: "Probe failed",
-        phase: "idle",
-        cause,
-      },
-    });
-  }
+  booted = true;
+  lastSelectionKey = connectionKey(store.config);
+  window.addEventListener("online", refreshAfterTransition);
+  document.addEventListener("visibilitychange", refreshAfterVisibility);
+  await validateConnections().catch(() => {});
 }
 
 export function engage() {
@@ -113,26 +187,30 @@ export function engage() {
   }
   store.reset();
   const cfg = $state.snapshot(store.config);
-  // start() enters a visible connecting phase immediately, then resolves the
-  // selected target before starting the measurement clock.
-  getRunner()
-    .start(cfg)
-    .catch((cause) => {
-      // An abort invalidates the pending start and resolves it without error.
-      if (store.phase === "aborted") return;
-      store.ingest({
-        type: "error",
-        error: {
-          reason:
-            cause instanceof TransportUnavailableError
-              ? "transport-unavailable"
-              : "preflight-failed",
-          message: "Couldn't reach the server",
-          phase: "connecting",
-          cause,
-        },
-      });
+  store.activeConfig = structuredClone(cfg);
+  const key = connectionKey(cfg);
+  const start = async () => {
+    const info = preparedIsFresh(key)
+      ? prepared!.info
+      : await validateConnections();
+    await getRunner().start(cfg, info);
+  };
+  start().catch((cause) => {
+    // An abort invalidates the pending start and resolves it without error.
+    if (store.phase === "aborted") return;
+    store.ingest({
+      type: "error",
+      error: {
+        reason:
+          cause instanceof TransportUnavailableError
+            ? "transport-unavailable"
+            : "preflight-failed",
+        message: "Couldn't reach the server",
+        phase: "connecting",
+        cause,
+      },
     });
+  });
 }
 
 /**
@@ -144,6 +222,7 @@ export function engage() {
 export function returnToStart() {
   if (store.isRunning) getRunner().abort();
   store.reset();
+  void validateConnections(true).catch(() => {});
 }
 
 /**
@@ -166,6 +245,11 @@ export function injectAnomaly(a: RunnerAnomaly) {
 }
 
 export function teardownRunner() {
+  booted = false;
+  validationAbort?.abort();
+  validationAbort = null;
+  window.removeEventListener("online", refreshAfterTransition);
+  document.removeEventListener("visibilitychange", refreshAfterVisibility);
   unsub?.();
   unsub = null;
 }

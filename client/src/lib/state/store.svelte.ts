@@ -21,6 +21,10 @@ import type {
   StageFailure,
 } from "../runner/contract";
 import {
+  presentConnections,
+  type ConnectionValidation,
+} from "../runner/connectionModel";
+import {
   estimateLiveCompensation,
   estimateResultCompensation,
   type CompensationEstimate,
@@ -190,6 +194,20 @@ class AppStore {
   startEpoch = $state(0);
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
+  activeConfig = $state<RunnerConfig | null>(null);
+  connectionValidation = $state<ConnectionValidation>({
+    throughput: { selection: "current", state: "stale" },
+    latency: { selection: "auto", state: "stale" },
+  });
+  connections = $derived(
+    presentConnections(
+      this.config,
+      this.transportDiscovery,
+      this.connectionValidation,
+      this.infra,
+    ),
+  );
+  runConfig = $derived(this.activeConfig ?? this.config);
   unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
@@ -568,6 +586,7 @@ class AppStore {
     this.stageFailures = {};
     this.result = null;
     this.error = null;
+    this.activeConfig = null;
     this.startEpoch = 0;
     this.runSeq++;
   }

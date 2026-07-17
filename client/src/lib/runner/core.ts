@@ -310,7 +310,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   /* ================= START ================= */
-  async start(config: RunnerConfig): Promise<void> {
+  async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
     if (this.#tickTimer || this.#prepareAbort) this.abort();
     const generation = ++this.#runGeneration;
     const prepareAbort = new AbortController();
@@ -325,14 +325,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       transition: { from, to: "connecting", stage: null, t: 0 },
     });
 
-    let info: InfraInfo;
-    try {
-      info = await this.probe(config, prepareAbort.signal);
-    } catch (cause) {
-      if (generation !== this.#runGeneration || prepareAbort.signal.aborted)
-        return;
-      this.#prepareAbort = null;
-      throw cause;
+    let info = prepared;
+    if (!info) {
+      try {
+        info = await this.probe(config, prepareAbort.signal);
+      } catch (cause) {
+        if (generation !== this.#runGeneration || prepareAbort.signal.aborted)
+          return;
+        this.#prepareAbort = null;
+        throw cause;
+      }
     }
     if (generation !== this.#runGeneration) return;
     this.#prepareAbort = null;

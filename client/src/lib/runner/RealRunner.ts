@@ -351,6 +351,12 @@ export class RealBackend implements RunnerBackend {
       location.protocol === "https:",
       this.#discoveryProtocol,
     );
+    Object.assign(discovery, {
+      generation: pf.generation,
+      engineVersion: pf.engineVersion,
+      server: pf.server,
+      fetchedAt: Date.now(),
+    });
     this.#host?.emit({ type: "transportDiscovery", discovery });
     const selection = config.transports.throughputTarget;
     const selected = selectThroughputTarget(discovery, selection);
@@ -476,6 +482,7 @@ export class RealBackend implements RunnerBackend {
       },
       preTestPingMs: probeRtts.length ? median(probeRtts) : 0,
       engineVersion: pf.engineVersion,
+      discoveryGeneration: pf.generation,
       protocolNegotiated: pathProbe.protocolNegotiated,
       selectedThroughputTarget: selected.id,
       selectedThroughputProtocol: selected.protocol,

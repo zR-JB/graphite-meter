@@ -381,6 +381,7 @@ export interface InfraInfo {
   server: { name: string; host: string; port: number; location?: string };
   preTestPingMs: number;
   engineVersion: string;
+  discoveryGeneration: string;
   protocolNegotiated: string;
   selectedThroughputTarget?: string;
   selectedThroughputProtocol?: ProtocolTarget;
@@ -404,6 +405,10 @@ export interface DiscoveredTarget<T> {
 /** Server-advertised transports classified against the page that will use
  * them. Emitted as soon as /preflight completes, before selection or probing. */
 export interface TransportDiscovery {
+  generation: string;
+  engineVersion: string;
+  server: { name: string; host: string; port: number; location?: string };
+  fetchedAt: number;
   pageOrigin: string;
   pageSecure: boolean;
   pageProtocol?: string;
@@ -479,7 +484,7 @@ export type RunnerAnomaly =
 export interface NetworkRunner {
   /** Verify the selected target, then run. Emits `connecting` immediately so
    *  asynchronous path verification is visible and cancellable. */
-  start(config: RunnerConfig): Promise<void>;
+  start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
   abort(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
   probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo>;

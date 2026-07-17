@@ -96,7 +96,17 @@ export function classifyTransportDiscovery(
       ];
     }),
   );
-  return { pageOrigin, pageSecure, pageProtocol, throughput, latency };
+  return {
+    generation: "",
+    engineVersion: "",
+    server: { name: "", host: "", port: 0 },
+    fetchedAt: 0,
+    pageOrigin,
+    pageSecure,
+    pageProtocol,
+    throughput,
+    latency,
+  };
 }
 
 /** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;

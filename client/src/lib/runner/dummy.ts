@@ -208,6 +208,7 @@ export class DummyBackend implements RunnerBackend {
       },
       preTestPingMs: this.#spec.idleRttMs,
       engineVersion: "dummy-1.0.0",
+      discoveryGeneration: "dummy",
       protocolNegotiated:
         this.#opts.profile === "satellite" ? "h3 (QUIC)" : "webtransport/h3",
     };

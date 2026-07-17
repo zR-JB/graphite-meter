@@ -72,6 +72,7 @@ class FakeBackend implements RunnerBackend {
       server: { name: "fake", host: "fake", port: 0 },
       preTestPingMs: 0,
       engineVersion: "test",
+      discoveryGeneration: "test",
       protocolNegotiated: "fake",
     });
   }
@@ -377,6 +378,21 @@ test("target verification is a visible phase and abort prevents a late run start
 
   expect(core.phase).toBe("aborted");
   expect(backend.calls).toEqual(["abort"]);
+});
+
+test("a prepared selection starts without probing again", async () => {
+  class PreparedBackend extends FakeBackend {
+    override probe(): Promise<InfraInfo> {
+      throw new Error("unexpected probe");
+    }
+  }
+  const backend = new PreparedBackend();
+  const prepared = await new FakeBackend().probe();
+  const core = new RunnerCore(backend);
+
+  await core.start(makeConfig(), prepared);
+
+  expect(backend.calls.slice(0, 2)).toEqual(["runStart", "begin:download"]);
 });
 
 test("asynchronous stage preparation cannot consume the warmup budget", async () => {

@@ -1,0 +1,163 @@
+import type { InfraInfo, RunnerConfig, TransportDiscovery } from "./contract";
+import type {
+  FetchThroughputTarget,
+  WebSocketLatencyTarget,
+} from "../api/preflight";
+import {
+  selectLatencyTarget,
+  selectThroughputTarget,
+} from "./real/backendPure";
+
+export type ConnectionValidationState =
+  "checking" | "verified" | "failed" | "stale";
+export type ConnectionRole = "throughput" | "latency";
+
+export interface RoleValidation {
+  selection: string;
+  state: ConnectionValidationState;
+  verifiedAt?: number;
+  message?: string;
+}
+
+export interface ConnectionValidation {
+  throughput: RoleValidation;
+  latency: RoleValidation;
+}
+
+export interface ConnectionPresentation {
+  role: ConnectionRole;
+  selection: string;
+  target: FetchThroughputTarget | WebSocketLatencyTarget | null;
+  availability: "advertised" | "browser-blocked" | "not-advertised";
+  validation: ConnectionValidationState;
+  label: string;
+  summary: string;
+  message?: string;
+  browserProtocol?: string;
+  serverProtocol?: string;
+  clientIp?: string;
+  clientIpVersion?: 4 | 6;
+  clientIpSource?: "socket" | "forwarded";
+  verifiedAt?: number;
+}
+
+export const CONNECTION_FRESH_MS = 30_000;
+
+export function connectionKey(config: RunnerConfig): string {
+  return JSON.stringify({
+    throughput: config.transports.throughputTarget,
+    latency: config.transports.latencyTarget,
+    needsLatency:
+      config.stages.latency ||
+      (!config.skipLoadedLatencyWhenStageOff &&
+        (config.stages.download ||
+          config.stages.upload ||
+          config.stages.bidirectional)),
+  });
+}
+
+function protocolLabel(protocol: string): string {
+  if (protocol === "http1") return "HTTP/1.1";
+  if (protocol === "http2") return "HTTP/2";
+  if (protocol === "http3") return "HTTP/3";
+  return protocol;
+}
+
+function targetSummary(
+  target: FetchThroughputTarget | WebSocketLatencyTarget,
+): string {
+  const mechanism =
+    target.transport === "websocket" ? "WebSocket" : "Fetch stream";
+  return `${mechanism} · ${protocolLabel(target.protocol)} · ${target.tls ? "TLS" : "clear"}`;
+}
+
+function targetLabel(
+  role: ConnectionRole,
+  target: FetchThroughputTarget | WebSocketLatencyTarget | null,
+): string {
+  if (!target)
+    return role === "throughput" ? "Throughput path" : "Latency path";
+  if (target.transport === "websocket")
+    return target.tls ? "Secure WebSocket" : "Clear WebSocket";
+  return protocolLabel(target.protocol);
+}
+
+function availability(
+  discovery: TransportDiscovery,
+  role: ConnectionRole,
+  selection: string,
+): ConnectionPresentation["availability"] {
+  if (selection === "current" || selection === "auto")
+    return role === "throughput"
+      ? selectThroughputTarget(discovery, selection)
+        ? "advertised"
+        : "not-advertised"
+      : selectLatencyTarget(discovery, selection)
+        ? "advertised"
+        : "not-advertised";
+  return discovery[role][selection]?.state ?? "not-advertised";
+}
+
+export function presentConnections(
+  config: RunnerConfig,
+  discovery: TransportDiscovery | null,
+  validation: ConnectionValidation,
+  infra: InfraInfo | null,
+): Record<ConnectionRole, ConnectionPresentation> {
+  const make = (role: ConnectionRole): ConnectionPresentation => {
+    const selection =
+      role === "throughput"
+        ? config.transports.throughputTarget
+        : config.transports.latencyTarget;
+    const target = discovery
+      ? role === "throughput"
+        ? selectThroughputTarget(discovery, selection)
+        : selectLatencyTarget(discovery, selection)
+      : null;
+    const status = validation[role];
+    const currentEvidence =
+      status.state === "verified" &&
+      status.selection === selection &&
+      infra?.discoveryGeneration === discovery?.generation;
+    const evidence = currentEvidence ? infra : null;
+    return {
+      role,
+      selection,
+      target,
+      availability: discovery
+        ? availability(discovery, role, selection)
+        : "not-advertised",
+      validation: status.state,
+      label: targetLabel(role, target),
+      summary: target ? targetSummary(target) : "Selection unresolved",
+      message: status.message,
+      browserProtocol: evidence
+        ? role === "throughput"
+          ? evidence.firstHopProtocol
+          : evidence.verifiedLatencyProtocol
+        : undefined,
+      serverProtocol: evidence
+        ? role === "throughput"
+          ? evidence.protocolNegotiated
+          : evidence.latencyProtocolNegotiated
+        : undefined,
+      clientIp: evidence
+        ? role === "throughput"
+          ? evidence.clientIp
+          : evidence.latencyClientIp
+        : undefined,
+      clientIpVersion: evidence
+        ? role === "throughput"
+          ? evidence.clientIpVersion
+          : evidence.latencyClientIpVersion
+        : undefined,
+      clientIpSource: evidence
+        ? role === "throughput"
+          ? evidence.clientIpSource
+          : evidence.latencyClientIpSource
+        : undefined,
+      verifiedAt: currentEvidence ? status.verifiedAt : undefined,
+    };
+  };
+  return { throughput: make("throughput"), latency: make("latency") };
+}
