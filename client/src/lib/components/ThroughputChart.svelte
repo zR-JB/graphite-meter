@@ -1,22 +1,21 @@
 <script lang="ts">
-  /* ============================================================
-   * <ThroughputChart> — dual-axis canvas chart
-   * Thin wrapper around ChartEngine. Owns hover scrub: feeds the
-   * cursor x to the engine (which draws the guideline) and renders
-   * a floating mono readout chip in DOM.
-   * ============================================================ */
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { ChartEngine, type HoverInfo } from "../canvas/ChartEngine";
   import { fmtSpeed, fmtMs } from "../format";
+  import {
+    presentation,
+    type PresentationHandle,
+  } from "../canvas/presentation";
 
   let canvasEl = $state<HTMLCanvasElement>();
+  let plotEl = $state<HTMLDivElement>();
   let engine: ChartEngine;
   let hover = $state<HoverInfo | null>(null);
+  let hoverX: number | null = null;
+  let hoverPresentation: PresentationHandle;
 
-  // Wake the (self-parking) chart loop whenever the data it draws changes.
-  // During a run the loop sustains itself; this re-arms it on engage, on a new
-  // run (runSeq), and on the latency-enabled toggle while parked.
+  // Invalidate only for state read by ChartEngine.
   $effect(() => {
     void store.phase;
     void store.runSeq;
@@ -41,8 +40,11 @@
   });
 
   function onMove(e: MouseEvent) {
-    if (!engine) return;
-    engine.setHover(e.offsetX);
+    hoverX = e.offsetX;
+    hoverPresentation?.invalidate();
+  }
+  function updateHover() {
+    engine.setHover(hoverX);
     hover = engine.hoverInfo();
     if (
       hover &&
@@ -52,10 +54,11 @@
       hover.rtt == null
     )
       hover = null;
+    return false;
   }
   function onLeave() {
-    engine?.setHover(null);
-    hover = null;
+    hoverX = null;
+    hoverPresentation?.invalidate();
   }
 
   onMount(() => {
@@ -81,9 +84,8 @@
       },
     );
     engine.attach(canvasEl!);
-    engine.start();
+    hoverPresentation = presentation.register(plotEl!, updateHover);
 
-    // invalidateTheme repaints synchronously, so theme/resize need no wake().
     const mo = new MutationObserver(() => engine.invalidateTheme());
     mo.observe(document.documentElement, {
       attributes: true,
@@ -94,6 +96,7 @@
 
     return () => {
       engine.destroy();
+      hoverPresentation.destroy();
       mo.disconnect();
       ro.disconnect();
     };
@@ -102,6 +105,7 @@
 
 <section class="chart">
   <div
+    bind:this={plotEl}
     class="plot"
     role="img"
     aria-label="Throughput and latency over time"

@@ -21,7 +21,18 @@
   };
 
   let now = $state(Date.now());
+  let visible = $state(true);
+
   onMount(() => {
+    const update = () => (visible = !document.hidden);
+    update();
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  });
+
+  $effect(() => {
+    if (!store.isRunning || !visible) return;
+    now = Date.now();
     const id = setInterval(() => (now = Date.now()), 200);
     return () => clearInterval(id);
   });

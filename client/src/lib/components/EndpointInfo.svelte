@@ -3,7 +3,6 @@
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
-  import { pointerIntent } from "../actions/pointerIntent";
 
   const connections = $derived(
     store.isRunning ? store.runConnections : store.connections,
@@ -99,7 +98,7 @@
 
 <section class="infra">
   <div class="grid">
-    <article class="card" use:pointerIntent>
+    <article class="card">
       <h3>Server</h3>
       <dl>
         <div>
@@ -121,7 +120,7 @@
       </dl>
     </article>
 
-    <article class="card" use:pointerIntent>
+    <article class="card">
       <h3>Measurement engine</h3>
       <dl>
         <div>
@@ -142,7 +141,7 @@
     {#each ["throughput", "latency"] as role}
       {@const typedRole = role as "throughput" | "latency"}
       {@const connection = connections[typedRole]}
-      <article class="card path" use:pointerIntent>
+      <article class="card path">
         <header>
           <h3>{role} path</h3>
           <mark data-state={connection.validation}
@@ -257,22 +256,6 @@
     padding: var(--space-3);
     box-shadow: var(--elev-recess);
     overflow: clip;
-  }
-  .card::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0;
-    background: radial-gradient(
-      200px circle at var(--intent-x, 50%) var(--intent-y, 0),
-      var(--brand-soft),
-      transparent 70%
-    );
-    transition: opacity var(--dur-hover) var(--ease-out);
-  }
-  .card:hover::before {
-    opacity: 1;
   }
   .card > * {
     position: relative;

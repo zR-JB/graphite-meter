@@ -1,23 +1,17 @@
 <script lang="ts">
-  /* ============================================================
-   * <ConnectivityIndicator> — ambient awareness, topbar
-   * A 9px state dot (pulse keyed to effectiveConnectivity) + a
-   * 36px micro-sparkline of the last 16 RTT samples. Decorative
-   * canvas (aria-hidden); the wrapper carries role=status so the
-   * connection state is announced + tooltip-discoverable.
-   * ============================================================ */
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { tooltip } from "../actions/tooltip";
+  import {
+    presentation,
+    type PresentationHandle,
+  } from "../canvas/presentation";
 
   let canvasEl = $state<HTMLCanvasElement>();
+  let canvasPresentation: PresentationHandle;
 
-  // Last 16 RTT samples drive the sparkline (idle keepalive when no run is
-  // in flight, run samples during one — see store.pulseLatency).
   const spark = $derived(store.pulseLatency.slice(-16).map((s) => s.rttMs));
 
-  // Cached stroke color — resolved once and on theme change, NOT per draw
-  // (draw runs on every latency sample, ~16Hz; getComputedStyle there was hot).
   let sparkColor = "#888";
   function resolveColor() {
     sparkColor =
@@ -26,21 +20,25 @@
         .trim() || "#888";
   }
 
-  function draw() {
+  function draw(): boolean {
     const c = canvasEl;
-    if (!c) return;
+    if (!c) return false;
     const ctx = c.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) return false;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = 36;
     const h = 16;
-    c.width = Math.round(w * dpr);
-    c.height = Math.round(h * dpr);
+    const width = Math.round(w * dpr);
+    const height = Math.round(h * dpr);
+    if (c.width !== width || c.height !== height) {
+      c.width = width;
+      c.height = height;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
     const vals = spark;
-    if (vals.length < 2) return;
+    if (vals.length < 2) return false;
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const range = max - min || 1;
@@ -56,27 +54,29 @@
       else ctx.moveTo(x, y);
     });
     ctx.stroke();
+    return false;
   }
 
-  // Redraw when samples change (tracking `spark`).
   $effect(() => {
     spark;
-    draw();
+    canvasPresentation?.invalidate();
   });
 
   onMount(() => {
     resolveColor();
-    draw();
-    // Theme switch recolors the sparkline: re-resolve the cached color, redraw.
+    canvasPresentation = presentation.register(canvasEl!, draw);
     const mo = new MutationObserver(() => {
       resolveColor();
-      draw();
+      canvasPresentation.invalidate();
     });
     mo.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    return () => mo.disconnect();
+    return () => {
+      canvasPresentation.destroy();
+      mo.disconnect();
+    };
   });
 </script>
 
@@ -120,55 +120,17 @@
   .dot[data-state="connected"] {
     background: var(--ok);
     box-shadow: 0 0 0 4px var(--ok-soft);
-    animation: pulse 2s var(--ease-out) infinite;
   }
   .dot[data-state="degraded"] {
     background: var(--warn);
     box-shadow: 0 0 0 4px var(--warn-soft);
-    animation: pulse 1s var(--ease-out) infinite;
   }
   .dot[data-state="unstable"] {
     background: var(--err);
     box-shadow: 0 0 0 4px var(--err-soft);
-    animation: pulse 0.6s var(--ease-out) infinite;
   }
   .dot[data-state="offline"] {
     background: transparent;
     border: 1.5px solid var(--text-soft);
-    animation: blink 2.4s steps(1, end) infinite;
-  }
-
-  /* transform + opacity only — stays on the compositor; an animated filter
-     would re-rasterize the dot every frame for the app's whole lifetime. */
-  @keyframes pulse {
-    0% {
-      transform: scale(0.92);
-      opacity: 0.85;
-    }
-    50% {
-      transform: scale(1.08);
-      opacity: 1;
-    }
-    100% {
-      transform: scale(0.92);
-      opacity: 0.85;
-    }
-  }
-  @keyframes blink {
-    0%,
-    60% {
-      opacity: 1;
-    }
-    80%,
-    100% {
-      opacity: 0.35;
-    }
-  }
-
-  /* Reduced motion: hold steady, no pulse/blink. */
-  @media (prefers-reduced-motion: reduce) {
-    .dot {
-      animation: none !important;
-    }
   }
 </style>
