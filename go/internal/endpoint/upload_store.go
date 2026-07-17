@@ -32,6 +32,8 @@ type UploadStore struct {
 	tokenKeyOnce sync.Once
 	tokenKeyOK   bool
 	live         atomic.Int32 // live aggregates retained through completion replay
+	ownersMu     sync.Mutex
+	byOwner      map[string]int
 }
 
 type uploadShard struct {
@@ -55,6 +57,8 @@ type uploadAgg struct {
 	postsChanged   chan struct{}
 	finished       chan struct{} // explicitly closed by DELETE /upload/progress
 	finishOnce     sync.Once
+	progressActive atomic.Bool
+	owner          string
 }
 
 // recordChunk counts one drained chunk and starts the elapsed clock on the first
@@ -90,6 +94,9 @@ const (
 	// maxLiveUploads bounds the aggregate map so a burst of minted ids can't grow
 	// memory without bound.
 	maxLiveUploads = 1000
+	// maxLiveUploadsPerClient leaves ample room for rapid abort/retry cycles while
+	// preventing one source from occupying the global aggregate map.
+	maxLiveUploadsPerClient = 32
 	// uploadIDTTL: an aggregate idle this long (no chunk or progress tick) is
 	// reaped by the sweeper after abort, tab close, or crash.
 	uploadIDTTL = 30 * time.Second
@@ -101,7 +108,7 @@ const (
 
 // NewUploadStore builds an empty store with its shard maps initialised.
 func NewUploadStore() *UploadStore {
-	s := &UploadStore{}
+	s := &UploadStore{byOwner: make(map[string]int)}
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
 	}
@@ -174,50 +181,97 @@ func (s *UploadStore) validID(id string) bool {
 // the live-aggregate cap is reached. An EXISTING aggregate is always returned —
 // authentication and the cap apply only to the first create, so token expiry or
 // hitting the cap mid-test never strands a running test's later lanes. Every
-// successful call bumps lastTouchMono so an active id never looks idle to the sweeper.
+// successful call bumps lastTouchMono so upload activity never looks idle to the sweeper.
 func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
+	agg, access := s.getOrCreateFor(id, "")
+	return agg, access == uploadAccessOK
+}
+
+type uploadAccess uint8
+
+const (
+	uploadAccessOK uploadAccess = iota
+	uploadAccessInvalid
+	uploadAccessGlobalFull
+	uploadAccessClientFull
+	uploadAccessOwnerMismatch
+)
+
+func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
 	if id == "" {
-		return nil, false
+		return nil, uploadAccessInvalid
 	}
 	sh := s.shard(id)
 	sh.mu.Lock()
 	if agg, ok := sh.m[id]; ok {
+		if agg.owner != "" && owner != agg.owner {
+			sh.mu.Unlock()
+			return nil, uploadAccessOwnerMismatch
+		}
 		sh.mu.Unlock()
 		agg.lastTouchMono.Store(monoNanos())
-		return agg, true
+		return agg, uploadAccessOK
 	}
-	// Reserve a bounded live slot before doing token work.
+	if !s.validID(id) {
+		sh.mu.Unlock()
+		return nil, uploadAccessInvalid
+	}
 	for {
 		n := s.live.Load()
 		if n >= maxLiveUploads {
 			sh.mu.Unlock()
-			return nil, false
+			return nil, uploadAccessGlobalFull
 		}
 		if s.live.CompareAndSwap(n, n+1) {
 			break
 		}
 	}
-	if !s.validID(id) {
-		s.live.Add(-1)
-		sh.mu.Unlock()
-		return nil, false
+	if owner != "" {
+		s.ownersMu.Lock()
+		if s.byOwner[owner] >= maxLiveUploadsPerClient {
+			s.ownersMu.Unlock()
+			s.live.Add(-1)
+			sh.mu.Unlock()
+			return nil, uploadAccessClientFull
+		}
+		s.byOwner[owner]++
+		s.ownersMu.Unlock()
 	}
-	agg := &uploadAgg{finished: make(chan struct{}), postsChanged: make(chan struct{}, 1)}
+	agg := &uploadAgg{finished: make(chan struct{}), postsChanged: make(chan struct{}, 1), owner: owner}
 	agg.lastTouchMono.Store(monoNanos())
 	sh.m[id] = agg
 	sh.mu.Unlock()
-	return agg, true
+	return agg, uploadAccessOK
+}
+
+func (s *UploadStore) releaseOwner(agg *uploadAgg) {
+	if agg.owner == "" {
+		return
+	}
+	s.ownersMu.Lock()
+	s.byOwner[agg.owner]--
+	if s.byOwner[agg.owner] == 0 {
+		delete(s.byOwner, agg.owner)
+	}
+	s.ownersMu.Unlock()
+}
+
+func (s *UploadStore) finishFor(id, owner string) uploadAccess {
+	agg, ok := s.get(id)
+	if !ok {
+		return uploadAccessInvalid
+	}
+	if agg.owner != "" && owner != agg.owner {
+		return uploadAccessOwnerMismatch
+	}
+	agg.finishOnce.Do(func() { close(agg.finished) })
+	return uploadAccessOK
 }
 
 // finish marks the client-owned upload stage lifecycle as closed. Completion is
 // explicit: the progress stream never guesses from a quiet gap between POSTs.
 func (s *UploadStore) finish(id string) bool {
-	agg, ok := s.get(id)
-	if !ok {
-		return false
-	}
-	agg.finishOnce.Do(func() { close(agg.finished) })
-	return true
+	return s.finishFor(id, "") == uploadAccessOK
 }
 
 // get returns the existing aggregate for id without creating one.
@@ -237,9 +291,10 @@ func (s *UploadStore) get(id string) (*uploadAgg, bool) {
 func (s *UploadStore) delete(id string) {
 	sh := s.shard(id)
 	sh.mu.Lock()
-	if _, ok := sh.m[id]; ok {
+	if agg, ok := sh.m[id]; ok {
 		delete(sh.m, id)
 		s.live.Add(-1)
+		s.releaseOwner(agg)
 	}
 	sh.mu.Unlock()
 }
@@ -257,6 +312,7 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 			if agg.lastTouchMono.Load() < aggCutoff {
 				delete(sh.m, id)
 				s.live.Add(-1)
+				s.releaseOwner(agg)
 			}
 		}
 		sh.mu.Unlock()

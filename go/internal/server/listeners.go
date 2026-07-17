@@ -56,8 +56,8 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 	h3Port := publicH3Port(cfg)
 	return &endpoints{
 		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
-		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store),
-		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store),
+		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store, cfg.TrustedProxies),
+		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
 		admission:      newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration),
 		trustedProxies: cfg.TrustedProxies,
 	}, nil
