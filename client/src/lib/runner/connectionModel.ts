@@ -72,10 +72,7 @@ export function validationRoles(
     const matches = status.identity
       ? status.identity === connectionRoleKey(config, role, discovery)
       : status.selection === connectionSelection(config, role);
-    if (
-      !roles.includes(role) &&
-      (status.state === "stale" || !matches)
-    )
+    if (!roles.includes(role) && (status.state === "stale" || !matches))
       roles.push(role);
   }
   return roles;
