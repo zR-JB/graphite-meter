@@ -175,9 +175,9 @@ jobs:
         run: bun run check
       - name: Tests
         run: bun test
-      - name: Install browser
-        run: bunx playwright install --with-deps chromium
-      - name: Browser accessibility
+      - name: Install browsers
+        run: bunx playwright install --with-deps chromium firefox
+      - name: Browser accessibility and compatibility
         run: bun run test:e2e
 
   smoke:
