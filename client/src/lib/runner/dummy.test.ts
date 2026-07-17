@@ -39,7 +39,7 @@ const BASE_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingCadence: "instant",
+  pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
@@ -229,7 +229,7 @@ function relStd(xs: number[]): number {
 
 test("unloaded and loaded stages use their independent ping cadences", () => {
   const config = structuredClone(BASE_CONFIG);
-  config.pingCadence = "instant";
+  config.pingCadence = "fast";
   config.loadedPingCadence = "slow";
   const unloaded = makeBackend(
     { profile: "fiber", seed: 1 },
@@ -529,12 +529,12 @@ test("injectAnomaly packet-loss: raises loss probability to the default 60% with
   host.setPhase("download");
   host.setElapsed(1000);
   // Widen the window (magnitude stays default 0.6) so enough pings land inside
-  // it to estimate a probability — the instant unloaded cadence only samples
+  // it to estimate a probability — the fast unloaded cadence only samples
   // every 80ms, and the default 900ms window barely fits ~11.
   backend.injectAnomaly!({ kind: "packet-loss", durationMs: 20000 });
 
   for (let i = 0; i < 150; i++) {
-    const t = 1000 + i * 80; // matches the "instant" ping cadence exactly
+    const t = 1000 + i * 80; // matches the fast ping cadence exactly
     tick(backend, { activity: LATENCY_ACTIVITY, elapsed: t, realNow: t });
   }
   const lost = host.latency.filter((s) => s.lost).length;

@@ -60,16 +60,20 @@ const LANE_STAGGER_MS = 75;
 const PROGRESS_BYE_GRACE_MS = 1000;
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PING_INTERVAL: Record<PingCadence, number> = {
-  instant: 80,
+const PING_LOSS_K = 4;
+const PING_LOSS_FLOOR_MS = 250;
+const FIXED_PING_INTERVAL: Record<
+  Exclude<PingCadence, "reply-driven">,
+  number
+> = {
+  fast: 80,
   medium: 250,
   slow: 600,
 };
 const PING_MAX_IN_FLIGHT = 16;
+const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
 const PING_REPORT_GAP_MS = 20;
-const PING_LOSS_K = 4;
-const PING_LOSS_FLOOR_MS = 250;
 
 // One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
 const IDLE_PING_INTERVAL_MS = 1000;
@@ -1029,7 +1033,12 @@ export class RealBackend implements RunnerBackend {
       throw new Error("latency target not resolved");
     const url = httpToWs(channel.origin) + latencyRoute;
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
-    const intervalMs = PING_INTERVAL[cadence];
+    const replyDriven = cadence === "reply-driven";
+    // Reply-driven uses this only for its loss sweep; its sends are driven by
+    // PONGs and the worker's adaptive backup.
+    const intervalMs = replyDriven
+      ? PING_LOSS_FLOOR_MS
+      : FIXED_PING_INTERVAL[cadence];
 
     this.#latencyUnderLoad = false;
     this.#pingActive = true;
@@ -1057,9 +1066,15 @@ export class RealBackend implements RunnerBackend {
       type: "start",
       url,
       intervalMs,
-      maxInFlight: isLatencyStage
-        ? PING_MAX_IN_FLIGHT
-        : PING_LOADED_MAX_IN_FLIGHT,
+      replyDriven,
+      maxInFlight: replyDriven
+        ? Math.min(
+            PING_REPLY_MAX_IN_FLIGHT,
+            isLatencyStage ? PING_MAX_IN_FLIGHT : PING_LOADED_MAX_IN_FLIGHT,
+          )
+        : isLatencyStage
+          ? PING_MAX_IN_FLIGHT
+          : PING_LOADED_MAX_IN_FLIGHT,
       reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
@@ -1162,6 +1177,7 @@ export class RealBackend implements RunnerBackend {
       type: "start",
       url,
       intervalMs,
+      replyDriven: false,
       maxInFlight: 2,
       reportGapMs: 0, // paced sends are already sparse — report every sample
       lossK: PING_LOSS_K,

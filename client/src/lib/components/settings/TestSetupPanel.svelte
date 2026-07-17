@@ -467,7 +467,8 @@
     <label>
       <span>Unloaded ping cadence</span>
       <select bind:value={store.config.pingCadence} disabled={running}>
-        <option value="instant">Instant (80 ms)</option>
+        <option value="reply-driven">Reply-driven</option>
+        <option value="fast">Fast (80 ms)</option>
         <option value="medium">Medium (250 ms)</option>
         <option value="slow">Slow (600 ms)</option>
       </select>
@@ -475,7 +476,8 @@
     <label>
       <span>Loaded ping cadence</span>
       <select bind:value={store.config.loadedPingCadence} disabled={running}>
-        <option value="instant">Instant (80 ms)</option>
+        <option value="reply-driven">Reply-driven</option>
+        <option value="fast">Fast (80 ms)</option>
         <option value="medium">Medium (250 ms)</option>
         <option value="slow">Slow (600 ms)</option>
       </select>

@@ -94,7 +94,10 @@ const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
 };
 
 const PING_INTERVAL: Record<PingCadence, number> = {
-  instant: 80,
+  // The dummy has no request/reply transport; one core tick approximates the
+  // reply-driven worker's UI-visible sample stream.
+  "reply-driven": 20,
+  fast: 80,
   medium: 250,
   slow: 600,
 };

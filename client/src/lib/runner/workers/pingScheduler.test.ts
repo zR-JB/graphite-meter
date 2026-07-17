@@ -51,7 +51,7 @@ function harness(intervalMs: number, maxInFlight = 16) {
   let id = 0;
   let reports = 0;
   const scheduler = new PingScheduler(
-    intervalMs,
+    { kind: "fixed", intervalMs },
     () => {
       if (pending.size >= maxInFlight) return false;
       pending.add(id);
@@ -69,9 +69,35 @@ function harness(intervalMs: number, maxInFlight = 16) {
       const first = pending.values().next().value;
       if (first !== undefined) pending.delete(first);
       if (report) reports++;
-      scheduler.nudge();
+      scheduler.complete();
     },
     reportCount: () => reports,
+  };
+}
+
+function replyHarness(backupDelayMs: () => number, maxInFlight = 4) {
+  const clock = new ControlledClock();
+  const socket = new FakeWebSocket(clock);
+  const pending = new Set<number>();
+  let id = 0;
+  const scheduler = new PingScheduler(
+    { kind: "reply-driven", backupDelayMs },
+    () => {
+      if (pending.size >= maxInFlight) return false;
+      pending.add(id);
+      socket.send(encode({ op: "PING", id: id++ }));
+      return true;
+    },
+    clock,
+  );
+  return {
+    clock,
+    socket,
+    scheduler,
+    pending,
+    pong(id: number) {
+      if (pending.delete(id)) scheduler.complete();
+    },
   };
 }
 
@@ -147,4 +173,29 @@ test("cadence can settle after a fast probe without an early send", () => {
   expect(h.socket.sent).toHaveLength(2);
   h.clock.advance(1);
   expect(h.socket.sent.map((send) => send.at)).toEqual([0, 120, 1120]);
+});
+
+test("reply-driven cadence continues immediately on each pong", () => {
+  const h = replyHarness(() => 250);
+  h.scheduler.start();
+  h.clock.advance(2);
+  h.pong(0);
+  h.clock.advance(1);
+  h.pong(1);
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 2, 3]);
+});
+
+test("reply-driven backup follows the live RTT heuristic and respects its cap", () => {
+  let backupMs = 100;
+  const h = replyHarness(() => backupMs, 3);
+  h.scheduler.start();
+  backupMs = 20;
+  h.clock.advance(100);
+  h.clock.advance(40);
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 100, 120]);
+  h.clock.advance(1_000);
+  expect(h.socket.sent).toHaveLength(3);
+
+  h.pong(1);
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 100, 120, 1140]);
 });

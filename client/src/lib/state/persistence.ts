@@ -1,6 +1,6 @@
 // LocalStorage schema for user settings. Load is defensive so old or partial
 // blobs merge onto the current defaults instead of breaking startup.
-import type { RunnerConfig } from "../runner/contract";
+import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/real/streamPolicy";
 import { DEFAULT_CONFIG } from "./store.svelte";
 
@@ -77,6 +77,16 @@ function safeParse(raw: string | null): unknown {
   }
 }
 
+function pingCadence(value: unknown, fallback: PingCadence): PingCadence {
+  if (value === "instant") return "reply-driven";
+  return value === "reply-driven" ||
+    value === "fast" ||
+    value === "medium" ||
+    value === "slow"
+    ? value
+    : fallback;
+}
+
 export function loadPersisted(): PersistedState {
   const defaults = defaultPersisted();
   if (typeof window === "undefined") return defaults;
@@ -93,13 +103,20 @@ export function loadPersisted(): PersistedState {
   // Version 1 originally stored a numeric IP family. Preserve that explicit
   // expert choice now that the setting also supports automatic detection.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  merged.config.pingCadence = pingCadence(
+    parsedConfig?.pingCadence,
+    defaults.config.pingCadence,
+  );
+  merged.config.loadedPingCadence = pingCadence(
+    parsedConfig?.loadedPingCadence,
+    defaults.config.loadedPingCadence,
+  );
   const legacyPingCadence = parsedConfig?.pingConcurrency;
-  if (
-    legacyPingCadence === "instant" ||
-    legacyPingCadence === "medium" ||
-    legacyPingCadence === "slow"
-  )
-    merged.config.pingCadence = legacyPingCadence;
+  if (legacyPingCadence !== undefined)
+    merged.config.pingCadence = pingCadence(
+      legacyPingCadence,
+      merged.config.pingCadence,
+    );
   const legacyTransports = isPlainObject(parsedConfig?.transports)
     ? parsedConfig.transports
     : null;

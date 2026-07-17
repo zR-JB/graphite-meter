@@ -34,7 +34,7 @@ export type ProtocolTarget = "http1" | "http2" | "http3";
 export type ConnectionRole = "throughput" | "latency";
 /** Advertised transfer target id; "current" resolves from the discovery hop. */
 export type ThroughputTargetSelection = string;
-export type PingCadence = "instant" | "medium" | "slow";
+export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
 /* ---------- Phase activity descriptor (core → backend) ----------
  *  The self-contained description of WHAT a stage exercises, resolved ONCE by

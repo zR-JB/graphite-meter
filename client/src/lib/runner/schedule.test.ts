@@ -16,7 +16,7 @@ const BASE_CONFIG: RunnerConfig = {
     uploadMs: 10000,
     bidirectionalMs: 10000,
   },
-  pingCadence: "instant",
+  pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,

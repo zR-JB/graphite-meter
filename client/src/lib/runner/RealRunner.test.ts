@@ -482,7 +482,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
         uploadMs: 1,
         bidirectionalMs: 1,
       },
-      pingCadence: "instant",
+      pingCadence: "reply-driven",
       loadedPingCadence: "medium",
       experimentalChunkedDownload: false,
       compensation: {
@@ -598,8 +598,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     backend.onStageBegin(unloaded);
     expect(pingMessages.at(-1)).toMatchObject({
       type: "start",
-      intervalMs: 80,
-      maxInFlight: 16,
+      replyDriven: true,
+      maxInFlight: 4,
     });
     backend.onStageMeasure(unloaded);
     expect(pingMessages.at(-1)).toEqual({ type: "measure" });
@@ -614,6 +614,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     expect(pingMessages.at(-1)).toMatchObject({
       type: "start",
       intervalMs: 250,
+      replyDriven: false,
       maxInFlight: 2,
     });
     backend.onStageMeasure(loaded);
