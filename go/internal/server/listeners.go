@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -170,6 +171,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
 	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
@@ -185,7 +187,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	services := []service{{
 		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.H1Addr, network: "tcp",
-		run: func() error { return serve(h1ln, h1) }, stop: h1.Shutdown,
+		run: func() error { return serve(admittedListener{Listener: h1ln, admission: connections}, h1) }, stop: h1.Shutdown,
 	}}
 
 	if cfg.EnableH1TLS {
@@ -198,7 +200,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
 		services = append(services, service{
 			name: "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
 			addr: cfg.H1TLSAddr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
@@ -215,7 +217,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("h2"))
+		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("h2"))
 		services = append(services, service{
 			name: "HTTPS HTTP/2: measurement probe, transfers, progress only",
 			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
@@ -231,7 +233,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, ln)
-		tlsLn := tls.NewListener(ln, cm.tlsConfig("http/1.1"))
+		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
 		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
 		pc, err := net.ListenPacket("udp", cfg.H3Addr)
@@ -240,18 +242,29 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			return err
 		}
 		opened = append(opened, pc)
+		quicTransport := &quic.Transport{Conn: pc, ConnContext: connections.connContext}
+		quicListener, err := quicTransport.Listen(h3.TLSConfig, h3.QUICConfig)
+		if err != nil {
+			closeOpened()
+			return err
+		}
 		services = append(services,
 			service{
 				name: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only",
 				addr: cfg.H3Addr, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
 			},
 			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.H3Addr, network: "udp", run: func() error {
-				err := h3.Serve(pc)
+				err := h3.ServeListener(quicListener)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 					return nil
 				}
 				return err
-			}, stop: func(ctx context.Context) error { err := h3.Shutdown(ctx); _ = pc.Close(); return err }})
+			}, stop: func(ctx context.Context) error {
+				err := h3.Shutdown(ctx)
+				_ = quicListener.Close()
+				_ = quicTransport.Close()
+				return err
+			}})
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
