@@ -55,8 +55,8 @@ func (s *websocketSession) HTTP() (http.ResponseWriter, *http.Request, bool) {
 	return nil, nil, false
 }
 
-func (s *websocketSession) OpenDownloadSink() (io.Writer, FlushFunc, error) {
-	return nil, nil, ErrUnsupported
+func (s *websocketSession) OpenDownloadSink() (io.Writer, error) {
+	return nil, ErrUnsupported
 }
 
 func (s *websocketSession) OpenUploadSource() (io.Reader, error) {

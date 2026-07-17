@@ -3,7 +3,6 @@ package transport
 import (
 	"bytes"
 	"io"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -95,44 +94,15 @@ func TestHTTPSessionBus(t *testing.T) {
 	}
 }
 
-// TestHTTPSessionOpenDownloadSinkFlusher checks the sink is the ResponseWriter
-// itself and flush drains the underlying http.Flusher.
-func TestHTTPSessionOpenDownloadSinkFlusher(t *testing.T) {
+func TestHTTPSessionOpenDownloadSink(t *testing.T) {
 	w := httptest.NewRecorder()
 	s := NewHTTPSession(w, httptest.NewRequest("GET", "/", nil))
 
-	sink, flush, err := s.OpenDownloadSink()
+	sink, err := s.OpenDownloadSink()
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
 	if sink != w {
 		t.Error("sink is not the underlying ResponseWriter")
-	}
-	if err := flush(); err != nil {
-		t.Errorf("flush() = %v, want nil", err)
-	}
-	if !w.Flushed {
-		t.Error("flush() did not reach the underlying http.Flusher")
-	}
-}
-
-// nonFlushingWriter implements only http.ResponseWriter, not http.Flusher, so
-// OpenDownloadSink's no-op flush branch is reachable in a test.
-type nonFlushingWriter struct {
-	http.ResponseWriter
-}
-
-// TestHTTPSessionOpenDownloadSinkNoFlusher checks flush is a no-op (no panic,
-// no error) when the writer does not implement http.Flusher.
-func TestHTTPSessionOpenDownloadSinkNoFlusher(t *testing.T) {
-	w := &nonFlushingWriter{ResponseWriter: httptest.NewRecorder()}
-	s := NewHTTPSession(w, httptest.NewRequest("GET", "/", nil))
-
-	_, flush, err := s.OpenDownloadSink()
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if err := flush(); err != nil {
-		t.Errorf("flush() = %v, want nil", err)
 	}
 }
