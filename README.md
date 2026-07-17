@@ -102,58 +102,9 @@ A ready-made unit that pulls the image and runs it as a systemd service lives at
 
 ### Configuration
 
-Everything is optional; the defaults just work. The common knobs:
-
-| Env var                                                                | Default                   | What it does                                                                                                                   |
-| ---------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `GM_H1_ADDR`                                                           | `:7246`                   | Clear HTTP/1.1 listen address.                                                                                                 |
-| `GM_H1_TLS_ADDR`                                                       | `:7247`                   | Dedicated HTTPS HTTP/1.1 and WSS listen address.                                                                               |
-| `GM_H2_ADDR`                                                           | `:7248`                   | HTTP/2-only TLS listen address.                                                                                                |
-| `GM_H3_ADDR`                                                           | `:7249`                   | HTTP/3 UDP and bootstrap-only TCP listen address.                                                                              |
-| `GM_ENABLE_H1_TLS`                                                     | off                       | Enable dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, progress, and WSS latency on `GM_H1_TLS_ADDR` (`:7247/tcp`).  |
-| `GM_ENABLE_H2`                                                         | off                       | Enable the HTTP/2-only measurement probe, transfer, and progress listener on `GM_H2_ADDR` (`:7248/tcp`).                       |
-| `GM_ENABLE_H3`                                                         | off                       | Enable HTTP/3 probe, transfers, and progress on `GM_H3_ADDR` UDP plus the bootstrap-only TCP probe on the same port (`:7249`). |
-| `GM_TLS_CERT` / `GM_TLS_KEY`                                           | —                         | Matching, currently valid PEM pair required by native H1-TLS/H2/H3; renewed files hot-reload.                                  |
-| `GM_SERVER_NAME`                                                       | `graphite-meter`          | Server name shown in the client.                                                                                               |
-| `GM_SERVER_LOCATION`                                                   | —                         | Location label shown in the client (e.g. `fra`).                                                                               |
-| `GM_TRUSTED_PROXIES`                                                   | —                         | Comma-separated proxy CIDRs allowed to supply client IP and scheme forwarding headers.                                         |
-| `GM_MAX_ACTIVE_MEASUREMENTS` / `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `256` / `32`              | Concurrent measurement-handler ceilings globally and per client.                                                               |
-| `GM_MAX_CONNECTIONS` / `GM_MAX_CONNECTIONS_PER_CLIENT`                 | `512` / `64`              | Established TCP/QUIC connection ceilings globally and per direct peer.                                                         |
-| `GM_MAX_OPERATION_DURATION`                                            | `5m`                      | Hard lifetime for one transfer, progress stream, or latency WebSocket.                                                         |
-| `PUBLIC_H1_ORIGIN`                                                     | derived from request      | Public origin to advertise — set behind a reverse proxy.                                                                       |
-| `PUBLIC_H1_TLS_ORIGIN` / `PUBLIC_H2_ORIGIN` / `PUBLIC_H3_ORIGIN`       | derived from request host | Exact public TLS origins. Setting one advertises that external target even when its native listener is disabled.               |
-| `PUBLIC_TLS_ORIGIN`                                                    | —                         | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence.                                                |
-| `GM_VERBOSE`                                                           | off                       | Per-second server-side throughput/connection logging.                                                                          |
-
-`GM_H1_ADDR`, `GM_H1_TLS_ADDR`, `GM_H2_ADDR`, and `GM_H3_ADDR` control the sockets the Go
-process opens. `PUBLIC_*_ORIGIN` variables do not change those sockets; they only override the
-client-visible origins returned by `/preflight`. Leave the public origins unset for a direct
-deployment. Set them only when a reverse proxy, container port mapping, or public hostname makes
-the browser-facing origin differ from the listener address.
-
-Forwarding headers are ignored by default. See [Reverse proxy deployment](docs/REVERSE_PROXY.md)
-for nginx, Caddy, and Traefik examples and the trust-chain rules.
-
-### Public-server capacity
-
-The default admission limits are deliberately above a normal browser or native run, including a
-bidirectional stage with loaded latency and upload progress. Capacity is released immediately when
-a request finishes or disconnects; there is no client ban or cooldown. IPv4 clients are keyed by
-address and IPv6 clients by `/64`. Per-client saturation returns `429`; global saturation returns
-`503`. Both include `Retry-After: 1`, and clients fail the affected measurement instead of showing
-a partial result.
-
-Trusted forwarded addresses identify HTTP clients only when `GM_TRUSTED_PROXIES` permits the
-socket peer. TLS and QUIC admission happens before forwarded headers exist, so trusted proxies
-share the global connection ceiling and should enforce their own connection and packet-rate
-limits. Graphite Meter does not throttle measurement bandwidth because that would change the
-result it is meant to measure.
-
-Full runtime and build-time reference: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration).
-
-> **Measuring multi-gigabit through the container?** Rootless Podman's user-mode networking
-> (pasta/slirp) can cap throughput well below your NIC — use host networking for full-rate LAN
-> tests.
+Defaults need no configuration. The complete listener, TLS, public-origin, admission-limit, and
+build reference lives in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration);
+reverse proxies have a separate [deployment guide](docs/REVERSE_PROXY.md).
 
 ### Native terminal client
 
@@ -172,9 +123,8 @@ progress is part of the selected throughput path. See `-throughput-target` and `
 
 - **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — toolchain, `just` recipes, build flags,
   building the image from source.
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the server, the browser client, the TUI
-  client, and the cross-language `api/` contract fit together, plus the roadmap (multi-server
-  testing and the Rust rewrite).
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the server, browser client, TUI, and
+  cross-language `api/` contract fit together, plus the project roadmap.
 
 The short version: `git clone`, then `just dev`, then open http://localhost:7246.
 

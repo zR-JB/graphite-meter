@@ -183,9 +183,9 @@ and `internal/wire` — run with `just server-test`.
 
 ## The native Go terminal client
 
-`go/cmd/graphite-meter-client` is a separate binary: a fully interactive Bubble Tea TUI, not a
-one-shot printer. It shares the wire protocol and `/preflight` contract with the browser client
-and runs the same measurement stages against any Graphite Meter server.
+`go/cmd/graphite-meter-client` is an interactive Bubble Tea client that shares `/preflight` and
+the wire protocol with the browser. Measurement events are drained in bounded batches, and the
+terminal redraws only for state changes; there is no application animation clock.
 
 Stages (independently toggleable): **latency** (idle RTT baseline over `/ws/ping`), **download**,
 **upload**, **bidirectional** (download and upload lanes run concurrently — this is purely
@@ -225,7 +225,7 @@ module covers both the server and the TUI client).
 ## The Svelte browser client
 
 The UI (`client/src/`) is deliberately engine-agnostic: it only ever talks to `RunnerCore`
-(`src/lib/runner/core.ts`), which owns the phase timeline, a 20ms tick loop, a measured clock that
+(`src/lib/runner/core.ts`), which owns the phase timeline, a deadline scheduler, a measured clock that
 retains stalls in effective throughput while bounding recovery with a max timeout, an
 adaptive early-finish ("glide" toward the phase boundary once a stage's confidence stabilizes),
 and dual exponential-moving-average smoothing (a fast ~700ms constant for the displayed number, a
@@ -254,91 +254,23 @@ real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 
 ### Measurement stages
 
-- **Latency** — a dedicated ping WebSocket run entirely inside `ping-worker.ts`, off the main
-  thread so JS jank on the page never pollutes RTT. Implements an adaptive RFC-6298-style loss
-  timeout, a "late-pong graveyard" so one delayed reply doesn't falsely register as loss, an
-  in-flight cap, fixed start-to-start pacing, and a reply-driven mode. Reply-driven sends the next
-  PING as soon as a PONG arrives; a conservative RTT-derived backup keeps it alive after a missing
-  reply, while caps of four unloaded or two loaded requests bound a badly underestimated path.
-  Worker-to-main batching and sample downsampling do not affect wire pacing.
-  The unloaded or loaded cadence is selected when that stage's channel opens, applies throughout
-  warmup and measurement, and is not changed when measurement enables reporting.
-- **Download** — `download-worker.ts`, one per parallel lane: a `fetch` GET with a streamed
-  response read via a BYOB reader that reuses a single 1 MiB buffer (no per-chunk allocation —
-  this is the actual read-side ceiling at multi-gigabit rates). Automatic stream policy uses the
-  browser's per-origin connection budget, bounded by the configured H1 ceiling, and one request
-  stream for HTTP/2/HTTP/3.
-- **Upload** — `upload-worker.ts` builds one incompressible Blob "pool" via
-  `crypto.getRandomValues` (generated once, then sliced with zero-copy views — never
-  regenerated per request), and POSTs adaptively-sized slices toward a 500ms target
-  (`autosize.ts`). Automatic H2/H3 uses three overlapping POST lanes so the connection keeps
-  carrying data while another finite request waits for its response. The shared 64 MiB reservoir
-  is divided across those lanes. The reported throughput number is **server-authoritative**: the worker only
-  reports lane liveness, and a separate dedicated `/upload/progress` fetch
-  (`upload-progress-worker.ts`) is the sole source of the byte count and rate, exactly mirroring
-  the server's elapsed-time clock described above.
-- **Bidirectional** — download and upload lanes run concurrently on `RealBackend`, each with its
-  own worker pool, aggregation cadence, and stall tracking. Automatic HTTP/1.1 splits the
-  available connection budget between directions after reserving the progress request and latency socket and applies the
-  configured ceiling to each share; automatic HTTP/2 uses one download request, HTTP/3 uses
-  three independent download streams, and both use three overlapping upload requests on one
-  multiplexed connection. Forced policy starts the exact configured request count independently for each
-  direction and protocol. HTTP/1.1 requests over the browser's connection limit can be queued.
+- **Latency** owns its WebSocket, pacing, RTT, and loss state in `ping-worker.ts`.
+- **Download** runs one streaming fetch worker per lane and reuses its read buffer.
+- **Upload** uses finite requests from a bounded shared payload pool; `/upload/progress` remains
+  the sole authoritative byte and rate source.
+- **Bidirectional** runs the download and upload pools together. Automatic stream policy accounts
+  for multiplexing and the HTTP/1.1 connection budget; forced policy uses the requested lane count.
 
 ### Settings
 
-Settings use a docked panel on wide layouts, a side flyout on smaller desktops, and a draggable
-bottom sheet on mobile. There are up to two tabs — Setup, plus Developer in dev-tooling builds.
-A production build has only Setup, so no tab bar is rendered at all.
+The responsive settings panel groups test, result, and advanced controls. It independently selects
+verified throughput and latency targets; unavailable targets remain visible with their discovery
+reason. Ping cadence applies to the selected measurement channel, while probe and between-run
+keepalive traffic retain their internal cadence.
 
-**Setup — Test tier**
-
-| Setting           | Default           | Notes                                                                                                                                                                                                               |
-| ----------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Duration preset   | Medium            | Short / Medium / Long apply warmup and every enabled stage duration together. Custom exposes the individual millisecond fields.                                                                                     |
-| Bidirectional     | off               | Adds concurrent download + upload. Its individual duration is shown only for Custom; named presets supply their matching bidirectional duration.                                                                    |
-| Throughput target | Same as this page | Requires an advertised target that exactly matches the page origin and browser-observed protocol, or selects H1 clear, H1 TLS, H2, or H3 independently. Unavailable targets stay visible with the discovery reason. |
-| Latency target    | Automatic         | Selects an advertised WebSocket target independently: H1 clear or H1 TLS. Unavailable targets stay visible with the discovery reason.                                                                               |
-
-**Setup — Results tier**
-
-| Setting                                     | Default | Notes                                                                                                                                                                                                                                          |
-| ------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Rate unit                                   | Bits    | Bits or Bytes.                                                                                                                                                                                                                                 |
-| Prefix scale                                | Decimal | Decimal (SI) or Binary (IEC).                                                                                                                                                                                                                  |
-| Auto throughput ceiling                     | on      | When off, a manual max-scale value can be set.                                                                                                                                                                                                 |
-| Include wire-rate estimates in result cards | off     | Estimates forward-direction physical Ethernet occupancy. Resource Timing detects the browser-facing HTTP protocol; expert settings cover MTU, IP version, TCP-option range, VLAN, QUIC connection-ID range, and explicit tunnel encapsulation. |
-
-**Setup — Advanced tier**
-
-| Setting                                       | Default   | Notes                                                                                                                                                                                                                            |
-| --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adaptive early finish                         | on        | Plus Min coverage (0.52), Stability threshold (0.86), Glide window (1100ms).                                                                                                                                                     |
-| Unloaded ping cadence                         | Reply-driven | Sends on each PONG with a bounded adaptive backup. Fast is 80ms, Medium is 250ms, and Slow is 600ms. Applies to latency-stage warmup and measurement.                                                                          |
-| Loaded ping cadence                           | Medium       | Reply-driven is available explicitly; fixed Fast/Medium/Slow cadences are 80/250/600ms. Applies to warmup and loaded-latency measurement during transfer stages.                                                              |
-| Transfer stream policy                        | Automatic | H1 derives from the connection pool with a configurable ceiling (default 6); H2 uses one download, H3 uses three downloads, and both use three overlapping uploads. Forced uses the configured count exactly for every protocol. |
-| Skip loaded latency when latency stage is off | on        |                                                                                                                                                                                                                                  |
-| Chunked download (experimental)               | off       | See Experimental features.                                                                                                                                                                                                       |
-
-Pre-test probe pings and the between-run connectivity keepalive use fixed internal cadences; neither
-selector changes them.
-
-Wire estimates deliberately stop at the browser's first hop. Behind a terminating reverse proxy,
-`PerformanceResourceTiming.nextHopProtocol` describes browser→proxy while the selected `/probe`'s
-`protocolNegotiated` describes what Go observed; the two are retained separately. The model composes
-application framing, TLS/QUIC protection, packetization, optional tunnel encapsulation, and
-Ethernet framing once. Reverse ACKs belong to the other full-duplex direction, while browser CPU,
-stability, ramp-up, ping timeouts, and proxy buffering describe achieved goodput or measurement
-quality rather than invisible protocol bytes, so none of them increases the estimate.
-The IP-family input defaults to the normalized client address reported by the throughput probe; forwarding
-headers contribute only through a peer in `GM_TRUSTED_PROXIES`. The UI shows whether that evidence
-came from the socket or a trusted proxy and retains IPv4/IPv6 overrides because translation,
-overlays, and upstream load balancers can make the presented family ambiguous.
-
-**Developer tab** (only in dev-tooling builds) — a debug-logging switch (verbose per-worker
-console diagnostics, meant to pair with the server's `-verbose`/`GM_VERBOSE` logging) and, when
-the dummy engine is also compiled in, four live anomaly-injection controls usable mid-run: latency
-spike, packet loss, throughput drop, and connection drop (a full stall-then-resume).
+Wire estimates stop at the browser's first hop. Browser Resource Timing, server probe evidence,
+and trusted-proxy address evidence stay separate because they describe different network
+boundaries. Dev-tooling builds add diagnostics and dummy-backend anomaly controls.
 
 ### The Endpoint info drawer
 
@@ -361,21 +293,8 @@ the primary summary.
 
 ### Testing
 
-Unit tests (`bun:test`, run via `just client-test`) cover pure `.ts` logic only — no component
-rendering (no jsdom/happy-dom/`@testing-library/svelte` in this repo). Coverage includes
-`actions/sheetDrag.ts`, `compensation.ts`, `format.ts`, `runner/adaptive.ts`, `runner/core.ts` (via a fake `RunnerBackend`
-test double, exercising the full phase-lifecycle/stall/early-finish/EMA behavior without a real
-network or worker), `runner/RealRunner.ts`, `runner/dummy.ts`, `runner/evaluation.ts`,
-`runner/schedule.ts`, `runner/real/streamPolicy.ts`, `runner/real/wire.ts`, the worker policy
-helpers, `state/persistence.ts`, `state/stageGuards.ts`, and the canvas interpolation/mapping
-helpers. Follow `state/stageGuards.test.ts` as the style
-model for new pure-logic tests; extract logic out of `.svelte`/rune-bearing files or classes
-entangled with I/O the same way `stageGuards.ts`/`backendPure.ts`/`hoverInterp.ts` were extracted,
-if it needs to be unit-tested in isolation.
-
-Client type checking is a separate gate from test execution. `just client-check` runs
-`svelte-check` with Bun's test globals enabled, so test files are semantically checked instead of
-only transpiled by `bun test`; it also runs `tsc` over the Vite config.
+Pure logic uses Bun unit tests; browser behavior uses Playwright in Chromium and Firefox. Commands
+and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
 
@@ -394,8 +313,9 @@ only transpiled by `bun test`; it also runs `tsc` over the Vite config.
 - **Multi-server testing** — select one configured server or run against several servers in one
   pass. Protocol targets in one discovery document currently remain listeners of one logical
   server, not independent servers.
-- **Rust rewrite (speculative far future)** — replace the Go server and native terminal client while preserving the shared
-  schemas, wire vectors, runtime behavior, and container interface. Some promissing experiments showed s2n-quic with custom h3 adapter with good performance.
+- **Rust rewrite (speculative far future)** — replace the Go server and native terminal client
+  while preserving the shared schemas, wire vectors, runtime behavior, and container interface.
+  Promising experiments used s2n-quic with a custom H3 adapter.
 
 ## TLS security and lifecycle
 
