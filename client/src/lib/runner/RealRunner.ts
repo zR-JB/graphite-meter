@@ -388,7 +388,7 @@ export class RealBackend implements RunnerBackend {
         (config.stages.download ||
           config.stages.upload ||
           config.stages.bidirectional));
-    if (needsLatency && !this.#latencyTarget)
+    if (needsLatency && role !== "throughput" && !this.#latencyTarget)
       throw new TransportUnavailableError(
         `${config.transports.latencyTarget} latency target unavailable`,
       );
