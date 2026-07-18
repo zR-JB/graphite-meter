@@ -252,6 +252,32 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 	}
 }
 
+func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionNetwork
+	m.row = 0
+	pf := wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{ID: "https://one.example", Origin: "https://one.example"},
+			{ID: "https://two.example", Origin: "https://two.example"},
+		},
+	}}
+
+	updated, _ := m.Update(preparationMsg{
+		seq: m.prepareSeq,
+		err: &goclient.PreparationError{
+			Preflight: pf,
+			Err:       errors.New("multiple throughput endpoints available; select an origin"),
+		},
+	})
+	m = updated.(model)
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "https://one.example"; got != want {
+		t.Fatalf("selected throughput target = %q, want %q", got, want)
+	}
+}
+
 func TestCheckbox(t *testing.T) {
 	if got := checkbox(true); got != "●" {
 		t.Errorf("checkbox(true) = %q, want ●", got)

@@ -381,8 +381,37 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 	if prepared.ThroughputTarget.Protocol != "http2" {
 		t.Fatalf("client-to-proxy protocol = %q", prepared.ThroughputTarget.Protocol)
 	}
+	if got := prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol; got != "negotiated" {
+		t.Fatalf("advertised protocol mutated to %q", got)
+	}
 	if prepared.Probe.ProtocolNegotiated != "http/1.1" || backendProtocol != "HTTP/1.1" {
 		t.Fatalf("backend evidence = %q, request = %q", prepared.Probe.ProtocolNegotiated, backendProtocol)
+	}
+}
+
+func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Preflight{
+			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+				testTransfer("one", "http://one.example", "negotiated", false),
+				testTransfer("two", "http://two.example", "negotiated", false),
+			}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := DefaultConfig()
+	cfg.BaseURL = srv.URL
+	cfg.Stages = StageSet{Download: true}
+	_, err := Prepare(context.Background(), cfg)
+	var preparationErr *PreparationError
+	if !errors.As(err, &preparationErr) {
+		t.Fatalf("Prepare error = %T %v, want PreparationError", err, err)
+	}
+	if got := len(preparationErr.Preflight.Capabilities.ThroughputTargets); got != 2 {
+		t.Fatalf("retained throughput targets = %d, want 2", got)
 	}
 }
 

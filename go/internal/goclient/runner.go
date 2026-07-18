@@ -27,6 +27,16 @@ type PreparedConnection struct {
 	configKey        string
 }
 
+// PreparationError retains successful discovery when a later target check
+// fails, so interactive clients can offer the advertised alternatives.
+type PreparationError struct {
+	Preflight wire.Preflight
+	Err       error
+}
+
+func (e *PreparationError) Error() string { return e.Err.Error() }
+func (e *PreparationError) Unwrap() error { return e.Err }
+
 const preparationFreshness = 30 * time.Second
 
 func preparationKey(cfg Config) string {
@@ -102,21 +112,25 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	target, err := selectTarget(cfg, pf)
-	if err != nil {
-		return nil, err
+	fail := func(err error) (*PreparedConnection, error) {
+		return nil, &PreparationError{Preflight: pf, Err: err}
 	}
+	advertisedTarget, err := selectTarget(cfg, pf)
+	if err != nil {
+		return fail(err)
+	}
+	target := *advertisedTarget
 	if cfg.ThroughputProtocol != "auto" {
 		if target.Protocol != "negotiated" && target.Protocol != cfg.ThroughputProtocol {
-			return nil, fmt.Errorf("endpoint is fixed to %s, cannot use %s", target.Protocol, cfg.ThroughputProtocol)
+			return fail(fmt.Errorf("endpoint is fixed to %s, cannot use %s", target.Protocol, cfg.ThroughputProtocol))
 		}
 		target.Protocol = cfg.ThroughputProtocol
 	}
 	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
 	defer closeTransfer()
-	probe, clientProtocol, err := getProbe(ctx, transfer, target)
+	probe, clientProtocol, err := getProbe(ctx, transfer, &target)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	if target.Protocol == "negotiated" {
 		target.Protocol = protocolFromEvidence(clientProtocol)
@@ -130,7 +144,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
 	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
 	if latencyErr != nil && needsLatency {
-		return nil, latencyErr
+		return fail(latencyErr)
 	}
 	var latencyProbe *wire.Probe
 	if !needsLatency {
@@ -138,15 +152,15 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	} else if latencyTarget != nil {
 		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)
 		if err != nil {
-			return nil, err
+			return fail(err)
 		} else {
 			latencyProbe = &p
 		}
 		if err := verifyLatencyWebSocket(ctx, wsClient, latencyTarget); err != nil {
-			return nil, err
+			return fail(err)
 		}
 	}
-	return &PreparedConnection{Preflight: pf, ThroughputTarget: *target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
+	return &PreparedConnection{Preflight: pf, ThroughputTarget: target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
 }
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {

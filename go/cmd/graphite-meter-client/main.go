@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func main() {
@@ -166,6 +168,7 @@ type model struct {
 	err                                 error
 	complete                            bool
 	prepared                            *goclient.PreparedConnection
+	discovery                           *wire.Preflight
 	prepareSeq                          int
 	prepareStatus                       string
 	prepareError                        string
@@ -253,10 +256,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prepareStatus = "failed"
 			m.prepareError = msg.err.Error()
 			m.prepared = nil
+			var preparationErr *goclient.PreparationError
+			if errors.As(msg.err, &preparationErr) {
+				pf := preparationErr.Preflight
+				m.discovery = &pf
+			} else {
+				m.discovery = nil
+			}
 		} else {
 			m.prepareStatus = "ready"
 			m.prepareError = ""
 			m.prepared = msg.connection
+			pf := msg.connection.Preflight
+			m.discovery = &pf
 		}
 		return m, nil
 	case eventsMsg:
@@ -497,8 +509,8 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		switch m.row {
 		case 0:
 			choices := []string{"auto"}
-			if m.prepared != nil {
-				for _, target := range m.prepared.Preflight.Capabilities.ThroughputTargets {
+			if m.discovery != nil {
+				for _, target := range m.discovery.Capabilities.ThroughputTargets {
 					choices = append(choices, target.Origin)
 				}
 			}
@@ -506,8 +518,8 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 			m.notice = "Throughput endpoint updated."
 		case 1:
 			choices := []string{"auto"}
-			if m.prepared != nil {
-				for _, target := range m.prepared.Preflight.Capabilities.LatencyTargets {
+			if m.discovery != nil {
+				for _, target := range m.discovery.Capabilities.LatencyTargets {
 					choices = append(choices, target.Origin)
 				}
 			}
