@@ -1,7 +1,11 @@
 // Package wire holds the JSON discovery/probe contracts and message-bus frames.
 package wire
 
-// Preflight describes one logical server. Connection-specific facts live in Probe.
+import (
+	"encoding/json"
+	"net/url"
+)
+
 type Preflight struct {
 	Server        ServerInfo   `json:"server"`
 	EngineVersion string       `json:"engineVersion"`
@@ -11,58 +15,68 @@ type Preflight struct {
 
 type ServerInfo struct {
 	Name     string `json:"name"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
 	Location string `json:"location,omitempty"`
 }
 
-// Capabilities advertises independently selectable throughput and latency paths.
 type Capabilities struct {
-	ThroughputTargets []ThroughputTarget `json:"throughputTargets"`
-	LatencyTargets    []LatencyTarget    `json:"latencyTargets"`
+	ThroughputTargets []ThroughputTarget `json:"throughput"`
+	LatencyTargets    []LatencyTarget    `json:"latency"`
 }
 
+// The non-JSON fields are normalized client-side conveniences. The wire shape
+// intentionally contains only baseUrl and the deterministic/negotiated protocol.
 type ThroughputTarget struct {
-	ID        string           `json:"id"`
-	Origin    string           `json:"origin"`
-	Transport string           `json:"transport"`
+	ID        string           `json:"-"`
+	Origin    string           `json:"baseUrl"`
+	Transport string           `json:"-"`
 	Protocol  string           `json:"protocol"`
-	TLS       bool             `json:"tls"`
-	Routes    ThroughputRoutes `json:"routes"`
+	TLS       bool             `json:"-"`
+	Routes    ThroughputRoutes `json:"-"`
 }
+type ThroughputRoutes struct{ Probe, Download, Upload, UploadSession, UploadProgress string }
 
-type ThroughputRoutes struct {
-	Probe          string `json:"probe"`
-	Download       string `json:"download"`
-	Upload         string `json:"upload"`
-	UploadSession  string `json:"uploadSession"`
-	UploadProgress string `json:"uploadProgress"`
-}
-
-// LatencyTarget is an independently selectable interactive latency path.
 type LatencyTarget struct {
-	ID        string        `json:"id"`
-	Origin    string        `json:"origin"`
-	Transport string        `json:"transport"`
-	Protocol  string        `json:"protocol"`
-	TLS       bool          `json:"tls"`
-	Routes    LatencyRoutes `json:"routes"`
+	ID        string        `json:"-"`
+	Origin    string        `json:"baseUrl"`
+	Transport string        `json:"-"`
+	Protocol  string        `json:"-"`
+	TLS       bool          `json:"-"`
+	Routes    LatencyRoutes `json:"-"`
 }
-
-type LatencyRoutes struct {
-	Probe string `json:"probe"`
-	Ping  string `json:"ping"`
-}
+type LatencyRoutes struct{ Probe, Ping string }
 
 func DefaultThroughputRoutes() ThroughputRoutes {
-	return ThroughputRoutes{Probe: "/probe", Download: "/download", Upload: "/upload", UploadSession: "/upload/session", UploadProgress: "/upload/progress"}
+	return ThroughputRoutes{"/probe", "/download", "/upload", "/upload/session", "/upload/progress"}
+}
+func DefaultLatencyRoutes() LatencyRoutes { return LatencyRoutes{"/probe", "/ws/ping"} }
+
+func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		BaseURL  string `json:"baseUrl"`
+		Protocol string `json:"protocol"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, "fetch-stream", raw.Protocol, DefaultThroughputRoutes()
+	u, _ := url.Parse(raw.BaseURL)
+	t.TLS = u.Scheme == "https"
+	return nil
 }
 
-func DefaultLatencyRoutes() LatencyRoutes {
-	return LatencyRoutes{Probe: "/probe", Ping: "/ws/ping"}
+func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		BaseURL string `json:"baseUrl"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, "websocket", "http1", DefaultLatencyRoutes()
+	u, _ := url.Parse(raw.BaseURL)
+	t.TLS = u.Scheme == "https"
+	return nil
 }
 
-// Probe describes one independently selected target path.
 type Probe struct {
 	ClientIP           string `json:"clientIp"`
 	ClientIPVersion    int    `json:"clientIpVersion"`

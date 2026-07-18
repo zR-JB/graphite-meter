@@ -40,9 +40,9 @@ func writeCertificate(t *testing.T, dir, name, host string, notBefore, notAfter 
 
 func tlsTestConfig(cert, key string) *config.Config {
 	c := config.Default()
-	c.EnableH2 = true
+	c.Native.H2 = ":7248"
 	c.TLSCert, c.TLSKey = cert, key
-	c.PublicH2Origin = "https://meter.example:7248"
+	c.NativePublic.H2 = "https://meter.example:7248"
 	return &c
 }
 
@@ -79,10 +79,10 @@ func TestCertificateValidationIgnoresExternalOrigins(t *testing.T) {
 	dir := t.TempDir()
 	cert, key := writeCertificate(t, dir, "quic", "quic.example", now.Add(-time.Hour), now.Add(time.Hour))
 	cfg := config.Default()
-	cfg.EnableH3 = true
+	cfg.Native.H3 = ":7249"
 	cfg.TLSCert, cfg.TLSKey = cert, key
-	cfg.PublicH2Origin = "https://speed.example"
-	cfg.PublicH3Origin = "https://quic.example"
+	cfg.Public.Both = []string{"https://speed.example"}
+	cfg.NativePublic.H3 = "https://quic.example"
 	if _, err := newCertificateManager(&cfg); err != nil {
 		t.Fatalf("native H3 certificate rejected for external H2 origin: %v", err)
 	}

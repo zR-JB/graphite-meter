@@ -12,6 +12,7 @@ func TestDefaultConfig(t *testing.T) {
 	want := Config{
 		BaseURL:                "http://127.0.0.1:7246",
 		ThroughputTarget:       "auto",
+		ThroughputProtocol:     "auto",
 		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,

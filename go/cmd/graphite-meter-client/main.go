@@ -22,11 +22,9 @@ func main() {
 	var ping string
 	var showVersion bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "server base URL")
-	flag.StringVar(&cfg.ThroughputTarget, "protocol", cfg.ThroughputTarget, "transfer target (legacy flag): auto, http1, http1-clear, http1-tls, http2, or http3")
-	flag.StringVar(&cfg.ThroughputTarget, "transfer-target", cfg.ThroughputTarget, "transfer target: auto, http1, http1-clear, http1-tls, http2, or http3")
-	flag.StringVar(&cfg.ThroughputTarget, "throughput-target", cfg.ThroughputTarget, "throughput target id from discovery, or auto")
-	flag.StringVar(&cfg.LatencyTarget, "latency-channel", cfg.LatencyTarget, "latency target (legacy flag) id from discovery, or auto")
-	flag.StringVar(&cfg.LatencyTarget, "latency-target", cfg.LatencyTarget, "latency target id from discovery, or auto")
+	flag.StringVar(&cfg.ThroughputTarget, "throughput-origin", cfg.ThroughputTarget, "throughput origin from discovery, or auto")
+	flag.StringVar(&cfg.ThroughputProtocol, "throughput-protocol", cfg.ThroughputProtocol, "protocol for a negotiated throughput origin: auto, http1, http2, or http3")
+	flag.StringVar(&cfg.LatencyTarget, "latency-origin", cfg.LatencyTarget, "WebSocket latency origin from discovery, or auto")
 	flag.StringVar(&stages, "stages", "latency,download,upload", "comma-separated stages: latency,download,upload,bidirectional")
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
 	flag.DurationVar(&cfg.LatencyDuration, "latency-duration", cfg.LatencyDuration, "latency measurement duration")
@@ -498,33 +496,36 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionNetwork:
 		switch m.row {
 		case 0:
-			protocols := []string{"auto", "http1-clear", "http1-tls", "http2", "http3"}
-			for i, p := range protocols {
-				if p == m.cfg.ThroughputTarget {
-					m.cfg.ThroughputTarget = protocols[(i+1)%len(protocols)]
-					break
+			choices := []string{"auto"}
+			if m.prepared != nil {
+				for _, target := range m.prepared.Preflight.Capabilities.ThroughputTargets {
+					choices = append(choices, target.Origin)
 				}
 			}
-			m.notice = "Throughput target updated."
+			m.cfg.ThroughputTarget = nextChoice(m.cfg.ThroughputTarget, choices)
+			m.notice = "Throughput endpoint updated."
 		case 1:
-			targets := []string{"auto", "ws-http1-clear", "ws-http1-tls"}
-			for i, target := range targets {
-				if target == m.cfg.LatencyTarget {
-					m.cfg.LatencyTarget = targets[(i+1)%len(targets)]
-					break
+			choices := []string{"auto"}
+			if m.prepared != nil {
+				for _, target := range m.prepared.Preflight.Capabilities.LatencyTargets {
+					choices = append(choices, target.Origin)
 				}
 			}
-			m.notice = "Latency target updated."
+			m.cfg.LatencyTarget = nextChoice(m.cfg.LatencyTarget, choices)
+			m.notice = "Latency endpoint updated."
 		case 2:
+			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
+			m.notice = "Throughput protocol updated."
+		case 3:
 			m.edit = editState{kind: editInt, field: "auto-streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax)}
 			m.notice = "Editing maximum automatic HTTP/1 streams. Use 1 through 128."
-		case 3:
+		case 4:
 			m.edit = editState{kind: editInt, field: "streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.Forced)}
 			m.notice = "Editing streams per direction. Use 0 for automatic or 1 through 128 to force."
-		case 4:
+		case 5:
 			m.cfg.InsecureSkipTLSVerify = !m.cfg.InsecureSkipTLSVerify
 			m.notice = "TLS verification setting updated."
-		case 5:
+		case 6:
 			m.cfg = goclient.DefaultConfig()
 			m.notice = "Configuration reset to defaults."
 		}
@@ -599,7 +600,7 @@ func (m *model) apply(e goclient.Event) {
 			if e.Probe != nil {
 				observed = "/" + e.Probe.ProtocolNegotiated
 			}
-			m.server = fmt.Sprintf("%s %s:%d %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Host, e.Preflight.Server.Port, e.Preflight.Server.Location, e.Message, observed)
+			m.server = fmt.Sprintf("%s %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message, observed)
 			m.status = "connected"
 		}
 		m.refreshSummary()
@@ -642,7 +643,7 @@ func (m model) rowCount() int {
 	case sectionTiming:
 		return 6
 	case sectionNetwork:
-		return 6
+		return 7
 	case sectionRun:
 		return 1
 	default:
@@ -680,6 +681,15 @@ func clamp(v, min, max int) int {
 		return max
 	}
 	return v
+}
+
+func nextChoice(current string, choices []string) string {
+	for i, choice := range choices {
+		if choice == current {
+			return choices[(i+1)%len(choices)]
+		}
+	}
+	return choices[0]
 }
 
 var (
@@ -858,18 +868,19 @@ func (m model) networkView(w int) string {
 		latency = m.prepared.LatencySummary()
 	}
 	rows := []string{
-		valueLine("Throughput", throughput, "independent path"),
-		valueLine("Latency", latency, "independent path"),
+		valueLine("Throughput endpoint", throughput, "independent path"),
+		valueLine("Latency endpoint", latency, "independent path"),
+		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated endpoints"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
-		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputTarget), "0 automatic; 1–128 forced"),
+		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 automatic; 1–128 forced"),
 		toggleLine("Unsafe: skip TLS verification", m.cfg.InsecureSkipTLSVerify, "advanced; all native TLS requests"),
 		warnStyle.Render("Reset to defaults"),
 	}
 	if m.edit.field == "auto-streams" {
-		rows[2] = valueLine("Auto H1 max", m.edit.value+"█", "editing")
+		rows[3] = valueLine("Auto H1 max", m.edit.value+"█", "editing")
 	}
 	if m.edit.field == "streams" {
-		rows[3] = valueLine("Streams", m.edit.value+"█", "editing")
+		rows[4] = valueLine("Streams", m.edit.value+"█", "editing")
 	}
 	return m.listWithTitle("Connections", rows, w)
 }

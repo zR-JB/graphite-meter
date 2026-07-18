@@ -8,15 +8,13 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
-func TestH1AddressFlags(t *testing.T) {
+func TestH1AddressFlag(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		args []string
 		want string
 	}{
-		{"legacy addr", []string{"-addr", ":9000"}, ":9000"},
 		{"h1 addr", []string{"-h1-addr", ":9001"}, ":9001"},
-		{"last occurrence wins", []string{"-addr", ":9000", "-h1-addr", ":9001"}, ":9001"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Default()
@@ -25,8 +23,8 @@ func TestH1AddressFlags(t *testing.T) {
 			if err := fs.Parse(tc.args); err != nil {
 				t.Fatal(err)
 			}
-			if cfg.H1Addr != tc.want {
-				t.Fatalf("H1Addr = %q, want %q", cfg.H1Addr, tc.want)
+			if cfg.Native.H1 != tc.want {
+				t.Fatalf("H1Addr = %q, want %q", cfg.Native.H1, tc.want)
 			}
 		})
 	}
@@ -46,7 +44,7 @@ func TestAdmissionFlags(t *testing.T) {
 }
 
 func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
-	t.Setenv("GM_ENABLE_H2", "true")
+	t.Setenv("GM_H2_ADDR", ":7248")
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatal(err)

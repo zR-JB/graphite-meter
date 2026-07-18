@@ -1,41 +1,15 @@
 {
-  "server": {
-    "name": "graphite-meter",
-    "host": "speed.example",
-    "port": 7246,
-    "location": "fra"
-  },
+  "server": { "name": "graphite-meter", "location": "fra" },
   "engineVersion": "0.1.0-test",
   "generation": "test-generation",
   "capabilities": {
-    "throughputTargets": [
-      {
-        "id": "http1-clear",
-        "origin": "http://speed.example:7246",
-        "transport": "fetch-stream",
-        "protocol": "http1",
-        "tls": false,
-        "routes": {
-          "probe": "/probe",
-          "download": "/download",
-          "upload": "/upload",
-          "uploadSession": "/upload/session",
-          "uploadProgress": "/upload/progress"
-        }
-      }
+    "throughput": [
+      { "baseUrl": "http://speed.example:7246", "protocol": "http1" },
+      { "baseUrl": ".", "protocol": "negotiated" }
     ],
-    "latencyTargets": [
-      {
-        "id": "ws-http1-clear",
-        "origin": "http://speed.example:7246",
-        "transport": "websocket",
-        "protocol": "http1",
-        "tls": false,
-        "routes": {
-          "probe": "/probe",
-          "ping": "/ws/ping"
-        }
-      }
+    "latency": [
+      { "baseUrl": "http://speed.example:7246" },
+      { "baseUrl": "." }
     ]
   }
 }

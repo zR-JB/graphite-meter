@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://graphite-meter/api/preflight.schema.json",
   "title": "Preflight",
-  "description": "Logical-server discovery returned by GET /preflight. Throughput and latency targets are independently selectable and independently verified.",
+  "description": "Logical server discovery with independently selectable throughput and latency endpoints.",
   "type": "object",
   "additionalProperties": false,
   "required": ["server", "engineVersion", "generation", "capabilities"],
@@ -10,93 +10,35 @@
     "server": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "host", "port"],
-      "properties": {
-        "name": { "type": "string" },
-        "host": { "type": "string" },
-        "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "location": { "type": "string" }
-      }
+      "required": ["name"],
+      "properties": { "name": { "type": "string" }, "location": { "type": "string" } }
     },
     "engineVersion": { "type": "string" },
     "generation": { "type": "string", "minLength": 1 },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["throughputTargets", "latencyTargets"],
+      "required": ["throughput", "latency"],
       "properties": {
-        "throughputTargets": { "type": "array", "items": { "$ref": "#/$defs/throughputTarget" } },
-        "latencyTargets": { "type": "array", "items": { "$ref": "#/$defs/latencyTarget" } }
+        "throughput": { "type": "array", "items": { "$ref": "#/$defs/throughputEndpoint" } },
+        "latency": { "type": "array", "items": { "$ref": "#/$defs/latencyEndpoint" } }
       }
     }
   },
   "$defs": {
-    "throughputTarget": {
-      "oneOf": [
-        { "$ref": "#/$defs/fetchThroughputTarget" },
-        { "$ref": "#/$defs/webTransportStreamsThroughputTarget" }
-      ]
-    },
-    "fetchThroughputTarget": {
+    "baseUrl": { "type": "string", "pattern": "^(\\.|https?://[^/]+)$" },
+    "throughputEndpoint": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
+      "required": ["baseUrl", "protocol"],
       "properties": {
-        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
-        "transport": { "const": "fetch-stream" }, "protocol": { "enum": ["http1", "http2", "http3"] },
-        "tls": { "type": "boolean" }, "routes": { "$ref": "#/$defs/throughputRoutes" }
+        "baseUrl": { "$ref": "#/$defs/baseUrl" },
+        "protocol": { "enum": ["http1", "http2", "http3", "negotiated"] }
       }
     },
-    "webTransportStreamsThroughputTarget": {
+    "latencyEndpoint": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
-      "properties": {
-        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
-        "transport": { "const": "webtransport-streams" }, "protocol": { "const": "http3" },
-        "tls": { "const": true }, "routes": { "type": "object" }
-      }
-    },
-    "throughputRoutes": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["probe", "download", "upload", "uploadSession", "uploadProgress"],
-      "properties": {
-        "probe": { "type": "string" },
-        "download": { "type": "string" },
-        "upload": { "type": "string" },
-        "uploadSession": { "type": "string" },
-        "uploadProgress": { "type": "string" }
-      }
-    },
-    "latencyTarget": {
-      "oneOf": [
-        { "$ref": "#/$defs/webSocketLatencyTarget" },
-        { "$ref": "#/$defs/webTransportDatagramsLatencyTarget" }
-      ]
-    },
-    "webSocketLatencyTarget": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
-      "properties": {
-        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
-        "transport": { "const": "websocket" }, "protocol": { "const": "http1" },
-        "tls": { "type": "boolean" }, "routes": { "$ref": "#/$defs/latencyRoutes" }
-      }
-    },
-    "webTransportDatagramsLatencyTarget": {
-      "type": "object", "additionalProperties": false,
-      "required": ["id", "origin", "transport", "protocol", "tls", "routes"],
-      "properties": {
-        "id": { "type": "string", "minLength": 1 }, "origin": { "type": "string", "format": "uri" },
-        "transport": { "const": "webtransport-datagrams" }, "protocol": { "const": "http3" },
-        "tls": { "const": true }, "routes": { "type": "object" }
-      }
-    },
-    "latencyRoutes": {
-      "type": "object", "additionalProperties": false,
-      "required": ["probe", "ping"],
-      "properties": {
-        "probe": { "type": "string" }, "ping": { "type": "string" }
-      }
+      "required": ["baseUrl"],
+      "properties": { "baseUrl": { "$ref": "#/$defs/baseUrl" } }
     }
   }
 }

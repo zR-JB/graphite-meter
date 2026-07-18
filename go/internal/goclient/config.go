@@ -56,6 +56,7 @@ func (p TransferStreamPolicy) Label(protocol string) string {
 type Config struct {
 	BaseURL                string
 	ThroughputTarget       string
+	ThroughputProtocol     string
 	LatencyTarget          string
 	Stages                 StageSet
 	Warmup                 time.Duration
@@ -78,6 +79,7 @@ func DefaultConfig() Config {
 	return Config{
 		BaseURL:                "http://127.0.0.1:7246",
 		ThroughputTarget:       "auto",
+		ThroughputProtocol:     "auto",
 		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
@@ -102,6 +104,9 @@ func (c Config) normalized() Config {
 	}
 	if c.ThroughputTarget == "" {
 		c.ThroughputTarget = "auto"
+	}
+	if c.ThroughputProtocol == "" {
+		c.ThroughputProtocol = "auto"
 	}
 	if c.LatencyTarget == "" {
 		c.LatencyTarget = "auto"
