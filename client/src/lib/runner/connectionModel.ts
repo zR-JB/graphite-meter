@@ -1,6 +1,7 @@
 import type {
   ConnectionRole,
   InfraInfo,
+  ProtocolTarget,
   RunnerConfig,
   TransportDiscovery,
 } from "./contract";
@@ -12,6 +13,7 @@ import {
   selectLatencyTarget,
   selectThroughputTarget,
 } from "./real/backendPure";
+import { describeTarget } from "./real/targetPresentation";
 
 export type ConnectionValidationState =
   "checking" | "verified" | "failed" | "stale";
@@ -39,6 +41,7 @@ export interface ConnectionPresentation {
   label: string;
   summary: string;
   message?: string;
+  observedProtocol?: ProtocolTarget;
   browserProtocol?: string;
   serverProtocol?: string;
   clientIp?: string;
@@ -146,32 +149,6 @@ export function connectionRoleKey(
       });
 }
 
-function protocolLabel(protocol: string): string {
-  if (protocol === "http1") return "HTTP/1.1";
-  if (protocol === "http2") return "HTTP/2";
-  if (protocol === "http3") return "HTTP/3";
-  return protocol;
-}
-
-function targetSummary(
-  target: FetchThroughputTarget | WebSocketLatencyTarget,
-): string {
-  const mechanism =
-    target.transport === "websocket" ? "WebSocket" : "Fetch stream";
-  return `${mechanism} · ${protocolLabel(target.protocol)} · ${target.tls ? "TLS" : "clear"}`;
-}
-
-function targetLabel(
-  role: ConnectionRole,
-  target: FetchThroughputTarget | WebSocketLatencyTarget | null,
-): string {
-  if (!target)
-    return role === "throughput" ? "Throughput path" : "Latency path";
-  if (target.transport === "websocket")
-    return target.tls ? "Secure WebSocket" : "Clear WebSocket";
-  return protocolLabel(target.protocol);
-}
-
 function availability(
   discovery: TransportDiscovery,
   role: ConnectionRole,
@@ -213,6 +190,14 @@ export function presentConnections(
       evidenceMatches &&
       infra?.discoveryGeneration === discovery?.generation;
     const evidence = currentEvidence ? infra : null;
+    const observedProtocol =
+      evidence && role === "throughput"
+        ? evidence.selectedThroughputProtocol
+        : undefined;
+    const targetPresentation =
+      target && discovery
+        ? describeTarget(discovery, target, observedProtocol)
+        : null;
     return {
       role,
       selection,
@@ -221,9 +206,12 @@ export function presentConnections(
         ? availability(discovery, role, selection)
         : "not-advertised",
       validation: status.state,
-      label: targetLabel(role, target),
-      summary: target ? targetSummary(target) : "Selection unresolved",
+      label:
+        targetPresentation?.label ??
+        (role === "throughput" ? "Throughput path" : "Latency path"),
+      summary: targetPresentation?.summary ?? "Selection unresolved",
       message: status.message,
+      observedProtocol,
       browserProtocol: evidence
         ? role === "throughput"
           ? evidence.firstHopProtocol

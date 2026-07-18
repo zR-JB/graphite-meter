@@ -16,17 +16,13 @@ import type {
   WebSocketLatencyTarget,
 } from "../../api/endpoints";
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
-
-const protocolByNextHop: Partial<Record<string, ProtocolTarget>> = {
-  "http/1.1": "http1",
-  h2: "http2",
-  h3: "http3",
-};
+import { normalizeHttpProtocol } from "../protocol";
 
 export function protocolFromNextHop(
   nextHopProtocol?: string,
 ): ProtocolTarget | undefined {
-  return nextHopProtocol ? protocolByNextHop[nextHopProtocol] : undefined;
+  const protocol = normalizeHttpProtocol(nextHopProtocol);
+  return protocol === "negotiated" ? undefined : protocol;
 }
 
 export function isLoopbackHostname(hostname: string): boolean {

@@ -134,8 +134,80 @@ test("presentation keeps browser and server protocol boundaries distinct", () =>
   expect(model.throughput.summary).toBe("Fetch stream · HTTP/2 · TLS");
   expect(model.throughput.browserProtocol).toBe("h2");
   expect(model.throughput.serverProtocol).toBe("http/1.1");
-  expect(model.latency.summary).toBe("WebSocket · HTTP/1.1 · TLS");
+  expect(model.latency.summary).toBe("WebSocket · TLS");
   expect(model.latency.preTestPingMs).toBe(4);
+});
+
+test("native H1 latency summary states its deterministic HTTP version", () => {
+  const cfg = config();
+  const direct = { ...latency, origin: throughput.origin, tls: true };
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [{ ...throughput, protocol: "http1" }],
+      [direct],
+      throughput.origin,
+      true,
+      "http/1.1",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: { selection: "auto", state: "stale" },
+    latency: { selection: "auto", state: "verified", verifiedAt: 2 },
+  };
+  const infra: InfraInfo = {
+    clientIp: "192.0.2.2",
+    clientIpVersion: 4,
+    clientIpSource: "socket",
+    latencyClientIp: "192.0.2.2",
+    latencyClientIpVersion: 4,
+    latencyClientIpSource: "socket",
+    server: discovery.server,
+    preTestPingMs: 4,
+    engineVersion: "test",
+    discoveryGeneration: discovery.generation,
+    protocolNegotiated: "http/1.1",
+    latencyProtocolNegotiated: "http/1.1",
+  };
+  expect(
+    presentConnections(cfg, discovery, validation, infra).latency.summary,
+  ).toBe("WebSocket · HTTP/1.1 · TLS");
+});
+
+test("verified negotiated throughput presents the observed browser protocol", () => {
+  const cfg = config();
+  const discovery = fixture();
+  discovery.throughput[throughput.origin].target!.protocol = "negotiated";
+  const validation: ConnectionValidation = {
+    throughput: { selection: "auto", state: "verified", verifiedAt: 2 },
+    latency: { selection: "auto", state: "stale" },
+  };
+  const infra: InfraInfo = {
+    clientIp: "192.0.2.2",
+    clientIpVersion: 4,
+    clientIpSource: "forwarded",
+    server: discovery.server,
+    preTestPingMs: 0,
+    engineVersion: "test",
+    discoveryGeneration: discovery.generation,
+    protocolNegotiated: "http/1.1",
+    selectedThroughputProtocol: "http2",
+    firstHopProtocol: "h2",
+  };
+
+  const presented = presentConnections(
+    cfg,
+    discovery,
+    validation,
+    infra,
+  ).throughput;
+  expect(presented.summary).toBe("Fetch stream · HTTP/2 · TLS");
+  expect(presented.observedProtocol).toBe("http2");
 });
 
 test("old evidence never appears under a new selection or generation", () => {

@@ -7,6 +7,8 @@
   } from "../../runner/contract";
   import { applyConnectionProfile } from "../../compensation";
   import { applyLiveRunConfig } from "../../runner/wire.svelte";
+  import { describeTarget } from "../../runner/real/targetPresentation";
+  import { compensationTransportLabel } from "../../runner/protocol";
   import { tooltip, JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
@@ -16,14 +18,6 @@
   }
   let { running = false }: Props = $props();
 
-  const protocolLabel = (protocol: string) =>
-    protocol === "http1"
-      ? "HTTP/1.1"
-      : protocol === "http2"
-        ? "HTTP/2"
-        : protocol === "http3"
-          ? "HTTP/3"
-          : "Negotiated";
   const throughputTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
@@ -32,7 +26,14 @@
           ? [
               {
                 value: entry.target.origin,
-                label: `${protocolLabel(entry.target.protocol)} · ${entry.target.origin}`,
+                label: describeTarget(
+                  store.transportDiscovery!,
+                  entry.target,
+                  store.connections.throughput.target?.origin ===
+                    entry.target.origin
+                    ? store.connections.throughput.observedProtocol
+                    : undefined,
+                ).label,
               },
             ]
           : [],
@@ -46,7 +47,8 @@
           ? [
               {
                 value: entry.target.origin,
-                label: `WebSocket · ${entry.target.origin}`,
+                label: describeTarget(store.transportDiscovery!, entry.target)
+                  .label,
               },
             ]
           : [],
@@ -161,13 +163,12 @@
   const COMPENSATION_TRANSPORTS: {
     value: CompensationTransportSetting;
     label: string;
-  }[] = [
-    { value: "auto", label: "Automatic" },
-    { value: "http1-clear", label: "HTTP/1.1 clear" },
-    { value: "https-tls", label: "HTTP/1.1 TLS" },
-    { value: "http2", label: "HTTP/2" },
-    { value: "http3-quic", label: "HTTP/3 QUIC" },
-  ];
+  }[] = (
+    ["auto", "http1-clear", "https-tls", "http2", "http3-quic"] as const
+  ).map((value) => ({
+    value,
+    label: compensationTransportLabel(value),
+  }));
   const COMPENSATION_NUMBERS = [
     ["mtuBytes", "MTU bytes", 576, 65536, 1],
     ["tcpOptionsMinBytes", "TCP options min", 0, 40, 4],

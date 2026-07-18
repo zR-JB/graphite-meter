@@ -3,6 +3,7 @@
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
+  import { httpProtocolLabel } from "../runner/protocol";
 
   const connections = $derived(
     store.isRunning ? store.runConnections : store.connections,
@@ -31,11 +32,13 @@
 
   function protocolEvidence(role: "throughput" | "latency") {
     const connection = connections[role];
+    if (role === "latency")
+      return connection.serverProtocol
+        ? `Path check reached server over ${httpProtocolLabel(connection.serverProtocol)}`
+        : "Pending";
     if (!connection.browserProtocol && !connection.serverProtocol)
       return "Pending";
-    if (connection.browserProtocol === connection.serverProtocol)
-      return `${connection.browserProtocol} · browser and server`;
-    return `Browser ${connection.browserProtocol ?? "unknown"} · server ${connection.serverProtocol ?? "unknown"}`;
+    return `Browser to endpoint ${httpProtocolLabel(connection.browserProtocol)} · server received ${httpProtocolLabel(connection.serverProtocol)}`;
   }
 
   function capability(value: string, role: "throughput" | "latency") {
@@ -154,7 +157,9 @@
             <dd>{connection.summary}</dd>
           </div>
           <div>
-            <dt>Protocol</dt>
+            <dt>
+              {typedRole === "throughput" ? "Observed HTTP" : "Path check"}
+            </dt>
             <dd>{protocolEvidence(typedRole)}</dd>
           </div>
           <div>
@@ -217,8 +222,9 @@
         </div>
       </dl>
       <p class="diagnostic-note">
-        Server instance changes when the backend restarts. Origins are the
-        endpoints used by the measurement.
+        Server instance changes when the backend restarts. Browser protocol
+        describes the selected endpoint; server protocol is what its path check
+        delivered to Graphite Meter.
       </p>
       <button type="button" onclick={copyReport}
         >{copied ? "Copied" : "Copy diagnostic report"}</button

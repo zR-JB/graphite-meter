@@ -42,7 +42,9 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
   );
   expect(
     throughputOptionView(blocked, "http://meter.example:7246").detail,
-  ).toContain("Advertised, but blocked from this secure page.");
+  ).toBe(
+    "Blocked by the browser: a secure page cannot open this clear endpoint · http://meter.example:7246",
+  );
   expect(throughputOptionView(blocked, "http2").detail).toBe(
     "Not offered in /preflight.",
   );
@@ -54,7 +56,7 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
     "http/1.1",
   );
   expect(throughputOptionView(loopback, "http://localhost:7246").detail).toBe(
-    "Allowed as a browser-trusted loopback target.",
+    "Browser-trusted clear loopback endpoint · http://localhost:7246",
   );
 });
 
@@ -67,13 +69,41 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
     "h2",
   );
   expect(throughputOptionView(catalog, "auto").detail).toBe(
-    "Uses this page's connection.",
+    "Selects https://meter because it matches this page.",
   );
   expect(latencyOptionView(catalog, "auto").detail).toBe(
-    "Uses the same security as this page.",
+    "Selects https://meter:7247 because it is the only available latency endpoint.",
   );
   expect(
     throughputOptionView({ ...catalog, pageOrigin: "https://proxy" }, "auto")
       .disabled,
   ).toBe(false);
+});
+
+test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () => {
+  const direct = classifyTransportDiscovery(
+    [transfer("http1-clear", "http://meter:7246", "http1", false)],
+    [latency("ws-http1-clear", "http://meter:7246", false)],
+    "http://meter:7246",
+    false,
+  );
+  expect(throughputOptionView(direct, "http://meter:7246").detail).toBe(
+    "Direct HTTP/1.1 endpoint · http://meter:7246",
+  );
+  expect(latencyOptionView(direct, "http://meter:7246").detail).toBe(
+    "Direct HTTP/1.1 WebSocket endpoint · http://meter:7246",
+  );
+
+  const negotiated = classifyTransportDiscovery(
+    [transfer("proxy", "https://meter", "negotiated", true)],
+    [latency("proxy", "https://meter", true)],
+    "https://meter",
+    true,
+  );
+  expect(throughputOptionView(negotiated, "https://meter").detail).toBe(
+    "Browser negotiates the available HTTP version · https://meter",
+  );
+  expect(latencyOptionView(negotiated, "https://meter").detail).toBe(
+    "WebSocket endpoint · https://meter",
+  );
 });
