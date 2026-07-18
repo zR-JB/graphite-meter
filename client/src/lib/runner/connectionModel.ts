@@ -94,6 +94,33 @@ export function connectionKey(
   });
 }
 
+/** Inputs that can invalidate preparation without depending on discovery or
+ * runtime protocol evidence produced by that same preparation. */
+export function connectionDraftRoleKey(
+  config: RunnerConfig,
+  role: ConnectionRole,
+): string {
+  const selection = connectionSelection(config, role);
+  return role === "throughput"
+    ? selection
+    : JSON.stringify({
+        selection,
+        needed:
+          config.stages.latency ||
+          (!config.skipLoadedLatencyWhenStageOff &&
+            (config.stages.download ||
+              config.stages.upload ||
+              config.stages.bidirectional)),
+      });
+}
+
+export function connectionDraftKey(config: RunnerConfig): string {
+  return JSON.stringify({
+    throughput: connectionDraftRoleKey(config, "throughput"),
+    latency: connectionDraftRoleKey(config, "latency"),
+  });
+}
+
 export function connectionRoleKey(
   config: RunnerConfig,
   role: ConnectionRole,

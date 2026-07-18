@@ -23,6 +23,12 @@ const protocolByNextHop: Partial<Record<string, ProtocolTarget>> = {
   h3: "http3",
 };
 
+export function protocolFromNextHop(
+  nextHopProtocol?: string,
+): ProtocolTarget | undefined {
+  return nextHopProtocol ? protocolByNextHop[nextHopProtocol] : undefined;
+}
+
 export function isLoopbackHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (host === "localhost" || host.endsWith(".localhost") || host === "::1")
@@ -151,9 +157,9 @@ export function browserProtocolMatchesTarget(
   nextHopProtocol?: string,
 ): boolean {
   return (
-    !!nextHopProtocol &&
-    (target.protocol === "negotiated" ||
-      protocolByNextHop[nextHopProtocol] === target.protocol)
+    target.protocol === "negotiated" ||
+    (!!nextHopProtocol &&
+      protocolFromNextHop(nextHopProtocol) === target.protocol)
   );
 }
 

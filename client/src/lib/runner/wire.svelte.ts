@@ -30,6 +30,8 @@ import { BUILD } from "../buildenv";
 import {
   CONNECTION_FRESH_MS,
   CONNECTION_ROLES,
+  connectionDraftKey,
+  connectionDraftRoleKey,
   connectionKey,
   connectionRoleKey,
   connectionSelection,
@@ -43,7 +45,7 @@ let validationSeq = 0;
 let booted = false;
 let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
   null;
-let lastRoleKeys: Record<ConnectionRole, string> = {
+let lastDraftRoleKeys: Record<ConnectionRole, string> = {
   throughput: "",
   latency: "",
 };
@@ -61,19 +63,15 @@ if (typeof window !== "undefined") {
     $effect(() => {
       const changed = CONNECTION_ROLES.filter(
         (role) =>
-          connectionRoleKey(store.config, role, store.transportDiscovery) !==
-          lastRoleKeys[role],
+          connectionDraftRoleKey(store.config, role) !==
+          lastDraftRoleKeys[role],
       );
       const running = store.isRunning;
       if (!booted) return;
       if (changed.length) {
         if (changed.includes("latency")) store.idleLatency = [];
         for (const role of changed)
-          lastRoleKeys[role] = connectionRoleKey(
-            store.config,
-            role,
-            store.transportDiscovery,
-          );
+          lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
         pendingValidation = true;
         if (running) {
           markValidation(
@@ -155,12 +153,13 @@ function markValidation(
   state: "checking" | "verified" | "failed" | "stale",
   message?: string,
   verifiedAt?: number,
+  config = store.config,
 ) {
   const next = { ...store.connectionValidation };
   for (const role of roles)
     next[role] = {
-      selection: connectionSelection(store.config, role),
-      identity: connectionRoleKey(store.config, role, store.transportDiscovery),
+      selection: connectionSelection(config, role),
+      identity: connectionRoleKey(config, role, store.transportDiscovery),
       state,
       message,
       verifiedAt,
@@ -181,12 +180,14 @@ export async function validateConnections(
   force = false,
   requestedRole?: ConnectionRole,
 ): Promise<InfraInfo> {
-  const key = connectionKey(store.config, store.transportDiscovery);
+  const config = $state.snapshot(store.config);
+  const key = connectionKey(config, store.transportDiscovery);
+  const draftKey = connectionDraftKey(config);
   if (!force && preparedIsFresh(key)) return prepared!.info;
   if (validating.length) markValidation(validating, "stale");
   validationAbort?.abort();
   const roles = validationRoles(
-    store.config,
+    config,
     store.connectionValidation,
     requestedRole,
     store.transportDiscovery,
@@ -195,27 +196,51 @@ export async function validateConnections(
   validationAbort = abort;
   const seq = ++validationSeq;
   validating = roles;
-  markValidation(roles, "checking");
+  markValidation(roles, "checking", undefined, undefined, config);
+  const transactionCurrent = (): boolean =>
+    !abort.signal.aborted &&
+    seq === validationSeq &&
+    connectionDraftKey($state.snapshot(store.config)) === draftKey;
   try {
     let latest: InfraInfo | null = null;
     let firstFailure: unknown;
-    for (const role of roles) {
+    const batches: (ConnectionRole | undefined)[] =
+      roles.length === CONNECTION_ROLES.length ? [undefined] : roles;
+    for (const role of batches) {
+      const batchRoles = role ? [role] : roles;
       try {
-        const info = await getRunner().probe(
-          $state.snapshot(store.config),
-          abort.signal,
-          role,
-        );
-        if (abort.signal.aborted || seq !== validationSeq)
+        const info = await getRunner().probe(config, abort.signal, role);
+        if (!transactionCurrent())
           throw new DOMException("Aborted", "AbortError");
         latest = info;
         const verifiedAt = Date.now();
         store.ingest({ type: "infra", info });
-        markValidation([role], "verified", undefined, verifiedAt);
+        markValidation(batchRoles, "verified", undefined, verifiedAt, config);
       } catch (cause) {
-        if (abort.signal.aborted || seq !== validationSeq) throw cause;
+        if (!transactionCurrent()) throw cause;
         firstFailure ??= cause;
-        markValidation([role], "failed", validationMessage(cause));
+        const failedRoles =
+          cause instanceof TransportUnavailableError && cause.role
+            ? [cause.role]
+            : batchRoles;
+        markValidation(
+          failedRoles,
+          "failed",
+          validationMessage(cause),
+          undefined,
+          config,
+        );
+        const uncheckedRoles = batchRoles.filter(
+          (batchRole) => !failedRoles.includes(batchRole),
+        );
+        if (uncheckedRoles.length)
+          markValidation(
+            uncheckedRoles,
+            "stale",
+            "Not checked because the other path failed.",
+            undefined,
+            config,
+          );
       }
     }
     if (firstFailure) {
@@ -224,7 +249,7 @@ export async function validateConnections(
     }
     if (!latest) throw new Error("no connection role was validated");
     prepared = {
-      key: connectionKey(store.config, store.transportDiscovery),
+      key: connectionKey(config, store.transportDiscovery),
       info: latest,
       verifiedAt: Date.now(),
     };
@@ -276,11 +301,7 @@ export async function bootRunner() {
   unsub = r.on(ingestRunnerEvent);
   booted = true;
   for (const role of CONNECTION_ROLES)
-    lastRoleKeys[role] = connectionRoleKey(
-      store.config,
-      role,
-      store.transportDiscovery,
-    );
+    lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
   await validateConnections().catch(() => {});

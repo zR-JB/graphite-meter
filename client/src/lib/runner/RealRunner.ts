@@ -27,6 +27,7 @@ import {
   median,
   needsPings,
   laneStaggerMs,
+  protocolFromNextHop,
   selectThroughputTarget,
   selectLatencyTarget,
   browserProtocolMatchesTarget,
@@ -38,7 +39,17 @@ export interface RealBackendOptions {
   authToken?: string;
 }
 
-export class TransportUnavailableError extends Error {}
+export class TransportUnavailableError extends Error {
+  readonly role?: ConnectionRole;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & { role?: ConnectionRole },
+  ) {
+    super(message, options);
+    this.role = options?.role;
+  }
+}
 
 // Match the core/dummy cadence so both engines feed the UI at the same rate.
 const THROUGHPUT_CADENCE_MS = 60;
@@ -258,7 +269,7 @@ export class RealBackend implements RunnerBackend {
   /** Set while probe() is harvesting the keepalive's first RTTs; `finish`
    *  resolves the preflight median wait (idempotent). */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
-  #probeReady: (() => void) | null = null;
+  #probeReady: { finish: (error?: Error) => void } | null = null;
   /** True after the keepalive reported a stall, so "connected" is emitted only
    *  on the offline→online edge instead of once per sample. */
   #idleOffline = false;
@@ -374,9 +385,12 @@ export class RealBackend implements RunnerBackend {
     this.#host?.emit({ type: "transportDiscovery", discovery });
     if (previous?.discoveryGeneration !== pf.generation) role = undefined;
     const selection = config.transports.throughputTarget;
-    const selected = selectThroughputTarget(discovery, selection);
-    if (!selected)
-      throw new TransportUnavailableError(`${selection} target unavailable`);
+    const advertisedTarget = selectThroughputTarget(discovery, selection);
+    if (!advertisedTarget)
+      throw new TransportUnavailableError(`${selection} target unavailable`, {
+        role: "throughput",
+      });
+    const selected = { ...advertisedTarget };
     if (
       role === "latency" &&
       selected.protocol === "negotiated" &&
@@ -400,6 +414,7 @@ export class RealBackend implements RunnerBackend {
     if (needsLatency && role !== "throughput" && !this.#latencyTarget)
       throw new TransportUnavailableError(
         `${config.transports.latencyTarget} latency target unavailable`,
+        { role: "latency" },
       );
     if (!needsLatency) this.#latencyTarget = null;
 
@@ -459,8 +474,12 @@ export class RealBackend implements RunnerBackend {
         if (selected.protocol === "http3")
           throw new TransportUnavailableError("http3 transport unavailable", {
             cause,
+            role: "throughput",
           });
-        throw cause;
+        throw new TransportUnavailableError("throughput probe request failed", {
+          cause,
+          role: "throughput",
+        });
       } finally {
         if (probeDeadline !== undefined) clearTimeout(probeDeadline);
       }
@@ -470,18 +489,17 @@ export class RealBackend implements RunnerBackend {
       )
         throw new TransportUnavailableError(
           `${selected.protocol} transport unavailable`,
+          { role: "throughput" },
         );
       if (selected.protocol === "negotiated") {
         selected.protocol =
-          firstHopProtocol === "h3"
-            ? "http3"
-            : firstHopProtocol === "h2"
-              ? "http2"
-              : "http1";
+          protocolFromNextHop(firstHopProtocol) ?? "negotiated";
       }
     }
     if (!pathProbe)
-      throw new TransportUnavailableError("throughput evidence unavailable");
+      throw new TransportUnavailableError("throughput evidence unavailable", {
+        role: "throughput",
+      });
 
     let latencyPathProbe:
       | {
@@ -501,14 +519,23 @@ export class RealBackend implements RunnerBackend {
         : undefined;
     if (needsLatency && this.#latencyTarget && role !== "throughput") {
       const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
-      const latencyRes = await fetch(latencyURL, {
-        cache: "no-store",
-        headers: this.#authHeaders(),
-        signal,
-      });
+      let latencyRes: Response;
+      try {
+        latencyRes = await fetch(latencyURL, {
+          cache: "no-store",
+          headers: this.#authHeaders(),
+          signal,
+        });
+      } catch (cause) {
+        throw new TransportUnavailableError("latency probe request failed", {
+          cause,
+          role: "latency",
+        });
+      }
       if (!latencyRes.ok)
         throw new TransportUnavailableError(
           `latency probe returned HTTP ${latencyRes.status}`,
+          { role: "latency" },
         );
       latencyPathProbe = (await latencyRes.json()) as Probe;
     }
@@ -596,11 +623,12 @@ export class RealBackend implements RunnerBackend {
           finish(
             new TransportUnavailableError(
               "latency WebSocket did not become ready",
+              { role: "latency" },
             ),
           ),
         PROBE_PING_TIMEOUT_MS,
       );
-      this.#probeReady = () => finish();
+      this.#probeReady = { finish };
       signal?.addEventListener("abort", aborted, { once: true });
     });
   }
@@ -1230,7 +1258,11 @@ export class RealBackend implements RunnerBackend {
       this.#idleRespawnTimer = null;
     }
     this.#probeCollect?.finish();
-    this.#probeReady = null;
+    this.#probeReady?.finish(
+      new TransportUnavailableError("latency WebSocket validation stopped", {
+        role: "latency",
+      }),
+    );
     if (this.#idleWorker) {
       this.#idleWorker.postMessage({ type: "stop" });
       this.#idleWorker.terminate();
@@ -1291,7 +1323,7 @@ export class RealBackend implements RunnerBackend {
       case "open":
         break;
       case "ready":
-        this.#probeReady?.();
+        this.#probeReady?.finish();
         break;
     }
   }

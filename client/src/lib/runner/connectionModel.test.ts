@@ -6,6 +6,8 @@ import type {
 import type { InfraInfo, RunnerConfig } from "./contract";
 import {
   connectionKey,
+  connectionDraftKey,
+  connectionDraftRoleKey,
   connectionRoleKey,
   validationRoles,
   presentConnections,
@@ -198,6 +200,21 @@ test("automatic and explicit selections share an identity when they resolve to t
   expect(connectionKey(automatic, discovery)).toBe(
     connectionKey(explicit, discovery),
   );
+});
+
+test("draft invalidation ignores discovery and observed protocol changes", () => {
+  const cfg = config();
+  const discovery = fixture();
+  const roleKey = connectionDraftRoleKey(cfg, "throughput");
+  const key = connectionDraftKey(cfg);
+
+  discovery.throughput[throughput.origin].target!.protocol = "http2";
+  expect(connectionDraftRoleKey(cfg, "throughput")).toBe(roleKey);
+  expect(connectionDraftKey(cfg)).toBe(key);
+
+  cfg.transports.throughputTarget = throughput.origin;
+  expect(connectionDraftRoleKey(cfg, "throughput")).not.toBe(roleKey);
+  expect(connectionDraftKey(cfg)).not.toBe(key);
 });
 
 test("probe failure and stale evidence remain retryable presentation states", () => {

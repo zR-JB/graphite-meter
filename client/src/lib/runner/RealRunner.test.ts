@@ -5,6 +5,7 @@ import {
   median,
   needsPings,
   laneStaggerMs,
+  protocolFromNextHop,
   selectThroughputTarget,
   selectLatencyTarget,
   browserProtocolMatchesTarget,
@@ -112,9 +113,19 @@ test("native endpoints remain deterministic and mixed content stays blocked", ()
 test("browser protocol verification is independent of server probe evidence", () => {
   const h1 = transfer("http1-tls", "https://meter", "http1", true);
   const h2 = transfer("http2", "https://meter", "http2", true);
+  const negotiated = transfer(
+    "https://meter",
+    "https://meter",
+    "negotiated",
+    true,
+  );
   expect(browserProtocolMatchesTarget(h1, "http/1.1")).toBe(true);
   expect(browserProtocolMatchesTarget(h2, "h2")).toBe(true);
   expect(browserProtocolMatchesTarget(h2, "http/1.1")).toBe(false);
+  expect(browserProtocolMatchesTarget(negotiated)).toBe(true);
+  expect(browserProtocolMatchesTarget(h2)).toBe(false);
+  expect(protocolFromNextHop()).toBeUndefined();
+  expect(protocolFromNextHop("h2")).toBe("http2");
 });
 
 test("idle target ownership includes protocol and public origin", () => {
@@ -479,6 +490,17 @@ test("probe refresh preserves negotiated protocol across roles and opens upload 
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
 
     config.transports.throughputTarget = "https://proxy.test";
+    browserProtocol = "";
+    const proxyWithoutTiming = await backend.probe(
+      config,
+      undefined,
+      "throughput",
+    );
+    expect(proxyWithoutTiming.selectedThroughputProtocol).toBe("negotiated");
+    expect(
+      discoveries.at(-1)?.throughput["https://proxy.test"].target?.protocol,
+    ).toBe("negotiated");
+
     browserProtocol = "h2";
     const proxyThroughput = await backend.probe(
       config,
@@ -488,6 +510,9 @@ test("probe refresh preserves negotiated protocol across roles and opens upload 
     expect(proxyThroughput.selectedThroughputProtocol).toBe("http2");
     const proxyLatency = await backend.probe(config, undefined, "latency");
     expect(proxyLatency.selectedThroughputProtocol).toBe("http2");
+    expect(
+      discoveries.at(-1)?.throughput["https://proxy.test"].target?.protocol,
+    ).toBe("negotiated");
 
     config.transports.throughputTarget = "http://meter.test:7246";
     browserProtocol = "http/1.1";
