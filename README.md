@@ -103,7 +103,7 @@ A ready-made unit that pulls the image and runs it as a systemd service lives at
 ### Configuration
 
 Defaults need no configuration. The complete listener, TLS, public-origin, admission-limit, and
-build reference lives in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#server-run-time-configuration);
+deployment reference lives in [docs/CONFIGURATION.md](docs/CONFIGURATION.md);
 reverse proxies have a separate [deployment guide](docs/REVERSE_PROXY.md).
 
 ### Native terminal client
@@ -111,13 +111,14 @@ reverse proxies have a separate [deployment guide](docs/REVERSE_PROXY.md).
 ```sh
 just goclient-build            # -> go/graphite-meter-client
 ./go/graphite-meter-client -url https://your-server:7247 \
-  -throughput-target http1-tls -latency-target ws-http1-tls
+  -throughput-origin https://your-server:7247 \
+  -latency-origin https://your-server:7247
 ```
 
 An interactive TUI with the same stages (latency, download, upload, bidirectional, loaded
 latency), server presets, and live telemetry — ideal for headless boxes and for pushing rates a
 browser can't. Throughput and latency targets are independently selected and verified; upload
-progress is part of the selected throughput path. See `-throughput-target` and `-latency-target`.
+progress is part of the selected throughput path. See `-throughput-origin`, `-throughput-protocol`, and `-latency-origin`.
 
 ## Building from source & contributing
 

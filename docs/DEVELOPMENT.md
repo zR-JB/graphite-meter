@@ -130,16 +130,14 @@ dummy-stripped build, so it can't be re-enabled by URL trickery in a production 
 
 ## Server run-time configuration
 
-Read once at startup; flags (parsed in `cmd/graphite-meter/main.go`) take precedence over
-environment variables, which take precedence over defaults.
+The canonical environment and flag reference is [CONFIGURATION.md](CONFIGURATION.md). Configuration is read once at startup; flags override environment variables, which override defaults.
 
 | Env var                                                                            | Flag                              | Default                      | What it does                                                                                                                                                                                                          |
 | ---------------------------------------------------------------------------------- | --------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_H1_ADDR`                                                                       | `-h1-addr` (`-addr` legacy alias) | `:7246`                      | Clear HTTP/1.1 UI and measurement listener.                                                                                                                                                                           |
-| `GM_H1_TLS_ADDR`                                                                   | `-h1-tls-addr`                    | `:7247`                      | Dedicated HTTPS HTTP/1.1 UI, discovery, probe, transfers, and WebSockets.                                                                                                                                             |
-| `GM_H2_ADDR`                                                                       | `-h2-addr`                        | `:7248`                      | HTTP/2-only TLS listener for measurement probe, transfers, and upload progress.                                                                                                                                       |
-| `GM_H3_ADDR`                                                                       | `-h3-addr`                        | `:7249`                      | UDP HTTP/3 probe, transfers, and progress plus a TCP HTTP/1.1 Alt-Svc bootstrap probe only.                                                                                                                           |
-| `GM_ENABLE_H1_TLS` / `GM_ENABLE_H2` / `GM_ENABLE_H3`                               | matching flags                    | off                          | Enable the corresponding native TLS listeners.                                                                                                                                                                        |
+| `GM_H1_ADDR`                                                                       | `-h1-addr`                        | `:7246`                      | Clear HTTP/1.1 UI and measurement listener.                                                                                                                                                                           |
+| `GM_H1_TLS_ADDR`                                                                   | `-h1-tls-addr`                    | empty                        | Non-empty enables native HTTPS HTTP/1.1.                                                                                                                                                                              |
+| `GM_H2_ADDR`                                                                       | `-h2-addr`                        | empty                        | Non-empty enables deterministic HTTP/2.                                                                                                                                                                               |
+| `GM_H3_ADDR`                                                                       | `-h3-addr`                        | empty                        | Non-empty enables HTTP/3 UDP and its TCP bootstrap.                                                                                                                                                                   |
 | `GM_TLS_CERT` / `GM_TLS_KEY`                                                       | `-tls-cert` / `-tls-key`          | —                            | Matching PEM pair. Invalid dates, hostnames, and pairs fail startup; valid renewals hot-reload.                                                                                                                       |
 | `GM_SERVER_NAME`                                                                   | `-name`                           | `graphite-meter`             | Server identity advertised in `/preflight`.                                                                                                                                                                           |
 | `GM_SERVER_LOCATION`                                                               | `-location`                       | —                            | Location label advertised in `/preflight` (e.g. `fra`).                                                                                                                                                               |
@@ -148,14 +146,11 @@ environment variables, which take precedence over defaults.
 | `GM_MAX_CONNECTIONS` / `GM_MAX_CONNECTIONS_PER_CLIENT`                             | matching flags                    | `512` / `64`                 | Global and direct-peer TCP/QUIC connection limits.                                                                                                                                                                    |
 | `GM_MAX_OPERATION_DURATION`                                                        | `-max-operation-duration`         | `5m`                         | Maximum lifetime of one transfer, progress stream, or latency WebSocket.                                                                                                                                              |
 | `GM_VERBOSE`                                                                       | `-verbose`                        | off                          | Per-second throughput + connection-count logging on download/upload (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)).                                                                                     |
-| `PUBLIC_H1_ORIGIN`, `PUBLIC_H1_TLS_ORIGIN`, `PUBLIC_H2_ORIGIN`, `PUBLIC_H3_ORIGIN` | matching flags                    | request host + listener port | Exact externally reachable transfer origins. Clear H1 must be `http`; all TLS targets must be `https`.                                                                                                                |
-| `PUBLIC_TLS_ORIGIN`                                                                | —                                 | —                            | Legacy alias for `PUBLIC_H2_ORIGIN`; the explicit H2 variable takes precedence.                                                                                                                                       |
+| `GM_ADVERTISED_NATIVE_ENDPOINTS`                                                    | `-advertised-native-endpoints`    | `all`                        | `all`, `none`, or deterministic native endpoint names.                                                                                                                                                               |
+| `GM_PUBLIC_ORIGINS`                                                                | `-public-origins`                 | —                            | Negotiated reverse-proxy origins providing throughput and WebSocket latency.                                                                                                                                          |
+| `GM_PUBLIC_THROUGHPUT_ORIGINS` / `GM_PUBLIC_LATENCY_ORIGINS`                       | matching flags                    | —                            | Role-only proxy origins. `self` means the `/preflight` origin.                                                                                                                                                        |
 
-The address and origin settings are deliberately different. `GM_*_ADDR` changes where Go listens;
-`PUBLIC_*_ORIGIN` only changes what `/preflight` advertises and never opens or moves a listener.
-For direct local development, leave every public origin unset so discovery derives the request
-hostname plus the configured listener ports. Public origins are for reverse proxies, external
-container port mappings, or public hostnames that differ from the bind addresses.
+Listener addresses enable native listeners. Native public-origin overrides describe deterministic native listeners; ordinary reverse proxies use the role-based public-origin catalog.
 
 ### Local TLS and HTTP/3 certificates
 
@@ -174,7 +169,7 @@ mkdir -p .dev-certs
 mkcert -install
 mkcert -cert-file .dev-certs/localhost.pem \
   -key-file .dev-certs/localhost-key.pem localhost 127.0.0.1 ::1
-GM_ENABLE_H1_TLS=true GM_ENABLE_H2=true GM_ENABLE_H3=true \
+GM_H1_TLS_ADDR=:7247 GM_H2_ADDR=:7248 GM_H3_ADDR=:7249 \
   GM_TLS_CERT=../.dev-certs/localhost.pem \
   GM_TLS_KEY=../.dev-certs/localhost-key.pem \
   just prod
@@ -217,8 +212,9 @@ Run settings, including both target roles, are editable inside the TUI before a 
 | Flag                                                                        | Default                   | Meaning                                                                                                |
 | --------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `-url`                                                                      | `http://127.0.0.1:7246`   | Server base URL.                                                                                       |
-| `-throughput-target` (`-transfer-target` and `-protocol` migration aliases) | `auto`                    | Fetch target: `auto`, `http1`, `http1-clear`, `http1-tls`, `http2`, or direct-QUIC `http3`.            |
-| `-latency-target` (`-latency-channel` migration alias)                      | `auto`                    | `ws-http1-clear` or `ws-http1-tls`, selected independently.                                            |
+| `-throughput-origin`                                                        | `auto`                    | Discovered throughput origin.                                                                          |
+| `-throughput-protocol`                                                      | `auto`                    | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                         |
+| `-latency-origin`                                                           | `auto`                    | Discovered WebSocket latency origin.                                                                   |
 | `-stages`                                                                   | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.                |
 | `-warmup`                                                                   | `800ms`                   | Per-stage warmup before measurement starts.                                                            |
 | `-latency-duration`                                                         | `4s`                      | Latency stage window.                                                                                  |
