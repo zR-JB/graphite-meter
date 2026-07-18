@@ -74,6 +74,18 @@ func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
 	}
 }
 
+func TestSelectLatencyTargetFindsLaterSameOriginInHybridCatalog(t *testing.T) {
+	targets := []wire.LatencyTarget{
+		testChannel("ws-http1-clear", "http://meter.example:7246", false),
+		testChannel("ws-http1-tls", "https://meter.example:7247", true),
+		testChannel("https://meter.example", "https://meter.example", true),
+	}
+	got, err := selectLatencyTarget("auto", "https://meter.example", targets)
+	if err != nil || got.ID != "https://meter.example" {
+		t.Fatalf("automatic hybrid latency target = %+v, %v", got, err)
+	}
+}
+
 func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
 	return wire.ThroughputTarget{ID: id, Origin: origin, Transport: "fetch-stream", Protocol: protocol, TLS: tls, Routes: wire.DefaultThroughputRoutes()}
 }

@@ -495,6 +495,8 @@ func protocolFromEvidence(protocol string) string {
 
 func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (*wire.LatencyTarget, error) {
 	var candidate *wire.LatencyTarget
+	var sameOriginCandidate *wire.LatencyTarget
+	candidateCount := 0
 	for i := range targets {
 		t := &targets[i]
 		if t.Transport != "websocket" || t.Protocol != "http1" {
@@ -504,19 +506,25 @@ func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (
 			return t, nil
 		}
 		if selection == "auto" {
-			if sameOrigin(t.Origin, base) {
-				return t, nil
-			}
-			if candidate != nil {
-				candidate = nil
-				selection = "ambiguous"
-			} else {
+			candidateCount++
+			if candidate == nil {
 				candidate = t
+			}
+			if sameOriginCandidate == nil && sameOrigin(t.Origin, base) {
+				sameOriginCandidate = t
 			}
 		}
 	}
-	if selection == "auto" && candidate != nil {
-		return candidate, nil
+	if selection == "auto" {
+		if sameOriginCandidate != nil {
+			return sameOriginCandidate, nil
+		}
+		if candidateCount == 1 {
+			return candidate, nil
+		}
+		if candidateCount > 1 {
+			selection = "ambiguous"
+		}
 	}
 	return nil, fmt.Errorf("latency target %q unavailable", selection)
 }
