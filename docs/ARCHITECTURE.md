@@ -67,10 +67,10 @@ disabled to prevent POST replay.
 | `:7249/udp` | HTTP/3                 | H3 probe, transfers, and upload progress.                                                           |
 | `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets.                 |
 
-Discovery separates `capabilities.throughputTargets` from `capabilities.latencyTargets`. A run
-freezes one target for each role and verifies each target independently. Fetch throughput targets
-own probe, transfer, session, and NDJSON progress routes. Latency targets own a probe and ping
-route. Their probes are separate connections and can therefore select different IPv4/IPv6 paths;
+Discovery separates `capabilities.throughput` from `capabilities.latency`. Each entry is only a
+base URL plus, for throughput, `http1`, `http2`, `http3`, or `negotiated`. Stable API routes and
+scheme-derived facts are not duplicated in discovery. A run freezes one endpoint for each role
+and verifies each endpoint independently. Their probes are separate connections and can therefore select different IPv4/IPv6 paths;
 the UI reports both instead of presenting the latency probe as a throughput fallback. The browser
 always fetches `/preflight` from the page origin; it never reconstructs target
 ports locally, and every subsequent HTTP or WebSocket URL comes from that discovery document.
@@ -80,15 +80,16 @@ keeps successful evidence for at most 30 seconds. A discovery generation change,
 failure, reset, explicit retry, or relevant network/visibility transition invalidates that
 evidence. Start reuses a fresh unchanged preparation; run inputs are snapshotted at that boundary,
 so settings remain editable while a run consumes the frozen values.
-Only WebSocket over dedicated H1 clear/TLS origins is advertised for latency. H2/H3 WebSockets and
-WebTransport are not advertised. WebSockets over H2 or H3 Extended CONNECT are specified by
+Native latency is advertised on deterministic H1 clear/TLS origins. A reverse proxy may advertise
+WebSocket latency independently of throughput, and the browser verifies the actual `HI`/`READY`
+exchange without claiming a handshake HTTP version. WebSockets over H2 or H3 Extended CONNECT are specified by
 [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441) and
 [RFC 9220](https://www.rfc-editor.org/rfc/rfc9220), but the current implementation uses the widely
 interoperable HTTP/1.1 Upgrade.
 
-The dedicated H1-TLS listener is a real transfer target, not a control fallback. It exists because
-browsers cannot be forced to use H1 on an origin that advertises H2 through ALPN. Operators using a
-reverse proxy must likewise give H1-TLS its own origin/port or disable H2 on that virtual host.
+The dedicated native H1-TLS listener is a real deterministic transfer target, not a control
+fallback. Reverse-proxy origins are instead advertised once as negotiated because browsers cannot
+be forced to use H1 on an origin that also offers H2 or H3.
 HTTP/1.1 remains an active Internet Standard, and TLS security is independent of selecting H2;
 ALPN lets a browser negotiate the protocol the origin offers. Keeping the native SPA on H1 makes
 the control-plane entrypoint distinct from the H2 measurement target. A reverse proxy may still
@@ -306,7 +307,7 @@ and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 - **Reserved WebTransport contract** is intentionally inactive. It is neither mounted nor
   advertised; H3 throughput and upload progress use fetch over QUIC, while latency independently
-  uses an H1-TLS WebSocket.
+  uses a separately advertised WebSocket endpoint.
 
 ## Roadmap
 
@@ -319,7 +320,7 @@ and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## TLS security and lifecycle
 
-H1-TLS, H2, and H3 are opt-in and fail before binding when the PEM pair is missing, mismatched,
+H1-TLS, H2, and H3 are enabled by non-empty listener addresses and fail before binding when the PEM pair is missing, mismatched,
 outside its validity window, or incompatible with a configured public TLS hostname. Private-key
 permissions and certificates expiring within 30 days produce warnings. Files are checked every
 minute and a complete valid renewal is swapped atomically; a partial or invalid renewal leaves the

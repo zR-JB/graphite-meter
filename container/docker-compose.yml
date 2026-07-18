@@ -13,12 +13,12 @@ services:
       - "7246:7246" # HTTP/1.1 (default)
       # Add docker-compose.tls.yml for H1-TLS, H2 TCP, and H3 TCP+UDP.
     environment:
-      # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
-      # running behind a reverse proxy so /preflight advertises reachable URLs.
+      # For a proxy-only deployment set GM_ADVERTISED_NATIVE_ENDPOINTS=none and
+      # GM_PUBLIC_ORIGINS=self.
       GM_SERVER_NAME: "graphite-meter"
       # GM_SERVER_LOCATION: "fra"
       # GM_H1_ADDR: ":7246"              # listen address inside the container
       # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network
-      # PUBLIC_H1_ORIGIN: "http://speed.example:7246"
+      # GM_PUBLIC_ORIGINS: "self"
       # GM_VERBOSE: "1"                  # per-second server-side throughput log
     restart: unless-stopped

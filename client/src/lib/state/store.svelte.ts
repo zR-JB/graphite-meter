@@ -100,7 +100,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
   transports: {
-    throughputTarget: "current",
+    throughputTarget: "auto",
     latencyTarget: "auto",
   },
   compensation: {

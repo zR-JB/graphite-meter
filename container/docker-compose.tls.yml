@@ -8,14 +8,14 @@ services:
       - "7249:7249/tcp" # HTTP/3 Alt-Svc bootstrap probe only
       - "7249:7249/udp" # HTTP/3 probe, transfers, and progress
     environment:
-      GM_ENABLE_H1_TLS: "true"
-      GM_ENABLE_H2: "true"
-      GM_ENABLE_H3: "true"
+      GM_H1_TLS_ADDR: ":7247"
+      GM_H2_ADDR: ":7248"
+      GM_H3_ADDR: ":7249"
       GM_TLS_CERT: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/fullchain.pem
       GM_TLS_KEY: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/privkey.pem
-      PUBLIC_H1_TLS_ORIGIN: https://${GM_PUBLIC_HOST}:7247
-      PUBLIC_H2_ORIGIN: https://${GM_PUBLIC_HOST}:7248
-      PUBLIC_H3_ORIGIN: https://${GM_PUBLIC_HOST}:7249
+      GM_H1_TLS_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST}:7247
+      GM_H2_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST}:7248
+      GM_H3_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST}:7249
     volumes:
       # Mount the complete tree: live/ entries are symlinks into archive/.
       - letsencrypt:/etc/letsencrypt:ro

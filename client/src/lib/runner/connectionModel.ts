@@ -1,17 +1,19 @@
 import type {
   ConnectionRole,
   InfraInfo,
+  ProtocolTarget,
   RunnerConfig,
   TransportDiscovery,
 } from "./contract";
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
-} from "../api/preflight";
+} from "../api/endpoints";
 import {
   selectLatencyTarget,
   selectThroughputTarget,
 } from "./real/backendPure";
+import { describeTarget } from "./real/targetPresentation";
 
 export type ConnectionValidationState =
   "checking" | "verified" | "failed" | "stale";
@@ -39,6 +41,7 @@ export interface ConnectionPresentation {
   label: string;
   summary: string;
   message?: string;
+  observedProtocol?: ProtocolTarget;
   browserProtocol?: string;
   serverProtocol?: string;
   clientIp?: string;
@@ -78,6 +81,16 @@ export function validationRoles(
   return roles;
 }
 
+export function verifiedRolesForProbe(
+  requested: ConnectionRole[],
+  discoveryGeneration: string | undefined,
+  resultGeneration: string,
+): ConnectionRole[] {
+  return discoveryGeneration === resultGeneration
+    ? requested
+    : [...CONNECTION_ROLES];
+}
+
 export function connectionKey(
   config: RunnerConfig,
   discovery?: TransportDiscovery | null,
@@ -91,6 +104,33 @@ export function connectionKey(
         (config.stages.download ||
           config.stages.upload ||
           config.stages.bidirectional)),
+  });
+}
+
+/** Inputs that can invalidate preparation without depending on discovery or
+ * runtime protocol evidence produced by that same preparation. */
+export function connectionDraftRoleKey(
+  config: RunnerConfig,
+  role: ConnectionRole,
+): string {
+  const selection = connectionSelection(config, role);
+  return role === "throughput"
+    ? selection
+    : JSON.stringify({
+        selection,
+        needed:
+          config.stages.latency ||
+          (!config.skipLoadedLatencyWhenStageOff &&
+            (config.stages.download ||
+              config.stages.upload ||
+              config.stages.bidirectional)),
+      });
+}
+
+export function connectionDraftKey(config: RunnerConfig): string {
+  return JSON.stringify({
+    throughput: connectionDraftRoleKey(config, "throughput"),
+    latency: connectionDraftRoleKey(config, "latency"),
   });
 }
 
@@ -117,32 +157,6 @@ export function connectionRoleKey(
               config.stages.upload ||
               config.stages.bidirectional)),
       });
-}
-
-function protocolLabel(protocol: string): string {
-  if (protocol === "http1") return "HTTP/1.1";
-  if (protocol === "http2") return "HTTP/2";
-  if (protocol === "http3") return "HTTP/3";
-  return protocol;
-}
-
-function targetSummary(
-  target: FetchThroughputTarget | WebSocketLatencyTarget,
-): string {
-  const mechanism =
-    target.transport === "websocket" ? "WebSocket" : "Fetch stream";
-  return `${mechanism} · ${protocolLabel(target.protocol)} · ${target.tls ? "TLS" : "clear"}`;
-}
-
-function targetLabel(
-  role: ConnectionRole,
-  target: FetchThroughputTarget | WebSocketLatencyTarget | null,
-): string {
-  if (!target)
-    return role === "throughput" ? "Throughput path" : "Latency path";
-  if (target.transport === "websocket")
-    return target.tls ? "Secure WebSocket" : "Clear WebSocket";
-  return protocolLabel(target.protocol);
 }
 
 function availability(
@@ -186,6 +200,14 @@ export function presentConnections(
       evidenceMatches &&
       infra?.discoveryGeneration === discovery?.generation;
     const evidence = currentEvidence ? infra : null;
+    const observedProtocol =
+      evidence && role === "throughput"
+        ? evidence.selectedThroughputProtocol
+        : undefined;
+    const targetPresentation =
+      target && discovery
+        ? describeTarget(discovery, target, observedProtocol)
+        : null;
     return {
       role,
       selection,
@@ -194,13 +216,16 @@ export function presentConnections(
         ? availability(discovery, role, selection)
         : "not-advertised",
       validation: status.state,
-      label: targetLabel(role, target),
-      summary: target ? targetSummary(target) : "Selection unresolved",
+      label:
+        targetPresentation?.label ??
+        (role === "throughput" ? "Throughput path" : "Latency path"),
+      summary: targetPresentation?.summary ?? "Selection unresolved",
       message: status.message,
+      observedProtocol,
       browserProtocol: evidence
         ? role === "throughput"
           ? evidence.firstHopProtocol
-          : evidence.verifiedLatencyProtocol
+          : undefined
         : undefined,
       serverProtocol: evidence
         ? role === "throughput"

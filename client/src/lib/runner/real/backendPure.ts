@@ -13,19 +13,17 @@ import type {
 } from "../contract";
 import type {
   FetchThroughputTarget,
-  LatencyTarget,
-  ThroughputTarget,
   WebSocketLatencyTarget,
-} from "../../api/preflight";
+} from "../../api/endpoints";
+import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
+import { normalizeHttpProtocol } from "../protocol";
 
-const protocolByNextHop: Partial<Record<string, ProtocolTarget>> = {
-  "http/1.1": "http1",
-  h2: "http2",
-  h3: "http3",
-};
-
-const THROUGHPUT_IDS = ["http1-clear", "http1-tls", "http2", "http3"];
-const LATENCY_IDS = ["ws-http1-clear", "ws-http1-tls"];
+export function protocolFromNextHop(
+  nextHopProtocol?: string,
+): ProtocolTarget | undefined {
+  const protocol = normalizeHttpProtocol(nextHopProtocol);
+  return protocol === "negotiated" ? undefined : protocol;
+}
 
 export function isLoopbackHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
@@ -52,54 +50,76 @@ function usableFromPage(origin: string, tls: boolean, pageSecure: boolean) {
 
 /** Classify the logical server catalog once for both selection and settings. */
 export function classifyTransportDiscovery(
-  throughputTargets: ThroughputTarget[],
-  latencyTargets: LatencyTarget[],
+  throughputEndpoints: (ThroughputEndpoint | FetchThroughputTarget)[],
+  latencyEndpoints: (LatencyEndpoint | WebSocketLatencyTarget)[],
   pageOrigin: string,
   pageSecure: boolean,
   pageProtocol?: string,
 ): TransportDiscovery {
-  const throughput = Object.fromEntries(
-    THROUGHPUT_IDS.map((id) => {
-      const target = throughputTargets.find(
-        (candidate): candidate is FetchThroughputTarget =>
-          candidate.id === id && candidate.transport === "fetch-stream",
-      );
-      return [
-        id,
-        !target
-          ? { state: "not-advertised" as const }
-          : {
-              state: usableFromPage(target.origin, target.tls, pageSecure)
-                ? ("advertised" as const)
-                : ("browser-blocked" as const),
-              target,
-            },
-      ];
-    }),
-  );
+  const resolve = (baseUrl: string): string =>
+    baseUrl === "." ? pageOrigin : new URL(baseUrl, pageOrigin).origin;
+  const throughputTargets = throughputEndpoints.map((endpoint) => {
+    const origin = resolve(
+      endpoint.baseUrl ?? ("origin" in endpoint ? endpoint.origin : "."),
+    );
+    return {
+      ...endpoint,
+      id: origin,
+      origin,
+      transport: "fetch-stream" as const,
+      tls: origin.startsWith("https://"),
+      routes: {
+        probe: "/probe",
+        download: "/download",
+        upload: "/upload",
+        uploadSession: "/upload/session",
+        uploadProgress: "/upload/progress",
+      },
+    };
+  });
+  const latencyTargets = latencyEndpoints.map((endpoint) => {
+    const origin = resolve(
+      endpoint.baseUrl ?? ("origin" in endpoint ? endpoint.origin : "."),
+    );
+    return {
+      ...endpoint,
+      id: origin,
+      origin,
+      transport: "websocket" as const,
+      protocol: "http1" as const,
+      tls: origin.startsWith("https://"),
+      routes: { probe: "/probe", ping: "/ws/ping" },
+    };
+  });
+  const throughput: TransportDiscovery["throughput"] = {};
+  for (const target of throughputTargets) {
+    const current = throughput[target.origin]?.target;
+    if (current && current.protocol !== "negotiated") continue;
+    throughput[target.origin] = {
+      state: usableFromPage(target.origin, target.tls, pageSecure)
+        ? "advertised"
+        : "browser-blocked",
+      target,
+    };
+  }
   const latency = Object.fromEntries(
-    LATENCY_IDS.map((id) => {
-      const target = latencyTargets.find(
-        (candidate): candidate is WebSocketLatencyTarget =>
-          candidate.id === id && candidate.transport === "websocket",
-      );
+    latencyTargets.map((target) => {
+      const id = target.origin;
       return [
         id,
-        !target
-          ? { state: "not-advertised" as const }
-          : {
-              state: usableFromPage(target.origin, target.tls, pageSecure)
-                ? ("advertised" as const)
-                : ("browser-blocked" as const),
-              target,
-            },
+        {
+          state: usableFromPage(target.origin, target.tls, pageSecure)
+            ? ("advertised" as const)
+            : ("browser-blocked" as const),
+          target,
+        },
       ];
     }),
   );
   return {
     generation: "",
     engineVersion: "",
-    server: { name: "", host: "", port: 0 },
+    server: { name: "" },
     fetchedAt: 0,
     pageOrigin,
     pageSecure,
@@ -115,21 +135,16 @@ export function selectThroughputTarget(
   discovery: TransportDiscovery,
   selection: ThroughputTargetSelection,
 ): FetchThroughputTarget | null {
-  if (selection !== "current") {
+  if (selection !== "current" && selection !== "auto") {
     const entry = discovery.throughput[selection];
     return entry?.state === "advertised" ? (entry.target ?? null) : null;
   }
-  const observed = discovery.pageProtocol
-    ? protocolByNextHop[discovery.pageProtocol]
-    : undefined;
-  if (!observed) return null;
+  const advertised = Object.values(discovery.throughput)
+    .filter((entry) => entry.state === "advertised" && entry.target)
+    .map((entry) => entry.target!);
   return (
-    Object.values(discovery.throughput).find(
-      (entry) =>
-        entry.state === "advertised" &&
-        entry.target?.origin === discovery.pageOrigin &&
-        entry.target.protocol === observed,
-    )?.target ?? null
+    advertised.find((target) => target.origin === discovery.pageOrigin) ??
+    (advertised.length === 1 ? advertised[0] : null)
   );
 }
 
@@ -138,11 +153,15 @@ export function browserProtocolMatchesTarget(
   nextHopProtocol?: string,
 ): boolean {
   return (
-    !!nextHopProtocol && protocolByNextHop[nextHopProtocol] === target.protocol
+    target.protocol === "negotiated" ||
+    (!!nextHopProtocol &&
+      protocolFromNextHop(nextHopProtocol) === target.protocol)
   );
 }
 
-export function throughputTargetKey(target: ThroughputTarget | null): string {
+export function throughputTargetKey(
+  target: FetchThroughputTarget | null,
+): string {
   return target ? `${target.id}\n${target.origin}` : "";
 }
 
@@ -151,14 +170,17 @@ export function selectLatencyTarget(
   discovery: TransportDiscovery,
   selection: "auto" | string,
 ): WebSocketLatencyTarget | null {
-  const id =
-    selection === "auto"
-      ? discovery.pageSecure
-        ? "ws-http1-tls"
-        : "ws-http1-clear"
-      : selection;
-  const entry = discovery.latency[id];
-  return entry?.state === "advertised" ? (entry.target ?? null) : null;
+  if (selection !== "auto") {
+    const entry = discovery.latency[selection];
+    return entry?.state === "advertised" ? (entry.target ?? null) : null;
+  }
+  const advertised = Object.values(discovery.latency)
+    .filter((entry) => entry.state === "advertised" && entry.target)
+    .map((entry) => entry.target!);
+  return (
+    advertised.find((target) => target.origin === discovery.pageOrigin) ??
+    (advertised.length === 1 ? advertised[0] : null)
+  );
 }
 
 /** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything

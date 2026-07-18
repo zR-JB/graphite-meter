@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -236,7 +238,7 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		origin := "http://" + r.Host
-		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test", Host: r.Host, Port: 80}, EngineVersion: "test", Capabilities: wire.Capabilities{
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
 		}})
@@ -311,7 +313,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(wire.Preflight{
-			Server: wire.ServerInfo{Name: "proxy", Host: r.Host, Port: 443},
+			Server: wire.ServerInfo{Name: "proxy"},
 			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("http2", origin, "http2", true),
 			}},
@@ -334,7 +336,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	origin = srv.URL
 
 	cfg := Config{
-		BaseURL: origin, ThroughputTarget: "http2", Stages: StageSet{Download: true},
+		BaseURL: origin, ThroughputTarget: "auto", Stages: StageSet{Download: true},
 		DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true,
 		TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024,
 	}
@@ -345,6 +347,71 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	}
 	if probeRequestProtocol != "HTTP/2.0" {
 		t.Fatalf("client-to-proxy probe used %q, want HTTP/2.0", probeRequestProtocol)
+	}
+}
+
+func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
+	var backendProtocol string
+	backendMux := http.NewServeMux()
+	backendMux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Protocol: "negotiated"}},
+			LatencyTargets:    []wire.LatencyTarget{{Origin: "."}},
+		}})
+	})
+	backendMux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		backendProtocol = r.Proto
+		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+	})
+	backendMux.Handle("/ws/ping", echoPingHandler())
+	backend := httptest.NewServer(backendMux)
+	defer backend.Close()
+	upstream, _ := url.Parse(backend.URL)
+	proxy := httptest.NewUnstartedServer(httputil.NewSingleHostReverseProxy(upstream))
+	proxy.EnableHTTP2 = true
+	proxy.StartTLS()
+	defer proxy.Close()
+
+	cfg := DefaultConfig()
+	cfg.BaseURL, cfg.InsecureSkipTLSVerify = proxy.URL, true
+	prepared, err := Prepare(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.ThroughputTarget.Protocol != "http2" {
+		t.Fatalf("client-to-proxy protocol = %q", prepared.ThroughputTarget.Protocol)
+	}
+	if got := prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol; got != "negotiated" {
+		t.Fatalf("advertised protocol mutated to %q", got)
+	}
+	if prepared.Probe.ProtocolNegotiated != "http/1.1" || backendProtocol != "HTTP/1.1" {
+		t.Fatalf("backend evidence = %q, request = %q", prepared.Probe.ProtocolNegotiated, backendProtocol)
+	}
+}
+
+func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Preflight{
+			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+				testTransfer("one", "http://one.example", "negotiated", false),
+				testTransfer("two", "http://two.example", "negotiated", false),
+			}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := DefaultConfig()
+	cfg.BaseURL = srv.URL
+	cfg.Stages = StageSet{Download: true}
+	_, err := Prepare(context.Background(), cfg)
+	var preparationErr *PreparationError
+	if !errors.As(err, &preparationErr) {
+		t.Fatalf("Prepare error = %T %v, want PreparationError", err, err)
+	}
+	if got := len(preparationErr.Preflight.Capabilities.ThroughputTargets); got != 2 {
+		t.Fatalf("retained throughput targets = %d, want 2", got)
 	}
 }
 
@@ -605,7 +672,16 @@ func echoPingHandler() http.Handler {
 				return
 			}
 			f, derr := wire.Decode(string(msg))
-			if derr != nil || f.Op != wire.OpPING {
+			if derr != nil {
+				continue
+			}
+			if f.Op == wire.OpHI {
+				if err := conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpREADY}))); err != nil {
+					return
+				}
+				continue
+			}
+			if f.Op != wire.OpPING {
 				continue
 			}
 			pong := wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Now().UnixNano())})

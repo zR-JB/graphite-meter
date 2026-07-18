@@ -72,6 +72,7 @@ type InMsg =
  *  stall/resume bracket a reconnect window. */
 type OutMsg =
   | { type: "open" }
+  | { type: "ready" }
   | { type: "samples"; samples: { rtt: number; lost: boolean }[] }
   | { type: "stall"; detail: string }
   | { type: "resume" };
@@ -231,7 +232,11 @@ function onFrame(data: unknown): void {
   } catch {
     return; // ignore malformed / ERR frames — never tear the bus down
   }
-  if (f.op !== "PONG") return; // READY (warmup ack) and anything else: ignore
+  if (f.op === "READY") {
+    post({ type: "ready" });
+    return;
+  }
+  if (f.op !== "PONG") return;
 
   const sent = pending.get(f.id);
   if (sent !== undefined) {

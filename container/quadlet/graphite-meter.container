@@ -38,17 +38,17 @@ PublishPort=7246:7246
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_H1_ADDR=:7246
-# Environment=GM_ENABLE_H1_TLS=true
-# Environment=GM_ENABLE_H2=true
-# Environment=GM_ENABLE_H3=true
+# Environment=GM_H1_TLS_ADDR=:7247
+# Environment=GM_H2_ADDR=:7248
+# Environment=GM_H3_ADDR=:7249
 # Environment=GM_TLS_CERT=/etc/letsencrypt/live/graphite-meter/fullchain.pem
 # Environment=GM_TLS_KEY=/etc/letsencrypt/live/graphite-meter/privkey.pem
 # Volume=/etc/letsencrypt:/etc/letsencrypt:ro
 # Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
-# Environment=PUBLIC_H1_ORIGIN=http://speed.example:7246
-# Environment=PUBLIC_H1_TLS_ORIGIN=https://speed.example:7247
-# Environment=PUBLIC_H2_ORIGIN=https://speed.example:7248
-# Environment=PUBLIC_H3_ORIGIN=https://speed.example:7249
+# Environment=GM_H1_PUBLIC_ORIGIN=http://speed.example:7246
+# Environment=GM_H1_TLS_PUBLIC_ORIGIN=https://speed.example:7247
+# Environment=GM_H2_PUBLIC_ORIGIN=https://speed.example:7248
+# Environment=GM_H3_PUBLIC_ORIGIN=https://speed.example:7249
 # Environment=GM_VERBOSE=1
 
 [Service]

@@ -60,7 +60,7 @@ func TestStructConformance(t *testing.T) {
 		name  string
 		value any
 	}{
-		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter", Host: "speed.example", Port: 7246}, EngineVersion: "test", Generation: "test-generation", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{h1}, LatencyTargets: []LatencyTarget{ws}}}},
+		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter"}, EngineVersion: "test", Generation: "test-generation", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{h1}, LatencyTargets: []LatencyTarget{ws}}}},
 		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}},
 	}
 	for _, tc := range values {

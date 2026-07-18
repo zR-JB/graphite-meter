@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -28,11 +27,21 @@ type PreparedConnection struct {
 	configKey        string
 }
 
+// PreparationError retains successful discovery when a later target check
+// fails, so interactive clients can offer the advertised alternatives.
+type PreparationError struct {
+	Preflight wire.Preflight
+	Err       error
+}
+
+func (e *PreparationError) Error() string { return e.Err.Error() }
+func (e *PreparationError) Unwrap() error { return e.Err }
+
 const preparationFreshness = 30 * time.Second
 
 func preparationKey(cfg Config) string {
 	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
-	return fmt.Sprintf("%s\n%s\n%s\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, needsLatency)
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, needsLatency)
 }
 
 func (p *PreparedConnection) FreshFor(cfg Config) bool {
@@ -75,7 +84,7 @@ func baseTransport(cfg Config) *http.Transport {
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     false,
+		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
 		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
 		MaxConnsPerHost:       0,
@@ -90,6 +99,11 @@ func baseTransport(cfg Config) *http.Transport {
 
 func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
+	switch cfg.ThroughputProtocol {
+	case "auto", "http1", "http2", "http3":
+	default:
+		return nil, fmt.Errorf("invalid throughput protocol %q", cfg.ThroughputProtocol)
+	}
 	discoveryTransport := baseTransport(cfg)
 	defer discoveryTransport.CloseIdleConnections()
 	discoveryClient := &http.Client{Transport: discoveryTransport}
@@ -98,15 +112,28 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	target, err := selectTarget(cfg, pf)
+	fail := func(err error) (*PreparedConnection, error) {
+		return nil, &PreparationError{Preflight: pf, Err: err}
+	}
+	advertisedTarget, err := selectTarget(cfg, pf)
 	if err != nil {
-		return nil, err
+		return fail(err)
+	}
+	target := *advertisedTarget
+	if cfg.ThroughputProtocol != "auto" {
+		if target.Protocol != "negotiated" && target.Protocol != cfg.ThroughputProtocol {
+			return fail(fmt.Errorf("endpoint is fixed to %s, cannot use %s", target.Protocol, cfg.ThroughputProtocol))
+		}
+		target.Protocol = cfg.ThroughputProtocol
 	}
 	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
 	defer closeTransfer()
-	probe, err := getProbe(ctx, transfer, target)
+	probe, clientProtocol, err := getProbe(ctx, transfer, &target)
 	if err != nil {
-		return nil, err
+		return fail(err)
+	}
+	if target.Protocol == "negotiated" {
+		target.Protocol = protocolFromEvidence(clientProtocol)
 	}
 	wsTransport := baseTransport(cfg)
 	wsp := &http.Protocols{}
@@ -117,7 +144,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
 	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
 	if latencyErr != nil && needsLatency {
-		return nil, latencyErr
+		return fail(latencyErr)
 	}
 	var latencyProbe *wire.Probe
 	if !needsLatency {
@@ -125,12 +152,15 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	} else if latencyTarget != nil {
 		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)
 		if err != nil {
-			return nil, err
+			return fail(err)
 		} else {
 			latencyProbe = &p
 		}
+		if err := verifyLatencyWebSocket(ctx, wsClient, latencyTarget); err != nil {
+			return fail(err)
+		}
 	}
-	return &PreparedConnection{Preflight: pf, ThroughputTarget: *target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
+	return &PreparedConnection{Preflight: pf, ThroughputTarget: target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
 }
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
@@ -160,7 +190,11 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	probe := prepared.Probe
 	latencyTarget := prepared.LatencyTarget
 	latencyProbe := prepared.LatencyProbe
-	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: targetProtocolEvidence(target.Protocol)}
+	throughputProtocol := targetProtocolEvidence(target.Protocol)
+	if target.Protocol == "negotiated" {
+		throughputProtocol = probe.ProtocolNegotiated
+	}
+	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol}
 	if latencyTarget != nil {
 		event.LatencyTarget = latencyTarget.ID
 		if latencyProbe != nil {
@@ -411,30 +445,32 @@ func (r *runner) routes() wire.ThroughputRoutes {
 func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
 	selection := cfg.ThroughputTarget
 	if selection == "auto" {
-		base, err := url.Parse(cfg.BaseURL)
-		if err != nil {
-			return nil, err
-		}
 		for i := range pf.Capabilities.ThroughputTargets {
 			t := &pf.Capabilities.ThroughputTargets[i]
 			if t.Transport != "fetch-stream" {
 				continue
 			}
-			u, _ := url.Parse(t.Origin)
-			if u.Scheme == base.Scheme && u.Host == base.Host {
+			if origin.Equal(t.Origin, cfg.BaseURL) {
 				return t, nil
 			}
 		}
+		var candidate *wire.ThroughputTarget
 		for i := range pf.Capabilities.ThroughputTargets {
 			t := &pf.Capabilities.ThroughputTargets[i]
 			if t.Transport == "fetch-stream" {
-				return t, nil
+				if candidate != nil {
+					return nil, fmt.Errorf("multiple throughput endpoints available; select an origin")
+				}
+				candidate = t
 			}
+		}
+		if candidate != nil {
+			return candidate, nil
 		}
 	}
 	for i := range pf.Capabilities.ThroughputTargets {
 		t := &pf.Capabilities.ThroughputTargets[i]
-		if t.Transport == "fetch-stream" && (t.ID == selection || (selection == "http1" && t.Protocol == "http1")) {
+		if t.Transport == "fetch-stream" && (t.ID == selection || origin.Equal(t.Origin, selection)) {
 			return t, nil
 		}
 	}
@@ -454,18 +490,49 @@ func targetProtocolEvidence(protocol string) string {
 	}
 }
 
+func protocolFromEvidence(protocol string) string {
+	switch protocol {
+	case "http/1.1", "HTTP/1.1":
+		return "http1"
+	case "h2", "HTTP/2.0":
+		return "http2"
+	case "h3", "HTTP/3.0":
+		return "http3"
+	}
+	return protocol
+}
+
 func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (*wire.LatencyTarget, error) {
-	wantsTLS := strings.HasPrefix(base, "https://")
+	var candidate *wire.LatencyTarget
+	var sameOriginCandidate *wire.LatencyTarget
+	candidateCount := 0
 	for i := range targets {
 		t := &targets[i]
 		if t.Transport != "websocket" || t.Protocol != "http1" {
 			continue
 		}
-		if selection != "auto" && t.ID == selection {
+		if selection != "auto" && (t.ID == selection || origin.Equal(t.Origin, selection)) {
 			return t, nil
 		}
-		if selection == "auto" && t.TLS == wantsTLS {
-			return t, nil
+		if selection == "auto" {
+			candidateCount++
+			if candidate == nil {
+				candidate = t
+			}
+			if sameOriginCandidate == nil && origin.Equal(t.Origin, base) {
+				sameOriginCandidate = t
+			}
+		}
+	}
+	if selection == "auto" {
+		if sameOriginCandidate != nil {
+			return sameOriginCandidate, nil
+		}
+		if candidateCount == 1 {
+			return candidate, nil
+		}
+		if candidateCount > 1 {
+			selection = "ambiguous"
 		}
 	}
 	return nil, fmt.Errorf("latency target %q unavailable", selection)
@@ -479,9 +546,11 @@ func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport
 	}
 	tr := makeHTTP()
 	tr.TLSClientConfig = tlsConfig
-	p := &http.Protocols{}
-	p.SetHTTP1(protocol == "http1")
-	p.SetHTTP2(protocol == "http2")
-	tr.Protocols = p
+	if protocol != "negotiated" {
+		p := &http.Protocols{}
+		p.SetHTTP1(protocol == "http1")
+		p.SetHTTP2(protocol == "http2")
+		tr.Protocols = p
+	}
 	return &http.Client{Transport: tr}, tr.CloseIdleConnections
 }

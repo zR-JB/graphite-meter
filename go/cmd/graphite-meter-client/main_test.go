@@ -252,6 +252,78 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 	}
 }
 
+func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionNetwork
+	m.row = 0
+	pf := wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{ID: "https://one.example", Origin: "https://one.example"},
+			{ID: "https://two.example", Origin: "https://two.example"},
+		},
+	}}
+
+	updated, _ := m.Update(preparationMsg{
+		seq: m.prepareSeq,
+		err: &goclient.PreparationError{
+			Preflight: pf,
+			Err:       errors.New("multiple throughput endpoints available; select an origin"),
+		},
+	})
+	m = updated.(model)
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "https://one.example"; got != want {
+		t.Fatalf("selected throughput target = %q, want %q", got, want)
+	}
+}
+
+func TestNetworkEndpointPickerDeduplicatesEquivalentOrigins(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionNetwork
+	m.row = 0
+	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{Origin: "https://meter.example:443"},
+			{Origin: "https://meter.example"},
+			{Origin: "https://other.example"},
+		},
+		LatencyTargets: []wire.LatencyTarget{
+			{Origin: "http://meter.example:80"},
+			{Origin: "http://meter.example"},
+			{Origin: "http://other.example"},
+		},
+	}}
+
+	updated, _ := m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "https://meter.example:443"; got != want {
+		t.Fatalf("first throughput target = %q, want %q", got, want)
+	}
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "https://other.example"; got != want {
+		t.Fatalf("second throughput target = %q, want %q", got, want)
+	}
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "auto"; got != want {
+		t.Fatalf("third throughput target = %q, want %q", got, want)
+	}
+
+	m.row = 1
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.LatencyTarget, "http://meter.example:80"; got != want {
+		t.Fatalf("first latency target = %q, want %q", got, want)
+	}
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.LatencyTarget, "http://other.example"; got != want {
+		t.Fatalf("second latency target = %q, want %q", got, want)
+	}
+}
+
 func TestCheckbox(t *testing.T) {
 	if got := checkbox(true); got != "●" {
 		t.Errorf("checkbox(true) = %q, want ●", got)
@@ -291,7 +363,7 @@ func TestRowCount(t *testing.T) {
 		{sectionServers, len(serverPresets) + 1},
 		{sectionStages, 5},
 		{sectionTiming, 6},
-		{sectionNetwork, 6},
+		{sectionNetwork, 7},
 		{sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -401,7 +473,7 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 		rows    int
 	}{
 		{"servers", sectionServers, len(serverPresets) + 1},
-		{"network", sectionNetwork, 6},
+		{"network", sectionNetwork, 7},
 		{"run (single row)", sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -575,7 +647,7 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionNetwork
-	for row, field := range map[int]string{2: "auto-streams", 3: "streams"} {
+	for row, field := range map[int]string{3: "auto-streams", 4: "streams"} {
 		m.row = row
 		next, _ := m.activate()
 		edited := next.(model)
@@ -588,7 +660,7 @@ func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 func TestActivate_NetworkTLSToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionNetwork
-	m.row = 4
+	m.row = 5
 	before := m.cfg.InsecureSkipTLSVerify
 	next, _ := m.activate()
 	m = next.(model)
@@ -602,7 +674,7 @@ func TestActivate_NetworkReset(t *testing.T) {
 	m.cfg.TransferStreams.Forced = 99
 	m.cfg.BaseURL = "http://changed.example"
 	m.section = sectionNetwork
-	m.row = 5
+	m.row = 6
 	next, _ := m.activate()
 	m = next.(model)
 	want := goclient.DefaultConfig()
@@ -895,9 +967,9 @@ func TestApply_Events(t *testing.T) {
 	}
 
 	m2 := newModel(goclient.DefaultConfig())
-	pf := &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Host: "host.example", Port: 7246, Location: "ams"}}
+	pf := &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Location: "ams"}}
 	m2.apply(goclient.Event{Kind: goclient.EventPreflight, Preflight: pf})
-	if m2.status != "connected" || !strings.Contains(m2.server, "host.example") {
+	if m2.status != "connected" || !strings.Contains(m2.server, "srv") {
 		t.Errorf("after EventPreflight: status=%q server=%q", m2.status, m2.server)
 	}
 }

@@ -2,16 +2,29 @@ import type { DiscoveredTarget, TransportDiscovery } from "../contract";
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
-} from "../../api/preflight";
+} from "../../api/endpoints";
 import {
   isLoopbackHostname,
   selectLatencyTarget,
   selectThroughputTarget,
 } from "./backendPure";
+import { describeTarget } from "./targetPresentation";
 
 export interface TransportOptionView {
   disabled: boolean;
   detail: string;
+}
+
+function automaticDetail(
+  target: FetchThroughputTarget | WebSocketLatencyTarget,
+  discovery: TransportDiscovery,
+  role: "throughput" | "latency",
+): string {
+  const reason =
+    target.origin === discovery.pageOrigin
+      ? "matches this page"
+      : `is the only available ${role} endpoint`;
+  return `Selects ${target.origin} because it ${reason}.`;
 }
 
 function advertisedDetail(
@@ -20,15 +33,17 @@ function advertisedDetail(
 ): string {
   if (entry.state === "not-advertised") return "Not offered in /preflight.";
   if (entry.state === "browser-blocked")
-    return "Advertised, but blocked from this secure page. Open the Graphite Meter UI over HTTP to test this clear target.";
+    return `Blocked by the browser: a secure page cannot open this clear endpoint · ${entry.target?.origin ?? "unknown origin"}`;
   if (
     discovery.pageSecure &&
     entry.target &&
     !entry.target.tls &&
     isLoopbackHostname(new URL(entry.target.origin).hostname)
   )
-    return "Allowed as a browser-trusted loopback target.";
-  return "Offered by server.";
+    return `Browser-trusted clear loopback endpoint · ${entry.target.origin}`;
+  return entry.target
+    ? describeTarget(discovery, entry.target).advertisedDetail
+    : "Not offered in /preflight.";
 }
 
 export function throughputOptionView(
@@ -37,12 +52,12 @@ export function throughputOptionView(
 ): TransportOptionView {
   if (!discovery)
     return { disabled: true, detail: "Checking server transports…" };
-  if (selection === "current") {
+  if (selection === "current" || selection === "auto") {
     const target = selectThroughputTarget(discovery, selection);
     return target
       ? {
           disabled: false,
-          detail: "Uses this page's connection.",
+          detail: automaticDetail(target, discovery, "throughput"),
         }
       : {
           disabled: true,
@@ -69,7 +84,7 @@ export function latencyOptionView(
     return target
       ? {
           disabled: false,
-          detail: "Uses the same security as this page.",
+          detail: automaticDetail(target, discovery, "latency"),
         }
       : {
           disabled: true,

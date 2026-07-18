@@ -7,16 +7,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Preflight serves logical-server discovery. It deliberately ignores the
-// request protocol; the selected target's /probe reports path evidence.
 type Preflight struct {
 	cfg        *config.Config
 	generation string
@@ -31,7 +29,6 @@ func NewPreflight(cfg *config.Config) *Preflight {
 }
 func (p *Preflight) ID() string                 { return "preflight" }
 func (p *Preflight) Capabilities() Capabilities { return Capabilities{HTTP: true} }
-
 func (p *Preflight) Handle(s transport.Session) error {
 	w, r, ok := s.HTTP()
 	if !ok {
@@ -43,43 +40,72 @@ func (p *Preflight) Handle(s transport.Session) error {
 }
 
 func (p *Preflight) build(r *http.Request) wire.Preflight {
-	host, port := hostPort(r)
-	throughput := []wire.ThroughputTarget{
-		throughputTarget("http1-clear", origin(p.cfg.PublicH1Origin, "http", host, p.cfg.H1Addr), "http1", false),
+	host, _, _ := net.SplitHostPort(r.Host)
+	if host == "" {
+		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
 	}
-	latency := []wire.LatencyTarget{
-		latencyTarget("ws-http1-clear", throughput[0].Origin, false),
+	throughput := make([]wire.ThroughputTarget, 0)
+	latency := make([]wire.LatencyTarget, 0)
+	addThroughput := func(base, protocol string) {
+		base = strings.TrimRight(base, "/")
+		for i := range throughput {
+			if origin.Equal(throughput[i].Origin, base) {
+				if throughput[i].Protocol != protocol {
+					throughput[i].Protocol = "negotiated"
+				}
+				return
+			}
+		}
+		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: "fetch-stream", Protocol: protocol, TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultThroughputRoutes()})
 	}
-	if p.cfg.EnableH1TLS || p.cfg.PublicH1TLSOrigin != "" {
-		o := origin(p.cfg.PublicH1TLSOrigin, "https", host, p.cfg.H1TLSAddr)
-		throughput = append(throughput, throughputTarget("http1-tls", o, "http1", true))
-		latency = append(latency, latencyTarget("ws-http1-tls", o, true))
+	addLatency := func(base string) {
+		base = strings.TrimRight(base, "/")
+		for _, e := range latency {
+			if origin.Equal(e.Origin, base) {
+				return
+			}
+		}
+		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: "websocket", Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
 	}
-	if p.cfg.EnableH2 || p.cfg.PublicH2Origin != "" {
-		o := origin(p.cfg.PublicH2Origin, "https", host, p.cfg.H2Addr)
-		throughput = append(throughput, throughputTarget("http2", o, "http2", true))
+	native := []struct {
+		name, public, scheme, addr, protocol string
+		latency                              bool
+	}{
+		{config.NativeH1Clear, p.cfg.NativePublic.H1, "http", p.cfg.Native.H1, "http1", true},
+		{config.NativeH1TLS, p.cfg.NativePublic.H1TLS, "https", p.cfg.Native.H1TLS, "http1", true},
+		{config.NativeH2, p.cfg.NativePublic.H2, "https", p.cfg.Native.H2, "http2", false},
+		{config.NativeH3, p.cfg.NativePublic.H3, "https", p.cfg.Native.H3, "http3", false},
 	}
-	if p.cfg.EnableH3 || p.cfg.PublicH3Origin != "" {
-		o := origin(p.cfg.PublicH3Origin, "https", host, p.cfg.H3Addr)
-		throughput = append(throughput, throughputTarget("http3", o, "http3", true))
+	for _, e := range native {
+		if p.cfg.NativeAdvertised(e.name) {
+			base := nativeOrigin(e.public, e.scheme, host, e.addr)
+			addThroughput(base, e.protocol)
+			if e.latency {
+				addLatency(base)
+			}
+		}
 	}
-	return wire.Preflight{
-		Server:        wire.ServerInfo{Name: p.cfg.ServerName, Host: host, Port: port, Location: p.cfg.ServerLocation},
-		EngineVersion: p.cfg.EngineVersion,
-		Generation:    p.generation,
-		Capabilities:  wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency},
+	for _, base := range p.cfg.Public.Both {
+		addThroughput(publicBase(base), "negotiated")
+		addLatency(publicBase(base))
 	}
+	for _, base := range p.cfg.Public.Throughput {
+		addThroughput(publicBase(base), "negotiated")
+	}
+	for _, base := range p.cfg.Public.Latency {
+		addLatency(publicBase(base))
+	}
+	return wire.Preflight{Server: wire.ServerInfo{Name: p.cfg.ServerName, Location: p.cfg.ServerLocation}, EngineVersion: p.cfg.EngineVersion, Generation: p.generation, Capabilities: wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency}}
 }
 
-func throughputTarget(id, origin, protocol string, tls bool) wire.ThroughputTarget {
-	return wire.ThroughputTarget{ID: id, Origin: strings.TrimRight(origin, "/"), Transport: "fetch-stream", Protocol: protocol, TLS: tls, Routes: wire.DefaultThroughputRoutes()}
+func publicBase(origin string) string {
+	if origin == "self" {
+		return "."
+	}
+	return origin
 }
 
-func latencyTarget(id, origin string, tls bool) wire.LatencyTarget {
-	return wire.LatencyTarget{ID: id, Origin: strings.TrimRight(origin, "/"), Transport: "websocket", Protocol: "http1", TLS: tls, Routes: wire.DefaultLatencyRoutes()}
-}
-
-func origin(public, scheme, host, addr string) string {
+func nativeOrigin(public, scheme, host, addr string) string {
 	if public != "" {
 		return public
 	}
@@ -88,16 +114,4 @@ func origin(public, scheme, host, addr string) string {
 		return scheme + "://" + host
 	}
 	return (&url.URL{Scheme: scheme, Host: net.JoinHostPort(host, port)}).String()
-}
-
-func hostPort(r *http.Request) (string, int) {
-	host, portStr, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		return r.Host, map[bool]int{true: 443, false: 80}[r.TLS != nil]
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return host, 0
-	}
-	return host, port
 }

@@ -5,70 +5,27 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
-export type ThroughputTarget = FetchThroughputTarget | WebTransportStreamsThroughputTarget;
-export type LatencyTarget = WebSocketLatencyTarget | WebTransportDatagramsLatencyTarget;
+export type BaseUrl = string;
 
 /**
- * Logical-server discovery returned by GET /preflight. Throughput and latency targets are independently selectable and independently verified.
+ * Logical server discovery with independently selectable throughput and latency endpoints.
  */
 export interface Preflight {
   server: {
     name: string;
-    host: string;
-    port: number;
     location?: string;
   };
   engineVersion: string;
   generation: string;
   capabilities: {
-    throughputTargets: ThroughputTarget[];
-    latencyTargets: LatencyTarget[];
+    throughput: ThroughputEndpoint[];
+    latency: LatencyEndpoint[];
   };
 }
-export interface FetchThroughputTarget {
-  id: string;
-  origin: string;
-  transport: "fetch-stream";
-  protocol: "http1" | "http2" | "http3";
-  tls: boolean;
-  routes: ThroughputRoutes;
+export interface ThroughputEndpoint {
+  baseUrl: BaseUrl;
+  protocol: "http1" | "http2" | "http3" | "negotiated";
 }
-export interface ThroughputRoutes {
-  probe: string;
-  download: string;
-  upload: string;
-  uploadSession: string;
-  uploadProgress: string;
-}
-export interface WebTransportStreamsThroughputTarget {
-  id: string;
-  origin: string;
-  transport: "webtransport-streams";
-  protocol: "http3";
-  tls: true;
-  routes: {
-    [k: string]: unknown;
-  };
-}
-export interface WebSocketLatencyTarget {
-  id: string;
-  origin: string;
-  transport: "websocket";
-  protocol: "http1";
-  tls: boolean;
-  routes: LatencyRoutes;
-}
-export interface LatencyRoutes {
-  probe: string;
-  ping: string;
-}
-export interface WebTransportDatagramsLatencyTarget {
-  id: string;
-  origin: string;
-  transport: "webtransport-datagrams";
-  protocol: "http3";
-  tls: true;
-  routes: {
-    [k: string]: unknown;
-  };
+export interface LatencyEndpoint {
+  baseUrl: BaseUrl;
 }

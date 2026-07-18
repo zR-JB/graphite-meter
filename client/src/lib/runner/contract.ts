@@ -4,7 +4,7 @@
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
-} from "../api/preflight";
+} from "../api/endpoints";
 
 /* ---------- Lifecycle ---------- */
 /* Phase sequence: every enabled stage is preceded by its own self-contained
@@ -30,7 +30,7 @@ export type Phase =
  *  so the core never infers direction from the phase — that lets a single
  *  `bidirectional` phase carry concurrent down+up samples unambiguously. */
 export type FlowDirection = "down" | "up";
-export type ProtocolTarget = "http1" | "http2" | "http3";
+export type ProtocolTarget = "http1" | "http2" | "http3" | "negotiated";
 export type ConnectionRole = "throughput" | "latency";
 /** Advertised transfer target id; "current" resolves from the discovery hop. */
 export type ThroughputTargetSelection = string;
@@ -379,7 +379,7 @@ export interface InfraInfo {
   latencyClientIp?: string;
   latencyClientIpVersion?: 4 | 6;
   latencyClientIpSource?: "socket" | "forwarded";
-  server: { name: string; host: string; port: number; location?: string };
+  server: { name: string; location?: string };
   preTestPingMs: number;
   engineVersion: string;
   discoveryGeneration: string;
@@ -388,7 +388,6 @@ export interface InfraInfo {
   selectedThroughputProtocol?: ProtocolTarget;
   selectedLatencyTarget?: string;
   selectedLatencyTransport?: TransportKind;
-  verifiedLatencyProtocol?: string;
   latencyProtocolNegotiated?: string;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
@@ -408,7 +407,7 @@ export interface DiscoveredTarget<T> {
 export interface TransportDiscovery {
   generation: string;
   engineVersion: string;
-  server: { name: string; host: string; port: number; location?: string };
+  server: { name: string; location?: string };
   fetchedAt: number;
   pageOrigin: string;
   pageSecure: boolean;

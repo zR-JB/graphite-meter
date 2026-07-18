@@ -2,12 +2,15 @@ import { expect, test } from "bun:test";
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
-} from "../api/preflight";
+} from "../api/endpoints";
 import type { InfraInfo, RunnerConfig } from "./contract";
 import {
   connectionKey,
+  connectionDraftKey,
+  connectionDraftRoleKey,
   connectionRoleKey,
   validationRoles,
+  verifiedRolesForProbe,
   presentConnections,
   type ConnectionValidation,
 } from "./connectionModel";
@@ -56,7 +59,7 @@ function config(): RunnerConfig {
     loadedPingCadence: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
-    transports: { throughputTarget: "current", latencyTarget: "auto" },
+    transports: { throughputTarget: "auto", latencyTarget: "auto" },
     compensation: {
       profile: "lan",
       transport: "auto",
@@ -96,7 +99,7 @@ function fixture() {
     {
       generation: "generation-a",
       engineVersion: "test",
-      server: { name: "meter", host: "meter.test", port: 443 },
+      server: { name: "meter" },
       fetchedAt: 1,
     },
   );
@@ -104,11 +107,15 @@ function fixture() {
 
 test("presentation keeps browser and server protocol boundaries distinct", () => {
   const cfg = config();
-  cfg.transports.throughputTarget = "http2";
-  cfg.transports.latencyTarget = "ws-http1-tls";
+  cfg.transports.throughputTarget = throughput.origin;
+  cfg.transports.latencyTarget = latency.origin;
   const validation: ConnectionValidation = {
-    throughput: { selection: "http2", state: "verified", verifiedAt: 2 },
-    latency: { selection: "ws-http1-tls", state: "verified", verifiedAt: 2 },
+    throughput: {
+      selection: throughput.origin,
+      state: "verified",
+      verifiedAt: 2,
+    },
+    latency: { selection: latency.origin, state: "verified", verifiedAt: 2 },
   };
   const infra: InfraInfo = {
     clientIp: "192.0.2.2",
@@ -121,7 +128,6 @@ test("presentation keeps browser and server protocol boundaries distinct", () =>
     protocolNegotiated: "http/1.1",
     firstHopProtocol: "h2",
     latencyProtocolNegotiated: "http/1.1",
-    verifiedLatencyProtocol: "http/1.1",
   };
 
   const model = presentConnections(cfg, fixture(), validation, infra);
@@ -129,13 +135,85 @@ test("presentation keeps browser and server protocol boundaries distinct", () =>
   expect(model.throughput.summary).toBe("Fetch stream · HTTP/2 · TLS");
   expect(model.throughput.browserProtocol).toBe("h2");
   expect(model.throughput.serverProtocol).toBe("http/1.1");
-  expect(model.latency.summary).toBe("WebSocket · HTTP/1.1 · TLS");
+  expect(model.latency.summary).toBe("WebSocket · TLS");
   expect(model.latency.preTestPingMs).toBe(4);
+});
+
+test("native H1 latency summary states its deterministic HTTP version", () => {
+  const cfg = config();
+  const direct = { ...latency, origin: throughput.origin, tls: true };
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [{ ...throughput, protocol: "http1" }],
+      [direct],
+      throughput.origin,
+      true,
+      "http/1.1",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: { selection: "auto", state: "stale" },
+    latency: { selection: "auto", state: "verified", verifiedAt: 2 },
+  };
+  const infra: InfraInfo = {
+    clientIp: "192.0.2.2",
+    clientIpVersion: 4,
+    clientIpSource: "socket",
+    latencyClientIp: "192.0.2.2",
+    latencyClientIpVersion: 4,
+    latencyClientIpSource: "socket",
+    server: discovery.server,
+    preTestPingMs: 4,
+    engineVersion: "test",
+    discoveryGeneration: discovery.generation,
+    protocolNegotiated: "http/1.1",
+    latencyProtocolNegotiated: "http/1.1",
+  };
+  expect(
+    presentConnections(cfg, discovery, validation, infra).latency.summary,
+  ).toBe("WebSocket · HTTP/1.1 · TLS");
+});
+
+test("verified negotiated throughput presents the observed browser protocol", () => {
+  const cfg = config();
+  const discovery = fixture();
+  discovery.throughput[throughput.origin].target!.protocol = "negotiated";
+  const validation: ConnectionValidation = {
+    throughput: { selection: "auto", state: "verified", verifiedAt: 2 },
+    latency: { selection: "auto", state: "stale" },
+  };
+  const infra: InfraInfo = {
+    clientIp: "192.0.2.2",
+    clientIpVersion: 4,
+    clientIpSource: "forwarded",
+    server: discovery.server,
+    preTestPingMs: 0,
+    engineVersion: "test",
+    discoveryGeneration: discovery.generation,
+    protocolNegotiated: "http/1.1",
+    selectedThroughputProtocol: "http2",
+    firstHopProtocol: "h2",
+  };
+
+  const presented = presentConnections(
+    cfg,
+    discovery,
+    validation,
+    infra,
+  ).throughput;
+  expect(presented.summary).toBe("Fetch stream · HTTP/2 · TLS");
+  expect(presented.observedProtocol).toBe("http2");
 });
 
 test("old evidence never appears under a new selection or generation", () => {
   const cfg = config();
-  cfg.transports.throughputTarget = "http2";
+  cfg.transports.throughputTarget = throughput.origin;
   const validation: ConnectionValidation = {
     throughput: { selection: "http1-clear", state: "verified", verifiedAt: 2 },
     latency: { selection: "auto", state: "stale" },
@@ -165,14 +243,14 @@ test("connection cache key changes only for preparation inputs", () => {
   const b = config();
   b.visualization.throughputMaxBytesPerSec = 1_000_000;
   expect(connectionKey(a)).toBe(connectionKey(b));
-  b.transports.latencyTarget = "ws-http1-clear";
+  b.transports.latencyTarget = "http://meter.test";
   expect(connectionKey(a)).not.toBe(connectionKey(b));
 });
 
 test("role cache keys isolate throughput from latency preparation", () => {
   const a = config();
   const b = config();
-  b.transports.throughputTarget = "http2";
+  b.transports.throughputTarget = throughput.origin;
   expect(connectionRoleKey(a, "latency")).toBe(connectionRoleKey(b, "latency"));
   expect(connectionRoleKey(a, "throughput")).not.toBe(
     connectionRoleKey(b, "throughput"),
@@ -182,8 +260,8 @@ test("role cache keys isolate throughput from latency preparation", () => {
 test("automatic and explicit selections share an identity when they resolve to the same target", () => {
   const automatic = config();
   const explicit = config();
-  explicit.transports.throughputTarget = "http2";
-  explicit.transports.latencyTarget = "ws-http1-tls";
+  explicit.transports.throughputTarget = throughput.origin;
+  explicit.transports.latencyTarget = latency.origin;
   const discovery = fixture();
 
   expect(connectionRoleKey(automatic, "throughput", discovery)).toBe(
@@ -197,12 +275,27 @@ test("automatic and explicit selections share an identity when they resolve to t
   );
 });
 
+test("draft invalidation ignores discovery and observed protocol changes", () => {
+  const cfg = config();
+  const discovery = fixture();
+  const roleKey = connectionDraftRoleKey(cfg, "throughput");
+  const key = connectionDraftKey(cfg);
+
+  discovery.throughput[throughput.origin].target!.protocol = "http2";
+  expect(connectionDraftRoleKey(cfg, "throughput")).toBe(roleKey);
+  expect(connectionDraftKey(cfg)).toBe(key);
+
+  cfg.transports.throughputTarget = throughput.origin;
+  expect(connectionDraftRoleKey(cfg, "throughput")).not.toBe(roleKey);
+  expect(connectionDraftKey(cfg)).not.toBe(key);
+});
+
 test("probe failure and stale evidence remain retryable presentation states", () => {
   const cfg = config();
-  cfg.transports.throughputTarget = "http2";
+  cfg.transports.throughputTarget = throughput.origin;
   const failed: ConnectionValidation = {
     throughput: {
-      selection: "http2",
+      selection: throughput.origin,
       state: "failed",
       message: "probe timed out",
     },
@@ -219,18 +312,28 @@ test("probe failure and stale evidence remain retryable presentation states", ()
 test("validation retries only the changed role and carries an aborted stale role", () => {
   const cfg = config();
   const validation: ConnectionValidation = {
-    throughput: { selection: "current", state: "verified" },
+    throughput: { selection: "auto", state: "verified" },
     latency: { selection: "auto", state: "verified" },
   };
-  cfg.transports.throughputTarget = "http2";
+  cfg.transports.throughputTarget = throughput.origin;
   expect(validationRoles(cfg, validation, "throughput")).toEqual([
     "throughput",
   ]);
 
-  validation.throughput = { selection: "http2", state: "stale" };
-  cfg.transports.latencyTarget = "ws-http1-tls";
+  validation.throughput = { selection: throughput.origin, state: "stale" };
+  cfg.transports.latencyTarget = latency.origin;
   expect(validationRoles(cfg, validation, "latency")).toEqual([
     "latency",
     "throughput",
+  ]);
+});
+
+test("a generation refresh verifies every role checked by the broadened probe", () => {
+  expect(verifiedRolesForProbe(["latency"], "old", "new")).toEqual([
+    "throughput",
+    "latency",
+  ]);
+  expect(verifiedRolesForProbe(["latency"], "same", "same")).toEqual([
+    "latency",
   ]);
 });

@@ -5,6 +5,7 @@ import {
   median,
   needsPings,
   laneStaggerMs,
+  protocolFromNextHop,
   selectThroughputTarget,
   selectLatencyTarget,
   browserProtocolMatchesTarget,
@@ -13,7 +14,7 @@ import {
   throughputTargetKey,
 } from "./real/backendPure";
 import type { PhaseActivity, RunnerConfig } from "./contract";
-import type { FetchThroughputTarget, LatencyTarget } from "../api/preflight";
+import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 
 const routes = {
   probe: "/probe",
@@ -52,63 +53,79 @@ const discovery = (
     pageProtocol,
   );
 
-test("selectThroughputTarget freezes the requested advertised target", () => {
-  const targets = [
-    transfer("http1-clear", "http://meter:7246", "http1", false),
-    transfer("http1-tls", "https://meter:7247", "http1", true),
-    transfer("http2", "https://meter:7248", "http2", true),
-  ];
-  expect(selectThroughputTarget(discovery(targets), "http1-tls")?.id).toBe(
-    "http1-tls",
+test("proxy endpoints resolve relative to preflight and negotiate the browser hop", () => {
+  const catalog = classifyTransportDiscovery(
+    [{ baseUrl: ".", protocol: "negotiated" }],
+    [{ baseUrl: "." }],
+    "https://meter.example",
+    true,
+    "h2",
   );
-  expect(selectThroughputTarget(discovery(targets), "http3")).toBeNull();
+  const target = selectThroughputTarget(catalog, "auto");
+  expect(target?.origin).toBe("https://meter.example");
+  expect(target?.protocol).toBe("negotiated");
+  expect(browserProtocolMatchesTarget(target!, "h2")).toBe(true);
+  expect(selectLatencyTarget(catalog, "auto")?.origin).toBe(
+    "https://meter.example",
+  );
 });
 
-test("secure pages block clear non-loopback targets but retain TLS H1", () => {
-  const targets = [
-    transfer("http1-clear", "http://meter:7246", "http1", false),
-    transfer("http1-tls", "https://meter:7247", "http1", true),
-  ];
+test("deterministic native target wins when self resolves to the same origin", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      { baseUrl: "https://meter.example", protocol: "http1" },
+      { baseUrl: ".", protocol: "negotiated" },
+    ],
+    [],
+    "https://meter.example",
+    true,
+    "http/1.1",
+  );
+  expect(catalog.throughput["https://meter.example"].target?.protocol).toBe(
+    "http1",
+  );
+  expect(selectThroughputTarget(catalog, "auto")?.protocol).toBe("http1");
+});
+
+test("native endpoints remain deterministic and mixed content stays blocked", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      { baseUrl: "http://meter:7246", protocol: "http1" },
+      { baseUrl: "https://meter:7248", protocol: "http2" },
+    ],
+    [],
+    "https://ui.example",
+    true,
+    "h2",
+  );
+  expect(catalog.throughput["http://meter:7246"].state).toBe("browser-blocked");
+  expect(selectThroughputTarget(catalog, "https://meter:7248")?.protocol).toBe(
+    "http2",
+  );
   expect(
-    selectThroughputTarget(
-      discovery(targets, [], "https://meter", true, "http/1.1"),
-      "http1-clear",
+    browserProtocolMatchesTarget(
+      selectThroughputTarget(catalog, "https://meter:7248")!,
+      "http/1.1",
     ),
-  ).toBeNull();
-  expect(
-    selectThroughputTarget(
-      discovery(targets, [], "https://meter", true, "http/1.1"),
-      "http1-tls",
-    )?.id,
-  ).toBe("http1-tls");
-});
-
-test("current target follows the negotiated protocol on a shared origin", () => {
-  const shared = "https://meter";
-  const targets = [
-    transfer("http2", shared, "http2", true),
-    transfer("http3", shared, "http3", true),
-  ];
-  expect(
-    selectThroughputTarget(
-      discovery(targets, [], shared, true, "h2"),
-      "current",
-    )?.protocol,
-  ).toBe("http2");
-  expect(
-    selectThroughputTarget(
-      discovery(targets, [], shared, true, "h3"),
-      "current",
-    )?.protocol,
-  ).toBe("http3");
+  ).toBe(false);
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {
   const h1 = transfer("http1-tls", "https://meter", "http1", true);
   const h2 = transfer("http2", "https://meter", "http2", true);
+  const negotiated = transfer(
+    "https://meter",
+    "https://meter",
+    "negotiated",
+    true,
+  );
   expect(browserProtocolMatchesTarget(h1, "http/1.1")).toBe(true);
   expect(browserProtocolMatchesTarget(h2, "h2")).toBe(true);
   expect(browserProtocolMatchesTarget(h2, "http/1.1")).toBe(false);
+  expect(browserProtocolMatchesTarget(negotiated)).toBe(true);
+  expect(browserProtocolMatchesTarget(h2)).toBe(false);
+  expect(protocolFromNextHop()).toBeUndefined();
+  expect(protocolFromNextHop("h2")).toBe("http2");
 });
 
 test("idle target ownership includes protocol and public origin", () => {
@@ -117,81 +134,6 @@ test("idle target ownership includes protocol and public origin", () => {
   expect(
     throughputTargetKey({ ...target, origin: "https://other-meter" }),
   ).not.toBe(throughputTargetKey(target));
-});
-
-test("latency target follows page security independently from throughput", () => {
-  const targets: LatencyTarget[] = [
-    {
-      id: "ws-http1-tls",
-      origin: "https://meter:7247",
-      transport: "websocket",
-      protocol: "http1",
-      tls: true,
-      routes: { probe: "/probe", ping: "/ws/ping" },
-    },
-    {
-      id: "ws-http1-clear",
-      origin: "http://meter:7246",
-      transport: "websocket",
-      protocol: "http1",
-      tls: false,
-      routes: { probe: "/probe", ping: "/ws/ping" },
-    },
-  ];
-  expect(
-    selectLatencyTarget(discovery([], targets, "https://meter", true), "auto")
-      ?.id,
-  ).toBe("ws-http1-tls");
-  expect(selectLatencyTarget(discovery([], targets), "auto")?.id).toBe(
-    "ws-http1-clear",
-  );
-  expect(
-    selectLatencyTarget(
-      discovery([], targets, "https://meter", true),
-      "ws-http1-clear",
-    ),
-  ).toBeNull();
-});
-
-test("every fetch target combines with either H1 websocket latency target", () => {
-  const throughput = [
-    transfer("http1-clear", "http://meter:7246", "http1", false),
-    transfer("http1-tls", "https://meter:7247", "http1", true),
-    transfer("http2", "https://meter:7248", "http2", true),
-    transfer("http3", "https://meter:7249", "http3", true),
-  ];
-  const latency: LatencyTarget[] = [
-    {
-      id: "ws-http1-clear",
-      origin: "http://meter:7246",
-      transport: "websocket",
-      protocol: "http1",
-      tls: false,
-      routes: { probe: "/probe", ping: "/ws/ping" },
-    },
-    {
-      id: "ws-http1-tls",
-      origin: "https://meter:7247",
-      transport: "websocket",
-      protocol: "http1",
-      tls: true,
-      routes: { probe: "/probe", ping: "/ws/ping" },
-    },
-  ];
-  for (const throughputTarget of throughput) {
-    for (const latencyTarget of latency) {
-      expect(
-        selectThroughputTarget(
-          discovery(throughput, latency),
-          throughputTarget.id,
-        )?.id,
-      ).toBe(throughputTarget.id);
-      expect(
-        selectLatencyTarget(discovery(throughput, latency), latencyTarget.id)
-          ?.id,
-      ).toBe(latencyTarget.id);
-    }
-  }
 });
 
 test("clear loopback targets stay usable from HTTPS", () => {
@@ -204,54 +146,11 @@ test("clear loopback targets stay usable from HTTPS", () => {
     );
     expect(
       discovery([target], [], "https://ui.example", true).throughput[
-        "http1-clear"
+        target.origin
       ].state,
     ).toBe("advertised");
   }
   expect(isLoopbackHostname("127.255.1.2")).toBe(true);
-});
-
-test("clear private and public targets are browser-blocked only when advertised", () => {
-  for (const host of ["192.168.1.4", "10.0.0.2", "meter.example"]) {
-    const target = transfer(
-      "http1-clear",
-      `http://${host}:7246`,
-      "http1",
-      false,
-    );
-    expect(
-      discovery([target], [], "https://ui.example", true).throughput[
-        "http1-clear"
-      ].state,
-    ).toBe("browser-blocked");
-  }
-  expect(
-    discovery([], [], "https://ui.example", true).throughput["http1-clear"]
-      .state,
-  ).toBe("not-advertised");
-});
-
-test("same as page requires an exact advertised origin and protocol", () => {
-  const h1 = transfer("http1-tls", "https://meter", "http1", true);
-  const h2 = transfer("http2", "https://meter", "http2", true);
-  expect(
-    selectThroughputTarget(
-      discovery([h1, h2], [], "https://meter", true, "http/1.1"),
-      "current",
-    )?.id,
-  ).toBe("http1-tls");
-  expect(
-    selectThroughputTarget(
-      discovery([h1, h2], [], "https://meter", true, "h2"),
-      "current",
-    )?.id,
-  ).toBe("http2");
-  expect(
-    selectThroughputTarget(
-      discovery([h1], [], "https://proxy", true, "h2"),
-      "current",
-    ),
-  ).toBeNull();
 });
 
 /* ---------- httpToWs ---------- */
@@ -338,7 +237,7 @@ test("laneStaggerMs: caps at the base stagger even on a long warmup", () => {
   expect(laneStaggerMs(2, 100_000, 75)).toBe(75);
 });
 
-test("each probe refreshes discovery and upload progress opens before forced H1 lanes", async () => {
+test("probe refresh preserves negotiated protocol across roles and opens upload progress first", async () => {
   const buildGlobals = globalThis as typeof globalThis &
     Record<string, unknown>;
   Object.assign(buildGlobals, {
@@ -359,6 +258,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   const pingMessages: Record<string, unknown>[] = [];
   const fetchUrls: string[] = [];
   let preflights = 0;
+  let browserProtocol = "http/1.1";
   let progressWorker: FakeWorker | null = null;
   let pingWorker: FakeWorker | null = null;
 
@@ -387,7 +287,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       if (message.type === "start" && message.url)
         workerStarts.push({ kind: this.kind, url: message.url });
       if (this.kind === "ping") {
-        queueMicrotask(() =>
+        queueMicrotask(() => {
+          this.emit({ type: "ready" });
           this.emit({
             type: "samples",
             samples: [
@@ -397,8 +298,8 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
               { rtt: 1, lost: false },
               { rtt: 1, lost: false },
             ],
-          }),
-        );
+          });
+        });
       } else if (message.type === "start") {
         started.push(this.kind);
         if (this.kind === "progress") progressWorker = this;
@@ -413,25 +314,18 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   }
 
   const discovery = (withH2: boolean) => ({
-    server: { name: "test", host: "meter.test", port: 7246 },
+    server: { name: "test" },
     engineVersion: "test",
+    generation: withH2 ? "b" : "a",
     capabilities: {
-      throughputTargets: [
-        transfer("http1-clear", "http://meter.test:7246", "http1", false),
+      throughput: [
+        { baseUrl: "http://meter.test:7246", protocol: "http1" },
+        { baseUrl: "https://proxy.test", protocol: "negotiated" },
         ...(withH2
-          ? [transfer("http2", "https://meter.test:7248", "http2", true)]
+          ? [{ baseUrl: "https://meter.test:7248", protocol: "http2" as const }]
           : []),
       ],
-      latencyTargets: [
-        {
-          id: "ws-http1-clear",
-          origin: "http://meter.test:7246",
-          transport: "websocket",
-          protocol: "http1",
-          tls: false,
-          routes: { probe: "/probe", ping: "/ws/ping" },
-        },
-      ],
+      latency: [{ baseUrl: "http://meter.test:7246" }],
     },
   });
 
@@ -442,7 +336,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     });
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     performance.getEntriesByName = () =>
-      [{ nextHopProtocol: "http/1.1" }] as unknown as PerformanceEntry[];
+      [{ nextHopProtocol: browserProtocol }] as unknown as PerformanceEntry[];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       fetchUrls.push(url);
@@ -471,7 +365,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
       },
       skipLoadedLatencyWhenStageOff: true,
       transports: {
-        throughputTarget: "http1-clear",
+        throughputTarget: "http://meter.test:7246",
         latencyTarget: "auto",
       },
       transferStreams: { mode: "forced", count: 6 },
@@ -537,12 +431,14 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     backend.attach(host);
 
     await backend.probe(config);
-    config.transports.throughputTarget = "http3";
+    config.transports.throughputTarget = "https://meter.test:7249";
     await expect(backend.probe(config)).rejects.toBeInstanceOf(
       TransportUnavailableError,
     );
-    expect(discoveries.at(-1)?.throughput.http2.state).toBe("advertised");
-    config.transports.throughputTarget = "http1-clear";
+    expect(
+      discoveries.at(-1)?.throughput["https://meter.test:7248"].state,
+    ).toBe("advertised");
+    config.transports.throughputTarget = "http://meter.test:7246";
     const secondProbe = backend.probe(config);
     for (let i = 0; i < 10; i++) await Promise.resolve();
     pingWorker!.emit({
@@ -572,8 +468,12 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
         .every(({ url }) => url === "ws://meter.test:7246/ws/ping"),
     ).toBe(true);
     expect(workerStarts.some(({ url }) => url.includes("8765"))).toBe(false);
-    expect(discoveries[0].throughput.http2.state).toBe("not-advertised");
-    expect(discoveries[2].throughput.http2.state).toBe("advertised");
+    expect(
+      discoveries[0].throughput["https://meter.test:7248"],
+    ).toBeUndefined();
+    expect(discoveries[2].throughput["https://meter.test:7248"].state).toBe(
+      "advertised",
+    );
 
     let fetchStart = fetchUrls.length;
     await backend.probe(config, undefined, "throughput");
@@ -588,6 +488,35 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     });
     await latencyProbe;
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
+
+    config.transports.throughputTarget = "https://proxy.test";
+    browserProtocol = "";
+    const proxyWithoutTiming = await backend.probe(
+      config,
+      undefined,
+      "throughput",
+    );
+    expect(proxyWithoutTiming.selectedThroughputProtocol).toBe("negotiated");
+    expect(
+      discoveries.at(-1)?.throughput["https://proxy.test"].target?.protocol,
+    ).toBe("negotiated");
+
+    browserProtocol = "h2";
+    const proxyThroughput = await backend.probe(
+      config,
+      undefined,
+      "throughput",
+    );
+    expect(proxyThroughput.selectedThroughputProtocol).toBe("http2");
+    const proxyLatency = await backend.probe(config, undefined, "latency");
+    expect(proxyLatency.selectedThroughputProtocol).toBe("http2");
+    expect(
+      discoveries.at(-1)?.throughput["https://proxy.test"].target?.protocol,
+    ).toBe("negotiated");
+
+    config.transports.throughputTarget = "http://meter.test:7246";
+    browserProtocol = "http/1.1";
+    await backend.probe(config, undefined, "throughput");
 
     backend.onRunStart(config);
     const unloaded: PhaseActivity = {

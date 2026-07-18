@@ -6,6 +6,7 @@ import type {
   OverheadCompensationConfig,
   ThroughputResult,
 } from "./runner/contract";
+import { compensationTransportFromProtocol } from "./runner/protocol";
 
 export type CompensationConfidence = "high" | "medium" | "low";
 export type CompensationPhase = "download" | "upload";
@@ -54,10 +55,7 @@ export function transportFromProtocol(
   protocol: string | undefined,
   secure = typeof location !== "undefined" && location.protocol === "https:",
 ): CompensationTransport {
-  const p = protocol?.toLowerCase() ?? "";
-  if (p === "h3" || p.startsWith("h3-")) return "http3-quic";
-  if (p === "h2" || p === "h2c") return "http2";
-  return secure ? "https-tls" : "http1-clear";
+  return compensationTransportFromProtocol(protocol, secure);
 }
 
 export function applyConnectionProfile(

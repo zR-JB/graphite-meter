@@ -7,6 +7,8 @@
   } from "../../runner/contract";
   import { applyConnectionProfile } from "../../compensation";
   import { applyLiveRunConfig } from "../../runner/wire.svelte";
+  import { describeTarget } from "../../runner/real/targetPresentation";
+  import { compensationTransportLabel } from "../../runner/protocol";
   import { tooltip, JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
@@ -16,18 +18,42 @@
   }
   let { running = false }: Props = $props();
 
-  const THROUGHPUT_TARGETS = [
-    { value: "current", label: "Same as this page" },
-    { value: "http1-clear", label: "HTTP/1.1 clear" },
-    { value: "http1-tls", label: "HTTP/1.1 TLS" },
-    { value: "http2", label: "HTTP/2" },
-    { value: "http3", label: "HTTP/3" },
-  ] as const;
-  const LATENCY_TARGETS = [
-    { value: "auto", label: "Match page security" },
-    { value: "ws-http1-clear", label: "WebSocket clear" },
-    { value: "ws-http1-tls", label: "WebSocket TLS" },
-  ] as const;
+  const throughputTargets = $derived([
+    { value: "auto", label: "Automatic" },
+    ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
+      (entry) =>
+        entry.target
+          ? [
+              {
+                value: entry.target.origin,
+                label: describeTarget(
+                  store.transportDiscovery!,
+                  entry.target,
+                  store.connections.throughput.target?.origin ===
+                    entry.target.origin
+                    ? store.connections.throughput.observedProtocol
+                    : undefined,
+                ).label,
+              },
+            ]
+          : [],
+    ),
+  ]);
+  const latencyTargets = $derived([
+    { value: "auto", label: "Automatic" },
+    ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
+      (entry) =>
+        entry.target
+          ? [
+              {
+                value: entry.target.origin,
+                label: describeTarget(store.transportDiscovery!, entry.target)
+                  .label,
+              },
+            ]
+          : [],
+    ),
+  ]);
 
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
@@ -137,13 +163,12 @@
   const COMPENSATION_TRANSPORTS: {
     value: CompensationTransportSetting;
     label: string;
-  }[] = [
-    { value: "auto", label: "Automatic" },
-    { value: "http1-clear", label: "HTTP/1.1 clear" },
-    { value: "https-tls", label: "HTTP/1.1 TLS" },
-    { value: "http2", label: "HTTP/2" },
-    { value: "http3-quic", label: "HTTP/3 QUIC" },
-  ];
+  }[] = (
+    ["auto", "http1-clear", "https-tls", "http2", "http3-quic"] as const
+  ).map((value) => ({
+    value,
+    label: compensationTransportLabel(value),
+  }));
   const COMPENSATION_NUMBERS = [
     ["mtuBytes", "MTU bytes", 576, 65536, 1],
     ["tcpOptionsMinBytes", "TCP options min", 0, 40, 4],
@@ -183,12 +208,12 @@
     </p>
     <ConnectionPicker
       role="throughput"
-      options={THROUGHPUT_TARGETS}
+      options={throughputTargets}
       locked={running}
     />
     <ConnectionPicker
       role="latency"
-      options={LATENCY_TARGETS}
+      options={latencyTargets}
       locked={running}
     />
   </section>

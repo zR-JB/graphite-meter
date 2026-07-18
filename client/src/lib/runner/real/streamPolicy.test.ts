@@ -57,6 +57,24 @@ test("automatic H1 reserves control connections and splits bidirectional capacit
   ).toBe(1);
 });
 
+test("unobserved negotiated HTTP uses the H1-safe connection budget", () => {
+  const oneWay = {
+    protocol: "negotiated",
+    policy: auto,
+    needsPing: true,
+  } as const;
+  expect(
+    transferStreamCount({ ...oneWay, transfer: ["down"], dir: "down" }),
+  ).toBe(BROWSER_CONNECTION_BUDGET - 1);
+  expect(transferStreamCount({ ...oneWay, transfer: ["up"], dir: "up" })).toBe(
+    BROWSER_CONNECTION_BUDGET - 2,
+  );
+
+  const bidirectional = { ...oneWay, transfer: ["down", "up"] } as const;
+  expect(transferStreamCount({ ...bidirectional, dir: "down" })).toBe(2);
+  expect(transferStreamCount({ ...bidirectional, dir: "up" })).toBe(2);
+});
+
 test("forced policy is exact per direction and ignores protocol and browser budget", () => {
   for (const protocol of ["http1", "http2", "http3"] as const) {
     expect(

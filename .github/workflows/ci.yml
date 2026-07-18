@@ -221,23 +221,14 @@ jobs:
           jq -e '
             .engineVersion == "0.0.0-ci"
             and (.generation | type == "string" and length > 0)
-            and .capabilities.throughputTargets == [{
-              "id": "http1-clear",
-              "origin": "http://localhost:7246",
-              "transport": "fetch-stream",
-              "protocol": "http1",
-              "tls": false,
-              "routes": {"probe":"/probe","download":"/download","upload":"/upload","uploadSession":"/upload/session","uploadProgress":"/upload/progress"}
+            and .capabilities.throughput == [{
+              "baseUrl": "http://localhost:7246",
+              "protocol": "http1"
             }]
-            and .capabilities.latencyTargets == [{
-              "id": "ws-http1-clear",
-              "origin": "http://localhost:7246",
-              "transport": "websocket",
-              "protocol": "http1",
-              "tls": false,
-              "routes": {"probe":"/probe","ping":"/ws/ping"}
+            and .capabilities.latency == [{
+              "baseUrl": "http://localhost:7246"
             }]
-            and (.server.port | type == "number")
+            and .server.name == "graphite-meter"
           ' /tmp/preflight.json
       - name: Smoke /probe
         run: |

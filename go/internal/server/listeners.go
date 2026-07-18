@@ -64,8 +64,8 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 }
 
 func publicH3Port(cfg *config.Config) string {
-	if cfg.PublicH3Origin != "" {
-		u, err := url.Parse(cfg.PublicH3Origin)
+	if cfg.NativePublic.H3 != "" {
+		u, err := url.Parse(cfg.NativePublic.H3)
 		if err == nil {
 			if port := u.Port(); port != "" {
 				return port
@@ -73,7 +73,7 @@ func publicH3Port(cfg *config.Config) string {
 			return "443"
 		}
 	}
-	_, port, _ := net.SplitHostPort(cfg.H3Addr)
+	_, port, _ := net.SplitHostPort(cfg.Native.H3)
 	return port
 }
 
@@ -161,7 +161,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	var cm *certificateManager
 	var err error
-	if cfg.EnableH1TLS || cfg.EnableH2 || cfg.EnableH3 {
+	if cfg.Native.H1TLS != "" || cfg.Native.H2 != "" || cfg.Native.H3 != "" {
 		if cm, err = newCertificateManager(cfg); err != nil {
 			return err
 		}
@@ -178,7 +178,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
 	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
-	h1ln, err := net.Listen("tcp", cfg.H1Addr)
+	h1ln, err := net.Listen("tcp", cfg.Native.H1)
 	if err != nil {
 		return err
 	}
@@ -189,15 +189,15 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	services := []service{{
-		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.H1Addr, network: "tcp",
+		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.Native.H1, network: "tcp",
 		run: func() error { return serve(admittedListener{Listener: h1ln, admission: connections}, h1) }, stop: h1.Shutdown,
 	}}
 
-	if cfg.EnableH1TLS {
+	if cfg.Native.H1TLS != "" {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
 		s := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
-		ln, err := net.Listen("tcp", cfg.H1TLSAddr)
+		ln, err := net.Listen("tcp", cfg.Native.H1TLS)
 		if err != nil {
 			closeOpened()
 			return err
@@ -206,15 +206,15 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
 		services = append(services, service{
 			name: "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
-			addr: cfg.H1TLSAddr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+			addr: cfg.Native.H1TLS, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
 		})
 	}
 
-	if cfg.EnableH2 {
+	if cfg.Native.H2 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
 		s := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
-		ln, err := net.Listen("tcp", cfg.H2Addr)
+		ln, err := net.Listen("tcp", cfg.Native.H2)
 		if err != nil {
 			closeOpened()
 			return err
@@ -223,23 +223,23 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("h2"))
 		services = append(services, service{
 			name: "HTTPS HTTP/2: measurement probe, transfers, progress only",
-			addr: cfg.H2Addr, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+			addr: cfg.Native.H2, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
 		})
 	}
-	if cfg.EnableH3 {
+	if cfg.Native.H3 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
 		bootstrap := baseServer(listenerMux(ctx, e, muxTopology{bootstrap: true}), p)
-		ln, err := net.Listen("tcp", cfg.H3Addr)
+		ln, err := net.Listen("tcp", cfg.Native.H3)
 		if err != nil {
 			closeOpened()
 			return err
 		}
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
-		h3 := &http3.Server{Addr: cfg.H3Addr, TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+		h3 := &http3.Server{Addr: cfg.Native.H3, TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
 		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
-		pc, err := net.ListenPacket("udp", cfg.H3Addr)
+		pc, err := net.ListenPacket("udp", cfg.Native.H3)
 		if err != nil {
 			closeOpened()
 			return err
@@ -254,9 +254,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		services = append(services,
 			service{
 				name: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only",
-				addr: cfg.H3Addr, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
+				addr: cfg.Native.H3, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
 			},
-			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.H3Addr, network: "udp", run: func() error {
+			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.Native.H3, network: "udp", run: func() error {
 				err := h3.ServeListener(quicListener)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 					return nil
