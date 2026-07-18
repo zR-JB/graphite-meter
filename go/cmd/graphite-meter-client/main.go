@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -508,21 +509,11 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionNetwork:
 		switch m.row {
 		case 0:
-			choices := []string{"auto"}
-			if m.discovery != nil {
-				for _, target := range m.discovery.Capabilities.ThroughputTargets {
-					choices = append(choices, target.Origin)
-				}
-			}
+			choices := throughputOriginChoices(m.discovery)
 			m.cfg.ThroughputTarget = nextChoice(m.cfg.ThroughputTarget, choices)
 			m.notice = "Throughput endpoint updated."
 		case 1:
-			choices := []string{"auto"}
-			if m.discovery != nil {
-				for _, target := range m.discovery.Capabilities.LatencyTargets {
-					choices = append(choices, target.Origin)
-				}
-			}
+			choices := latencyOriginChoices(m.discovery)
 			m.cfg.LatencyTarget = nextChoice(m.cfg.LatencyTarget, choices)
 			m.notice = "Latency endpoint updated."
 		case 2:
@@ -693,6 +684,39 @@ func clamp(v, min, max int) int {
 		return max
 	}
 	return v
+}
+
+func throughputOriginChoices(pf *wire.Preflight) []string {
+	choices := []string{"auto"}
+	if pf == nil {
+		return choices
+	}
+	seen := map[string]struct{}{origin.Key("auto"): {}}
+	for _, target := range pf.Capabilities.ThroughputTargets {
+		choices = appendUniqueOriginChoice(choices, seen, target.Origin)
+	}
+	return choices
+}
+
+func latencyOriginChoices(pf *wire.Preflight) []string {
+	choices := []string{"auto"}
+	if pf == nil {
+		return choices
+	}
+	seen := map[string]struct{}{origin.Key("auto"): {}}
+	for _, target := range pf.Capabilities.LatencyTargets {
+		choices = appendUniqueOriginChoice(choices, seen, target.Origin)
+	}
+	return choices
+}
+
+func appendUniqueOriginChoice(choices []string, seen map[string]struct{}, value string) []string {
+	key := origin.Key(value)
+	if _, ok := seen[key]; ok {
+		return choices
+	}
+	seen[key] = struct{}{}
+	return append(choices, value)
 }
 
 func nextChoice(current string, choices []string) string {

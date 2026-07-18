@@ -278,6 +278,52 @@ func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	}
 }
 
+func TestNetworkEndpointPickerDeduplicatesEquivalentOrigins(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionNetwork
+	m.row = 0
+	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{Origin: "https://meter.example:443"},
+			{Origin: "https://meter.example"},
+			{Origin: "https://other.example"},
+		},
+		LatencyTargets: []wire.LatencyTarget{
+			{Origin: "http://meter.example:80"},
+			{Origin: "http://meter.example"},
+			{Origin: "http://other.example"},
+		},
+	}}
+
+	updated, _ := m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "https://meter.example:443"; got != want {
+		t.Fatalf("first throughput target = %q, want %q", got, want)
+	}
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "https://other.example"; got != want {
+		t.Fatalf("second throughput target = %q, want %q", got, want)
+	}
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.ThroughputTarget, "auto"; got != want {
+		t.Fatalf("third throughput target = %q, want %q", got, want)
+	}
+
+	m.row = 1
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.LatencyTarget, "http://meter.example:80"; got != want {
+		t.Fatalf("first latency target = %q, want %q", got, want)
+	}
+	updated, _ = m.activate()
+	m = updated.(model)
+	if got, want := m.cfg.LatencyTarget, "http://other.example"; got != want {
+		t.Fatalf("second latency target = %q, want %q", got, want)
+	}
+}
+
 func TestCheckbox(t *testing.T) {
 	if got := checkbox(true); got != "●" {
 		t.Errorf("checkbox(true) = %q, want ●", got)
