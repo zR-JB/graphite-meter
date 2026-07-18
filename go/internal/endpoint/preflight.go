@@ -41,7 +41,7 @@ func (p *Preflight) Handle(s transport.Session) error {
 func (p *Preflight) build(r *http.Request) wire.Preflight {
 	host, _, _ := net.SplitHostPort(r.Host)
 	if host == "" {
-		host = r.Host
+		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
 	}
 	throughput := make([]wire.ThroughputTarget, 0)
 	latency := make([]wire.LatencyTarget, 0)

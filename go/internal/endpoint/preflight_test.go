@@ -50,3 +50,12 @@ func TestPreflightMergesDuplicatePublicRoles(t *testing.T) {
 		t.Fatalf("capabilities = %+v", pf.Capabilities)
 	}
 }
+
+func TestPreflightNativeOriginFromBracketedIPv6Host(t *testing.T) {
+	cfg := config.Default()
+	req := httptest.NewRequest("GET", "http://[::1]/preflight", nil)
+	pf := NewPreflight(&cfg).build(req)
+	if got, want := pf.Capabilities.ThroughputTargets[0].Origin, "http://[::1]:7246"; got != want {
+		t.Fatalf("native origin = %q, want %q", got, want)
+	}
+}
