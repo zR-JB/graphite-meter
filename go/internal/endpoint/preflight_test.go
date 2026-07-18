@@ -51,6 +51,19 @@ func TestPreflightMergesDuplicatePublicRoles(t *testing.T) {
 	}
 }
 
+func TestPreflightMergesEquivalentDefaultPortOrigins(t *testing.T) {
+	cfg := config.Default()
+	cfg.AdvertiseAllNative = false
+	cfg.AdvertisedNative = map[string]bool{}
+	cfg.Public.Both = []string{"https://meter.example"}
+	cfg.Public.Throughput = []string{"https://meter.example:443"}
+	cfg.Public.Latency = []string{"https://meter.example:443"}
+	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
+		t.Fatalf("capabilities = %+v", pf.Capabilities)
+	}
+}
+
 func TestPreflightNativeOriginFromBracketedIPv6Host(t *testing.T) {
 	cfg := config.Default()
 	req := httptest.NewRequest("GET", "http://[::1]/preflight", nil)

@@ -63,6 +63,22 @@ func TestSelectTargetNormalizesDefaultPort(t *testing.T) {
 	}
 }
 
+func TestExplicitTargetsNormalizeDefaultPort(t *testing.T) {
+	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+		testTransfer("native-h1", "https://meter.example:443", "http1", true),
+	}}}
+	throughput, err := selectTarget(Config{ThroughputTarget: "https://meter.example"}, pf)
+	if err != nil || throughput.ID != "native-h1" {
+		t.Fatalf("explicit throughput target = %+v, %v", throughput, err)
+	}
+	latency, err := selectLatencyTarget("https://meter.example", "http://discovery", []wire.LatencyTarget{
+		testChannel("native-h1", "https://meter.example:443", true),
+	})
+	if err != nil || latency.ID != "native-h1" {
+		t.Fatalf("explicit latency target = %+v, %v", latency, err)
+	}
+}
+
 func TestTargetProtocolEvidence(t *testing.T) {
 	for protocol, want := range map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"} {
 		if got := targetProtocolEvidence(protocol); got != want {

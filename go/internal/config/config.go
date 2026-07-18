@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/origin"
 )
 
 var EngineVersion = "0.0.0-dev"
@@ -271,15 +273,16 @@ func (c Config) Validate() error {
 		if endpoint.origin == "" || !c.NativeAdvertised(endpoint.name) {
 			continue
 		}
-		if protocol, ok := fixed[endpoint.origin]; ok && protocol != endpoint.protocol {
+		key := origin.Key(endpoint.origin)
+		if protocol, ok := fixed[key]; ok && protocol != endpoint.protocol {
 			return fmt.Errorf("native origin %q is advertised with multiple deterministic protocols", endpoint.origin)
 		}
-		fixed[endpoint.origin] = endpoint.protocol
+		fixed[key] = endpoint.protocol
 	}
 	for _, origins := range [][]string{c.Public.Both, c.Public.Throughput} {
-		for _, origin := range origins {
-			if _, ok := fixed[origin]; ok {
-				return fmt.Errorf("origin %q cannot be both native deterministic and public negotiated", origin)
+		for _, publicOrigin := range origins {
+			if _, ok := fixed[origin.Key(publicOrigin)]; ok {
+				return fmt.Errorf("origin %q cannot be both native deterministic and public negotiated", publicOrigin)
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -48,7 +49,7 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	addThroughput := func(base, protocol string) {
 		base = strings.TrimRight(base, "/")
 		for i := range throughput {
-			if throughput[i].Origin == base {
+			if origin.Equal(throughput[i].Origin, base) {
 				if throughput[i].Protocol != protocol {
 					throughput[i].Protocol = "negotiated"
 				}
@@ -60,7 +61,7 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	addLatency := func(base string) {
 		base = strings.TrimRight(base, "/")
 		for _, e := range latency {
-			if e.Origin == base {
+			if origin.Equal(e.Origin, base) {
 				return
 			}
 		}

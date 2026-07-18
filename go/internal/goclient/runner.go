@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -437,7 +436,7 @@ func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error)
 			if t.Transport != "fetch-stream" {
 				continue
 			}
-			if sameOrigin(t.Origin, cfg.BaseURL) {
+			if origin.Equal(t.Origin, cfg.BaseURL) {
 				return t, nil
 			}
 		}
@@ -457,7 +456,7 @@ func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error)
 	}
 	for i := range pf.Capabilities.ThroughputTargets {
 		t := &pf.Capabilities.ThroughputTargets[i]
-		if t.Transport == "fetch-stream" && (t.ID == selection || t.Origin == selection) {
+		if t.Transport == "fetch-stream" && (t.ID == selection || origin.Equal(t.Origin, selection)) {
 			return t, nil
 		}
 	}
@@ -498,7 +497,7 @@ func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (
 		if t.Transport != "websocket" || t.Protocol != "http1" {
 			continue
 		}
-		if selection != "auto" && (t.ID == selection || t.Origin == selection) {
+		if selection != "auto" && (t.ID == selection || origin.Equal(t.Origin, selection)) {
 			return t, nil
 		}
 		if selection == "auto" {
@@ -506,7 +505,7 @@ func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (
 			if candidate == nil {
 				candidate = t
 			}
-			if sameOriginCandidate == nil && sameOrigin(t.Origin, base) {
+			if sameOriginCandidate == nil && origin.Equal(t.Origin, base) {
 				sameOriginCandidate = t
 			}
 		}
@@ -523,29 +522,6 @@ func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (
 		}
 	}
 	return nil, fmt.Errorf("latency target %q unavailable", selection)
-}
-
-func sameOrigin(a, b string) bool {
-	ua, ea := url.Parse(a)
-	ub, eb := url.Parse(b)
-	return ea == nil && eb == nil &&
-		strings.EqualFold(ua.Scheme, ub.Scheme) &&
-		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
-		originPort(ua) == originPort(ub)
-}
-
-func originPort(u *url.URL) string {
-	if port := u.Port(); port != "" {
-		return port
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "http":
-		return "80"
-	case "https":
-		return "443"
-	default:
-		return ""
-	}
 }
 
 func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {

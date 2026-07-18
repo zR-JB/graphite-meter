@@ -96,6 +96,27 @@ func TestValidateOriginsAndTLS(t *testing.T) {
 	}
 }
 
+func TestValidateNormalizesOriginsBeforeDuplicateChecks(t *testing.T) {
+	t.Run("deterministic protocols", func(t *testing.T) {
+		c := Default()
+		c.Native.H1TLS, c.Native.H2 = ":7247", ":7248"
+		c.TLSCert, c.TLSKey = "cert", "key"
+		c.NativePublic.H1TLS = "https://meter.example:443"
+		c.NativePublic.H2 = "https://meter.example"
+		if err := c.Validate(); err == nil {
+			t.Fatal("expected equivalent deterministic origin error")
+		}
+	})
+	t.Run("native and negotiated", func(t *testing.T) {
+		c := Default()
+		c.NativePublic.H1 = "http://meter.example:80"
+		c.Public.Both = []string{"http://meter.example"}
+		if err := c.Validate(); err == nil {
+			t.Fatal("expected equivalent negotiated origin error")
+		}
+	})
+}
+
 func TestParseAdvertisedNative(t *testing.T) {
 	all, err := ParseAdvertisedNative("all")
 	if err != nil || len(all) != 4 {
