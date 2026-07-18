@@ -33,7 +33,7 @@ export function transferStreamCount(opts: TransferStreamOptions): number {
   // control sockets are established before these lanes are started.
   if (opts.policy.mode === "forced")
     return normalizeStreamCount(opts.policy.count);
-  if (opts.protocol !== "http1") {
+  if (opts.protocol === "http2" || opts.protocol === "http3") {
     if (opts.dir === "up") return MULTIPLEXED_UPLOAD_STREAMS;
     return opts.protocol === "http3" ? HTTP3_DOWNLOAD_STREAMS : 1;
   }
