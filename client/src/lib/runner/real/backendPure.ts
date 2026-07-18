@@ -89,20 +89,17 @@ export function classifyTransportDiscovery(
       routes: { probe: "/probe", ping: "/ws/ping" },
     };
   });
-  const throughput = Object.fromEntries(
-    throughputTargets.map((target) => {
-      const id = target.origin;
-      return [
-        id,
-        {
-          state: usableFromPage(target.origin, target.tls, pageSecure)
-            ? ("advertised" as const)
-            : ("browser-blocked" as const),
-          target,
-        },
-      ];
-    }),
-  );
+  const throughput: TransportDiscovery["throughput"] = {};
+  for (const target of throughputTargets) {
+    const current = throughput[target.origin]?.target;
+    if (current && current.protocol !== "negotiated") continue;
+    throughput[target.origin] = {
+      state: usableFromPage(target.origin, target.tls, pageSecure)
+        ? "advertised"
+        : "browser-blocked",
+      target,
+    };
+  }
   const latency = Object.fromEntries(
     latencyTargets.map((target) => {
       const id = target.origin;

@@ -69,6 +69,23 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
   );
 });
 
+test("deterministic native target wins when self resolves to the same origin", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      { baseUrl: "https://meter.example", protocol: "http1" },
+      { baseUrl: ".", protocol: "negotiated" },
+    ],
+    [],
+    "https://meter.example",
+    true,
+    "http/1.1",
+  );
+  expect(catalog.throughput["https://meter.example"].target?.protocol).toBe(
+    "http1",
+  );
+  expect(selectThroughputTarget(catalog, "auto")?.protocol).toBe("http1");
+});
+
 test("native endpoints remain deterministic and mixed content stays blocked", () => {
   const catalog = classifyTransportDiscovery(
     [
