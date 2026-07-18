@@ -16,18 +16,42 @@
   }
   let { running = false }: Props = $props();
 
-  const THROUGHPUT_TARGETS = [
-    { value: "current", label: "Same as this page" },
-    { value: "http1-clear", label: "HTTP/1.1 clear" },
-    { value: "http1-tls", label: "HTTP/1.1 TLS" },
-    { value: "http2", label: "HTTP/2" },
-    { value: "http3", label: "HTTP/3" },
-  ] as const;
-  const LATENCY_TARGETS = [
-    { value: "auto", label: "Match page security" },
-    { value: "ws-http1-clear", label: "WebSocket clear" },
-    { value: "ws-http1-tls", label: "WebSocket TLS" },
-  ] as const;
+  const protocolLabel = (protocol: string) =>
+    protocol === "http1"
+      ? "HTTP/1.1"
+      : protocol === "http2"
+        ? "HTTP/2"
+        : protocol === "http3"
+          ? "HTTP/3"
+          : "Negotiated";
+  const throughputTargets = $derived([
+    { value: "auto", label: "Automatic" },
+    ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
+      (entry) =>
+        entry.target
+          ? [
+              {
+                value: entry.target.origin,
+                label: `${protocolLabel(entry.target.protocol)} · ${entry.target.origin}`,
+              },
+            ]
+          : [],
+    ),
+  ]);
+  const latencyTargets = $derived([
+    { value: "auto", label: "Automatic" },
+    ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
+      (entry) =>
+        entry.target
+          ? [
+              {
+                value: entry.target.origin,
+                label: `WebSocket · ${entry.target.origin}`,
+              },
+            ]
+          : [],
+    ),
+  ]);
 
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
@@ -183,12 +207,12 @@
     </p>
     <ConnectionPicker
       role="throughput"
-      options={THROUGHPUT_TARGETS}
+      options={throughputTargets}
       locked={running}
     />
     <ConnectionPicker
       role="latency"
-      options={LATENCY_TARGETS}
+      options={latencyTargets}
       locked={running}
     />
   </section>

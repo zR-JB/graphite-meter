@@ -636,7 +636,7 @@ test("probe: emits pre-test idle pings and reports the profile's idle RTT + prot
   expect(info.preTestPingMs).toBeCloseTo(600, -1); // satellite idleRttMs
   expect(info.protocolNegotiated).toBe("http/1.1");
   expect(info.clientIp).toMatch(/^\d{1,3}(\.\d{1,3}){3}$/);
-  expect(info.server.host).toBe("edge-fra-03.graphite.net"); // "auto" resolves
+  expect(info.server.name).toContain("Graphite Edge");
 
   const pings = host.events.filter((e) => e.type === "latency");
   expect(pings).toHaveLength(4);

@@ -191,8 +191,6 @@ export class DummyBackend implements RunnerBackend {
         engineVersion: "dummy-1.0.0",
         server: {
           name: "Graphite Edge — Frankfurt",
-          host: "edge-fra-03.graphite.net",
-          port: 443,
           location: "Frankfurt, DE",
         },
         fetchedAt: Date.now(),
@@ -261,8 +259,6 @@ export class DummyBackend implements RunnerBackend {
       clientIpSource: "socket",
       server: {
         name: "Graphite Edge — Frankfurt",
-        host: "edge-fra-03.graphite.net",
-        port: 443,
         location: "Frankfurt, DE",
       },
       preTestPingMs: this.#spec.idleRttMs,
@@ -273,7 +269,6 @@ export class DummyBackend implements RunnerBackend {
       selectedThroughputProtocol: "http1",
       selectedLatencyTarget: latencyId,
       selectedLatencyTransport: "websocket",
-      verifiedLatencyProtocol: "http/1.1",
       latencyProtocolNegotiated: "http/1.1",
       firstHopProtocol: "http/1.1",
       firstHopSecure: secure,

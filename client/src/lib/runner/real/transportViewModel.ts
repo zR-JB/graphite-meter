@@ -2,7 +2,7 @@ import type { DiscoveredTarget, TransportDiscovery } from "../contract";
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
-} from "../../api/preflight";
+} from "../../api/endpoints";
 import {
   isLoopbackHostname,
   selectLatencyTarget,
@@ -37,7 +37,7 @@ export function throughputOptionView(
 ): TransportOptionView {
   if (!discovery)
     return { disabled: true, detail: "Checking server transports…" };
-  if (selection === "current") {
+  if (selection === "current" || selection === "auto") {
     const target = selectThroughputTarget(discovery, selection);
     return target
       ? {

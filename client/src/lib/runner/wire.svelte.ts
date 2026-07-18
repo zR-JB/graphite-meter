@@ -196,33 +196,39 @@ export async function validateConnections(
   const seq = ++validationSeq;
   validating = roles;
   markValidation(roles, "checking");
-  const generation = store.transportDiscovery?.generation;
   try {
-    const info = await getRunner().probe(
-      $state.snapshot(store.config),
-      abort.signal,
-      roles.length === 1 ? roles[0] : undefined,
-    );
-    if (abort.signal.aborted || seq !== validationSeq)
-      throw new DOMException("Aborted", "AbortError");
-    const verifiedAt = Date.now();
-    const verifiedRoles =
-      generation && generation !== info.discoveryGeneration
-        ? CONNECTION_ROLES
-        : roles;
+    let latest: InfraInfo | null = null;
+    let firstFailure: unknown;
+    for (const role of roles) {
+      try {
+        const info = await getRunner().probe(
+          $state.snapshot(store.config),
+          abort.signal,
+          role,
+        );
+        if (abort.signal.aborted || seq !== validationSeq)
+          throw new DOMException("Aborted", "AbortError");
+        latest = info;
+        const verifiedAt = Date.now();
+        store.ingest({ type: "infra", info });
+        markValidation([role], "verified", undefined, verifiedAt);
+      } catch (cause) {
+        if (abort.signal.aborted || seq !== validationSeq) throw cause;
+        firstFailure ??= cause;
+        markValidation([role], "failed", validationMessage(cause));
+      }
+    }
+    if (firstFailure) {
+      prepared = null;
+      throw firstFailure;
+    }
+    if (!latest) throw new Error("no connection role was validated");
     prepared = {
       key: connectionKey(store.config, store.transportDiscovery),
-      info,
-      verifiedAt,
+      info: latest,
+      verifiedAt: Date.now(),
     };
-    store.ingest({ type: "infra", info });
-    markValidation(verifiedRoles, "verified", undefined, verifiedAt);
-    return info;
-  } catch (cause) {
-    if (abort.signal.aborted || seq !== validationSeq) throw cause;
-    prepared = null;
-    markValidation(roles, "failed", validationMessage(cause));
-    throw cause;
+    return latest;
   } finally {
     if (validationAbort === abort) {
       validationAbort = null;

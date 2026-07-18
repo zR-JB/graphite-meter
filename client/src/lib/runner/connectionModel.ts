@@ -7,7 +7,7 @@ import type {
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
-} from "../api/preflight";
+} from "../api/endpoints";
 import {
   selectLatencyTarget,
   selectThroughputTarget,
@@ -200,7 +200,7 @@ export function presentConnections(
       browserProtocol: evidence
         ? role === "throughput"
           ? evidence.firstHopProtocol
-          : evidence.verifiedLatencyProtocol
+          : undefined
         : undefined,
       serverProtocol: evidence
         ? role === "throughput"

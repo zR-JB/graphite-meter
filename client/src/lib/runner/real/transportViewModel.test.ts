@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { FetchThroughputTarget, LatencyTarget } from "../../api/preflight";
+import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import { classifyTransportDiscovery } from "./backendPure";
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
 
@@ -40,9 +40,9 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
     true,
     "h2",
   );
-  expect(throughputOptionView(blocked, "http1-clear").detail).toContain(
-    "Advertised, but blocked from this secure page.",
-  );
+  expect(
+    throughputOptionView(blocked, "http://meter.example:7246").detail,
+  ).toContain("Advertised, but blocked from this secure page.");
   expect(throughputOptionView(blocked, "http2").detail).toBe(
     "Not offered in /preflight.",
   );
@@ -53,7 +53,7 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
     true,
     "http/1.1",
   );
-  expect(throughputOptionView(loopback, "http1-clear").detail).toBe(
+  expect(throughputOptionView(loopback, "http://localhost:7246").detail).toBe(
     "Allowed as a browser-trusted loopback target.",
   );
 });
@@ -66,14 +66,14 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
     true,
     "h2",
   );
-  expect(throughputOptionView(catalog, "current").detail).toBe(
+  expect(throughputOptionView(catalog, "auto").detail).toBe(
     "Uses this page's connection.",
   );
   expect(latencyOptionView(catalog, "auto").detail).toBe(
     "Uses the same security as this page.",
   );
   expect(
-    throughputOptionView({ ...catalog, pageOrigin: "https://proxy" }, "current")
+    throughputOptionView({ ...catalog, pageOrigin: "https://proxy" }, "auto")
       .disabled,
-  ).toBe(true);
+  ).toBe(false);
 });

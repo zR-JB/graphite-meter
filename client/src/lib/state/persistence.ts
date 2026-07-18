@@ -168,6 +168,15 @@ export function loadPersisted(): PersistedState {
     )
   )
     merged.config.compensation.transport = "auto";
+  if (
+    merged.config.transports.throughputTarget === "current" ||
+    /^(http[123]|http1-(clear|tls))$/.test(
+      merged.config.transports.throughputTarget,
+    )
+  )
+    merged.config.transports.throughputTarget = "auto";
+  if (/^ws-http1-(clear|tls)$/.test(merged.config.transports.latencyTarget))
+    merged.config.transports.latencyTarget = "auto";
   if (!["auto", "forced"].includes(merged.config.transferStreams.mode))
     merged.config.transferStreams.mode = "auto";
   merged.config.transferStreams.count = normalizeStreamCount(

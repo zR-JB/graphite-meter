@@ -15,9 +15,9 @@ import type {
 import type { CoreHost, RunnerBackend } from "./core";
 import type {
   FetchThroughputTarget,
-  Preflight,
   WebSocketLatencyTarget,
-} from "../api/preflight";
+} from "../api/endpoints";
+import type { Preflight } from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
@@ -97,6 +97,7 @@ interface PingSample {
  *  stall/resume around a reconnect window rather than a terminal error. */
 type PingOutMsg =
   | { type: "open" }
+  | { type: "ready" }
   | { type: "samples"; samples: PingSample[] }
   | { type: "stall"; detail: string }
   | { type: "resume" };
@@ -257,6 +258,7 @@ export class RealBackend implements RunnerBackend {
   /** Set while probe() is harvesting the keepalive's first RTTs; `finish`
    *  resolves the preflight median wait (idempotent). */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
+  #probeReady: (() => void) | null = null;
   /** True after the keepalive reported a stall, so "connected" is emitted only
    *  on the offline→online edge instead of once per sample. */
   #idleOffline = false;
@@ -357,8 +359,8 @@ export class RealBackend implements RunnerBackend {
     }
     this.#capabilities = pf.capabilities;
     const discovery = classifyTransportDiscovery(
-      pf.capabilities.throughputTargets,
-      pf.capabilities.latencyTargets,
+      pf.capabilities.throughput,
+      pf.capabilities.latency,
       this.#discoveryOrigin,
       location.protocol === "https:",
       this.#discoveryProtocol,
@@ -460,12 +462,18 @@ export class RealBackend implements RunnerBackend {
         throw new TransportUnavailableError(
           `${selected.protocol} transport unavailable`,
         );
+      if (selected.protocol === "negotiated") {
+        selected.protocol =
+          firstHopProtocol === "h3"
+            ? "http3"
+            : firstHopProtocol === "h2"
+              ? "http2"
+              : "http1";
+      }
     }
     if (!pathProbe)
       throw new TransportUnavailableError("throughput evidence unavailable");
 
-    let verifiedLatencyProtocol =
-      role === "throughput" ? previous?.verifiedLatencyProtocol : undefined;
     let latencyPathProbe:
       | {
           clientIp: string;
@@ -494,23 +502,13 @@ export class RealBackend implements RunnerBackend {
           `latency probe returned HTTP ${latencyRes.status}`,
         );
       latencyPathProbe = (await latencyRes.json()) as Probe;
-      verifiedLatencyProtocol = (
-        performance.getEntriesByName(latencyRes.url, "resource").at(-1) as
-          PerformanceResourceTiming | undefined
-      )?.nextHopProtocol;
-      if (verifiedLatencyProtocol !== "http/1.1")
-        throw new TransportUnavailableError(
-          `latency target negotiated ${verifiedLatencyProtocol || "unknown"}, want http/1.1`,
-        );
-      if (latencyPathProbe.protocolNegotiated !== "http/1.1")
-        throw new TransportUnavailableError(
-          `latency server observed ${latencyPathProbe.protocolNegotiated}, want http/1.1`,
-        );
     }
 
     // Start the persistent idle keepalive (briskly at first) and use its first
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
+    if (needsLatency && role !== "throughput")
+      await this.#verifyIdleReady(signal);
     const probeRtts =
       needsLatency && role !== "throughput"
         ? await this.#collectIdleRtts(signal)
@@ -525,8 +523,6 @@ export class RealBackend implements RunnerBackend {
       latencyClientIpSource: latencyPathProbe?.clientIpSource,
       server: {
         name: pf.server.name,
-        host: pf.server.host,
-        port: pf.server.port,
         location: pf.server.location,
       },
       preTestPingMs: probeRtts.length
@@ -539,7 +535,6 @@ export class RealBackend implements RunnerBackend {
       selectedThroughputProtocol: selected.protocol,
       selectedLatencyTarget: this.#latencyTarget?.id,
       selectedLatencyTransport: this.#latencyTarget?.transport,
-      verifiedLatencyProtocol,
       latencyProtocolNegotiated: latencyPathProbe?.protocolNegotiated,
       firstHopProtocol,
       firstHopSecure: selected.tls,
@@ -572,6 +567,32 @@ export class RealBackend implements RunnerBackend {
       const timer = setTimeout(finish, PROBE_PING_TIMEOUT_MS);
       signal?.addEventListener("abort", finish, { once: true });
       this.#probeCollect = { rtts: [], finish };
+    });
+  }
+
+  #verifyIdleReady(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    this.#startIdleKeepalive(PROBE_PING_INTERVAL_MS);
+    return new Promise<void>((resolve, reject) => {
+      const finish = (error?: Error): void => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", aborted);
+        this.#probeReady = null;
+        error ? reject(error) : resolve();
+      };
+      const aborted = (): void =>
+        finish(new Error("latency WebSocket validation aborted"));
+      const timer = setTimeout(
+        () =>
+          finish(
+            new TransportUnavailableError(
+              "latency WebSocket did not become ready",
+            ),
+          ),
+        PROBE_PING_TIMEOUT_MS,
+      );
+      this.#probeReady = () => finish();
+      signal?.addEventListener("abort", aborted, { once: true });
     });
   }
 
@@ -1114,6 +1135,8 @@ export class RealBackend implements RunnerBackend {
         break;
       case "open":
         break;
+      case "ready":
+        break;
     }
   }
 
@@ -1198,6 +1221,7 @@ export class RealBackend implements RunnerBackend {
       this.#idleRespawnTimer = null;
     }
     this.#probeCollect?.finish();
+    this.#probeReady = null;
     if (this.#idleWorker) {
       this.#idleWorker.postMessage({ type: "stop" });
       this.#idleWorker.terminate();
@@ -1256,6 +1280,9 @@ export class RealBackend implements RunnerBackend {
         break;
       case "resume":
       case "open":
+        break;
+      case "ready":
+        this.#probeReady?.();
         break;
     }
   }

@@ -17,7 +17,7 @@ const FAKE_CONFIG: RunnerConfig = {
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
-  transports: { throughputTarget: "current", latencyTarget: "auto" },
+  transports: { throughputTarget: "auto", latencyTarget: "auto" },
   compensation: {
     profile: "lan",
     transport: "auto",
@@ -149,7 +149,7 @@ test("legacy protocol selection migrates to a transfer target", () => {
     JSON.stringify({ config: { endpoint: { protocol: "http1" } } }),
   );
   expect(loadPersisted().config.transports).toEqual({
-    throughputTarget: "http1-clear",
+    throughputTarget: "auto",
     latencyTarget: "auto",
   });
 });
@@ -168,8 +168,8 @@ test("legacy role bindings migrate and obsolete progress selection is dropped", 
     }),
   );
   expect(loadPersisted().config.transports).toEqual({
-    throughputTarget: "http3",
-    latencyTarget: "ws-http1-tls",
+    throughputTarget: "auto",
+    latencyTarget: "auto",
   });
 });
 
