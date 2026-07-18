@@ -377,6 +377,15 @@ export class RealBackend implements RunnerBackend {
     const selected = selectThroughputTarget(discovery, selection);
     if (!selected)
       throw new TransportUnavailableError(`${selection} target unavailable`);
+    if (
+      role === "latency" &&
+      selected.protocol === "negotiated" &&
+      previous?.discoveryGeneration === pf.generation &&
+      previous.selectedThroughputTarget === selected.id &&
+      previous.selectedThroughputProtocol &&
+      previous.selectedThroughputProtocol !== "negotiated"
+    )
+      selected.protocol = previous.selectedThroughputProtocol;
     this.#throughputTarget = selected;
     this.#latencyTarget = selectLatencyTarget(
       discovery,

@@ -209,7 +209,7 @@ test("laneStaggerMs: caps at the base stagger even on a long warmup", () => {
   expect(laneStaggerMs(2, 100_000, 75)).toBe(75);
 });
 
-test("each probe refreshes discovery and upload progress opens before forced H1 lanes", async () => {
+test("probe refresh preserves negotiated protocol across roles and opens upload progress first", async () => {
   const buildGlobals = globalThis as typeof globalThis &
     Record<string, unknown>;
   Object.assign(buildGlobals, {
@@ -230,6 +230,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
   const pingMessages: Record<string, unknown>[] = [];
   const fetchUrls: string[] = [];
   let preflights = 0;
+  let browserProtocol = "http/1.1";
   let progressWorker: FakeWorker | null = null;
   let pingWorker: FakeWorker | null = null;
 
@@ -291,6 +292,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     capabilities: {
       throughput: [
         { baseUrl: "http://meter.test:7246", protocol: "http1" },
+        { baseUrl: "https://proxy.test", protocol: "negotiated" },
         ...(withH2
           ? [{ baseUrl: "https://meter.test:7248", protocol: "http2" as const }]
           : []),
@@ -306,7 +308,7 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     });
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     performance.getEntriesByName = () =>
-      [{ nextHopProtocol: "http/1.1" }] as unknown as PerformanceEntry[];
+      [{ nextHopProtocol: browserProtocol }] as unknown as PerformanceEntry[];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       fetchUrls.push(url);
@@ -458,6 +460,21 @@ test("each probe refreshes discovery and upload progress opens before forced H1 
     });
     await latencyProbe;
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
+
+    config.transports.throughputTarget = "https://proxy.test";
+    browserProtocol = "h2";
+    const proxyThroughput = await backend.probe(
+      config,
+      undefined,
+      "throughput",
+    );
+    expect(proxyThroughput.selectedThroughputProtocol).toBe("http2");
+    const proxyLatency = await backend.probe(config, undefined, "latency");
+    expect(proxyLatency.selectedThroughputProtocol).toBe("http2");
+
+    config.transports.throughputTarget = "http://meter.test:7246";
+    browserProtocol = "http/1.1";
+    await backend.probe(config, undefined, "throughput");
 
     backend.onRunStart(config);
     const unloaded: PhaseActivity = {
