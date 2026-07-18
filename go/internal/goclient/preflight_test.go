@@ -52,6 +52,17 @@ func TestSelectTarget(t *testing.T) {
 	}
 }
 
+func TestSelectTargetNormalizesDefaultPort(t *testing.T) {
+	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+		testTransfer("native-h1", "https://meter.example:443", "http1", true),
+		testTransfer("native-h2", "https://meter.example:7248", "http2", true),
+	}}}
+	got, err := selectTarget(Config{ThroughputTarget: "auto", BaseURL: "https://meter.example"}, pf)
+	if err != nil || got.ID != "native-h1" {
+		t.Fatalf("automatic default-port target = %+v, %v", got, err)
+	}
+}
+
 func TestTargetProtocolEvidence(t *testing.T) {
 	for protocol, want := range map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"} {
 		if got := targetProtocolEvidence(protocol); got != want {
@@ -83,6 +94,17 @@ func TestSelectLatencyTargetFindsLaterSameOriginInHybridCatalog(t *testing.T) {
 	got, err := selectLatencyTarget("auto", "https://meter.example", targets)
 	if err != nil || got.ID != "https://meter.example" {
 		t.Fatalf("automatic hybrid latency target = %+v, %v", got, err)
+	}
+}
+
+func TestSelectLatencyTargetNormalizesDefaultPort(t *testing.T) {
+	targets := []wire.LatencyTarget{
+		testChannel("native-clear", "http://meter.example:7246", false),
+		testChannel("proxy", "https://meter.example:443", true),
+	}
+	got, err := selectLatencyTarget("auto", "https://meter.example", targets)
+	if err != nil || got.ID != "proxy" {
+		t.Fatalf("automatic default-port latency target = %+v, %v", got, err)
 	}
 }
 

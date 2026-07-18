@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -431,17 +432,12 @@ func (r *runner) routes() wire.ThroughputRoutes {
 func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
 	selection := cfg.ThroughputTarget
 	if selection == "auto" {
-		base, err := url.Parse(cfg.BaseURL)
-		if err != nil {
-			return nil, err
-		}
 		for i := range pf.Capabilities.ThroughputTargets {
 			t := &pf.Capabilities.ThroughputTargets[i]
 			if t.Transport != "fetch-stream" {
 				continue
 			}
-			u, _ := url.Parse(t.Origin)
-			if u.Scheme == base.Scheme && u.Host == base.Host {
+			if sameOrigin(t.Origin, cfg.BaseURL) {
 				return t, nil
 			}
 		}
@@ -532,7 +528,24 @@ func selectLatencyTarget(selection, base string, targets []wire.LatencyTarget) (
 func sameOrigin(a, b string) bool {
 	ua, ea := url.Parse(a)
 	ub, eb := url.Parse(b)
-	return ea == nil && eb == nil && ua.Scheme == ub.Scheme && ua.Host == ub.Host
+	return ea == nil && eb == nil &&
+		strings.EqualFold(ua.Scheme, ub.Scheme) &&
+		strings.EqualFold(ua.Hostname(), ub.Hostname()) &&
+		originPort(ua) == originPort(ub)
+}
+
+func originPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {
