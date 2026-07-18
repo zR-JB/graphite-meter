@@ -36,6 +36,7 @@ import {
   connectionRoleKey,
   connectionSelection,
   validationRoles,
+  verifiedRolesForProbe,
 } from "./connectionModel";
 
 let runner: NetworkRunner | null = null;
@@ -208,6 +209,7 @@ export async function validateConnections(
       roles.length === CONNECTION_ROLES.length ? [undefined] : roles;
     for (const role of batches) {
       const batchRoles = role ? [role] : roles;
+      const discoveryGeneration = store.transportDiscovery?.generation;
       try {
         const info = await getRunner().probe(config, abort.signal, role);
         if (!transactionCurrent())
@@ -215,7 +217,17 @@ export async function validateConnections(
         latest = info;
         const verifiedAt = Date.now();
         store.ingest({ type: "infra", info });
-        markValidation(batchRoles, "verified", undefined, verifiedAt, config);
+        markValidation(
+          verifiedRolesForProbe(
+            batchRoles,
+            discoveryGeneration,
+            info.discoveryGeneration,
+          ),
+          "verified",
+          undefined,
+          verifiedAt,
+          config,
+        );
       } catch (cause) {
         if (!transactionCurrent()) throw cause;
         firstFailure ??= cause;
@@ -263,6 +275,20 @@ export async function validateConnections(
 }
 
 function ingestRunnerEvent(event: RunnerEvent) {
+  if (
+    event.type === "transportDiscovery" &&
+    store.transportDiscovery &&
+    event.discovery.generation !== store.transportDiscovery.generation
+  ) {
+    store.ingest(event);
+    prepared = null;
+    markValidation(
+      CONNECTION_ROLES,
+      "stale",
+      "Server changed; checking both paths again.",
+    );
+    return;
+  }
   if (
     event.type === "error" &&
     [

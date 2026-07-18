@@ -81,6 +81,16 @@ export function validationRoles(
   return roles;
 }
 
+export function verifiedRolesForProbe(
+  requested: ConnectionRole[],
+  discoveryGeneration: string | undefined,
+  resultGeneration: string,
+): ConnectionRole[] {
+  return discoveryGeneration === resultGeneration
+    ? requested
+    : [...CONNECTION_ROLES];
+}
+
 export function connectionKey(
   config: RunnerConfig,
   discovery?: TransportDiscovery | null,

@@ -10,6 +10,7 @@ import {
   connectionDraftRoleKey,
   connectionRoleKey,
   validationRoles,
+  verifiedRolesForProbe,
   presentConnections,
   type ConnectionValidation,
 } from "./connectionModel";
@@ -324,5 +325,15 @@ test("validation retries only the changed role and carries an aborted stale role
   expect(validationRoles(cfg, validation, "latency")).toEqual([
     "latency",
     "throughput",
+  ]);
+});
+
+test("a generation refresh verifies every role checked by the broadened probe", () => {
+  expect(verifiedRolesForProbe(["latency"], "old", "new")).toEqual([
+    "throughput",
+    "latency",
+  ]);
+  expect(verifiedRolesForProbe(["latency"], "same", "same")).toEqual([
+    "latency",
   ]);
 });
