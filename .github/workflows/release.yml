@@ -5,10 +5,11 @@ name: Release
 # Use dotted numeric prerelease identifiers (alpha.9 < alpha.10 compares
 # correctly; a bare "alpha10" would sort lexically wrong). A tag counts as
 # a prerelease iff its name contains "-" — every job below keys off that.
-# Prerelease tags: build + push the image (so you can pull and test the
-# exact release artifact) but never move the `latest`/`{{major}}.{{minor}}`
-# floating tags and never cut a GitHub Release. Final tags (no "-"): full
-# promotion, all floating tags move, GitHub Release is created.
+# Prerelease tags: build + push the image from a CI-green main commit or open
+# same-repository PR targeting main, but never move the
+# `latest`/`{{major}}.{{minor}}` floating tags or cut a GitHub Release. Final
+# tags (no "-"): main only, full promotion, all floating tags move, GitHub
+# Release is created.
 on:
   push:
     tags: ["v*.*.*"] # glob `*` matches "-" too, so this already covers prereleases
@@ -17,6 +18,7 @@ permissions:
   contents: write
   packages: write
   actions: read # guard job reads the CI run for the tagged commit
+  pull-requests: read # prerelease tags may point at an open PR head
 
 concurrency:
   group: release-${{ github.ref }}
@@ -30,26 +32,41 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-      # Branch protection on main doesn't cover tags — anyone can push a tag
-      # pointing at an unreviewed commit. Refuse to publish unless the tagged
-      # commit actually merged to main, so the image always matches a
-      # CI-green, reviewed state.
-      - name: Verify tag is reachable from main
-        run: |
-          git fetch origin main
-          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
-            echo "::error::Tag ${{ github.ref_name }} (commit ${{ github.sha }}) is not reachable from main — refusing to publish. Tag from an up-to-date main."
-            exit 1
-          fi
-      # CI already ran the full test matrix when this commit was pushed to
-      # main — verify that run succeeded instead of re-running everything
-      # here. Waits out an in-flight run (tags often land right after the
-      # merge), fails on anything but a completed successful one.
-      - name: Verify CI succeeded on the tagged commit
+      # Stable artifacts remain main-only. Prerelease images may come from an
+      # open same-repository PR targeting main so the exact candidate can be
+      # tested before merge; its pull-request CI is checked below.
+      - name: Verify tag source
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          runs_url="repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&event=push"
+          set -euo pipefail
+          git fetch origin main
+          ci_event=push
+          if ! git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            if [[ "${{ github.ref_name }}" != *-* ]]; then
+              echo "::error::Stable tag ${{ github.ref_name }} (commit ${{ github.sha }}) is not reachable from main — refusing to publish."
+              exit 1
+            fi
+            pr_number="$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+              --jq 'map(select(.state == "open" and .base.ref == "main" and .head.sha == "${{ github.sha }}" and .head.repo.full_name == "${{ github.repository }}")) | first | .number // empty')"
+            if [[ -z "$pr_number" ]]; then
+              echo "::error::Prerelease tag ${{ github.ref_name }} must point to main or the exact head of an open same-repository PR targeting main."
+              exit 1
+            fi
+            echo "Using pull-request CI from PR #$pr_number."
+            ci_event=pull_request
+          fi
+          echo "ci_event=$ci_event" >> "$GITHUB_OUTPUT"
+      # CI already ran the full matrix for the exact main or PR head commit.
+      # Verify that run instead of rebuilding it here; wait for an in-flight
+      # run and fail on anything but a completed success.
+      - name: Verify CI succeeded on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_EVENT: ${{ steps.source.outputs.ci_event }}
+        run: |
+          runs_url="repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${{ github.sha }}&event=${CI_EVENT}"
           for i in $(seq 1 60); do
             read -r status conclusion <<<"$(gh api "$runs_url" \
               --jq '.workflow_runs | first // {} | "\(.status // "missing") \(.conclusion // "-")"')"
