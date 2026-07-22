@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,8 +25,8 @@ const (
 )
 
 func HashPassword(password string) (string, error) {
-	if len(password) == 0 || len(password) > 1024 {
-		return "", fmt.Errorf("password must contain 1 to 1024 bytes")
+	if err := validatePassword(password); err != nil {
+		return "", err
 	}
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -72,11 +73,21 @@ func parsePasswordHash(encoded string) ([]byte, []byte, error) {
 
 func verifyPassword(encoded, password string) bool {
 	salt, expected, err := parsePasswordHash(encoded)
-	if err != nil || len(password) == 0 || len(password) > 1024 {
+	if err != nil || validatePassword(password) != nil {
 		return false
 	}
 	actual := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	return subtle.ConstantTimeCompare(actual, expected) == 1
+}
+
+func validatePassword(password string) error {
+	if len(password) == 0 || len(password) > 1024 {
+		return fmt.Errorf("password must contain 1 to 1024 bytes")
+	}
+	if strings.ContainsAny(password, "\r\n") {
+		return errors.New("password must not contain line breaks")
+	}
+	return nil
 }
 
 // ReadPassword reads without terminal echo when possible and falls back to one

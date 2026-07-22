@@ -178,7 +178,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	authn, err := auth.New(ctx, cfg.Auth, cfg.TrustedProxies)
+	authn, err := auth.New(ctx, cfg.Auth, cfg.TrustedProxies, cfg.Verbose)
 	if err != nil {
 		return err
 	}

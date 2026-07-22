@@ -256,7 +256,7 @@ func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
 	}
 }
 
-func TestOIDCProviderHealthIsIndependentOfCallbackFailure(t *testing.T) {
+func TestOIDCCallbackFailureDoesNotDisableProvider(t *testing.T) {
 	for _, endpoint := range []string{"token", "jwks", "userinfo"} {
 		t.Run(endpoint, func(t *testing.T) {
 			f := newFakeOIDC(t)
@@ -282,43 +282,19 @@ func TestOIDCProviderHealthIsIndependentOfCallbackFailure(t *testing.T) {
 			if discoveries != 1 {
 				t.Fatalf("one failed callback triggered %d discoveries", discoveries)
 			}
-			if s.oidc.refresh(context.Background(), s.public) {
-				t.Fatal("health check accepted an unavailable endpoint")
-			}
-			if s.oidc.ready() {
-				t.Fatal("independent health check did not mark provider unavailable")
-			}
-			f.mu.Lock()
-			f.tokenStatus, f.jwksStatus, f.userinfoStatus = 0, 0, 0
-			f.mu.Unlock()
-			if !s.oidc.refresh(context.Background(), s.public) || !s.oidc.ready() {
-				t.Fatal("provider did not recover after an independent healthy check")
-			}
 		})
 	}
 }
 
-func TestOIDCTransactionKeepsItsVerifiedProviderSnapshot(t *testing.T) {
+func TestOIDCStartupDoesNotProbeProtectedProviderEndpoints(t *testing.T) {
 	f := newFakeOIDC(t)
-	s := f.service(t)
-	state, cookie := startOIDC(t, s, f)
 	f.mu.Lock()
 	f.tokenStatus = http.StatusServiceUnavailable
+	f.jwksStatus = http.StatusServiceUnavailable
+	f.userinfoStatus = http.StatusServiceUnavailable
 	f.mu.Unlock()
-	if s.oidc.refresh(context.Background(), s.public) || s.oidc.ready() {
-		t.Fatal("health check did not mark provider unavailable")
-	}
-	f.mu.Lock()
-	f.tokenStatus = 0
-	f.mu.Unlock()
-	rr := finishOIDC(s, state, cookie, "")
-	loggedIn := false
-	for _, c := range rr.Result().Cookies() {
-		if c.Name == sessionCookie && c.Value != "" {
-			loggedIn = true
-		}
-	}
-	if !loggedIn {
-		t.Fatal("provider refresh invalidated an already-started transaction")
+	s := f.service(t)
+	if !s.oidc.ready() {
+		t.Fatal("successful discovery did not make OIDC available")
 	}
 }

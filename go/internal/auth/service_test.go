@@ -82,6 +82,32 @@ func TestUnauthenticatedRequestRejectedBeforeBodyRead(t *testing.T) {
 		t.Fatal("H1 rejection did not close connection")
 	}
 }
+
+func TestUnauthenticatedUIRootRedirectsButAPIsDoNot(t *testing.T) {
+	s := testService(t)
+	for _, tc := range []struct {
+		name     string
+		listener Listener
+		path     string
+		want     int
+	}{
+		{"UI root", Listener{UI: true}, "/", http.StatusTemporaryRedirect},
+		{"measurement root", Listener{}, "/", http.StatusForbidden},
+		{"UI API", Listener{UI: true}, "/preflight", http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := s.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), tc.listener)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, secureRequest(http.MethodGet, tc.path, nil))
+			if rr.Code != tc.want {
+				t.Fatalf("code=%d", rr.Code)
+			}
+			if tc.want == http.StatusTemporaryRedirect && rr.Header().Get("Location") != s.public.String()+"/login" {
+				t.Fatalf("location=%q", rr.Header().Get("Location"))
+			}
+		})
+	}
+}
 func TestSessionRevocationCancelsActiveRequest(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local", time.Time{})
@@ -466,6 +492,51 @@ func TestLoginRendersOnlyConfiguredMethods(t *testing.T) {
 				t.Fatal("password form lacks labeling or password-manager semantics")
 			}
 		})
+	}
+}
+
+func TestPasswordLoginPreservesFormEncodedPunctuation(t *testing.T) {
+	password := `!@#$%^&*()_+-=[]{}|;:',.<>/?~` + " unicode üU0001f510"
+	hash, err := HashPassword(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	handler := s.Wrap(mux, Listener{UI: true})
+
+	login := httptest.NewRecorder()
+	handler.ServeHTTP(login, secureRequest(http.MethodGet, "/login", nil))
+	var loginCookieValue string
+	for _, cookie := range login.Result().Cookies() {
+		if cookie.Name == loginCookie {
+			loginCookieValue = cookie.Value
+		}
+	}
+	if loginCookieValue == "" || !strings.Contains(login.Body.String(), `value="`+loginCookieValue+`"`) {
+		t.Fatal("login CSRF value missing")
+	}
+
+	body := url.Values{"csrf": {loginCookieValue}, "password": {password}}.Encode()
+	r := httptest.NewRequest(http.MethodPost, "https://meter.example/auth/password", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", "https://meter.example")
+	r.AddCookie(&http.Cookie{Name: loginCookie, Value: loginCookieValue})
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, r)
+	if result.Code != http.StatusSeeOther || result.Header().Get("Location") != "/" {
+		t.Fatalf("code=%d location=%q", result.Code, result.Header().Get("Location"))
+	}
+	foundSession := false
+	for _, cookie := range result.Result().Cookies() {
+		foundSession = foundSession || cookie.Name == sessionCookie && cookie.Value != ""
+	}
+	if !foundSession {
+		t.Fatal("successful password login did not create a session")
 	}
 }
 func TestPerSubjectSessionLimitRevokesOldest(t *testing.T) {

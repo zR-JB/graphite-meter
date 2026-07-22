@@ -3,10 +3,12 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,19 +41,19 @@ type oidcState struct {
 	oauth          oauth2.Config
 	responseIssuer bool
 	retrying       bool
+	verbose        bool
 	tx             map[[32]byte]oidcTransaction
 }
 
 type oidcDiscovery struct {
-	provider                       *oidc.Provider
-	verifier                       *oidc.IDTokenVerifier
-	oauth                          oauth2.Config
-	responseIssuer                 bool
-	tokenURL, userinfoURL, jwksURL string
+	provider       *oidc.Provider
+	verifier       *oidc.IDTokenVerifier
+	oauth          oauth2.Config
+	responseIssuer bool
 }
 
-func newOIDCState(cfg config.AuthConfig, secret string) *oidcState {
-	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}}
+func newOIDCState(cfg config.AuthConfig, secret string, verbose ...bool) *oidcState {
+	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: len(verbose) != 0 && verbose[0]}
 }
 func (o *oidcState) ready() bool { o.mu.RLock(); defer o.mu.RUnlock(); return o.provider != nil }
 
@@ -79,7 +81,9 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	ctx = oidc.ClientContext(ctx, client)
 	p, err := oidc.NewProvider(ctx, o.cfg.OIDCIssuer)
 	if err != nil {
-		return nil, errors.New("provider unavailable")
+		failure := classifyDiscoveryFailure(err)
+		o.debugf("OIDC discovery failed reason=" + failure.reason)
+		return nil, failure
 	}
 	var meta struct {
 		ResponseIssuer bool   `json:"authorization_response_iss_parameter_supported"`
@@ -89,30 +93,51 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	_ = p.Claims(&meta)
 	ep := p.Endpoint()
 	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) || !validProviderURL(meta.JWKS) {
-		return nil, errors.New("provider endpoints must use HTTPS")
+		o.debugf("OIDC discovery failed reason=invalid_endpoint_metadata")
+		return nil, &discoveryFailure{reason: "invalid_endpoint_metadata"}
 	}
 	ep.AuthStyle = oauth2.AuthStyleInHeader
 	return &oidcDiscovery{
 		provider: p, verifier: p.Verifier(&oidc.Config{ClientID: o.cfg.OIDCClientID}),
 		oauth:          oauth2.Config{ClientID: o.cfg.OIDCClientID, ClientSecret: o.secret, Endpoint: ep, RedirectURL: public.String() + "/auth/oidc/callback", Scopes: []string{oidc.ScopeOpenID, "profile", "groups"}},
-		responseIssuer: meta.ResponseIssuer, tokenURL: ep.TokenURL, userinfoURL: meta.UserInfo, jwksURL: meta.JWKS,
+		responseIssuer: meta.ResponseIssuer,
 	}, nil
 }
 
-func (o *oidcState) check(ctx context.Context, public *url.URL) (*oidcDiscovery, error) {
-	discovery, err := o.discover(ctx, public)
-	if err != nil {
-		return nil, err
-	}
-	for _, endpoint := range []struct {
-		url       string
-		requireOK bool
-	}{{discovery.tokenURL, false}, {discovery.userinfoURL, false}, {discovery.jwksURL, true}} {
-		if err := probeProviderEndpoint(ctx, endpoint.url, endpoint.requireOK); err != nil {
-			return nil, err
+type discoveryFailure struct{ reason string }
+
+func (e *discoveryFailure) Error() string { return "provider unavailable" }
+
+func classifyDiscoveryFailure(err error) *discoveryFailure {
+	reason := "discovery_response"
+	var issuer *oidc.IssuerMismatchError
+	var dns *net.DNSError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		reason = "timeout"
+	case errors.Is(err, context.Canceled):
+		reason = "cancelled"
+	case errors.As(err, &issuer):
+		reason = "issuer_mismatch"
+	case errors.As(err, &dns):
+		reason = "dns"
+	case errors.As(err, &unknownAuthority), errors.As(err, &hostname):
+		reason = "tls_verification"
+	default:
+		var op *net.OpError
+		if errors.As(err, &op) {
+			reason = "connection"
 		}
 	}
-	return discovery, nil
+	return &discoveryFailure{reason: reason}
+}
+
+func (o *oidcState) debugf(message string) {
+	if o.verbose {
+		log.Printf("[gm:auth:debug] %s", message)
+	}
 }
 
 func (o *oidcState) install(discovery *oidcDiscovery) {
@@ -142,7 +167,7 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 	delay := time.Second
 	unavailableLogged := false
 	for {
-		discovery, err := o.check(ctx, public)
+		discovery, err := o.discover(ctx, public)
 		if err == nil {
 			o.install(discovery)
 			o.mu.Lock()
@@ -174,113 +199,38 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 	}
 }
 
-func probeProviderEndpoint(ctx context.Context, raw string, requireOK bool) error {
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, raw, nil)
-	if err != nil {
-		return errors.New("provider unavailable")
-	}
-	res, err := providerHTTPClient().Do(req)
-	if err != nil {
-		return errors.New("provider unavailable")
-	}
-	defer res.Body.Close()
-	if !healthyProviderStatus(res.StatusCode, requireOK) {
-		return errors.New("provider unavailable")
-	}
-	return nil
-}
-
-func healthyProviderStatus(status int, requireOK bool) bool {
-	if requireOK {
-		return status == http.StatusOK
-	}
-	if status >= http.StatusOK && status < http.StatusMultipleChoices {
-		return true
-	}
-	switch status {
-	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusMethodNotAllowed:
-		return true
-	default:
-		return false
-	}
-}
-
-func (o *oidcState) refresh(ctx context.Context, public *url.URL) bool {
-	discovery, err := o.check(ctx, public)
-	o.mu.Lock()
-	wasReady := o.provider != nil
-	if err != nil {
-		o.provider = nil
-		o.verifier = nil
-	} else {
-		o.provider = discovery.provider
-		o.verifier = discovery.verifier
-		o.oauth = discovery.oauth
-		o.responseIssuer = discovery.responseIssuer
-	}
-	o.mu.Unlock()
-	if err != nil && wasReady {
-		log.Printf("[gm:auth] OIDC provider unavailable")
-	} else if err != nil {
-		log.Printf("[gm:auth] OIDC provider retrying")
-	} else if !wasReady {
-		log.Printf("[gm:auth] OIDC provider recovered")
-	}
-	return err == nil
-}
-
-func (o *oidcState) monitor(ctx context.Context, public *url.URL) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			o.mu.RLock()
-			retrying := o.retrying
-			o.mu.RUnlock()
-			if !retrying {
-				o.refresh(ctx, public)
-			}
-		}
-	}
-}
-
 func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
 	if s.oidc == nil || !s.oidc.ready() {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "provider_not_ready")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil || !s.csrfOK(r, "csrf") {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "start_request")
 		return
 	}
 	state, err := randomToken(32)
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "state_generation")
 		return
 	}
 	nonce, err := randomToken(32)
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "nonce_generation")
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
 	browser, err := randomToken(32)
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "browser_binding_generation")
 		return
 	}
 	key := sha256.Sum256([]byte(state))
 	bh := sha256.Sum256([]byte(browser))
 	addr, ok := s.authClientAddress(r)
 	if !ok {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "client_address")
 		return
 	}
 	client := addr.String()
@@ -302,12 +252,12 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	if len(o.tx) >= 256 || perClient >= 8 {
 		o.mu.Unlock()
 		s.counters.capacity.Add(1)
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "transaction_capacity")
 		return
 	}
 	if o.provider == nil || o.verifier == nil {
 		o.mu.Unlock()
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "provider_not_ready")
 		return
 	}
 	oauthCfg := o.oauth
@@ -339,13 +289,13 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
 	if !cok || !sok || len(q["error"]) > 0 || len(q["iss"]) > 1 {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "callback_parameters")
 		return
 	}
 	key := sha256.Sum256([]byte(state))
 	cookie, err := r.Cookie(transactionCookie)
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "transaction_cookie")
 		return
 	}
 	bh := sha256.Sum256([]byte(cookie.Value))
@@ -364,12 +314,12 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok || !s.now().Before(tx.expires) || tx.browser != bh || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
 		s.counters.replayExpiry.Add(1)
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "transaction_replay_or_expiry")
 		return
 	}
 	iss := first(q["iss"])
 	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "response_issuer")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -377,17 +327,17 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	ctx = oidc.ClientContext(ctx, providerHTTPClient())
 	token, err := tx.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "token_exchange")
 		return
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "missing_id_token")
 		return
 	}
 	idToken, err := tx.idVerifier.Verify(ctx, rawID)
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "id_token_verification")
 		return
 	}
 	var idClaims struct {
@@ -397,18 +347,18 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		AtHash   string `json:"at_hash"`
 	}
 	if err := idToken.Claims(&idClaims); err != nil || idClaims.Nonce != tx.nonce {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "id_token_claims_or_nonce")
 		return
 	}
 	if idClaims.AtHash != "" {
 		if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-			s.oidcLoginFailure(w, r)
+			s.oidcLoginFailure(w, r, "access_token_hash")
 			return
 		}
 	}
 	ui, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 	if err != nil || ui.Subject != idToken.Subject {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "userinfo_or_subject")
 		return
 	}
 	var claims struct {
@@ -420,11 +370,11 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			s.counters.groupDenial.Add(1)
 		}
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "userinfo_claims_or_group")
 		return
 	}
 	if !validSubject(idToken.Subject) {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "invalid_subject")
 		return
 	}
 	name := claims.Name
@@ -443,7 +393,7 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	name = safeDisplayName(name)
 	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName, idToken.Expiry)
 	if err != nil {
-		s.oidcLoginFailure(w, r)
+		s.oidcLoginFailure(w, r, "session_capacity")
 		return
 	}
 	setCookie(w, sessionCookie, raw, sess.expires)
@@ -457,7 +407,8 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
-func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request) {
+func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, reason string) {
+	s.debugf("OIDC login rejected reason=" + reason)
 	s.counters.oidcFailure.Add(1)
 	s.loginFailure(w, r)
 }

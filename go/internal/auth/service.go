@@ -88,11 +88,12 @@ type Service struct {
 	oidc           *oidcState
 	loginTemplate  *template.Template
 	now            func() time.Time
+	verbose        bool
 	counters       authCounters
 }
 
-func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix) (*Service, error) {
-	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now}
+func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose ...bool) (*Service, error) {
+	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: len(verbose) != 0 && verbose[0]}
 	if cfg.Mode == "off" {
 		return s, nil
 	}
@@ -109,6 +110,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix) (*S
 		if _, _, err := parsePasswordHash(s.passwordHash); err != nil {
 			return nil, err
 		}
+		s.debugf("local password hash loaded and validated")
 	}
 	s.loginTemplate = loginTemplate
 	if cfg.Mode == "oidc" || cfg.Mode == "hybrid" {
@@ -116,9 +118,9 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix) (*S
 		if e != nil {
 			return nil, fmt.Errorf("OIDC client secret: %w", e)
 		}
-		s.oidc = newOIDCState(cfg, secret)
+		s.oidc = newOIDCState(cfg, secret, s.verbose)
 		if cfg.Mode == "oidc" {
-			discovery, err := s.oidc.check(ctx, s.public)
+			discovery, err := s.oidc.discover(ctx, s.public)
 			if err != nil {
 				return nil, fmt.Errorf("OIDC discovery: %w", err)
 			}
@@ -127,12 +129,17 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix) (*S
 		} else {
 			s.oidc.startRetry(ctx, s.public)
 		}
-		go s.oidc.monitor(ctx, s.public)
 	}
 	log.Printf("[gm:auth] mode=%s origin=%s provider=%s issuer=%s allowed-groups=%d session-lifetime=%s", cfg.Mode, cfg.PublicURL, cfg.OIDCProviderName, cfg.OIDCIssuer, len(cfg.OIDCAllowedGroups), sessionLifetime)
 	go s.sweep(ctx)
 	go s.runSecurityLog(ctx)
 	return s, nil
+}
+
+func (s *Service) debugf(message string) {
+	if s.verbose {
+		log.Printf("[gm:auth:debug] %s", message)
+	}
 }
 
 func readSecret(inline, file string, limit int64) (string, error) {
@@ -335,7 +342,8 @@ func (s *Service) authRequired(w http.ResponseWriter, r *http.Request, listener 
 	if r.ProtoMajor == 1 && r.Body != nil {
 		w.Header().Set("Connection", "close")
 	}
-	if listener.Clear && r.Method == http.MethodGet && r.URL.Path == "/" {
+	if listener.UI && r.Method == http.MethodGet && r.URL.Path == "/" {
+		s.debugf("unauthenticated UI root redirected to login")
 		http.Redirect(w, r, s.public.String()+"/login", http.StatusTemporaryRedirect)
 		return
 	}
@@ -613,11 +621,18 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := r.ParseForm(); err != nil || !s.csrfOK(r, "csrf") {
+	if err := r.ParseForm(); err != nil {
+		s.debugf("local password rejected reason=malformed_form")
+		s.loginFailure(w, r)
+		return
+	}
+	if !s.csrfOK(r, "csrf") {
+		s.debugf("local password rejected reason=csrf")
 		s.loginFailure(w, r)
 		return
 	}
 	if !s.allowAttempt(r) {
+		s.debugf("local password rejected reason=rate_limit_or_client_address")
 		s.counters.throttled.Add(1)
 		s.loginFailure(w, r)
 		return
@@ -626,16 +641,19 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	case s.argon <- struct{}{}:
 		defer func() { <-s.argon }()
 	default:
+		s.debugf("local password rejected reason=verifier_busy")
 		s.loginFailure(w, r)
 		return
 	}
 	if !verifyPassword(s.passwordHash, r.FormValue("password")) {
+		s.debugf("local password rejected reason=mismatch")
 		s.counters.invalidPassword.Add(1)
 		s.loginFailure(w, r)
 		return
 	}
 	raw, sess, err := s.createSession("local-operator", "Local operator", "local", time.Time{})
 	if err != nil {
+		s.debugf("local password rejected reason=session_capacity")
 		s.loginFailure(w, r)
 		return
 	}

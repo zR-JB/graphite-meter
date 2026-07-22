@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,6 +17,33 @@ func TestPasswordHashParametersAndVerification(t *testing.T) {
 	}
 	if !verifyPassword(h, "correct horse battery staple") || verifyPassword(h, "wrong") {
 		t.Fatal("password verification mismatch")
+	}
+}
+
+func TestPasswordPreservesPunctuationUnicodeAndHashFileLineEnding(t *testing.T) {
+	password := `!@#$%^&*()_+-=[]{}|;:',.<>/?~` + " tabs\tand unicode üU0001f510"
+	h, err := HashPassword(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "password.phc")
+	if err := os.WriteFile(path, []byte(h+"\r\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := readSecret("", path, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verifyPassword(loaded, password) {
+		t.Fatal("special-character password changed during hashing or file loading")
+	}
+}
+
+func TestPasswordRejectsLineBreaks(t *testing.T) {
+	for _, password := range []string{"line\nbreak", "line\rbreak", "line\r\nbreak"} {
+		if _, err := HashPassword(password); err == nil {
+			t.Fatalf("accepted %q", password)
+		}
 	}
 }
 func TestPasswordHashRejectsWeakerOrMalformedValues(t *testing.T) {
