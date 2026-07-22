@@ -205,6 +205,7 @@
   <!-- TOPBAR -->
   <header
     class="zone topbar flex items-center gap-3 border-b border-border px-4"
+    class:authenticated={authEnabled}
   >
     <button
       type="button"
@@ -225,7 +226,7 @@
           stroke-width="2.2"
           stroke-linecap="round"
         /><circle cx="12" cy="12" r="2.1" fill="currentColor" /></svg
-      >Graphite&nbsp;Meter</button
+      ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
       class="ghost-btn icon-btn"
@@ -527,6 +528,11 @@
     .stage {
       overflow-y: visible;
       overscroll-behavior: auto;
+    }
+  }
+  @media (max-width: 520px) {
+    .topbar.authenticated .brand-label {
+      display: none;
     }
   }
 </style>

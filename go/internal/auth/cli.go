@@ -88,7 +88,7 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 	s.counters.cliApproval.Add(1)
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte("<!doctype html><title>Client approved</title><p>You may return to Graphite Meter.</p>"))
+	_ = cliDoneTemplate.Execute(w, map[string]any{"Styles": authStyles})
 }
 
 func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {

@@ -120,3 +120,20 @@ button:disabled {
   letter-spacing: 0.14em;
   overflow-wrap: anywhere;
 }
+.completion .mark {
+  color: var(--brand);
+}
+.completion .eyebrow {
+  margin: 18px 0 5px;
+  color: var(--brand);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.completion h1 {
+  margin-top: 0;
+}
+.completion p:last-child {
+  margin-bottom: 0;
+}
