@@ -30,8 +30,10 @@ location = /upload/progress {
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-For "";
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $http_host;
     proxy_buffering off;
     proxy_cache off;
     gzip off;
@@ -42,8 +44,10 @@ location / {
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Forwarded "";
+    proxy_set_header X-Forwarded-For "";
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
 }
@@ -53,7 +57,13 @@ location / {
 
 ```caddyfile
 meter.example {
-    reverse_proxy graphite-meter:7246
+    reverse_proxy graphite-meter:7246 {
+        header_up -Forwarded
+        header_up -X-Forwarded-For
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
 }
 ```
 
@@ -66,6 +76,8 @@ Caddy can offer public H1/H2/H3 while using clear H1 upstream. Its Alt-Svc heade
 - Preserve `Host` and standard forwarding headers.
 - Set `GM_TRUSTED_PROXIES` only to proxy peers as seen by Graphite Meter. Trusted headers affect client identity and admission accounting, not endpoint discovery.
 - Apply public connection, handshake, packet-rate, and bandwidth policy at the proxy or firewall. Application bandwidth throttling corrupts measurements.
+
+When application authentication is enabled, the trusted proxy must set `X-Real-IP` from its connection peer, remove `Forwarded` and `X-Forwarded-For`, and overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`. Its socket CIDR must be listed in `GM_TRUSTED_PROXIES`, and the reconstructed origin must exactly match `GM_AUTH_PUBLIC_URL`. Redact the query string for `/auth/oidc/callback` from access and error logs. Do not also apply provider `forward_auth`; Graphite Meter owns its OIDC redirect and session boundary.
 
 The selected `/probe` reports normalized client address, address source, and the proxy-to-server protocol. The UI labels this separately from the browser-to-proxy protocol.
 

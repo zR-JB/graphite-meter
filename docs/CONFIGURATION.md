@@ -72,6 +72,31 @@ GM_PUBLIC_ORIGINS=self
 | `GM_MAX_OPERATION_DURATION` | `5m` | Maximum operation lifetime. |
 | `GM_VERBOSE` | false | Per-second server measurement logs. |
 
+## Optional authentication
+
+Authentication is off by default. When enabled, every UI asset, discovery request, probe, transfer, progress stream, and WebSocket requires a browser session or terminal grant.
+
+| Environment | Flag | Meaning |
+| --- | --- | --- |
+| `GM_AUTH_MODE` | `-auth-mode` | `off`, `password`, `oidc`, or `hybrid`. |
+| `GM_AUTH_PUBLIC_URL` | `-auth-public-url` | Canonical HTTPS UI origin, without a path. |
+| `GM_AUTH_PASSWORD_HASH` | none | Inline Argon2id PHC hash. Prefer a secret file in containers. |
+| `GM_AUTH_PASSWORD_HASH_FILE` | `-auth-password-hash-file` | File containing the Argon2id PHC hash. |
+| `GM_AUTH_OIDC_ISSUER` | `-auth-oidc-issuer` | Exact OIDC issuer URL. |
+| `GM_AUTH_OIDC_CLIENT_ID` | `-auth-oidc-client-id` | Confidential-client ID. |
+| `GM_AUTH_OIDC_CLIENT_SECRET` | none | Inline client secret. Prefer a secret file in containers. |
+| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `-auth-oidc-client-secret-file` | File containing the client secret. |
+| `GM_AUTH_OIDC_ALLOWED_GROUPS` | `-auth-oidc-allowed-groups` | Comma-separated, case-sensitive group allowlist. |
+| `GM_AUTH_OIDC_PROVIDER_NAME` | `-auth-oidc-provider-name` | Login/provider label; default `Authelia`. |
+
+Generate a local operator hash interactively; the password is never accepted as a command-line argument:
+
+```sh
+graphite-meter hash-password
+```
+
+Authenticated deployments must advertise only HTTPS origins on the canonical hostname. Set `GM_ADVERTISED_NATIVE_ENDPOINTS` to omit `http1-clear`. For OIDC, register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client using PKCE S256, `client_secret_basic`, and scopes `openid profile groups`.
+
 ## Breaking migration
 
 - Replace `GM_ENABLE_H1_TLS=true` with a non-empty `GM_H1_TLS_ADDR`.
