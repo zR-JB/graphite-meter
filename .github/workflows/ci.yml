@@ -207,6 +207,8 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Run container
         run: docker run -d --name gm -p 7246:7246 graphite-meter:smoke
+      - name: Verify outbound TLS trust store
+        run: docker export gm | tar -tf - | grep -qx 'etc/ssl/certs/ca-certificates.crt'
       - name: Wait for ready
         run: |
           for i in $(seq 1 30); do
