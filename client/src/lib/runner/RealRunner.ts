@@ -21,6 +21,12 @@ import type { Preflight } from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { BUILD } from "../buildenv";
+import {
+  authenticatedFetch,
+  authEnabled,
+  csrfHeader,
+  requireAuthentication,
+} from "../auth";
 import { transferStreamCount } from "./real/streamPolicy";
 import {
   httpToWs,
@@ -111,7 +117,8 @@ type PingOutMsg =
   | { type: "ready" }
   | { type: "samples"; samples: PingSample[] }
   | { type: "stall"; detail: string }
-  | { type: "resume" };
+  | { type: "resume" }
+  | AuthRequiredMsg;
 
 /** Upload-progress worker → RealRunner. `bytes`/`complete` carry the SERVER's
  *  cumulative drained count `n` and elapsed clock `t` (ns) it was
@@ -125,6 +132,8 @@ type ProgressOutMsg =
   | { type: "fatal"; detail: string }
   | { type: "stall"; detail: string }
   | { type: "resume" };
+
+type AuthRequiredMsg = { type: "auth-required" };
 
 /** One worker pool + its bookkeeping for a single active transfer direction.
  *  A standalone download/upload stage populates exactly one of these; a
@@ -276,6 +285,7 @@ export class RealBackend implements RunnerBackend {
   /** Pending respawn of a dead idle worker (script failed to load / crashed);
    *  see IDLE_RESPAWN_MS. Cleared on stop. */
   #idleRespawnTimer: ReturnType<typeof setTimeout> | null = null;
+  #disposed = false;
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -352,7 +362,7 @@ export class RealBackend implements RunnerBackend {
       // A logical server may restart with different public targets while the
       // SPA remains open, so every run resolves a fresh discovery document.
       const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-      const res = await fetch(`/preflight${ident}`, {
+      const res = await authenticatedFetch(`/preflight${ident}`, {
         method: "GET",
         cache: "no-store",
         headers: this.#authHeaders(),
@@ -452,7 +462,7 @@ export class RealBackend implements RunnerBackend {
           attempt++
         ) {
           const probeURL = `${selected.origin}${selected.routes.probe}?cb=${performance.now()}-${attempt}`;
-          const probeRes = await fetch(probeURL, {
+          const probeRes = await authenticatedFetch(probeURL, {
             cache: "no-store",
             headers: this.#authHeaders(),
             signal: probeSignal,
@@ -521,7 +531,7 @@ export class RealBackend implements RunnerBackend {
       const latencyURL = `${this.#latencyTarget.origin}${this.#latencyTarget.routes.probe}?cb=${performance.now()}`;
       let latencyRes: Response;
       try {
-        latencyRes = await fetch(latencyURL, {
+        latencyRes = await authenticatedFetch(latencyURL, {
           cache: "no-store",
           headers: this.#authHeaders(),
           signal,
@@ -959,7 +969,7 @@ export class RealBackend implements RunnerBackend {
     this.#abort?.signal.addEventListener("abort", onRunAbort, { once: true });
     const deadline = setTimeout(() => ctl.abort(), UPLOAD_SESSION_TIMEOUT_MS);
     try {
-      const res = await fetch(`${base}${path}`, {
+      const res = await authenticatedFetch(`${base}${path}`, {
         method: "POST",
         cache: "no-store",
         signal: ctl.signal,
@@ -1028,6 +1038,8 @@ export class RealBackend implements RunnerBackend {
       headers: this.#opts.authToken
         ? { authorization: `Bearer ${this.#opts.authToken}` }
         : undefined,
+      csrf: csrfHeader(),
+      credentials: authEnabled ? "include" : "same-origin",
     });
     this.#progressWorker = w;
     return ready;
@@ -1068,6 +1080,11 @@ export class RealBackend implements RunnerBackend {
       debug: debugEnabled(),
       id: i,
       streams: state.laneCount,
+      credentials: authEnabled ? "include" : "same-origin",
+      headers: {
+        ...(this.#authHeaders() as Record<string, string> | undefined),
+        ...csrfHeader(),
+      },
       // Download-only experimental chunked mode (ignored by the upload worker).
       chunk: state.chunkDownload,
     });
@@ -1136,6 +1153,7 @@ export class RealBackend implements RunnerBackend {
       reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
+      checkAuthentication: authEnabled,
     });
     this.#pingWorker = w;
   }
@@ -1147,6 +1165,11 @@ export class RealBackend implements RunnerBackend {
    *  reconnects pass silently. */
   #onPingMessage(msg: PingOutMsg): void {
     if (!this.#pingActive) return; // late message after teardown
+    if (msg.type === "auth-required") {
+      this.#teardownLatency();
+      requireAuthentication();
+      return;
+    }
     switch (msg.type) {
       case "samples":
         this.#clearPingEstablishTimer(); // a pong proves the channel works
@@ -1242,6 +1265,7 @@ export class RealBackend implements RunnerBackend {
       reportGapMs: 0, // paced sends are already sparse — report every sample
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
+      checkAuthentication: authEnabled,
     });
     // Report immediately (there is no keepalive warmup window).
     w.postMessage({ type: "measure" });
@@ -1291,6 +1315,11 @@ export class RealBackend implements RunnerBackend {
    *  effectiveConnectivity respects (stall()/resume() no-op outside a run). */
   #onIdlePingMessage(msg: PingOutMsg): void {
     if (!this.#idleActive) return;
+    if (msg.type === "auth-required") {
+      this.#stopIdleKeepalive();
+      requireAuthentication();
+      return;
+    }
     switch (msg.type) {
       case "samples":
         for (const s of msg.samples) {
@@ -1427,11 +1456,17 @@ export class RealBackend implements RunnerBackend {
     msg:
       | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
       | { type: "alive" }
-      | { type: "error"; recoverable: boolean; detail: string },
+      | { type: "error"; recoverable: boolean; detail: string }
+      | AuthRequiredMsg,
     i: number,
   ): void {
     const state = this.#lanes[dir];
     if (!state) return; // late message after teardown
+    if (msg.type === "auth-required") {
+      this.#discardTransfer();
+      requireAuthentication();
+      return;
+    }
     if (msg.type === "progress") {
       if (
         dir === "down" &&
@@ -1546,9 +1581,14 @@ export class RealBackend implements RunnerBackend {
    *  socket drop doesn't stop the transfer: the server keeps draining and accruing
    *  elapsed time, and catch-up Δn / Δelapsed on reconnect is the true rate over
    *  the gap — no client-side counting anywhere. */
-  #onProgressMessage(msg: ProgressOutMsg): void {
+  #onProgressMessage(msg: ProgressOutMsg | AuthRequiredMsg): void {
     const state = this.#lanes.up;
     if (!this.#transferActive || !state) return; // late message after teardown
+    if (msg.type === "auth-required") {
+      this.#discardTransfer();
+      requireAuthentication();
+      return;
+    }
     if (msg.type === "fatal") {
       this.#progressReady?.finish(false);
       if (state.measuring) {
@@ -1620,10 +1660,14 @@ export class RealBackend implements RunnerBackend {
     this.#progressReady?.finish(false);
     this.#progressReady = null;
     const w = this.#progressWorker;
-    this.#progressWorker = null;
     if (!w) return Promise.resolve();
     const worker = w;
     if (!finalize) {
+      if (this.#progressDone) {
+        this.#progressDone();
+        return Promise.resolve();
+      }
+      this.#progressWorker = null;
       worker.terminate();
       return Promise.resolve();
     }
@@ -1633,6 +1677,7 @@ export class RealBackend implements RunnerBackend {
       function done(): void {
         clearTimeout(timer);
         if (self.#progressDone === done) self.#progressDone = null;
+        if (self.#progressWorker === worker) self.#progressWorker = null;
         worker.terminate();
         resolve();
       }
@@ -1704,6 +1749,16 @@ export class RealBackend implements RunnerBackend {
     // The run (or abort) just ended — resume the idle keepalive so the
     // connectivity pill stays live again instead of freezing at its
     // last-known state until the next probe/run.
-    this.#startIdleKeepalive();
+    if (!this.#disposed) this.#startIdleKeepalive();
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#stopIdleKeepalive();
+    this.#discardTransfer();
+    this.#teardownLatency();
+    this.#abort?.abort();
+    this.#abort = null;
+    this.#activeTransport = null;
   }
 }

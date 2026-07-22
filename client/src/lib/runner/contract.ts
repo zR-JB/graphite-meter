@@ -494,6 +494,8 @@ export interface NetworkRunner {
    *  asynchronous path verification is visible and cancellable. */
   start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
   abort(): void;
+  /** Permanently stop background activity owned by this runner. */
+  dispose?(): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
   probe(
     config: RunnerConfig,

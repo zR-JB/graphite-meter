@@ -18,6 +18,9 @@
   import { focusTrap } from "../actions/focusTrap";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
+  import { authEnabled } from "../auth";
+
+  let AccountControl = $state<any>(null);
 
   let telemetryOpen = $state(false);
   let settingsOpen = $state(false);
@@ -96,6 +99,10 @@
     e.returnValue = "";
   }
 
+  function onAuthRequired() {
+    teardownRunner();
+  }
+
   function inEditable(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
     const tag = el.tagName;
@@ -170,11 +177,20 @@
   onMount(() => {
     window.addEventListener("keydown", onKeydown);
     window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("graphite-meter-auth-required", onAuthRequired);
     void bootRunner();
+    if (authEnabled)
+      void import("./AccountControl.svelte").then(
+        (m) => (AccountControl = m.default),
+      );
 
     return () => {
       window.removeEventListener("keydown", onKeydown);
       window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener(
+        "graphite-meter-auth-required",
+        onAuthRequired,
+      );
       teardownRunner();
     };
   });
@@ -221,6 +237,7 @@
     >
     <ConnectivityIndicator />
     <div class="flex-1"></div>
+    {#if AccountControl}<AccountControl />{/if}
     <button
       class="ghost-btn"
       aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}

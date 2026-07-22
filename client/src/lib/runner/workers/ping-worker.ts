@@ -48,6 +48,7 @@ import {
 } from "./rttEstimator";
 import { nextBackoff } from "./backoff";
 import { PingScheduler } from "./pingScheduler";
+import { redirectForCredentials } from "../../request-auth";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
  *  reporting on for the SAME warmed socket; `stop` closes everything. */
@@ -61,6 +62,7 @@ type InMsg =
       reportGapMs: number;
       lossK: number;
       lossFloorMs: number;
+      checkAuthentication?: boolean;
     }
   | { type: "measure"; intervalMs?: number }
   | { type: "stop" };
@@ -75,7 +77,8 @@ type OutMsg =
   | { type: "ready" }
   | { type: "samples"; samples: { rtt: number; lost: boolean }[] }
   | { type: "stall"; detail: string }
-  | { type: "resume" };
+  | { type: "resume" }
+  | { type: "auth-required" };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg): void => ctx.postMessage(m);
@@ -98,6 +101,7 @@ let url = "";
 let ws: WebSocket | null = null;
 let measuring = false;
 let stopped = false;
+let checkAuthentication = false;
 
 // Tuning — stage workers keep this fixed; the idle worker settles from probe
 // pacing to its one-second keepalive interval.
@@ -141,6 +145,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       reportGapMs = m.reportGapMs;
       lossK = m.lossK;
       lossFloorMs = m.lossFloorMs;
+      checkAuthentication = m.checkAuthentication ?? false;
       scheduler = new PingScheduler(
         replyDriven
           ? { kind: "reply-driven", backupDelayMs: replyBackupDelay }
@@ -193,7 +198,45 @@ function connect(): void {
   ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
   // onerror is always followed by onclose for WebSocket — handle reconnect once,
   // in onclose, to avoid a double schedule.
-  ws.onclose = (): void => onDisconnect("websocket closed");
+  ws.onclose = (event: CloseEvent): void => {
+    if (event.code === 1008 && event.reason === "authentication required") {
+      post({ type: "auth-required" });
+      stopped = true;
+      return;
+    }
+    if (checkAuthentication && (event.code === 1006 || event.code === 0)) {
+      void checkSessionThenReconnect();
+      return;
+    }
+    onDisconnect("websocket closed");
+  };
+}
+
+async function checkSessionThenReconnect(): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const target = new URL("/auth/session", self.location.origin);
+    const response = await fetch(target, {
+      cache: "no-store",
+      credentials: "include",
+      redirect: redirectForCredentials("include"),
+      signal: controller.signal,
+    });
+    if (
+      response.status === 403 &&
+      response.headers.get("Graphite-Meter-Auth") === "required"
+    ) {
+      post({ type: "auth-required" });
+      stopped = true;
+      return;
+    }
+  } catch {
+    // A provider/network failure is not proof of expiry; use normal backoff.
+  } finally {
+    clearTimeout(timeout);
+  }
+  onDisconnect("websocket closed");
 }
 
 function onDisconnect(detail: string): void {

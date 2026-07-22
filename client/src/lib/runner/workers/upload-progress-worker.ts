@@ -2,9 +2,16 @@
  * target. Empty NDJSON lines are liveness heartbeats, never measurements. */
 
 import { nextBackoff } from "./backoff";
+import { redirectForCredentials } from "../../request-auth";
 
 type InMsg =
-  | { type: "start"; url: string; headers?: Record<string, string> }
+  | {
+      type: "start";
+      url: string;
+      headers?: Record<string, string>;
+      csrf?: Record<string, string>;
+      credentials?: RequestCredentials;
+    }
   | { type: "stop" };
 type OutMsg =
   | { type: "open" }
@@ -12,7 +19,8 @@ type OutMsg =
   | { type: "complete"; n: number; t: number }
   | { type: "fatal"; detail: string }
   | { type: "stall"; detail: string }
-  | { type: "resume" };
+  | { type: "resume" }
+  | { type: "auth-required" };
 type ProgressEvent = {
   type: "ready" | "progress" | "complete" | "error";
   bytes?: number;
@@ -27,6 +35,8 @@ const RECONNECT_MAX_MS = 2000;
 
 let url = "";
 let headers: Record<string, string> = {};
+let csrf: Record<string, string> = {};
+let credentials: RequestCredentials = "same-origin";
 let controller: AbortController | null = null;
 let wakeReconnect: (() => void) | null = null;
 let stopped = false;
@@ -43,6 +53,8 @@ ctx.onmessage = (event: MessageEvent<InMsg>): void => {
   if (event.data.type === "start") {
     url = event.data.url;
     headers = event.data.headers ?? {};
+    csrf = event.data.csrf ?? {};
+    credentials = event.data.credentials ?? "same-origin";
     stopped = false;
     finishing = false;
     lastN = 0;
@@ -61,7 +73,17 @@ async function run(): Promise<void> {
         cache: "no-store",
         headers: { ...headers, accept: "application/x-ndjson" },
         signal: controller.signal,
+        credentials,
+        redirect: redirectForCredentials(credentials),
       });
+      if (
+        response.status === 403 &&
+        response.headers.get("Graphite-Meter-Auth") === "required"
+      ) {
+        post({ type: "auth-required" });
+        stopped = true;
+        return;
+      }
       if (!response.ok) {
         if (terminalProgressStatus(response.status)) {
           post({
@@ -161,8 +183,18 @@ async function finish(): Promise<void> {
     const response = await fetch(url, {
       method: "DELETE",
       cache: "no-store",
-      headers,
+      headers: { ...headers, ...csrf },
+      credentials,
+      redirect: redirectForCredentials(credentials),
     });
+    if (
+      response.status === 403 &&
+      response.headers.get("Graphite-Meter-Auth") === "required"
+    ) {
+      post({ type: "auth-required" });
+      teardown();
+      return;
+    }
     if (!response.ok) teardown();
   } catch {
     teardown();

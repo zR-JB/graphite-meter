@@ -68,6 +68,7 @@ import {
   fmtBytes,
   fmtMs,
 } from "../../debug";
+import { redirectForCredentials } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** `debug`/`id` drive verbose per-stream logging only. */
@@ -78,14 +79,20 @@ type InMsg =
       debug?: boolean;
       id?: number;
       streams?: number;
+      credentials?: RequestCredentials;
+      headers?: Record<string, string>;
     }
   | { type: "stop" };
 /** `alive` = one POST drained by the server (lane is live; NO byte count — the
  *  /upload/progress stream carries the authoritative count). `error` drives lane restart. */
 type OutMsg =
-  { type: "alive" } | { type: "error"; recoverable: boolean; detail: string };
+  | { type: "alive" }
+  | { type: "error"; recoverable: boolean; detail: string }
+  | { type: "auth-required" };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+let credentials: RequestCredentials = "same-origin";
+let headers: Record<string, string> = {};
 const post = (m: OutMsg) => ctx.postMessage(m);
 
 /** One upload reservoir budget divided across the active lanes. */
@@ -192,6 +199,8 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
+    credentials = msg.credentials ?? "same-origin";
+    headers = msg.headers ?? {};
     const deviceMemory = (navigator as unknown as { deviceMemory?: number })
       .deviceMemory;
     bufBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
@@ -260,8 +269,17 @@ async function run(url: string): Promise<void> {
         body: pool.slice(0, sentBytes), // zero-copy view of the pool
         signal: abort.signal,
         cache: "no-store",
-        headers: { "Content-Type": "application/octet-stream" },
+        headers: { ...headers, "Content-Type": "application/octet-stream" },
+        credentials,
+        redirect: redirectForCredentials(credentials),
       });
+      if (
+        res.status === 403 &&
+        res.headers.get("Graphite-Meter-Auth") === "required"
+      ) {
+        post({ type: "auth-required" });
+        return;
+      }
       // Drain the tiny JSON echo so this keep-alive connection is reusable for the
       // next POST (an unread body can pin the connection and stall the lane).
       await res.arrayBuffer().catch(() => {});
