@@ -4,10 +4,14 @@ import (
 	"net/http"
 	"net/netip"
 
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 func uploadOwner(r *http.Request, trusted []netip.Prefix) string {
+	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
+		return "principal:" + p.Subject
+	}
 	addr := transport.ResolveClientAddress(r, trusted).Addr.Unmap()
 	if !addr.IsValid() {
 		return "unknown"

@@ -1,0 +1,324 @@
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
+)
+
+type fakeOIDC struct {
+	server         *httptest.Server
+	key            *rsa.PrivateKey
+	mu             sync.Mutex
+	nonce          string
+	challenge      string
+	audience       string
+	subject        string
+	userinfoSub    string
+	groups         []string
+	expires        time.Time
+	accessToken    string
+	badAccessHash  bool
+	badSignature   bool
+	tokenStatus    int
+	jwksStatus     int
+	userinfoStatus int
+	discoveries    int
+}
+
+func newFakeOIDC(t *testing.T) *fakeOIDC {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeOIDC{key: key, audience: "client", subject: "subject", userinfoSub: "subject", groups: []string{"allowed"}, expires: time.Now().Add(time.Hour), accessToken: "access-token"}
+	f.server = httptest.NewTLSServer(http.HandlerFunc(f.serveHTTP))
+	t.Cleanup(f.server.Close)
+	return f
+}
+
+func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/.well-known/openid-configuration":
+		f.mu.Lock()
+		f.discoveries++
+		f.mu.Unlock()
+		writeJSON(w, map[string]any{
+			"issuer": f.server.URL, "authorization_endpoint": f.server.URL + "/authorize", "token_endpoint": f.server.URL + "/token",
+			"jwks_uri": f.server.URL + "/jwks", "userinfo_endpoint": f.server.URL + "/userinfo", "authorization_response_iss_parameter_supported": true,
+		})
+	case "/jwks":
+		f.mu.Lock()
+		status := f.jwksStatus
+		f.mu.Unlock()
+		if status != 0 {
+			http.Error(w, "temporarily unavailable", status)
+			return
+		}
+		writeJSON(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &f.key.PublicKey, KeyID: "test", Algorithm: string(jose.RS256), Use: "sig"}}})
+	case "/token":
+		f.mu.Lock()
+		status := f.tokenStatus
+		f.mu.Unlock()
+		if status != 0 {
+			http.Error(w, "temporarily unavailable", status)
+			return
+		}
+		if user, secret, ok := r.BasicAuth(); !ok || user != "client" || secret != "secret" {
+			http.Error(w, "invalid client", http.StatusUnauthorized)
+			return
+		}
+		if err := r.ParseForm(); err != nil || r.Form.Get("code") != "valid-code" || r.Form.Get("code_verifier") == "" {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		f.mu.Lock()
+		nonce, challenge, audience, subject, expires, accessToken, badHash, badSignature := f.nonce, f.challenge, f.audience, f.subject, f.expires, f.accessToken, f.badAccessHash, f.badSignature
+		f.mu.Unlock()
+		verifierHash := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
+		if base64.RawURLEncoding.EncodeToString(verifierHash[:]) != challenge {
+			http.Error(w, "invalid verifier", http.StatusBadRequest)
+			return
+		}
+		hash := sha256.Sum256([]byte(accessToken))
+		atHash := base64.RawURLEncoding.EncodeToString(hash[:len(hash)/2])
+		if badHash {
+			atHash = "invalid"
+		}
+		signingKey := f.key
+		if badSignature {
+			signingKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+		}
+		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: signingKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test"))
+		raw, _ := jwt.Signed(signer).Claims(map[string]any{"iss": f.server.URL, "aud": audience, "sub": subject, "iat": time.Now().Unix(), "exp": expires.Unix(), "nonce": nonce, "at_hash": atHash}).Serialize()
+		writeJSON(w, map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": 3600, "id_token": raw})
+	case "/userinfo":
+		f.mu.Lock()
+		subject, groups, status := f.userinfoSub, append([]string(nil), f.groups...), f.userinfoStatus
+		f.mu.Unlock()
+		if status != 0 {
+			http.Error(w, "temporarily unavailable", status)
+			return
+		}
+		writeJSON(w, map[string]any{"sub": subject, "name": "Example User", "groups": groups})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (f *fakeOIDC) service(t *testing.T) *Service {
+	t.Helper()
+	previous := http.DefaultTransport
+	http.DefaultTransport = f.server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	s, err := New(ctx, config.AuthConfig{Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client", OIDCClientSecret: "secret", OIDCAllowedGroups: []string{"allowed"}, OIDCProviderName: "Provider"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func startOIDC(t *testing.T, s *Service, f *fakeOIDC) (state string, cookie *http.Cookie) {
+	t.Helper()
+	csrf := "abcdefghijklmnopqrstuvwxyz0123456789"
+	body := url.Values{"csrf": {csrf}}.Encode()
+	r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
+	r.Body = io.NopCloser(strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", s.public.String())
+	r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
+	rr := httptest.NewRecorder()
+	s.oidcStart(rr, r)
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("start status=%d", rr.Code)
+	}
+	location, err := url.Parse(rr.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.nonce = location.Query().Get("nonce")
+	f.challenge = location.Query().Get("code_challenge")
+	f.mu.Unlock()
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == transactionCookie {
+			return location.Query().Get("state"), c
+		}
+	}
+	t.Fatal("transaction cookie missing")
+	return "", nil
+}
+
+func finishOIDC(s *Service, state string, cookie *http.Cookie, query string) *httptest.ResponseRecorder {
+	r := secureRequest(http.MethodGet, "/auth/oidc/callback?state="+url.QueryEscape(state)+"&code=valid-code&iss="+url.QueryEscape(s.cfg.OIDCIssuer)+query, nil)
+	r.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	s.oidcCallback(rr, r)
+	return rr
+}
+
+func TestOIDCLoginSecurityChecks(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*fakeOIDC)
+		want   int
+	}{
+		{"valid", func(*fakeOIDC) {}, http.StatusSeeOther},
+		{"wrong audience", func(f *fakeOIDC) { f.audience = "other" }, http.StatusSeeOther},
+		{"expired", func(f *fakeOIDC) { f.expires = time.Now().Add(-time.Minute) }, http.StatusSeeOther},
+		{"userinfo subject mismatch", func(f *fakeOIDC) { f.userinfoSub = "other" }, http.StatusSeeOther},
+		{"group case mismatch", func(f *fakeOIDC) { f.groups = []string{"Allowed"} }, http.StatusSeeOther},
+		{"bad access hash", func(f *fakeOIDC) { f.badAccessHash = true }, http.StatusSeeOther},
+		{"bad signature", func(f *fakeOIDC) { f.badSignature = true }, http.StatusSeeOther},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFakeOIDC(t)
+			test.mutate(f)
+			s := f.service(t)
+			state, cookie := startOIDC(t, s, f)
+			rr := finishOIDC(s, state, cookie, "")
+			if rr.Code != test.want {
+				t.Fatalf("status=%d", rr.Code)
+			}
+			loggedIn := false
+			for _, c := range rr.Result().Cookies() {
+				if c.Name == sessionCookie && c.Value != "" {
+					loggedIn = true
+				}
+			}
+			if loggedIn != (test.name == "valid") {
+				t.Fatalf("loggedIn=%v", loggedIn)
+			}
+		})
+	}
+}
+
+func TestOIDCCallbackRejectsWrongNonceAndMissingIssuer(t *testing.T) {
+	f := newFakeOIDC(t)
+	s := f.service(t)
+	state, cookie := startOIDC(t, s, f)
+	f.mu.Lock()
+	f.nonce = "wrong"
+	f.mu.Unlock()
+	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=1") {
+		t.Fatal("wrong nonce accepted")
+	}
+
+	state, cookie = startOIDC(t, s, f)
+	r := secureRequest(http.MethodGet, "/auth/oidc/callback?state="+url.QueryEscape(state)+"&code=valid-code", nil)
+	r.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	s.oidcCallback(rr, r)
+	if !strings.Contains(rr.Header().Get("Location"), "error=1") {
+		t.Fatal("missing response issuer accepted")
+	}
+}
+
+func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
+	f := newFakeOIDC(t)
+	s := f.service(t)
+	state, cookie := startOIDC(t, s, f)
+	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusSeeOther {
+		t.Fatalf("first status=%d", rr.Code)
+	}
+	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=1") {
+		t.Fatal("transaction replay accepted")
+	}
+
+	state, cookie = startOIDC(t, s, f)
+	rr := finishOIDC(s, state, cookie, "&state=duplicate")
+	if !strings.Contains(rr.Header().Get("Location"), "error=1") {
+		t.Fatal("duplicate state accepted")
+	}
+}
+
+func TestOIDCProviderHealthIsIndependentOfCallbackFailure(t *testing.T) {
+	for _, endpoint := range []string{"token", "jwks", "userinfo"} {
+		t.Run(endpoint, func(t *testing.T) {
+			f := newFakeOIDC(t)
+			s := f.service(t)
+			state, cookie := startOIDC(t, s, f)
+			f.mu.Lock()
+			switch endpoint {
+			case "token":
+				f.tokenStatus = http.StatusServiceUnavailable
+			case "jwks":
+				f.jwksStatus = http.StatusServiceUnavailable
+			case "userinfo":
+				f.userinfoStatus = http.StatusServiceUnavailable
+			}
+			f.mu.Unlock()
+			_ = finishOIDC(s, state, cookie, "")
+			if !s.oidc.ready() {
+				t.Fatal("one failed callback disabled OIDC globally")
+			}
+			f.mu.Lock()
+			discoveries := f.discoveries
+			f.mu.Unlock()
+			if discoveries != 1 {
+				t.Fatalf("one failed callback triggered %d discoveries", discoveries)
+			}
+			if s.oidc.refresh(context.Background(), s.public) {
+				t.Fatal("health check accepted an unavailable endpoint")
+			}
+			if s.oidc.ready() {
+				t.Fatal("independent health check did not mark provider unavailable")
+			}
+			f.mu.Lock()
+			f.tokenStatus, f.jwksStatus, f.userinfoStatus = 0, 0, 0
+			f.mu.Unlock()
+			if !s.oidc.refresh(context.Background(), s.public) || !s.oidc.ready() {
+				t.Fatal("provider did not recover after an independent healthy check")
+			}
+		})
+	}
+}
+
+func TestOIDCTransactionKeepsItsVerifiedProviderSnapshot(t *testing.T) {
+	f := newFakeOIDC(t)
+	s := f.service(t)
+	state, cookie := startOIDC(t, s, f)
+	f.mu.Lock()
+	f.tokenStatus = http.StatusServiceUnavailable
+	f.mu.Unlock()
+	if s.oidc.refresh(context.Background(), s.public) || s.oidc.ready() {
+		t.Fatal("health check did not mark provider unavailable")
+	}
+	f.mu.Lock()
+	f.tokenStatus = 0
+	f.mu.Unlock()
+	rr := finishOIDC(s, state, cookie, "")
+	loggedIn := false
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			loggedIn = true
+		}
+	}
+	if !loggedIn {
+		t.Fatal("provider refresh invalidated an already-started transaction")
+	}
+}

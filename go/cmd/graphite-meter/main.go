@@ -3,18 +3,28 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/server"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "hash-password" {
+		if err := hashPassword(); err != nil {
+			log.Fatalf("hash-password: %v", err)
+		}
+		return
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
@@ -32,6 +42,29 @@ func main() {
 	if err := server.Run(ctx, &cfg); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func hashPassword() error {
+	in := bufio.NewReader(os.Stdin)
+	fmt.Fprint(os.Stderr, "Password: ")
+	first, err := auth.ReadPassword(in, os.Stdin)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(os.Stderr, "Confirm password: ")
+	second, err := auth.ReadPassword(in, os.Stdin)
+	if err != nil {
+		return err
+	}
+	if first != second {
+		return fmt.Errorf("passwords do not match")
+	}
+	encoded, err := auth.HashPassword(first)
+	if err != nil {
+		return err
+	}
+	fmt.Println(encoded)
+	return nil
 }
 
 func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
@@ -64,6 +97,26 @@ func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
 	fs.IntVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "maximum concurrent TCP and QUIC connections")
 	fs.IntVar(&cfg.MaxConnectionsPerClient, "max-connections-per-client", cfg.MaxConnectionsPerClient, "maximum concurrent connections per direct client")
 	fs.DurationVar(&cfg.MaxOperationDuration, "max-operation-duration", cfg.MaxOperationDuration, "maximum measurement operation lifetime")
+	fs.StringVar(&cfg.Auth.Mode, "auth-mode", cfg.Auth.Mode, "authentication mode: off, password, oidc, or hybrid")
+	authStringFlag(fs, cfg, "auth-public-url", &cfg.Auth.PublicURL, "canonical HTTPS UI origin")
+	authStringFlag(fs, cfg, "auth-password-hash-file", &cfg.Auth.PasswordHashFile, "file containing the operator Argon2id PHC hash")
+	authStringFlag(fs, cfg, "auth-oidc-issuer", &cfg.Auth.OIDCIssuer, "OIDC issuer URL")
+	authStringFlag(fs, cfg, "auth-oidc-client-id", &cfg.Auth.OIDCClientID, "OIDC client ID")
+	authStringFlag(fs, cfg, "auth-oidc-client-secret-file", &cfg.Auth.OIDCSecretFile, "file containing the OIDC client secret")
+	fs.Func("auth-oidc-allowed-groups", "comma-separated case-sensitive OIDC groups", func(value string) error {
+		cfg.Auth.Explicit = true
+		cfg.Auth.OIDCAllowedGroups = splitFlagList(value)
+		return nil
+	})
+	authStringFlag(fs, cfg, "auth-oidc-provider-name", &cfg.Auth.OIDCProviderName, "OIDC provider label")
+}
+
+func authStringFlag(fs *flag.FlagSet, cfg *config.Config, name string, target *string, usage string) {
+	fs.Func(name, usage, func(value string) error {
+		cfg.Auth.Explicit = true
+		*target = strings.TrimSpace(value)
+		return nil
+	})
 }
 
 func splitFlagList(value string) []string {

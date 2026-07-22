@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Approve client · Graphite Meter</title>
+    <style>{{.Styles}}</style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Approve terminal client</h1>
+      <p>Confirm that this code matches the code in your terminal.</p>
+      <code class="code">{{.Code}}</code>
+      <form method="post" action="/auth/cli/approve">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="challenge" value="{{.Challenge}}">
+        <button type="submit">Approve this client</button>
+      </form>
+    </main>
+  </body>
+</html>

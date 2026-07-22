@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
 )
@@ -34,6 +35,20 @@ type PublicOrigins struct {
 	Both, Throughput, Latency []string
 }
 
+type AuthConfig struct {
+	Explicit          bool
+	Mode              string
+	PublicURL         string
+	PasswordHash      string
+	PasswordHashFile  string
+	OIDCIssuer        string
+	OIDCClientID      string
+	OIDCClientSecret  string
+	OIDCSecretFile    string
+	OIDCAllowedGroups []string
+	OIDCProviderName  string
+}
+
 type Config struct {
 	Native                                    NativeListeners
 	NativePublic                              NativeOrigins
@@ -49,6 +64,7 @@ type Config struct {
 	MaxConnections                            int
 	MaxConnectionsPerClient                   int
 	MaxOperationDuration                      time.Duration
+	Auth                                      AuthConfig
 }
 
 func Default() Config {
@@ -59,6 +75,7 @@ func Default() Config {
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
 		MaxConnections: 512, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
+		Auth:                 AuthConfig{Mode: "off", OIDCProviderName: "Authelia"},
 	}
 }
 
@@ -72,10 +89,22 @@ func Load() (Config, error) {
 		{"GM_TLS_CERT", &c.TLSCert}, {"GM_TLS_KEY", &c.TLSKey},
 		{"GM_H1_PUBLIC_ORIGIN", &c.NativePublic.H1}, {"GM_H1_TLS_PUBLIC_ORIGIN", &c.NativePublic.H1TLS}, {"GM_H2_PUBLIC_ORIGIN", &c.NativePublic.H2}, {"GM_H3_PUBLIC_ORIGIN", &c.NativePublic.H3},
 		{"GM_SERVER_NAME", &c.ServerName}, {"GM_SERVER_LOCATION", &c.ServerLocation},
+		{"GM_AUTH_MODE", &c.Auth.Mode}, {"GM_AUTH_PUBLIC_URL", &c.Auth.PublicURL},
+		{"GM_AUTH_PASSWORD_HASH", &c.Auth.PasswordHash}, {"GM_AUTH_PASSWORD_HASH_FILE", &c.Auth.PasswordHashFile},
+		{"GM_AUTH_OIDC_ISSUER", &c.Auth.OIDCIssuer}, {"GM_AUTH_OIDC_CLIENT_ID", &c.Auth.OIDCClientID},
+		{"GM_AUTH_OIDC_CLIENT_SECRET", &c.Auth.OIDCClientSecret}, {"GM_AUTH_OIDC_CLIENT_SECRET_FILE", &c.Auth.OIDCSecretFile},
+		{"GM_AUTH_OIDC_PROVIDER_NAME", &c.Auth.OIDCProviderName},
 	} {
 		if v, ok := os.LookupEnv(e.name); ok {
 			*e.dst = strings.TrimSpace(v)
+			if strings.HasPrefix(e.name, "GM_AUTH_") && e.name != "GM_AUTH_MODE" {
+				c.Auth.Explicit = true
+			}
 		}
+	}
+	if v, ok := os.LookupEnv("GM_AUTH_OIDC_ALLOWED_GROUPS"); ok {
+		c.Auth.Explicit = true
+		c.Auth.OIDCAllowedGroups = splitList(v)
 	}
 	if v, ok := os.LookupEnv("GM_ADVERTISED_NATIVE_ENDPOINTS"); ok {
 		set, err := ParseAdvertisedNative(v)
@@ -213,6 +242,9 @@ func validOrigin(value, scheme string, self bool) bool {
 }
 
 func (c Config) Validate() error {
+	if err := c.validateAuth(); err != nil {
+		return err
+	}
 	for _, v := range []struct {
 		name  string
 		value int
@@ -288,6 +320,100 @@ func (c Config) Validate() error {
 	}
 	if !c.NativeAdvertised(NativeH1Clear) && !c.NativeAdvertised(NativeH1TLS) && !c.NativeAdvertised(NativeH2) && !c.NativeAdvertised(NativeH3) && len(c.Public.Both) == 0 && len(c.Public.Throughput) == 0 {
 		return fmt.Errorf("configuration advertises no throughput endpoint")
+	}
+	return nil
+}
+
+func (c Config) validateAuth() error {
+	a := c.Auth
+	switch a.Mode {
+	case "off", "password", "oidc", "hybrid":
+	default:
+		return fmt.Errorf("GM_AUTH_MODE must be off, password, oidc, or hybrid")
+	}
+	configured := a.Explicit || a.PublicURL != "" || a.PasswordHash != "" || a.PasswordHashFile != "" || a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0 || a.OIDCProviderName != "Authelia"
+	if a.Mode == "off" {
+		if configured {
+			return fmt.Errorf("authentication settings require GM_AUTH_MODE to be enabled")
+		}
+		return nil
+	}
+	if !validOrigin(a.PublicURL, "https", false) {
+		return fmt.Errorf("GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment")
+	}
+	publicURL, _ := url.Parse(a.PublicURL)
+	if publicURL.Port() == "443" {
+		return fmt.Errorf("GM_AUTH_PUBLIC_URL must omit the default HTTPS port")
+	}
+	if a.PasswordHash != "" && a.PasswordHashFile != "" {
+		return fmt.Errorf("GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive")
+	}
+	if a.OIDCClientSecret != "" && a.OIDCSecretFile != "" {
+		return fmt.Errorf("GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive")
+	}
+	wantsPassword := a.Mode == "password" || a.Mode == "hybrid"
+	if wantsPassword != (a.PasswordHash != "" || a.PasswordHashFile != "") {
+		if wantsPassword {
+			return fmt.Errorf("password authentication requires exactly one password hash source")
+		}
+		return fmt.Errorf("password hash configured while password authentication is disabled")
+	}
+	wantsOIDC := a.Mode == "oidc" || a.Mode == "hybrid"
+	hasOIDC := a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0
+	oidcComplete := a.OIDCIssuer != "" && a.OIDCClientID != "" && (a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
+	if wantsOIDC && !oidcComplete {
+		return fmt.Errorf("OIDC authentication requires issuer, client ID, one client secret source, and allowed groups")
+	}
+	if !wantsOIDC && hasOIDC {
+		return fmt.Errorf("OIDC settings configured while OIDC authentication is disabled")
+	}
+	issuer, issuerErr := url.Parse(a.OIDCIssuer)
+	if wantsOIDC && (issuerErr != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "") {
+		return fmt.Errorf("GM_AUTH_OIDC_ISSUER must be an HTTPS origin with no path, query, or fragment")
+	}
+	if wantsOIDC && strings.TrimSpace(a.OIDCProviderName) == "" {
+		return fmt.Errorf("GM_AUTH_OIDC_PROVIDER_NAME must not be empty")
+	}
+	if len(a.OIDCProviderName) > 64 {
+		return fmt.Errorf("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters")
+	}
+	for _, r := range a.OIDCProviderName {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters")
+		}
+	}
+	public := publicURL
+	check := func(name, value string) error {
+		if value == "" || value == "self" {
+			return nil
+		}
+		u, err := url.Parse(value)
+		if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), public.Hostname()) {
+			return fmt.Errorf("%s must use HTTPS and the canonical authentication hostname", name)
+		}
+		return nil
+	}
+	if c.NativeAdvertised(NativeH1Clear) {
+		return fmt.Errorf("clear HTTP/1.1 cannot be advertised when authentication is enabled")
+	}
+	for _, v := range []struct{ name, value string }{
+		{"GM_H1_TLS_PUBLIC_ORIGIN", c.NativePublic.H1TLS}, {"GM_H2_PUBLIC_ORIGIN", c.NativePublic.H2}, {"GM_H3_PUBLIC_ORIGIN", c.NativePublic.H3},
+	} {
+		if err := check(v.name, v.value); err != nil {
+			return err
+		}
+	}
+	for _, v := range []struct {
+		name   string
+		values []string
+	}{
+		{"GM_PUBLIC_ORIGINS", c.Public.Both}, {"GM_PUBLIC_THROUGHPUT_ORIGINS", c.Public.Throughput}, {"GM_PUBLIC_LATENCY_ORIGINS", c.Public.Latency},
+	} {
+		for _, value := range v.values {
+			if err := check(v.name, value); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

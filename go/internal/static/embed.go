@@ -5,6 +5,7 @@
 package static
 
 import (
+	"bytes"
 	"embed"
 	"io"
 	"io/fs"
@@ -25,6 +26,38 @@ func Handler() http.Handler {
 		panic(err)
 	}
 	return handlerFor(sub)
+}
+
+// AuthenticatedHandler serves the same build while marking only protected
+// index responses. Assets remain byte-identical and the public-mode handler is
+// unchanged.
+func AuthenticatedHandler() http.Handler {
+	sub, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		panic(err)
+	}
+	return handlerForAuthenticated(sub)
+}
+
+func handlerForAuthenticated(sub fs.FS) http.Handler {
+	base := handlerFor(sub)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+		if name != "" && name != "." && path.Ext(name) != "" {
+			base.ServeHTTP(w, r)
+			return
+		}
+		b, err := fs.ReadFile(sub, "index.html")
+		if err != nil {
+			base.ServeHTTP(w, r)
+			return
+		}
+		marker := []byte(`<meta name="graphite-meter-auth" content="enabled">`)
+		b = bytes.Replace(b, []byte("</head>"), append(marker, []byte("</head>")...), 1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(b)
+	})
 }
 
 // handlerFor builds the SPA-fallback handler over fsys. Split out from

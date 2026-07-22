@@ -3,8 +3,10 @@ package endpoint
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -43,11 +45,17 @@ func (r *Registry) RegisterWS(path string, e Endpoint) {
 // the server's run context, so srv.Shutdown cancels it and in-flight bus handlers
 // (conn.Read/Write) return promptly instead of hanging the shutdown window.
 func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
+	r.MountWithOrigin(parent, mux, "")
+}
+
+// MountWithOrigin restricts browser cross-origin measurement access to one
+// canonical authenticated UI origin. An empty origin preserves public mode.
+func (r *Registry) MountWithOrigin(parent context.Context, mux *http.ServeMux, origin string) {
 	for path, e := range r.httpEndpoints {
-		mux.Handle(path, httpAdapter(e))
+		mux.Handle(path, httpAdapterWithOrigin(e, origin))
 	}
 	for path, e := range r.wsEndpoints {
-		mux.Handle(path, wsAdapter(parent, e))
+		mux.Handle(path, wsAdapterWithOrigin(parent, e, origin))
 	}
 }
 
@@ -58,10 +66,25 @@ func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 // measurement bus (app on :7246 measuring against :7248), so there is no session
 // state for a forged origin to abuse.
 func wsAdapter(parent context.Context, e Endpoint) http.Handler {
+	return wsAdapterWithOrigin(parent, e, "")
+}
+
+func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if allowedOrigin != "" && r.Header.Get("Origin") != "" && r.Header.Get("Origin") != allowedOrigin {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			InsecureSkipVerify: true,
-			CompressionMode:    websocket.CompressionDisabled,
+			InsecureSkipVerify: allowedOrigin == "",
+			OriginPatterns: func() []string {
+				if allowedOrigin == "" {
+					return nil
+				}
+				u, _ := url.Parse(allowedOrigin)
+				return []string{u.Host}
+			}(),
+			CompressionMode: websocket.CompressionDisabled,
 		})
 		if err != nil {
 			return // Accept already wrote the handshake-failure response
@@ -77,11 +100,20 @@ func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 		} else {
 			ctx, cancel = context.WithCancel(parent)
 		}
+		if allowedOrigin != "" {
+			stopRequest := context.AfterFunc(r.Context(), cancel)
+			defer stopRequest()
+		}
 		defer cancel()
 		defer conn.CloseNow()
 
 		s := transport.NewWebSocketSession(ctx, conn, r.URL.Query())
-		if err := e.Handle(s); err != nil {
+		err = e.Handle(s)
+		if allowedOrigin != "" && auth.SessionEnded(r.Context()) {
+			conn.Close(websocket.StatusPolicyViolation, "authentication required")
+			return
+		}
+		if err != nil {
 			conn.Close(websocket.StatusInternalError, "handler error")
 			return
 		}
@@ -92,9 +124,11 @@ func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 // httpAdapter wraps an Endpoint as an http.Handler: it applies the global CORS
 // + timing headers, short-circuits CORS preflight OPTIONS, and runs the
 // endpoint against an httpSession.
-func httpAdapter(e Endpoint) http.Handler {
+func httpAdapter(e Endpoint) http.Handler { return httpAdapterWithOrigin(e, "") }
+
+func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setCommonHeaders(w)
+		setCommonHeaders(w, origin)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -109,8 +143,18 @@ func httpAdapter(e Endpoint) http.Handler {
 // setCommonHeaders applies permissive CORS and Timing-Allow-Origin so the
 // client can measure cross-origin (app on :7246, measuring against :7248) with
 // accurate Resource Timing.
-func setCommonHeaders(w http.ResponseWriter) {
+func setCommonHeaders(w http.ResponseWriter, origin string) {
 	h := w.Header()
+	if origin != "" {
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token")
+		h.Set("Access-Control-Expose-Headers", "Graphite-Meter-Auth, Graphite-Meter-Auth-URL")
+		h.Set("Timing-Allow-Origin", origin)
+		h.Add("Vary", "Origin")
+		return
+	}
 	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	h.Set("Access-Control-Allow-Headers", "*")

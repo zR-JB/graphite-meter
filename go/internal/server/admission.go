@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -27,6 +28,9 @@ func newRequestAdmission(globalMax, clientMax int, maxLifetime time.Duration) *r
 }
 
 func clientKey(r *http.Request, trusted []netip.Prefix) string {
+	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
+		return "principal:" + p.Subject
+	}
 	addr := transport.ResolveClientAddress(r, trusted).Addr.Unmap()
 	if !addr.IsValid() {
 		return "unknown"
@@ -83,7 +87,7 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.
 		}
 		release, status := a.acquire(clientKey(r, trusted))
 		if status != 0 {
-			setAdmissionHeaders(w)
+			setAdmissionHeaders(w, r)
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, http.StatusText(status), status)
 			return
@@ -102,8 +106,17 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.
 	})
 }
 
-func setAdmissionHeaders(w http.ResponseWriter) {
+func setAdmissionHeaders(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
+	if _, ok := auth.PrincipalFromContext(r.Context()); ok {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Allow-Credentials", "true")
+			h.Set("Timing-Allow-Origin", origin)
+			h.Add("Vary", "Origin")
+		}
+		return
+	}
 	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 	h.Set("Access-Control-Allow-Headers", "*")

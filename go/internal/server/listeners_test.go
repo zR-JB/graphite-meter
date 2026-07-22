@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -10,8 +12,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
+
+type observedBody struct {
+	reader *bytes.Reader
+	read   int
+}
+
+func (b *observedBody) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	b.read += n
+	return n, err
+}
 
 func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 	cfg := config.Default()
@@ -91,6 +105,56 @@ func TestH1MountsSPAAndDiscovery(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s status = %d, want 200", path, rec.Code)
 		}
+	}
+}
+
+func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
+	hash, err := auth.HashPassword("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authn, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		topology muxTopology
+		listener auth.Listener
+		path     string
+		proto    int
+	}{
+		{"h1-ui", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/", 1},
+		{"h1-static", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/asset.js", 1},
+		{"h1-upload", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/upload", 1},
+		{"h2", muxTopology{transfers: true, requiredProto: 2}, auth.Listener{}, "/download", 2},
+		{"h3-bootstrap", muxTopology{bootstrap: true}, auth.Listener{}, "/probe", 1},
+		{"h3", muxTopology{transfers: true}, auth.Listener{}, "/upload", 3},
+		{"websocket", muxTopology{latency: true}, auth.Listener{}, "/ws/ping", 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := &observedBody{reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
+			mux := listenerMuxConfigured(context.Background(), e, test.topology, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
+			handler := authn.Wrap(mux, test.listener)
+			req := httptest.NewRequest(http.MethodPost, "https://meter.example"+test.path, body)
+			req.Host = "meter.example"
+			req.TLS = &tls.ConnectionState{}
+			req.ProtoMajor = test.proto
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusForbidden || body.read != 0 {
+				t.Fatalf("status=%d body-read=%d", recorder.Code, body.read)
+			}
+		})
+	}
+	if stats := e.admission.stats(); stats.active != 0 || stats.peak != 0 {
+		t.Fatalf("unauthenticated requests reached admission: %+v", stats)
 	}
 }
 

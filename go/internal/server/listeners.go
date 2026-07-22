@@ -17,6 +17,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
@@ -104,6 +105,10 @@ func listenerMux(ctx context.Context, e *endpoints, topology muxTopology) *http.
 }
 
 func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler) *http.ServeMux {
+	return listenerMuxConfigured(ctx, e, topology, spa, nil)
+}
+
+func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler, authn *auth.Service) *http.ServeMux {
 	reg := endpoint.NewRegistry()
 	if topology.discovery {
 		reg.RegisterHTTP("/preflight", e.preflight)
@@ -129,7 +134,14 @@ func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology,
 		reg.RegisterWS("/ws/ping", e.ping)
 	}
 	inner := http.NewServeMux()
-	reg.Mount(ctx, inner)
+	if authn != nil && authn.Enabled() {
+		reg.MountWithOrigin(ctx, inner, authn.PublicOrigin())
+	} else {
+		reg.Mount(ctx, inner)
+	}
+	if topology.spa && authn != nil {
+		authn.Mount(inner)
+	}
 	if topology.spa {
 		inner.Handle("/", spa)
 	}
@@ -153,14 +165,24 @@ func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	}}
 }
 
+func hardenAuthenticatedServer(s *http.Server, enabled bool) {
+	if enabled {
+		s.IdleTimeout = 60 * time.Second
+		s.MaxHeaderBytes = 32 << 10
+	}
+}
+
 // Run binds every configured listener only after certificate validation and
 // shuts the logical server down as one unit.
 func Run(ctx context.Context, cfg *config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	authn, err := auth.New(ctx, cfg.Auth, cfg.TrustedProxies)
+	if err != nil {
+		return err
+	}
 	var cm *certificateManager
-	var err error
 	if cfg.Native.H1TLS != "" || cfg.Native.H2 != "" || cfg.Native.H3 != "" {
 		if cm, err = newCertificateManager(cfg); err != nil {
 			return err
@@ -172,12 +194,18 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
+	spa := static.Handler()
+	if authn.Enabled() {
+		spa = static.AuthenticatedHandler()
+	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
-	h1 := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}), h1p)
+	h1mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, authn)
+	h1 := baseServer(authn.Wrap(h1mux, auth.Listener{UI: true, Clear: true}), h1p)
+	hardenAuthenticatedServer(h1, authn.Enabled())
 	h1ln, err := net.Listen("tcp", cfg.Native.H1)
 	if err != nil {
 		return err
@@ -192,11 +220,16 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.Native.H1, network: "tcp",
 		run: func() error { return serve(admittedListener{Listener: h1ln, admission: connections}, h1) }, stop: h1.Shutdown,
 	}}
+	if authn.Enabled() {
+		services[0].name = "HTTP/1.1 clear: trusted proxy upstream or HTTPS redirect only"
+	}
 
 	if cfg.Native.H1TLS != "" {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
-		s := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
+		mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, authn)
+		s := baseServer(authn.Wrap(mux, auth.Listener{UI: true}), p)
+		hardenAuthenticatedServer(s, authn.Enabled())
 		ln, err := net.Listen("tcp", cfg.Native.H1TLS)
 		if err != nil {
 			closeOpened()
@@ -213,7 +246,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Native.H2 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
-		s := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
+		mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), authn)
+		s := baseServer(authn.Wrap(mux, auth.Listener{}), p)
+		hardenAuthenticatedServer(s, authn.Enabled())
 		ln, err := net.Listen("tcp", cfg.Native.H2)
 		if err != nil {
 			closeOpened()
@@ -229,7 +264,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Native.H3 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
-		bootstrap := baseServer(listenerMux(ctx, e, muxTopology{bootstrap: true}), p)
+		bootstrapMux := listenerMuxConfigured(ctx, e, muxTopology{bootstrap: true}, static.Handler(), authn)
+		bootstrap := baseServer(authn.Wrap(bootstrapMux, auth.Listener{}), p)
+		hardenAuthenticatedServer(bootstrap, authn.Enabled())
 		ln, err := net.Listen("tcp", cfg.Native.H3)
 		if err != nil {
 			closeOpened()
@@ -237,7 +274,18 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		}
 		opened = append(opened, ln)
 		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
-		h3 := &http3.Server{Addr: cfg.Native.H3, TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+		h3mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, static.Handler(), authn)
+		quicConfig := transport.NewQUICConfig()
+		if authn.Enabled() {
+			quicConfig.HandshakeIdleTimeout = 10 * time.Second
+			quicConfig.MaxIdleTimeout = 60 * time.Second
+			quicConfig.MaxIncomingStreams = 256
+			quicConfig.MaxIncomingUniStreams = 32
+		}
+		h3 := &http3.Server{Addr: cfg.Native.H3, TLSConfig: cm.tlsConfig(), QUICConfig: quicConfig, Handler: authn.Wrap(h3mux, auth.Listener{})}
+		if authn.Enabled() {
+			h3.MaxHeaderBytes = 32 << 10
+		}
 		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
 		pc, err := net.ListenPacket("udp", cfg.Native.H3)
 		if err != nil {
