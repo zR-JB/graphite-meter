@@ -595,9 +595,15 @@ func (s *Service) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute))
-	data := map[string]any{"Styles": authStyles, "CSRF": csrf, "Password": s.cfg.Mode == "password" || s.cfg.Mode == "hybrid", "OIDC": s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid", "OIDCReady": s.oidc != nil && s.oidc.ready(), "Provider": s.cfg.OIDCProviderName, "Error": r.URL.Query().Get("error") != "", "Expired": r.URL.Query().Get("reason") == "expired", "Challenge": r.URL.Query().Get("challenge")}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = s.loginTemplate.Execute(w, data)
+	data := loginView{
+		Styles: authStyles, CSRF: csrf,
+		Password:  s.cfg.Mode == "password" || s.cfg.Mode == "hybrid",
+		OIDC:      s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid",
+		OIDCReady: s.oidc != nil && s.oidc.ready(), Provider: s.cfg.OIDCProviderName,
+		Error: r.URL.Query().Get("error") != "", Expired: r.URL.Query().Get("reason") == "expired",
+		Challenge: r.URL.Query().Get("challenge"),
+	}
+	renderLogin(w, s.loginTemplate, data)
 }
 
 func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
