@@ -22,6 +22,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"golang.org/x/oauth2"
 )
 
 func testService(t *testing.T) *Service {
@@ -199,6 +200,27 @@ func TestAuthPagesPreserveSameOriginFormOrigin(t *testing.T) {
 	authenticatedSecurityHeaders(h)
 	if got := h.Get("Referrer-Policy"); got != "same-origin" {
 		t.Fatalf("authenticated Referrer-Policy = %q, want same-origin", got)
+	}
+}
+
+func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
+	s := testService(t)
+	s.oidc = &oidcState{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "https://login.example:8443/oauth2/authorize"}}}
+	h := http.Header{}
+	s.loginSecurityHeaders(h)
+	policy := h.Get("Content-Security-Policy")
+	if !strings.Contains(policy, "form-action 'self' https://login.example:8443;") {
+		t.Fatalf("authorization origin missing from CSP: %q", policy)
+	}
+	if strings.Contains(policy, "/oauth2/authorize") {
+		t.Fatalf("authorization path leaked into CSP source: %q", policy)
+	}
+
+	s.oidc.oauth.Endpoint.AuthURL = "http://login.example/authorize"
+	h = http.Header{}
+	s.loginSecurityHeaders(h)
+	if strings.Contains(h.Get("Content-Security-Policy"), "login.example") {
+		t.Fatalf("clear authorization origin accepted in CSP: %q", h.Get("Content-Security-Policy"))
 	}
 }
 
@@ -743,9 +765,10 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 
 func TestGeneratedAuthAssetsAreCurrent(t *testing.T) {
 	for path, generated := range map[string]string{
-		"../../../client/src/auth/auth.css":   authCSS,
-		"../../../client/src/auth/login.tmpl": loginHTML,
-		"../../../client/src/auth/cli.tmpl":   cliHTML,
+		"../../../client/src/auth/auth.css":      authCSS,
+		"../../../client/src/auth/login.tmpl":    loginHTML,
+		"../../../client/src/auth/cli.tmpl":      cliHTML,
+		"../../../client/src/auth/cli-done.tmpl": cliDoneHTML,
 	} {
 		contents, err := os.ReadFile(path)
 		if err != nil {

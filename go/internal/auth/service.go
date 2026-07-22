@@ -359,7 +359,22 @@ func securityHeaders(h http.Header) {
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'sha256-"+authStyleHash+"'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	h.Set("Content-Security-Policy", authPageCSP(""))
+}
+
+func authPageCSP(authorizationOrigin string) string {
+	formAction := "'self'"
+	if authorizationOrigin != "" {
+		formAction += " " + authorizationOrigin
+	}
+	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
+}
+
+func (s *Service) loginSecurityHeaders(h http.Header) {
+	securityHeaders(h)
+	if s.oidc != nil {
+		h.Set("Content-Security-Policy", authPageCSP(s.oidc.authorizationOrigin()))
+	}
 }
 
 func authenticatedSecurityHeaders(h http.Header) {
@@ -606,7 +621,7 @@ func (s *Service) csrfFailure(r *http.Request, field string) string {
 }
 
 func (s *Service) login(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
+	s.loginSecurityHeaders(w.Header())
 	csrf, err := randomToken(32)
 	if err != nil {
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)

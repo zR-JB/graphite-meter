@@ -56,6 +56,16 @@ func newOIDCState(cfg config.AuthConfig, secret string, verbose ...bool) *oidcSt
 	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: len(verbose) != 0 && verbose[0]}
 }
 func (o *oidcState) ready() bool { o.mu.RLock(); defer o.mu.RUnlock(); return o.provider != nil }
+func (o *oidcState) authorizationOrigin() string {
+	o.mu.RLock()
+	raw := o.oauth.Endpoint.AuthURL
+	o.mu.RUnlock()
+	u, err := url.Parse(raw)
+	if err != nil || !validProviderURL(raw) {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
 
 type limitTransport struct{ base http.RoundTripper }
 
@@ -200,7 +210,7 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 }
 
 func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
+	s.loginSecurityHeaders(w.Header())
 	if s.oidc == nil || !s.oidc.ready() {
 		s.oidcLoginFailure(w, r, "provider_not_ready")
 		return
