@@ -19,8 +19,11 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	conn, _, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
+	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
+		if authErr := authResponseError(response); authErr != nil {
+			return LatencyStats{}, authErr
+		}
 		return LatencyStats{}, err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")

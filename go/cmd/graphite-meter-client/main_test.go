@@ -683,6 +683,34 @@ func TestActivate_NetworkReset(t *testing.T) {
 	}
 }
 
+func TestAuthTokenResultIsBoundToCurrentServer(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.BaseURL = "https://new.example"
+	next, _ := m.Update(authTokenMsg{token: "secret", origin: "https://old.example"})
+	m = next.(model)
+	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
+		t.Fatal("stale authorization result was retained")
+	}
+
+	next, _ = m.Update(authTokenMsg{token: "secret", origin: "https://new.example"})
+	m = next.(model)
+	if m.cfg.AuthToken != "secret" || m.cfg.AuthOrigin != "https://new.example" {
+		t.Fatal("matching authorization result was not retained")
+	}
+}
+
+func TestChangingServerClearsAuthorization(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.BaseURL = "https://old.example"
+	m.cfg.AuthToken = "secret"
+	m.cfg.AuthOrigin = "https://old.example"
+	m.edit = editState{kind: editURL, field: "url", value: "https://new.example"}
+	m.commitEdit()
+	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
+		t.Fatal("authorization was retained after editing the server")
+	}
+}
+
 func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = editState{kind: editURL, field: "url", value: ""}
