@@ -48,7 +48,7 @@ import {
 } from "./rttEstimator";
 import { nextBackoff } from "./backoff";
 import { PingScheduler } from "./pingScheduler";
-import { redirectForCredentials } from "../../request-auth";
+import { sessionAuthenticationRequired } from "../../request-auth";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
  *  reporting on for the SAME warmed socket; `stop` closes everything. */
@@ -213,28 +213,10 @@ function connect(): void {
 }
 
 async function checkSessionThenReconnect(): Promise<void> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
-  try {
-    const target = new URL("/auth/session", self.location.origin);
-    const response = await fetch(target, {
-      cache: "no-store",
-      credentials: "include",
-      redirect: redirectForCredentials("include"),
-      signal: controller.signal,
-    });
-    if (
-      response.status === 403 &&
-      response.headers.get("Graphite-Meter-Auth") === "required"
-    ) {
-      post({ type: "auth-required" });
-      stopped = true;
-      return;
-    }
-  } catch {
-    // A provider/network failure is not proof of expiry; use normal backoff.
-  } finally {
-    clearTimeout(timeout);
+  if (await sessionAuthenticationRequired(self.location.origin)) {
+    post({ type: "auth-required" });
+    stopped = true;
+    return;
   }
   onDisconnect("websocket closed");
 }

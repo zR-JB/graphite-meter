@@ -2,7 +2,10 @@
  * target. Empty NDJSON lines are liveness heartbeats, never measurements. */
 
 import { nextBackoff } from "./backoff";
-import { redirectForCredentials } from "../../request-auth";
+import {
+  redirectForCredentials,
+  sessionAuthenticationRequired,
+} from "../../request-auth";
 
 type InMsg =
   | {
@@ -99,6 +102,15 @@ async function run(): Promise<void> {
         throw new Error(`progress returned HTTP ${response.status}`);
       await readEvents(response.body);
     } catch (error) {
+      if (
+        !stopped &&
+        credentials === "include" &&
+        (await sessionAuthenticationRequired(self.location.origin))
+      ) {
+        stopped = true;
+        post({ type: "auth-required" });
+        return;
+      }
       detail = String(error);
     } finally {
       controller = null;

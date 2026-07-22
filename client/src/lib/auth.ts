@@ -1,6 +1,10 @@
-import { redirectForCredentials } from "./request-auth";
+import {
+  redirectForCredentials,
+  sessionAuthenticationRequired,
+} from "./request-auth";
 
 let redirecting = false;
+let classifying: Promise<boolean> | null = null;
 
 export const authEnabled =
   typeof document !== "undefined" &&
@@ -23,6 +27,22 @@ export function csrfHeader(): Record<string, string> {
     .find((entry) => entry.startsWith(prefix))
     ?.slice(prefix.length);
   return value ? { "X-CSRF-Token": decodeURIComponent(value) } : {};
+}
+
+export async function classifyAuthenticationFailure(
+  localSignal?: AbortSignal,
+): Promise<boolean> {
+  if (!authEnabled || localSignal?.aborted) return false;
+  const pending = (classifying ??= sessionAuthenticationRequired(
+    location.origin,
+  ));
+  try {
+    const required = await pending;
+    if (required) requireAuthentication();
+    return required;
+  } finally {
+    if (classifying === pending) classifying = null;
+  }
 }
 
 export async function authenticatedFetch(

@@ -24,6 +24,7 @@ import { BUILD } from "../buildenv";
 import {
   authenticatedFetch,
   authEnabled,
+  classifyAuthenticationFailure,
   csrfHeader,
   requireAuthentication,
 } from "../auth";
@@ -376,6 +377,7 @@ export class RealBackend implements RunnerBackend {
           PerformanceResourceTiming | undefined
       )?.nextHopProtocol;
     } catch (cause) {
+      await classifyAuthenticationFailure(signal);
       throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
     this.#capabilities = pf.capabilities;
@@ -481,6 +483,7 @@ export class RealBackend implements RunnerBackend {
             break;
         }
       } catch (cause) {
+        await classifyAuthenticationFailure(probeSignal);
         if (selected.protocol === "http3")
           throw new TransportUnavailableError("http3 transport unavailable", {
             cause,
@@ -536,18 +539,16 @@ export class RealBackend implements RunnerBackend {
           headers: this.#authHeaders(),
           signal,
         });
+        if (!latencyRes.ok)
+          throw new Error(`latency probe returned HTTP ${latencyRes.status}`);
+        latencyPathProbe = (await latencyRes.json()) as Probe;
       } catch (cause) {
+        await classifyAuthenticationFailure(signal);
         throw new TransportUnavailableError("latency probe request failed", {
           cause,
           role: "latency",
         });
       }
-      if (!latencyRes.ok)
-        throw new TransportUnavailableError(
-          `latency probe returned HTTP ${latencyRes.status}`,
-          { role: "latency" },
-        );
-      latencyPathProbe = (await latencyRes.json()) as Probe;
     }
 
     // Start the persistent idle keepalive (briskly at first) and use its first
@@ -982,6 +983,9 @@ export class RealBackend implements RunnerBackend {
         throw new Error("upload session returned no uploadId");
       }
       return body.uploadId;
+    } catch (cause) {
+      await classifyAuthenticationFailure(ctl.signal);
+      throw cause;
     } finally {
       clearTimeout(deadline);
       this.#abort?.signal.removeEventListener("abort", onRunAbort);

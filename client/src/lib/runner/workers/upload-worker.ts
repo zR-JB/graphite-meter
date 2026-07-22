@@ -68,7 +68,10 @@ import {
   fmtBytes,
   fmtMs,
 } from "../../debug";
-import { redirectForCredentials } from "../../request-auth";
+import {
+  redirectForCredentials,
+  sessionAuthenticationRequired,
+} from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** `debug`/`id` drive verbose per-stream logging only. */
@@ -319,6 +322,17 @@ async function run(url: string): Promise<void> {
       }
     } catch (err) {
       if (stopped) return; // aborted by stop() — a clean teardown, not an error
+      if (
+        credentials === "include" &&
+        (await sessionAuthenticationRequired(
+          self.location.origin,
+          abort.signal,
+        ))
+      ) {
+        stopped = true;
+        post({ type: "auth-required" });
+        return;
+      }
       post({ type: "error", recoverable: true, detail: String(err) });
       return; // the main thread decides whether to restart this lane
     }
