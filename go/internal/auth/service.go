@@ -356,7 +356,7 @@ func forbidden(w http.ResponseWriter) {
 }
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
-	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'sha256-"+authStyleHash+"'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
@@ -366,7 +366,7 @@ func authenticatedSecurityHeaders(h http.Header) {
 	h.Set("Strict-Transport-Security", "max-age=31536000")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
-	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 }
@@ -583,16 +583,26 @@ func SessionEnded(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), errSessionEnded)
 }
 
-func (s *Service) csrfOK(r *http.Request, field string) bool {
-	if r.Header.Get("Origin") != s.public.String() {
-		return false
+func (s *Service) csrfFailure(r *http.Request, field string) string {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return "origin_missing"
+	}
+	if origin != s.public.String() {
+		return "origin_mismatch"
 	}
 	c, err := r.Cookie(loginCookie)
 	if err != nil {
-		return false
+		return "cookie_missing"
 	}
 	v := r.FormValue(field)
-	return constantEqual(c.Value, v)
+	if v == "" {
+		return "token_missing"
+	}
+	if !constantEqual(c.Value, v) {
+		return "token_mismatch"
+	}
+	return ""
 }
 
 func (s *Service) login(w http.ResponseWriter, r *http.Request) {
@@ -626,8 +636,8 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		s.loginFailure(w, r)
 		return
 	}
-	if !s.csrfOK(r, "csrf") {
-		s.debugf("local password rejected reason=csrf")
+	if reason := s.csrfFailure(r, "csrf"); reason != "" {
+		s.debugf("local password rejected reason=csrf_" + reason)
 		s.loginFailure(w, r)
 		return
 	}

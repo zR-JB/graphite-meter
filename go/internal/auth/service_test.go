@@ -187,6 +187,58 @@ func TestCookieMutationRequiresOriginAndCSRF(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthPagesPreserveSameOriginFormOrigin(t *testing.T) {
+	h := http.Header{}
+	securityHeaders(h)
+	if got := h.Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("Referrer-Policy = %q, want same-origin", got)
+	}
+
+	h = http.Header{}
+	authenticatedSecurityHeaders(h)
+	if got := h.Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("authenticated Referrer-Policy = %q, want same-origin", got)
+	}
+}
+
+func TestLoginCSRFFailureReasons(t *testing.T) {
+	s := testService(t)
+	token := "abcdefghijklmnopqrstuvwxyz0123456789"
+	request := func(origin, cookie, form string) *http.Request {
+		body := url.Values{"csrf": {form}}.Encode()
+		r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/password", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		if cookie != "" {
+			r.AddCookie(&http.Cookie{Name: loginCookie, Value: cookie})
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+
+	for _, tc := range []struct {
+		name, origin, cookie, form, want string
+	}{
+		{"missing origin", "", token, token, "origin_missing"},
+		{"null origin", "null", token, token, "origin_mismatch"},
+		{"wrong origin", "https://wrong.example", token, token, "origin_mismatch"},
+		{"missing cookie", s.public.String(), "", token, "cookie_missing"},
+		{"missing token", s.public.String(), token, "", "token_missing"},
+		{"wrong token", s.public.String(), token, "different", "token_mismatch"},
+		{"valid", s.public.String(), token, token, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := s.csrfFailure(request(tc.origin, tc.cookie, tc.form), "csrf"); got != tc.want {
+				t.Fatalf("csrfFailure = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 func TestCookieWebSocketRequiresExactOrigin(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})

@@ -206,8 +206,12 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	if err := r.ParseForm(); err != nil || !s.csrfOK(r, "csrf") {
-		s.oidcLoginFailure(w, r, "start_request")
+	if err := r.ParseForm(); err != nil {
+		s.oidcLoginFailure(w, r, "start_request_malformed_form")
+		return
+	}
+	if reason := s.csrfFailure(r, "csrf"); reason != "" {
+		s.oidcLoginFailure(w, r, "start_request_csrf_"+reason)
 		return
 	}
 	state, err := randomToken(32)
