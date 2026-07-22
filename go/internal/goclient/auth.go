@@ -82,9 +82,9 @@ func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	if err != nil {
 		return nil, errors.New("authenticated operation requires an HTTPS -url")
 	}
-	login, err := url.Parse(authURL)
-	if err != nil || login.Scheme != "https" || !strings.EqualFold(login.Host, base.Host) || login.Path != "/login" || login.User != nil || login.RawQuery != "" || login.ForceQuery || login.Fragment != "" {
-		return nil, errors.New("server returned an invalid authentication URL")
+	login, err := authenticationLoginURL(base, authURL)
+	if err != nil {
+		return nil, err
 	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -109,6 +109,14 @@ func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	p := &PendingAuthorization{BrowserURL: login.String(), Code: code, Origin: issuingOrigin, verifier: verifier, tokenURL: token.String(), client: client, close: tr.CloseIdleConnections}
 	openBrowser(p.BrowserURL)
 	return p, nil
+}
+
+func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
+	login, err := url.Parse(raw)
+	if err != nil || login.Scheme != "https" || !strings.EqualFold(login.Hostname(), base.Hostname()) || login.Path != "/login" || login.User != nil || login.RawQuery != "" || login.ForceQuery || login.Fragment != "" {
+		return nil, errors.New("server returned an invalid authentication URL")
+	}
+	return login, nil
 }
 
 func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {

@@ -5,9 +5,28 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestAuthenticationLoginURLAcceptsCanonicalHostnameOnAnotherPort(t *testing.T) {
+	base, _ := url.Parse("https://meter.example:7248")
+	login, err := authenticationLoginURL(base, "https://meter.example:7247/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if login.Host != "meter.example:7247" {
+		t.Fatalf("Host = %q", login.Host)
+	}
+}
+
+func TestAuthenticationLoginURLRejectsDifferentHostname(t *testing.T) {
+	base, _ := url.Parse("https://meter.example:7248")
+	if _, err := authenticationLoginURL(base, "https://login.example:7247/login"); err == nil {
+		t.Fatal("accepted authentication URL on another hostname")
+	}
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
