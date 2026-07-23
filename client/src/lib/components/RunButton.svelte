@@ -1,7 +1,7 @@
 <script lang="ts">
   // Primary start/abort action.
   import { store } from "../state/store.svelte";
-  import { engage } from "../runner/wire.svelte";
+  import { engage } from "../runner/engine.svelte";
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 

@@ -2,7 +2,7 @@
   // Stage rail: maps store/core stage state into toggleable progress segments
   // for latency, download, upload, and optional bidirectional.
   import { MEASURED_STAGES, store, type StageKey } from "../state/store.svelte";
-  import { applyLiveRunConfig } from "../runner/wire.svelte";
+  import { applyLiveRunConfig } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   // Dev-only anomaly controls, tree-shaken from real-only builds.
-  import { injectAnomaly } from "../../runner/wire.svelte";
+  import { injectAnomaly } from "../../runner/engine.svelte";
   import { tooltip } from "../../actions/tooltip";
   import type { RunnerAnomaly } from "../../runner/contract";
 

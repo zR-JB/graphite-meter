@@ -1,6 +1,6 @@
 <script lang="ts">
   import { store } from "../../state/store.svelte";
-  import { validateConnections } from "../../runner/wire.svelte";
+  import { validateConnections } from "../../runner/engine.svelte";
   import type { ConnectionRole } from "../../runner/connectionModel";
   import {
     latencyOptionView,

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
   import type { RunnerConfig } from "../../runner/contract";
-  import { applyLiveRunConfig } from "../../runner/wire.svelte";
+  import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
   import { JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";

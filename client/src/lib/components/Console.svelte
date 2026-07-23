@@ -3,7 +3,7 @@
   // theme toggle, and docked/flyout layout state.
   import { onMount, type Component } from "svelte";
   import { store } from "../state/store.svelte";
-  import { bootRunner, teardownRunner } from "../runner/wire.svelte";
+  import { bootRunner, teardownRunner } from "../runner/engine.svelte";
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -12,7 +12,7 @@
   import PhaseToast from "./PhaseToast.svelte";
   import ShortcutHints from "./ShortcutHints.svelte";
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
-  import { engage, returnToStart } from "../runner/wire.svelte";
+  import { engage, returnToStart } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { focusTrap } from "../actions/focusTrap";
