@@ -237,6 +237,31 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 	}
 }
 
+// A preparation attempt runs detached from the model, so starting a new one
+// must invalidate whatever the previous attempt is still about to answer.
+func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	superseded := m.prepareSeq
+
+	updated, _ := m.handleKey(keyRunes("v"))
+	m = updated.(model)
+	if m.prepareSeq == superseded {
+		t.Fatalf("recheck kept the preparation sequence at %d", m.prepareSeq)
+	}
+
+	updated, _ = m.Update(preparationMsg{seq: superseded, connection: &goclient.PreparedConnection{}})
+	m = updated.(model)
+	if m.prepareStatus != "checking" || m.prepared != nil {
+		t.Fatalf("superseded preparation was adopted: status=%q prepared=%v", m.prepareStatus, m.prepared)
+	}
+
+	updated, _ = m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}})
+	m = updated.(model)
+	if m.prepareStatus != "ready" || m.prepared == nil {
+		t.Fatalf("current preparation was not adopted: status=%q prepared=%v", m.prepareStatus, m.prepared)
+	}
+}
+
 func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
@@ -564,6 +589,131 @@ func TestHandleKey_ConfigureIgnoresTheRunScreensKeys(t *testing.T) {
 	}
 }
 
+func quitMsg(cmd tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd().(tea.QuitMsg)
+	return ok
+}
+
+// TestHandleKey_RoutesByScreenState pins which handler owns a key: an open
+// editor and the cancel prompt claim keys the screens below them also bind,
+// and quit outranks both.
+func TestHandleKey_RoutesByScreenState(t *testing.T) {
+	editing := func(m model) model {
+		m.edit = beginEdit(editURL, "url", "")
+		return m
+	}
+	cases := []struct {
+		name  string
+		setup func(model) model
+		key   tea.KeyMsg
+		check func(*testing.T, model, tea.Cmd)
+	}{
+		{
+			name: "? expands the help",
+			key:  keyRunes("?"),
+			check: func(t *testing.T, m model, _ tea.Cmd) {
+				if !m.help.ShowAll {
+					t.Error("help stayed collapsed")
+				}
+			},
+		},
+		{
+			name:  "an open editor takes ? as text",
+			setup: editing,
+			key:   keyRunes("?"),
+			check: func(t *testing.T, m model, _ tea.Cmd) {
+				if m.help.ShowAll || m.edit.input.Value() != "?" {
+					t.Errorf("help=%v field=%q, want the rune typed into the field", m.help.ShowAll, m.edit.input.Value())
+				}
+			},
+		},
+		{
+			name:  "an open editor takes q as text",
+			setup: editing,
+			key:   keyRunes("q"),
+			check: func(t *testing.T, m model, cmd tea.Cmd) {
+				if quitMsg(cmd) || m.edit.input.Value() != "q" {
+					t.Errorf("field=%q quit=%v, want the rune typed into the field", m.edit.input.Value(), quitMsg(cmd))
+				}
+			},
+		},
+		{
+			name:  "ctrl+c still quits from an open editor",
+			setup: editing,
+			key:   tea.KeyMsg{Type: tea.KeyCtrlC},
+			check: func(t *testing.T, _ model, cmd tea.Cmd) {
+				if !quitMsg(cmd) {
+					t.Error("ctrl+c did not quit")
+				}
+			},
+		},
+		{
+			name: "v rechecks the connection",
+			key:  keyRunes("v"),
+			check: func(t *testing.T, m model, _ tea.Cmd) {
+				if m.prepareSeq != 2 || m.prepareStatus != "checking" {
+					t.Errorf("seq=%d status=%q, want a second attempt", m.prepareSeq, m.prepareStatus)
+				}
+			},
+		},
+		{
+			name: "space activates the selected row",
+			setup: func(m model) model {
+				m.section, m.row = sectionServers, 1
+				return m
+			},
+			key: keyRunes(" "),
+			check: func(t *testing.T, m model, _ tea.Cmd) {
+				if m.cfg.BaseURL != serverPresets[1].url {
+					t.Errorf("BaseURL = %q, want %q", m.cfg.BaseURL, serverPresets[1].url)
+				}
+				if m.prepareSeq != 2 {
+					t.Errorf("seq = %d, want the new server checked", m.prepareSeq)
+				}
+			},
+		},
+		{
+			name: "r reaches the runner",
+			setup: func(m model) model {
+				m.cfg.Stages = goclient.StageSet{}
+				return m
+			},
+			key: keyRunes("r"),
+			check: func(t *testing.T, m model, _ tea.Cmd) {
+				if !strings.Contains(m.notice, "Enable at least one stage") {
+					t.Errorf("notice = %q, want the runner's refusal", m.notice)
+				}
+			},
+		},
+		{
+			name: "quit outranks the cancel prompt",
+			setup: func(m model) model {
+				m.mode, m.cancelPrompt = modeRun, true
+				return m
+			},
+			key: keyRunes("q"),
+			check: func(t *testing.T, _ model, cmd tea.Cmd) {
+				if !quitMsg(cmd) {
+					t.Error("q during the cancel prompt did not quit")
+				}
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			if c.setup != nil {
+				m = c.setup(m)
+			}
+			next, cmd := m.handleKey(c.key)
+			c.check(t, next.(model), cmd)
+		})
+	}
+}
+
 func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -808,6 +958,19 @@ func TestUpdate_PasteFillsTheURLField(t *testing.T) {
 	}
 }
 
+func TestUpdate_PasteLandsAtTheCursorOfAnOpenField(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.edit = beginEdit(editURL, "url", "meter.example:7247")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = next.(model)
+	next, _ = m.Update(keyPaste("https://"))
+	m = next.(model)
+	if want := "https://meter.example:7247"; m.edit.input.Value() != want {
+		t.Errorf("field after pasting at the line start = %q, want %q", m.edit.input.Value(), want)
+	}
+}
+
 func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionServers
@@ -970,6 +1133,47 @@ func TestCommitEdit_AutomaticStreams(t *testing.T) {
 	m.commitEdit()
 	if m.cfg.TransferStreams.AutomaticMax != 1 {
 		t.Fatalf("invalid automatic max changed to %d", m.cfg.TransferStreams.AutomaticMax)
+	}
+}
+
+// A recheck costs a round trip, so only a commit that moved the configuration
+// starts one.
+func TestHandleEditKey_ApplyRechecksOnlyWhatChanged(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	seq := m.prepareSeq
+
+	m.edit = beginEdit(editDuration, "download", "nope")
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.edit.kind != editDuration || m.prepareSeq != seq {
+		t.Fatalf("rejected commit: kind=%v seq=%d, want the field open and no recheck", m.edit.kind, m.prepareSeq)
+	}
+
+	m.edit = beginEdit(editDuration, "download", m.durationValue(2))
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.edit.kind != editNone || m.prepareSeq != seq {
+		t.Fatalf("commit of the current value: kind=%v seq=%d, want the field closed and no recheck", m.edit.kind, m.prepareSeq)
+	}
+
+	m.edit = beginEdit(editDuration, "download", "12s")
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if m.cfg.DownloadDuration != 12*time.Second {
+		t.Errorf("download duration = %v, want 12s", m.cfg.DownloadDuration)
+	}
+	if m.prepareSeq != seq+1 || m.prepareStatus != "checking" {
+		t.Errorf("seq=%d status=%q, want the changed configuration rechecked", m.prepareSeq, m.prepareStatus)
+	}
+}
+
+func TestCommitEdit_RetypingTheSameURLKeepsAuthorization(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.AuthToken, m.cfg.AuthOrigin = "grant", m.cfg.BaseURL
+	m.edit = beginEdit(editURL, "url", "  "+m.cfg.BaseURL+"  ")
+	m.commitEdit()
+	if m.cfg.AuthToken != "grant" {
+		t.Errorf("authorization dropped by retyping the same URL, token = %q", m.cfg.AuthToken)
 	}
 }
 
@@ -1780,6 +1984,88 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	m.apply(goclient.Event{Kind: goclient.EventError, Err: errors.New("upload failed")})
 	if m.stages[2].state != stageStopped {
 		t.Errorf("upload after the run failed = %v, want stopped", m.stages[2].state)
+	}
+}
+
+func TestPlannedStages(t *testing.T) {
+	cfg := goclient.DefaultConfig()
+	cfg.LatencyDuration = time.Second
+	cfg.DownloadDuration = 2 * time.Second
+	cfg.UploadDuration = 3 * time.Second
+	cfg.BidirectionalDuration = 4 * time.Second
+	cases := []struct {
+		name  string
+		stage goclient.StageSet
+		want  []stageProgress
+	}{
+		{"none", goclient.StageSet{}, nil},
+		{
+			name:  "engine order, not selection order",
+			stage: goclient.StageSet{Bidirectional: true, Upload: true, Download: true, Latency: true},
+			want: []stageProgress{
+				{name: "latency", duration: time.Second},
+				{name: "download", duration: 2 * time.Second},
+				{name: "upload", duration: 3 * time.Second},
+				{name: "bidirectional", duration: 4 * time.Second},
+			},
+		},
+		{
+			name:  "disabled stages leave no row",
+			stage: goclient.StageSet{Latency: true, Bidirectional: true},
+			want: []stageProgress{
+				{name: "latency", duration: time.Second},
+				{name: "bidirectional", duration: 4 * time.Second},
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg.Stages = c.stage
+			got := plannedStages(cfg)
+			if len(got) != len(c.want) {
+				t.Fatalf("stages = %+v, want %+v", got, c.want)
+			}
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Errorf("stage %d = %+v, want %+v", i, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestStageTimelineIgnoresWhatItCannotPlace(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.stages = plannedStages(m.cfg)
+
+	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download"}})
+	if m.stages[1].state != stagePending {
+		t.Errorf("download = %v after a result but no start, want pending", m.stages[1].state)
+	}
+
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Message: "measure"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Message: "cooldown"})
+	if m.stages[1].state != stageMeasuring {
+		t.Errorf("download = %v after an unnamed phase, want measuring", m.stages[1].state)
+	}
+
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "loaded-latency", Message: "measure"})
+	if m.stages[0].state != stagePending || m.stages[2].state != stagePending {
+		t.Errorf("a stage with no row disturbed the timeline: %+v", m.stages)
+	}
+}
+
+func TestEndOfRunStopsTheStageThatWasRunning(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.stages = plannedStages(m.cfg)
+	m.stages[0].state = stageDone
+	m.stages[1].state = stageMeasuring
+
+	next, _ := m.Update(doneMsg{err: errors.New("context canceled")})
+	m = next.(model)
+	if m.stages[0].state != stageDone || m.stages[1].state != stageStopped || m.stages[2].state != stagePending {
+		t.Errorf("timeline after a canceled run = %+v, want the running stage stopped only", m.stages)
 	}
 }
 
