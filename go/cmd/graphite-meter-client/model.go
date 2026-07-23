@@ -388,130 +388,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case spinner.TickMsg:
-		if !m.animating() {
-			return m, nil
-		}
-		m.now = msg.Time
-		for dir, sample := range m.rates {
-			m.disp[dir] += (sample.BytesPerSec - m.disp[dir]) * 0.35
-		}
-		var cmd tea.Cmd
-		m.spin, cmd = m.spin.Update(msg)
-		return m, cmd
+		return m.handleTick(msg)
 	case preparationMsg:
-		if msg.seq != m.prepareSeq {
-			return m, nil
-		}
-		var preparationErr *goclient.PreparationError
-		preflightDecoded := errors.As(msg.err, &preparationErr)
-		if preflightDecoded {
-			pf := preparationErr.Preflight
-			m.discovery = &pf
-		}
-		if msg.err != nil {
-			var authErr *goclient.AuthRequiredError
-			if errors.As(msg.err, &authErr) {
-				m.prepareStatus = "authorizing"
-				m.prepareStep = stepPreflight
-				if preflightDecoded {
-					m.prepareStep = stepOrigins
-				}
-				m.prepareError = ""
-				m.notice = "Authentication is required. Preparing browser approval…"
-				return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
-			}
-			m.prepareStatus = "failed"
-			m.prepareStep = stepReach
-			if preflightDecoded {
-				m.prepareStep = stepOrigins
-			} else {
-				m.discovery = nil
-			}
-			m.prepareError = msg.err.Error()
-			m.prepared = nil
-		} else {
-			m.prepareStatus = "ready"
-			m.prepareStep = stepReady
-			m.prepareError = ""
-			m.prepared = msg.connection
-			pf := msg.connection.Preflight
-			m.discovery = &pf
-		}
-		return m, nil
+		return m.handlePreparation(msg)
 	case authChallengeMsg:
-		if msg.seq != m.prepareSeq {
-			return m, nil
-		}
-		if msg.err != nil {
-			m.prepareStatus = "failed"
-			m.prepareError = msg.err.Error()
-			return m, nil
-		}
-		m.auth = msg.pending
-		m.authSince = time.Now()
-		m.now = m.authSince
-		m.notice = "Waiting for the browser approval."
-		return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
+		return m.handleAuthChallenge(msg)
 	case authTokenMsg:
-		if msg.seq != m.prepareSeq {
-			return m, nil
-		}
-		m.auth = nil
-		if msg.err != nil {
-			m.prepareStatus = "failed"
-			m.prepareError = msg.err.Error()
-			return m, nil
-		}
-		currentOrigin, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL)
-		if err != nil || !strings.EqualFold(currentOrigin, msg.origin) {
-			m.notice = "Server changed while approval was pending. Authorization was discarded."
-			return m.reprepare(nil)
-		}
-		m.cfg.AuthToken = msg.token
-		m.cfg.AuthOrigin = msg.origin
-		m.notice = "Client approved. Verifying authenticated transports…"
-		return m.reprepare(nil)
+		return m.handleAuthToken(msg)
 	case eventsMsg:
-		if msg.seq != m.runSeq {
-			return m, nil
-		}
-		m.now = time.Now()
-		for _, event := range msg.events {
-			m.apply(event)
-		}
-		if m.mode == modeRun && m.err == nil {
-			return m, waitEvents(m.runSeq, m.events)
-		}
+		return m.handleEvents(msg)
 	case doneMsg:
-		if msg.seq != m.runSeq {
-			return m, nil
-		}
-		var authErr *goclient.AuthRequiredError
-		if errors.As(msg.err, &authErr) {
-			if m.cancel != nil {
-				m.cancel()
-			}
-			m.complete = true
-			m.mode = modeConfigure
-			m.prepared = nil
-			m.prepareStatus = "authorizing"
-			if m.prepareStep < stepPreflight {
-				m.prepareStep = stepPreflight
-			}
-			m.notice = "Authentication expired. Preparing browser approval…"
-			return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
-		}
-		if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
-			m.err = msg.err
-			m.status = "error"
-		}
-		if msg.err != nil && strings.Contains(msg.err.Error(), "context canceled") {
-			m.status = "canceled"
-		}
-		m.stopStages()
-		m.complete = true
-		m.cancelPrompt = false
-		return m, nil
+		return m.handleDone(msg)
 	default:
 		// The clipboard read behind ctrl+v answers with a message only the text
 		// input understands.
@@ -521,6 +408,146 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	return m, nil
+}
+
+// handleTick advances the spinner and glides the displayed rates toward the
+// latest samples, once per animation frame.
+func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
+	if !m.animating() {
+		return m, nil
+	}
+	m.now = msg.Time
+	for dir, sample := range m.rates {
+		m.disp[dir] += (sample.BytesPerSec - m.disp[dir]) * 0.35
+	}
+	var cmd tea.Cmd
+	m.spin, cmd = m.spin.Update(msg)
+	return m, cmd
+}
+
+func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.prepareSeq {
+		return m, nil
+	}
+	var preparationErr *goclient.PreparationError
+	preflightDecoded := errors.As(msg.err, &preparationErr)
+	if preflightDecoded {
+		pf := preparationErr.Preflight
+		m.discovery = &pf
+	}
+	if msg.err != nil {
+		var authErr *goclient.AuthRequiredError
+		if errors.As(msg.err, &authErr) {
+			m.prepareStatus = "authorizing"
+			m.prepareStep = stepPreflight
+			if preflightDecoded {
+				m.prepareStep = stepOrigins
+			}
+			m.prepareError = ""
+			m.notice = "Authentication is required. Preparing browser approval…"
+			return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
+		}
+		m.prepareStatus = "failed"
+		m.prepareStep = stepReach
+		if preflightDecoded {
+			m.prepareStep = stepOrigins
+		} else {
+			m.discovery = nil
+		}
+		m.prepareError = msg.err.Error()
+		m.prepared = nil
+		return m, nil
+	}
+	m.prepareStatus = "ready"
+	m.prepareStep = stepReady
+	m.prepareError = ""
+	m.prepared = msg.connection
+	pf := msg.connection.Preflight
+	m.discovery = &pf
+	return m, nil
+}
+
+func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.prepareSeq {
+		return m, nil
+	}
+	if msg.err != nil {
+		m.prepareStatus = "failed"
+		m.prepareError = msg.err.Error()
+		return m, nil
+	}
+	m.auth = msg.pending
+	m.authSince = time.Now()
+	m.now = m.authSince
+	m.notice = "Waiting for the browser approval."
+	return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
+}
+
+func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.prepareSeq {
+		return m, nil
+	}
+	m.auth = nil
+	if msg.err != nil {
+		m.prepareStatus = "failed"
+		m.prepareError = msg.err.Error()
+		return m, nil
+	}
+	currentOrigin, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL)
+	if err != nil || !strings.EqualFold(currentOrigin, msg.origin) {
+		m.notice = "Server changed while approval was pending. Authorization was discarded."
+		return m.reprepare(nil)
+	}
+	m.cfg.AuthToken = msg.token
+	m.cfg.AuthOrigin = msg.origin
+	m.notice = "Client approved. Verifying authenticated transports…"
+	return m.reprepare(nil)
+}
+
+func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.runSeq {
+		return m, nil
+	}
+	m.now = time.Now()
+	for _, event := range msg.events {
+		m.apply(event)
+	}
+	if m.mode == modeRun && m.err == nil {
+		return m, waitEvents(m.runSeq, m.events)
+	}
+	return m, nil
+}
+
+func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.runSeq {
+		return m, nil
+	}
+	var authErr *goclient.AuthRequiredError
+	if errors.As(msg.err, &authErr) {
+		if m.cancel != nil {
+			m.cancel()
+		}
+		m.complete = true
+		m.mode = modeConfigure
+		m.prepared = nil
+		m.prepareStatus = "authorizing"
+		if m.prepareStep < stepPreflight {
+			m.prepareStep = stepPreflight
+		}
+		m.notice = "Authentication expired. Preparing browser approval…"
+		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
+	}
+	if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
+		m.err = msg.err
+		m.status = "error"
+	}
+	if msg.err != nil && strings.Contains(msg.err.Error(), "context canceled") {
+		m.status = "canceled"
+	}
+	m.stopStages()
+	m.complete = true
+	m.cancelPrompt = false
 	return m, nil
 }
 
@@ -700,95 +727,94 @@ func (m *model) editAccepted(notice string) {
 
 func (m *model) commitEdit() {
 	raw := strings.TrimSpace(m.edit.input.Value())
-	field := m.edit.field
-
 	switch m.edit.kind {
 	case editURL:
-		if raw == "" {
-			m.editRejected("Server URL cannot be empty.")
-			return
-		}
-		// A bare host means HTTPS: the presets carry their schemes, so what is
-		// typed without one is a remote host, and remote servers answer TLS.
-		if !strings.Contains(raw, "://") {
-			raw = "https://" + raw
-		}
-		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
-			return
-		}
-		if raw != m.cfg.BaseURL {
-			m.cfg.AuthToken = ""
-			m.cfg.AuthOrigin = ""
-		}
-		m.cfg.BaseURL = raw
-		m.editAccepted("Custom server URL set.")
+		m.commitURL(raw)
 	case editDuration:
-		// A bare number is seconds, so "10" works as well as "10s".
-		if n, err := strconv.ParseFloat(raw, 64); err == nil {
-			raw = fmt.Sprintf("%gs", n)
-		}
-		d, err := time.ParseDuration(raw)
-		if err != nil || d < 0 {
-			m.editRejected("Use a duration like 800ms, 4s, or 1m — a bare number is seconds.")
-			return
-		}
-		switch field {
-		case "warmup":
-			m.cfg.Warmup = d
-		case "latency":
-			if d == 0 {
-				m.editRejected("Latency duration must be greater than zero.")
-				return
-			}
-			m.cfg.LatencyDuration = d
-		case "download":
-			if d == 0 {
-				m.editRejected("Download duration must be greater than zero.")
-				return
-			}
-			m.cfg.DownloadDuration = d
-		case "upload":
-			if d == 0 {
-				m.editRejected("Upload duration must be greater than zero.")
-				return
-			}
-			m.cfg.UploadDuration = d
-		case "bidirectional":
-			if d == 0 {
-				m.editRejected("Bidirectional duration must be greater than zero.")
-				return
-			}
-			m.cfg.BidirectionalDuration = d
-		case "ping":
-			if d == 0 {
-				m.editRejected("Ping interval must be greater than zero.")
-				return
-			}
-			m.cfg.PingInterval = d
-		}
-		m.editAccepted("Timing updated.")
+		m.commitDuration(raw, m.edit.field)
 	case editInt:
-		n, err := strconv.Atoi(raw)
-		min := 0
+		m.commitInt(raw, m.edit.field)
+	}
+}
+
+func (m *model) commitURL(raw string) {
+	if raw == "" {
+		m.editRejected("Server URL cannot be empty.")
+		return
+	}
+	// A bare host means HTTPS: the presets carry their schemes, so what is
+	// typed without one is a remote host, and remote servers answer TLS.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
+		return
+	}
+	if raw != m.cfg.BaseURL {
+		m.cfg.AuthToken = ""
+		m.cfg.AuthOrigin = ""
+	}
+	m.cfg.BaseURL = raw
+	m.editAccepted("Custom server URL set.")
+}
+
+func (m *model) commitDuration(raw, field string) {
+	// A bare number is seconds, so "10" works as well as "10s".
+	if n, err := strconv.ParseFloat(raw, 64); err == nil {
+		raw = fmt.Sprintf("%gs", n)
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		m.editRejected("Use a duration like 800ms, 4s, or 1m — a bare number is seconds.")
+		return
+	}
+	// warmup may be zero; every stage window and the ping interval must be
+	// positive. An empty zeroError marks the fields that accept zero.
+	type slot struct {
+		ptr       *time.Duration
+		zeroError string
+	}
+	slots := map[string]slot{
+		"warmup":        {&m.cfg.Warmup, ""},
+		"latency":       {&m.cfg.LatencyDuration, "Latency duration must be greater than zero."},
+		"download":      {&m.cfg.DownloadDuration, "Download duration must be greater than zero."},
+		"upload":        {&m.cfg.UploadDuration, "Upload duration must be greater than zero."},
+		"bidirectional": {&m.cfg.BidirectionalDuration, "Bidirectional duration must be greater than zero."},
+		"ping":          {&m.cfg.PingInterval, "Ping interval must be greater than zero."},
+	}
+	s, ok := slots[field]
+	if !ok {
+		return
+	}
+	if d == 0 && s.zeroError != "" {
+		m.editRejected(s.zeroError)
+		return
+	}
+	*s.ptr = d
+	m.editAccepted("Timing updated.")
+}
+
+func (m *model) commitInt(raw, field string) {
+	n, err := strconv.Atoi(raw)
+	min := 0
+	if field == "auto-streams" {
+		min = 1
+	}
+	if err != nil || n < min || n > 128 {
 		if field == "auto-streams" {
-			min = 1
-		}
-		if err != nil || n < min || n > 128 {
-			if field == "auto-streams" {
-				m.editRejected("Automatic H1 max must be an integer from 1 to 128.")
-				return
-			}
-			m.editRejected("Streams must be 0 (automatic) or an integer from 1 to 128.")
+			m.editRejected("Automatic H1 max must be an integer from 1 to 128.")
 			return
 		}
-		if field == "auto-streams" {
-			m.cfg.TransferStreams.AutomaticMax = n
-		} else {
-			m.cfg.TransferStreams.Forced = n
-		}
-		m.editAccepted("Transfer stream policy updated.")
+		m.editRejected("Streams must be 0 (automatic) or an integer from 1 to 128.")
+		return
 	}
+	if field == "auto-streams" {
+		m.cfg.TransferStreams.AutomaticMax = n
+	} else {
+		m.cfg.TransferStreams.Forced = n
+	}
+	m.editAccepted("Transfer stream policy updated.")
 }
 
 func (m model) activate() (tea.Model, tea.Cmd) {
