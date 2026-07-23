@@ -5,6 +5,7 @@ import { nextBackoff } from "./backoff";
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
+  authenticationRequired,
 } from "../../request-auth";
 
 type InMsg =
@@ -79,10 +80,7 @@ async function run(): Promise<void> {
         credentials,
         redirect: redirectForCredentials(credentials),
       });
-      if (
-        response.status === 403 &&
-        response.headers.get("Graphite-Meter-Auth") === "required"
-      ) {
+      if (authenticationRequired(response)) {
         post({ type: "auth-required" });
         stopped = true;
         return;
@@ -199,10 +197,7 @@ async function finish(): Promise<void> {
       credentials,
       redirect: redirectForCredentials(credentials),
     });
-    if (
-      response.status === 403 &&
-      response.headers.get("Graphite-Meter-Auth") === "required"
-    ) {
+    if (authenticationRequired(response)) {
       post({ type: "auth-required" });
       teardown();
       return;

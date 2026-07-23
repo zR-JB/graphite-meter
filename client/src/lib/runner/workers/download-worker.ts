@@ -62,6 +62,7 @@ import {
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
+  authenticationRequired,
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
@@ -240,10 +241,7 @@ async function run(url: string): Promise<void> {
         reqUrl,
         downloadFetchInit(abort.signal, credentials, headers),
       );
-      if (
-        res.status === 403 &&
-        res.headers.get("Graphite-Meter-Auth") === "required"
-      ) {
+      if (authenticationRequired(res)) {
         post({ type: "auth-required" });
         return;
       }

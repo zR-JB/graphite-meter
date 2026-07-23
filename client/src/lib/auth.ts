@@ -1,6 +1,7 @@
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
+  authenticationRequired,
 } from "./request-auth";
 
 let redirecting = false;
@@ -68,10 +69,7 @@ export async function authenticatedFetch(
     credentials,
     redirect: redirectForCredentials(credentials),
   });
-  if (
-    response.status === 403 &&
-    response.headers.get("Graphite-Meter-Auth") === "required"
-  ) {
+  if (authenticationRequired(response)) {
     redirectToLogin();
   }
   return response;
