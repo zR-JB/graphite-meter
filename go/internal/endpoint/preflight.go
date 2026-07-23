@@ -44,6 +44,34 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	if host == "" {
 		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
 	}
+	return p.buildForHost(host)
+}
+
+// ConnectOrigins is the set of distinct cross-origin measurement targets this
+// server advertises to a browser on the given host, for the authenticated
+// CSP's connect-src. It is derived from the very targets /preflight returns, so
+// the policy can never omit an origin the client is told to use. The UI's own
+// origin ("." / self) is excluded — connect-src 'self' already covers it.
+func (p *Preflight) ConnectOrigins(host string) []string {
+	pf := p.buildForHost(host)
+	seen := map[string]bool{"": true, ".": true}
+	out := make([]string, 0)
+	add := func(o string) {
+		if !seen[o] {
+			seen[o] = true
+			out = append(out, o)
+		}
+	}
+	for _, t := range pf.Capabilities.ThroughputTargets {
+		add(t.Origin)
+	}
+	for _, t := range pf.Capabilities.LatencyTargets {
+		add(t.Origin)
+	}
+	return out
+}
+
+func (p *Preflight) buildForHost(host string) wire.Preflight {
 	throughput := make([]wire.ThroughputTarget, 0)
 	latency := make([]wire.LatencyTarget, 0)
 	addThroughput := func(base, protocol string) {

@@ -102,6 +102,19 @@ type Service struct {
 	now            func() time.Time
 	verbose        bool
 	counters       authCounters
+	// connectSrc is the space-joined cross-origin measurement targets appended
+	// to the application CSP's connect-src (which always allows 'self'). Empty
+	// when every target is same-origin. Set once at startup.
+	connectSrc string
+}
+
+// SetConnectOrigins records the distinct cross-origin measurement targets the
+// server advertises, so the authenticated CSP's connect-src admits exactly them
+// and nothing else. The server derives the set from /preflight, so the policy
+// cannot omit an origin the client is told to use. Same-origin ('self') is
+// always allowed and is not listed here.
+func (s *Service) SetConnectOrigins(origins []string) {
+	s.connectSrc = strings.Join(origins, " ")
 }
 
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {

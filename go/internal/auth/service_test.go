@@ -198,34 +198,35 @@ func TestAuthPagesPreserveSameOriginFormOrigin(t *testing.T) {
 	}
 
 	h = http.Header{}
-	authenticatedSecurityHeaders(h)
+	testService(t).authenticatedSecurityHeaders(h)
 	if got := h.Get("Referrer-Policy"); got != "same-origin" {
 		t.Fatalf("authenticated Referrer-Policy = %q, want same-origin", got)
 	}
 }
 
-func TestAppCSPPinsScriptsWhenABuildIsEmbedded(t *testing.T) {
-	// The baseline directives are always present; script-src appears only when
-	// a real client build supplies an inline-script hash.
-	base := appCSP("")
+func TestAppCSPPinsScriptsAndConnectSrc(t *testing.T) {
+	// The baseline directives and connect-src 'self' are always present;
+	// script-src appears only when a real client build supplies a hash.
+	base := appCSP("", "")
 	for _, want := range []string{
-		"frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'", "form-action 'self'",
+		"frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'",
+		"form-action 'self'", "connect-src 'self'",
 	} {
 		if !strings.Contains(base, want) {
-			t.Fatalf("appCSP(\"\") missing %q: %s", want, base)
+			t.Fatalf("appCSP missing %q: %s", want, base)
 		}
 	}
 	if strings.Contains(base, "script-src") {
-		t.Fatalf("appCSP(\"\") pinned script-src without a build: %s", base)
+		t.Fatalf("appCSP pinned script-src without a build: %s", base)
 	}
 
-	pinned := appCSP("ABC123")
+	pinned := appCSP("ABC123", "https://probe.example https://ping.example")
 	if !strings.Contains(pinned, "script-src 'self' 'sha256-ABC123'") {
 		t.Fatalf("appCSP with a hash did not pin script-src: %s", pinned)
 	}
-	// connect-src stays unpinned: measurement origins are chosen at runtime.
-	if strings.Contains(pinned, "connect-src") {
-		t.Fatalf("appCSP pinned connect-src, which would break runtime origins: %s", pinned)
+	// The advertised cross-origin targets extend connect-src; nothing else may.
+	if !strings.Contains(pinned, "connect-src 'self' https://probe.example https://ping.example") {
+		t.Fatalf("appCSP did not admit the advertised measurement origins: %s", pinned)
 	}
 }
 

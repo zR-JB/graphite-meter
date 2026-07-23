@@ -217,6 +217,13 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	spa := static.Handler()
 	if authn.Enabled() {
 		spa = static.AuthenticatedHandler()
+		// Pin the authenticated CSP's connect-src to exactly the measurement
+		// origins /preflight advertises on the canonical UI host (auth requires
+		// requests on that host). Derived from the same targets the client is
+		// handed, so it can never omit one.
+		if u, perr := url.Parse(cfg.Auth.PublicURL); perr == nil {
+			authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
+		}
 	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)

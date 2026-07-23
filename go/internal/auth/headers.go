@@ -52,22 +52,26 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 // appCSP is the application (SPA) Content-Security-Policy. script-src pins the
 // bundle to same-origin plus the one inline pre-paint script by hash, which
 // also governs the same-origin module workers via the worker-src fallback; the
-// app uses no eval and no blob/data scripts. connect-src and img-src are left
-// unpinned: the app connects to measurement origins chosen at runtime and
-// discovered from /preflight, and no server-side list is authoritative over
-// that set. The remaining directives are the subset the app never needs
-// relaxed: no <base> (so no relative-URL hijack), no plugins, forms post only
-// same-origin (the sign-out form), and no framing. The login surface overrides
-// all of this with its own strict hash-pinned policy.
-func appCSP(scriptHash string) string {
-	csp := "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'"
+// app uses no eval and no blob/data scripts. connect-src is 'self' plus the
+// cross-origin measurement targets the server advertises in /preflight
+// (connectExtra), and nothing else — so a script that did run could not
+// exfiltrate to an arbitrary host. img-src is left unpinned for the data:
+// favicon. The remaining directives are the subset the app never needs relaxed:
+// no <base> (so no relative-URL hijack), no plugins, forms post only same-origin
+// (the sign-out form), and no framing. The login surface overrides all of this
+// with its own strict hash-pinned policy.
+func appCSP(scriptHash, connectExtra string) string {
+	csp := "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'"
+	if connectExtra != "" {
+		csp += " " + connectExtra
+	}
 	if scriptHash != "" {
 		csp += "; script-src 'self' 'sha256-" + scriptHash + "'"
 	}
 	return csp
 }
 
-func authenticatedSecurityHeaders(h http.Header) {
+func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	// HSTS is scoped to this exact host, deliberately without includeSubDomains:
 	// a homelab commonly runs many services under one base domain, and forcing
 	// HTTPS onto every sibling subdomain would break the ones that are plain HTTP
@@ -75,7 +79,7 @@ func authenticatedSecurityHeaders(h http.Header) {
 	// neighbours.
 	h.Set("Strict-Transport-Security", "max-age=31536000")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", appCSP(appScriptHash))
+	h.Set("Content-Security-Policy", appCSP(appScriptHash, s.connectSrc))
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")

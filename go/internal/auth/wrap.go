@@ -46,7 +46,7 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			return
 		}
 		if t.Secure {
-			authenticatedSecurityHeaders(w.Header())
+			s.authenticatedSecurityHeaders(w.Header())
 		}
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/auth/") {
 			controller := http.NewResponseController(w)
