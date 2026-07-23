@@ -11,6 +11,8 @@
   <body>
     <main class="card">
       <h1>Approve terminal client</h1>
+      <p>Only approve a client you started yourself. This grants a terminal
+        access to run measurements as you until you sign out.</p>
       <p>Confirm that this code matches the code in your terminal.</p>
       <code class="code">{{.Code}}</code>
       <form method="post" action="/auth/cli/approve">
@@ -18,6 +20,8 @@
         <input type="hidden" name="challenge" value="{{.Challenge}}">
         <button type="submit">Approve this client</button>
       </form>
+      <p class="notice">If you did not just start a terminal client, close
+        this page and do not approve.</p>
     </main>
     {{template "pending"}}
   </body>

@@ -8,16 +8,18 @@ import (
 	"testing"
 )
 
-// credentialOutcomes are the reasons whose distinctness would tell a visitor
-// something about a credential, an identity, or another visitor's traffic.
-// None of them may reach the login page as anything but the generic notice.
+// credentialOutcomes are the reasons that must stay generic because their
+// distinctness would reveal another identity's authorization state — the OIDC
+// group/subject/signature outcomes — or an attack indicator (CSRF). The single
+// operator password (reasonPasswordMismatch) and rate limiting
+// (reasonThrottled) are deliberately absent: the code is open source, so a
+// vague message hides nothing, and the real defense is the rate limit and the
+// memory-hard hash, not message vagueness.
 var credentialOutcomes = []reason{
 	reasonCSRFOriginMissing,
 	reasonCSRFOriginMismatch,
 	reasonCSRFTokenMismatch,
 	reasonFormMalformed,
-	reasonThrottled,
-	reasonPasswordMismatch,
 	reasonStateGeneration,
 	reasonNonceGeneration,
 	reasonBrowserBinding,
@@ -53,6 +55,8 @@ func TestSafeNoticesDescribeServerOrFormStateOnly(t *testing.T) {
 		reasonVerifierBusy:        noticeBusy,
 		reasonSessionCapacity:     noticeBusy,
 		reasonTransactionCapacity: noticeBusy,
+		reasonThrottled:           noticeThrottled,
+		reasonPasswordMismatch:    noticePassword,
 		reasonCSRFCookieMissing:   noticeStale,
 		reasonCSRFTokenMissing:    noticeStale,
 		reasonTransactionCookie:   noticeStale,
@@ -76,6 +80,8 @@ func TestParseNoticeAcceptsOnlyKnownCodes(t *testing.T) {
 		{"provider", noticeProvider},
 		{"busy", noticeBusy},
 		{"stale", noticeStale},
+		{"throttled", noticeThrottled},
+		{"password", noticePassword},
 		{"failed", noticeGeneric},
 		{"1", noticeGeneric},
 		{"<script>alert(1)</script>", noticeGeneric},
@@ -92,8 +98,8 @@ func TestLoginRejectedCarriesOnlyTheSafeNotice(t *testing.T) {
 		why  reason
 		want notice
 	}{
-		{reasonPasswordMismatch, noticeGeneric},
-		{reasonThrottled, noticeGeneric},
+		{reasonPasswordMismatch, noticePassword},
+		{reasonThrottled, noticeThrottled},
 		{reasonUserInfoClaimsOrGroup, noticeGeneric},
 		{reasonProviderNotReady, noticeProvider},
 		{reasonSessionCapacity, noticeBusy},
@@ -124,7 +130,9 @@ func loginAlerts(t *testing.T, s *Service, code string) []string {
 	rr := httptest.NewRecorder()
 	s.loginPage(rr, r)
 	var alerts []string
-	for _, part := range strings.Split(rr.Body.String(), `<p class="message" role="alert">`)[1:] {
+	// A failure/limit notice is a <p ... role="alert"> regardless of its class
+	// (message, warn, notice); the expected-state banners use role="status".
+	for _, part := range strings.Split(rr.Body.String(), `role="alert">`)[1:] {
 		alerts = append(alerts, strings.SplitN(part, "</p>", 2)[0])
 	}
 	return alerts
@@ -133,7 +141,7 @@ func loginAlerts(t *testing.T, s *Service, code string) []string {
 func TestLoginPageRendersEachNoticeDistinctly(t *testing.T) {
 	s := testService(t)
 	seen := map[string]string{}
-	for _, code := range []string{"", "failed", "provider", "busy", "stale"} {
+	for _, code := range []string{"", "failed", "provider", "busy", "stale", "throttled", "password"} {
 		alerts := loginAlerts(t, s, code)
 		if code == "" {
 			if len(alerts) != 0 {

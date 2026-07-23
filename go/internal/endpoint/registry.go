@@ -89,6 +89,10 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 		if err != nil {
 			return // Accept already wrote the handshake-failure response
 		}
+		// Message-bus frames are tiny text control messages (opcodes.go); cap the
+		// read well below the library default so a peer cannot force a large
+		// buffered allocation per connection.
+		conn.SetReadLimit(2048)
 		// The conn is hijacked, so r.Context() is no longer reliable (see Accept
 		// docs). Bound the bus with a context derived from the SERVER's run context
 		// (not Background): cancelled when Handle returns AND on srv.Shutdown, so a

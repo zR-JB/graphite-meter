@@ -23,7 +23,7 @@ func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 		Password:  s.cfg.Mode == "password" || s.cfg.Mode == "hybrid",
 		OIDC:      s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid",
 		OIDCReady: s.oidc != nil && s.oidc.ready(), Provider: s.cfg.OIDCProviderName,
-		Notice: string(parseNotice(r.URL.Query().Get("error"))), Expired: r.URL.Query().Get("reason") == "expired",
+		Notice: string(parseNotice(r.URL.Query().Get("error"))), Status: parseStatus(r.URL.Query().Get("reason")),
 		Challenge: r.URL.Query().Get("challenge"),
 	}
 	renderLogin(w, s.loginTemplate, data)
@@ -124,5 +124,5 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 	clearCookie(w, sessionCookie)
 	clearCookie(w, loginCookie)
 	clearCookie(w, csrfCookie)
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, "/login?reason=signed_out", http.StatusSeeOther)
 }

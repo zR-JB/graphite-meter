@@ -130,3 +130,25 @@ func TestParseAdvertisedNative(t *testing.T) {
 		t.Fatal("expected unknown endpoint error")
 	}
 }
+
+func TestTrustedProxiesRejectsDefaultRoute(t *testing.T) {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0", "10.0.0.0/8,0.0.0.0/0"} {
+		clearConfigEnv(t)
+		t.Setenv("GM_TRUSTED_PROXIES", cidr)
+		if _, err := Load(); err == nil {
+			t.Errorf("GM_TRUSTED_PROXIES=%q loaded without error; a default route must be rejected", cidr)
+		}
+	}
+}
+
+func TestTrustedProxiesMasksHostBits(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("GM_TRUSTED_PROXIES", "192.168.1.42/24")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.TrustedProxies) != 1 || c.TrustedProxies[0].String() != "192.168.1.0/24" {
+		t.Fatalf("trusted proxies = %v, want the masked 192.168.1.0/24", c.TrustedProxies)
+	}
+}

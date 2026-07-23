@@ -150,7 +150,15 @@ func Load() (Config, error) {
 			if err != nil {
 				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q: %w", raw, err)
 			}
-			c.TrustedProxies = append(c.TrustedProxies, prefix)
+			// A default route trusts every client's forwarding headers, so any
+			// caller could spoof X-Real-IP to mint a fresh rate-limit budget per
+			// request or assert X-Forwarded-Proto=https on cleartext. There is no
+			// legitimate reason to trust the whole internet as a proxy; require the
+			// operator to name the proxy's actual CIDR.
+			if prefix.Bits() == 0 {
+				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q trusts every address; list the proxy's actual CIDR instead", raw)
+			}
+			c.TrustedProxies = append(c.TrustedProxies, prefix.Masked())
 		}
 	}
 	return c, nil

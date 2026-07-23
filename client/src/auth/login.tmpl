@@ -13,15 +13,20 @@
       <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/><path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.1" fill="currentColor"/></svg>
       <h1>Private Graphite Meter</h1>
       <p>Sign in to use this measurement server.</p>
-      {{if .Expired}}<p class="message" role="alert">Your session expired. Sign in again.</p>{{end}}
-      {{if eq .Notice "provider"}}
-        <p class="message" role="alert">{{.Provider}} is unreachable right now.{{if .Password}} Sign in with the operator password.{{end}}</p>
+      {{if eq .Status "signed_out"}}<p class="ok" role="status">You're signed out.</p>{{end}}
+      {{if eq .Status "expired"}}<p class="notice" role="status">Your session ended. Sign in again.</p>{{end}}
+      {{if eq .Notice "password"}}
+        <p class="message" role="alert">Incorrect password. Check it and try again.</p>
+      {{else if eq .Notice "throttled"}}
+        <p class="warn" role="alert">Too many attempts. Wait a minute and try again.</p>
+      {{else if eq .Notice "provider"}}
+        <p class="notice" role="alert">{{.Provider}} is unreachable right now.{{if .Password}} Sign in with the operator password.{{end}}</p>
       {{else if eq .Notice "busy"}}
-        <p class="message" role="alert">The server is busy. Try again in a moment.</p>
+        <p class="notice" role="alert">The server is busy. Try again in a moment.</p>
       {{else if eq .Notice "stale"}}
-        <p class="message" role="alert">This sign-in form expired. Try again.</p>
+        <p class="notice" role="alert">This sign-in form expired. Reload and try again.</p>
       {{else if .Notice}}
-        <p class="message" role="alert">Sign-in failed.</p>
+        <p class="message" role="alert">Sign-in failed. Please try again.</p>
       {{end}}
       {{if .OIDC}}
         <form method="post" action="/auth/oidc/start">
@@ -42,7 +47,7 @@
           <label class="offscreen" for="username">Account</label>
           <input class="offscreen" id="username" name="username" type="text" value="operator" autocomplete="username" readonly>
           <label for="password">Operator password</label>
-          <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" required>
+          <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" autofocus required>
           <button type="submit">Sign in with operator password</button>
         </form>
       {{end}}
