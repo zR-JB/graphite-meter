@@ -148,9 +148,13 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	if e.admission == nil {
 		return inner
 	}
+	var publicOrigin string
+	if authn != nil {
+		publicOrigin = authn.PublicOrigin()
+	}
 	m := http.NewServeMux()
 	for _, path := range []string{"/download", "/upload", "/upload/progress", "/ws/ping"} {
-		m.Handle(path, e.admission.wrap(inner, e.trustedProxies))
+		m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
 	}
 	m.Handle("/", inner)
 	return m

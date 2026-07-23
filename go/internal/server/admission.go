@@ -79,7 +79,11 @@ func (a *requestAdmission) stats() admissionStats {
 	return admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient}
 }
 
-func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.Handler {
+// wrap accounts one in-flight measurement request. publicOrigin is the
+// operator-configured origin when authentication is enabled, and "" when it is
+// off; it is echoed instead of the request's own Origin on credentialed
+// responses.
+func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publicOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
@@ -87,7 +91,7 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.
 		}
 		release, status := a.acquire(clientKey(r, trusted))
 		if status != 0 {
-			setAdmissionHeaders(w, r)
+			setAdmissionHeaders(w, r, publicOrigin)
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, http.StatusText(status), status)
 			return
@@ -106,13 +110,19 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix) http.
 	})
 }
 
-func setAdmissionHeaders(w http.ResponseWriter, r *http.Request) {
+// setAdmissionHeaders writes the CORS headers for a rejected measurement
+// request. When a principal is present the response is credentialed, so it
+// echoes the validated public origin rather than whatever the request asked
+// for — reflecting a request-supplied Origin alongside
+// Access-Control-Allow-Credentials would be a cross-origin read primitive if
+// this function were ever reachable with a foreign origin.
+func setAdmissionHeaders(w http.ResponseWriter, r *http.Request, publicOrigin string) {
 	h := w.Header()
 	if _, ok := auth.PrincipalFromContext(r.Context()); ok {
-		if origin := r.Header.Get("Origin"); origin != "" {
-			h.Set("Access-Control-Allow-Origin", origin)
+		if publicOrigin != "" && r.Header.Get("Origin") == publicOrigin {
+			h.Set("Access-Control-Allow-Origin", publicOrigin)
 			h.Set("Access-Control-Allow-Credentials", "true")
-			h.Set("Timing-Allow-Origin", origin)
+			h.Set("Timing-Allow-Origin", publicOrigin)
 			h.Add("Vary", "Origin")
 		}
 		return

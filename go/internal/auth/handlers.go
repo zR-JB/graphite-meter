@@ -69,7 +69,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	s.counters.local.Add(1)
 	clearCookie(w, loginCookie)
 	dest := "/"
-	if challenge := r.FormValue("challenge"); challenge != "" {
+	if challenge := r.FormValue("challenge"); validChallenge(challenge) {
 		dest = "/auth/cli?challenge=" + url.QueryEscape(challenge)
 	}
 	http.Redirect(w, r, dest, http.StatusSeeOther)

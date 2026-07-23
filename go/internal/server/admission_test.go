@@ -22,7 +22,7 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		entered <- struct{}{}
 		<-release
-	}), nil)
+	}), nil, "")
 
 	var wg sync.WaitGroup
 	for i := 0; i < 2; i++ {
@@ -94,7 +94,7 @@ func TestRequestAdmissionLifetime(t *testing.T) {
 	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 		close(done)
-	}), nil)
+	}), nil, "")
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
 	select {
 	case <-done:
@@ -112,7 +112,7 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	defer release()
 	srv := httptest.NewServer(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("rejected WebSocket reached handler")
-	}), nil))
+	}), nil, ""))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

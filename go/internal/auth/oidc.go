@@ -413,11 +413,21 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	setCSRFCookie(w, sess.csrf, sess.expires)
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)
-	dest := "/"
-	if tx.cliChallenge != "" {
-		dest = "/auth/cli?challenge=" + url.QueryEscape(tx.cliChallenge)
+	s.writeSignedInInterstitial(w, tx.cliChallenge)
+}
+
+// writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
+// callback is the tail of a navigation the identity provider started, so it is
+// cross-site: a redirect from here would be followed without the SameSite=Strict
+// session cookie just set, and the visitor would land back on /login. Rendering
+// a page instead makes the next hop same-site, because this document initiates
+// it, and the cookie rides along.
+func (s *Service) writeSignedInInterstitial(w http.ResponseWriter, challenge string) {
+	if !validChallenge(challenge) {
+		challenge = ""
 	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = continueTemplate.Execute(w, map[string]any{"Styles": authStyles, "Challenge": challenge})
 }
 
 // oidcLoginFailure charges the OIDC failure counter and then takes the shared

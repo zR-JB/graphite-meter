@@ -186,7 +186,7 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 		mutate func(*fakeOIDC)
 		want   int
 	}{
-		{"valid", func(*fakeOIDC) {}, http.StatusSeeOther},
+		{"valid", func(*fakeOIDC) {}, http.StatusOK},
 		{"wrong audience", func(f *fakeOIDC) { f.audience = "other" }, http.StatusSeeOther},
 		{"expired", func(f *fakeOIDC) { f.expires = time.Now().Add(-time.Minute) }, http.StatusSeeOther},
 		{"userinfo subject mismatch", func(f *fakeOIDC) { f.userinfoSub = "other" }, http.StatusSeeOther},
@@ -242,7 +242,7 @@ func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
 	f := newFakeOIDC(t)
 	s := f.service(t)
 	state, cookie := startOIDC(t, s, f)
-	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusSeeOther {
+	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
 		t.Fatalf("first status=%d", rr.Code)
 	}
 	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
@@ -296,5 +296,58 @@ func TestOIDCStartupDoesNotProbeProtectedProviderEndpoints(t *testing.T) {
 	s := f.service(t)
 	if !s.oidc.ready() {
 		t.Fatal("successful discovery did not make OIDC available")
+	}
+}
+
+// The callback is the tail of a navigation the identity provider started. A
+// redirect there would be followed without the SameSite=Strict session cookie
+// the callback just set, bouncing a successful first login back to /login, so
+// the callback must answer with a same-site hop instead.
+func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
+	f := newFakeOIDC(t)
+	s := f.service(t)
+	state, cookie := startOIDC(t, s, f)
+	rr := finishOIDC(s, state, cookie, "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200", rr.Code)
+	}
+	if location := rr.Header().Get("Location"); location != "" {
+		t.Fatalf("callback redirected to %q; a cross-site hop drops the Strict session cookie", location)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `http-equiv="refresh"`) || !strings.Contains(body, `url=/"`) {
+		t.Fatalf("interstitial does not navigate to the application root: %s", body)
+	}
+	var session *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookie {
+			session = c
+		}
+	}
+	if session == nil || session.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("session cookie = %+v, want SameSite=Strict", session)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("content-type=%q", ct)
+	}
+}
+
+// A CLI challenge carried through the OIDC transaction must reach the approval
+// page through the same same-site hop, and only when it is well-formed.
+func TestOIDCInterstitialCarriesOnlyValidCLIChallenge(t *testing.T) {
+	s := testService(t)
+	sum := sha256.Sum256([]byte("terminal-verifier"))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	rr := httptest.NewRecorder()
+	s.writeSignedInInterstitial(rr, challenge)
+	if !strings.Contains(rr.Body.String(), "/auth/cli?challenge="+challenge) {
+		t.Fatalf("valid challenge was dropped: %s", rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	s.writeSignedInInterstitial(rr, "not-a-challenge")
+	if body := rr.Body.String(); strings.Contains(body, "not-a-challenge") || !strings.Contains(body, `url=/"`) {
+		t.Fatalf("invalid challenge was reflected: %s", body)
 	}
 }

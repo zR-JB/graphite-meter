@@ -122,13 +122,16 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		s.writeGrantPending(w)
 		return
 	}
-	delete(s.approvals, challenge)
 	grant, err := randomToken(32)
 	if err != nil {
 		s.mu.Unlock()
 		s.writeGrantPending(w)
 		return
 	}
+	// Consumed only once a grant actually exists: deleting before the RNG can
+	// fail would burn the approval and force the operator through a second
+	// browser confirmation for a server-side error.
+	delete(s.approvals, challenge)
 	h := sha256.Sum256([]byte(grant))
 	if len(a.session.grants) >= 8 {
 		for old := range a.session.grants {

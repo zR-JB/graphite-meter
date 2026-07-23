@@ -7,11 +7,12 @@ import (
 )
 
 var (
-	authStyles      = template.CSS(authCSS)
-	loginTemplate   = template.Must(template.New("login").Parse(loginHTML))
-	cliTemplate     = template.Must(template.New("cli").Parse(cliHTML))
-	cliDoneTemplate = template.Must(template.New("cli-done").Parse(cliDoneHTML))
-	authStyleHash   = func() string {
+	authStyles       = template.CSS(authCSS)
+	loginTemplate    = template.Must(template.New("login").Parse(loginHTML))
+	cliTemplate      = template.Must(template.New("cli").Parse(cliHTML))
+	cliDoneTemplate  = template.Must(template.New("cli-done").Parse(cliDoneHTML))
+	continueTemplate = template.Must(template.New("continue").Parse(continueHTML))
+	authStyleHash    = func() string {
 		sum := sha256.Sum256([]byte(authCSS))
 		return base64.StdEncoding.EncodeToString(sum[:])
 	}()
