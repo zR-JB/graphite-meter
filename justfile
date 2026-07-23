@@ -129,13 +129,30 @@ server-check:
     cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
     cd go && go vet ./...
 
-# Run server tests with the same race/shuffle settings used by CI.
-# Includes the preflight schema conformance test.
-server-test:
-    cd go && CGO_ENABLED=1 go test -race -shuffle=on ./...
+# Static analysis + vulnerability scan. ci.yml calls this exact recipe, so the
+# local gate and GitHub CI cannot describe different checks.
+go-lint:
+    cd go && test -x "$(go env GOPATH)/bin/staticcheck" || go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+    cd go && test -x "$(go env GOPATH)/bin/govulncheck" || go install golang.org/x/vuln/cmd/govulncheck@latest
+    cd go && "$(go env GOPATH)/bin/staticcheck" ./...
+    cd go && "$(go env GOPATH)/bin/govulncheck" ./...
 
-# Run the main local CI gates. Docker smoke remains CI-only.
-ci: client-ci server-check server-test
+# Race-detector tests plus the coverage floor. ci.yml calls this recipe, so the
+# floor is enforced identically locally and in CI. Raise the floor as coverage
+# climbs; never lower it.
+server-test:
+    #!/usr/bin/env sh
+    set -e
+    cd go
+    CGO_ENABLED=1 go test -race -shuffle=on -coverprofile=cover.out ./...
+    total=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | tr -d '%')
+    echo "total statement coverage: ${total}%"
+    awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
+        || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
+
+# Run the main local CI gates — the same recipes ci.yml invokes. Docker smoke,
+# the cross-build matrix, CodeQL, and E2E remain CI-only orchestration.
+ci: client-ci server-check go-lint server-test
 
 # --- Go native TUI client (graphite-meter-client) ---
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.
