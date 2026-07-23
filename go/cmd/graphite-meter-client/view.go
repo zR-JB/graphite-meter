@@ -72,18 +72,46 @@ func (m model) innerWidth() int {
 }
 
 // fitLine truncates one rendered line to w cells, ANSI-aware, so panel content
-// never wraps: a cramped terminal loses a line's tail, not its layout.
+// never wraps: a cramped terminal loses a line's tail, not its layout. A line
+// already within width is returned untouched — the vast majority of lines —
+// which skips lipgloss's whole render pipeline for them.
 func fitLine(s string, w int) string {
+	if lipgloss.Width(s) <= w {
+		return s
+	}
 	return lipgloss.NewStyle().MaxWidth(w).Render(s)
 }
 
-// fitBlock applies fitLine to every line of a panel body.
+// fitBlock applies fitLine to every line of a panel body. It walks the block
+// without allocating a line slice and, when nothing overflows, returns the
+// input unchanged so the common in-width case allocates nothing.
 func fitBlock(s string, w int) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		lines[i] = fitLine(line, w)
+	var b strings.Builder
+	changed := false
+	rest := s
+	for {
+		line, tail, more := strings.Cut(rest, "\n")
+		fitted := fitLine(line, w)
+		if fitted != line && !changed {
+			b.Grow(len(s))
+			b.WriteString(s[:len(s)-len(rest)]) // verbatim lines before this one
+			changed = true
+		}
+		if changed {
+			b.WriteString(fitted)
+			if more {
+				b.WriteByte('\n')
+			}
+		}
+		if !more {
+			break
+		}
+		rest = tail
 	}
-	return strings.Join(lines, "\n")
+	if !changed {
+		return s
+	}
+	return b.String()
 }
 
 func (m model) header(w int) string {
