@@ -19,26 +19,6 @@ const (
 	panelContentTop = 2
 )
 
-var (
-	shellStyle      = lipgloss.NewStyle().Margin(1, shellMargin)
-	titleStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Padding(0, 1)
-	pillStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("86")).Padding(0, 1)
-	panelStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(1, 2)
-	activeTabStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("63")).Padding(0, 1)
-	tabStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
-	selectedStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238"))
-	labelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	keyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	valueStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	errorStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-	accentStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("111"))
-	warnStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("215"))
-	successStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
-	subtleRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
-	codeStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("111")).Padding(0, 1)
-)
-
 // layout records where View last drew the clickable parts of the configure
 // screen. View takes the model by value, so the record lives behind a pointer
 // every copy shares. Positions are absolute terminal cells.
@@ -266,7 +246,7 @@ func (m model) runMenuView(w int) string {
 	label := "Start measurement · " + m.prepareStatus
 	switch m.prepareStatus {
 	case "ready":
-		label = successStyle.Render(label)
+		label = accentStyle.Render(label)
 	case "failed":
 		label = warnStyle.Render(label)
 	default:
@@ -421,7 +401,7 @@ func (m model) summaryView(w int) string {
 	}
 	lines = append(lines, m.timelineView(w)...)
 	if m.complete {
-		lines = append(lines, "", successStyle.Render("Finished. Press esc for setup or r to run again."))
+		lines = append(lines, "", successStyle.Render("✓")+accentStyle.Render(" Finished. Press esc for setup or r to run again."))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -556,7 +536,7 @@ func (m model) helpView() string {
 // the bubble's defaults.
 func newHelp() help.Model {
 	h := help.New()
-	h.Styles.ShortKey, h.Styles.FullKey = keyStyle, keyStyle
+	h.Styles.ShortKey, h.Styles.FullKey = labelStyle, labelStyle
 	h.Styles.ShortDesc, h.Styles.FullDesc = mutedStyle, mutedStyle
 	h.Styles.ShortSeparator, h.Styles.FullSeparator = subtleRuleStyle, subtleRuleStyle
 	h.Styles.Ellipsis = subtleRuleStyle

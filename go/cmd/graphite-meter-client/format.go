@@ -68,7 +68,7 @@ func valueLine(label, value, note string) string {
 
 func checkbox(on bool) string {
 	if on {
-		return successStyle.Render("●")
+		return accentStyle.Render("●")
 	}
 	return mutedStyle.Render("○")
 }
