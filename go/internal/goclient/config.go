@@ -22,6 +22,11 @@ const (
 	defaultAutomaticStreams = 6
 	defaultH3Streams        = 3
 	maxTransferStreams      = 128
+
+	defaultLatencyDuration = 4 * time.Second
+	// defaultTransferDuration covers the download, upload, and bidirectional
+	// stages, which run the same window.
+	defaultTransferDuration = 10 * time.Second
 )
 
 func (p TransferStreamPolicy) Resolve(protocol string) int {
@@ -85,10 +90,10 @@ func DefaultConfig() Config {
 		LatencyTarget:          "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
-		LatencyDuration:        4 * time.Second,
-		DownloadDuration:       10 * time.Second,
-		UploadDuration:         10 * time.Second,
-		BidirectionalDuration:  10 * time.Second,
+		LatencyDuration:        defaultLatencyDuration,
+		DownloadDuration:       defaultTransferDuration,
+		UploadDuration:         defaultTransferDuration,
+		BidirectionalDuration:  defaultTransferDuration,
 		TransferStreams:        TransferStreamPolicy{AutomaticMax: defaultAutomaticStreams},
 		PingInterval:           250 * time.Millisecond,
 		LoadedLatency:          true,
@@ -117,16 +122,16 @@ func (c Config) normalized() Config {
 		c.Warmup = 0
 	}
 	if c.LatencyDuration <= 0 {
-		c.LatencyDuration = 4 * time.Second
+		c.LatencyDuration = defaultLatencyDuration
 	}
 	if c.DownloadDuration <= 0 {
-		c.DownloadDuration = 10 * time.Second
+		c.DownloadDuration = defaultTransferDuration
 	}
 	if c.UploadDuration <= 0 {
-		c.UploadDuration = 10 * time.Second
+		c.UploadDuration = defaultTransferDuration
 	}
 	if c.BidirectionalDuration <= 0 {
-		c.BidirectionalDuration = 10 * time.Second
+		c.BidirectionalDuration = defaultTransferDuration
 	}
 	if c.TransferStreams.Forced < 0 {
 		c.TransferStreams.Forced = 0
