@@ -93,6 +93,9 @@ class FakeBackend implements RunnerBackend {
   onAbort(): void {
     this.calls.push("abort");
   }
+  setBackgroundActivity(enabled: boolean): void {
+    this.calls.push(`background:${enabled}`);
+  }
 }
 
 function makeConfig(
@@ -827,4 +830,19 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
     );
     expect(complete.result.download!.totalBytes).toBe(N * DELTA);
   }
+});
+
+test("setBackgroundActivity reaches the backend so a hidden tab can park", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  core.setBackgroundActivity(false);
+  core.setBackgroundActivity(true);
+  expect(backend.calls).toEqual(["background:false", "background:true"]);
+});
+
+test("setBackgroundActivity is optional on a backend that has no keepalive", () => {
+  const backend = new FakeBackend();
+  delete (backend as Partial<FakeBackend>).setBackgroundActivity;
+  const core = new RunnerCore(backend);
+  expect(() => core.setBackgroundActivity(false)).not.toThrow();
 });

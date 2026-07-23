@@ -315,8 +315,17 @@ function refreshAfterTransition() {
     void validateConnections(true).catch(() => {});
 }
 
+// A hidden tab does no background work: the idle keepalive's ping socket and
+// worker are stopped so the browser can park the page. A run keeps going —
+// hiding the tab mid-measurement must not disturb it. Coming back re-arms the
+// keepalive, and re-checks the connection if the cached probe went stale while
+// away.
 function refreshAfterVisibility() {
-  if (document.visibilityState === "hidden") {
+  const hidden = document.visibilityState === "hidden";
+  // Safe during a run: the keepalive is already stopped for its duration, and
+  // the flag decides whether it comes back when the run ends.
+  runner?.setBackgroundActivity?.(!hidden);
+  if (hidden) {
     hiddenAt = Date.now();
   } else if (hiddenAt && Date.now() - hiddenAt >= CONNECTION_FRESH_MS) {
     hiddenAt = 0;

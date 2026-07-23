@@ -153,7 +153,7 @@
     }
 
     switch (e.key.toLowerCase()) {
-      case "w":
+      case "s":
         settingsOpen = !settingsOpen;
         e.preventDefault();
         break;
@@ -232,7 +232,7 @@
       class="ghost-btn icon-btn"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
-      use:tooltip={"Settings — setup, endpoint, developer"}
+      use:tooltip={"Settings — setup, endpoint, developer (S)"}
       onclick={() => (settingsOpen = !settingsOpen)}
       >{@html ICON.settings}</button
     >

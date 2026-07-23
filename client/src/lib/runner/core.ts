@@ -103,6 +103,7 @@ export interface RunnerBackend {
   onComplete(): void;
   onAbort(): void;
   dispose?(): void;
+  setBackgroundActivity?(enabled: boolean): void;
   onReconfigure?(stages: RunnerConfig["stages"]): void;
   idleHintMs?(): number;
   injectAnomaly?(a: RunnerAnomaly): void;
@@ -317,6 +318,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   dispose(): void {
     this.#backend.dispose?.();
     this.abort();
+  }
+
+  setBackgroundActivity(enabled: boolean): void {
+    this.#backend.setBackgroundActivity?.(enabled);
   }
 
   /* ================= LIVE RECONFIGURE ================= */

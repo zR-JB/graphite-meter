@@ -496,6 +496,9 @@ export interface NetworkRunner {
   abort(): void;
   /** Permanently stop background activity owned by this runner. */
   dispose?(): void;
+  /** Suspend or resume the idle keepalive. A hidden tab suspends it so the
+   *  browser can park the page; a run is never affected. */
+  setBackgroundActivity?(enabled: boolean): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
   probe(
     config: RunnerConfig,

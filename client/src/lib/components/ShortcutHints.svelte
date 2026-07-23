@@ -23,7 +23,7 @@
 
 <div class="command-hints" aria-label="Keyboard shortcuts">
   <span><kbd>Space</kbd>{primary}</span>
-  <span><kbd>W</kbd>Settings</span>
+  <span><kbd>S</kbd>Settings</span>
   <span><kbd>D</kbd>Info</span>
   {#if resolved}
     <span><kbd>R</kbd>Run again</span>
