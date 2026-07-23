@@ -14,15 +14,21 @@ var (
 	continueTemplate = page("continue", continueHTML)
 	authStyleHash    = cspHash(authCSS)
 	authThemeHash    = cspHash(authThemeJS)
+	authPendingHash  = cspHash(authPendingJS)
 )
 
-// page parses an auth page together with the "theme" template its head
-// includes. The script arrives as a template.JS value because html/template
-// emits those byte for byte, while comments in literal script text are dropped
-// by its JS lexer — the served bytes must match the digest authThemeHash pins.
+// page parses an auth page together with the "theme" and "pending" templates
+// its markup includes. Each script arrives as a template.JS value because
+// html/template emits those byte for byte, while comments in literal script
+// text are dropped by its JS lexer — the served bytes must match the digests
+// authThemeHash and authPendingHash pin.
 func page(name, text string) *template.Template {
-	theme := template.FuncMap{"themeJS": func() template.JS { return template.JS(authThemeJS) }}
-	set := template.Must(template.New("theme").Funcs(theme).Parse(`<script>{{themeJS}}</script>`))
+	scripts := template.FuncMap{
+		"themeJS":   func() template.JS { return template.JS(authThemeJS) },
+		"pendingJS": func() template.JS { return template.JS(authPendingJS) },
+	}
+	set := template.Must(template.New("theme").Funcs(scripts).Parse(`<script>{{themeJS}}</script>`))
+	template.Must(set.New("pending").Parse(`<script>{{pendingJS}}</script>`))
 	return template.Must(set.New(name).Parse(text))
 }
 

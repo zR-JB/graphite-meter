@@ -10,6 +10,7 @@ import (
 var assets = []struct{ constant, file string }{
 	{"authCSS", "auth.css"},
 	{"authThemeJS", "theme.js"},
+	{"authPendingJS", "pending.js"},
 	{"loginHTML", "login.tmpl"},
 	{"cliHTML", "cli.tmpl"},
 	{"cliDoneHTML", "cli-done.tmpl"},

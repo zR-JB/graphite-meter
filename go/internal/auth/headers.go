@@ -29,7 +29,7 @@ func authPageCSP(authorizationOrigin string) string {
 	if authorizationOrigin != "" {
 		formAction += " " + authorizationOrigin
 	}
-	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
+	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
 func (s *Service) loginSecurityHeaders(h http.Header) {
