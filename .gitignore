@@ -7,6 +7,9 @@ client/test-results
 # --- Go module (server + native client) ---
 go/graphite-meter
 go/graphite-meter-client
+# test/coverage artifacts the just recipes and `go test -c` emit
+go/cover.out
+*.test
 # release cross-compile intermediates + archives; must stay ignored so
 # buildvcs stamps vcs.modified=false and release binaries reproduce
 # bit-for-bit from a clean checkout of the tag
