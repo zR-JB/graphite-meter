@@ -53,10 +53,9 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 ## The Go measurement server
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
-builds the random block, upload store, meters, and endpoint implementations once. Listener-specific
-muxes expose clear H1 on 7246/tcp, optional TLS-only H1 on 7247/tcp, optional H2 on 7248/tcp,
-and optional H3 on 7249/udp with a TLS H1 bootstrap on 7249/tcp. The H3 TCP surface has only
-`/probe`, so transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
+builds the random block, upload store, meters, and endpoint implementations once. Each listener
+gets its own mux, so a surface never leaks across protocols: the H3 TCP bootstrap carries only
+`/probe`, and transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
 disabled to prevent POST replay.
 
 | Listener    | Protocol               | Owned surface                                                                                       |
@@ -135,7 +134,7 @@ Plain request/response endpoints (`/preflight`, `/probe`, `/download`, `/upload`
 bus speaks a tiny ASCII protocol — one message per frame, no
 length prefix, `OP` or `OP,arg[,arg...]`, parsed by `indexOf(',')` slicing, never JSON. An unknown
 opcode or malformed frame gets a non-fatal `ERR,<code>,<text>` reply; the bus is never torn down
-for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpus:
+for one bad frame. Full spec: [`api/wire.md`](../api/wire.md); shared byte-exact conformance corpus:
 `api/wire.testvectors.txt` (every language's encoder/decoder must match it).
 
 | Opcode  | Direction | Shape                    | Meaning                                                                     |
@@ -326,5 +325,5 @@ H1-TLS, H2, and H3 are enabled by non-empty listener addresses and fail before b
 outside its validity window, or incompatible with a configured public TLS hostname. Private-key
 permissions and certificates expiring within 30 days produce warnings. Files are checked every
 minute and a complete valid renewal is swapped atomically; a partial or invalid renewal leaves the
-last valid certificate serving. No private-key bytes are logged. The Compose overlay mounts the
-complete Let's Encrypt tree read-only so `live/` symlinks into `archive/` remain usable.
+last valid certificate serving. No private-key bytes are logged. Deployment settings for the pair
+are in [CONFIGURATION.md](CONFIGURATION.md#native-listeners).

@@ -15,6 +15,20 @@ Graphite Meter reads environment variables at startup. Matching command-line fla
 
 A non-empty listener address enables that listener. There are no separate enable switches.
 
+Ports 7246–7249 are the convention used by the container image's `EXPOSE` set and by every example in this repository:
+
+| Port | Enabled by | Serves |
+| --- | --- | --- |
+| `7246/tcp` | `GM_H1_ADDR` | Clear HTTP/1.1 UI, API, transfers, and WebSocket latency. |
+| `7247/tcp` | `GM_H1_TLS_ADDR` | HTTPS UI, API, transfers, and WSS latency. |
+| `7248/tcp` | `GM_H2_ADDR` | HTTP/2 measurement only. |
+| `7249/tcp` | `GM_H3_ADDR` | HTTP/3 Alt-Svc bootstrap probe only. |
+| `7249/udp` | `GM_H3_ADDR` | HTTP/3 QUIC measurement. |
+
+Only 7246 and 7247 serve a browser; 7248 and 7249 are strict measurement targets. Which routes each listener owns is in [ARCHITECTURE.md](ARCHITECTURE.md#the-go-measurement-server).
+
+`GM_TLS_CERT` and `GM_TLS_KEY` are one PEM pair shared by every enabled native TLS listener. The pair is validated before binding, and a complete valid renewal is picked up without a restart — see [TLS security and lifecycle](ARCHITECTURE.md#tls-security-and-lifecycle). Mount the whole Let's Encrypt tree rather than one `live/` directory: its entries are symlinks into `archive/`. For development certificates, see [DEVELOPMENT.md](DEVELOPMENT.md#local-tls-and-http3-certificates).
+
 `GM_H1_PUBLIC_ORIGIN`, `GM_H1_TLS_PUBLIC_ORIGIN`, `GM_H2_PUBLIC_ORIGIN`, and `GM_H3_PUBLIC_ORIGIN` override the externally reachable origin of the corresponding native listener. Their flags use the same names without `GM_` and with lowercase dashes. They are for host/port remapping only; the advertised protocols remain deterministic.
 
 `GM_ADVERTISED_NATIVE_ENDPOINTS` (`-advertised-native-endpoints`) controls which enabled native listeners appear in `/preflight`:
@@ -95,7 +109,7 @@ Generate a local operator hash interactively; the password is never accepted as 
 graphite-meter hash-password
 ```
 
-Authenticated deployments must advertise only HTTPS origins on the canonical hostname. Set `GM_ADVERTISED_NATIVE_ENDPOINTS` to omit `http1-clear`. For OIDC, register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client using PKCE S256, `client_secret_basic`, and scopes `openid profile groups`.
+Authenticated deployments must advertise only HTTPS origins on the canonical hostname. Set `GM_ADVERTISED_NATIVE_ENDPOINTS` to omit `http1-clear`. For OIDC, register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client using PKCE S256, `client_secret_basic`, and scopes `openid profile groups`. Behind a reverse proxy, the forwarding headers an authenticated deployment requires are in [REVERSE_PROXY.md](REVERSE_PROXY.md#measurement-requirements).
 
 ### Authorizing the terminal client
 

@@ -156,9 +156,8 @@ GM_H1_TLS_ADDR=:7247 GM_H2_ADDR=:7248 GM_H3_ADDR=:7249 \
   just prod
 ```
 
-That single command starts clear H1 on `7246/tcp`, TLS-only H1 on `7247/tcp`, H2-only TLS on
-`7248/tcp`, and the H3 bootstrap/QUIC pair on `7249/tcp` and `7249/udp`. Open the UI on
-`http://localhost:7246` or `https://localhost:7247`; the H2 and H3 ports are measurement-only.
+That single command starts all four native listeners on their standard ports. Open the UI on
+`http://localhost:7246` or `https://localhost:7247`.
 
 Browsers can apply additional certificate and root-policy checks to HTTP/3 beyond their normal
 HTTPS trust decision. Firefox has a confirmed

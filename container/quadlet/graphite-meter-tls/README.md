@@ -91,14 +91,11 @@ podman run --rm \
 
 ## Ports with host networking
 
-- 7246/tcp: clear HTTP/1.1 (still opened by the application; keep blocked in the
-  firewall if you want TLS-only external access)
-- 7247/tcp: HTTPS HTTP/1.1 UI/throughput and WSS latency
-- 7248/tcp: strict HTTP/2 measurement listener
-- 7249/tcp: HTTP/3 bootstrap probe
-- 7249/udp: HTTP/3/QUIC measurements
-
-Do not add `PublishPort=` while `Network=host` is set.
+`graphite-meter.env` enables all four native listeners on the standard ports
+listed in [CONFIGURATION.md](../../../docs/CONFIGURATION.md#native-listeners),
+and `Network=host` binds them directly on the host. Keep 7246/tcp blocked in
+the firewall if you want TLS-only external access, and do not add
+`PublishPort=` while `Network=host` is set.
 
 ## Changing hostname or certificate name
 
