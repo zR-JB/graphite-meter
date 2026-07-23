@@ -519,11 +519,11 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionNetwork:
 		switch m.row {
 		case 0:
-			choices := throughputOriginChoices(m.discovery)
+			choices := originChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
 			m.cfg.ThroughputTarget = nextChoice(m.cfg.ThroughputTarget, choices)
 			m.notice = "Throughput endpoint updated."
 		case 1:
-			choices := latencyOriginChoices(m.discovery)
+			choices := originChoices(m.capabilities().LatencyTargets, func(t wire.LatencyTarget) string { return t.Origin })
 			m.cfg.LatencyTarget = nextChoice(m.cfg.LatencyTarget, choices)
 			m.notice = "Latency endpoint updated."
 		case 2:
@@ -693,37 +693,29 @@ func activePreset(url string) int {
 	return -1
 }
 
-func throughputOriginChoices(pf *wire.Preflight) []string {
-	choices := []string{"auto"}
-	if pf == nil {
-		return choices
+func (m model) capabilities() wire.Capabilities {
+	if m.discovery == nil {
+		return wire.Capabilities{}
 	}
-	seen := map[string]struct{}{origin.Key("auto"): {}}
-	for _, target := range pf.Capabilities.ThroughputTargets {
-		choices = appendUniqueOriginChoice(choices, seen, target.Origin)
-	}
-	return choices
+	return m.discovery.Capabilities
 }
 
-func latencyOriginChoices(pf *wire.Preflight) []string {
+// originChoices is the cycle offered for an endpoint row: "auto" first, then each
+// discovered origin. Discovery can advertise one origin under several spellings,
+// so origin.Key decides equivalence and the first spelling wins.
+func originChoices[T any](targets []T, originOf func(T) string) []string {
 	choices := []string{"auto"}
-	if pf == nil {
-		return choices
-	}
 	seen := map[string]struct{}{origin.Key("auto"): {}}
-	for _, target := range pf.Capabilities.LatencyTargets {
-		choices = appendUniqueOriginChoice(choices, seen, target.Origin)
+	for _, target := range targets {
+		value := originOf(target)
+		key := origin.Key(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		choices = append(choices, value)
 	}
 	return choices
-}
-
-func appendUniqueOriginChoice(choices []string, seen map[string]struct{}, value string) []string {
-	key := origin.Key(value)
-	if _, ok := seen[key]; ok {
-		return choices
-	}
-	seen[key] = struct{}{}
-	return append(choices, value)
 }
 
 func nextChoice(current string, choices []string) string {

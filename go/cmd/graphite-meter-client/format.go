@@ -98,27 +98,27 @@ func timingLabel(row int) string {
 	}
 }
 
-// rateLine renders one telemetry bar filled by rate/scale (a scale shared across
-// directions), with a brighter leading cell so motion reads at a glance and the
-// eased rate as the trailing figure.
-func rateLine(name string, rate, scale float64, w int) string {
-	barW := w - 34
-	if barW < 12 {
-		barW = 12
-	}
+// renderBar fills width cells with value/scale. Every bar on a screen shares one
+// scale — the largest value in view — so the fills compare against each other at
+// a glance instead of each bar being full against its own maximum. lead brightens
+// the last filled cell, which makes a live bar's motion legible.
+func renderBar(value, scale float64, width int, lead bool) string {
 	n := 0
 	if scale > 0 {
-		n = int((rate/scale)*float64(barW) + 0.5)
+		n = clamp(int((value/scale)*float64(width)+0.5), 0, width)
 	}
-	n = clamp(n, 0, barW)
-	var bar string
-	if n <= 0 {
-		bar = mutedStyle.Render(strings.Repeat("░", barW))
-	} else {
-		bar = accentStyle.Render(strings.Repeat("█", n-1)) +
-			valueStyle.Render("█") +
-			mutedStyle.Render(strings.Repeat("░", barW-n))
+	if n == 0 {
+		return mutedStyle.Render(strings.Repeat("░", width))
 	}
+	filled := accentStyle.Render(strings.Repeat("█", n))
+	if lead {
+		filled = accentStyle.Render(strings.Repeat("█", n-1)) + valueStyle.Render("█")
+	}
+	return filled + mutedStyle.Render(strings.Repeat("░", width-n))
+}
+
+func rateLine(name string, rate, scale float64, w int) string {
+	bar := renderBar(rate, scale, max(12, w-34), true)
 	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
 }
 

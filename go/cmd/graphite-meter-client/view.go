@@ -66,21 +66,26 @@ func (m model) header(w int) string {
 	return line + "\n" + mutedStyle.Render("native go client "+goclient.Version) + "  " + accentStyle.Render(target)
 }
 
+// splitColumns divides w into two panels separated by a two-cell gutter. Below
+// 96 cells neither panel stays readable side by side, so both take the full
+// width and the caller stacks them.
+func splitColumns(w int) (leftW, rightW int, twoCol bool) {
+	if w < 96 {
+		return w, w, false
+	}
+	leftW = (w - 2) / 2
+	return leftW, w - leftW - 2, true
+}
+
 func (m model) configView(w int) string {
 	var b strings.Builder
 	b.WriteString(m.tabBar(w))
 	b.WriteString("\n\n")
 
-	leftW := w
-	rightW := w
-	if w >= 96 {
-		leftW = (w - 2) / 2
-		rightW = w - leftW - 2
-	}
-
+	leftW, rightW, twoCol := splitColumns(w)
 	menu := panelStyle.Width(leftW).Render(m.sectionView(leftW - 4))
 	summary := panelStyle.Width(rightW).Render(m.planView(rightW - 4))
-	if w >= 96 {
+	if twoCol {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, menu, "  ", summary))
 	} else {
 		b.WriteString(menu)
@@ -256,17 +261,11 @@ func (m model) planView(w int) string {
 }
 
 func (m model) runView(w int) string {
-	leftW := w
-	rightW := w
-	if w >= 96 {
-		leftW = (w - 2) / 2
-		rightW = w - leftW - 2
-	}
-
+	leftW, rightW, twoCol := splitColumns(w)
 	summary := panelStyle.Width(leftW).Render(m.summary)
 	live := panelStyle.Width(rightW).Render(m.liveView(rightW - 4))
 	var b strings.Builder
-	if w >= 96 {
+	if twoCol {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, summary, "  ", live))
 	} else {
 		b.WriteString(summary)
@@ -313,9 +312,6 @@ func (m model) summaryView() string {
 }
 
 func (m model) liveView(w int) string {
-	// One shared scale (the larger of the two session peaks) for both bars, so a
-	// glance at the fill compares download against upload directly instead of each
-	// bar being full against its own peak.
 	scale := m.rateScale()
 	lines := []string{
 		accentStyle.Render("Live Telemetry"),
@@ -326,7 +322,7 @@ func (m model) liveView(w int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// rateScale is the shared bar denominator: the larger session peak across both
+// rateScale is the live bars' denominator: the larger session peak across both
 // directions. Peaks only grow, so the scale is stable within a run.
 func (m model) rateScale() float64 {
 	s := m.peaks[goclient.Down]
@@ -339,8 +335,6 @@ func (m model) rateScale() float64 {
 func (m model) resultsView(w int) string {
 	lines := []string{accentStyle.Render("Results")}
 
-	// One shared scale across every throughput row (both directions) so the mini
-	// bars are comparable at a glance — the same principle as the live bars.
 	var scale float64
 	for _, r := range m.results {
 		if !isLatencyResult(r) && r.PeakBps > scale {
@@ -360,12 +354,7 @@ func (m model) resultsView(w int) string {
 			))
 			continue
 		}
-		n := 0
-		if scale > 0 {
-			n = int((r.MeanBps/scale)*float64(barW) + 0.5)
-		}
-		n = clamp(n, 0, barW)
-		bar := accentStyle.Render(strings.Repeat("█", n)) + mutedStyle.Render(strings.Repeat("░", barW-n))
+		bar := renderBar(r.MeanBps, scale, barW, false)
 		dir := "down"
 		if r.Direction == goclient.Up {
 			dir = "up"
