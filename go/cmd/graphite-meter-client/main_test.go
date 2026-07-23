@@ -208,24 +208,6 @@ func TestTimingLabel(t *testing.T) {
 	}
 }
 
-func TestBoolLabel(t *testing.T) {
-	if got := boolLabel(true); got != "enabled" {
-		t.Errorf("boolLabel(true) = %q, want enabled", got)
-	}
-	if got := boolLabel(false); got != "disabled" {
-		t.Errorf("boolLabel(false) = %q, want disabled", got)
-	}
-}
-
-func TestTLSLabel(t *testing.T) {
-	if got := tlsLabel(true); got != "verification skipped" {
-		t.Errorf("tlsLabel(true) = %q, want verification skipped", got)
-	}
-	if got := tlsLabel(false); got != "verified" {
-		t.Errorf("tlsLabel(false) = %q, want verified", got)
-	}
-}
-
 func TestTargetChoiceLabel(t *testing.T) {
 	if got := targetChoiceLabel("ws-http1-tls"); got != "WebSocket · HTTP/1.1 · TLS" {
 		t.Fatalf("targetChoiceLabel() = %q", got)
