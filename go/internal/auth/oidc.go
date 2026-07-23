@@ -320,22 +320,56 @@ func first(v []string) string {
 	return v[0]
 }
 
+// oidcIDClaims are the ID-token claims the callback reads directly.
+type oidcIDClaims struct {
+	Nonce    string `json:"nonce"`
+	Name     string `json:"name"`
+	Username string `json:"preferred_username"`
+	AtHash   string `json:"at_hash"`
+}
+
 func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
+	tx, code, ok := s.resolveOIDCTransaction(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	ctx = oidc.ClientContext(ctx, providerHTTPClient())
+	token, idToken, idClaims, why := s.exchangeAndVerifyToken(ctx, tx, code)
+	if why != "" {
+		s.oidcLoginFailure(w, r, why)
+		return
+	}
+	name, why := s.authorizeOIDCUser(ctx, tx, token, idToken, idClaims)
+	if why != "" {
+		s.oidcLoginFailure(w, r, why)
+		return
+	}
+	s.completeOIDCSignIn(w, r, tx, idToken, name)
+}
+
+// resolveOIDCTransaction validates the callback parameters and consumes the
+// one-time transaction, returning it plus the authorization code. It writes the
+// failure response and returns ok=false on any mismatch. The cliChallenge is
+// forwarded onto r.URL before the fallible checks so a later failure's /login
+// redirect still carries it.
+func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request) (oidcTransaction, string, bool) {
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
 	if !cok || !sok || len(q["error"]) > 0 || len(q["iss"]) > 1 {
 		s.oidcLoginFailure(w, r, reasonCallbackParameters)
-		return
+		return oidcTransaction{}, "", false
 	}
-	key := sha256.Sum256([]byte(state))
 	cookie, err := r.Cookie(transactionCookie)
 	if err != nil {
 		s.oidcLoginFailure(w, r, reasonTransactionCookie)
-		return
+		return oidcTransaction{}, "", false
 	}
 	bh := sha256.Sum256([]byte(cookie.Value))
+	key := sha256.Sum256([]byte(state))
 	o := s.oidc
 	o.mu.Lock()
 	tx, ok := o.tx[key]
@@ -352,12 +386,12 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok || !s.now().Before(tx.expires) || tx.browser != bh || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
 		s.counters.replayExpiry.Add(1)
 		s.oidcLoginFailure(w, r, reasonTransactionReplay)
-		return
+		return oidcTransaction{}, "", false
 	}
 	iss := first(q["iss"])
 	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
 		s.oidcLoginFailure(w, r, reasonResponseIssuer)
-		return
+		return oidcTransaction{}, "", false
 	}
 	// The exchange is the one anonymous path that produces an outbound request
 	// to the identity provider, which commonly sits on a private network. The
@@ -365,46 +399,44 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	// this bounds volume.
 	if !s.allowExchange(r) {
 		s.oidcLoginFailure(w, r, reasonExchangeRateLimited)
-		return
+		return oidcTransaction{}, "", false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	ctx = oidc.ClientContext(ctx, providerHTTPClient())
+	return tx, code, true
+}
+
+// exchangeAndVerifyToken swaps the code for tokens and verifies the ID token
+// signature, nonce, and access-token hash. why is "" on success.
+func (s *Service) exchangeAndVerifyToken(ctx context.Context, tx oidcTransaction, code string) (*oauth2.Token, *oidc.IDToken, oidcIDClaims, reason) {
 	token, err := tx.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
 	if err != nil {
-		s.oidcLoginFailure(w, r, reasonTokenExchange)
-		return
+		return nil, nil, oidcIDClaims{}, reasonTokenExchange
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		s.oidcLoginFailure(w, r, reasonMissingIDToken)
-		return
+		return nil, nil, oidcIDClaims{}, reasonMissingIDToken
 	}
 	idToken, err := tx.idVerifier.Verify(ctx, rawID)
 	if err != nil {
-		s.oidcLoginFailure(w, r, reasonIDTokenVerification)
-		return
+		return nil, nil, oidcIDClaims{}, reasonIDTokenVerification
 	}
-	var idClaims struct {
-		Nonce    string `json:"nonce"`
-		Name     string `json:"name"`
-		Username string `json:"preferred_username"`
-		AtHash   string `json:"at_hash"`
-	}
+	var idClaims oidcIDClaims
 	if err := idToken.Claims(&idClaims); err != nil || idClaims.Nonce != tx.nonce {
-		s.oidcLoginFailure(w, r, reasonIDTokenClaimsOrNonce)
-		return
+		return nil, nil, oidcIDClaims{}, reasonIDTokenClaimsOrNonce
 	}
 	if idClaims.AtHash != "" {
 		if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-			s.oidcLoginFailure(w, r, reasonAccessTokenHash)
-			return
+			return nil, nil, oidcIDClaims{}, reasonAccessTokenHash
 		}
 	}
+	return token, idToken, idClaims, ""
+}
+
+// authorizeOIDCUser fetches UserInfo, confirms the subject matches, enforces the
+// group allowlist, and derives the display name. why is "" on success.
+func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, token *oauth2.Token, idToken *oidc.IDToken, idClaims oidcIDClaims) (string, reason) {
 	ui, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 	if err != nil || ui.Subject != idToken.Subject {
-		s.oidcLoginFailure(w, r, reasonUserInfoOrSubject)
-		return
+		return "", reasonUserInfoOrSubject
 	}
 	var claims struct {
 		Name     string   `json:"name"`
@@ -415,27 +447,18 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			s.counters.groupDenial.Add(1)
 		}
-		s.oidcLoginFailure(w, r, reasonUserInfoClaimsOrGroup)
-		return
+		return "", reasonUserInfoClaimsOrGroup
 	}
 	if !validSubject(idToken.Subject) {
-		s.oidcLoginFailure(w, r, reasonInvalidSubject)
-		return
+		return "", reasonInvalidSubject
 	}
-	name := claims.Name
-	if name == "" {
-		name = claims.Username
-	}
-	if name == "" {
-		name = idClaims.Name
-	}
-	if name == "" {
-		name = idClaims.Username
-	}
-	if name == "" {
-		name = idToken.Subject
-	}
-	name = safeDisplayName(name)
+	name := firstNonEmpty(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
+	return safeDisplayName(name), ""
+}
+
+// completeOIDCSignIn mints the session, rotates any prior one, and hands off to
+// the same-site interstitial.
+func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx oidcTransaction, idToken *oidc.IDToken, name string) {
 	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName, idToken.Expiry)
 	if err != nil {
 		s.oidcLoginFailure(w, r, reasonSessionCapacity)
@@ -449,6 +472,15 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)
 	s.writeSignedInInterstitial(w, tx.cliChallenge)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
