@@ -41,11 +41,6 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress
 	return clientAddress(current, ClientIPForwarded)
 }
 
-func PeerIsTrusted(r *http.Request, trusted []netip.Prefix) bool {
-	peer, ok := parseAddress(r.RemoteAddr)
-	return ok && contains(trusted, peer)
-}
-
 func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
 	version := 6
 	if addr.Is4() {

@@ -196,7 +196,7 @@ func ParseAdvertisedNative(raw string) (map[string]bool, error) {
 	return set, nil
 }
 
-func (c Config) NativeEnabled(name string) bool {
+func (c Config) nativeEnabled(name string) bool {
 	switch name {
 	case NativeH1Clear:
 		return c.Native.H1 != ""
@@ -211,7 +211,7 @@ func (c Config) NativeEnabled(name string) bool {
 }
 
 func (c Config) NativeAdvertised(name string) bool {
-	return c.NativeEnabled(name) && (c.AdvertiseAllNative || c.AdvertisedNative[name])
+	return c.nativeEnabled(name) && (c.AdvertiseAllNative || c.AdvertisedNative[name])
 }
 
 func envBool(name string, fallback bool) (bool, error) {
@@ -302,7 +302,7 @@ func (c Config) validateListeners() error {
 	}
 	if !c.AdvertiseAllNative {
 		for name := range c.AdvertisedNative {
-			if !c.NativeEnabled(name) {
+			if !c.nativeEnabled(name) {
 				return fmt.Errorf("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint %q", name)
 			}
 		}
