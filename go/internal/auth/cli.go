@@ -10,6 +10,17 @@ import (
 	"time"
 )
 
+// cliApproval is one pending browser approval of a native-client grant: a
+// verification code shown on both sides, bound to the approving session, valid
+// for two minutes and never persisted.
+type cliApproval struct {
+	challenge string
+	code      string
+	session   *session
+	expires   time.Time
+	approved  bool
+}
+
 func validChallenge(v string) bool {
 	b, err := base64.RawURLEncoding.DecodeString(v)
 	return err == nil && len(b) == 32 && len(v) <= 64
