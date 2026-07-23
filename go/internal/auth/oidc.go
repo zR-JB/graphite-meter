@@ -36,6 +36,12 @@ type oidcTransaction struct {
 	idVerifier             *oidc.IDTokenVerifier
 	oauth                  oauth2.Config
 	responseIssuer         bool
+	// prior is the session hash the caller held when the flow began. The
+	// callback is cross-site and never carries the Strict session cookie, so
+	// the prior session is captured here at /auth/oidc/start (which is
+	// same-site) and rotated out when the new session is issued.
+	prior    [32]byte
+	hasPrior bool
 }
 
 type oidcState struct {
@@ -255,6 +261,10 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	}
 	client := budgetKey(addr)
 	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: bh, expires: s.now().Add(10 * time.Minute), client: client, cliChallenge: r.FormValue("challenge")}
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		tx.prior = sha256.Sum256([]byte(c.Value))
+		tx.hasPrior = true
+	}
 	o := s.oidc
 	o.mu.Lock()
 	now := s.now()
@@ -427,6 +437,9 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.oidcLoginFailure(w, r, reasonSessionCapacity)
 		return
+	}
+	if tx.hasPrior {
+		s.revokeSessionHash(tx.prior, sess)
 	}
 	setSessionCookie(w, sessionCookie, raw, sess.expires)
 	setCSRFCookie(w, sess.csrf, sess.expires)

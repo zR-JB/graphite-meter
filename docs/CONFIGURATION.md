@@ -135,6 +135,14 @@ A browser sign-in creates a session that lasts **8 hours, absolute**. Nothing ex
 request, no open page, no measurement renews the clock, so a tab left open overnight is signed
 out in the morning and lands back on the login page.
 
+**Signing in again** in the same browser rotates the old session out — the session it replaces,
+and every bearer grant issued from it, is revoked immediately rather than left live for the rest
+of its lifetime. **Sign out** ends the current session (and its grants). **Sign out everywhere**
+(the second account-strip button) ends *every* session for the account at once, which is how you
+revoke a session or terminal grant whose token you no longer hold — a shared device, a stolen
+laptop, a leaked grant. A plain sign-out does not touch your other devices; sign-out-everywhere
+does.
+
 The server sets four cookies, all `__Host-` prefixed — which browsers accept only with `Secure`,
 `Path=/`, and **no `Domain`**:
 

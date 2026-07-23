@@ -64,6 +64,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		s.loginRejected(w, r, reasonSessionCapacity)
 		return
 	}
+	s.rotateSuppliedSession(r, sess)
 	setSessionCookie(w, sessionCookie, raw, sess.expires)
 	setCSRFCookie(w, sess.csrf, sess.expires)
 	s.counters.local.Add(1)
@@ -113,7 +114,11 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.deleteSessionLocked(p.session)
+	if r.FormValue("scope") == "all" {
+		s.deleteSubjectSessionsLocked(p.session.subject)
+	} else {
+		s.deleteSessionLocked(p.session)
+	}
 	s.mu.Unlock()
 	s.counters.logout.Add(1)
 	clearCookie(w, sessionCookie)

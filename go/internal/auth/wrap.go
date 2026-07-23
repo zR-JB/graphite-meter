@@ -122,6 +122,17 @@ func isMeasurementRoute(path string) bool {
 	return false
 }
 
+// rotateSuppliedSession revokes the session named by the request's own session
+// cookie, if it still keys a live one, as part of issuing sess. The password
+// login POST is same-site, so the browser attaches the prior session cookie;
+// the OIDC callback is cross-site and does not, so that path captures the prior
+// session at /auth/oidc/start instead (see oidcTransaction.prior).
+func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		s.revokeSessionHash(sha256.Sum256([]byte(c.Value)), sess)
+	}
+}
+
 func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 	if raw := r.Header.Get("Authorization"); raw != "" {
 		if !strings.HasPrefix(raw, "Bearer ") {

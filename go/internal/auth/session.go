@@ -89,6 +89,37 @@ func (s *Service) deleteSessionLocked(sess *session) {
 	sess.cancel()
 }
 
+// deleteSubjectSessionsLocked revokes every session belonging to subject, each
+// with its grants and pending approvals, and returns how many were revoked.
+// This is "sign out everywhere": it reaches sessions the caller no longer holds
+// a token for — including one a re-login orphaned — which a single-session
+// logout cannot. Victims are collected before deletion so the map is not
+// mutated mid-range.
+func (s *Service) deleteSubjectSessionsLocked(subject string) int {
+	var victims []*session
+	for _, sess := range s.sessions {
+		if sess.subject == subject {
+			victims = append(victims, sess)
+		}
+	}
+	for _, sess := range victims {
+		s.deleteSessionLocked(sess)
+	}
+	return len(victims)
+}
+
+// revokeSessionHash deletes the session keyed by h unless it is absent or is
+// keep. A fresh sign-in calls it to rotate out the session it replaces —
+// including that session's grants — so re-authenticating in a browser cannot
+// leave the prior session live and unreachable for the rest of its lifetime.
+func (s *Service) revokeSessionHash(h [32]byte, keep *session) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[h]; ok && sess != keep {
+		s.deleteSessionLocked(sess)
+	}
+}
+
 func (s *Service) expireLocked(now time.Time) {
 	for _, sess := range s.sessions {
 		if !now.Before(sess.expires) {
