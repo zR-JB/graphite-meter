@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { authenticatedFetch } from "../auth";
+  import { tooltip } from "../actions/tooltip";
 
   type Session = {
     name: string;
@@ -43,17 +44,14 @@
     aria-label={`${label} · ${provider}`}
   >
     <input type="hidden" name="csrf" value={session.csrf} />
-    <div class="identity" title={`${label} · ${provider}`}>
+    <div class="identity" use:tooltip={`${label} · ${provider}`}>
       <span class="avatar" aria-hidden="true">
         <svg viewBox="0 0 20 20">
           <circle cx="10" cy="7" r="3" />
           <path d="M4.5 16c.5-3 2.3-4.5 5.5-4.5s5 1.5 5.5 4.5" />
         </svg>
       </span>
-      <span class="copy">
-        <strong>{label}</strong>
-        <small>{provider}</small>
-      </span>
+      <strong class="name">{label}</strong>
     </div>
     <button
       class="signout"
@@ -76,7 +74,7 @@
     flex: 0 0 auto;
     align-items: center;
     min-width: 0;
-    height: 38px;
+    height: 32px;
     max-width: min(36vw, 300px);
     overflow: hidden;
     border: 1px solid var(--border);
@@ -89,13 +87,13 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
-    padding: 0 10px;
+    padding: 0 var(--space-2);
   }
   .avatar {
     display: grid;
     flex: none;
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     place-items: center;
     border: 1px solid color-mix(in srgb, var(--brand) 38%, var(--border));
     border-radius: 50%;
@@ -103,39 +101,28 @@
     color: var(--brand-strong);
   }
   .avatar svg {
-    width: 15px;
+    width: 13px;
     fill: none;
     stroke: currentColor;
     stroke-linecap: round;
     stroke-linejoin: round;
     stroke-width: 1.5;
   }
-  .copy {
-    display: grid;
-    min-width: 0;
-    line-height: 1.15;
-  }
-  .copy strong,
-  .copy small {
+  /* The provider line lives in the tooltip and the form's accessible name;
+     the strip itself carries one 32px-tall line. */
+  .name {
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .copy strong {
+    min-width: 0;
     color: var(--text);
     font-size: var(--type-sm);
     font-weight: 650;
-  }
-  .copy small {
-    color: var(--text-muted);
-    font-size: 9px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .signout {
     display: grid;
     flex: none;
-    width: 36px;
+    width: 32px;
     height: 100%;
     margin-left: auto;
     place-items: center;
@@ -156,7 +143,7 @@
     outline-offset: -3px;
   }
   .signout svg {
-    width: 17px;
+    width: 16px;
     fill: none;
     stroke: currentColor;
     stroke-linecap: round;
@@ -164,10 +151,7 @@
     stroke-width: 1.6;
   }
   @media (max-width: 640px) {
-    .identity {
-      padding: 0 7px;
-    }
-    .copy {
+    .name {
       display: none;
     }
   }
