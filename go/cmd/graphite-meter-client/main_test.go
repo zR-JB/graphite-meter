@@ -2319,3 +2319,53 @@ func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
 		}
 	}
 }
+
+// populatedRunModel is a run-screen model with live bars, a timeline, latency,
+// and results — the visually densest frame, exercising every fit path.
+func populatedRunModel(width int) model {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.width = width
+	m.stage = "bidirectional"
+	m.status = "measure"
+	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000, TotalBytes: 1 << 30}
+	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000, TotalBytes: 1 << 30}
+	m.peaks[goclient.Down] = 940_000_000
+	m.peaks[goclient.Up] = 80_000_000
+	m.latency = goclient.LatencySample{RTT: 3 * time.Millisecond}
+	m.target = "throughput.example.com — a deliberately long target label to test truncation at narrow widths"
+	m.stages = plannedStages(m.cfg)
+	m.stages[0].state = stageDone
+	m.stages[1].state, m.stages[1].since = stageMeasuring, m.now.Add(-2*time.Second)
+	return m
+}
+
+// TestRenderedFramesNeverExceedWidth is the end-to-end guarantee behind the
+// fitLine/fitBlock render path: whatever the content, no drawn line may be
+// wider than the frame, or the layout wraps and corrupts. It drives the full
+// View pipeline for the configure and run screens across widths from cramped to
+// wide, including one narrower than a long target label. Below 44 cells the
+// innerWidth floor (40) plus the shell's 4-cell margin deliberately overflows a
+// too-small terminal, so the bound is max(width, 44).
+func TestRenderedFramesNeverExceedWidth(t *testing.T) {
+	for _, width := range []int{40, 60, 80, 100, 140, 200} {
+		bound := max(width, 44)
+		frames := map[string]string{
+			"configure": func() string { m := newModel(goclient.DefaultConfig()); m.width = width; return m.View() }(),
+			"run":       populatedRunModel(width).View(),
+		}
+		for name, frame := range frames {
+			for i, line := range strings.Split(frame, "\n") {
+				if w := lipgloss.Width(line); w > bound {
+					t.Errorf("%s@%d: line %d is %d cells wide (> %d): %q", name, width, i, w, bound, line)
+				}
+			}
+		}
+	}
+}
+
+// TestRenderRunFrame prints one real run-screen frame (ANSI included) so the
+// rendered terminal output can be eyeballed: go test -run TestRenderRunFrame -v.
+func TestRenderRunFrame(t *testing.T) {
+	t.Log("\n" + populatedRunModel(100).View())
+}
