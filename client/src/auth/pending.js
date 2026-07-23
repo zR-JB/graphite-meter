@@ -54,8 +54,18 @@ document.addEventListener("submit", (event) => {
     credentials: "same-origin",
     redirect: "follow",
   })
-    .then((response) =>
-      response.text().then((html) => {
+    .then((response) => {
+      // A successful sign-in redirects to the app; follow it without parsing.
+      // Parsing the app document here would evaluate its inline styles against
+      // this page's strict CSP and log a spurious violation.
+      if (
+        response.redirected &&
+        new URL(response.url).pathname !== action.pathname
+      ) {
+        location.assign(response.url);
+        return;
+      }
+      return response.text().then((html) => {
         const card = new DOMParser()
           .parseFromString(html, "text/html")
           .querySelector("main.card");
@@ -67,7 +77,7 @@ document.addEventListener("submit", (event) => {
           if (focus instanceof HTMLElement) focus.focus();
         } else if (response.ok) location.assign(response.url);
         else location.reload();
-      }),
-    )
+      });
+    })
     .catch(() => setBusy(form, false));
 });
