@@ -208,3 +208,32 @@ func (f *fakeSession) OpenDownloadSink() (io.Writer, error) {
 }
 func (f *fakeSession) OpenUploadSource() (io.Reader, error) { return nil, transport.ErrUnsupported }
 func (f *fakeSession) Bus() (transport.MessageBus, bool)    { return nil, false }
+
+// BenchmarkDownloadThroughput streams a multi-megabyte download over a loopback
+// TCP server end to end, so it measures the endpoint's real serving throughput
+// (block wrap-around, HTTP framing, and the loopback stack) rather than a
+// synthetic in-memory copy. b.SetBytes makes the result read as MB/s.
+func BenchmarkDownloadThroughput(b *testing.B) {
+	srv, _ := newDownloadServer(testBlockSize)
+	b.Cleanup(srv.Close)
+	const size = 8 << 20 // 8 MiB per request
+	client := srv.Client()
+	url := srv.URL + "/download?bytes=" + strconv.Itoa(size)
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	for b.Loop() {
+		res, err := client.Get(url)
+		if err != nil {
+			b.Fatal(err)
+		}
+		n, err := io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if n != size {
+			b.Fatalf("streamed %d bytes, want %d", n, size)
+		}
+	}
+}
