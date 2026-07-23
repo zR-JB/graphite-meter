@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
@@ -27,6 +28,7 @@ var (
 	tabStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Padding(0, 1)
 	selectedStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238"))
 	labelStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	keyStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
 	valueStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	mutedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	errorStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
@@ -171,11 +173,11 @@ func (m model) sectionView(w int) string {
 	switch m.section {
 	case sectionServers:
 		return m.serversView(w)
-	case sectionStages:
+	case sectionRunSetup:
 		return m.stagesView(w)
 	case sectionTiming:
 		return m.timingView(w)
-	case sectionNetwork:
+	case sectionConnections:
 		return m.networkView(w)
 	case sectionRun:
 		return m.runMenuView(w)
@@ -419,7 +421,7 @@ func (m model) summaryView(w int) string {
 	}
 	lines = append(lines, m.timelineView(w)...)
 	if m.complete {
-		lines = append(lines, "", successStyle.Render("Finished. Press m for menus or r to run again."))
+		lines = append(lines, "", successStyle.Render("Finished. Press esc for setup or r to run again."))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -543,12 +545,20 @@ func isLatencyResult(r goclient.Result) bool {
 	return r.Latency.Count > 0 || r.Stage == "latency"
 }
 
+// helpView is the footer. The model is the key map it renders, so the listing
+// follows whichever screen is on show.
 func (m model) helpView() string {
-	if m.edit.kind != editNone {
-		return mutedStyle.Render("type or paste • ←/→ home/end move • enter apply • esc cancel • ctrl+c quit")
-	}
-	if m.mode == modeRun {
-		return mutedStyle.Render("c/esc cancel • m menus after finish • r rerun after finish • q quit")
-	}
-	return mutedStyle.Render("tab switch menu • ↑/↓ select • enter edit/toggle/select • v recheck • r run • q quit")
+	m.help.Width = m.innerWidth()
+	return m.help.View(m)
+}
+
+// newHelp is the footer renderer, dressed in this program's styles rather than
+// the bubble's defaults.
+func newHelp() help.Model {
+	h := help.New()
+	h.Styles.ShortKey, h.Styles.FullKey = keyStyle, keyStyle
+	h.Styles.ShortDesc, h.Styles.FullDesc = mutedStyle, mutedStyle
+	h.Styles.ShortSeparator, h.Styles.FullSeparator = subtleRuleStyle, subtleRuleStyle
+	h.Styles.Ellipsis = subtleRuleStyle
+	return h
 }

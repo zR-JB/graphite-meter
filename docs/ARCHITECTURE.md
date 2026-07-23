@@ -209,16 +209,18 @@ peak across ~100ms samples (upload uses the server receiver, download the local 
 latency as min/mean/P50/P95 (linear-interpolated percentiles), jitter (mean absolute deviation),
 and loss ratio.
 
-The TUI has five configuration sections (Servers — three built-in presets plus a custom URL;
-Stages; Timing; Network — stream count and TLS verification; Run) and a live telemetry view
-(session panel, ASCII throughput bars, a running results log). Keys: `tab`/arrows to navigate,
-`enter`/`space` to toggle or edit, `r` to run, `c`/`esc` to cancel, `q` to quit. CLI flags (all
-editable again inside the TUI before a run starts) are listed in
+The TUI has five configuration sections (Server — three built-in presets plus a custom URL; Run
+setup; Timing; Connections — stream count and TLS verification; Start) and a live telemetry view
+(session panel, stage timeline, ASCII throughput bars, a running results log). Keys: `tab`/arrows
+to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run or run again, `v`
+to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
+finished one, `?` to expand the key list, `q` to quit; the footer lists every binding the screen on
+show accepts. CLI flags (all editable again inside the TUI before a run starts) are listed in
 [DEVELOPMENT.md](DEVELOPMENT.md#native-tui-client-flags).
 
 `internal/goclient` (stats, config normalization, preflight, the adaptive-warmup/lane-stagger
 runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model` state machine in
-`cmd/graphite-meter-client/main.go` have unit tests — also run with `just server-test` (one Go
+`cmd/graphite-meter-client/model.go` have unit tests — also run with `just server-test` (one Go
 module covers both the server and the TUI client).
 
 ---

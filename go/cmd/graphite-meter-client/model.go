@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -52,9 +54,9 @@ type section int
 
 const (
 	sectionServers section = iota
-	sectionStages
+	sectionRunSetup
 	sectionTiming
-	sectionNetwork
+	sectionConnections
 	sectionRun
 	sectionCount
 )
@@ -215,6 +217,10 @@ type model struct {
 	notice  string
 	lay     *layout
 	spin    spinner.Model
+	help    help.Model
+	// cancelPrompt is the run screen waiting for the second esc that stops the
+	// run. Any other key clears it and the run carries on.
+	cancelPrompt bool
 	// now paces every elapsed clock on screen. The spinner's frame tick sets
 	// it, so the clocks and the frames advance together.
 	now time.Time
@@ -257,6 +263,7 @@ func newModel(cfg goclient.Config) model {
 		prepareStatus: "checking",
 		lay:           &layout{},
 		spin:          spin,
+		help:          newHelp(),
 		now:           time.Now(),
 		rates:         map[goclient.Direction]goclient.ThroughputSample{},
 		peaks:         map[goclient.Direction]float64{},
@@ -468,6 +475,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stopStages()
 		m.complete = true
+		m.cancelPrompt = false
 		return m, nil
 	default:
 		// The clipboard read behind ctrl+v answers with a message only the text
@@ -482,67 +490,82 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.edit.kind != editNone {
+	switch {
+	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
-	}
-
-	switch msg.String() {
-	case "ctrl+c", "q":
+	case key.Matches(msg, keys.quit):
 		if m.cancel != nil {
 			m.cancel()
 		}
 		return m, tea.Quit
-	}
-
-	if m.mode == modeRun {
-		switch msg.String() {
-		case "esc", "c":
-			if !m.complete && m.cancel != nil {
-				m.cancel()
-				m.status = "canceling"
-			}
-		case "m", "left":
-			if m.complete {
-				m.mode = modeConfigure
-				m.section = sectionRun
-				m.row = 0
-			}
-		case "r":
-			if m.complete {
-				return m.startRun()
-			}
-		}
+	case m.cancelPrompt:
+		return m.answerCancelPrompt(msg)
+	case key.Matches(msg, keys.help):
+		m.help.ShowAll = !m.help.ShowAll
 		return m, nil
+	case m.mode == modeRun:
+		return m.handleRunKey(msg)
 	}
+	return m.handleConfigureKey(msg)
+}
 
-	switch msg.String() {
-	case "tab", "right":
-		m.section = (m.section + 1) % sectionCount
+func (m model) handleConfigureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	step := 1
+	if reverse(msg) {
+		step = -1
+	}
+	switch {
+	case key.Matches(msg, keys.sections):
+		m.section = section((int(m.section) + step + int(sectionCount)) % int(sectionCount))
 		m.row = clamp(m.row, 0, m.rowCount()-1)
-	case "shift+tab", "left":
-		m.section = (m.section + sectionCount - 1) % sectionCount
-		m.row = clamp(m.row, 0, m.rowCount()-1)
-	case "up", "k":
-		m.row = clamp(m.row-1, 0, m.rowCount()-1)
-	case "down", "j":
-		m.row = clamp(m.row+1, 0, m.rowCount()-1)
-	case "enter", " ":
+	case key.Matches(msg, keys.rows):
+		m.row = clamp(m.row+step, 0, m.rowCount()-1)
+	case key.Matches(msg, keys.activate):
 		return m.confirm()
-	case "r":
+	case key.Matches(msg, keys.run):
 		return m.startRun()
-	case "v":
+	case key.Matches(msg, keys.verify):
 		return m.reprepare(nil)
-	case "esc":
-		m.notice = "Configuration kept. Press q to quit or r to run."
-	default:
+	case m.section == sectionServers && m.row == len(serverPresets) && msg.Type == tea.KeyRunes && !msg.Alt:
 		// The custom URL row is a text field, so runes it receives while merely
 		// selected open the editor carrying them. A bracketed paste arrives as
 		// one rune batch and lands whole.
-		if m.section == sectionServers && m.row == len(serverPresets) && msg.Type == tea.KeyRunes && !msg.Alt {
-			m.edit = beginEdit(editURL, "url", string(msg.Runes))
-			m.notice = "Editing server URL. Enter applies, esc cancels."
-		}
+		m.edit = beginEdit(editURL, "url", string(msg.Runes))
+		m.notice = "Editing server URL. Enter applies, esc cancels."
 	}
+	return m, nil
+}
+
+func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if !m.complete {
+		if key.Matches(msg, keys.cancel) && m.cancel != nil {
+			m.cancelPrompt = true
+			m.notice = "Cancel the run? esc confirms, any other key continues."
+		}
+		return m, nil
+	}
+	switch {
+	case key.Matches(msg, keys.back):
+		m.mode = modeConfigure
+		m.section = sectionRun
+		m.row = 0
+	case key.Matches(msg, keys.rerun):
+		return m.startRun()
+	}
+	return m, nil
+}
+
+func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.cancelPrompt = false
+	if !key.Matches(msg, keys.confirm) {
+		m.notice = "Run continues."
+		return m, nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+		m.status = "canceling"
+	}
+	m.notice = "Canceling the run."
 	return m, nil
 }
 
@@ -595,17 +618,17 @@ func (m model) confirm() (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "ctrl+c":
+	switch {
+	case key.Matches(msg, keys.abort):
 		if m.cancel != nil {
 			m.cancel()
 		}
 		return m, tea.Quit
-	case "esc":
+	case key.Matches(msg, keys.discard):
 		m.notice = "Edit canceled."
 		m.edit = editState{}
 		return m, nil
-	case "enter":
+	case key.Matches(msg, keys.apply):
 		before := m.cfg
 		m.commitEdit()
 		if m.cfg != before {
@@ -725,7 +748,7 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		}
 		m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
 		m.notice = "Editing server URL. Enter applies, esc cancels."
-	case sectionStages:
+	case sectionRunSetup:
 		switch m.row {
 		case 0:
 			m.cfg.Stages.Latency = !m.cfg.Stages.Latency
@@ -742,7 +765,7 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionTiming:
 		m.edit = beginEdit(editDuration, timingFields[m.row], m.durationValue(m.row))
 		m.notice = "Editing duration. Use values like 800ms, 4s, or 1m."
-	case sectionNetwork:
+	case sectionConnections:
 		switch m.row {
 		case 0:
 			choices := originChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
@@ -778,7 +801,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	if !m.cfg.Stages.Latency && !m.cfg.Stages.Download && !m.cfg.Stages.Upload && !m.cfg.Stages.Bidirectional {
 		m.notice = "Enable at least one stage before running."
 		m.mode = modeConfigure
-		m.section = sectionStages
+		m.section = sectionRunSetup
 		m.row = 0
 		return m, nil
 	}
@@ -816,13 +839,14 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.throughputProtocol, m.latencyProtocol = "", ""
 	m.err = nil
 	m.complete = false
+	m.cancelPrompt = false
 	m.now = time.Now()
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
 	m.peaks = map[goclient.Direction]float64{}
 	m.results = nil
 	m.latency = goclient.LatencySample{}
 	m.stages = plannedStages(cfg)
-	m.notice = "Run started. Press c or esc to cancel."
+	m.notice = "Run started. Press esc to cancel."
 	return m, tea.Batch(waitEvents(events), waitDone(done), m.spin.Tick)
 }
 
@@ -914,11 +938,11 @@ func (m model) rowCount() int {
 	switch m.section {
 	case sectionServers:
 		return len(serverPresets) + 1
-	case sectionStages:
+	case sectionRunSetup:
 		return 5
 	case sectionTiming:
 		return 6
-	case sectionNetwork:
+	case sectionConnections:
 		return 7
 	case sectionRun:
 		return 1

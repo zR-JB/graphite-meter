@@ -239,7 +239,7 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 
 func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section = sectionNetwork
+	m.section = sectionConnections
 	m.row = 0
 	pf := wire.Preflight{Capabilities: wire.Capabilities{
 		ThroughputTargets: []wire.ThroughputTarget{
@@ -265,7 +265,7 @@ func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 
 func TestNetworkEndpointPickerDeduplicatesEquivalentOrigins(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section = sectionNetwork
+	m.section = sectionConnections
 	m.row = 0
 	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
 		ThroughputTargets: []wire.ThroughputTarget{
@@ -346,9 +346,9 @@ func TestRowCount(t *testing.T) {
 		want    int
 	}{
 		{sectionServers, len(serverPresets) + 1},
-		{sectionStages, 5},
+		{sectionRunSetup, 5},
 		{sectionTiming, 6},
-		{sectionNetwork, 7},
+		{sectionConnections, 7},
 		{sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -386,7 +386,7 @@ func keyPaste(s string) tea.KeyMsg {
 
 func TestHandleKey_TabCyclesSections(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	order := []section{sectionStages, sectionTiming, sectionNetwork, sectionRun, sectionServers}
+	order := []section{sectionRunSetup, sectionTiming, sectionConnections, sectionRun, sectionServers}
 	for _, want := range order {
 		next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
 		m = next.(model)
@@ -409,8 +409,8 @@ func TestHandleKey_RightLeftCycleSections(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
 	m = next.(model)
-	if m.section != sectionStages {
-		t.Errorf("section after right = %v, want sectionStages", m.section)
+	if m.section != sectionRunSetup {
+		t.Errorf("section after right = %v, want sectionRunSetup", m.section)
 	}
 	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
 	m = next.(model)
@@ -421,7 +421,7 @@ func TestHandleKey_RightLeftCycleSections(t *testing.T) {
 
 func TestHandleKey_RowNavigationClamped(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section = sectionStages // rowCount == 5, valid rows 0..4
+	m.section = sectionRunSetup // rowCount == 5, valid rows 0..4
 	m.row = 4
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
@@ -463,7 +463,7 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 		rows    int
 	}{
 		{"servers", sectionServers, len(serverPresets) + 1},
-		{"network", sectionNetwork, 7},
+		{"network", sectionConnections, 7},
 		{"run (single row)", sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -551,12 +551,53 @@ func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 	}
 }
 
-func TestHandleKey_EscInConfigureSetsNotice(t *testing.T) {
+func TestHandleKey_ConfigureIgnoresTheRunScreensKeys(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
-	if !strings.Contains(m.notice, "Configuration kept") {
-		t.Errorf("notice after esc = %q, want mention of Configuration kept", m.notice)
+	m.section = sectionTiming
+	m.row = 2
+	for _, msg := range []tea.KeyMsg{{Type: tea.KeyEsc}, keyRunes("m"), keyRunes("c")} {
+		next, cmd := m.handleKey(msg)
+		got := next.(model)
+		if cmd != nil || got.section != sectionTiming || got.row != 2 || got.edit.kind != editNone {
+			t.Errorf("%q changed the configure screen: section=%v row=%d edit=%v", msg.String(), got.section, got.row, got.edit.kind)
+		}
+	}
+}
+
+func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
+	cases := []struct {
+		name  string
+		model func(model) model
+	}{
+		{"configure", func(m model) model { return m }},
+		{"editing", func(m model) model {
+			m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
+			return m
+		}},
+		{"running", func(m model) model {
+			m.mode = modeRun
+			return m
+		}},
+		{"cancel prompt", func(m model) model {
+			m.mode, m.cancelPrompt = modeRun, true
+			return m
+		}},
+		{"complete", func(m model) model {
+			m.mode, m.complete = modeRun, true
+			return m
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := c.model(newModel(goclient.DefaultConfig()))
+			m.width = 200
+			footer := ansiPattern.ReplaceAllString(m.helpView(), "")
+			for _, b := range m.ShortHelp() {
+				if !strings.Contains(footer, b.Help().Key) {
+					t.Errorf("footer %q omits %q", footer, b.Help().Key)
+				}
+			}
+		})
 	}
 }
 
@@ -592,7 +633,7 @@ func TestActivate_ServerCustomStartsEdit(t *testing.T) {
 
 func TestActivate_StagesToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section = sectionStages
+	m.section = sectionRunSetup
 	cfg := m.cfg
 
 	getters := []func(goclient.Config) bool{
@@ -636,7 +677,7 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 
 func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section = sectionNetwork
+	m.section = sectionConnections
 	for row, field := range map[int]string{3: "auto-streams", 4: "streams"} {
 		m.row = row
 		next, _ := m.activate()
@@ -649,7 +690,7 @@ func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 
 func TestActivate_NetworkTLSToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section = sectionNetwork
+	m.section = sectionConnections
 	m.row = 5
 	before := m.cfg.InsecureSkipTLSVerify
 	next, _ := m.activate()
@@ -663,7 +704,7 @@ func TestActivate_NetworkReset(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.TransferStreams.Forced = 99
 	m.cfg.BaseURL = "http://changed.example"
-	m.section = sectionNetwork
+	m.section = sectionConnections
 	m.row = 6
 	next, _ := m.activate()
 	m = next.(model)
@@ -932,7 +973,7 @@ func TestCommitEdit_AutomaticStreams(t *testing.T) {
 	}
 }
 
-func TestHandleKey_RunMode_CancelAndMenuReturn(t *testing.T) {
+func TestHandleKey_RunMode_CancelTakesTwoEscapes(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
 	canceled := false
@@ -940,18 +981,34 @@ func TestHandleKey_RunMode_CancelAndMenuReturn(t *testing.T) {
 
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(model)
-	if !canceled {
-		t.Error("esc during run should invoke cancel")
-	}
-	if m.status != "canceling" {
-		t.Errorf("status after cancel = %q, want canceling", m.status)
+	if !m.cancelPrompt || canceled {
+		t.Fatalf("first esc: cancelPrompt=%v canceled=%v, want a prompt and no cancel", m.cancelPrompt, canceled)
 	}
 
+	next, _ = m.handleKey(keyRunes("j"))
+	m = next.(model)
+	if m.cancelPrompt || canceled {
+		t.Fatalf("other key: cancelPrompt=%v canceled=%v, want the prompt dropped and the run kept", m.cancelPrompt, canceled)
+	}
+
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	if !canceled || m.status != "canceling" {
+		t.Errorf("second esc: canceled=%v status=%q, want the run canceled", canceled, m.status)
+	}
+}
+
+func TestHandleKey_RunMode_EscapeReturnsToSetupWhenComplete(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
 	m.complete = true
-	next, _ = m.handleKey(keyRunes("m"))
+
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(model)
 	if m.mode != modeConfigure || m.section != sectionRun || m.row != 0 {
-		t.Errorf("after 'm' on complete run: mode=%v section=%v row=%d", m.mode, m.section, m.row)
+		t.Errorf("after esc on a complete run: mode=%v section=%v row=%d", m.mode, m.section, m.row)
 	}
 }
 
@@ -978,8 +1035,8 @@ func TestStartRun_NoStagesSelected(t *testing.T) {
 	if next.mode != modeConfigure {
 		t.Errorf("mode = %v, want modeConfigure", next.mode)
 	}
-	if next.section != sectionStages || next.row != 0 {
-		t.Errorf("section=%v row=%d, want sectionStages/0", next.section, next.row)
+	if next.section != sectionRunSetup || next.row != 0 {
+		t.Errorf("section=%v row=%d, want sectionRunSetup/0", next.section, next.row)
 	}
 	if !strings.Contains(next.notice, "Enable at least one stage") {
 		t.Errorf("notice = %q, want stage requirement message", next.notice)
