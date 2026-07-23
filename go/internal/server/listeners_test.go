@@ -141,7 +141,7 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			body := &observedBody{reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
 			mux := listenerMuxConfigured(context.Background(), e, test.topology, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
-			handler := authn.Wrap(mux, test.listener)
+			handler := authn.Enforce(mux, test.listener)
 			req := httptest.NewRequest(http.MethodPost, "https://meter.example"+test.path, body)
 			req.Host = "meter.example"
 			req.TLS = &tls.ConnectionState{}

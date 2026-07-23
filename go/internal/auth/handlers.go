@@ -1,7 +1,7 @@
 package auth
 
 // handlers.go is the login surface: the server-rendered login page and the
-// password, session-info, and logout handlers mounted behind Wrap.
+// password, session-info, and logout handlers mounted behind Enforce.
 
 import (
 	"encoding/json"
@@ -10,14 +10,14 @@ import (
 	"time"
 )
 
-func (s *Service) login(w http.ResponseWriter, r *http.Request) {
+func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
 	csrf, err := randomToken(32)
 	if err != nil {
 		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	setCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute))
+	setSessionCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute))
 	data := loginView{
 		Styles: authStyles, CSRF: csrf,
 		Password:  s.cfg.Mode == "password" || s.cfg.Mode == "hybrid",
@@ -72,7 +72,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		s.loginFailure(w, r)
 		return
 	}
-	setCookie(w, sessionCookie, raw, sess.expires)
+	setSessionCookie(w, sessionCookie, raw, sess.expires)
 	setCSRFCookie(w, sess.csrf, sess.expires)
 	s.counters.local.Add(1)
 	clearCookie(w, loginCookie)

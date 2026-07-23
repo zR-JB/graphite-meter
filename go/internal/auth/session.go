@@ -122,7 +122,7 @@ func randomToken(n int) (string, error) {
 
 var randomBytes = rand.Read
 
-func setCookie(w http.ResponseWriter, name, value string, expires time.Time) {
+func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 }
 

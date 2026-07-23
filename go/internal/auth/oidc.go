@@ -409,7 +409,7 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, "session_capacity")
 		return
 	}
-	setCookie(w, sessionCookie, raw, sess.expires)
+	setSessionCookie(w, sessionCookie, raw, sess.expires)
 	setCSRFCookie(w, sess.csrf, sess.expires)
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)

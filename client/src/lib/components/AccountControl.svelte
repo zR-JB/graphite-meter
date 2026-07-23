@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { authenticatedFetch, requireAuthentication } from "../auth";
+  import { authenticatedFetch, redirectToLogin } from "../auth";
 
   type Session = {
     name: string;
@@ -24,7 +24,7 @@
       cache: "no-store",
     });
     if (response.status === 403) {
-      requireAuthentication();
+      redirectToLogin();
       return;
     }
     if (response.ok) session = (await response.json()) as Session;

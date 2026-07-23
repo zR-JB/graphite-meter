@@ -204,7 +204,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
 	h1mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, authn)
-	h1 := baseServer(authn.Wrap(h1mux, auth.Listener{UI: true}), h1p)
+	h1 := baseServer(authn.Enforce(h1mux, auth.Listener{UI: true}), h1p)
 	hardenAuthenticatedServer(h1, authn.Enabled())
 	h1ln, err := net.Listen("tcp", cfg.Native.H1)
 	if err != nil {
@@ -228,7 +228,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
 		mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, authn)
-		s := baseServer(authn.Wrap(mux, auth.Listener{UI: true}), p)
+		s := baseServer(authn.Enforce(mux, auth.Listener{UI: true}), p)
 		hardenAuthenticatedServer(s, authn.Enabled())
 		ln, err := net.Listen("tcp", cfg.Native.H1TLS)
 		if err != nil {
@@ -247,7 +247,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
 		mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), authn)
-		s := baseServer(authn.Wrap(mux, auth.Listener{}), p)
+		s := baseServer(authn.Enforce(mux, auth.Listener{}), p)
 		hardenAuthenticatedServer(s, authn.Enabled())
 		ln, err := net.Listen("tcp", cfg.Native.H2)
 		if err != nil {
@@ -265,7 +265,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		p := &http.Protocols{}
 		p.SetHTTP1(true)
 		bootstrapMux := listenerMuxConfigured(ctx, e, muxTopology{bootstrap: true}, static.Handler(), authn)
-		bootstrap := baseServer(authn.Wrap(bootstrapMux, auth.Listener{}), p)
+		bootstrap := baseServer(authn.Enforce(bootstrapMux, auth.Listener{}), p)
 		hardenAuthenticatedServer(bootstrap, authn.Enabled())
 		ln, err := net.Listen("tcp", cfg.Native.H3)
 		if err != nil {
@@ -282,7 +282,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			quicConfig.MaxIncomingStreams = 256
 			quicConfig.MaxIncomingUniStreams = 32
 		}
-		h3 := &http3.Server{Addr: cfg.Native.H3, TLSConfig: cm.tlsConfig(), QUICConfig: quicConfig, Handler: authn.Wrap(h3mux, auth.Listener{})}
+		h3 := &http3.Server{Addr: cfg.Native.H3, TLSConfig: cm.tlsConfig(), QUICConfig: quicConfig, Handler: authn.Enforce(h3mux, auth.Listener{})}
 		if authn.Enabled() {
 			h3.MaxHeaderBytes = 32 << 10
 		}

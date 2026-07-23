@@ -43,16 +43,16 @@ func authenticatedSecurityHeaders(h http.Header) {
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 }
 
-// preflight answers the CORS preflight for measurement routes. It is the one
-// unauthenticated path through Wrap, and writes headers only — never a body
+// corsPreflight answers the CORS preflight for measurement routes. It is the one
+// unauthenticated path through Enforce, and writes headers only — never a body
 // and never a principal-bearing response.
-func (s *Service) preflight(w http.ResponseWriter, r *http.Request, secure bool) {
+func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
 	if !secure || r.Header.Get("Origin") != s.public.String() {
 		forbidden(w)
 		return
 	}
 	method := r.Header.Get("Access-Control-Request-Method")
-	if !allowedPreflightMethod(r.URL.Path, method) {
+	if !allowedCORSMethod(r.URL.Path, method) {
 		forbidden(w)
 		return
 	}
@@ -74,7 +74,7 @@ func (s *Service) preflight(w http.ResponseWriter, r *http.Request, secure bool)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func allowedPreflightMethod(path, method string) bool {
+func allowedCORSMethod(path, method string) bool {
 	switch path {
 	case "/preflight", "/probe", "/download":
 		return method == http.MethodGet

@@ -26,7 +26,7 @@ import {
   authEnabled,
   classifyAuthenticationFailure,
   csrfHeader,
-  requireAuthentication,
+  redirectToLogin,
 } from "../auth";
 import { transferStreamCount } from "./real/streamPolicy";
 import {
@@ -1171,7 +1171,7 @@ export class RealBackend implements RunnerBackend {
     if (!this.#pingActive) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.#teardownLatency();
-      requireAuthentication();
+      redirectToLogin();
       return;
     }
     switch (msg.type) {
@@ -1321,7 +1321,7 @@ export class RealBackend implements RunnerBackend {
     if (!this.#idleActive) return;
     if (msg.type === "auth-required") {
       this.#stopIdleKeepalive();
-      requireAuthentication();
+      redirectToLogin();
       return;
     }
     switch (msg.type) {
@@ -1468,7 +1468,7 @@ export class RealBackend implements RunnerBackend {
     if (!state) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.#discardTransfer();
-      requireAuthentication();
+      redirectToLogin();
       return;
     }
     if (msg.type === "progress") {
@@ -1590,7 +1590,7 @@ export class RealBackend implements RunnerBackend {
     if (!this.#transferActive || !state) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.#discardTransfer();
-      requireAuthentication();
+      redirectToLogin();
       return;
     }
     if (msg.type === "fatal") {

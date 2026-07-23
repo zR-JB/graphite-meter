@@ -57,7 +57,7 @@ func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
 			origin := "https://" + ln.Addr().String()
 			authn := testPasswordAuth(t, origin)
 			var dispatched atomic.Int32
-			handler := authn.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})
+			handler := authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})
 			serverProtocols := &http.Protocols{}
 			clientProtocols := &http.Protocols{}
 			if protocol == "http1" {
@@ -93,7 +93,7 @@ func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
 		origin := "https://" + pc.LocalAddr().String()
 		authn := testPasswordAuth(t, origin)
 		var dispatched atomic.Int32
-		h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: authn.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})}
+		h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})}
 		go h3.Serve(pc)
 		defer func() { _ = h3.Close(); _ = pc.Close() }()
 		tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
@@ -121,7 +121,7 @@ func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
 	var dispatched atomic.Int32
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
-	srv := baseServer(authn.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{}), p)
+	srv := baseServer(authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{}), p)
 	go serve(tls.NewListener(ln, cm.tlsConfig("http/1.1")), srv)
 	defer srv.Close()
 	cp := &http.Protocols{}

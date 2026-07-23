@@ -146,14 +146,14 @@ func (s *Service) PublicOrigin() string {
 }
 
 // Mount installs the auth routes. Every route it registers still passes
-// through Wrap; Mount only decides which paths exist at all.
+// through Enforce; Mount only decides which paths exist at all.
 func (s *Service) Mount(mux *http.ServeMux) {
 	if !s.Enabled() {
 		mux.HandleFunc("/login", http.NotFound)
 		mux.HandleFunc("/auth/", http.NotFound)
 		return
 	}
-	mux.HandleFunc("GET /login", s.login)
+	mux.HandleFunc("GET /login", s.loginPage)
 	if s.cfg.Mode == "password" || s.cfg.Mode == "hybrid" {
 		mux.HandleFunc("POST /auth/password", s.passwordLogin)
 	}

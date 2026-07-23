@@ -12,11 +12,16 @@ export const authEnabled =
     .querySelector('meta[name="graphite-meter-auth"]')
     ?.getAttribute("content") === "enabled";
 
-export function requireAuthentication(): void {
+/** Reasons the server-rendered login page knows how to phrase. */
+export type LoginReason = "expired";
+
+/** Navigate to the login page. Named for the side effect: this replaces the
+ *  current document, so nothing after the call in the same task runs. */
+export function redirectToLogin(reason: LoginReason = "expired"): void {
   if (!authEnabled || redirecting) return;
   redirecting = true;
   window.dispatchEvent(new Event("graphite-meter-auth-required"));
-  location.replace("/login?reason=expired");
+  location.replace(`/login?reason=${encodeURIComponent(reason)}`);
 }
 
 export function csrfHeader(): Record<string, string> {
@@ -38,7 +43,7 @@ export async function classifyAuthenticationFailure(
   ));
   try {
     const required = await pending;
-    if (required) requireAuthentication();
+    if (required) redirectToLogin();
     return required;
   } finally {
     if (classifying === pending) classifying = null;
@@ -67,7 +72,7 @@ export async function authenticatedFetch(
     response.status === 403 &&
     response.headers.get("Graphite-Meter-Auth") === "required"
   ) {
-    requireAuthentication();
+    redirectToLogin();
   }
   return response;
 }

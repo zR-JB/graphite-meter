@@ -32,17 +32,17 @@ type Principal struct {
 	Bearer                  bool
 }
 
-// Wrap applies the authentication boundary to next. It is installed outermost
+// Enforce applies the authentication boundary to next. It is installed outermost
 // on every listener, so admission accounting, body reads, and WebSocket
 // upgrades all happen behind it.
-func (s *Service) Wrap(next http.Handler, listener Listener) http.Handler {
+func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	if !s.Enabled() {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		secure, canonical := s.secureCanonical(r)
 		if secure && r.TLS != nil && !strings.EqualFold(requestHostname(r.Host), s.public.Hostname()) {
-			s.authRequired(w, r, listener)
+			s.writeAuthRequired(w, r, listener)
 			return
 		}
 		if secure {
@@ -54,7 +54,7 @@ func (s *Service) Wrap(next http.Handler, listener Listener) http.Handler {
 			defer controller.SetReadDeadline(time.Time{})
 		}
 		if r.Method == http.MethodOptions && isMeasurementRoute(r.URL.Path) {
-			s.preflight(w, r, secure)
+			s.corsPreflight(w, r, secure)
 			return
 		}
 		if (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/")) && (!listener.UI || !canonical) {
@@ -64,19 +64,19 @@ func (s *Service) Wrap(next http.Handler, listener Listener) http.Handler {
 		public := listener.UI && s.isPublicAuthRoute(r.Method, r.URL.Path)
 		if public {
 			if !secure || !canonical {
-				s.authRequired(w, r, listener)
+				s.writeAuthRequired(w, r, listener)
 				return
 			}
 			next.ServeHTTP(w, r)
 			return
 		}
 		if !secure {
-			s.authRequired(w, r, listener)
+			s.writeAuthRequired(w, r, listener)
 			return
 		}
 		p, ok := s.authenticate(r)
 		if !ok {
-			s.authRequired(w, r, listener)
+			s.writeAuthRequired(w, r, listener)
 			return
 		}
 		if p.Bearer && !isMeasurementRoute(r.URL.Path) {
@@ -160,9 +160,9 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 	return Principal{}, false
 }
 
-// authRequired answers an unauthenticated request with the marker headers the
+// writeAuthRequired answers an unauthenticated request with the marker headers the
 // browser and native clients key off, redirecting only the UI root.
-func (s *Service) authRequired(w http.ResponseWriter, r *http.Request, listener Listener) {
+func (s *Service) writeAuthRequired(w http.ResponseWriter, r *http.Request, listener Listener) {
 	securityHeaders(w.Header())
 	if s.public != nil && r.Header.Get("Origin") == s.public.String() {
 		h := w.Header()

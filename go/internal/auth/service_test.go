@@ -62,7 +62,7 @@ func TestOffWrapperIsTransparent(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(299) }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(299) }), Listener{})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "http://example/anything", nil))
 	if !called || rr.Code != 299 {
@@ -73,7 +73,7 @@ func TestUnauthenticatedRequestRejectedBeforeBodyRead(t *testing.T) {
 	s := testService(t)
 	body := &countingReader{r: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
 	called := false
-	h := s.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), Listener{})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, secureRequest("POST", "/upload", body))
 	if rr.Code != 403 || called || body.n != 0 {
@@ -97,7 +97,7 @@ func TestUnauthenticatedUIRootRedirectsButAPIsDoNot(t *testing.T) {
 		{"UI API", Listener{UI: true}, "/preflight", http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := s.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), tc.listener)
+			h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), tc.listener)
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, secureRequest(http.MethodGet, tc.path, nil))
 			if rr.Code != tc.want {
@@ -118,7 +118,7 @@ func TestSessionRevocationCancelsActiveRequest(t *testing.T) {
 	entered := make(chan struct{})
 	done := make(chan struct{})
 	ended := make(chan bool, 1)
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
 		<-r.Context().Done()
 		ended <- SessionEnded(r.Context())
@@ -169,7 +169,7 @@ func TestCookieMutationRequiresOriginAndCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	h := s.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), Listener{})
 	for _, tc := range []struct {
 		name, origin, csrf string
 		want               int
@@ -264,7 +264,7 @@ func TestLoginCSRFFailureReasons(t *testing.T) {
 func TestCookieWebSocketRequiresExactOrigin(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
 	for _, origin := range []string{"", "https://wrong.example", s.public.String()} {
 		r := secureRequest("GET", "/ws/ping", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
@@ -283,7 +283,7 @@ func TestCookieWebSocketRequiresExactOrigin(t *testing.T) {
 func TestCookieMeasurementAllowsExactOriginFromAlternatePort(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
 	r := secureRequest("GET", "/download", nil)
 	r.Host = "meter.example:7443"
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
@@ -298,7 +298,7 @@ func TestCookieMeasurementAllowsExactOriginFromAlternatePort(t *testing.T) {
 func TestCookieMeasurementRejectsSiblingSiteWithoutExactOrigin(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
 	for _, origin := range []string{"", "https://evil.example"} {
 		r := secureRequest("GET", "/download", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
@@ -317,7 +317,7 @@ func TestCookieMeasurementRejectsSiblingSiteWithoutExactOrigin(t *testing.T) {
 func TestCookieMeasurementRequiresPositiveSameOriginEvidence(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), Listener{})
 	for _, site := range []string{"", "none", "cross-site"} {
 		r := secureRequest(http.MethodGet, "/probe", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
@@ -343,7 +343,7 @@ func TestCookieMeasurementRequiresPositiveSameOriginEvidence(t *testing.T) {
 func TestSuccessfulAuthenticatedResponseHasTransportAndFrameHeaders(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }), Listener{UI: true})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }), Listener{UI: true})
 	r := secureRequest(http.MethodGet, "/", nil)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
 	rr := httptest.NewRecorder()
@@ -355,7 +355,7 @@ func TestSuccessfulAuthenticatedResponseHasTransportAndFrameHeaders(t *testing.T
 func TestBrowserAuthRoutesRequireCanonicalPort(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
 	r := secureRequest("GET", "/auth/session", nil)
 	r.Host = "meter.example:7443"
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
@@ -372,7 +372,7 @@ func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 	hsh := sha256.Sum256([]byte(grant))
 	sess.grants[hsh] = struct{}{}
 	s.grants[hsh] = sess
-	h := s.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
+	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
 	r := secureRequest("GET", "/auth/session", nil)
 	r.Header.Set("Authorization", "Bearer "+grant)
 	rr := httptest.NewRecorder()
@@ -383,7 +383,7 @@ func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 }
 func TestAuthRequiredExposesHeadersCrossOrigin(t *testing.T) {
 	s := testService(t)
-	h := s.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), Listener{})
+	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), Listener{})
 	r := secureRequest("GET", "/download", nil)
 	r.Header.Set("Origin", s.public.String())
 	rr := httptest.NewRecorder()
@@ -554,7 +554,7 @@ func TestLoginRendersOnlyConfiguredMethods(t *testing.T) {
 				}
 			}
 			rr := httptest.NewRecorder()
-			s.login(rr, secureRequest(http.MethodGet, "/login", nil))
+			s.loginPage(rr, secureRequest(http.MethodGet, "/login", nil))
 			body := rr.Body.String()
 			if strings.Contains(body, `action="/auth/password"`) != tc.password || strings.Contains(body, `action="/auth/oidc/start"`) != tc.provider {
 				t.Fatalf("unexpected methods in %s", body)
@@ -581,7 +581,7 @@ func TestPasswordLoginPreservesFormEncodedPunctuation(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	s.Mount(mux)
-	handler := s.Wrap(mux, Listener{UI: true})
+	handler := s.Enforce(mux, Listener{UI: true})
 
 	login := httptest.NewRecorder()
 	handler.ServeHTTP(login, secureRequest(http.MethodGet, "/login", nil))

@@ -109,7 +109,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		Verifier string `json:"verifier"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Verifier) > 128 {
-		s.pending(w)
+		s.writeGrantPending(w)
 		return
 	}
 	sum := sha256.Sum256([]byte(req.Verifier))
@@ -119,14 +119,14 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	a := s.approvals[challenge]
 	if a == nil || !a.approved || !now.Before(a.expires) || !now.Before(a.session.expires) || a.session.ctx.Err() != nil {
 		s.mu.Unlock()
-		s.pending(w)
+		s.writeGrantPending(w)
 		return
 	}
 	delete(s.approvals, challenge)
 	grant, err := randomToken(32)
 	if err != nil {
 		s.mu.Unlock()
-		s.pending(w)
+		s.writeGrantPending(w)
 		return
 	}
 	h := sha256.Sum256([]byte(grant))
@@ -144,7 +144,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"token": grant, "expires": expires})
 }
-func (s *Service) pending(w http.ResponseWriter) {
+func (s *Service) writeGrantPending(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte(`{"status":"pending"}`))
