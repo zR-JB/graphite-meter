@@ -42,7 +42,13 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 func authenticatedSecurityHeaders(h http.Header) {
 	h.Set("Strict-Transport-Security", "max-age=31536000")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+	// The application bundles its own scripts and connects to measurement
+	// origins chosen at runtime, so script-src/connect-src are not pinned here.
+	// These directives are the subset the app never needs relaxed: no <base>
+	// (so no relative-URL hijack), no plugins, and forms post only same-origin
+	// (the sign-out form). The login surface overrides this with its strict
+	// hash-pinned policy.
+	h.Set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
