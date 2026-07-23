@@ -224,7 +224,7 @@ func TestOIDCCallbackRejectsWrongNonceAndMissingIssuer(t *testing.T) {
 	f.mu.Lock()
 	f.nonce = "wrong"
 	f.mu.Unlock()
-	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=1") {
+	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
 		t.Fatal("wrong nonce accepted")
 	}
 
@@ -233,7 +233,7 @@ func TestOIDCCallbackRejectsWrongNonceAndMissingIssuer(t *testing.T) {
 	r.AddCookie(cookie)
 	rr := httptest.NewRecorder()
 	s.oidcCallback(rr, r)
-	if !strings.Contains(rr.Header().Get("Location"), "error=1") {
+	if !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
 		t.Fatal("missing response issuer accepted")
 	}
 }
@@ -245,13 +245,13 @@ func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
 	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusSeeOther {
 		t.Fatalf("first status=%d", rr.Code)
 	}
-	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=1") {
+	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
 		t.Fatal("transaction replay accepted")
 	}
 
 	state, cookie = startOIDC(t, s, f)
 	rr := finishOIDC(s, state, cookie, "&state=duplicate")
-	if !strings.Contains(rr.Header().Get("Location"), "error=1") {
+	if !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
 		t.Fatal("duplicate state accepted")
 	}
 }

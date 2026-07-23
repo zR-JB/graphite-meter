@@ -6,10 +6,12 @@ import (
 )
 
 type loginView struct {
-	Styles                    template.CSS
-	CSRF, Provider, Challenge string
-	Password, OIDC, OIDCReady bool
-	Error, Expired            bool
+	Styles template.CSS
+	// Notice is one of the validated notice codes, or "" when the page was not
+	// reached through a failed attempt. The wording lives in the template.
+	CSRF, Provider, Challenge, Notice string
+	Password, OIDC, OIDCReady         bool
+	Expired                           bool
 }
 
 func renderLogin(w http.ResponseWriter, tmpl *template.Template, data loginView) {
@@ -29,7 +31,7 @@ func PreviewHandler(mode string, oidcReady bool) http.Handler {
 			Styles: authStyles, CSRF: "preview", Provider: "Authelia",
 			Password: mode == "password" || mode == "hybrid",
 			OIDC:     mode == "oidc" || mode == "hybrid", OIDCReady: oidcReady,
-			Error: r.URL.Query().Get("error") != "", Expired: r.URL.Query().Get("reason") == "expired",
+			Notice: string(parseNotice(r.URL.Query().Get("error"))), Expired: r.URL.Query().Get("reason") == "expired",
 		})
 	})
 }

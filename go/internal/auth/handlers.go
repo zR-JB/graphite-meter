@@ -23,7 +23,7 @@ func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 		Password:  s.cfg.Mode == "password" || s.cfg.Mode == "hybrid",
 		OIDC:      s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid",
 		OIDCReady: s.oidc != nil && s.oidc.ready(), Provider: s.cfg.OIDCProviderName,
-		Error: r.URL.Query().Get("error") != "", Expired: r.URL.Query().Get("reason") == "expired",
+		Notice: string(parseNotice(r.URL.Query().Get("error"))), Expired: r.URL.Query().Get("reason") == "expired",
 		Challenge: r.URL.Query().Get("challenge"),
 	}
 	renderLogin(w, s.loginTemplate, data)
@@ -37,39 +37,31 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
-		s.debugln("local password rejected reason=malformed_form")
-		s.loginFailure(w, r)
+		s.loginRejected(w, r, reasonFormMalformed)
 		return
 	}
-	if reason := s.csrfFailure(r, "csrf"); reason != "" {
-		s.debugln("local password rejected reason=csrf_" + reason)
-		s.loginFailure(w, r)
+	if why, ok := s.checkCSRF(r, "csrf"); !ok {
+		s.loginRejected(w, r, why)
 		return
 	}
 	if !s.allowAttempt(r) {
-		s.debugln("local password rejected reason=rate_limit_or_client_address")
-		s.counters.throttled.Add(1)
-		s.loginFailure(w, r)
+		s.loginRejected(w, r, reasonThrottled)
 		return
 	}
 	select {
 	case s.argon <- struct{}{}:
 		defer func() { <-s.argon }()
 	default:
-		s.debugln("local password rejected reason=verifier_busy")
-		s.loginFailure(w, r)
+		s.loginRejected(w, r, reasonVerifierBusy)
 		return
 	}
 	if !verifyPassword(s.passwordHash, r.FormValue("password")) {
-		s.debugln("local password rejected reason=mismatch")
-		s.counters.invalidPassword.Add(1)
-		s.loginFailure(w, r)
+		s.loginRejected(w, r, reasonPasswordMismatch)
 		return
 	}
 	raw, sess, err := s.createSession("local-operator", "Local operator", "local", time.Time{})
 	if err != nil {
-		s.debugln("local password rejected reason=session_capacity")
-		s.loginFailure(w, r)
+		s.loginRejected(w, r, reasonSessionCapacity)
 		return
 	}
 	setSessionCookie(w, sessionCookie, raw, sess.expires)
@@ -83,10 +75,14 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
-// loginFailure collapses every credential outcome into one generic response so
-// the page cannot be used to enumerate valid inputs.
-func (s *Service) loginFailure(w http.ResponseWriter, r *http.Request) {
-	query := url.Values{"error": {"1"}}
+// loginRejected is the single exit for a failed sign-in: it logs the reason,
+// charges it to a counter, and returns the visitor to the login page carrying
+// only the safe subset of that reason. Credential outcomes are indistinguishable
+// in the response.
+func (s *Service) loginRejected(w http.ResponseWriter, r *http.Request, why reason) {
+	s.debugln("login rejected reason=" + string(why))
+	s.countReason(why)
+	query := url.Values{"error": {string(noticeFor(why))}}
 	if challenge := r.FormValue("challenge"); validChallenge(challenge) {
 		query.Set("challenge", challenge)
 	}

@@ -244,19 +244,22 @@ func TestLoginCSRFFailureReasons(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		name, origin, cookie, form, want string
+		name, origin, cookie, form string
+		want                       reason
+		wantOK                     bool
 	}{
-		{"missing origin", "", token, token, "origin_missing"},
-		{"null origin", "null", token, token, "origin_mismatch"},
-		{"wrong origin", "https://wrong.example", token, token, "origin_mismatch"},
-		{"missing cookie", s.public.String(), "", token, "cookie_missing"},
-		{"missing token", s.public.String(), token, "", "token_missing"},
-		{"wrong token", s.public.String(), token, "different", "token_mismatch"},
-		{"valid", s.public.String(), token, token, ""},
+		{"missing origin", "", token, token, reasonCSRFOriginMissing, false},
+		{"null origin", "null", token, token, reasonCSRFOriginMismatch, false},
+		{"wrong origin", "https://wrong.example", token, token, reasonCSRFOriginMismatch, false},
+		{"missing cookie", s.public.String(), "", token, reasonCSRFCookieMissing, false},
+		{"missing token", s.public.String(), token, "", reasonCSRFTokenMissing, false},
+		{"wrong token", s.public.String(), token, "different", reasonCSRFTokenMismatch, false},
+		{"valid", s.public.String(), token, token, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := s.csrfFailure(request(tc.origin, tc.cookie, tc.form), "csrf"); got != tc.want {
-				t.Fatalf("csrfFailure = %q, want %q", got, tc.want)
+			got, ok := s.checkCSRF(request(tc.origin, tc.cookie, tc.form), "csrf")
+			if got != tc.want || ok != tc.wantOK {
+				t.Fatalf("checkCSRF = (%q, %t), want (%q, %t)", got, ok, tc.want, tc.wantOK)
 			}
 		})
 	}
@@ -672,14 +675,14 @@ func TestLoginFailurePreservesValidCLIChallenge(t *testing.T) {
 	r := secureRequest(http.MethodPost, "/auth/password", nil)
 	r.Form = url.Values{"challenge": {challenge}}
 	rr := httptest.NewRecorder()
-	s.loginFailure(rr, r)
+	s.loginRejected(rr, r, reasonPasswordMismatch)
 	location, err := url.Parse(rr.Header().Get("Location"))
-	if err != nil || location.Query().Get("challenge") != challenge || location.Query().Get("error") != "1" {
+	if err != nil || location.Query().Get("challenge") != challenge || location.Query().Get("error") != string(noticeGeneric) {
 		t.Fatalf("location=%q err=%v", rr.Header().Get("Location"), err)
 	}
 	r.Form.Set("challenge", "invalid")
 	rr = httptest.NewRecorder()
-	s.loginFailure(rr, r)
+	s.loginRejected(rr, r, reasonPasswordMismatch)
 	location, _ = url.Parse(rr.Header().Get("Location"))
 	if location.Query().Has("challenge") {
 		t.Fatal("invalid challenge was reflected")

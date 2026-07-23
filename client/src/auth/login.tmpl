@@ -12,7 +12,15 @@
       <h1>Private Graphite Meter</h1>
       <p>Sign in to use this measurement server.</p>
       {{if .Expired}}<p class="message" role="alert">Your session expired. Sign in again.</p>{{end}}
-      {{if .Error}}<p class="message" role="alert">Sign-in failed.</p>{{end}}
+      {{if eq .Notice "provider"}}
+        <p class="message" role="alert">{{.Provider}} is unreachable right now.{{if .Password}} Sign in with the operator password.{{end}}</p>
+      {{else if eq .Notice "busy"}}
+        <p class="message" role="alert">The server is busy. Try again in a moment.</p>
+      {{else if eq .Notice "stale"}}
+        <p class="message" role="alert">This sign-in form expired. Try again.</p>
+      {{else if .Notice}}
+        <p class="message" role="alert">Sign-in failed.</p>
+      {{end}}
       {{if .OIDC}}
         <form method="post" action="/auth/oidc/start">
           <input type="hidden" name="csrf" value="{{.CSRF}}">

@@ -13,20 +13,29 @@ import (
 	"strings"
 )
 
-// secureCanonical reports whether the request reached the service over TLS
-// (directly or via a trusted proxy) and whether it addressed the canonical
-// public host. Forwarded headers are honored only from GM_TRUSTED_PROXIES.
-func (s *Service) secureCanonical(r *http.Request) (bool, bool) {
+// trust is what the service is willing to believe about a request: that it
+// arrived over TLS (Secure) and that it addressed the canonical public host
+// (Canonical). Named fields rather than a bare (bool, bool) so the two cannot
+// be swapped at the boundary that decides whether authentication runs at all.
+type trust struct{ Secure, Canonical bool }
+
+// requestTrust evaluates a request against the trust boundary. Direct TLS is
+// believed on its own; a cleartext request is believed only from a configured
+// trusted proxy, and only when a single, non-list X-Forwarded-Proto and
+// X-Forwarded-Host say https and the canonical host. Anything else is
+// untrusted, which is also what an untrusted peer forging those headers gets.
+func (s *Service) requestTrust(r *http.Request) trust {
 	if r.TLS != nil {
-		return true, equalHost(r.Host, s.public.Host)
+		return trust{Secure: true, Canonical: equalHost(r.Host, s.public.Host)}
 	}
 	peer, err := splitRemote(r.RemoteAddr)
 	if err != nil || !prefixContains(s.trusted, peer) {
-		return false, false
+		return trust{}
 	}
 	proto := singleHeader(r.Header, "X-Forwarded-Proto")
 	host := singleHeader(r.Header, "X-Forwarded-Host")
-	return proto == "https" && equalHost(host, s.public.Host), proto == "https" && equalHost(host, s.public.Host)
+	forwarded := proto == "https" && equalHost(host, s.public.Host)
+	return trust{Secure: forwarded, Canonical: forwarded}
 }
 
 // singleHeader returns a header value only when it appears exactly once and
@@ -132,28 +141,29 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 	return true
 }
 
-// csrfFailure validates the pre-session login form's double-submit token,
-// returning "" when the request is acceptable.
-func (s *Service) csrfFailure(r *http.Request, field string) string {
+// checkCSRF validates the pre-session login form's double-submit token. It
+// reports the classified reason and whether the request may proceed; callers
+// must branch on ok, never on the reason.
+func (s *Service) checkCSRF(r *http.Request, field string) (reason, bool) {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
-		return "origin_missing"
+		return reasonCSRFOriginMissing, false
 	}
 	if origin != s.public.String() {
-		return "origin_mismatch"
+		return reasonCSRFOriginMismatch, false
 	}
 	c, err := r.Cookie(loginCookie)
 	if err != nil {
-		return "cookie_missing"
+		return reasonCSRFCookieMissing, false
 	}
 	v := r.FormValue(field)
 	if v == "" {
-		return "token_missing"
+		return reasonCSRFTokenMissing, false
 	}
 	if !constantEqual(c.Value, v) {
-		return "token_mismatch"
+		return reasonCSRFTokenMismatch, false
 	}
-	return ""
+	return "", true
 }
 
 func constantEqual(a, b string) bool {

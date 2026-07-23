@@ -40,12 +40,12 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secure, canonical := s.secureCanonical(r)
-		if secure && r.TLS != nil && !strings.EqualFold(requestHostname(r.Host), s.public.Hostname()) {
+		t := s.requestTrust(r)
+		if t.Secure && r.TLS != nil && !strings.EqualFold(requestHostname(r.Host), s.public.Hostname()) {
 			s.writeAuthRequired(w, r, listener)
 			return
 		}
-		if secure {
+		if t.Secure {
 			authenticatedSecurityHeaders(w.Header())
 		}
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/auth/") {
@@ -54,23 +54,23 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			defer controller.SetReadDeadline(time.Time{})
 		}
 		if r.Method == http.MethodOptions && isMeasurementRoute(r.URL.Path) {
-			s.corsPreflight(w, r, secure)
+			s.corsPreflight(w, r, t.Secure)
 			return
 		}
-		if (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/")) && (!listener.UI || !canonical) {
+		if (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/")) && (!listener.UI || !t.Canonical) {
 			forbidden(w)
 			return
 		}
 		public := listener.UI && s.isPublicAuthRoute(r.Method, r.URL.Path)
 		if public {
-			if !secure || !canonical {
+			if !t.Secure || !t.Canonical {
 				s.writeAuthRequired(w, r, listener)
 				return
 			}
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !secure {
+		if !t.Secure {
 			s.writeAuthRequired(w, r, listener)
 			return
 		}

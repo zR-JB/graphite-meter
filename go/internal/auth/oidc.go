@@ -211,39 +211,39 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
 	if s.oidc == nil || !s.oidc.ready() {
-		s.oidcLoginFailure(w, r, "provider_not_ready")
+		s.oidcLoginFailure(w, r, reasonProviderNotReady)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
-		s.oidcLoginFailure(w, r, "start_request_malformed_form")
+		s.oidcLoginFailure(w, r, reasonFormMalformed)
 		return
 	}
-	if reason := s.csrfFailure(r, "csrf"); reason != "" {
-		s.oidcLoginFailure(w, r, "start_request_csrf_"+reason)
+	if why, ok := s.checkCSRF(r, "csrf"); !ok {
+		s.oidcLoginFailure(w, r, why)
 		return
 	}
 	state, err := randomToken(32)
 	if err != nil {
-		s.oidcLoginFailure(w, r, "state_generation")
+		s.oidcLoginFailure(w, r, reasonStateGeneration)
 		return
 	}
 	nonce, err := randomToken(32)
 	if err != nil {
-		s.oidcLoginFailure(w, r, "nonce_generation")
+		s.oidcLoginFailure(w, r, reasonNonceGeneration)
 		return
 	}
 	verifier := oauth2.GenerateVerifier()
 	browser, err := randomToken(32)
 	if err != nil {
-		s.oidcLoginFailure(w, r, "browser_binding_generation")
+		s.oidcLoginFailure(w, r, reasonBrowserBinding)
 		return
 	}
 	key := sha256.Sum256([]byte(state))
 	bh := sha256.Sum256([]byte(browser))
 	addr, ok := s.authClientAddress(r)
 	if !ok {
-		s.oidcLoginFailure(w, r, "client_address")
+		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
 	}
 	client := addr.String()
@@ -265,12 +265,12 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	if len(o.tx) >= 256 || perClient >= 8 {
 		o.mu.Unlock()
 		s.counters.capacity.Add(1)
-		s.oidcLoginFailure(w, r, "transaction_capacity")
+		s.oidcLoginFailure(w, r, reasonTransactionCapacity)
 		return
 	}
 	if o.provider == nil || o.verifier == nil {
 		o.mu.Unlock()
-		s.oidcLoginFailure(w, r, "provider_not_ready")
+		s.oidcLoginFailure(w, r, reasonProviderNotReady)
 		return
 	}
 	oauthCfg := o.oauth
@@ -302,13 +302,13 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
 	if !cok || !sok || len(q["error"]) > 0 || len(q["iss"]) > 1 {
-		s.oidcLoginFailure(w, r, "callback_parameters")
+		s.oidcLoginFailure(w, r, reasonCallbackParameters)
 		return
 	}
 	key := sha256.Sum256([]byte(state))
 	cookie, err := r.Cookie(transactionCookie)
 	if err != nil {
-		s.oidcLoginFailure(w, r, "transaction_cookie")
+		s.oidcLoginFailure(w, r, reasonTransactionCookie)
 		return
 	}
 	bh := sha256.Sum256([]byte(cookie.Value))
@@ -327,12 +327,12 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok || !s.now().Before(tx.expires) || tx.browser != bh || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
 		s.counters.replayExpiry.Add(1)
-		s.oidcLoginFailure(w, r, "transaction_replay_or_expiry")
+		s.oidcLoginFailure(w, r, reasonTransactionReplay)
 		return
 	}
 	iss := first(q["iss"])
 	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
-		s.oidcLoginFailure(w, r, "response_issuer")
+		s.oidcLoginFailure(w, r, reasonResponseIssuer)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
@@ -340,17 +340,17 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	ctx = oidc.ClientContext(ctx, providerHTTPClient())
 	token, err := tx.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
 	if err != nil {
-		s.oidcLoginFailure(w, r, "token_exchange")
+		s.oidcLoginFailure(w, r, reasonTokenExchange)
 		return
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		s.oidcLoginFailure(w, r, "missing_id_token")
+		s.oidcLoginFailure(w, r, reasonMissingIDToken)
 		return
 	}
 	idToken, err := tx.idVerifier.Verify(ctx, rawID)
 	if err != nil {
-		s.oidcLoginFailure(w, r, "id_token_verification")
+		s.oidcLoginFailure(w, r, reasonIDTokenVerification)
 		return
 	}
 	var idClaims struct {
@@ -360,18 +360,18 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		AtHash   string `json:"at_hash"`
 	}
 	if err := idToken.Claims(&idClaims); err != nil || idClaims.Nonce != tx.nonce {
-		s.oidcLoginFailure(w, r, "id_token_claims_or_nonce")
+		s.oidcLoginFailure(w, r, reasonIDTokenClaimsOrNonce)
 		return
 	}
 	if idClaims.AtHash != "" {
 		if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-			s.oidcLoginFailure(w, r, "access_token_hash")
+			s.oidcLoginFailure(w, r, reasonAccessTokenHash)
 			return
 		}
 	}
 	ui, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 	if err != nil || ui.Subject != idToken.Subject {
-		s.oidcLoginFailure(w, r, "userinfo_or_subject")
+		s.oidcLoginFailure(w, r, reasonUserInfoOrSubject)
 		return
 	}
 	var claims struct {
@@ -383,11 +383,11 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			s.counters.groupDenial.Add(1)
 		}
-		s.oidcLoginFailure(w, r, "userinfo_claims_or_group")
+		s.oidcLoginFailure(w, r, reasonUserInfoClaimsOrGroup)
 		return
 	}
 	if !validSubject(idToken.Subject) {
-		s.oidcLoginFailure(w, r, "invalid_subject")
+		s.oidcLoginFailure(w, r, reasonInvalidSubject)
 		return
 	}
 	name := claims.Name
@@ -406,7 +406,7 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	name = safeDisplayName(name)
 	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName, idToken.Expiry)
 	if err != nil {
-		s.oidcLoginFailure(w, r, "session_capacity")
+		s.oidcLoginFailure(w, r, reasonSessionCapacity)
 		return
 	}
 	setSessionCookie(w, sessionCookie, raw, sess.expires)
@@ -420,10 +420,12 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
-func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, reason string) {
-	s.debugln("OIDC login rejected reason=" + reason)
+// oidcLoginFailure charges the OIDC failure counter and then takes the shared
+// login-rejection exit, so an OIDC failure is logged, counted, and phrased by
+// exactly the same mechanism as a password failure.
+func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, why reason) {
 	s.counters.oidcFailure.Add(1)
-	s.loginFailure(w, r)
+	s.loginRejected(w, r, why)
 }
 
 func validSubject(v string) bool {
