@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -52,8 +51,8 @@ type oidcDiscovery struct {
 	responseIssuer bool
 }
 
-func newOIDCState(cfg config.AuthConfig, secret string, verbose ...bool) *oidcState {
-	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: len(verbose) != 0 && verbose[0]}
+func newOIDCState(cfg config.AuthConfig, secret string, verbose bool) *oidcState {
+	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: verbose}
 }
 func (o *oidcState) ready() bool { o.mu.RLock(); defer o.mu.RUnlock(); return o.provider != nil }
 func (o *oidcState) authorizationOrigin() string {
@@ -92,7 +91,7 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	p, err := oidc.NewProvider(ctx, o.cfg.OIDCIssuer)
 	if err != nil {
 		failure := classifyDiscoveryFailure(err)
-		o.debugf("OIDC discovery failed reason=" + failure.reason)
+		o.debugln("OIDC discovery failed reason=" + failure.reason)
 		return nil, failure
 	}
 	var meta struct {
@@ -103,7 +102,7 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	_ = p.Claims(&meta)
 	ep := p.Endpoint()
 	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) || !validProviderURL(meta.JWKS) {
-		o.debugf("OIDC discovery failed reason=invalid_endpoint_metadata")
+		o.debugln("OIDC discovery failed reason=invalid_endpoint_metadata")
 		return nil, &discoveryFailure{reason: "invalid_endpoint_metadata"}
 	}
 	ep.AuthStyle = oauth2.AuthStyleInHeader
@@ -144,7 +143,7 @@ func classifyDiscoveryFailure(err error) *discoveryFailure {
 	return &discoveryFailure{reason: reason}
 }
 
-func (o *oidcState) debugf(message string) {
+func (o *oidcState) debugln(message string) {
 	if o.verbose {
 		log.Printf("[gm:auth:debug] %s", message)
 	}
@@ -422,7 +421,7 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, reason string) {
-	s.debugf("OIDC login rejected reason=" + reason)
+	s.debugln("OIDC login rejected reason=" + reason)
 	s.counters.oidcFailure.Add(1)
 	s.loginFailure(w, r)
 }
@@ -465,5 +464,3 @@ func allowedGroup(actual, allowed []string) bool {
 	}
 	return false
 }
-
-var _ = fmt.Sprintf

@@ -31,7 +31,7 @@ func testService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia"}, nil)
+	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ type countingReader struct {
 func (r *countingReader) Read(p []byte) (int, error) { n, e := r.r.Read(p); r.n += n; return n, e }
 
 func TestOffWrapperIsTransparent(t *testing.T) {
-	s, err := New(context.Background(), config.AuthConfig{Mode: "off"}, nil)
+	s, err := New(context.Background(), config.AuthConfig{Mode: "off"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestAuthRequiredExposesHeadersCrossOrigin(t *testing.T) {
 	}
 }
 func TestOffModeReservesAuthRoutes(t *testing.T) {
-	s, _ := New(context.Background(), config.AuthConfig{Mode: "off"}, nil)
+	s, _ := New(context.Background(), config.AuthConfig{Mode: "off"}, nil, false)
 	mux := http.NewServeMux()
 	s.Mount(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
@@ -548,7 +548,7 @@ func TestLoginRendersOnlyConfiguredMethods(t *testing.T) {
 		t.Run(fmt.Sprintf("%s-ready-%v", tc.mode, tc.ready), func(t *testing.T) {
 			s := &Service{cfg: config.AuthConfig{Mode: tc.mode, OIDCProviderName: "Provider"}, public: public, loginTemplate: loginTemplate, now: time.Now}
 			if tc.provider {
-				s.oidc = newOIDCState(s.cfg, "secret")
+				s.oidc = newOIDCState(s.cfg, "secret", false)
 				if tc.ready {
 					s.oidc.provider = &oidc.Provider{}
 				}
@@ -575,7 +575,7 @@ func TestPasswordLoginPreservesFormEncodedPunctuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil)
+	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -369,7 +369,7 @@ func (c Config) validateAuth() error {
 	}
 	issuer, issuerErr := url.Parse(a.OIDCIssuer)
 	if wantsOIDC && (issuerErr != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "") {
-		return fmt.Errorf("GM_AUTH_OIDC_ISSUER must be an HTTPS origin with no path, query, or fragment")
+		return fmt.Errorf("GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment")
 	}
 	if wantsOIDC && strings.TrimSpace(a.OIDCProviderName) == "" {
 		return fmt.Errorf("GM_AUTH_OIDC_PROVIDER_NAME must not be empty")

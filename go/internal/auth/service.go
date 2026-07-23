@@ -37,7 +37,7 @@ const (
 	sessionLifetime    = 8 * time.Hour
 )
 
-type Listener struct{ UI, Clear bool }
+type Listener struct{ UI bool }
 
 type principalKey struct{}
 
@@ -92,8 +92,8 @@ type Service struct {
 	counters       authCounters
 }
 
-func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose ...bool) (*Service, error) {
-	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: len(verbose) != 0 && verbose[0]}
+func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
+	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
 	if cfg.Mode == "off" {
 		return s, nil
 	}
@@ -110,7 +110,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		if _, _, err := parsePasswordHash(s.passwordHash); err != nil {
 			return nil, err
 		}
-		s.debugf("local password hash loaded and validated")
+		s.debugln("local password hash loaded and validated")
 	}
 	s.loginTemplate = loginTemplate
 	if cfg.Mode == "oidc" || cfg.Mode == "hybrid" {
@@ -136,7 +136,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 	return s, nil
 }
 
-func (s *Service) debugf(message string) {
+func (s *Service) debugln(message string) {
 	if s.verbose {
 		log.Printf("[gm:auth:debug] %s", message)
 	}
@@ -343,7 +343,7 @@ func (s *Service) authRequired(w http.ResponseWriter, r *http.Request, listener 
 		w.Header().Set("Connection", "close")
 	}
 	if listener.UI && r.Method == http.MethodGet && r.URL.Path == "/" {
-		s.debugf("unauthenticated UI root redirected to login")
+		s.debugln("unauthenticated UI root redirected to login")
 		http.Redirect(w, r, s.public.String()+"/login", http.StatusTemporaryRedirect)
 		return
 	}
@@ -647,17 +647,17 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
-		s.debugf("local password rejected reason=malformed_form")
+		s.debugln("local password rejected reason=malformed_form")
 		s.loginFailure(w, r)
 		return
 	}
 	if reason := s.csrfFailure(r, "csrf"); reason != "" {
-		s.debugf("local password rejected reason=csrf_" + reason)
+		s.debugln("local password rejected reason=csrf_" + reason)
 		s.loginFailure(w, r)
 		return
 	}
 	if !s.allowAttempt(r) {
-		s.debugf("local password rejected reason=rate_limit_or_client_address")
+		s.debugln("local password rejected reason=rate_limit_or_client_address")
 		s.counters.throttled.Add(1)
 		s.loginFailure(w, r)
 		return
@@ -666,19 +666,19 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	case s.argon <- struct{}{}:
 		defer func() { <-s.argon }()
 	default:
-		s.debugf("local password rejected reason=verifier_busy")
+		s.debugln("local password rejected reason=verifier_busy")
 		s.loginFailure(w, r)
 		return
 	}
 	if !verifyPassword(s.passwordHash, r.FormValue("password")) {
-		s.debugf("local password rejected reason=mismatch")
+		s.debugln("local password rejected reason=mismatch")
 		s.counters.invalidPassword.Add(1)
 		s.loginFailure(w, r)
 		return
 	}
 	raw, sess, err := s.createSession("local-operator", "Local operator", "local", time.Time{})
 	if err != nil {
-		s.debugf("local password rejected reason=session_capacity")
+		s.debugln("local password rejected reason=session_capacity")
 		s.loginFailure(w, r)
 		return
 	}
@@ -814,8 +814,6 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 	}
 	return Principal{}, false
 }
-
-var _ = fmt.Sprintf
 
 func (s *Service) runSecurityLog(ctx context.Context) {
 	t := time.NewTicker(time.Minute)

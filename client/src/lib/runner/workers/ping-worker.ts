@@ -204,7 +204,7 @@ function connect(): void {
       stopped = true;
       return;
     }
-    if (checkAuthentication && (event.code === 1006 || event.code === 0)) {
+    if (checkAuthentication && event.code === 1006) {
       void checkSessionThenReconnect();
       return;
     }

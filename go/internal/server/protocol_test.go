@@ -39,7 +39,7 @@ func testPasswordAuth(t *testing.T, origin string) *auth.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil)
+	service, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

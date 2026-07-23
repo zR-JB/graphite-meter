@@ -204,7 +204,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
 	h1mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, authn)
-	h1 := baseServer(authn.Wrap(h1mux, auth.Listener{UI: true, Clear: true}), h1p)
+	h1 := baseServer(authn.Wrap(h1mux, auth.Listener{UI: true}), h1p)
 	hardenAuthenticatedServer(h1, authn.Enabled())
 	h1ln, err := net.Listen("tcp", cfg.Native.H1)
 	if err != nil {
@@ -221,7 +221,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		run: func() error { return serve(admittedListener{Listener: h1ln, admission: connections}, h1) }, stop: h1.Shutdown,
 	}}
 	if authn.Enabled() {
-		services[0].name = "HTTP/1.1 clear: trusted proxy upstream or HTTPS redirect only"
+		services[0].name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
 
 	if cfg.Native.H1TLS != "" {

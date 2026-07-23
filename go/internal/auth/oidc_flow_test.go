@@ -134,7 +134,7 @@ func (f *fakeOIDC) service(t *testing.T) *Service {
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	s, err := New(ctx, config.AuthConfig{Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client", OIDCClientSecret: "secret", OIDCAllowedGroups: []string{"allowed"}, OIDCProviderName: "Provider"}, nil)
+	s, err := New(ctx, config.AuthConfig{Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client", OIDCClientSecret: "secret", OIDCAllowedGroups: []string{"allowed"}, OIDCProviderName: "Provider"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}

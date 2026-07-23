@@ -1,7 +1,7 @@
 <script lang="ts">
   // Main console shell: boots the runner, owns top-level panels, shortcuts,
   // theme toggle, and docked/flyout layout state.
-  import { onMount } from "svelte";
+  import { onMount, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import { bootRunner, teardownRunner } from "../runner/wire.svelte";
   import GaugePanel from "./GaugePanel.svelte";
@@ -20,7 +20,7 @@
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
   import { authEnabled } from "../auth";
 
-  let AccountControl = $state<any>(null);
+  let AccountControl = $state<Component | null>(null);
 
   let telemetryOpen = $state(false);
   let settingsOpen = $state(false);
