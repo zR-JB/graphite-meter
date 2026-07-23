@@ -9,6 +9,7 @@
     "allowJs": true,
     "checkJs": true,
     "isolatedModules": true,
+    "noEmit": true,
     "moduleDetection": "force",
     "moduleResolution": "bundler",
     "strict": true,

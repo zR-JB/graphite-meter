@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNmRiMGI4IiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyLjYgMy45IDcuM3Y5LjRsOC4xIDQuNyA4LjEtNC43VjcuM1oiLz48cGF0aCBkPSJNMTIgMTIgMTguNiA4LjIiIHN0cm9rZS13aWR0aD0iMi4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIyLjEiIGZpbGw9IiM2ZGIwYjgiIHN0cm9rZT0ibm9uZSIvPjwvc3ZnPg==">
     <title>Sign in · Graphite Meter</title>
+    {{template "theme"}}
     <style>{{.Styles}}</style>
   </head>
   <body>
@@ -28,7 +29,7 @@
           <input type="hidden" name="challenge" value="{{.Challenge}}">
           <button type="submit" {{if not .OIDCReady}}disabled{{end}}>Continue with {{.Provider}}</button>
         </form>
-        {{if not .OIDCReady}}<p class="neutral">{{.Provider}} is temporarily unavailable.</p>{{end}}
+        {{if not .OIDCReady}}<p class="notice">{{.Provider}} is temporarily unavailable.</p>{{end}}
       {{end}}
       {{if and .OIDC .Password}}<div class="separator">or</div>{{end}}
       {{if .Password}}
