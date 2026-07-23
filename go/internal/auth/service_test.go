@@ -261,6 +261,12 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	if policy := authPageCSP(""); !strings.Contains(policy, pin) {
 		t.Fatalf("CSP %q does not pin both embedded scripts", policy)
 	}
+	// pending.js posts the same-origin password/CLI forms with fetch; without
+	// connect-src 'self' the login CSP's default-src 'none' blocks that fetch
+	// and a JS-enabled sign-in silently fails with no native fallback.
+	if policy := authPageCSP(""); !strings.Contains(policy, "connect-src 'self'") {
+		t.Fatalf("login CSP %q does not allow the same-origin sign-in fetch", policy)
+	}
 
 	pages := map[string]struct {
 		tmpl *template.Template

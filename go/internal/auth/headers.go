@@ -27,17 +27,19 @@ func securityHeaders(h http.Header) {
 
 // authPageCSP locks the login surface to its own inline stylesheet and
 // pre-paint theme script, each pinned by hash; no other source may load.
-// Signing in works without scripting: the script only carries the app's stored
-// theme over, and without it theme selection follows the OS preference.
-// form-action widens only to the discovered authorization origin. img-src
-// allows data: and nothing else, which covers the inlined favicon without
-// opening a route to any remote host.
+// Signing in works without scripting: the form posts natively, and the theme
+// script only carries the app's stored theme over. connect-src 'self' lets the
+// pending.js enhancement post the same-origin password and CLI-approval forms
+// with fetch (swapping errors in place instead of navigating); it fetches
+// nowhere else. form-action widens only to the discovered authorization origin.
+// img-src allows data: and nothing else, which covers the inlined favicon
+// without opening a route to any remote host.
 func authPageCSP(authorizationOrigin string) string {
 	formAction := "'self'"
 	if authorizationOrigin != "" {
 		formAction += " " + authorizationOrigin
 	}
-	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
+	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'; connect-src 'self'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
 func (s *Service) loginSecurityHeaders(h http.Header) {
