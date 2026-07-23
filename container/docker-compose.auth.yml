@@ -33,14 +33,16 @@ services:
       GM_AUTH_MODE: password
       GM_AUTH_PASSWORD_HASH_FILE: /run/secrets/gm_auth_password_hash
 
-      # --- OIDC, as an alternative to the two lines above ---
+      # --- OIDC, as an alternative to the operator password ---
       # Register ${GM_AUTH_PUBLIC_URL}/auth/oidc/callback as a confidential
       # authorization-code client using PKCE S256, client_secret_basic, and the
-      # scopes `openid profile groups`. `oidc` mode refuses to start until
-      # issuer discovery succeeds; `hybrid` retries in the background and keeps
-      # the operator password as a fallback — for hybrid, keep the two password
-      # lines above as well. Discovery, token exchange, UserInfo, and JWKS are
-      # outbound HTTPS calls, and the published image carries
+      # scopes `openid profile groups`. GM_AUTH_MODE is one line: `password`,
+      # `oidc`, or `hybrid`. `oidc` refuses to start until issuer discovery
+      # succeeds and replaces the password lines above; `hybrid` retries
+      # discovery in the background with the operator password as a fallback —
+      # set GM_AUTH_MODE: hybrid, keep GM_AUTH_PASSWORD_HASH_FILE, and
+      # uncomment the OIDC lines below it. Discovery, token exchange, UserInfo,
+      # and JWKS are outbound HTTPS calls, and the published image carries
       # /etc/ssl/certs/ca-certificates.crt, so no CA bundle has to be mounted.
       # GM_AUTH_MODE: oidc
       # GM_AUTH_OIDC_ISSUER: https://auth.example.com

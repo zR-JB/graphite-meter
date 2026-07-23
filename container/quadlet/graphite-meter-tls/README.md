@@ -82,9 +82,9 @@ To force a safe staging test without consuming production rate limits:
 
 ```sh
 podman run --rm \
-  -v "$PWD/letsencrypt:/etc/letsencrypt:Z" \
-  -v "$PWD/log:/var/log/letsencrypt:Z" \
-  -v "$PWD/secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,Z" \
+  -v "$PWD/letsencrypt:/etc/letsencrypt:z" \
+  -v "$PWD/log:/var/log/letsencrypt:z" \
+  -v "$PWD/secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,z" \
   docker.io/certbot/dns-cloudflare:latest renew --dry-run \
   --dns-cloudflare-credentials /run/secrets/cloudflare.ini
 ```

@@ -118,8 +118,8 @@ for the headers a trusted proxy must set.
 
 ## Notes
 
-- **First source build is slow** on a Pi (bun install + the Go build); later
-  starts reuse the built image.
+- **First source build is slow** on a low-power host (bun install + the Go
+  build); later starts reuse the built image.
 - To rebuild from scratch: `podman rmi localhost/graphite-meter:latest` then
   restart the service.
 - Override client build knobs (dummy runner / dev tools / label) by uncommenting

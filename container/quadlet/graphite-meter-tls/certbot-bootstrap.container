@@ -11,9 +11,9 @@ EnvironmentFile=graphite-meter.env
 Entrypoint=/bin/sh
 Exec=/config/certbot-bootstrap.sh
 Volume=./certbot-bootstrap.sh:/config/certbot-bootstrap.sh:ro,Z
-Volume=./secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,Z
-Volume=./letsencrypt:/etc/letsencrypt:Z
-Volume=./log:/var/log/letsencrypt:Z
+Volume=./secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,z
+Volume=./letsencrypt:/etc/letsencrypt:z
+Volume=./log:/var/log/letsencrypt:z
 NoNewPrivileges=true
 
 [Service]
