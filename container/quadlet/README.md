@@ -83,6 +83,39 @@ journalctl --user -u graphite-meter.service -f     # logs
 systemctl --user restart graphite-meter.service    # source variant: rebuilds only if inputs changed
 ```
 
+## Enable authentication
+
+Authentication is off by default. Uncomment the `GM_AUTH_*` block in
+`graphite-meter.container`, point `GM_AUTH_PUBLIC_URL` at the exact public HTTPS
+origin (no path, and no `:443`), and create the podman secrets the unit mounts.
+
+For the operator password, print the Argon2id hash on a terminal and store the
+single line it prints:
+
+```sh
+podman run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
+printf '%s' 'PASTE_THE_HASH_HERE' | podman secret create gm-auth-password-hash -
+```
+
+For OIDC, store the client secret the same way, as
+`gm-auth-oidc-client-secret`, and register
+`${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code
+client using PKCE S256, `client_secret_basic`, and the scopes
+`openid profile groups`. Discovery, token exchange, UserInfo, and JWKS are
+outbound HTTPS calls; the published image carries
+`/etc/ssl/certs/ca-certificates.crt`, so no CA bundle has to be mounted.
+
+The server refuses to start unless clear HTTP/1.1 is left unadvertised and
+every advertised origin is HTTPS on the `GM_AUTH_PUBLIC_URL` hostname. The
+commented block covers a reverse-proxy deployment with
+`GM_ADVERTISED_NATIVE_ENDPOINTS=none` and `GM_PUBLIC_ORIGINS=self`; serving the
+native TLS listeners directly instead means advertising `http1-tls,http2,http3`
+and giving each `GM_H*_PUBLIC_ORIGIN` that same hostname.
+
+See [CONFIGURATION.md](../../docs/CONFIGURATION.md) for every variable and the
+terminal-client grant flow, and [REVERSE_PROXY.md](../../docs/REVERSE_PROXY.md)
+for the headers a trusted proxy must set.
+
 ## Notes
 
 - **First source build is slow** on a Pi (bun install + the Go build); later

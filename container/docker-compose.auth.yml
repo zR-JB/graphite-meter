@@ -1,0 +1,64 @@
+# Authentication overlay. Stack it on the default compose from the repository
+# root:
+#   docker compose -f container/docker-compose.yml -f container/docker-compose.auth.yml up -d
+#
+# It assumes a reverse proxy owns TLS on GM_AUTH_PUBLIC_URL and forwards to the
+# clear HTTP/1.1 listener. The proxy must set X-Real-IP from its connection
+# peer, drop Forwarded and X-Forwarded-For, and overwrite X-Forwarded-Proto and
+# X-Forwarded-Host — see docs/REVERSE_PROXY.md. Variable semantics and the
+# terminal-client grant flow are in docs/CONFIGURATION.md.
+#
+# Edit GM_AUTH_PUBLIC_URL, GM_TRUSTED_PROXIES, and the secret paths at the
+# bottom before starting.
+services:
+  graphite-meter:
+    environment:
+      # Scheme, host, and non-default port only — no path, and never :443. The
+      # OIDC redirect URI is derived from it and the origin the proxy
+      # reconstructs must match it exactly.
+      GM_AUTH_PUBLIC_URL: https://meter.example.com
+      # Clear HTTP/1.1 must not be advertised while authentication is enabled,
+      # and every advertised origin must be HTTPS on the hostname above. `self`
+      # advertises the proxy origin the browser already reached.
+      GM_ADVERTISED_NATIVE_ENDPOINTS: none
+      GM_PUBLIC_ORIGINS: self
+      # The proxy's CIDR as Graphite Meter sees it; without it the forwarding
+      # headers are ignored and every client is accounted as the proxy.
+      GM_TRUSTED_PROXIES: "172.30.0.0/24"
+
+      # --- Operator password ---
+      # Produce the Argon2id PHC hash on a terminal and write the single line it
+      # prints to the secret file:
+      #   docker run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
+      GM_AUTH_MODE: password
+      GM_AUTH_PASSWORD_HASH_FILE: /run/secrets/gm_auth_password_hash
+
+      # --- OIDC, as an alternative to the two lines above ---
+      # Register ${GM_AUTH_PUBLIC_URL}/auth/oidc/callback as a confidential
+      # authorization-code client using PKCE S256, client_secret_basic, and the
+      # scopes `openid profile groups`. `oidc` mode refuses to start until
+      # issuer discovery succeeds; `hybrid` retries in the background and keeps
+      # the operator password as a fallback — for hybrid, keep the two password
+      # lines above as well. Discovery, token exchange, UserInfo, and JWKS are
+      # outbound HTTPS calls, and the published image carries
+      # /etc/ssl/certs/ca-certificates.crt, so no CA bundle has to be mounted.
+      # GM_AUTH_MODE: oidc
+      # GM_AUTH_OIDC_ISSUER: https://auth.example.com
+      # GM_AUTH_OIDC_CLIENT_ID: graphite-meter
+      # GM_AUTH_OIDC_CLIENT_SECRET_FILE: /run/secrets/gm_auth_oidc_client_secret
+      # Comma-separated and case-sensitive. Required whenever OIDC is enabled:
+      # an empty allowlist admits nobody and is rejected at startup.
+      # GM_AUTH_OIDC_ALLOWED_GROUPS: "meter-users"
+      # Provider label on the login page; defaults to Authelia.
+      # GM_AUTH_OIDC_PROVIDER_NAME: "Authelia"
+    secrets:
+      - gm_auth_password_hash
+      # - gm_auth_oidc_client_secret
+
+# Each secret is mounted read-only at /run/secrets/<name>. Keep the host files
+# outside the repository checkout and readable only by the Docker daemon's user.
+secrets:
+  gm_auth_password_hash:
+    file: /etc/graphite-meter/auth-password-hash
+  # gm_auth_oidc_client_secret:
+  #   file: /etc/graphite-meter/auth-oidc-client-secret
