@@ -14,7 +14,7 @@ import {
   presentConnections,
   type ConnectionValidation,
 } from "./connectionModel";
-import { classifyTransportDiscovery } from "./real/backendPure";
+import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 
 const throughput: FetchThroughputTarget = {
   id: "http2",
@@ -23,11 +23,11 @@ const throughput: FetchThroughputTarget = {
   protocol: "http2",
   tls: true,
   routes: {
-    probe: "/probe",
-    download: "/download",
-    upload: "/upload",
-    uploadSession: "/upload/session",
-    uploadProgress: "/upload/progress",
+    probe: ROUTES.probe,
+    download: ROUTES.download,
+    upload: ROUTES.upload,
+    uploadSession: ROUTES.uploadSession,
+    uploadProgress: ROUTES.uploadProgress,
   },
 };
 const latency: WebSocketLatencyTarget = {
@@ -36,7 +36,7 @@ const latency: WebSocketLatencyTarget = {
   transport: "websocket",
   protocol: "http1",
   tls: true,
-  routes: { probe: "/probe", ping: "/ws/ping" },
+  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
 };
 
 function config(): RunnerConfig {

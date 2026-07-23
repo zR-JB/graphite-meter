@@ -175,6 +175,8 @@
   .disclosure-body.nested {
     margin: 10px;
   }
+  /* The measured container is the parent TestSetupPanel's .setup-grid
+     (container-type: inline-size); this component declares none itself. */
   @container (max-width: 360px) {
     .two {
       grid-template-columns: 1fr;

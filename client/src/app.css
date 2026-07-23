@@ -134,8 +134,9 @@
        (`html { background }` and `[data-theme=light]`), because the bundle —
        and thus this file — loads too late to own the first frame.
      - client/src/auth/auth.css: the token subset the server-rendered auth
-       pages need, including --focus-ring and --edge-highlight. A Go test pins
-       its colors against this file; radii, type, and motion are unpinned. */
+       pages need. A Go test pins its colors, --focus-ring, and
+       --edge-highlight against this file; radii, type, and motion are
+       unpinned. */
   --canvas: #131518;
   --bg: #17191c;
   --bg-elevated: #1c1f23;

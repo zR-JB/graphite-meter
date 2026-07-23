@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
-import { classifyTransportDiscovery } from "./backendPure";
+import { classifyTransportDiscovery, ROUTES } from "./backendPure";
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
 
 const routes = {
-  probe: "/probe",
-  download: "/download",
-  upload: "/upload",
-  uploadSession: "/upload/session",
-  uploadProgress: "/upload/progress",
+  probe: ROUTES.probe,
+  download: ROUTES.download,
+  upload: ROUTES.upload,
+  uploadSession: ROUTES.uploadSession,
+  uploadProgress: ROUTES.uploadProgress,
 };
 const transfer = (
   id: string,
@@ -29,7 +29,7 @@ const latency = (id: string, origin: string, tls: boolean): LatencyTarget => ({
   protocol: "http1",
   tls,
   transport: "websocket",
-  routes: { probe: "/probe", ping: "/ws/ping" },
+  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
 });
 
 test("status copy distinguishes missing, blocked, and trusted loopback targets", () => {

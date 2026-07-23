@@ -809,7 +809,7 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 		return out
 	}
-	for _, name := range []string{"canvas", "surface-1", "surface-inset", "border", "text", "text-muted", "text-inverse", "brand", "brand-strong", "signal", "signal-soft", "err", "err-soft"} {
+	for _, name := range []string{"canvas", "surface-1", "surface-inset", "border", "text", "text-muted", "text-inverse", "brand", "brand-strong", "signal", "signal-soft", "err", "err-soft", "focus-ring", "edge-highlight"} {
 		if authValues, appValues := collapse(values(authCSS, name)), values(string(css), name); !reflect.DeepEqual(authValues, appValues) {
 			t.Errorf("token %s values %v do not match application values %v", name, authValues, appValues)
 		}
