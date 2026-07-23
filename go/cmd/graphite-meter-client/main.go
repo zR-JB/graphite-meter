@@ -44,7 +44,7 @@ func main() {
 	cfg.Stages = parseStages(stages)
 	cfg.PingInterval = parsePing(ping)
 
-	p := tea.NewProgram(newModel(cfg), tea.WithFPS(20), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(newModel(cfg), tea.WithFPS(30), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	final, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)

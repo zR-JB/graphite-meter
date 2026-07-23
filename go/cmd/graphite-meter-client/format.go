@@ -66,6 +66,24 @@ func valueLine(label, value, note string) string {
 	return fmt.Sprintf("%-24s %s  %s", label, valueStyle.Render(value), mutedStyle.Render(note))
 }
 
+// endpointRow is an endpoint selector line: the configured choice stays on
+// show with its position in the cycle enter walks, and the concrete target a
+// preparation resolved it to is the note beside it.
+func endpointRow(label, configured string, choices []string, resolved string) string {
+	pos := ""
+	for i, c := range choices {
+		if c == configured {
+			pos = mutedStyle.Render(fmt.Sprintf(" ‹%d/%d›", i+1, len(choices)))
+			break
+		}
+	}
+	note := mutedStyle.Render("enter cycles")
+	if resolved != "" {
+		note = mutedStyle.Render("→ " + resolved)
+	}
+	return fmt.Sprintf("%-24s %s%s  %s", label, valueStyle.Render(targetChoiceLabel(configured)), pos, note)
+}
+
 func checkbox(on bool) string {
 	if on {
 		return accentStyle.Render("●")
@@ -92,23 +110,41 @@ func timingLabel(row int) string {
 	}
 }
 
+// eighths are the partial-cell fills between an empty and a full block, so a
+// bar's tip moves in sub-cell steps instead of jumping a whole cell at a time.
+var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
+
 // renderBar fills width cells with value/scale. Every bar on a screen shares one
 // scale — the largest value in view — so the fills compare against each other at
-// a glance instead of each bar being full against its own maximum. lead brightens
-// the last filled cell, which makes a live bar's motion legible.
+// a glance instead of each bar being full against its own maximum. The tip
+// renders at eighth-cell resolution; lead brightens the last filled cell, which
+// makes a live bar's motion legible.
 func renderBar(value, scale float64, width int, lead bool) string {
-	n := 0
+	cells := 0.0
 	if scale > 0 {
-		n = clamp(int((value/scale)*float64(width)+0.5), 0, width)
+		cells = value / scale * float64(width)
+		if cells < 0 {
+			cells = 0
+		}
+		if cells > float64(width) {
+			cells = float64(width)
+		}
 	}
-	if n == 0 {
+	full := int(cells)
+	part := eighths[int((cells-float64(full))*8)]
+	if full == 0 && part == "" {
 		return mutedStyle.Render(strings.Repeat("░", width))
 	}
-	filled := accentStyle.Render(strings.Repeat("█", n))
-	if lead {
-		filled = accentStyle.Render(strings.Repeat("█", n-1)) + valueStyle.Render("█")
+	filled := accentStyle.Render(strings.Repeat("█", full))
+	if lead && full > 0 {
+		filled = accentStyle.Render(strings.Repeat("█", full-1)) + valueStyle.Render("█")
 	}
-	return filled + mutedStyle.Render(strings.Repeat("░", width-n))
+	rest := width - full
+	if part != "" {
+		filled += accentStyle.Render(part)
+		rest--
+	}
+	return filled + mutedStyle.Render(strings.Repeat("░", rest))
 }
 
 func rateLine(name string, rate, scale float64, w int) string {
@@ -116,20 +152,29 @@ func rateLine(name string, rate, scale float64, w int) string {
 	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
 }
 
-// latencyLine separates the two reasons there is no round trip to show: no
-// pong has come back yet, and a pong that never came back at all.
-func latencyLine(s goclient.LatencySample) string {
-	if s.Lost {
-		return labelStyle.Render("latency ") + errorStyle.Render("timeout")
-	}
+// latencyLine holds the last round trip on screen instead of blinking away on
+// every lost ping: a loss streak is annotated beside the value and only a
+// sustained streak reads as a timeout. Before the first pong there is only
+// "waiting", or "timeout" once losses are all there ever was.
+func latencyLine(s goclient.LatencySample, lostStreak int) string {
 	if s.RTT <= 0 {
+		if lostStreak > 0 {
+			return labelStyle.Render("latency ") + errorStyle.Render("timeout")
+		}
 		return labelStyle.Render("latency ") + mutedStyle.Render("waiting")
 	}
 	load := ""
 	if s.UnderLoad {
 		load = " loaded"
 	}
-	return labelStyle.Render("latency ") + valueStyle.Render(fmtMs(s.RTT)) + mutedStyle.Render(load)
+	line := labelStyle.Render("latency ") + valueStyle.Render(fmtMs(s.RTT)) + mutedStyle.Render(load)
+	switch {
+	case lostStreak >= 3:
+		line += errorStyle.Render("  timeout ×" + fmt.Sprint(lostStreak))
+	case lostStreak > 0:
+		line += warnStyle.Render(fmt.Sprintf("  %d lost", lostStreak))
+	}
+	return line
 }
 
 func emptyDash(s string) string {

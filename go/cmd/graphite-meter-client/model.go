@@ -241,6 +241,15 @@ type model struct {
 	done   <-chan error
 	cancel context.CancelFunc
 
+	// disp trails rates toward each authoritative sample on the animation
+	// tick, so the live bars and figures glide instead of jumping with every
+	// 100ms sample.
+	disp map[goclient.Direction]float64
+	// lostStreak counts consecutive lost pings; a good pong resets it. The
+	// latency line keeps its last value against a short streak instead of
+	// blinking between figure and timeout.
+	lostStreak int
+
 	stage                               string
 	status                              string
 	server                              string
@@ -265,7 +274,12 @@ type model struct {
 }
 
 func newModel(cfg goclient.Config) model {
-	spin := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	// The spinner's frame tick is the animation clock: clocks, the rate glide,
+	// and the frames all advance on it, so it runs faster than MiniDot's
+	// default to keep the motion fluid.
+	dial := spinner.MiniDot
+	dial.FPS = time.Second / 20
+	spin := spinner.New(spinner.WithSpinner(dial))
 	spin.Style = accentStyle
 	return model{
 		cfg:           cfg,
@@ -279,6 +293,7 @@ func newModel(cfg goclient.Config) model {
 		now:           time.Now(),
 		rates:         map[goclient.Direction]goclient.ThroughputSample{},
 		peaks:         map[goclient.Direction]float64{},
+		disp:          map[goclient.Direction]float64{},
 	}
 }
 
@@ -377,6 +392,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.now = msg.Time
+		for dir, sample := range m.rates {
+			m.disp[dir] += (sample.BytesPerSec - m.disp[dir]) * 0.35
+		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
@@ -690,6 +708,11 @@ func (m *model) commitEdit() {
 			m.editRejected("Server URL cannot be empty.")
 			return
 		}
+		// A bare host means HTTPS: the presets carry their schemes, so what is
+		// typed without one is a remote host, and remote servers answer TLS.
+		if !strings.Contains(raw, "://") {
+			raw = "https://" + raw
+		}
 		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
 			return
@@ -701,9 +724,13 @@ func (m *model) commitEdit() {
 		m.cfg.BaseURL = raw
 		m.editAccepted("Custom server URL set.")
 	case editDuration:
+		// A bare number is seconds, so "10" works as well as "10s".
+		if n, err := strconv.ParseFloat(raw, 64); err == nil {
+			raw = fmt.Sprintf("%gs", n)
+		}
 		d, err := time.ParseDuration(raw)
 		if err != nil || d < 0 {
-			m.editRejected("Use Go duration syntax, for example 800ms, 4s, or 1m.")
+			m.editRejected("Use a duration like 800ms, 4s, or 1m — a bare number is seconds.")
 			return
 		}
 		switch field {
@@ -875,6 +902,8 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.now = time.Now()
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
 	m.peaks = map[goclient.Direction]float64{}
+	m.disp = map[goclient.Direction]float64{}
+	m.lostStreak = 0
 	m.results = nil
 	m.latency = goclient.LatencySample{}
 	m.stages = plannedStages(cfg)
@@ -910,7 +939,12 @@ func (m *model) apply(e goclient.Event) {
 			m.peaks[e.Direction] = e.Throughput.BytesPerSec
 		}
 	case goclient.EventLatency:
-		m.latency = e.Latency
+		if e.Latency.Lost {
+			m.lostStreak++
+		} else {
+			m.lostStreak = 0
+			m.latency = e.Latency
+		}
 	case goclient.EventResult:
 		if e.Result != nil {
 			m.results = append(m.results, *e.Result)

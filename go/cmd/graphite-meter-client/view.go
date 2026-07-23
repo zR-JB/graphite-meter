@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const (
@@ -39,15 +40,10 @@ func (l *layout) reset() {
 
 // markRow records the menu row about to be appended to a section body of the
 // given lines. Rows render in row order, so their positions land in that order
-// too. The panel wraps its content at w, so a row's position is the wrapped
-// height of everything above it rather than the line count.
-func (l *layout) markRow(lines []string, w int) {
-	wrap := lipgloss.NewStyle().Width(w)
-	offset := 0
-	for _, line := range lines {
-		offset += lipgloss.Height(wrap.Render(line))
-	}
-	l.rows = append(l.rows, l.rowTop+offset)
+// too. fitBlock truncates every body line to the panel width, so each line
+// occupies exactly one row and the position is the line count.
+func (l *layout) markRow(lines []string) {
+	l.rows = append(l.rows, l.rowTop+len(lines))
 }
 
 func (m model) View() string {
@@ -68,10 +64,26 @@ func (m model) View() string {
 	return shellStyle.Render(b.String())
 }
 
-// innerWidth is the content width inside the shell margin: floored so both
-// panels stay legible, capped so lines do not sprawl on wide terminals.
+// innerWidth is the content width inside the shell margin. The terminal's full
+// width is used — bars and columns grow with it — with only a floor under
+// which no layout stays legible.
 func (m model) innerWidth() int {
-	return clamp(m.width-4, 72, 118)
+	return max(m.width-4, 40)
+}
+
+// fitLine truncates one rendered line to w cells, ANSI-aware, so panel content
+// never wraps: a cramped terminal loses a line's tail, not its layout.
+func fitLine(s string, w int) string {
+	return lipgloss.NewStyle().MaxWidth(w).Render(s)
+}
+
+// fitBlock applies fitLine to every line of a panel body.
+func fitBlock(s string, w int) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = fitLine(line, w)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) header(w int) string {
@@ -82,24 +94,25 @@ func (m model) header(w int) string {
 	left := titleStyle.Render("Graphite Meter")
 	right := pillStyle.Render(status)
 	spacer := strings.Repeat(" ", max(1, w-lipgloss.Width(left)-lipgloss.Width(right)))
-	line := left + spacer + right
+	line := fitLine(left+spacer+right, w)
 
 	target := m.cfg.BaseURL
 	if m.server != "" {
 		target = m.server
 	}
-	return line + "\n" + mutedStyle.Render("native go client "+goclient.Version) + "  " + accentStyle.Render(target)
+	return line + "\n" + fitLine(mutedStyle.Render("native go client "+goclient.Version)+"  "+accentStyle.Render(target), w)
 }
 
 // splitColumns divides w into two bordered panels separated by a two-cell
 // gutter. Each panel's border draws two columns outside its lipgloss width, so
 // the content widths split w minus the gutter and both border pairs — the pair
 // then renders exactly w columns wide. Below 96 cells neither panel stays
-// readable side by side, so both take the full width and the caller stacks
+// readable side by side, so both take the full width — minus their own border
+// pair, so a stacked panel renders the same w columns — and the caller stacks
 // them.
 func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 	if w < 96 {
-		return w, w, false
+		return w - 2, w - 2, false
 	}
 	inner := w - 6
 	leftW = inner / 2
@@ -118,8 +131,8 @@ func (m model) configView(w, top int) string {
 	// The menu panel's rendered span includes the border columns outside its
 	// lipgloss width.
 	m.lay.rowRight = shellMargin + leftW + 2
-	menu := panelStyle.Width(leftW).Render(m.sectionView(leftW - 4))
-	summary := panelStyle.Width(rightW).Render(m.planView(rightW - 4))
+	menu := panelStyle.Width(leftW).Render(fitBlock(m.sectionView(leftW-4), leftW-4))
+	summary := panelStyle.Width(rightW).Render(fitBlock(m.planView(rightW-4), rightW-4))
 	if twoCol {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, menu, "  ", summary))
 	} else {
@@ -129,7 +142,7 @@ func (m model) configView(w, top int) string {
 	}
 	if m.notice != "" {
 		b.WriteString("\n\n")
-		b.WriteString(mutedStyle.Render(m.notice))
+		b.WriteString(fitLine(mutedStyle.Render(m.notice), w))
 	}
 	return b.String()
 }
@@ -152,7 +165,10 @@ func (m model) tabBar(w, y int) string {
 	if lipgloss.Width(line) < w {
 		line += subtleRuleStyle.Render(strings.Repeat("─", w-lipgloss.Width(line)))
 	}
-	return line
+	// On a terminal narrower than the bar the trailing tabs clip; one long line
+	// would otherwise widen the whole shell block, padding every other line
+	// past the terminal.
+	return fitLine(line, w)
 }
 
 func (m model) sectionView(w int) string {
@@ -181,7 +197,7 @@ func (m model) serversView(w int) string {
 			mark = "●"
 		}
 		line := fmt.Sprintf("%s %-12s %s", mark, preset.name, mutedStyle.Render(preset.url))
-		m.lay.markRow(lines, w)
+		m.lay.markRow(lines)
 		lines = append(lines, m.menuLine(i, line, w))
 		lines = append(lines, mutedStyle.Render("  "+preset.note))
 	}
@@ -192,7 +208,7 @@ func (m model) serversView(w int) string {
 	if m.edit.kind == editURL {
 		custom = "● Custom URL  " + m.edit.input.View() + m.editError()
 	}
-	m.lay.markRow(lines, w)
+	m.lay.markRow(lines)
 	lines = append(lines, m.menuLine(len(serverPresets), custom, w))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -224,15 +240,17 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
-	throughput := targetChoiceLabel(m.cfg.ThroughputTarget)
-	latency := targetChoiceLabel(m.cfg.LatencyTarget)
+	caps := m.capabilities()
+	throughputChoices := originChoices(caps.ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
+	latencyChoices := originChoices(caps.LatencyTargets, func(t wire.LatencyTarget) string { return t.Origin })
+	resolvedThroughput, resolvedLatency := "", ""
 	if m.prepared.FreshFor(m.cfg) {
-		throughput = m.prepared.ThroughputSummary()
-		latency = m.prepared.LatencySummary()
+		resolvedThroughput = m.prepared.ThroughputSummary()
+		resolvedLatency = m.prepared.LatencySummary()
 	}
 	rows := []string{
-		valueLine("Throughput endpoint", throughput, "independent path"),
-		valueLine("Latency endpoint", latency, "independent path"),
+		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, throughputChoices, resolvedThroughput),
+		endpointRow("Latency endpoint", m.cfg.LatencyTarget, latencyChoices, resolvedLatency),
 		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated endpoints"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
 		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 automatic; 1–128 forced"),
@@ -273,7 +291,7 @@ func (m model) editError() string {
 func (m model) listWithTitle(title string, rows []string, w int) string {
 	lines := []string{accentStyle.Render(title)}
 	for i, row := range rows {
-		m.lay.markRow(lines, w)
+		m.lay.markRow(lines)
 		lines = append(lines, m.menuLine(i, row, w))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -362,8 +380,8 @@ func (m model) authView() []string {
 
 func (m model) runView(w int) string {
 	leftW, rightW, twoCol := splitColumns(w)
-	summary := panelStyle.Width(leftW).Render(m.summaryView(leftW - 4))
-	live := panelStyle.Width(rightW).Render(m.liveView(rightW - 4))
+	summary := panelStyle.Width(leftW).Render(fitBlock(m.summaryView(leftW-4), leftW-4))
+	live := panelStyle.Width(rightW).Render(fitBlock(m.liveView(rightW-4), rightW-4))
 	var b strings.Builder
 	if twoCol {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, summary, "  ", live))
@@ -374,11 +392,11 @@ func (m model) runView(w int) string {
 	}
 	if len(m.results) > 0 {
 		b.WriteString("\n\n")
-		b.WriteString(panelStyle.Width(w).Render(m.resultsView(w - 4)))
+		b.WriteString(panelStyle.Width(w - 2).Render(fitBlock(m.resultsView(w-6), w-6)))
 	}
 	if m.err != nil {
 		b.WriteString("\n\n")
-		b.WriteString(errorStyle.Render(m.err.Error()))
+		b.WriteString(fitLine(errorStyle.Render(m.err.Error()), w))
 	}
 	return b.String()
 }
@@ -421,15 +439,13 @@ func (m model) timelineView(w int) []string {
 		return nil
 	}
 	lines := []string{mutedStyle.Render("Stages")}
-	barW := clamp(w-38, 8, 24)
+	barW := clamp(w-38, 8, 40)
 	for _, s := range m.stages {
 		name := labelStyle.Render(fmt.Sprintf("%-14s", s.name))
 		switch s.state {
 		case stageWarmup:
-			lines = append(lines,
-				name+accentStyle.Render("◐ ")+m.spin.View(),
-				mutedStyle.Render(fmt.Sprintf("  %-12s %s", "warmup", fmtClock(m.now.Sub(s.since)))),
-			)
+			lines = append(lines, name+accentStyle.Render("◐ ")+m.spin.View()+
+				mutedStyle.Render(" warmup ")+valueStyle.Render(fmtClock(m.now.Sub(s.since))))
 		case stageMeasuring:
 			elapsed := m.now.Sub(s.since)
 			progress := m.spin.View() + mutedStyle.Render(" measuring")
@@ -453,9 +469,9 @@ func (m model) liveView(w int) string {
 	scale := m.rateScale()
 	lines := []string{
 		accentStyle.Render("Live Telemetry"),
-		rateLine("download", m.rates[goclient.Down].BytesPerSec, scale, w),
-		rateLine("upload  ", m.rates[goclient.Up].BytesPerSec, scale, w),
-		latencyLine(m.latency),
+		rateLine("download", m.disp[goclient.Down], scale, w),
+		rateLine("upload  ", m.disp[goclient.Up], scale, w),
+		latencyLine(m.latency, m.lostStreak),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -479,7 +495,7 @@ func (m model) resultsView(w int) string {
 			scale = r.PeakBps
 		}
 	}
-	barW := clamp(w-56, 10, 30)
+	barW := clamp(w-56, 10, 48)
 
 	for _, r := range m.results {
 		if isLatencyResult(r) {

@@ -1006,7 +1006,7 @@ func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 func TestCommitEdit_RejectsANonURL(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	before := m.cfg.BaseURL
-	for _, raw := range []string{"not a url", "meter.example:7246", "ftp://meter.example", "http://"} {
+	for _, raw := range []string{"not a url", "ftp://meter.example", "http://"} {
 		m.edit = beginEdit(editURL, "url", raw)
 		m.commitEdit()
 		if m.edit.kind != editURL || m.edit.err == "" {
@@ -1015,6 +1015,29 @@ func TestCommitEdit_RejectsANonURL(t *testing.T) {
 		if m.cfg.BaseURL != before {
 			t.Errorf("committing %q changed BaseURL to %q", raw, m.cfg.BaseURL)
 		}
+	}
+}
+
+func TestCommitEdit_BareHostBecomesHTTPS(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.edit = beginEdit(editURL, "url", "meter.example:7247")
+	m.commitEdit()
+	if m.edit.kind != editNone || m.cfg.BaseURL != "https://meter.example:7247" {
+		t.Errorf("kind=%v BaseURL=%q, want the committed host upgraded to https", m.edit.kind, m.cfg.BaseURL)
+	}
+}
+
+func TestCommitEdit_BareNumberIsSeconds(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.edit = beginEdit(editDuration, "download", "12")
+	m.commitEdit()
+	if m.edit.kind != editNone || m.cfg.DownloadDuration != 12*time.Second {
+		t.Errorf("kind=%v duration=%v, want a bare 12 committed as 12s", m.edit.kind, m.cfg.DownloadDuration)
+	}
+	m.edit = beginEdit(editDuration, "download", "0.5")
+	m.commitEdit()
+	if m.cfg.DownloadDuration != 500*time.Millisecond {
+		t.Errorf("duration=%v, want a bare 0.5 committed as 500ms", m.cfg.DownloadDuration)
 	}
 }
 
@@ -2174,23 +2197,40 @@ func TestAuthWaitShowsTheCodeAndTheDeadline(t *testing.T) {
 	}
 }
 
-func TestLatencyLineSeparatesWaitingFromTimeout(t *testing.T) {
+func TestLatencyLineHoldsTheLastRoundTripThroughLosses(t *testing.T) {
 	cases := []struct {
 		name   string
 		sample goclient.LatencySample
+		streak int
 		want   string
 	}{
-		{"no sample yet", goclient.LatencySample{}, "waiting"},
-		{"lost ping", goclient.LatencySample{Lost: true}, "timeout"},
-		{"round trip", goclient.LatencySample{RTT: 3 * time.Millisecond}, "3.00 ms"},
+		{"no sample yet", goclient.LatencySample{}, 0, "waiting"},
+		{"only losses so far", goclient.LatencySample{}, 2, "timeout"},
+		{"round trip", goclient.LatencySample{RTT: 3 * time.Millisecond}, 0, "3.00 ms"},
+		{"short streak keeps the value", goclient.LatencySample{RTT: 3 * time.Millisecond}, 1, "3.00 ms  1 lost"},
+		{"sustained streak reads as timeout", goclient.LatencySample{RTT: 3 * time.Millisecond}, 4, "timeout ×4"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := ansiPattern.ReplaceAllString(latencyLine(c.sample), "")
+			got := ansiPattern.ReplaceAllString(latencyLine(c.sample, c.streak), "")
 			if !strings.Contains(got, c.want) {
-				t.Errorf("latencyLine(%+v) = %q, want %q", c.sample, got, c.want)
+				t.Errorf("latencyLine(%+v, %d) = %q, want %q", c.sample, c.streak, got, c.want)
 			}
 		})
+	}
+}
+
+func TestApplyLatencyKeepsTheLastRoundTripThroughLosses(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{RTT: 5 * time.Millisecond}})
+	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{Lost: true}})
+	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{Lost: true}})
+	if m.latency.RTT != 5*time.Millisecond || m.lostStreak != 2 {
+		t.Errorf("after two losses: rtt=%v streak=%d, want the held 5ms and streak 2", m.latency.RTT, m.lostStreak)
+	}
+	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{RTT: 7 * time.Millisecond}})
+	if m.latency.RTT != 7*time.Millisecond || m.lostStreak != 0 {
+		t.Errorf("a pong should adopt the new value and clear the streak: rtt=%v streak=%d", m.latency.RTT, m.lostStreak)
 	}
 }
 
@@ -2207,6 +2247,75 @@ func TestFmtClock(t *testing.T) {
 	for _, c := range cases {
 		if got := fmtClock(c.d); got != c.want {
 			t.Errorf("fmtClock(%v) = %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+func TestViewNeverExceedsTheTerminalWidth(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.BaseURL = "https://a-very-long-hostname.internal.example.com:7247"
+	m.notice = strings.Repeat("a long notice ", 12)
+	for _, width := range []int{44, 60, 80, 120, 200} {
+		m.width = width
+		for _, sec := range []section{sectionServers, sectionConnections, sectionRun} {
+			m.section = sec
+			for i, line := range strings.Split(m.View(), "\n") {
+				if got := lipgloss.Width(line); got > width {
+					t.Errorf("width %d, section %v, line %d spans %d cells", width, sec, i, got)
+				}
+			}
+		}
+	}
+
+	m.mode = modeRun
+	m.server = "graphite-meter somewhere [https://a-very-long-hostname.internal.example.com:7248/http3]"
+	m.stages = plannedStages(m.cfg)
+	m.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9, TotalBytes: 1e10}}
+	for _, width := range []int{44, 80, 200} {
+		m.width = width
+		for i, line := range strings.Split(m.View(), "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Errorf("run view, width %d, line %d spans %d cells", width, i, got)
+			}
+		}
+	}
+}
+
+func TestRenderBarMovesInSubCellSteps(t *testing.T) {
+	plain := func(v float64) string { return ansiPattern.ReplaceAllString(renderBar(v, 100, 10, false), "") }
+	if got := plain(0); got != strings.Repeat("░", 10) {
+		t.Errorf("empty bar = %q", got)
+	}
+	if got := plain(100); got != strings.Repeat("█", 10) {
+		t.Errorf("full bar = %q", got)
+	}
+	half, quarterStep := plain(50), plain(52.5)
+	if half == quarterStep {
+		t.Errorf("a quarter-cell advance did not move the tip: %q", half)
+	}
+	if !strings.Contains(quarterStep, "▎") {
+		t.Errorf("bar at 5.25 cells = %q, want a two-eighths tip", quarterStep)
+	}
+	if w := lipgloss.Width(renderBar(52.5, 100, 10, true)); w != 10 {
+		t.Errorf("bar width with a partial tip = %d, want 10", w)
+	}
+}
+
+func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
+	choices := []string{"auto", "https://meter.example:7248"}
+	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices, ""), "")
+	for _, want := range []string{"Automatic", "‹2/2›", "enter cycles"} {
+		if want == "Automatic" {
+			continue
+		}
+		if !strings.Contains(got, want) {
+			t.Errorf("endpoint row = %q, want %q", got, want)
+		}
+	}
+	resolved := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices, "https://meter.example:7248 · http2"), "")
+	for _, want := range []string{"Automatic", "‹1/2›", "→ https://meter.example:7248 · http2"} {
+		if !strings.Contains(resolved, want) {
+			t.Errorf("resolved endpoint row = %q, want %q", resolved, want)
 		}
 	}
 }
