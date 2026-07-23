@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
@@ -88,6 +89,108 @@ func beginEdit(kind editKind, field, value string) editState {
 	return editState{kind: kind, field: field, input: in}
 }
 
+// prepareStep is the first step of the connection handshake the current
+// preparation attempt has not proven. Prepare answers the whole handshake with
+// a single result, so the model only advances this where a message carries the
+// evidence: a challenge proves the server answered, a PreparationError proves
+// the preflight body decoded, and only a finished preparation proves the
+// target origins resolved.
+type prepareStep int
+
+const (
+	stepReach prepareStep = iota
+	stepPreflight
+	stepOrigins
+	stepReady
+)
+
+type checkState int
+
+const (
+	checkPending checkState = iota
+	checkActive
+	checkDone
+	checkFailed
+	checkSkipped
+)
+
+type check struct {
+	state checkState
+	label string
+	note  string
+}
+
+// connectionChecks is the readiness checklist for the current preparation
+// attempt. Authorization is orthogonal to the handshake order: a server can
+// demand it at the preflight request itself or at a later target probe.
+func (m model) connectionChecks() []check {
+	state := func(step prepareStep) checkState {
+		switch {
+		case m.prepareStep > step:
+			return checkDone
+		case m.prepareStep < step:
+			return checkPending
+		case m.prepareStatus == "failed":
+			return checkFailed
+		case m.prepareStatus == "authorizing":
+			return checkPending
+		default:
+			return checkActive
+		}
+	}
+	auth := check{label: "authorization"}
+	switch {
+	case m.prepareStatus == "authorizing":
+		auth.state, auth.note = checkActive, "browser approval"
+	case m.cfg.AuthToken != "":
+		auth.state, auth.note = checkDone, "client approved"
+	case m.prepareStep == stepReady:
+		auth.state, auth.note = checkSkipped, "not required"
+	}
+	return []check{
+		{state: state(stepReach), label: "endpoint reachable"},
+		{state: state(stepPreflight), label: "preflight accepted"},
+		auth,
+		{state: state(stepOrigins), label: "origins resolved"},
+	}
+}
+
+type stageState int
+
+const (
+	stagePending stageState = iota
+	stageWarmup
+	stageMeasuring
+	stageDone
+	stageStopped
+)
+
+// stageProgress is one row of the run screen's timeline. duration is the
+// configured measurement window, which the engine holds to exactly. The warmup
+// window is stretched to the measured RTT inside the engine and is not
+// reported, so a warming stage can only be timed by elapsed.
+type stageProgress struct {
+	name     string
+	duration time.Duration
+	state    stageState
+	since    time.Time
+}
+
+// plannedStages is the enabled stages in the order the engine runs them.
+func plannedStages(cfg goclient.Config) []stageProgress {
+	var stages []stageProgress
+	add := func(on bool, name string, d time.Duration) {
+		if on {
+			stages = append(stages, stageProgress{name: name, duration: d})
+		}
+	}
+	add(cfg.Stages.Latency, "latency", cfg.LatencyDuration)
+	add(cfg.Stages.Download, "download", cfg.DownloadDuration)
+	add(cfg.Stages.Upload, "upload", cfg.UploadDuration)
+	add(cfg.Stages.Bidirectional, "bidirectional", cfg.BidirectionalDuration)
+	return stages
+}
+
 type serverPreset struct {
 	name string
 	url  string
@@ -111,6 +214,10 @@ type model struct {
 	edit    editState
 	notice  string
 	lay     *layout
+	spin    spinner.Model
+	// now paces every elapsed clock on screen. The spinner's frame tick sets
+	// it, so the clocks and the frames advance together.
+	now time.Time
 
 	events <-chan goclient.Event
 	done   <-chan error
@@ -127,16 +234,21 @@ type model struct {
 	discovery                           *wire.Preflight
 	prepareSeq                          int
 	prepareStatus                       string
+	prepareStep                         prepareStep
 	prepareError                        string
+	auth                                *goclient.PendingAuthorization
+	authSince                           time.Time
 
 	rates   map[goclient.Direction]goclient.ThroughputSample
 	peaks   map[goclient.Direction]float64
 	results []goclient.Result
 	latency goclient.LatencySample
-	summary string
+	stages  []stageProgress
 }
 
 func newModel(cfg goclient.Config) model {
+	spin := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	spin.Style = accentStyle
 	return model{
 		cfg:           cfg,
 		mode:          modeConfigure,
@@ -144,13 +256,26 @@ func newModel(cfg goclient.Config) model {
 		prepareSeq:    1,
 		prepareStatus: "checking",
 		lay:           &layout{},
+		spin:          spin,
+		now:           time.Now(),
 		rates:         map[goclient.Direction]goclient.ThroughputSample{},
 		peaks:         map[goclient.Direction]float64{},
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return prepareConnection(m.prepareSeq, m.cfg)
+	return tea.Batch(prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
+}
+
+// animating reports whether the screen changes without an incoming message:
+// the spinner frames and the elapsed clocks. Anything that enters one of these
+// states restarts the frame tick; duplicate starts are absorbed by the
+// spinner's own tag guard.
+func (m model) animating() bool {
+	if m.mode == modeRun {
+		return !m.complete
+	}
+	return m.prepareStatus == "checking" || m.prepareStatus == "authorizing"
 }
 
 func prepareConnection(seq int, cfg goclient.Config) tea.Cmd {
@@ -168,9 +293,14 @@ func beginAuthorization(seq int, cfg goclient.Config, authURL string) tea.Cmd {
 		return authChallengeMsg{seq: seq, pending: p, err: err}
 	}
 }
+
+// authWait is how long a browser approval may stay outstanding, and the
+// deadline the configure screen counts down against.
+const authWait = 2 * time.Minute
+
 func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), authWait)
 		defer cancel()
 		token, err := p.Poll(ctx)
 		return authTokenMsg{seq: seq, token: token, origin: p.Origin, err: err}
@@ -180,9 +310,11 @@ func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
 func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	m.prepareSeq++
 	m.prepareStatus = "checking"
+	m.prepareStep = stepReach
 	m.prepareError = ""
 	m.prepared = nil
-	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg))
+	m.auth = nil
+	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
 }
 
 func waitEvents(events <-chan goclient.Event) tea.Cmd {
@@ -222,30 +354,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
+	case spinner.TickMsg:
+		if !m.animating() {
+			return m, nil
+		}
+		m.now = msg.Time
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case preparationMsg:
 		if msg.seq != m.prepareSeq {
 			return m, nil
+		}
+		var preparationErr *goclient.PreparationError
+		preflightDecoded := errors.As(msg.err, &preparationErr)
+		if preflightDecoded {
+			pf := preparationErr.Preflight
+			m.discovery = &pf
 		}
 		if msg.err != nil {
 			var authErr *goclient.AuthRequiredError
 			if errors.As(msg.err, &authErr) {
 				m.prepareStatus = "authorizing"
+				m.prepareStep = stepPreflight
+				if preflightDecoded {
+					m.prepareStep = stepOrigins
+				}
 				m.prepareError = ""
 				m.notice = "Authentication is required. Preparing browser approval…"
-				return m, beginAuthorization(m.prepareSeq, m.cfg, authErr.URL)
+				return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 			}
 			m.prepareStatus = "failed"
-			m.prepareError = msg.err.Error()
-			m.prepared = nil
-			var preparationErr *goclient.PreparationError
-			if errors.As(msg.err, &preparationErr) {
-				pf := preparationErr.Preflight
-				m.discovery = &pf
+			m.prepareStep = stepReach
+			if preflightDecoded {
+				m.prepareStep = stepOrigins
 			} else {
 				m.discovery = nil
 			}
+			m.prepareError = msg.err.Error()
+			m.prepared = nil
 		} else {
 			m.prepareStatus = "ready"
+			m.prepareStep = stepReady
 			m.prepareError = ""
 			m.prepared = msg.connection
 			pf := msg.connection.Preflight
@@ -261,12 +411,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prepareError = msg.err.Error()
 			return m, nil
 		}
-		m.notice = fmt.Sprintf("Approve in browser: %s  Verification code: %s", msg.pending.BrowserURL, msg.pending.Code)
-		return m, pollAuthorization(msg.seq, msg.pending)
+		m.auth = msg.pending
+		m.authSince = time.Now()
+		m.now = m.authSince
+		m.notice = "Waiting for the browser approval."
+		return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
 	case authTokenMsg:
 		if msg.seq != m.prepareSeq {
 			return m, nil
 		}
+		m.auth = nil
 		if msg.err != nil {
 			m.prepareStatus = "failed"
 			m.prepareError = msg.err.Error()
@@ -282,6 +436,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = "Client approved. Verifying authenticated transports…"
 		return m.reprepare(nil)
 	case eventsMsg:
+		m.now = time.Now()
 		for _, event := range msg {
 			m.apply(event)
 		}
@@ -298,8 +453,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = modeConfigure
 			m.prepared = nil
 			m.prepareStatus = "authorizing"
+			if m.prepareStep < stepPreflight {
+				m.prepareStep = stepPreflight
+			}
 			m.notice = "Authentication expired. Preparing browser approval…"
-			return m, beginAuthorization(m.prepareSeq, m.cfg, authErr.URL)
+			return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 		}
 		if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
 			m.err = msg.err
@@ -308,6 +466,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil && strings.Contains(msg.err.Error(), "context canceled") {
 			m.status = "canceled"
 		}
+		m.stopStages()
 		m.complete = true
 		return m, nil
 	default:
@@ -657,13 +816,14 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.throughputProtocol, m.latencyProtocol = "", ""
 	m.err = nil
 	m.complete = false
+	m.now = time.Now()
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
 	m.peaks = map[goclient.Direction]float64{}
 	m.results = nil
 	m.latency = goclient.LatencySample{}
+	m.stages = plannedStages(cfg)
 	m.notice = "Run started. Press c or esc to cancel."
-	m.refreshSummary()
-	return m, tea.Batch(waitEvents(events), waitDone(done))
+	return m, tea.Batch(waitEvents(events), waitDone(done), m.spin.Tick)
 }
 
 func (m *model) apply(e goclient.Event) {
@@ -684,11 +844,10 @@ func (m *model) apply(e goclient.Event) {
 			m.server = fmt.Sprintf("%s %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message, observed)
 			m.status = "connected"
 		}
-		m.refreshSummary()
 	case goclient.EventStage:
 		m.stage = e.Stage
 		m.status = e.Message
-		m.refreshSummary()
+		m.enterStage(e)
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
 		if e.Throughput.BytesPerSec > m.peaks[e.Direction] {
@@ -699,20 +858,56 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventResult:
 		if e.Result != nil {
 			m.results = append(m.results, *e.Result)
+			m.finishStage(e.Result.Stage)
 		}
 	case goclient.EventComplete:
 		m.status = "complete"
 		m.complete = true
-		m.refreshSummary()
 	case goclient.EventError:
 		m.err = e.Err
 		m.status = "error"
-		m.refreshSummary()
+		m.stopStages()
 	}
 }
 
-func (m *model) refreshSummary() {
-	m.summary = m.summaryView()
+// enterStage moves a timeline row into the phase the engine just announced.
+// The engine names exactly two, so anything else leaves the row where it is.
+func (m *model) enterStage(e goclient.Event) {
+	var state stageState
+	switch e.Message {
+	case "warmup":
+		state = stageWarmup
+	case "measure":
+		state = stageMeasuring
+	default:
+		return
+	}
+	for i := range m.stages {
+		if m.stages[i].name == e.Stage {
+			m.stages[i].state, m.stages[i].since = state, e.At
+		}
+	}
+}
+
+// finishStage closes a timeline row. A stage emits its results only once every
+// lane has stopped, so the first one proves the measurement window closed; the
+// rest of the stage's results land on a row that is already done.
+func (m *model) finishStage(stage string) {
+	for i := range m.stages {
+		if m.stages[i].name == stage && m.stages[i].state != stagePending {
+			m.stages[i].state = stageDone
+		}
+	}
+}
+
+// stopStages marks whichever stage was running when the run ended early, so a
+// canceled or failed run does not leave a row spinning forever.
+func (m *model) stopStages() {
+	for i := range m.stages {
+		if s := m.stages[i].state; s == stageWarmup || s == stageMeasuring {
+			m.stages[i].state = stageStopped
+		}
+	}
 }
 
 func (m model) rowCount() int {

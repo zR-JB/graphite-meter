@@ -34,6 +34,7 @@ var (
 	warnStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("215"))
 	successStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("120"))
 	subtleRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
+	codeStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("111")).Padding(0, 1)
 )
 
 // layout records where View last drew the clickable parts of the configure
@@ -92,7 +93,7 @@ func (m model) innerWidth() int {
 }
 
 func (m model) header(w int) string {
-	status := "ready"
+	status := m.prepareStatus
 	if m.mode == modeRun {
 		status = emptyDash(m.status)
 	}
@@ -261,12 +262,15 @@ func (m model) networkView(w int) string {
 
 func (m model) runMenuView(w int) string {
 	label := "Start measurement · " + m.prepareStatus
-	if m.prepareStatus == "ready" {
+	switch m.prepareStatus {
+	case "ready":
 		label = successStyle.Render(label)
-	} else if m.prepareStatus == "failed" {
+	case "failed":
 		label = warnStyle.Render(label)
+	default:
+		label = m.spin.View() + " " + label
 	}
-	return m.listWithTitle("Connection readiness", []string{label}, w)
+	return m.listWithTitle("Start", []string{label}, w)
 }
 
 // editError trails the field being edited with the reason its last commit was
@@ -305,27 +309,72 @@ func (m model) planView(w int) string {
 		latency = m.prepared.LatencySummary()
 		observed = m.prepared.Probe.ProtocolNegotiated
 	}
-	lines := []string{
-		accentStyle.Render("Resolved Plan"),
-		labelStyle.Render("Status     ") + valueStyle.Render(m.prepareStatus),
-		labelStyle.Render("Throughput ") + valueStyle.Render(throughput),
-		labelStyle.Render("Latency    ") + valueStyle.Render(latency),
-		labelStyle.Render("Observed   ") + valueStyle.Render(emptyDash(observed)),
+	lines := []string{accentStyle.Render("Connection readiness")}
+	lines = append(lines, m.checklistView()...)
+	if m.prepareError != "" {
+		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("Press v to retry."))
+	}
+	lines = append(lines, m.authView()...)
+	lines = append(lines,
+		"",
+		labelStyle.Render("Throughput ")+valueStyle.Render(throughput),
+		labelStyle.Render("Latency    ")+valueStyle.Render(latency),
+		labelStyle.Render("Observed   ")+valueStyle.Render(emptyDash(observed)),
 		"",
 		mutedStyle.Render("Run order"),
-	}
-	if m.prepareError != "" {
-		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("Press v to retry."), "")
-	}
+	)
 	for _, line := range runOrder(m.cfg) {
 		lines = append(lines, "  "+line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+func (m model) checklistView() []string {
+	lines := make([]string, 0, 4)
+	for _, c := range m.connectionChecks() {
+		line := m.checkGlyph(c.state) + " " + c.label
+		if c.note != "" {
+			line += mutedStyle.Render("  " + c.note)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func (m model) checkGlyph(state checkState) string {
+	switch state {
+	case checkActive:
+		return m.spin.View()
+	case checkDone:
+		return successStyle.Render("✓")
+	case checkFailed:
+		return errorStyle.Render("✗")
+	case checkSkipped:
+		return mutedStyle.Render("·")
+	default:
+		return mutedStyle.Render("○")
+	}
+}
+
+// authView is the browser approval wait: where to approve, the code the page
+// asks the operator to match, and how much of the polling window is left.
+func (m model) authView() []string {
+	if m.auth == nil {
+		return nil
+	}
+	waited := m.now.Sub(m.authSince)
+	return []string{
+		"",
+		m.spin.View() + " " + accentStyle.Render("Approve this client in the browser"),
+		mutedStyle.Render(m.auth.BrowserURL),
+		codeStyle.Render(m.auth.Code),
+		mutedStyle.Render("waiting " + fmtClock(waited) + " · expires in " + fmtClock(authWait-waited)),
+	}
+}
+
 func (m model) runView(w int) string {
 	leftW, rightW, twoCol := splitColumns(w)
-	summary := panelStyle.Width(leftW).Render(m.summary)
+	summary := panelStyle.Width(leftW).Render(m.summaryView(leftW - 4))
 	live := panelStyle.Width(rightW).Render(m.liveView(rightW - 4))
 	var b strings.Builder
 	if twoCol {
@@ -346,7 +395,7 @@ func (m model) runView(w int) string {
 	return b.String()
 }
 
-func (m model) summaryView() string {
+func (m model) summaryView(w int) string {
 	server := m.server
 	if server == "" {
 		server = "probing " + m.cfg.BaseURL
@@ -365,13 +414,51 @@ func (m model) summaryView() string {
 		labelStyle.Render("Profile ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
 		labelStyle.Render("Throughput") + valueStyle.Render(" "+emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol)),
 		labelStyle.Render("Latency   ") + valueStyle.Render(" "+emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol)),
-		labelStyle.Render("Progress  ") + valueStyle.Render(" selected throughput path"),
 		labelStyle.Render("Streams ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.target)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
+		"",
 	}
+	lines = append(lines, m.timelineView(w)...)
 	if m.complete {
 		lines = append(lines, "", successStyle.Render("Finished. Press m for menus or r to run again."))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// timelineView is the run's stage timeline. A measuring stage runs for exactly
+// its configured duration, so its bar is determinate; the warmup window is
+// adapted to the measured RTT inside the engine and never reported, so warmup
+// counts up under an indeterminate spinner instead of down.
+func (m model) timelineView(w int) []string {
+	if len(m.stages) == 0 {
+		return nil
+	}
+	lines := []string{mutedStyle.Render("Stages")}
+	barW := clamp(w-38, 8, 24)
+	for _, s := range m.stages {
+		name := labelStyle.Render(fmt.Sprintf("%-14s", s.name))
+		switch s.state {
+		case stageWarmup:
+			lines = append(lines,
+				name+accentStyle.Render("◐ ")+m.spin.View(),
+				mutedStyle.Render(fmt.Sprintf("  %-12s %s", "warmup", fmtClock(m.now.Sub(s.since)))),
+			)
+		case stageMeasuring:
+			elapsed := m.now.Sub(s.since)
+			progress := m.spin.View() + mutedStyle.Render(" measuring")
+			if s.duration > 0 {
+				progress = renderBar(elapsed.Seconds(), s.duration.Seconds(), barW, false) +
+					"  " + valueStyle.Render(fmtClock(elapsed)) + mutedStyle.Render(" / "+s.duration.String())
+			}
+			lines = append(lines, name+accentStyle.Render("● ")+progress)
+		case stageDone:
+			lines = append(lines, name+successStyle.Render("✓ ")+mutedStyle.Render(s.duration.String()))
+		case stageStopped:
+			lines = append(lines, name+errorStyle.Render("✗ ")+mutedStyle.Render("stopped"))
+		default:
+			lines = append(lines, name+mutedStyle.Render("○ pending"))
+		}
+	}
+	return lines
 }
 
 func (m model) liveView(w int) string {

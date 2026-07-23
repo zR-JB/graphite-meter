@@ -44,22 +44,16 @@ func stageSummary(s goclient.StageSet) string {
 	return strings.Join(parts, ", ")
 }
 
+// runOrder previews the run screen's timeline: the same stages, in the same
+// order, with the window each one measures for.
 func runOrder(cfg goclient.Config) []string {
-	var lines []string
-	if cfg.Stages.Latency {
-		lines = append(lines, "Latency baseline for "+cfg.LatencyDuration.String())
-	}
-	if cfg.Stages.Download {
-		lines = append(lines, "Download for "+cfg.DownloadDuration.String())
-	}
-	if cfg.Stages.Upload {
-		lines = append(lines, "Upload for "+cfg.UploadDuration.String())
-	}
-	if cfg.Stages.Bidirectional {
-		lines = append(lines, "Bidirectional for "+cfg.BidirectionalDuration.String())
-	}
-	if len(lines) == 0 {
+	stages := plannedStages(cfg)
+	if len(stages) == 0 {
 		return []string{warnStyle.Render("No stages selected")}
+	}
+	lines := make([]string, 0, len(stages))
+	for _, s := range stages {
+		lines = append(lines, fmt.Sprintf("%-14s %s", s.name, mutedStyle.Render(s.duration.String())))
 	}
 	return lines
 }
@@ -122,12 +116,14 @@ func rateLine(name string, rate, scale float64, w int) string {
 	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
 }
 
+// latencyLine separates the two reasons there is no round trip to show: no
+// pong has come back yet, and a pong that never came back at all.
 func latencyLine(s goclient.LatencySample) string {
 	if s.Lost {
-		return labelStyle.Render("latency ") + errorStyle.Render("lost")
+		return labelStyle.Render("latency ") + errorStyle.Render("timeout")
 	}
 	if s.RTT <= 0 {
-		return labelStyle.Render("latency ") + mutedStyle.Render("--")
+		return labelStyle.Render("latency ") + mutedStyle.Render("waiting")
 	}
 	load := ""
 	if s.UnderLoad {
@@ -169,6 +165,18 @@ func fmtBytes(n uint64) string {
 		return fmt.Sprintf("%d %s", n, units[i])
 	}
 	return fmt.Sprintf("%.2f %s", v, units[i])
+}
+
+// fmtClock renders a running clock: tenths while the eye can follow them,
+// whole seconds once the number is long enough that they only flicker.
+func fmtClock(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return d.Round(time.Second).String()
 }
 
 func fmtMs(d time.Duration) string {

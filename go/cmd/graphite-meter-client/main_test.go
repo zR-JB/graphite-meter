@@ -176,7 +176,7 @@ func TestRunOrder(t *testing.T) {
 	cfg.LatencyDuration = 2 * time.Second
 	cfg.DownloadDuration = 5 * time.Second
 	lines = runOrder(cfg)
-	want := []string{"Latency baseline for 2s", "Download for 5s"}
+	want := []string{"latency        2s", "download       5s"}
 	if len(lines) != len(want) {
 		t.Fatalf("runOrder = %v, want %v", lines, want)
 	}
@@ -1379,7 +1379,9 @@ func BenchmarkViewTransfer(b *testing.B) {
 	m.peaks[goclient.Down] = 140_000_000
 	m.peaks[goclient.Up] = 80_000_000
 	m.latency = goclient.LatencySample{RTT: 3 * time.Millisecond}
-	m.refreshSummary()
+	m.stages = plannedStages(m.cfg)
+	m.stages[0].state = stageDone
+	m.stages[1].state, m.stages[1].since = stageMeasuring, m.now.Add(-2*time.Second)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1401,7 +1403,7 @@ func BenchmarkViewComplete(b *testing.B) {
 		PeakBps:    140_000_000,
 		TotalBytes: 1 << 30,
 	}}
-	m.refreshSummary()
+	m.stages = plannedStages(m.cfg)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1548,5 +1550,269 @@ func TestFinalReport(t *testing.T) {
 	}
 	if strings.ContainsRune(report, '\x1b') {
 		t.Error("report carries terminal styling into the scrollback")
+	}
+}
+
+func TestConnectionChecksFollowTheHandshake(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*model)
+		want  []checkState
+	}{
+		{
+			name:  "checking",
+			setup: func(m *model) {},
+			want:  []checkState{checkActive, checkPending, checkPending, checkPending},
+		},
+		{
+			name: "unreachable",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "failed", stepReach
+			},
+			want: []checkState{checkFailed, checkPending, checkPending, checkPending},
+		},
+		{
+			name: "authorization demanded by the preflight itself",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "authorizing", stepPreflight
+			},
+			want: []checkState{checkDone, checkPending, checkActive, checkPending},
+		},
+		{
+			name: "authorization demanded by a target probe",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "authorizing", stepOrigins
+			},
+			want: []checkState{checkDone, checkDone, checkActive, checkPending},
+		},
+		{
+			name: "target selection failed",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "failed", stepOrigins
+			},
+			want: []checkState{checkDone, checkDone, checkPending, checkFailed},
+		},
+		{
+			name: "ready on a server that asks for nothing",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "ready", stepReady
+			},
+			want: []checkState{checkDone, checkDone, checkSkipped, checkDone},
+		},
+		{
+			name: "ready with a granted token",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "ready", stepReady
+				m.cfg.AuthToken = "grant"
+			},
+			want: []checkState{checkDone, checkDone, checkDone, checkDone},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			c.setup(&m)
+			checks := m.connectionChecks()
+			if len(checks) != len(c.want) {
+				t.Fatalf("checks = %d, want %d", len(checks), len(c.want))
+			}
+			for i, want := range c.want {
+				if checks[i].state != want {
+					t.Errorf("%q state = %v, want %v", checks[i].label, checks[i].state, want)
+				}
+			}
+		})
+	}
+}
+
+func TestPreparationMessageRecordsHowFarItGot(t *testing.T) {
+	pf := wire.Preflight{Server: wire.ServerInfo{Name: "srv"}}
+	cases := []struct {
+		name       string
+		msg        preparationMsg
+		wantStep   prepareStep
+		wantStatus string
+	}{
+		{
+			name:       "transport failure proves nothing",
+			msg:        preparationMsg{err: errors.New("connection refused")},
+			wantStep:   stepReach,
+			wantStatus: "failed",
+		},
+		{
+			name:       "a preflight body proves the server answered",
+			msg:        preparationMsg{err: &goclient.PreparationError{Preflight: pf, Err: errors.New("no usable endpoint")}},
+			wantStep:   stepOrigins,
+			wantStatus: "failed",
+		},
+		{
+			name:       "a challenge at the preflight proves reachability only",
+			msg:        preparationMsg{err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}},
+			wantStep:   stepPreflight,
+			wantStatus: "authorizing",
+		},
+		{
+			name: "a challenge at a target probe proves the preflight too",
+			msg: preparationMsg{err: &goclient.PreparationError{
+				Preflight: pf,
+				Err:       &goclient.AuthRequiredError{URL: "https://meter.example/login"},
+			}},
+			wantStep:   stepOrigins,
+			wantStatus: "authorizing",
+		},
+		{
+			name:       "success proves the whole handshake",
+			msg:        preparationMsg{connection: &goclient.PreparedConnection{Preflight: pf}},
+			wantStep:   stepReady,
+			wantStatus: "ready",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			c.msg.seq = m.prepareSeq
+			updated, _ := m.Update(c.msg)
+			m = updated.(model)
+			if m.prepareStep != c.wantStep || m.prepareStatus != c.wantStatus {
+				t.Fatalf("step/status = %v/%q, want %v/%q", m.prepareStep, m.prepareStatus, c.wantStep, c.wantStatus)
+			}
+		})
+	}
+}
+
+func TestStageTimelineFollowsStageEvents(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.stages = plannedStages(m.cfg)
+	if len(m.stages) != 3 {
+		t.Fatalf("planned stages = %d, want latency, download and upload", len(m.stages))
+	}
+
+	start := m.now
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: start, Stage: "latency", Message: "measure"})
+	if m.stages[0].state != stageMeasuring || !m.stages[0].since.Equal(start) {
+		t.Fatalf("latency = %v since %v, want measuring since %v", m.stages[0].state, m.stages[0].since, start)
+	}
+	if m.stages[1].state != stagePending {
+		t.Errorf("download = %v, want pending", m.stages[1].state)
+	}
+
+	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "latency", Result: &goclient.Result{Stage: "latency"}})
+	if m.stages[0].state != stageDone {
+		t.Errorf("latency after its result = %v, want done", m.stages[0].state)
+	}
+
+	warmupAt := start.Add(4 * time.Second)
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt, Stage: "download", Message: "warmup"})
+	if m.stages[1].state != stageWarmup {
+		t.Fatalf("download = %v, want warmup", m.stages[1].state)
+	}
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(time.Second), Stage: "download", Message: "measure"})
+	if m.stages[1].state != stageMeasuring {
+		t.Fatalf("download = %v, want measuring", m.stages[1].state)
+	}
+
+	// Every result of a stage lands after its measurement window closed, so a
+	// second one leaves the row done rather than reopening it.
+	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download", Direction: goclient.Down}})
+	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download"}})
+	if m.stages[1].state != stageDone {
+		t.Errorf("download after its results = %v, want done", m.stages[1].state)
+	}
+
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(10 * time.Second), Stage: "upload", Message: "measure"})
+	m.apply(goclient.Event{Kind: goclient.EventError, Err: errors.New("upload failed")})
+	if m.stages[2].state != stageStopped {
+		t.Errorf("upload after the run failed = %v, want stopped", m.stages[2].state)
+	}
+}
+
+func TestTimelineShowsElapsedAgainstTheConfiguredWindow(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.width = 120
+	m.mode = modeRun
+	m.stages = plannedStages(m.cfg)
+	m.stages[1].state, m.stages[1].since = stageMeasuring, m.now.Add(-6200*time.Millisecond)
+
+	line := ansiPattern.ReplaceAllString(strings.Join(m.timelineView(60), "\n"), "")
+	if !strings.Contains(line, "6.2s / 10s") {
+		t.Errorf("measuring row = %q, want the elapsed and configured window", line)
+	}
+	if !strings.Contains(line, "█") {
+		t.Errorf("measuring row = %q, want a determinate bar", line)
+	}
+	if !strings.Contains(line, "upload") || !strings.Contains(line, "pending") {
+		t.Errorf("timeline = %q, want the stages that have not started yet", line)
+	}
+}
+
+// The engine stretches each warmup to the measured RTT and never reports the
+// window it settled on, so warmup may only count up.
+func TestTimelineWarmupCountsUpWithoutATotal(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.stages = plannedStages(m.cfg)
+	m.stages[1].state, m.stages[1].since = stageWarmup, m.now.Add(-1400*time.Millisecond)
+
+	lines := ansiPattern.ReplaceAllString(strings.Join(m.timelineView(60), "\n"), "")
+	if !strings.Contains(lines, "warmup") || !strings.Contains(lines, "1.4s") {
+		t.Errorf("warmup rows = %q, want a labelled elapsed clock", lines)
+	}
+	if strings.Contains(lines, "/ 800ms") || strings.Contains(lines, "█") {
+		t.Errorf("warmup rows = %q, want no window the client cannot know", lines)
+	}
+}
+
+func TestAuthWaitShowsTheCodeAndTheDeadline(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.prepareStatus, m.prepareStep = "authorizing", stepOrigins
+	m.auth = &goclient.PendingAuthorization{BrowserURL: "https://meter.example/auth/cli?challenge=x", Code: "AB2C4DZ"}
+	m.authSince = m.now.Add(-13 * time.Second)
+
+	view := ansiPattern.ReplaceAllString(strings.Join(m.authView(), "\n"), "")
+	for _, want := range []string{"https://meter.example/auth/cli?challenge=x", "AB2C4DZ", "waiting 13.0s", "expires in 1m47s"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("auth wait = %q, want %q", view, want)
+		}
+	}
+
+	m.auth = nil
+	if lines := m.authView(); lines != nil {
+		t.Errorf("auth wait without a pending approval = %v, want nothing", lines)
+	}
+}
+
+func TestLatencyLineSeparatesWaitingFromTimeout(t *testing.T) {
+	cases := []struct {
+		name   string
+		sample goclient.LatencySample
+		want   string
+	}{
+		{"no sample yet", goclient.LatencySample{}, "waiting"},
+		{"lost ping", goclient.LatencySample{Lost: true}, "timeout"},
+		{"round trip", goclient.LatencySample{RTT: 3 * time.Millisecond}, "3.00 ms"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ansiPattern.ReplaceAllString(latencyLine(c.sample), "")
+			if !strings.Contains(got, c.want) {
+				t.Errorf("latencyLine(%+v) = %q, want %q", c.sample, got, c.want)
+			}
+		})
+	}
+}
+
+func TestFmtClock(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{-time.Second, "0.0s"},
+		{1400 * time.Millisecond, "1.4s"},
+		{59500 * time.Millisecond, "59.5s"},
+		{107 * time.Second, "1m47s"},
+	}
+	for _, c := range cases {
+		if got := fmtClock(c.d); got != c.want {
+			t.Errorf("fmtClock(%v) = %q, want %q", c.d, got, c.want)
+		}
 	}
 }
