@@ -89,13 +89,19 @@ GM_PUBLIC_ORIGINS=self
 | --------------------------------------- | ------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
 | `GM_SERVER_NAME`                        | `-name`                               | `graphite-meter` | Server name in `/preflight`.                                                     |
 | `GM_SERVER_LOCATION`                    | `-location`                           | empty            | Optional location label.                                                         |
-| `GM_TRUSTED_PROXIES`                    | none                                  | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. Invalid CIDRs fail startup. |
+| `GM_TRUSTED_PROXIES`                    | none                                  | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. List the proxy's actual CIDR — a default route (`0.0.0.0/0`, `::/0`) is rejected, since trusting every caller's headers lets any client spoof its address and dodge the rate limits. Invalid CIDRs fail startup. |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `-max-active-measurements`            | `256`            | Global concurrent measurement handlers.                                          |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `-max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |
 | `GM_MAX_CONNECTIONS`                    | `-max-connections`                    | `512`            | Global TCP/QUIC connections.                                                     |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `-max-connections-per-client`         | `64`             | Per-direct-client connections.                                                   |
 | `GM_MAX_OPERATION_DURATION`             | `-max-operation-duration`             | `5m`             | Maximum operation lifetime.                                                      |
 | `GM_VERBOSE`                            | `-verbose`                            | `false`          | Per-second server measurement logs.                                              |
+
+The measurement endpoints are meant to move data fast: a single `/download` streams up to
+64 GiB and the server applies no bandwidth cap of its own (throttling would corrupt the
+measurement). A deployment reachable from the open internet should therefore either enable
+[authentication](#authentication) or sit behind a proxy/firewall that caps per-client bandwidth and
+connections — otherwise an anonymous client can pull sustained traffic at your expense.
 
 ## Authentication
 
