@@ -214,3 +214,27 @@ func TestHandlerHeadRequestMatchesGetHeaders(t *testing.T) {
 		t.Fatalf("Content-Length = %q, want %q (matching the GET body size)", got, "18")
 	}
 }
+
+func TestScriptCSPHash(t *testing.T) {
+	// The exact inline pre-paint script the client build emits; its digest is
+	// what a browser computes for the CSP 'sha256-…' source, cross-checked
+	// independently. A change to the script must change this hash in lockstep.
+	const inline = `try{e=localStorage.getItem("graphite-meter:v1"),t=e?JSON.parse(e).theme:null,r=t==="light"||t==="dark"?t:matchMedia("(prefers-color-scheme: light)").matches?"light":"dark",document.documentElement.setAttribute("data-theme",r)}catch(c){}var e,t,r;`
+	html := []byte(`<!doctype html><head><style>x</style> <script>` + inline +
+		`</script> <script type="module" src="/assets/app.js"></script></head>`)
+	if got := scriptCSPHash(html); got != "i18M9x6p8PNJSBUDdO2pX/7us3FTrwpVfsQ1eUfPYqw=" {
+		t.Fatalf("scriptCSPHash = %q, want the cross-checked digest", got)
+	}
+}
+
+func TestScriptCSPHashHandlesNoInlineScript(t *testing.T) {
+	// The tracked placeholder carries no inline script; the hash is then empty
+	// and the caller omits script-src rather than pinning nothing.
+	if got := scriptCSPHash([]byte(`<html><body>no scripts</body></html>`)); got != "" {
+		t.Fatalf("scriptCSPHash without an inline script = %q, want empty", got)
+	}
+	// A module-only build (src attribute) must not match the bare delimiter.
+	if got := scriptCSPHash([]byte(`<script src="/a.js"></script>`)); got != "" {
+		t.Fatalf("scriptCSPHash of a src-only script = %q, want empty", got)
+	}
+}

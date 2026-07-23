@@ -204,6 +204,31 @@ func TestAuthPagesPreserveSameOriginFormOrigin(t *testing.T) {
 	}
 }
 
+func TestAppCSPPinsScriptsWhenABuildIsEmbedded(t *testing.T) {
+	// The baseline directives are always present; script-src appears only when
+	// a real client build supplies an inline-script hash.
+	base := appCSP("")
+	for _, want := range []string{
+		"frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'", "form-action 'self'",
+	} {
+		if !strings.Contains(base, want) {
+			t.Fatalf("appCSP(\"\") missing %q: %s", want, base)
+		}
+	}
+	if strings.Contains(base, "script-src") {
+		t.Fatalf("appCSP(\"\") pinned script-src without a build: %s", base)
+	}
+
+	pinned := appCSP("ABC123")
+	if !strings.Contains(pinned, "script-src 'self' 'sha256-ABC123'") {
+		t.Fatalf("appCSP with a hash did not pin script-src: %s", pinned)
+	}
+	// connect-src stays unpinned: measurement origins are chosen at runtime.
+	if strings.Contains(pinned, "connect-src") {
+		t.Fatalf("appCSP pinned connect-src, which would break runtime origins: %s", pinned)
+	}
+}
+
 func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	s := testService(t)
 	s.oidc = &oidcState{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "https://login.example:8443/oauth2/authorize"}}}

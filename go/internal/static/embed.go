@@ -6,7 +6,9 @@ package static
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"io"
 	"io/fs"
 	"net/http"
@@ -16,6 +18,36 @@ import (
 
 //go:embed all:dist
 var distFS embed.FS
+
+// AppScriptCSPHash is the CSP 'sha256-…' digest of the single inline pre-paint
+// <script> in the embedded index.html, or "" when no real build is embedded
+// (the tracked placeholder). It is computed from the embedded bytes, so it
+// always matches the page actually served — a client rebuild can never leave it
+// stale, and there is nothing to regenerate.
+func AppScriptCSPHash() string {
+	b, err := fs.ReadFile(distFS, "dist/index.html")
+	if err != nil {
+		return ""
+	}
+	return scriptCSPHash(b)
+}
+
+// scriptCSPHash extracts the one attribute-less inline <script> from html and
+// returns the base64 sha256 of its exact text content — the form a CSP
+// 'sha256-…' source expects. The bundle's own module script carries a src
+// attribute, so the bare "<script>" delimiter matches only the inline one.
+func scriptCSPHash(html []byte) string {
+	_, afterOpen, found := bytes.Cut(html, []byte("<script>"))
+	if !found {
+		return ""
+	}
+	content, _, found := bytes.Cut(afterOpen, []byte("</script>"))
+	if !found {
+		return ""
+	}
+	sum := sha256.Sum256(content)
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
 
 // Handler serves the embedded client as an SPA: a missing path falls back to
 // index.html so client-side routing works. With only the placeholder

@@ -82,8 +82,7 @@ func TestOIDCStartProviderNotReady(t *testing.T) {
 	// In password mode the OIDC provider is absent, so a start request fails
 	// closed with the provider-unavailable notice.
 	s := testService(t)
-	r := passwordPost(s, "")
-	r = httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/oidc/start", strings.NewReader("csrf=x"))
+	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/oidc/start", strings.NewReader("csrf=x"))
 	r.Host = "meter.example"
 	r.TLS = &tls.ConnectionState{}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -7,7 +7,15 @@ package auth
 import (
 	"net/http"
 	"strings"
+
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
+
+// appScriptHash pins the application's one inline pre-paint <script> in the
+// authenticated CSP. It is derived from the embedded build at startup, so it
+// tracks the served page exactly; it is "" when no real client is embedded
+// (a Go-only build or test), and script-src is then omitted.
+var appScriptHash = static.AppScriptCSPHash()
 
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
@@ -39,6 +47,24 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 	}
 }
 
+// appCSP is the application (SPA) Content-Security-Policy. script-src pins the
+// bundle to same-origin plus the one inline pre-paint script by hash, which
+// also governs the same-origin module workers via the worker-src fallback; the
+// app uses no eval and no blob/data scripts. connect-src and img-src are left
+// unpinned: the app connects to measurement origins chosen at runtime and
+// discovered from /preflight, and no server-side list is authoritative over
+// that set. The remaining directives are the subset the app never needs
+// relaxed: no <base> (so no relative-URL hijack), no plugins, forms post only
+// same-origin (the sign-out form), and no framing. The login surface overrides
+// all of this with its own strict hash-pinned policy.
+func appCSP(scriptHash string) string {
+	csp := "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'"
+	if scriptHash != "" {
+		csp += "; script-src 'self' 'sha256-" + scriptHash + "'"
+	}
+	return csp
+}
+
 func authenticatedSecurityHeaders(h http.Header) {
 	// HSTS is scoped to this exact host, deliberately without includeSubDomains:
 	// a homelab commonly runs many services under one base domain, and forcing
@@ -47,13 +73,7 @@ func authenticatedSecurityHeaders(h http.Header) {
 	// neighbours.
 	h.Set("Strict-Transport-Security", "max-age=31536000")
 	h.Set("X-Frame-Options", "DENY")
-	// The application bundles its own scripts and connects to measurement
-	// origins chosen at runtime, so script-src/connect-src are not pinned here.
-	// These directives are the subset the app never needs relaxed: no <base>
-	// (so no relative-URL hijack), no plugins, and forms post only same-origin
-	// (the sign-out form). The login surface overrides this with its strict
-	// hash-pinned policy.
-	h.Set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
+	h.Set("Content-Security-Policy", appCSP(appScriptHash))
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
