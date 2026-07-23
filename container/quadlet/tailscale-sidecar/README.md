@@ -12,6 +12,11 @@ tailnet identity and TLS certificate.
 | HTTP/3 bootstrap | `8444/tcp` |
 | HTTP/3 measurement | `8444/udp` |
 
+This deployment deliberately drops the usual 7246–7249 scheme
+([CONFIGURATION.md](../../../docs/CONFIGURATION.md#native-listeners)): the
+sidecar owns the tailnet address and publishes nothing on the host, so the
+listeners are free to take the standard web ports.
+
 ## Configure
 
 Requirements are Linux with `/dev/net/tun`, systemd, a recent Podman release,

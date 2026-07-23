@@ -297,7 +297,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
     padding: 14px;
     border-bottom: 1px solid var(--border);
     background: linear-gradient(180deg, var(--surface-2), transparent);
@@ -315,9 +315,9 @@
     text-underline-offset: 3px;
   }
   .card-head h3.term:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
   }
   .card-head p {
     margin: 0;
@@ -340,7 +340,7 @@
     margin: 14px 14px 0;
     padding: var(--space-1) var(--space-2);
     border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-chrome);
     background: var(--err-soft);
     color: var(--err);
     font-size: 11.5px;
@@ -348,12 +348,12 @@
     line-height: 1.35;
   }
   .bare .lane-fail {
-    margin: 0 0 8px;
+    margin: 0 0 var(--space-2);
   }
 
   .lane {
     display: grid;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
     border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
     border-radius: var(--r-well);
@@ -375,7 +375,7 @@
   .lane-meta {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
   }
   .lane-meta span {
@@ -420,7 +420,7 @@
   .ticks {
     position: relative;
     height: 13px;
-    margin: 0 4px;
+    margin: 0 var(--space-1);
   }
   .ticks span {
     position: absolute;
@@ -445,7 +445,7 @@
     height: 30px;
     overflow: visible;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background:
       linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px) 0 0 /
         25% 100%,
@@ -459,7 +459,7 @@
     top: 13px;
     height: 5px;
     min-width: 10px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: color-mix(in srgb, var(--text-soft) 40%, transparent);
   }
   .range::before,
@@ -469,7 +469,7 @@
     width: 1px;
     height: 19px;
     content: "";
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: color-mix(in srgb, var(--text-soft) 64%, transparent);
   }
   .range::before {
@@ -484,7 +484,7 @@
     top: 6px;
     height: 18px;
     min-width: 8px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: color-mix(in srgb, var(--signal) 28%, transparent);
     box-shadow: inset 0 0 0 1px
       color-mix(in srgb, var(--signal-strong) 22%, transparent);
@@ -509,7 +509,7 @@
     top: 5px;
     bottom: 5px;
     width: 2px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: color-mix(in srgb, var(--text) 54%, transparent);
   }
   .cur-marker {
@@ -517,7 +517,7 @@
     bottom: 9px;
     width: 10px;
     border: 2px solid var(--surface-1);
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--signal-strong);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 18%, transparent);
   }
@@ -538,7 +538,7 @@
     right: 0;
     bottom: 0;
     min-width: 8px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: repeating-linear-gradient(
       -45deg,
       var(--err) 0 4px,
@@ -554,7 +554,7 @@
     top: -4px;
     bottom: -4px;
     width: 1px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
     transform: translateX(-50%);
@@ -566,7 +566,7 @@
     width: 11px;
     height: 11px;
     border: 2px solid var(--surface-1);
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--signal-strong);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 18%, transparent);
     pointer-events: none;
@@ -574,7 +574,7 @@
   }
   .pin.avg {
     width: 8px;
-    border-radius: 2px;
+    border-radius: var(--r-well);
     background: var(--text);
   }
   .lane[data-tone="download"] .pin {
@@ -593,11 +593,11 @@
     z-index: 10;
     top: 50%;
     display: grid;
-    gap: 4px;
+    gap: var(--space-1);
     min-width: 156px;
     max-width: min(238px, 76vw);
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-chrome);
     background: var(--surface-2);
     padding: 8px 9px;
     box-shadow: var(--shadow-float);
@@ -609,7 +609,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
     min-width: 0;
   }
   .hc-head span,
@@ -671,7 +671,7 @@
     display: none;
   }
   .bare .lanes {
-    gap: 8px;
+    gap: var(--space-2);
     padding: 0;
   }
   .bare .lane {

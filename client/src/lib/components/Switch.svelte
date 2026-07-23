@@ -91,7 +91,7 @@
     flex: none;
     width: 36px;
     height: 20px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--surface-inset);
     border: 1px solid var(--border);
     transition:
@@ -104,7 +104,7 @@
     left: 2px;
     width: 14px;
     height: 14px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--text-soft);
     transform: translateY(-50%);
     transition:
@@ -122,7 +122,7 @@
   }
 
   input:focus-visible + .track {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
   }
 

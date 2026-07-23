@@ -17,16 +17,19 @@ func securityHeaders(h http.Header) {
 	h.Set("Content-Security-Policy", authPageCSP(""))
 }
 
-// authPageCSP locks the no-JS login surface to its own inline stylesheet by
-// hash; form-action widens only to the discovered authorization origin.
-// img-src allows data: and nothing else, which covers the inlined favicon
-// without opening a route to any remote host.
+// authPageCSP locks the login surface to its own inline stylesheet and
+// pre-paint theme script, each pinned by hash; no other source may load.
+// Signing in works without scripting: the script only carries the app's stored
+// theme over, and without it theme selection follows the OS preference.
+// form-action widens only to the discovered authorization origin. img-src
+// allows data: and nothing else, which covers the inlined favicon without
+// opening a route to any remote host.
 func authPageCSP(authorizationOrigin string) string {
 	formAction := "'self'"
 	if authorizationOrigin != "" {
 		formAction += " " + authorizationOrigin
 	}
-	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
+	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
 }
 
 func (s *Service) loginSecurityHeaders(h http.Header) {
@@ -76,6 +79,9 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// allowedCORSMethod names the methods each measurement path may be preflighted
+// for; an unlisted path is refused. The paths are pinned by api/routes.txt
+// (routes_test.go).
 func allowedCORSMethod(path, method string) bool {
 	switch path {
 	case "/preflight", "/probe", "/download":

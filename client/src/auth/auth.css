@@ -1,24 +1,105 @@
+/* The auth pages are server-rendered with no bundler, so this sheet carries its
+   own copy of the tokens it needs. client/src/app.css is the source of truth:
+   names and values below must match it exactly. */
 :root {
   color-scheme: dark;
+
+  --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
+  --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono:
+    "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
+    "Liberation Mono", monospace;
+
+  --feel-radius: 0.6;
+  --r-well: calc(6px * var(--feel-radius));
+  --r-chrome: calc(8px * var(--feel-radius));
+  --r-pill: calc(12px * var(--feel-radius));
+
+  --type-md: 14px;
+  --type-sm: 12px;
+  --track-tight: -0.02em;
+  --track-wide: 0.1em;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-hover: 120ms;
+  --dur-slide: 180ms;
+
+  --focus-ring: 2px solid var(--brand);
+
   --canvas: #131518;
-  --surface: #1c1f23;
+  --surface-1: #1c1f23;
+  --surface-inset: #0f1012;
   --border: rgba(211, 219, 227, 0.11);
+
   --text: #d9dce0;
-  --muted: #9ba2aa;
+  --text-muted: #9ba2aa;
+  --text-inverse: #111315;
+
   --brand: #6db0b8;
-  --error: #d89393;
+  --brand-strong: #93cdd4;
+  --edge-highlight: rgba(255, 255, 255, 0.22);
+
+  --signal: #8ba3ba;
+  --signal-soft: rgba(139, 163, 186, 0.14);
+
+  --err: #d89393;
+  --err-soft: rgba(216, 147, 147, 0.15);
+
+  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(5, 7, 9, 0.4);
+}
+
+/* theme.js stamps data-theme from the app's stored preference; the media query
+   below repeats this palette for the visits it never runs on (no stored theme,
+   blocked storage, scripting off). The two blocks must stay identical. */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #e9e9e4;
+  --surface-1: #f6f5f1;
+  --surface-inset: #d8d6ce;
+  --border: rgba(43, 44, 40, 0.13);
+
+  --text: #26272a;
+  --text-muted: #454a4d;
+  --text-inverse: #f6f5f1;
+
+  --brand: #2f717a;
+  --brand-strong: #235257;
+
+  --signal: #4b6076;
+  --signal-soft: rgba(75, 96, 118, 0.12);
+
+  --err: #a04a4a;
+  --err-soft: rgba(160, 74, 74, 0.13);
+
+  --shadow-card:
+    0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  html:not([data-theme="dark"]) {
     color-scheme: light;
+
     --canvas: #e9e9e4;
-    --surface: #f6f5f1;
+    --surface-1: #f6f5f1;
+    --surface-inset: #d8d6ce;
     --border: rgba(43, 44, 40, 0.13);
+
     --text: #26272a;
-    --muted: #454a4d;
+    --text-muted: #454a4d;
+    --text-inverse: #f6f5f1;
+
     --brand: #2f717a;
-    --error: #a04a4a;
+    --brand-strong: #235257;
+
+    --signal: #4b6076;
+    --signal-soft: rgba(75, 96, 118, 0.12);
+
+    --err: #a04a4a;
+    --err-soft: rgba(160, 74, 74, 0.13);
+
+    --shadow-card:
+      0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
   }
 }
 
@@ -33,16 +114,25 @@ body {
   padding: 24px;
   background: var(--canvas);
   color: var(--text);
-  font:
-    16px/1.5 system-ui,
-    sans-serif;
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 .card {
   width: min(100%, 440px);
   padding: clamp(24px, 6vw, 32px);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: var(--r-pill);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-card);
+  animation: card-in var(--dur-slide) var(--ease-out) both;
+}
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 .mark {
   width: 36px;
@@ -50,12 +140,19 @@ body {
 }
 h1 {
   margin: 18px 0 6px;
+  font-family: var(--font-display);
   font-size: 1.6rem;
+  font-weight: 600;
   line-height: 1.2;
+  letter-spacing: var(--track-tight);
 }
 p {
-  color: var(--muted);
+  color: var(--text-muted);
   margin: 0 0 22px;
+}
+a {
+  color: var(--brand);
+  text-underline-offset: 3px;
 }
 label {
   display: block;
@@ -66,29 +163,45 @@ input,
 button {
   width: 100%;
   min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
   font: inherit;
 }
 input {
   padding: 9px 11px;
-  background: var(--canvas);
-  color: var(--text);
   margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-well);
+  background: var(--surface-inset);
+  color: var(--text);
 }
 button {
   padding: 9px 14px;
-  background: var(--brand);
-  color: #111315;
-  font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--brand-strong), var(--brand));
+  box-shadow:
+    inset 0 1px 0 var(--edge-highlight),
+    0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
+  color: var(--text-inverse);
+  font-family: var(--font-display);
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    transform var(--dur-hover) var(--ease-out),
+    filter var(--dur-hover) var(--ease-out);
+}
+button:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.04);
 }
 button:disabled {
+  transform: none;
+  filter: none;
+  box-shadow: none;
   opacity: 0.55;
   cursor: not-allowed;
 }
 :focus-visible {
-  outline: 3px solid var(--brand);
+  outline: var(--focus-ring);
   outline-offset: 2px;
 }
 .separator {
@@ -96,7 +209,8 @@ button:disabled {
   align-items: center;
   gap: 12px;
   margin: 22px 0;
-  color: var(--muted);
+  color: var(--text-muted);
+  font-size: var(--type-md);
 }
 .separator::before,
 .separator::after {
@@ -105,30 +219,45 @@ button:disabled {
   flex: 1;
   background: var(--border);
 }
-.message {
-  color: var(--error);
+.message,
+.notice {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: var(--r-chrome);
+  font-size: var(--type-md);
 }
-.neutral {
-  font-size: 0.9rem;
-  margin-top: 8px;
+.message {
+  border-color: color-mix(in srgb, var(--err) 38%, transparent);
+  background: var(--err-soft);
+  color: var(--err);
+}
+.notice {
+  border-color: color-mix(in srgb, var(--signal) 38%, transparent);
+  background: var(--signal-soft);
+  color: var(--signal);
 }
 .code {
   display: block;
   margin: 20px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-well);
+  background: var(--surface-inset);
   color: var(--brand);
+  font-family: var(--font-mono);
   font-size: clamp(1.5rem, 8vw, 2rem);
   letter-spacing: 0.14em;
+  text-align: center;
   overflow-wrap: anywhere;
-}
-.completion .mark {
-  color: var(--brand);
 }
 .completion .eyebrow {
   margin: 18px 0 5px;
   color: var(--brand);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  letter-spacing: var(--track-wide);
   text-transform: uppercase;
 }
 .completion h1 {
@@ -147,4 +276,12 @@ button:disabled {
   clip-path: inset(50%);
   overflow: hidden;
   white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }

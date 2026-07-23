@@ -552,11 +552,15 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 // Config.normalized().
 func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	cases := []struct {
-		name    string
-		streams int
+		name     string
+		streams  int
+		duration time.Duration
 	}{
-		{"single stream", 1},
-		{"clamped to the max of 128", 999},
+		{"single stream", 1, 500 * time.Millisecond},
+		// Spawning and connecting 128 lanes under the race detector can take
+		// most of a small runner's half second, leaving no window for a byte
+		// to land; the clamp case gets headroom for its startup cost.
+		{"clamped to the max of 128", 999, 2 * time.Second},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -567,7 +571,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 				BaseURL:                srv.URL,
 				Stages:                 StageSet{Bidirectional: true},
 				Warmup:                 0,
-				BidirectionalDuration:  500 * time.Millisecond,
+				BidirectionalDuration:  c.duration,
 				TransferStreams:        TransferStreamPolicy{Forced: c.streams},
 				DownloadBytesPerStream: 16 * 1024,
 			}

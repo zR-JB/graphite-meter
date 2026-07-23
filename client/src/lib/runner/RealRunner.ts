@@ -1,8 +1,8 @@
-// Real measurement backend: negotiates browser transports, owns workers, and
-// pushes only measured wire samples into RunnerCore.
+// Real measurement backend: negotiates browser transports, drives the transfer
+// lanes and the latency/upload-progress channels, and pushes only measured wire
+// samples into RunnerCore.
 import type {
   RunnerConfig,
-  PingCadence,
   InfraInfo,
   EngineInfo,
   TransportKind,
@@ -30,7 +30,6 @@ import {
 } from "../auth";
 import { transferStreamCount } from "./real/streamPolicy";
 import {
-  httpToWs,
   median,
   needsPings,
   laneStaggerMs,
@@ -39,23 +38,22 @@ import {
   selectLatencyTarget,
   browserProtocolMatchesTarget,
   classifyTransportDiscovery,
-  throughputTargetKey,
+  ROUTES,
 } from "./real/backendPure";
+import { TransportUnavailableError } from "./real/transportError";
+import {
+  downloadWorker,
+  stopWorker,
+  uploadWorker,
+  type AuthRequiredMsg,
+} from "./real/workerPool";
+import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
+import { UploadProgressChannel } from "./real/uploadProgress";
+
+export { TransportUnavailableError };
 
 export interface RealBackendOptions {
   authToken?: string;
-}
-
-export class TransportUnavailableError extends Error {
-  readonly role?: ConnectionRole;
-
-  constructor(
-    message: string,
-    options?: ErrorOptions & { role?: ConnectionRole },
-  ) {
-    super(message, options);
-    this.role = options?.role;
-  }
 }
 
 // Match the core/dummy cadence so both engines feed the UI at the same rate.
@@ -68,37 +66,10 @@ const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 const LANE_RESTART_BACKOFF_MS = 300;
 const LANE_MAX_RESTARTS = 40;
 const EARLY_FAIL_RESTARTS = 3;
-const PING_ESTABLISH_TIMEOUT_MS = 3500;
 // A hung upload-session request should skip the stage, not ride into max-stall.
 const UPLOAD_SESSION_TIMEOUT_MS = 3000;
-const PROGRESS_ESTABLISH_TIMEOUT_MS = 3500;
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
-
-const PROGRESS_BYE_GRACE_MS = 1000;
-
-// Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PING_LOSS_K = 4;
-const PING_LOSS_FLOOR_MS = 250;
-const FIXED_PING_INTERVAL: Record<
-  Exclude<PingCadence, "reply-driven">,
-  number
-> = {
-  fast: 80,
-  medium: 250,
-  slow: 600,
-};
-const PING_MAX_IN_FLIGHT = 16;
-const PING_REPLY_MAX_IN_FLIGHT = 4;
-const PING_LOADED_MAX_IN_FLIGHT = 2;
-const PING_REPORT_GAP_MS = 20;
-
-// One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
-const IDLE_PING_INTERVAL_MS = 1000;
-const PROBE_PING_INTERVAL_MS = 120;
-const PROBE_PING_COUNT = 5;
-const PROBE_PING_TIMEOUT_MS = 1500;
-const IDLE_RESPAWN_MS = 2000;
 
 // Some transports are advertised by the protocol before this client can drive them.
 const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
@@ -106,35 +77,6 @@ const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   websocket: true,
   webtransport: false,
 };
-/** One measured ping the worker reports (rtt already computed in-worker). */
-interface PingSample {
-  rtt: number;
-  lost: boolean;
-}
-/** Ping worker → RealRunner messages. The worker owns reconnection, so it emits
- *  stall/resume around a reconnect window rather than a terminal error. */
-type PingOutMsg =
-  | { type: "open" }
-  | { type: "ready" }
-  | { type: "samples"; samples: PingSample[] }
-  | { type: "stall"; detail: string }
-  | { type: "resume" }
-  | AuthRequiredMsg;
-
-/** Upload-progress worker → RealRunner. `bytes`/`complete` carry the SERVER's
- *  cumulative drained count `n` and elapsed clock `t` (ns) it was
- *  sampled at — the SOLE upload byte source. Rate is derived over server time
- *  (Δn / Δt), so the live curve and the totals headline are both immune to local
- *  tick/arrival jitter. stall/resume bracket control-channel recovery. */
-type ProgressOutMsg =
-  | { type: "open" }
-  | { type: "bytes"; n: number; t: number }
-  | { type: "complete"; n: number; t: number }
-  | { type: "fatal"; detail: string }
-  | { type: "stall"; detail: string }
-  | { type: "resume" };
-
-type AuthRequiredMsg = { type: "auth-required" };
 
 /** One worker pool + its bookkeeping for a single active transfer direction.
  *  A standalone download/upload stage populates exactly one of these; a
@@ -235,57 +177,56 @@ export class RealBackend implements RunnerBackend {
    *  surface a stage-wide stall (see #setLaneStalled). For a
    *  single-direction stage there's only one lane, so this is equivalent to
    *  that lane's own stalled state — no behavior change there. Also latches
-   *  the idle-latency-only stall path (#onPingMessage) when no transfer is
-   *  active at all (a stage with no byte lanes, e.g. plain "latency"). */
+   *  the idle-latency-only stall path (#latency's stall/resume) when no
+   *  transfer is active at all (a stage with no byte lanes, e.g. "latency"). */
   #stalled = false;
   /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
   #cbSeed = "";
 
-  /* ---- server-authoritative upload state (Stage 3+) ---- */
-  /** The upload-session id minted during upload warmup; appended as &id= on the
-   *  upload POST lanes AND the /upload/progress stream so the server correlates them.
-   *  null ⇒ the current upload stage has not been allocated yet. */
-  #testId: string | null = null;
-  /** The dedicated /upload/progress progress worker (up stage only), or null. */
-  #progressWorker: Worker | null = null;
-  #progressReady: { finish: (ready: boolean) => void } | null = null;
-  #progressDone: (() => void) | null = null;
-  /** Latest cumulative server byte count and previous measured snapshot. */
-  #srvN = 0;
-  #srvPrevN = 0; // cumulative at the last delta fed into the live curve
-  #srvPrevT = 0; // server elapsed ns of that last delta — the live-curve denominator
-  #srvHaveStart = false;
+  /** The server-authoritative upload meter (up stage only). */
+  #uploadProgress = new UploadProgressChannel({
+    host: () => this.#host!,
+    target: () => this.#throughputTarget,
+    headers: () => this.#authHeaders(),
+    lane: () => this.#lanes.up,
+    transferActive: () => this.#transferActive,
+    discardTransfer: () => this.#discardTransfer(),
+    setLaneStalled: (stalled, detail) =>
+      this.#setLaneStalled("up", stalled, detail),
+  });
 
-  /* ---- latency (ping) stage state (Stage 4) ---- */
-  /** The dedicated ping worker: owns the WebSocket bus and timestamps RTTs
-   *  in-worker. One per stage (idle latency, then each loaded transfer stage). */
-  #pingWorker: Worker | null = null;
-  /** True from #primeLatencyChannel to #teardownLatency — gates late worker
-   *  messages after teardown. */
-  #pingActive = false;
-  /** Armed for the idle latency stage only: fires failStage("latency") when no
-   *  pong ever arrives. Cleared by the first sample / teardown. */
-  #pingEstablishTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The underLoad tag stamped on forwarded samples (true during a transfer
-   *  stage's loaded latency). Set when #measureLatency flips reporting on. */
-  #latencyUnderLoad = false;
+  /** The stage-owned ping channel. Its stall/resume reach the core ONLY for the
+   *  idle latency stage; during a transfer stage the byte lanes drive link
+   *  health, so loaded-latency reconnects pass silently. */
+  #latency = new LatencyChannel({
+    host: () => this.#host!,
+    target: () => this.#latencyTarget,
+    stall: (detail) => {
+      if (!this.#transferActive && !this.#stalled) {
+        this.#host!.stall({
+          reason: "connection-lost",
+          transport: "websocket",
+          detail,
+        });
+        this.#stalled = true;
+      }
+    },
+    resume: () => {
+      if (!this.#transferActive && this.#stalled) {
+        this.#host!.resume();
+        this.#stalled = false;
+      }
+    },
+  });
 
-  /* ---- idle keepalive (connectivity indicator + preflight ping) ----
-   * Separate from the stage-scoped #pingWorker/#pingActive above; never
-   * active at the same time (stopped in onRunStart, restarted on run end). */
-  #idleWorker: Worker | null = null;
-  #idleActive = false;
-  #idleTargetKey = "";
-  /** Set while probe() is harvesting the keepalive's first RTTs; `finish`
-   *  resolves the preflight median wait (idempotent). */
-  #probeCollect: { rtts: number[]; finish: () => void } | null = null;
-  #probeReady: { finish: (error?: Error) => void } | null = null;
-  /** True after the keepalive reported a stall, so "connected" is emitted only
-   *  on the offline→online edge instead of once per sample. */
-  #idleOffline = false;
-  /** Pending respawn of a dead idle worker (script failed to load / crashed);
-   *  see IDLE_RESPAWN_MS. Cleared on stop. */
-  #idleRespawnTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The connectivity/preflight keepalive. Never runs at the same time as
+   *  #latency: stopped in onRunStart, restarted on run end. */
+  #idle = new IdleKeepalive({
+    host: () => this.#host!,
+    throughputTarget: () => this.#throughputTarget,
+    latencyTarget: () => this.#latencyTarget,
+  });
+
   #disposed = false;
 
   constructor(opts: RealBackendOptions = {}) {
@@ -300,41 +241,6 @@ export class RealBackend implements RunnerBackend {
     return this.#opts.authToken
       ? { authorization: `Bearer ${this.#opts.authToken}` }
       : undefined;
-  }
-
-  #downloadWorker(): Worker {
-    return new Worker(
-      new URL("./workers/download-worker.ts", import.meta.url),
-      {
-        type: "module",
-      },
-    );
-  }
-
-  #uploadWorker(): Worker {
-    return new Worker(new URL("./workers/upload-worker.ts", import.meta.url), {
-      type: "module",
-    });
-  }
-
-  #progressWorkerInstance(): Worker {
-    return new Worker(
-      new URL("./workers/upload-progress-worker.ts", import.meta.url),
-      { type: "module" },
-    );
-  }
-
-  #pingWorkerInstance(): Worker {
-    return new Worker(new URL("./workers/ping-worker.ts", import.meta.url), {
-      type: "module",
-    });
-  }
-
-  #resetUploadCounters(): void {
-    this.#srvN = 0;
-    this.#srvPrevN = 0;
-    this.#srvPrevT = 0;
-    this.#srvHaveStart = false;
   }
 
   /* ================= PROBE ================= */
@@ -353,7 +259,7 @@ export class RealBackend implements RunnerBackend {
     role?: ConnectionRole,
   ): Promise<InfraInfo> {
     const previous = this.#probeInfo;
-    if (role !== "throughput") this.#stopIdleKeepalive();
+    if (role !== "throughput") this.#idle.stop();
     this.#capabilities = null;
     this.#throughputTarget = null;
     this.#latencyTarget = null;
@@ -555,10 +461,10 @@ export class RealBackend implements RunnerBackend {
     // few RTTs as the pre-test ping median (the server sends 0 — RTT is
     // client-measured). Best-effort: a ping failure must never fail preflight.
     if (needsLatency && role !== "throughput")
-      await this.#verifyIdleReady(signal);
+      await this.#idle.verifyReady(signal);
     const probeRtts =
       needsLatency && role !== "throughput"
-        ? await this.#collectIdleRtts(signal)
+        ? await this.#idle.collectRtts(signal)
         : [];
 
     const info: InfraInfo = {
@@ -590,60 +496,6 @@ export class RealBackend implements RunnerBackend {
     return info;
   }
 
-  /** Start the idle keepalive at the brisk probe cadence and resolve with its
-   *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
-   *  worker to the sparse liveness cadence. Best-effort: resolves with whatever it
-   *  gathered by the timeout, never rejects. */
-  #collectIdleRtts(signal?: AbortSignal): Promise<number[]> {
-    if (signal?.aborted) return Promise.resolve([]);
-    this.#startIdleKeepalive(PROBE_PING_INTERVAL_MS);
-    if (!this.#idleWorker) return Promise.resolve([]);
-    return new Promise<number[]>((resolve) => {
-      const finish = (): void => {
-        if (!this.#probeCollect) return;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", finish);
-        const rtts = this.#probeCollect.rtts;
-        this.#probeCollect = null;
-        this.#idleWorker?.postMessage({
-          type: "measure",
-          intervalMs: IDLE_PING_INTERVAL_MS,
-        });
-        resolve(rtts);
-      };
-      const timer = setTimeout(finish, PROBE_PING_TIMEOUT_MS);
-      signal?.addEventListener("abort", finish, { once: true });
-      this.#probeCollect = { rtts: [], finish };
-    });
-  }
-
-  #verifyIdleReady(signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) return Promise.reject(signal.reason);
-    this.#startIdleKeepalive(PROBE_PING_INTERVAL_MS);
-    return new Promise<void>((resolve, reject) => {
-      const finish = (error?: Error): void => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", aborted);
-        this.#probeReady = null;
-        error ? reject(error) : resolve();
-      };
-      const aborted = (): void =>
-        finish(new Error("latency WebSocket validation aborted"));
-      const timer = setTimeout(
-        () =>
-          finish(
-            new TransportUnavailableError(
-              "latency WebSocket did not become ready",
-              { role: "latency" },
-            ),
-          ),
-        PROBE_PING_TIMEOUT_MS,
-      );
-      this.#probeReady = { finish };
-      signal?.addEventListener("abort", aborted, { once: true });
-    });
-  }
-
   /** The server capabilities captured by the last successful probe (or null
    *  before probing). Consumed by later-stage transport negotiation. */
   get capabilities(): Preflight["capabilities"] | null {
@@ -671,13 +523,12 @@ export class RealBackend implements RunnerBackend {
     // Pause the idle keepalive — the stage-owned ping channel takes over
     // latency duties for the duration of the run (resumed in #closeAll on
     // completion/abort).
-    this.#stopIdleKeepalive();
+    this.#idle.stop();
     this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
     this.#discardTransfer(); // discard leftovers from a prior run
     this.#stalled = false;
-    this.#testId = null;
     // Unique-per-run cache-buster. performance.now() avoids Date.now and is
     // monotonic; the stream index is appended per worker.
     this.#cbSeed = `r${Math.round(performance.now())}`;
@@ -688,12 +539,12 @@ export class RealBackend implements RunnerBackend {
     // The ping channel is ALWAYS a latency-role transport (websocket today) — it
     // runs on its OWN socket, never on the stage's transfer transport. Negotiate
     // it separately (and first) so a loaded transfer stage's fetch-stream kind can
-    // never reach #primeLatencyChannel (which only services websocket), and so
+    // never reach the latency channel (which only services websocket), and so
     // #activeTransport ends as the transfer kind for the lanes' stall reporting.
     if (needsPings(activity)) {
       const pingKind = this.#negotiateTransport("latency");
       if (pingKind) {
-        this.#primeLatencyChannel(pingKind, activity.stage === "latency");
+        this.#latency.prime(pingKind, activity.stage === "latency");
       } else if (activity.stage === "latency") {
         this.#host!.failStage(
           "latency",
@@ -729,13 +580,13 @@ export class RealBackend implements RunnerBackend {
    * NEVER reopen them (that would discard the warmup). Fires immediately after
    * onStageBegin when the stage has no warmup window (warmupMs<=0).
    *   • transfer lanes → #measureTransfer(dir): push host.ingestThroughput(dir,…).
-   *   • ping channel    → #measureLatency(underLoad): push host.ingestLatency(…),
+   *   • ping channel    → #latency.measure(underLoad): push host.ingestLatency(…),
    *                       with underLoad = the stage moves bytes (bufferbloat).
    */
   onStageMeasure(activity: PhaseActivity): void {
     const underLoad = activity.transfer.length > 0;
     for (const dir of activity.transfer) this.#measureTransfer(dir);
-    if (needsPings(activity)) this.#measureLatency(underLoad);
+    if (needsPings(activity)) this.#latency.measure(underLoad);
   }
 
   /** A measured stage ended. Drain its authoritative boundary sample before
@@ -744,11 +595,11 @@ export class RealBackend implements RunnerBackend {
     void activity;
     if (!flush) {
       this.#discardTransfer();
-      this.#teardownLatency();
+      this.#latency.teardown();
       return;
     }
     return this.#teardownTransfer().then(() => {
-      this.#teardownLatency();
+      this.#latency.teardown();
       this.#stalled = false;
     });
   }
@@ -899,20 +750,17 @@ export class RealBackend implements RunnerBackend {
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
-        const path = this.#throughputTarget?.routes.download ?? "/download";
+        const path = this.#throughputTarget?.routes.download ?? ROUTES.download;
         return chunkDownload
           ? `${base}${path}?cb=${cb}`
           : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
-      const path = this.#throughputTarget?.routes.upload ?? "/upload";
+      const path = this.#throughputTarget?.routes.upload ?? ROUTES.upload;
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
 
-    if (dir === "up") {
-      this.#testId = null;
-      return this.#primeUploadTransfer(dir, base, streams, url);
-    }
+    if (dir === "up") return this.#primeUploadTransfer(dir, base, streams, url);
 
     for (let i = 0; i < streams; i++) {
       state.streamUrls[i] = url(i);
@@ -947,11 +795,10 @@ export class RealBackend implements RunnerBackend {
     }
     const state = this.#lanes[dir];
     if (!this.#transferActive || !state) return;
-    this.#testId = id;
     // The progress stream is the authoritative upload meter. Establish it
     // before any POST workers so forced H1 lanes cannot occupy every browser
     // connection slot and queue the control channel behind the upload.
-    if (!(await this.#primeUploadProgress(state.stage))) return;
+    if (!(await this.#uploadProgress.prime(state.stage, id))) return;
     const readyState = this.#lanes[dir];
     if (!this.#transferActive || !readyState) return;
     for (let i = 0; i < streams; i++) {
@@ -962,7 +809,7 @@ export class RealBackend implements RunnerBackend {
 
   async #mintUploadSession(base: string): Promise<string> {
     const path =
-      this.#throughputTarget?.routes.uploadSession ?? "/upload/session";
+      this.#throughputTarget?.routes.uploadSession ?? ROUTES.uploadSession;
     // Own deadline + the run's abort: fetch must reject within the timeout even
     // when the request hangs, so the stage skips instead of max-stalling.
     const ctl = new AbortController();
@@ -992,63 +839,6 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Establish the server-authoritative upload progress stream before starting
-   *  POST lanes. Upload cannot be measured honestly without this channel. */
-  #primeUploadProgress(stage: PhaseActivity["stage"]): Promise<boolean> {
-    this.#resetUploadCounters();
-
-    if (!this.#testId) return Promise.resolve(false);
-    const target = this.#throughputTarget;
-    const progressRoute = target?.routes.uploadProgress;
-    if (!target || !progressRoute) {
-      this.#host!.failStage(
-        stage,
-        "transport-unavailable",
-        "selected throughput target has no upload progress route",
-      );
-      return Promise.resolve(false);
-    }
-
-    const url = `${target.origin}${progressRoute}?id=${encodeURIComponent(this.#testId)}`;
-    const w = this.#progressWorkerInstance();
-    const ready = new Promise<boolean>((resolve) => {
-      const finish = (established: boolean): void => {
-        if (this.#progressReady?.finish !== finish) return;
-        clearTimeout(timer);
-        this.#progressReady = null;
-        resolve(established);
-      };
-      const timer = setTimeout(() => {
-        this.#host!.failStage(
-          stage,
-          "connection-lost",
-          "upload progress channel could not be established",
-        );
-        finish(false);
-      }, PROGRESS_ESTABLISH_TIMEOUT_MS);
-      this.#progressReady = { finish };
-    });
-    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
-      if (e.data.type === "open") this.#progressReady?.finish(true);
-      this.#onProgressMessage(e.data);
-    };
-    w.onerror = (): void => {
-      /* the worker owns reconnect; a hard worker error just means no server bytes
-       * until it recovers, which the stall watchdog already covers. */
-    };
-    w.postMessage({
-      type: "start",
-      url,
-      headers: this.#opts.authToken
-        ? { authorization: `Bearer ${this.#opts.authToken}` }
-        : undefined,
-      csrf: csrfHeader(),
-      credentials: authEnabled ? "include" : "same-origin",
-    });
-    this.#progressWorker = w;
-    return ready;
-  }
-
   /** Spawn lane `i` at prime time, staggered by LANE_STAGGER_MS per index so the
    *  lanes don't slow-start in lockstep. Lane 0 is immediate; later lanes fire from
    *  #laneTimers[i] (which #teardownTransfer clears) within the warmup window. A
@@ -1073,7 +863,7 @@ export class RealBackend implements RunnerBackend {
   #spawnWorker(dir: FlowDirection, i: number): void {
     const state = this.#lanes[dir];
     if (!state) return; // torn down before a staggered/restart timer fired
-    const w = dir === "down" ? this.#downloadWorker() : this.#uploadWorker();
+    const w = dir === "down" ? downloadWorker() : uploadWorker();
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(dir, e.data, i);
     w.onerror = (e: ErrorEvent) =>
       this.#onWorkerError(dir, i, e.message || "worker error");
@@ -1102,269 +892,6 @@ export class RealBackend implements RunnerBackend {
     state.workers[i] = w;
   }
 
-  /** Open the latency (ping) channel over `kind` and warm it. Spawns the
-   *  dedicated ping worker (which owns the WebSocket + the whole ping algorithm),
-   *  hands it the tuning, and lets it send warmup pings — pushing NOTHING into
-   *  the core. #measureLatency flips reporting on over the SAME warmed socket. */
-  #primeLatencyChannel(kind: TransportKind, isLatencyStage = false): void {
-    if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
-
-    const cfg = this.#host!.config!;
-    const channel = this.#latencyTarget;
-    const latencyRoute = channel?.routes.ping;
-    if (!channel || channel.transport !== "websocket" || !latencyRoute)
-      throw new Error("latency target not resolved");
-    const url = httpToWs(channel.origin) + latencyRoute;
-    const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
-    const replyDriven = cadence === "reply-driven";
-    // Reply-driven uses this only for its loss sweep; its sends are driven by
-    // PONGs and the worker's adaptive backup.
-    const intervalMs = replyDriven
-      ? PING_LOSS_FLOOR_MS
-      : FIXED_PING_INTERVAL[cadence];
-
-    this.#latencyUnderLoad = false;
-    this.#pingActive = true;
-    // The idle latency stage has no byte lanes to prove the link — bound how
-    // long the channel gets to deliver its first pong before the stage skips.
-    if (isLatencyStage) {
-      this.#pingEstablishTimer = setTimeout(() => {
-        this.#pingEstablishTimer = null;
-        this.#host!.failStage(
-          "latency",
-          "connection-lost",
-          "ping connection could not be established",
-        );
-      }, PING_ESTABLISH_TIMEOUT_MS);
-    }
-    const w = this.#pingWorkerInstance();
-    w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
-      this.#onPingMessage(e.data);
-    w.onerror = (e: ErrorEvent): void =>
-      this.#onPingMessage({
-        type: "stall",
-        detail: e.message || "ping worker error",
-      });
-    w.postMessage({
-      type: "start",
-      url,
-      intervalMs,
-      replyDriven,
-      maxInFlight: replyDriven
-        ? Math.min(
-            PING_REPLY_MAX_IN_FLIGHT,
-            isLatencyStage ? PING_MAX_IN_FLIGHT : PING_LOADED_MAX_IN_FLIGHT,
-          )
-        : isLatencyStage
-          ? PING_MAX_IN_FLIGHT
-          : PING_LOADED_MAX_IN_FLIGHT,
-      reportGapMs: PING_REPORT_GAP_MS,
-      lossK: PING_LOSS_K,
-      lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: authEnabled,
-    });
-    this.#pingWorker = w;
-  }
-
-  /** Handle a message from the ping worker. The worker reports already-computed
-   *  RTTs; the runner just tags underLoad and forwards. stall/resume bracket a
-   *  reconnect — surfaced to the core ONLY for the idle latency stage; during a
-   *  transfer stage the byte lanes drive link health, so loaded-latency
-   *  reconnects pass silently. */
-  #onPingMessage(msg: PingOutMsg): void {
-    if (!this.#pingActive) return; // late message after teardown
-    if (msg.type === "auth-required") {
-      this.#teardownLatency();
-      redirectToLogin();
-      return;
-    }
-    switch (msg.type) {
-      case "samples":
-        this.#clearPingEstablishTimer(); // a pong proves the channel works
-        for (const s of msg.samples) {
-          this.#host!.ingestLatency(s.rtt, this.#latencyUnderLoad, s.lost);
-        }
-        break;
-      case "stall":
-        if (!this.#transferActive && !this.#stalled) {
-          this.#host!.stall({
-            reason: "connection-lost",
-            transport: "websocket",
-            detail: msg.detail,
-          });
-          this.#stalled = true;
-        }
-        break;
-      case "resume":
-        if (!this.#transferActive && this.#stalled) {
-          this.#host!.resume();
-          this.#stalled = false;
-        }
-        break;
-      case "open":
-        break;
-      case "ready":
-        break;
-    }
-  }
-
-  #clearPingEstablishTimer(): void {
-    if (this.#pingEstablishTimer) {
-      clearTimeout(this.#pingEstablishTimer);
-      this.#pingEstablishTimer = null;
-    }
-  }
-
-  /** Stop + terminate the ping worker (closes its WebSocket). Idempotent. */
-  #teardownLatency(): void {
-    this.#pingActive = false;
-    this.#clearPingEstablishTimer();
-    if (this.#pingWorker) {
-      this.#pingWorker.postMessage({ type: "stop" });
-      this.#pingWorker.terminate();
-      this.#pingWorker = null;
-    }
-  }
-
-  /* ================= IDLE KEEPALIVE (connectivity indicator) ================= */
-  /** Start the persistent idle ping at `intervalMs` (default 1/s). Safe to
-   *  call repeatedly — no-ops if already running or if websocket isn't
-   *  available. Started by probe() (at the brisk preflight cadence) and again
-   *  after every run ends (via #closeAll, from onComplete/onAbort), so the
-   *  connectivity pill stays live whenever the app isn't mid-test. The
-   *  uses a tiny in-flight window and a fixed internal cadence. */
-  #startIdleKeepalive(intervalMs = IDLE_PING_INTERVAL_MS): void {
-    const targetKey = `${throughputTargetKey(this.#throughputTarget)}\n${this.#latencyTarget?.id ?? ""}`;
-    if (this.#idleActive && this.#idleTargetKey === targetKey) return;
-    if (this.#idleActive) this.#stopIdleKeepalive();
-    const channel = this.#latencyTarget;
-    const latencyRoute = channel?.routes.ping;
-    if (!channel || channel.transport !== "websocket" || !latencyRoute) return;
-    const url = httpToWs(channel.origin) + latencyRoute;
-    this.#idleActive = true;
-    this.#idleTargetKey = targetKey;
-    // Treat connectivity as unknown until this (fresh) worker proves the link:
-    // its first samples then emit a "connected" edge. Crucial after a
-    // connection-lost failure — the store latched the pulse offline, and
-    // without this edge a link that recovered before the worker's first stall
-    // would never un-latch it.
-    this.#idleOffline = true;
-    const w = this.#pingWorkerInstance();
-    w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
-      this.#onIdlePingMessage(e.data);
-    w.onerror = (e: ErrorEvent): void => {
-      // Worker died without ever running its reconnect loop — most commonly the
-      // script fetch itself failed because the (bundle-serving) server is down,
-      // e.g. restarting the keepalive right after a connection-lost run. Report
-      // offline and retry the SPAWN until one sticks (the in-worker reconnect
-      // loop only exists once the script loads).
-      this.#onIdlePingMessage({
-        type: "stall",
-        detail: e.message || "idle ping worker error",
-      });
-      this.#scheduleIdleRespawn(intervalMs);
-    };
-    w.postMessage({
-      type: "start",
-      url,
-      intervalMs,
-      replyDriven: false,
-      maxInFlight: 2,
-      reportGapMs: 0, // paced sends are already sparse — report every sample
-      lossK: PING_LOSS_K,
-      lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: authEnabled,
-    });
-    // Report immediately (there is no keepalive warmup window).
-    w.postMessage({ type: "measure" });
-    this.#idleWorker = w;
-  }
-
-  /** Stop the idle keepalive — a real run is starting (onRunStart), or the
-   *  app is tearing down. Idempotent. */
-  #stopIdleKeepalive(): void {
-    this.#idleActive = false;
-    this.#idleTargetKey = "";
-    if (this.#idleRespawnTimer) {
-      clearTimeout(this.#idleRespawnTimer);
-      this.#idleRespawnTimer = null;
-    }
-    this.#probeCollect?.finish();
-    this.#probeReady?.finish(
-      new TransportUnavailableError("latency WebSocket validation stopped", {
-        role: "latency",
-      }),
-    );
-    if (this.#idleWorker) {
-      this.#idleWorker.postMessage({ type: "stop" });
-      this.#idleWorker.terminate();
-      this.#idleWorker = null;
-    }
-  }
-
-  /** Re-spawn the idle worker after it died at load time (see the onerror
-   *  handler in #startIdleKeepalive). One timer at a time; each failed attempt
-   *  schedules the next, so the keepalive keeps knocking every IDLE_RESPAWN_MS
-   *  until the server is back to serve the script. */
-  #scheduleIdleRespawn(intervalMs?: number): void {
-    if (!this.#idleActive || this.#idleRespawnTimer) return;
-    this.#idleRespawnTimer = setTimeout(() => {
-      this.#idleRespawnTimer = null;
-      if (!this.#idleActive) return; // a run started (or teardown) meanwhile
-      this.#stopIdleKeepalive();
-      this.#startIdleKeepalive(intervalMs);
-    }, IDLE_RESPAWN_MS);
-  }
-
-  /** Handle a message from the idle ping worker. Idle samples never reach
-   *  `host.ingestLatency` (run accumulation) — they are emitted as raw
-   *  `latency` events tagged phase "idle", which the store routes to its
-   *  keepalive-only buffer; the `connectivity` event is the hard override
-   *  effectiveConnectivity respects (stall()/resume() no-op outside a run). */
-  #onIdlePingMessage(msg: PingOutMsg): void {
-    if (!this.#idleActive) return;
-    if (msg.type === "auth-required") {
-      this.#stopIdleKeepalive();
-      redirectToLogin();
-      return;
-    }
-    switch (msg.type) {
-      case "samples":
-        for (const s of msg.samples) {
-          if (this.#probeCollect && !s.lost) {
-            this.#probeCollect.rtts.push(s.rtt);
-            if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT)
-              this.#probeCollect.finish();
-          }
-          this.#host!.emit({
-            type: "latency",
-            sample: {
-              t: 0,
-              rttMs: s.rtt,
-              underLoad: false,
-              lost: s.lost,
-              phase: "idle",
-            },
-          });
-        }
-        if (this.#idleOffline) {
-          this.#idleOffline = false;
-          this.#host!.emit({ type: "connectivity", state: "connected" });
-        }
-        break;
-      case "stall":
-        this.#idleOffline = true;
-        this.#host!.emit({ type: "connectivity", state: "offline" });
-        break;
-      case "resume":
-      case "open":
-        break;
-      case "ready":
-        this.#probeReady?.finish();
-        break;
-    }
-  }
-
   /* ================= MEASURE — push real samples on the primed connections ====== */
   /** Begin measuring the already-open transfer stream(s) for `dir` (opened in
    *  #primeTransfer — NEVER reopen). Per #readLoop, sum received/sent bytes/sec
@@ -1387,10 +914,7 @@ export class RealBackend implements RunnerBackend {
       for (const w of state.workers)
         w?.postMessage({ type: "measure", seq: state.measureSeq });
     } else {
-      // The first progress frame after this boundary becomes the upload baseline,
-      // excluding warmup bytes and time together.
-      this.#srvHaveStart = false;
-      this.#srvPrevN = this.#srvN;
+      this.#uploadProgress.beginMeasure();
     }
     if (aggregation) {
       aggregation.dbgWinBytes = 0;
@@ -1457,7 +981,7 @@ export class RealBackend implements RunnerBackend {
    *   • upload `alive` → one POST completed; reset the lane's restart counter. The
    *     server /upload/progress count is the SOLE upload byte source, so an upload lane
    *     reports NO bytes and never drives the curve or resumes a stall here (the
-   *     progress worker owns the up curve + its stall/resume — see #onProgressMessage).
+   *     progress worker owns the up curve + its stall/resume — see #uploadProgress).
    *   • `error` → stall + restart that single lane (#onWorkerError). */
   #onWorkerMessage(
     dir: FlowDirection,
@@ -1578,122 +1102,6 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** A message from the /upload/progress progress worker. The server count is the SOLE
-   *  upload byte source: `bytes`/`complete` feed the live curve and effective result.
-   *  Because there is no client-side fallback, the socket dropping is the
-   *  only thing that can leave the up stage without samples — so the worker's
-   *  `stall`/`resume` bracket its reconnect. While
-   *  the socket is up, the 100 ms frames carry byte/time deltas; on reconnect the
-   *  cumulative count + the server's elapsed-time denominator
-   *  self-heal the headline. The POST lanes are separate connections, so a progress-
-   *  socket drop doesn't stop the transfer: the server keeps draining and accruing
-   *  elapsed time, and catch-up Δn / Δelapsed on reconnect is the true rate over
-   *  the gap — no client-side counting anywhere. */
-  #onProgressMessage(msg: ProgressOutMsg | AuthRequiredMsg): void {
-    const state = this.#lanes.up;
-    if (!this.#transferActive || !state) return; // late message after teardown
-    if (msg.type === "auth-required") {
-      this.#discardTransfer();
-      redirectToLogin();
-      return;
-    }
-    if (msg.type === "fatal") {
-      this.#progressReady?.finish(false);
-      if (state.measuring) {
-        this.#host!.fail(
-          "connection-lost",
-          `upload progress failed: ${msg.detail}`,
-          msg.detail,
-        );
-      } else {
-        this.#host!.failStage(state.stage, "connection-lost", msg.detail);
-      }
-      return;
-    }
-    if (msg.type === "stall") {
-      // The progress stream dropped: no server bytes until it reconnects. Freeze
-      // surface recovery immediately instead of waiting for the silence watchdog.
-      if (state.measuring) this.#setLaneStalled("up", true, msg.detail);
-      return;
-    }
-    if (msg.type === "resume") {
-      // Reopening the control socket is not proof that upload delivery resumed.
-      // The next advancing server byte snapshot clears the stall.
-      return;
-    }
-    if (msg.type !== "bytes" && msg.type !== "complete") return; // open: nothing to do
-
-    // `srvT` is elapsed ns since the server received this id's first byte. It is
-    // independent of local frame-arrival jitter, while deliberately retaining
-    // measured stalls, reconnects and lane turnaround in the denominator.
-    const srvT = msg.t;
-    if (msg.n > this.#srvN) {
-      this.#srvN = msg.n; // cumulative + monotonic guard
-      state.stageSawBytes = true;
-    }
-    if (!state.measuring) return; // warmup bytes are excluded from the window
-
-    if (!this.#srvHaveStart) {
-      this.#srvHaveStart = true;
-      this.#srvPrevN = this.#srvN;
-      this.#srvPrevT = srvT;
-    }
-    // Server bytes drive the live curve directly from the server stream — never
-    // via the local #aggregate tick (whose fixed cadence would skew the rate).
-    // Each sample is the byte delta between two server frames divided by the
-    // server elapsed time between those frames, so the rate is correct at any
-    // push cadence and a reconnect catch-up includes the entire gap.
-    const delta = this.#srvN - this.#srvPrevN;
-    const frameSec = (srvT - this.#srvPrevT) / 1e9;
-    this.#srvPrevN = this.#srvN;
-    this.#srvPrevT = srvT;
-    if (frameSec > 0) {
-      this.#host!.ingestThroughput(
-        "up",
-        delta / frameSec,
-        delta,
-        frameSec,
-        true,
-      );
-    }
-    if (delta > 0) {
-      this.#setLaneStalled("up", false);
-    }
-    if (msg.type === "complete") this.#progressDone?.();
-  }
-
-  /** Stop the progress worker after the POST lanes. It explicitly finalizes the
-   *  session with DELETE and lets the stream receive the terminal complete record. */
-  #teardownProgress(finalize: boolean): Promise<void> {
-    this.#progressReady?.finish(false);
-    this.#progressReady = null;
-    const w = this.#progressWorker;
-    if (!w) return Promise.resolve();
-    const worker = w;
-    if (!finalize) {
-      if (this.#progressDone) {
-        this.#progressDone();
-        return Promise.resolve();
-      }
-      this.#progressWorker = null;
-      worker.terminate();
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      const timer = setTimeout(done, PROGRESS_BYE_GRACE_MS);
-      const self = this;
-      function done(): void {
-        clearTimeout(timer);
-        if (self.#progressDone === done) self.#progressDone = null;
-        if (self.#progressWorker === worker) self.#progressWorker = null;
-        worker.terminate();
-        resolve();
-      }
-      this.#progressDone = done;
-      worker.postMessage({ type: "stop" });
-    });
-  }
-
   #stopTransferWorkers(): void {
     // Preserve the partial download cadence window at the stage boundary.
     const down = this.#lanes.down;
@@ -1704,11 +1112,7 @@ export class RealBackend implements RunnerBackend {
       const timer = state.clientAggregation?.timer;
       if (timer != null) clearInterval(timer);
       for (const t of state.laneTimers) if (t) clearTimeout(t);
-      for (const w of state.workers) {
-        if (!w) continue;
-        w.postMessage({ type: "stop" });
-        w.terminate();
-      }
+      for (const w of state.workers) if (w) stopWorker(w);
     }
   }
 
@@ -1718,36 +1122,21 @@ export class RealBackend implements RunnerBackend {
     this.#stopTransferWorkers();
     // Stop the progress worker AFTER the POST lanes — BYE must follow the lanes
     // ending so the server's final count includes everything they drained.
-    await this.#teardownProgress(true);
+    await this.#uploadProgress.teardown(true);
     this.#transferActive = false;
     this.#lanes = {};
   }
 
   #discardTransfer(): void {
     this.#stopTransferWorkers();
-    void this.#teardownProgress(false);
+    void this.#uploadProgress.teardown(false);
     this.#transferActive = false;
     this.#lanes = {};
   }
 
-  /** Begin measuring on the already-open ping channel (opened in
-   *  #primeLatencyChannel). RTT = now − sent; an unacked / timed-out ping is
-   *  `lost`. The channel retains the cadence selected when its stage warmup
-   *  began; measurement only enables reporting via
-   *  host.ingestLatency(rtt, underLoad, lost) — `underLoad` is true when the
-   *  pings run concurrently with a transfer (bufferbloat). */
-  #measureLatency(underLoad: boolean): void {
-    // The worker primed in #primeLatencyChannel is already pinging on a warm
-    // socket; just flip reporting on (never re-spawn — that would throw away the
-    // warmup). underLoad tags every forwarded sample: true when these pings run
-    // concurrently with a transfer (bufferbloat), false for the idle stage.
-    this.#latencyUnderLoad = underLoad;
-    this.#pingWorker?.postMessage({ type: "measure" });
-  }
-
   #closeAll(): void {
     this.#discardTransfer();
-    this.#teardownLatency();
+    this.#latency.teardown();
     this.#stalled = false;
     if (this.#abort) {
       this.#abort.abort();
@@ -1757,14 +1146,14 @@ export class RealBackend implements RunnerBackend {
     // The run (or abort) just ended — resume the idle keepalive so the
     // connectivity pill stays live again instead of freezing at its
     // last-known state until the next probe/run.
-    if (!this.#disposed) this.#startIdleKeepalive();
+    if (!this.#disposed) this.#idle.start();
   }
 
   dispose(): void {
     this.#disposed = true;
-    this.#stopIdleKeepalive();
+    this.#idle.stop();
     this.#discardTransfer();
-    this.#teardownLatency();
+    this.#latency.teardown();
     this.#abort?.abort();
     this.#abort = null;
     this.#activeTransport = null;

@@ -1,7 +1,7 @@
 <script lang="ts">
   // Primary start/abort action.
   import { store } from "../state/store.svelte";
-  import { engage } from "../runner/wire.svelte";
+  import { engage } from "../runner/engine.svelte";
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
@@ -65,7 +65,7 @@
     color: var(--text-inverse);
     border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 1px 0 var(--edge-highlight),
       0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
     cursor: pointer;
     transition:
@@ -75,6 +75,10 @@
   .engage:hover {
     transform: translateY(-1px);
     filter: brightness(1.04);
+  }
+  .engage:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   .engage.running {
     background: var(--err-soft);
@@ -86,7 +90,7 @@
     width: 12px;
     height: 12px;
     background: currentColor;
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
   }
   .ico {
     display: inline-grid;

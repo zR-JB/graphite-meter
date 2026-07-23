@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -221,6 +222,43 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	s.loginSecurityHeaders(h)
 	if strings.Contains(h.Get("Content-Security-Policy"), "login.example") {
 		t.Fatalf("clear authorization origin accepted in CSP: %q", h.Get("Content-Security-Policy"))
+	}
+}
+
+// The pre-paint theme script is only allowed to run because the CSP pins its
+// digest, so every page must ship the exact bytes that digest covers.
+func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
+	sum := sha256.Sum256([]byte(authThemeJS))
+	pin := "script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	if policy := authPageCSP(""); !strings.Contains(policy, pin) {
+		t.Fatalf("CSP %q does not pin the embedded theme script", policy)
+	}
+
+	pages := map[string]struct {
+		tmpl *template.Template
+		data any
+	}{
+		"login":    {loginTemplate, loginView{Styles: authStyles, Password: true, OIDC: true, Provider: "Provider"}},
+		"cli":      {cliTemplate, map[string]any{"Styles": authStyles, "Code": "ABCD-1234", "Challenge": "c", "CSRF": "t"}},
+		"cli-done": {cliDoneTemplate, map[string]any{"Styles": authStyles}},
+		"continue": {continueTemplate, map[string]any{"Styles": authStyles, "Challenge": "c"}},
+	}
+	for name, page := range pages {
+		var rendered bytes.Buffer
+		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		_, after, found := strings.Cut(rendered.String(), "<script>")
+		script, closed := "", false
+		if found {
+			script, _, closed = strings.Cut(after, "</script>")
+		}
+		if !closed {
+			t.Fatalf("%s renders no inline script", name)
+		}
+		if script != authThemeJS {
+			t.Fatalf("%s script does not match the digest pinned in the CSP", name)
+		}
 	}
 }
 
@@ -759,9 +797,21 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 		return out
 	}
-	for authName, appName := range map[string]string{"canvas": "canvas", "surface": "surface-1", "border": "border", "text": "text", "muted": "text-muted", "brand": "brand", "error": "err"} {
-		if authValues, appValues := values(authCSS, authName), values(string(css), appName); !reflect.DeepEqual(authValues, appValues) {
-			t.Errorf("token %s values %v do not match application token %s values %v", authName, authValues, appName, appValues)
+	// auth.css states the light palette twice, once per data-theme and once as
+	// the OS-preference fallback, so consecutive repeats collapse. The two
+	// blocks drifting apart survives the collapse and fails the comparison.
+	collapse := func(in []string) []string {
+		out := in[:0:0]
+		for _, value := range in {
+			if len(out) == 0 || out[len(out)-1] != value {
+				out = append(out, value)
+			}
+		}
+		return out
+	}
+	for _, name := range []string{"canvas", "surface-1", "surface-inset", "border", "text", "text-muted", "text-inverse", "brand", "brand-strong", "signal", "signal-soft", "err", "err-soft", "focus-ring", "edge-highlight"} {
+		if authValues, appValues := collapse(values(authCSS, name)), values(string(css), name); !reflect.DeepEqual(authValues, appValues) {
+			t.Errorf("token %s values %v do not match application values %v", name, authValues, appValues)
 		}
 	}
 }
@@ -769,9 +819,11 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 func TestGeneratedAuthAssetsAreCurrent(t *testing.T) {
 	for path, generated := range map[string]string{
 		"../../../client/src/auth/auth.css":      authCSS,
+		"../../../client/src/auth/theme.js":      authThemeJS,
 		"../../../client/src/auth/login.tmpl":    loginHTML,
 		"../../../client/src/auth/cli.tmpl":      cliHTML,
 		"../../../client/src/auth/cli-done.tmpl": cliDoneHTML,
+		"../../../client/src/auth/continue.tmpl": continueHTML,
 	} {
 		contents, err := os.ReadFile(path)
 		if err != nil {

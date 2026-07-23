@@ -1,5 +1,5 @@
 /* ============================================================
- * Runner Wiring Helper — integration seam, backend swap
+ * Runner Engine Wiring — integration seam, backend swap
  * The single integration seam. The shared RunnerCore owns the
  * engine logic; only the backend (sample source) is swapped here.
  * Going live touches ONLY this file.

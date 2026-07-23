@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -19,41 +18,18 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	if err != nil {
 		return Result{}, err
 	}
-	laneCtx, laneCancel := context.WithCancel(ctx)
-	defer laneCancel()
 	var total atomic.Uint64
-	var wg sync.WaitGroup
-	laneErr := make(chan error, r.streams)
-	stagger := r.laneStaggerStep()
-	for i := 0; i < r.streams; i++ {
-		wg.Add(1)
-		go func(lane int) {
-			defer wg.Done()
-			if !staggerSleep(laneCtx, lane, stagger) {
-				return
-			}
-			if err := r.downloadLane(laneCtx, base, lane, &total); err != nil {
-				select {
-				case laneErr <- err:
-				default:
-				}
-			}
-		}(i)
-	}
-	select {
-	case <-ctx.Done():
-		return Result{}, ctx.Err()
-	case err := <-laneErr:
-		laneCancel()
-		wg.Wait()
+	lanes := r.startLanes(ctx, func(laneCtx context.Context, lane int) error {
+		return r.downloadLane(laneCtx, base, lane, &total)
+	})
+	defer lanes.cancel()
+	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
-	case <-start:
 	}
 	measureCtx, cancel := context.WithTimeout(ctx, elapsed)
-	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams, laneErr)
+	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams, lanes.errs)
 	cancel()
-	laneCancel()
-	wg.Wait()
+	lanes.stop()
 	return stats.result(stage, Down, false), err
 }
 
@@ -106,30 +82,27 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 	return nil
 }
 
+// sampleLocalRates measures from the bytes the lanes have read locally; ctx
+// carries the measurement window as its deadline.
 func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int, laneErr <-chan error) (rateStats, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	lastN := total.Load()
-	baseline := lastN
-	lastT := time.Now()
-	startT := lastT
-	stats := rateStats{}
-	for {
-		select {
-		case <-ctx.Done():
+	baseline := total.Load()
+	lastN := baseline
+	startT := time.Now()
+	lastT := startT
+	return rateLoop{
+		cancelEndsWindow: true,
+		laneErr:          laneErr,
+		window: func(stats *rateStats) {
 			stats.setWindow(total.Load()-baseline, time.Since(startT))
-			return stats, nil
-		case err := <-laneErr:
-			stats.setWindow(total.Load()-baseline, time.Since(startT))
-			return stats, err
-		case now := <-ticker.C:
+		},
+		sample: func(now time.Time, stats *rateStats) {
 			n := total.Load()
 			delta := n - lastN
 			dt := now.Sub(lastT).Seconds()
 			lastN = n
 			lastT = now
 			if delta == 0 || dt <= 0 {
-				continue
+				return
 			}
 			bps := float64(delta) / dt
 			measuredTotal := n - baseline
@@ -147,8 +120,8 @@ func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Directi
 					StreamCount: streams,
 				},
 			})
-		}
-	}
+		},
+	}.run(ctx)
 }
 
 func unexpectedStatus(res *http.Response) error {

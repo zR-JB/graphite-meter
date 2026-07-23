@@ -1,0 +1,25 @@
+[Unit]
+Description=Initial Graphite Meter TLS certificate issuance
+Documentation=https://certbot-dns-cloudflare.readthedocs.io/
+Before=certbot-renew.service graphite-meter.service
+
+[Container]
+ContainerName=graphite-meter-certbot-bootstrap
+Image=docker.io/certbot/dns-cloudflare:latest
+AutoUpdate=registry
+EnvironmentFile=graphite-meter.env
+Entrypoint=/bin/sh
+Exec=/config/certbot-bootstrap.sh
+Volume=./certbot-bootstrap.sh:/config/certbot-bootstrap.sh:ro,Z
+Volume=./secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,z
+Volume=./letsencrypt:/etc/letsencrypt:z
+Volume=./log:/var/log/letsencrypt:z
+NoNewPrivileges=true
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=default.target

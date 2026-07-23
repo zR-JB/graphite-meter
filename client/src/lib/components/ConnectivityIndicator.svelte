@@ -100,13 +100,13 @@
   .pulse {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     padding: 0 6px;
   }
   .dot {
     width: 9px;
     height: 9px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     flex: 0 0 auto;
   }
   .spark {

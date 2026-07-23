@@ -3,7 +3,7 @@
   // theme toggle, and docked/flyout layout state.
   import { onMount, type Component } from "svelte";
   import { store } from "../state/store.svelte";
-  import { bootRunner, teardownRunner } from "../runner/wire.svelte";
+  import { bootRunner, teardownRunner } from "../runner/engine.svelte";
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -12,7 +12,7 @@
   import PhaseToast from "./PhaseToast.svelte";
   import ShortcutHints from "./ShortcutHints.svelte";
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
-  import { engage, returnToStart } from "../runner/wire.svelte";
+  import { engage, returnToStart } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { focusTrap } from "../actions/focusTrap";
@@ -48,9 +48,9 @@
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
   const THEME_ICON: Record<(typeof THEME_CYCLE)[number], string> = {
-    light: "☀",
-    dark: "☾",
-    auto: "◐",
+    light: ICON.sun,
+    dark: ICON.moon,
+    auto: ICON.contrast,
   };
   const THEME_LABEL: Record<(typeof THEME_CYCLE)[number], string> = {
     light: "Light",
@@ -240,10 +240,10 @@
     <div class="flex-1"></div>
     {#if AccountControl}<AccountControl />{/if}
     <button
-      class="ghost-btn"
+      class="ghost-btn icon-btn"
       aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
       use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
-      onclick={toggleTheme}>{THEME_ICON[store.theme]}</button
+      onclick={toggleTheme}>{@html THEME_ICON[store.theme]}</button
     >
     <button
       class="ghost-btn icon-btn"
@@ -412,7 +412,7 @@
     padding: 4px 6px;
     margin-left: -6px;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-chrome);
     background: transparent;
     color: var(--text);
     cursor: pointer;
@@ -430,7 +430,7 @@
     color: var(--brand-strong);
   }
   .brand-btn:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
   }
 

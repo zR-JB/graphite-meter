@@ -1,16 +1,11 @@
 <script lang="ts">
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
-  import type {
-    ConnectionProfile,
-    CompensationTransportSetting,
-    RunnerConfig,
-  } from "../../runner/contract";
-  import { applyConnectionProfile } from "../../compensation";
-  import { applyLiveRunConfig } from "../../runner/wire.svelte";
+  import type { RunnerConfig } from "../../runner/contract";
+  import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
-  import { compensationTransportLabel } from "../../runner/protocol";
-  import { tooltip, JARGON } from "../../actions/tooltip";
+  import { JARGON } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
+  import CompensationEditor from "./CompensationEditor.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
 
   interface Props {
@@ -152,37 +147,6 @@
         1,
         Math.round(store.fromUnit(value)),
       );
-  }
-
-  const PROFILES: { value: ConnectionProfile; label: string }[] = [
-    { value: "lan", label: "Local Ethernet" },
-    { value: "loopback", label: "Loopback" },
-    { value: "tunnel", label: "VPN / tunnel" },
-    { value: "custom", label: "Custom" },
-  ];
-  const COMPENSATION_TRANSPORTS: {
-    value: CompensationTransportSetting;
-    label: string;
-  }[] = (
-    ["auto", "http1-clear", "https-tls", "http2", "http3-quic"] as const
-  ).map((value) => ({
-    value,
-    label: compensationTransportLabel(value),
-  }));
-  const COMPENSATION_NUMBERS = [
-    ["mtuBytes", "MTU bytes", 576, 65536, 1],
-    ["tcpOptionsMinBytes", "TCP options min", 0, 40, 4],
-    ["tcpOptionsMaxBytes", "TCP options max", 0, 40, 4],
-    ["encapsulationBytes", "Tunnel overhead", 0, 256, 1],
-    ["quicConnIdMinBytes", "QUIC CID min", 0, 20, 1],
-    ["quicConnIdMaxBytes", "QUIC CID max", 0, 20, 1],
-  ] as const;
-  function reseedProfile() {
-    const ipVersion = store.config.compensation.params.ipVersion;
-    const preset = applyConnectionProfile(store.config.compensation.profile);
-    Object.assign(store.config.compensation.params, preset.params, {
-      ipVersion,
-    });
   }
 
   const ready = $derived(
@@ -383,62 +347,7 @@
     <p class="hint">
       Forward-direction Ethernet estimate from protocol bytes only.
     </p>
-    <details class="advanced top-level">
-      <summary>Customize the compensation model</summary>
-      <div class="disclosure-body">
-        <div class="two">
-          <label>
-            <span use:tooltip={JARGON.compProfile}>Connection profile</span>
-            <select
-              bind:value={store.config.compensation.profile}
-              onchange={reseedProfile}
-            >
-              {#each PROFILES as option}<option value={option.value}
-                  >{option.label}</option
-                >{/each}
-            </select>
-          </label>
-          <label>
-            <span>Transport override</span>
-            <select bind:value={store.config.compensation.transport}>
-              {#each COMPENSATION_TRANSPORTS as option}<option
-                  value={option.value}>{option.label}</option
-                >{/each}
-            </select>
-          </label>
-        </div>
-        <details class="advanced">
-          <summary>Advanced — raw byte accounting</summary>
-          <div class="disclosure-body nested">
-            <label>
-              <span>IP version</span>
-              <select bind:value={store.config.compensation.params.ipVersion}>
-                <option value="auto">Automatic</option>
-                <option value={4}>IPv4 override</option>
-                <option value={6}>IPv6 override</option>
-              </select>
-            </label>
-            <div class="fields">
-              {#each COMPENSATION_NUMBERS as [key, label, min, max, step]}
-                <label
-                  ><span>{label}</span><input
-                    type="number"
-                    {min}
-                    {max}
-                    {step}
-                    bind:value={store.config.compensation.params[key]}
-                  /></label
-                >
-              {/each}
-            </div>
-            <Switch
-              bind:checked={store.config.compensation.params.vlanTagged}
-              label="VLAN tagged (+4B/frame)"
-            />
-          </div>
-        </details>
-      </div>
-    </details>
+    <CompensationEditor compensation={store.config.compensation} />
   </section>
 
   <h2 class="tier-label">Advanced</h2>
@@ -531,13 +440,13 @@
   .setup-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-    gap: 12px;
+    gap: var(--space-3);
     container-type: inline-size;
   }
   .panel {
     display: grid;
     align-content: start;
-    gap: 12px;
+    gap: var(--space-3);
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -577,12 +486,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
   }
   .readiness-badge {
     flex: none;
     padding: 3px 7px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--warn-soft);
     color: var(--warn);
     font-size: 9px;
@@ -617,7 +526,7 @@
     width: 100%;
     min-height: 36px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--text);
     padding: 7px 9px;
@@ -638,14 +547,14 @@
     gap: 3px;
     padding: 3px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }
   button {
     flex: 1;
     min-height: 30px;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: transparent;
     color: var(--text-soft);
     font-family: var(--font-sans);
@@ -693,7 +602,7 @@
     min-width: 0;
     padding: 6px 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: var(--surface-1);
   }
   .dur-cell span {
@@ -712,46 +621,10 @@
     font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
-  .advanced {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-1);
-  }
-  .advanced summary {
-    cursor: pointer;
-    padding: 10px;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    user-select: none;
-  }
-  .advanced summary:hover {
-    color: var(--text);
-  }
-  .advanced[open] > summary {
-    border-bottom: 1px solid var(--border);
-  }
-  .advanced.top-level {
-    border: 0;
-    background: transparent;
-  }
-  .advanced.top-level[open] > summary {
-    border-bottom: 1px solid var(--border);
-  }
-  .disclosure-body {
-    display: grid;
-    gap: 12px;
-    margin-top: 12px;
-  }
-  .disclosure-body.nested {
-    margin: 10px;
-  }
   @container (max-width: 360px) {
     .two {
       grid-template-columns: 1fr;
-      gap: 4px;
+      gap: var(--space-1);
     }
   }
 </style>

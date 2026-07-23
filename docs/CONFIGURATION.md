@@ -1,6 +1,6 @@
 # Configuration
 
-Graphite Meter reads environment variables at startup. Matching command-line flags override the environment. Environment variables are the canonical interface for Docker, Compose, Quadlet, and Kubernetes deployments.
+Graphite Meter reads environment variables at startup. Matching command-line flags override the environment. Environment variables are the canonical interface for Docker, Compose, Quadlet, and Kubernetes deployments. This page is the complete runtime reference: listeners, TLS material, public origins, identity, admission limits, authentication, and the native terminal client's flags.
 
 ## Native listeners
 
@@ -15,9 +15,23 @@ Graphite Meter reads environment variables at startup. Matching command-line fla
 
 A non-empty listener address enables that listener. There are no separate enable switches.
 
+Ports 7246–7249 are the convention used by the container image's `EXPOSE` set and by every example in this repository:
+
+| Port | Enabled by | Serves |
+| --- | --- | --- |
+| `7246/tcp` | `GM_H1_ADDR` | Clear HTTP/1.1 UI, API, transfers, and WebSocket latency. |
+| `7247/tcp` | `GM_H1_TLS_ADDR` | HTTPS UI, API, transfers, and WSS latency. |
+| `7248/tcp` | `GM_H2_ADDR` | HTTP/2 measurement only. |
+| `7249/tcp` | `GM_H3_ADDR` | HTTP/3 Alt-Svc bootstrap probe only. |
+| `7249/udp` | `GM_H3_ADDR` | HTTP/3 QUIC measurement. |
+
+Only 7246 and 7247 serve a browser; 7248 and 7249 are strict measurement targets. Which routes each listener owns is in [ARCHITECTURE.md](ARCHITECTURE.md#the-go-measurement-server).
+
+`GM_TLS_CERT` and `GM_TLS_KEY` are one PEM pair shared by every enabled native TLS listener. The pair is validated before binding, and a complete valid renewal is picked up without a restart — see [TLS security and lifecycle](ARCHITECTURE.md#tls-security-and-lifecycle). Mount the whole Let's Encrypt tree rather than one `live/` directory: its entries are symlinks into `archive/`. For development certificates, see [DEVELOPMENT.md](DEVELOPMENT.md#local-tls-and-http3-certificates).
+
 `GM_H1_PUBLIC_ORIGIN`, `GM_H1_TLS_PUBLIC_ORIGIN`, `GM_H2_PUBLIC_ORIGIN`, and `GM_H3_PUBLIC_ORIGIN` override the externally reachable origin of the corresponding native listener. Their flags use the same names without `GM_` and with lowercase dashes. They are for host/port remapping only; the advertised protocols remain deterministic.
 
-`GM_ADVERTISED_NATIVE_ENDPOINTS` controls which enabled native listeners appear in `/preflight`:
+`GM_ADVERTISED_NATIVE_ENDPOINTS` (`-advertised-native-endpoints`) controls which enabled native listeners appear in `/preflight`:
 
 - `all` (default): every enabled native listener
 - `none`: no native listener
@@ -60,17 +74,17 @@ GM_PUBLIC_ORIGINS=self
 
 ## Identity, proxy trust, and limits
 
-| Environment | Default | Meaning |
-| --- | --- | --- |
-| `GM_SERVER_NAME` | `graphite-meter` | Server name in `/preflight`. |
-| `GM_SERVER_LOCATION` | empty | Optional location label. |
-| `GM_TRUSTED_PROXIES` | empty | Comma-separated proxy CIDRs allowed to supply client-address headers. |
-| `GM_MAX_ACTIVE_MEASUREMENTS` | `256` | Global concurrent measurement handlers. |
-| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `32` | Per-client measurement handlers. |
-| `GM_MAX_CONNECTIONS` | `512` | Global TCP/QUIC connections. |
-| `GM_MAX_CONNECTIONS_PER_CLIENT` | `64` | Per-direct-client connections. |
-| `GM_MAX_OPERATION_DURATION` | `5m` | Maximum operation lifetime. |
-| `GM_VERBOSE` | false | Per-second server measurement logs. |
+| Environment | Flag | Default | Meaning |
+| --- | --- | --- | --- |
+| `GM_SERVER_NAME` | `-name` | `graphite-meter` | Server name in `/preflight`. |
+| `GM_SERVER_LOCATION` | `-location` | empty | Optional location label. |
+| `GM_TRUSTED_PROXIES` | none | empty | Comma-separated proxy CIDRs allowed to supply client-address headers. Invalid CIDRs fail startup. |
+| `GM_MAX_ACTIVE_MEASUREMENTS` | `-max-active-measurements` | `256` | Global concurrent measurement handlers. |
+| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `-max-active-measurements-per-client` | `32` | Per-client measurement handlers. |
+| `GM_MAX_CONNECTIONS` | `-max-connections` | `512` | Global TCP/QUIC connections. |
+| `GM_MAX_CONNECTIONS_PER_CLIENT` | `-max-connections-per-client` | `64` | Per-direct-client connections. |
+| `GM_MAX_OPERATION_DURATION` | `-max-operation-duration` | `5m` | Maximum operation lifetime. |
+| `GM_VERBOSE` | `-verbose` | false | Per-second server measurement logs (see [Meter](ARCHITECTURE.md#meter-internalendpointmetergo)). |
 
 ## Optional authentication
 
@@ -95,7 +109,7 @@ Generate a local operator hash interactively; the password is never accepted as 
 graphite-meter hash-password
 ```
 
-Authenticated deployments must advertise only HTTPS origins on the canonical hostname. Set `GM_ADVERTISED_NATIVE_ENDPOINTS` to omit `http1-clear`. For OIDC, register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client using PKCE S256, `client_secret_basic`, and scopes `openid profile groups`.
+Authenticated deployments must advertise only HTTPS origins on the canonical hostname. Set `GM_ADVERTISED_NATIVE_ENDPOINTS` to omit `http1-clear`. For OIDC, register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client using PKCE S256, `client_secret_basic`, and scopes `openid profile groups`. Behind a reverse proxy, the forwarding headers an authenticated deployment requires are in [REVERSE_PROXY.md](REVERSE_PROXY.md#measurement-requirements).
 
 ### Authorizing the terminal client
 
@@ -136,6 +150,33 @@ The consequence is that a determined anonymous attacker can hold a global ceilin
 ```
 
 Treat those lines as the signal that the ceiling, not the service, is refusing work. Put the deployment behind a network-level rate limit if you expect sustained hostile traffic.
+
+## Native TUI client flags
+
+`graphite-meter-client` is configured by flags only. Every run setting below, including both target roles, is also editable inside the TUI before a run starts.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `-url` | `http://127.0.0.1:7246` | Server base URL. |
+| `-throughput-origin` | `auto` | Discovered throughput origin. |
+| `-throughput-protocol` | `auto` | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches. |
+| `-latency-origin` | `auto` | Discovered WebSocket latency origin. |
+| `-stages` | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`. |
+| `-warmup` | `800ms` | Per-stage warmup before measurement starts. |
+| `-latency-duration` | `4s` | Latency stage window. |
+| `-download-duration` | `10s` | Download stage window. |
+| `-upload-duration` | `10s` | Upload stage window. |
+| `-bidirectional-duration` | `10s` | Bidirectional stage window. |
+| `-auto-streams` | `6` | Maximum automatic HTTP/1 streams per direction. Native H2/H3 use one continuous request per direction. |
+| `-streams` | `0` | `0` selects automatic; `1–128` forces an exact count per direction for every protocol. |
+| `-ping` | `medium` | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration. |
+| `-loaded-latency` | `true` | Measure RTT while a transfer stage is running. |
+| `-insecure` | `false` | Skip TLS certificate verification. Refused against an authenticated server. |
+| `-version` | `false` | Print the client version and exit. |
+
+## Deployment scaffolding
+
+`GM_PUBLIC_HOST`, `GM_CERT_NAME`, and `CERTBOT_EMAIL` appear in the Compose and Quadlet examples but are never read by the server. Compose interpolates the first two into `GM_H*_PUBLIC_ORIGIN`, `GM_TLS_CERT`, and `GM_TLS_KEY`; the certbot units read all three to issue and renew the certificate.
 
 ## Breaking migration
 

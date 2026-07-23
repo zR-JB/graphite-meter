@@ -18,6 +18,24 @@ import type {
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
 
+/**
+ * Server route paths — the TS half of the cross-language pin. The Go half is
+ * go/internal/server/listeners.go (what the mux mounts) and
+ * go/internal/wire/preflight.go (the target defaults). Both halves assert against
+ * api/routes.txt (routes.test.ts, routes_test.go).
+ *
+ * Preflight advertises origins only — the paths are not on the wire — so every
+ * language keeps its own table and the pin is what makes the tables agree.
+ */
+export const ROUTES = {
+  probe: "/probe",
+  download: "/download",
+  upload: "/upload",
+  uploadSession: "/upload/session",
+  uploadProgress: "/upload/progress",
+  ping: "/ws/ping",
+} as const;
+
 export function protocolFromNextHop(
   nextHopProtocol?: string,
 ): ProtocolTarget | undefined {
@@ -69,11 +87,11 @@ export function classifyTransportDiscovery(
       transport: "fetch-stream" as const,
       tls: origin.startsWith("https://"),
       routes: {
-        probe: "/probe",
-        download: "/download",
-        upload: "/upload",
-        uploadSession: "/upload/session",
-        uploadProgress: "/upload/progress",
+        probe: ROUTES.probe,
+        download: ROUTES.download,
+        upload: ROUTES.upload,
+        uploadSession: ROUTES.uploadSession,
+        uploadProgress: ROUTES.uploadProgress,
       },
     };
   });
@@ -88,7 +106,7 @@ export function classifyTransportDiscovery(
       transport: "websocket" as const,
       protocol: "http1" as const,
       tls: origin.startsWith("https://"),
-      routes: { probe: "/probe", ping: "/ws/ping" },
+      routes: { probe: ROUTES.probe, ping: ROUTES.ping },
     };
   });
   const throughput: TransportDiscovery["throughput"] = {};

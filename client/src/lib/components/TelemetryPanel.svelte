@@ -68,8 +68,8 @@
     text-decoration: underline;
   }
   .license a:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
-    border-radius: 2px;
+    border-radius: var(--r-well);
   }
 </style>

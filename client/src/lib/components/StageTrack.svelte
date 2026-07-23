@@ -2,7 +2,7 @@
   // Stage rail: maps store/core stage state into toggleable progress segments
   // for latency, download, upload, and optional bidirectional.
   import { MEASURED_STAGES, store, type StageKey } from "../state/store.svelte";
-  import { applyLiveRunConfig } from "../runner/wire.svelte";
+  import { applyLiveRunConfig } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 
@@ -237,7 +237,7 @@
     transform: translateY(-1px);
   }
   .seg:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
   }
 
@@ -258,7 +258,7 @@
     position: relative;
     width: 100%;
     height: 5px;
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-full);
     background: var(--surface-inset);
     overflow: hidden;
   }
@@ -374,7 +374,7 @@
     margin-left: auto;
     padding: 2px 6px;
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
     background: var(--surface-inset);
     color: var(--text-soft);
     font-family: var(--font-mono);

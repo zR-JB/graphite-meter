@@ -35,44 +35,20 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 		return Result{}, err
 	}
 
-	laneCtx, laneCancel := context.WithCancel(ctx)
-	defer laneCancel()
-	var wg sync.WaitGroup
-	laneErr := make(chan error, r.streams)
-	stagger := r.laneStaggerStep()
-	for i := 0; i < r.streams; i++ {
-		wg.Add(1)
-		go func(lane int) {
-			defer wg.Done()
-			if !staggerSleep(laneCtx, lane, stagger) {
-				return
-			}
-			if err := r.uploadLane(laneCtx, id, lane, bodyBlock); err != nil {
-				select {
-				case laneErr <- err:
-				default:
-				}
-			}
-		}(i)
-	}
-
-	select {
-	case <-ctx.Done():
-		return Result{}, ctx.Err()
-	case err := <-laneErr:
-		laneCancel()
-		wg.Wait()
+	lanes := r.startLanes(ctx, func(laneCtx context.Context, lane int) error {
+		return r.uploadLane(laneCtx, id, lane, bodyBlock)
+	})
+	defer lanes.cancel()
+	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
-	case <-start:
 	}
 	if !progress.waitNext(ctx, progress.seq.Load()) {
 		return Result{}, fmt.Errorf("upload progress did not advance")
 	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
-	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT, laneErr)
-	laneCancel()
-	wg.Wait()
+	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT, lanes.errs)
+	lanes.stop()
 	progress.bye()
 	return stats.result(stage, Up, true), sampleErr
 }
@@ -326,35 +302,24 @@ func (p *uploadProgress) bye() {
 	p.close()
 }
 
+// sampleServerUpload measures from the server's byte and active-time counters,
+// so the rate excludes time the server spent with nothing to read.
 func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64, laneErr <-chan error) (rateStats, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	var lastN, lastT uint64
-	stats := rateStats{}
-	lastN = baselineN
-	lastT = baselineT
-	finish := func() rateStats {
-		n, elapsed := p.n.Load(), p.t.Load()
-		if n >= baselineN && elapsed >= baselineT {
-			stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT))
-		}
-		return stats
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return finish(), ctx.Err()
-		case <-timer.C:
-			return finish(), nil
-		case err := <-laneErr:
-			return finish(), err
-		case now := <-ticker.C:
+	lastN, lastT := baselineN, baselineT
+	return rateLoop{
+		duration: duration,
+		laneErr:  laneErr,
+		window: func(stats *rateStats) {
+			n, elapsed := p.n.Load(), p.t.Load()
+			if n >= baselineN && elapsed >= baselineT {
+				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT))
+			}
+		},
+		sample: func(now time.Time, stats *rateStats) {
 			n := p.n.Load()
 			active := p.t.Load()
 			if n <= lastN || active <= lastT {
-				continue
+				return
 			}
 			dn := n - lastN
 			dt := active - lastT
@@ -378,8 +343,8 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 					MeasurementAt: time.Duration(active - baselineT),
 				},
 			})
-		}
-	}
+		},
+	}.run(ctx)
 }
 
 var _ io.ReadCloser = (*cyclingBody)(nil)

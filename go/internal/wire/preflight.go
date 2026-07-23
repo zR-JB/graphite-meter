@@ -45,6 +45,11 @@ type LatencyTarget struct {
 }
 type LatencyRoutes struct{ Probe, Ping string }
 
+// The route defaults a discovered target carries, filled in client-side because
+// Routes is json:"-" — the paths are never transmitted. They are pinned against
+// the paths the server mounts (go/internal/server/listeners.go) and the client
+// table (client/src/lib/runner/real/backendPure.ts) by api/routes.txt; the
+// assertion lives in go/internal/server/routes_test.go.
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{"/probe", "/download", "/upload", "/upload/session", "/upload/progress"}
 }

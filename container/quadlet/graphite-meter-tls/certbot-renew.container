@@ -1,0 +1,27 @@
+[Unit]
+Description=Continuous Graphite Meter certificate renewal
+Documentation=https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates
+Requires=certbot-bootstrap.service
+After=certbot-bootstrap.service network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=graphite-meter-certbot-renew
+Image=docker.io/certbot/dns-cloudflare:latest
+AutoUpdate=registry
+EnvironmentFile=graphite-meter.env
+Entrypoint=/bin/sh
+Exec=/config/certbot-renew.sh
+Volume=./certbot-renew.sh:/config/certbot-renew.sh:ro,Z
+Volume=./secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,z
+Volume=./letsencrypt:/etc/letsencrypt:z
+Volume=./log:/var/log/letsencrypt:z
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+RestartSec=60
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=default.target

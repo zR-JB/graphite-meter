@@ -1,6 +1,6 @@
 <script lang="ts">
   // Dev-only anomaly controls, tree-shaken from real-only builds.
-  import { injectAnomaly } from "../../runner/wire.svelte";
+  import { injectAnomaly } from "../../runner/engine.svelte";
   import { tooltip } from "../../actions/tooltip";
   import type { RunnerAnomaly } from "../../runner/contract";
 
@@ -100,7 +100,7 @@
     right: 0;
     padding: 2px 8px;
     border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
     background: var(--err-soft);
     color: var(--err);
     font-family: var(--font-mono);
@@ -112,7 +112,7 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    gap: var(--space-3);
   }
   .card {
     position: relative;
@@ -161,7 +161,7 @@
     width: 100%;
     min-height: 36px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-2);
     color: var(--text);
     padding: 8px 10px;
@@ -179,6 +179,10 @@
     border-color: color-mix(in srgb, var(--brand) 32%, var(--border-strong));
     background: var(--brand-soft);
     color: var(--brand-strong);
+  }
+  button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   button:disabled {
     opacity: 0.45;

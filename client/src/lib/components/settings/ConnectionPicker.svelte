@@ -1,6 +1,6 @@
 <script lang="ts">
   import { store } from "../../state/store.svelte";
-  import { validateConnections } from "../../runner/wire.svelte";
+  import { validateConnections } from "../../runner/engine.svelte";
   import type { ConnectionRole } from "../../runner/connectionModel";
   import {
     latencyOptionView,
@@ -117,11 +117,11 @@
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr);
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-height: 52px;
     padding: 8px 9px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
     cursor: pointer;
     transition:
@@ -188,7 +188,7 @@
   .validation {
     display: grid;
     grid-template-columns: 7px minmax(0, 1fr) auto;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
     min-height: 28px;
     padding: 2px 3px;
@@ -232,7 +232,7 @@
   button {
     min-height: 28px;
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
     color: var(--text);
     padding: 4px 9px;
@@ -240,6 +240,10 @@
     font-size: 10px;
     font-weight: 700;
     cursor: pointer;
+  }
+  button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   @container (max-width: 360px) {
     .options {

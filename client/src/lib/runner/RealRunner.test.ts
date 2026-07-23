@@ -12,16 +12,17 @@ import {
   classifyTransportDiscovery,
   isLoopbackHostname,
   throughputTargetKey,
+  ROUTES,
 } from "./real/backendPure";
 import type { PhaseActivity, RunnerConfig } from "./contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 
 const routes = {
-  probe: "/probe",
-  download: "/download",
-  upload: "/upload",
-  uploadSession: "/upload/session",
-  uploadProgress: "/upload/progress",
+  probe: ROUTES.probe,
+  download: ROUTES.download,
+  upload: ROUTES.upload,
+  uploadSession: ROUTES.uploadSession,
+  uploadProgress: ROUTES.uploadProgress,
 };
 
 const transfer = (

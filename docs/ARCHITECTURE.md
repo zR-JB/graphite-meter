@@ -53,10 +53,9 @@ container/                    Deployment: image-based docker-compose.yml + quadl
 ## The Go measurement server
 
 Entry point: `go/cmd/graphite-meter/main.go`. `server.Run` (`go/internal/server/listeners.go`)
-builds the random block, upload store, meters, and endpoint implementations once. Listener-specific
-muxes expose clear H1 on 7246/tcp, optional TLS-only H1 on 7247/tcp, optional H2 on 7248/tcp,
-and optional H3 on 7249/udp with a TLS H1 bootstrap on 7249/tcp. The H3 TCP surface has only
-`/probe`, so transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
+builds the random block, upload store, meters, and endpoint implementations once. Each listener
+gets its own mux, so a surface never leaks across protocols: the H3 TCP bootstrap carries only
+`/probe`, and transfers and latency cannot silently fall back to H1. QUIC 0-RTT is
 disabled to prevent POST replay.
 
 | Listener    | Protocol               | Owned surface                                                                                       |
@@ -135,7 +134,7 @@ Plain request/response endpoints (`/preflight`, `/probe`, `/download`, `/upload`
 bus speaks a tiny ASCII protocol — one message per frame, no
 length prefix, `OP` or `OP,arg[,arg...]`, parsed by `indexOf(',')` slicing, never JSON. An unknown
 opcode or malformed frame gets a non-fatal `ERR,<code>,<text>` reply; the bus is never torn down
-for one bad frame. Full spec: `api/wire.md`; shared byte-exact conformance corpus:
+for one bad frame. Full spec: [`api/wire.md`](../api/wire.md); shared byte-exact conformance corpus:
 `api/wire.testvectors.txt` (every language's encoder/decoder must match it).
 
 | Opcode  | Direction | Shape                    | Meaning                                                                     |
@@ -209,16 +208,18 @@ peak across ~100ms samples (upload uses the server receiver, download the local 
 latency as min/mean/P50/P95 (linear-interpolated percentiles), jitter (mean absolute deviation),
 and loss ratio.
 
-The TUI has five configuration sections (Servers — three built-in presets plus a custom URL;
-Stages; Timing; Network — stream count and TLS verification; Run) and a live telemetry view
-(session panel, ASCII throughput bars, a running results log). Keys: `tab`/arrows to navigate,
-`enter`/`space` to toggle or edit, `r` to run, `c`/`esc` to cancel, `q` to quit. CLI flags (all
-editable again inside the TUI before a run starts) are listed in
-[DEVELOPMENT.md](DEVELOPMENT.md#native-tui-client-flags).
+The TUI has five configuration sections (Server — three built-in presets plus a custom URL; Run
+setup; Timing; Connections — stream count and TLS verification; Start) and a live telemetry view
+(session panel, stage timeline, ASCII throughput bars, a running results log). Keys: `tab`/arrows
+to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run or run again, `v`
+to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
+finished one, `?` to expand the key list, `q` to quit; the footer lists every binding the screen on
+show accepts. CLI flags (all editable again inside the TUI before a run starts) are listed in
+[CONFIGURATION.md](CONFIGURATION.md#native-tui-client-flags).
 
 `internal/goclient` (stats, config normalization, preflight, the adaptive-warmup/lane-stagger
 runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model` state machine in
-`cmd/graphite-meter-client/main.go` have unit tests — also run with `just server-test` (one Go
+`cmd/graphite-meter-client/model.go` have unit tests — also run with `just server-test` (one Go
 module covers both the server and the TUI client).
 
 ---
@@ -324,5 +325,5 @@ H1-TLS, H2, and H3 are enabled by non-empty listener addresses and fail before b
 outside its validity window, or incompatible with a configured public TLS hostname. Private-key
 permissions and certificates expiring within 30 days produce warnings. Files are checked every
 minute and a complete valid renewal is swapped atomically; a partial or invalid renewal leaves the
-last valid certificate serving. No private-key bytes are logged. The Compose overlay mounts the
-complete Let's Encrypt tree read-only so `live/` symlinks into `archive/` remain usable.
+last valid certificate serving. No private-key bytes are logged. Deployment settings for the pair
+are in [CONFIGURATION.md](CONFIGURATION.md#native-listeners).

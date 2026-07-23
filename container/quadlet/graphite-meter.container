@@ -51,6 +51,30 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_H3_PUBLIC_ORIGIN=https://speed.example:7249
 # Environment=GM_VERBOSE=1
 
+# Authentication, off by default. When enabled it gates every UI asset,
+# discovery request, probe, transfer, progress stream, and WebSocket. The lines
+# below assume a reverse proxy owns TLS on GM_AUTH_PUBLIC_URL: clear HTTP/1.1
+# must not be advertised, and every advertised origin must be HTTPS on that
+# hostname.
+# Setup and the podman secret commands: ./README.md#enable-authentication
+# Environment=GM_AUTH_MODE=password
+# Environment=GM_AUTH_PUBLIC_URL=https://meter.example.com
+# Environment=GM_ADVERTISED_NATIVE_ENDPOINTS=none
+# Environment=GM_PUBLIC_ORIGINS=self
+# Environment=GM_TRUSTED_PROXIES=172.30.0.0/24
+# Environment=GM_AUTH_PASSWORD_HASH_FILE=/run/secrets/gm-auth-password-hash
+# Secret=gm-auth-password-hash,type=mount
+#
+# OIDC instead of the password, or GM_AUTH_MODE=hybrid to keep both. The group
+# allowlist is required whenever OIDC is enabled.
+# Environment=GM_AUTH_MODE=oidc
+# Environment=GM_AUTH_OIDC_ISSUER=https://auth.example.com
+# Environment=GM_AUTH_OIDC_CLIENT_ID=graphite-meter
+# Environment=GM_AUTH_OIDC_CLIENT_SECRET_FILE=/run/secrets/gm-auth-oidc-client-secret
+# Environment=GM_AUTH_OIDC_ALLOWED_GROUPS=meter-users
+# Environment=GM_AUTH_OIDC_PROVIDER_NAME=Authelia
+# Secret=gm-auth-oidc-client-secret,type=mount
+
 [Service]
 # docker-compose's `restart: unless-stopped` — systemd's closest is always.
 Restart=always

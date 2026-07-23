@@ -245,7 +245,7 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-    gap: 12px;
+    gap: var(--space-3);
   }
   .card,
   .diagnostics-card {
@@ -278,12 +278,12 @@
   header {
     display: flex;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
   mark {
     align-self: start;
     padding: 3px 6px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--warn-soft);
     color: var(--warn);
     font-size: 9px;
@@ -301,7 +301,7 @@
   dl div {
     display: grid;
     grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-    gap: 12px;
+    gap: var(--space-3);
     align-items: baseline;
   }
   dt {
@@ -335,9 +335,14 @@
   .diagnostics-card summary:hover {
     color: var(--text);
   }
+  /* Full-bleed against a clipping card, so the ring goes inside the edge. */
+  .diagnostics-card summary:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
   .diagnostics {
     display: grid;
-    gap: 12px;
+    gap: var(--space-3);
     padding: var(--space-3);
   }
   .diagnostic-note {
@@ -350,7 +355,7 @@
     justify-self: start;
     min-height: 34px;
     border: 1px solid var(--border-strong);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
     color: var(--text);
     padding: 6px 10px;
@@ -358,6 +363,17 @@
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  button:hover {
+    border-color: color-mix(in srgb, var(--brand) 45%, var(--border-strong));
+    color: var(--brand-strong);
+  }
+  button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   .sr-status {
     position: absolute;

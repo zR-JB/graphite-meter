@@ -59,7 +59,7 @@
     height: 15px;
     padding: 0 4px;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--r-well);
     background: var(--surface-2);
     box-shadow: var(--elev-tile);
     color: var(--text-muted);

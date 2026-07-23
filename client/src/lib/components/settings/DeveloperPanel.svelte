@@ -48,7 +48,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--space-4);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
@@ -57,7 +57,7 @@
   }
   .diag-text {
     display: grid;
-    gap: 4px;
+    gap: var(--space-1);
     min-width: 0;
   }
   .diag-text h4 {

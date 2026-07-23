@@ -14,8 +14,13 @@ Two ways to run it:
   `Image=graphite-meter.build`, so a start builds first, then runs. Requires
   **Podman 5.0+** (`.build` unit support).
 
-For an isolated server using the published image and reachable only through its
-own Tailscale identity, see [`tailscale-sidecar/`](./tailscale-sidecar/).
+Two complete multi-unit deployments live in subdirectories:
+
+- [`graphite-meter-tls/`](./graphite-meter-tls/) — all four native listeners on
+  a public hostname, with a Let's Encrypt certificate issued and renewed by
+  certbot over the Cloudflare DNS-01 challenge.
+- [`tailscale-sidecar/`](./tailscale-sidecar/) — an isolated server reachable
+  only through its own Tailscale identity, with no published ports.
 
 ## Default: run the published image
 
@@ -78,10 +83,43 @@ journalctl --user -u graphite-meter.service -f     # logs
 systemctl --user restart graphite-meter.service    # source variant: rebuilds only if inputs changed
 ```
 
+## Enable authentication
+
+Authentication is off by default. Uncomment the `GM_AUTH_*` block in
+`graphite-meter.container`, point `GM_AUTH_PUBLIC_URL` at the exact public HTTPS
+origin (no path, and no `:443`), and create the podman secrets the unit mounts.
+
+For the operator password, print the Argon2id hash on a terminal and store the
+single line it prints:
+
+```sh
+podman run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
+printf '%s' 'PASTE_THE_HASH_HERE' | podman secret create gm-auth-password-hash -
+```
+
+For OIDC, store the client secret the same way, as
+`gm-auth-oidc-client-secret`, and register
+`${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code
+client using PKCE S256, `client_secret_basic`, and the scopes
+`openid profile groups`. Discovery, token exchange, UserInfo, and JWKS are
+outbound HTTPS calls; the published image carries
+`/etc/ssl/certs/ca-certificates.crt`, so no CA bundle has to be mounted.
+
+The server refuses to start unless clear HTTP/1.1 is left unadvertised and
+every advertised origin is HTTPS on the `GM_AUTH_PUBLIC_URL` hostname. The
+commented block covers a reverse-proxy deployment with
+`GM_ADVERTISED_NATIVE_ENDPOINTS=none` and `GM_PUBLIC_ORIGINS=self`; serving the
+native TLS listeners directly instead means advertising `http1-tls,http2,http3`
+and giving each `GM_H*_PUBLIC_ORIGIN` that same hostname.
+
+See [CONFIGURATION.md](../../docs/CONFIGURATION.md) for every variable and the
+terminal-client grant flow, and [REVERSE_PROXY.md](../../docs/REVERSE_PROXY.md)
+for the headers a trusted proxy must set.
+
 ## Notes
 
-- **First source build is slow** on a Pi (bun install + the Go build); later
-  starts reuse the built image.
+- **First source build is slow** on a low-power host (bun install + the Go
+  build); later starts reuse the built image.
 - To rebuild from scratch: `podman rmi localhost/graphite-meter:latest` then
   restart the service.
 - Override client build knobs (dummy runner / dev tools / label) by uncommenting
