@@ -216,7 +216,7 @@ to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run
 to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
 finished one, `?` to expand the key list, `q` to quit; the footer lists every binding the screen on
 show accepts. CLI flags (all editable again inside the TUI before a run starts) are listed in
-[DEVELOPMENT.md](DEVELOPMENT.md#native-tui-client-flags).
+[CONFIGURATION.md](CONFIGURATION.md#native-tui-client-flags).
 
 `internal/goclient` (stats, config normalization, preflight, the adaptive-warmup/lane-stagger
 runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model` state machine in
