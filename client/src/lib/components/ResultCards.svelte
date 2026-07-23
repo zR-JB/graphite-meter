@@ -377,7 +377,7 @@
   header {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .ico {
     display: grid;
@@ -427,13 +427,13 @@
   .label.term:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
   }
 
   .pip {
     margin-left: auto;
     padding: 2px 7px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 700;
@@ -511,7 +511,7 @@
 
   /* Guided empty-state line — quiet invitation while there's no data. */
   .metric-guidance {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
     text-align: center;
     font-size: 12px;
     line-height: 1.4;
@@ -568,7 +568,7 @@
     flex: none;
     display: flex;
     align-items: baseline;
-    gap: 4px;
+    gap: var(--space-1);
   }
   .chip-val .num {
     font-family: var(--font-mono);

@@ -412,7 +412,7 @@
     padding: 4px 6px;
     margin-left: -6px;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-chrome);
     background: transparent;
     color: var(--text);
     cursor: pointer;

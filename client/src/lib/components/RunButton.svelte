@@ -65,7 +65,7 @@
     color: var(--text-inverse);
     border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 1px 0 var(--edge-highlight),
       0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
     cursor: pointer;
     transition:
@@ -90,7 +90,7 @@
     width: 12px;
     height: 12px;
     background: currentColor;
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
   }
   .ico {
     display: inline-grid;

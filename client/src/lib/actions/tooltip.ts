@@ -28,7 +28,7 @@ function ensureStyles() {
       max-width: 260px;
       padding: 8px 10px;
       border: 1px solid var(--border-strong);
-      border-radius: var(--radius-sm);
+      border-radius: var(--r-chrome);
       background: var(--surface-2);
       color: var(--text);
       box-shadow: var(--shadow-float);

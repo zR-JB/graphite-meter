@@ -531,13 +531,13 @@
   .setup-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-    gap: 12px;
+    gap: var(--space-3);
     container-type: inline-size;
   }
   .panel {
     display: grid;
     align-content: start;
-    gap: 12px;
+    gap: var(--space-3);
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -577,12 +577,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
   }
   .readiness-badge {
     flex: none;
     padding: 3px 7px;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--warn-soft);
     color: var(--warn);
     font-size: 9px;
@@ -617,7 +617,7 @@
     width: 100%;
     min-height: 36px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--text);
     padding: 7px 9px;
@@ -638,14 +638,14 @@
     gap: 3px;
     padding: 3px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }
   button {
     flex: 1;
     min-height: 30px;
     border: 0;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: transparent;
     color: var(--text-soft);
     font-family: var(--font-sans);
@@ -693,7 +693,7 @@
     min-width: 0;
     padding: 6px 8px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-well);
     background: var(--surface-1);
   }
   .dur-cell span {
@@ -714,7 +714,7 @@
   }
   .advanced {
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
   }
   .advanced summary {
@@ -742,8 +742,8 @@
   }
   .disclosure-body {
     display: grid;
-    gap: 12px;
-    margin-top: 12px;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
   }
   .disclosure-body.nested {
     margin: 10px;
@@ -751,7 +751,7 @@
   @container (max-width: 360px) {
     .two {
       grid-template-columns: 1fr;
-      gap: 4px;
+      gap: var(--space-1);
     }
   }
 </style>

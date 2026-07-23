@@ -100,7 +100,7 @@
     right: 0;
     padding: 2px 8px;
     border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
     background: var(--err-soft);
     color: var(--err);
     font-family: var(--font-mono);
@@ -112,7 +112,7 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    gap: var(--space-3);
   }
   .card {
     position: relative;
@@ -161,7 +161,7 @@
     width: 100%;
     min-height: 36px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--r-chrome);
     background: var(--surface-2);
     color: var(--text);
     padding: 8px 10px;

@@ -321,7 +321,7 @@
     width: 36px;
     height: 4px;
     margin: -6px auto 0;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--border-strong);
   }
   @media (max-width: 759px) {
@@ -417,7 +417,7 @@
   }
   .panel-body::-webkit-scrollbar-thumb {
     border: 3px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--r-full);
     background: var(--border-strong);
     background-clip: padding-box;
   }

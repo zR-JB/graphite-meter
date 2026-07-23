@@ -258,7 +258,7 @@
     position: relative;
     width: 100%;
     height: 5px;
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-full);
     background: var(--surface-inset);
     overflow: hidden;
   }
@@ -374,7 +374,7 @@
     margin-left: auto;
     padding: 2px 6px;
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-xs);
+    border-radius: var(--r-well);
     background: var(--surface-inset);
     color: var(--text-soft);
     font-family: var(--font-mono);
