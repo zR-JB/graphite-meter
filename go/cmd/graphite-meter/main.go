@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -20,19 +21,13 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "hash-password" {
-		if err := hashPassword(); err != nil {
+		if err := hashPassword(os.Stdin, os.Stdout, os.Stderr); err != nil {
 			log.Fatalf("hash-password: %v", err)
 		}
 		return
 	}
-	cfg, err := config.Load()
+	cfg, err := parseConfig("graphite-meter", os.Args[1:])
 	if err != nil {
-		log.Fatalf("configuration error: %v", err)
-	}
-
-	registerFlags(flag.CommandLine, &cfg)
-	flag.Parse()
-	if err := cfg.Validate(); err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
 
@@ -44,15 +39,38 @@ func main() {
 	}
 }
 
-func hashPassword() error {
-	in := bufio.NewReader(os.Stdin)
-	fmt.Fprint(os.Stderr, "Password: ")
-	first, err := auth.ReadPassword(in, os.Stdin)
+// parseConfig loads the base configuration, applies the command-line flags in
+// args, and validates the result. Split from main so the flag surface and the
+// validation wiring are testable without spawning a process.
+func parseConfig(name string, args []string) (config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return config.Config{}, err
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	if err := fs.Parse(args); err != nil {
+		return config.Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
+}
+
+// hashPassword reads a password twice from stdin (echoing nothing when it is a
+// terminal), confirms the two match, and writes the Argon2id PHC hash to out.
+// prompts carries the interactive "Password:" cues. stdin, out, and prompts are
+// injected so the flow is testable over pipes.
+func hashPassword(stdin *os.File, out, prompts io.Writer) error {
+	in := bufio.NewReader(stdin)
+	fmt.Fprint(prompts, "Password: ")
+	first, err := auth.ReadPassword(in, stdin)
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(os.Stderr, "Confirm password: ")
-	second, err := auth.ReadPassword(in, os.Stdin)
+	fmt.Fprint(prompts, "Confirm password: ")
+	second, err := auth.ReadPassword(in, stdin)
 	if err != nil {
 		return err
 	}
@@ -63,7 +81,7 @@ func hashPassword() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(encoded)
+	fmt.Fprintln(out, encoded)
 	return nil
 }
 
