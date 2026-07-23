@@ -1087,7 +1087,11 @@ export class RealBackend implements RunnerBackend {
       credentials: authEnabled ? "include" : "same-origin",
       headers: {
         ...(this.#authHeaders() as Record<string, string> | undefined),
-        ...csrfHeader(),
+        // CSRF applies to the upload POST only. Adding it to the download GET
+        // makes a cross-port transfer CORS-preflighted, and chunked mode
+        // varies the URL per request, so the preflight cache never hits and
+        // every measurement request pays a round trip it does not need.
+        ...(dir === "up" ? csrfHeader() : {}),
       },
       // Download-only experimental chunked mode (ignored by the upload worker).
       chunk: state.chunkDownload,

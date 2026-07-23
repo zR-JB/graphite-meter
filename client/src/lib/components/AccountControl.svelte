@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { authenticatedFetch, redirectToLogin } from "../auth";
+  import { authenticatedFetch } from "../auth";
 
   type Session = {
     name: string;
@@ -19,15 +19,19 @@
       : (session?.provider ?? ""),
   );
 
+  // authenticatedFetch already redirects on a 403 that carries the
+  // Graphite-Meter-Auth marker. An unqualified 403 — a proxy or WAF refusing
+  // the request — must not be read as an expired session, or a misconfigured
+  // hop in front of the server turns into a /login redirect loop.
   onMount(async () => {
-    const response = await authenticatedFetch("/auth/session", {
-      cache: "no-store",
-    });
-    if (response.status === 403) {
-      redirectToLogin();
-      return;
+    try {
+      const response = await authenticatedFetch("/auth/session", {
+        cache: "no-store",
+      });
+      if (response.ok) session = (await response.json()) as Session;
+    } catch {
+      // Leave the control unrendered; the runner surfaces connectivity loss.
     }
-    if (response.ok) session = (await response.json()) as Session;
   });
 </script>
 

@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNmRiMGI4IiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyLjYgMy45IDcuM3Y5LjRsOC4xIDQuNyA4LjEtNC43VjcuM1oiLz48cGF0aCBkPSJNMTIgMTIgMTguNiA4LjIiIHN0cm9rZS13aWR0aD0iMi4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIyLjEiIGZpbGw9IiM2ZGIwYjgiIHN0cm9rZT0ibm9uZSIvPjwvc3ZnPg==">
     <title>Sign in · Graphite Meter</title>
     <style>{{.Styles}}</style>
   </head>
@@ -34,6 +35,11 @@
         <form method="post" action="/auth/password">
           <input type="hidden" name="csrf" value="{{.CSRF}}">
           <input type="hidden" name="challenge" value="{{.Challenge}}">
+          <!-- There is one account. The field exists so a password manager can
+               associate the stored credential with a username; it is not read
+               by the server. -->
+          <label class="offscreen" for="username">Account</label>
+          <input class="offscreen" id="username" name="username" type="text" value="operator" autocomplete="username" readonly>
           <label for="password">Operator password</label>
           <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" required>
           <button type="submit">Sign in with operator password</button>
