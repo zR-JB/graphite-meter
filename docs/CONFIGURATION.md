@@ -129,6 +129,44 @@ S256, `client_secret_basic`, and scopes `openid profile groups`. Behind a revers
 required forwarding headers are in
 [REVERSE_PROXY.md](REVERSE_PROXY.md#measurement-requirements).
 
+### Sessions, cookies, and what they bind to
+
+A browser sign-in creates a session that lasts **8 hours, absolute**. Nothing extends it: no
+request, no open page, no measurement renews the clock, so a tab left open overnight is signed
+out in the morning and lands back on the login page.
+
+The server sets four cookies, all `__Host-` prefixed — which browsers accept only with `Secure`,
+`Path=/`, and **no `Domain`**:
+
+| Cookie              | Lifetime | Readable by JS | Purpose                                        |
+| ------------------- | -------- | -------------- | ---------------------------------------------- |
+| `__Host-gm_session` | 8h       | no             | The session. Only its SHA-256 is stored.       |
+| `__Host-gm_csrf`    | 8h       | yes            | Mirrored into `X-CSRF-Token` on unsafe methods. |
+| `__Host-gm_login`   | 10 min   | no             | Pre-session token for the sign-in form.        |
+| `__Host-gm_oidc`    | 10 min   | no             | Binds an OIDC round trip to this browser.      |
+
+`__Host-gm_csrf` is deliberately readable: the browser client echoes it in the `X-CSRF-Token`
+header, and the server compares that header against the token it holds for the session. The
+session cookie proves who you are; the header proves the request came from a page that could read
+the value. A cookie alone would still be attached to requests another site triggered.
+
+An identity provider sets its own cookie on its own host — Authelia's `authelia_session`, for
+instance. Graphite Meter never sees it.
+
+What `__Host-` costs you, concretely:
+
+- **One hostname.** Cookies set on `meter.example.com` never reach `example.com` or a sibling
+  subdomain, and no subdomain can overwrite them.
+- **Any port on that hostname.** Cookies ignore ports, so `https://meter.example.com` and
+  `https://meter.example.com:7248` share one session. This is what makes cross-port native
+  measurement work while signed in.
+- **HTTPS only**, which is why an authenticated deployment cannot advertise clear HTTP/1.1.
+
+That is also the rule for advertised measurement origins: scheme must be `https` and the
+**hostname must equal** `GM_AUTH_PUBLIC_URL`'s; the port may differ freely. A measurement origin
+on a different hostname is refused at startup. The terminal client is exempt because it does not
+use cookies at all — it carries a bearer grant, accepted only on measurement routes.
+
 ### Authorizing the terminal client
 
 The terminal client has no password prompt and stores nothing. Against an authenticated server it
