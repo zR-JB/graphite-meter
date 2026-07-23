@@ -46,6 +46,11 @@
   --err: #d89393;
   --err-soft: rgba(216, 147, 147, 0.15);
 
+  --ok: #79ad91;
+  --ok-soft: rgba(121, 173, 145, 0.14);
+  --warn: #c4a568;
+  --warn-soft: rgba(196, 165, 104, 0.14);
+
   --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(5, 7, 9, 0.4);
 }
 
@@ -72,6 +77,11 @@ html[data-theme="light"] {
 
   --err: #a04a4a;
   --err-soft: rgba(160, 74, 74, 0.13);
+
+  --ok: #285443;
+  --ok-soft: rgba(50, 99, 80, 0.13);
+  --warn: #6f5426;
+  --warn-soft: rgba(111, 84, 38, 0.13);
 
   --shadow-card:
     0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
@@ -260,22 +270,37 @@ form[data-busy] button[type="submit"]::after {
   background: var(--border);
 }
 .message,
-.notice {
+.notice,
+.ok,
+.warn {
   margin: 0 0 18px;
   padding: 10px 12px;
   border: 1px solid;
   border-radius: var(--r-chrome);
   font-size: var(--type-md);
 }
+/* .message is a real failure (red); .warn a recoverable limit (orange);
+   .notice an expected, neutral state (blue); .ok a successful outcome
+   (green). */
 .message {
   border-color: color-mix(in srgb, var(--err) 38%, transparent);
   background: var(--err-soft);
   color: var(--err);
 }
+.warn {
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
 .notice {
   border-color: color-mix(in srgb, var(--signal) 38%, transparent);
   background: var(--signal-soft);
   color: var(--signal);
+}
+.ok {
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 .code {
   display: block;

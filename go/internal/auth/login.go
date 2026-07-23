@@ -7,11 +7,21 @@ import (
 
 type loginView struct {
 	Styles template.CSS
-	// Notice is one of the validated notice codes, or "" when the page was not
-	// reached through a failed attempt. The wording lives in the template.
-	CSRF, Provider, Challenge, Notice string
-	Password, OIDC, OIDCReady         bool
-	Expired                           bool
+	// Notice is a validated notice code from a failed attempt, or "". Status is
+	// a validated non-failure state ("expired", "signed_out") from a redirect to
+	// the login page. The wording lives in the template.
+	CSRF, Provider, Challenge, Notice, Status string
+	Password, OIDC, OIDCReady                 bool
+}
+
+// parseStatus accepts only the non-failure states the login page renders, so
+// nothing from the query string reaches the template unvalidated.
+func parseStatus(raw string) string {
+	switch raw {
+	case "expired", "signed_out":
+		return raw
+	}
+	return ""
 }
 
 func renderLogin(w http.ResponseWriter, tmpl *template.Template, data loginView) {
@@ -31,7 +41,7 @@ func PreviewHandler(mode string, oidcReady bool) http.Handler {
 			Styles: authStyles, CSRF: "preview", Provider: "Authelia",
 			Password: mode == "password" || mode == "hybrid",
 			OIDC:     mode == "oidc" || mode == "hybrid", OIDCReady: oidcReady,
-			Notice: string(parseNotice(r.URL.Query().Get("error"))), Expired: r.URL.Query().Get("reason") == "expired",
+			Notice: string(parseNotice(r.URL.Query().Get("error"))), Status: parseStatus(r.URL.Query().Get("reason")),
 		})
 	})
 }

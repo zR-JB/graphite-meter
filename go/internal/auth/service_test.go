@@ -749,7 +749,7 @@ func TestLoginFailurePreservesValidCLIChallenge(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.loginRejected(rr, r, reasonPasswordMismatch)
 	location, err := url.Parse(rr.Header().Get("Location"))
-	if err != nil || location.Query().Get("challenge") != challenge || location.Query().Get("error") != string(noticeGeneric) {
+	if err != nil || location.Query().Get("challenge") != challenge || location.Query().Get("error") != string(noticePassword) {
 		t.Fatalf("location=%q err=%v", rr.Header().Get("Location"), err)
 	}
 	r.Form.Set("challenge", "invalid")
