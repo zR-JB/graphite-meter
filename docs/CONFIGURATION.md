@@ -97,6 +97,46 @@ graphite-meter hash-password
 
 Authenticated deployments must advertise only HTTPS origins on the canonical hostname. Set `GM_ADVERTISED_NATIVE_ENDPOINTS` to omit `http1-clear`. For OIDC, register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client using PKCE S256, `client_secret_basic`, and scopes `openid profile groups`.
 
+### Authorizing the terminal client
+
+The terminal client has no password prompt and stores nothing. When it meets an authenticated server it asks a browser to vouch for it, once per launch:
+
+1. The client generates a random verifier, keeps it in memory, and derives a challenge from it.
+2. It opens `${GM_AUTH_PUBLIC_URL}/auth/cli?challenge=…` in your browser and prints a short verification code.
+3. The browser page shows the same code. Confirm they match, then approve. If they differ, something else asked for the approval — refuse it.
+4. The client exchanges its verifier for a grant. Approval expires **two minutes** after the page is opened.
+
+The grant lives in the client's memory only. It is never written to disk, is bound to the browser session that approved it and to the exact HTTPS origin it was issued for, is refused on any redirect, and reaches measurement routes only — never the UI or the auth surface. Signing out of the browser session revokes it immediately, and closing the client discards it, so every launch needs a fresh approval.
+
+The client refuses to authenticate over anything but HTTPS and refuses `-insecure` entirely: a grant is never sent to an unverified server.
+
+### Hybrid mode with a private identity provider
+
+In `hybrid` mode the login page offers both the identity provider and the operator password. The browser, not the server, reaches the identity provider — so if the provider is only routable on a private network (a VPN or overlay such as Tailscale), visitors outside it cannot complete an OIDC sign-in and use the operator password instead. That is the intended fallback, not a misconfiguration. If you want OIDC to be the only way in, use `oidc` mode, which starts only once discovery succeeds.
+
+### Bounded stores and the availability trade-off
+
+Every authentication store is bounded in memory, and the bounds are deliberately chosen over unbounded growth: an anonymous caller can be refused, but cannot make the process allocate without limit.
+
+| Bound | Limit |
+| --- | --- |
+| Sessions | 1024 total, 8 per subject, 8-hour lifetime |
+| Password attempts | 5 per client address per minute, 60 across all addresses per minute |
+| OIDC token exchanges | 10 per client address per minute |
+| OIDC transactions | 256 total, 8 per client address, 10-minute lifetime |
+| Terminal approvals | 256 total, 8 per session, 2-minute lifetime |
+| Tracked addresses | 2048 per budget |
+
+Per-address budgets are keyed by the full IPv4 address and by the IPv6 **/64**, because a single IPv6 allocation routinely covers 2^64 addresses.
+
+The consequence is that a determined anonymous attacker can hold a global ceiling engaged and keep others from signing in for as long as they keep it saturated. Existing sessions are unaffected — only new sign-ins are refused. When a global ceiling engages the server logs it once per minute:
+
+```
+[gm:auth] global password-attempt ceiling engaged; further attempts are refused until the window drains
+```
+
+Treat those lines as the signal that the ceiling, not the service, is refusing work. Put the deployment behind a network-level rate limit if you expect sustained hostile traffic.
+
 ## Breaking migration
 
 - Replace `GM_ENABLE_H1_TLS=true` with a non-empty `GM_H1_TLS_ADDR`.

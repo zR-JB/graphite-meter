@@ -67,6 +67,10 @@ jobs:
               - *workflow
               - "go/**"
               - "api/**"
+              # The login surface is authored here and generated into
+              # internal/auth/assets_generated.go, so the Go job owns the
+              # drift check for it.
+              - "client/src/auth/**"
             tui:
               - *workflow
               - "go/go.mod"
@@ -110,6 +114,19 @@ jobs:
       - name: go vet
         working-directory: go
         run: go vet ./...
+      # The login surface is authored in client/src/auth and compiled into
+      # assets_generated.go. Nothing at build time reads the source files, so
+      # an edit that is never regenerated ships the old page silently — and
+      # the CSP style hash is derived from the generated CSS, so a drifted
+      # stylesheet is a blank login page, not a cosmetic difference.
+      - name: Generated auth assets match their source
+        working-directory: go/internal/auth
+        run: |
+          go run ./cmd/authassets
+          if ! git diff --exit-code -- assets_generated.go; then
+            echo "::error::assets_generated.go is stale; run 'go generate ./internal/auth' and commit the result"
+            exit 1
+          fi
       - name: go test
         working-directory: go
         run: go test -race -shuffle=on ./...

@@ -54,6 +54,15 @@ fi
 echo "pre-commit: gitleaks (secret scan)"
 gitleaks protect --staged --redact -v
 
+if echo "$staged" | grep -qE '^(go/|client/src/auth/)'; then
+    echo "pre-commit: auth assets (generated match source)"
+    (cd go/internal/auth && go run ./cmd/authassets)
+    if ! git diff --quiet -- go/internal/auth/assets_generated.go; then
+        echo "assets_generated.go is stale — regenerated it; stage the result and commit again"
+        exit 1
+    fi
+fi
+
 if echo "$staged" | grep -q '^go/'; then
     echo "pre-commit: go (gofmt, vet, test)"
     unformatted=$(cd go && gofmt -l .)

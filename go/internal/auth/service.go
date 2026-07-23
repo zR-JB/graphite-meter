@@ -4,8 +4,42 @@
 // file: wrap.go (nothing gets through without a principal), trust.go (what we
 // believe about a request and why), session.go (sessions bounded, hashed,
 // revocable), headers.go (response-header policy), ratelimit.go (attempt
-// budgets), handlers.go (the login surface), oidc.go, password.go, cli.go.
-// This file is wiring only.
+// budgets), reasons.go (why an attempt failed), handlers.go (the login
+// surface), oidc.go, password.go, cli.go. This file is wiring only.
+//
+// # Why authentication lives in the process
+//
+// The obvious alternative is forward-auth: put Authelia or oauth2-proxy in
+// front of the server behind nginx or Traefik and keep zero authentication
+// code here. For most web applications that is the better answer. It is the
+// wrong answer for this one, for three reasons specific to what the product
+// is.
+//
+//   - A proxy in the data path perturbs the measurement. This is an
+//     instrument: its output is a claim about a network path, and every extra
+//     hop that terminates, buffers, and re-originates the transfer becomes
+//     part of what is being measured. An authentication decision must not
+//     appear in the numbers.
+//   - Forward-auth does not compose with the HTTP/3 listener. QUIC is UDP;
+//     the subrequest-authentication mechanisms of the common proxies are
+//     HTTP-over-TCP constructs, and there is no equivalent in front of a QUIC
+//     listener that leaves the transport characteristics intact.
+//   - Measurement runs across several origins and ports at once — cleartext
+//     H1, H1-TLS, H2, H3 bootstrap, H3/QUIC, and a WebSocket — and the
+//     credential has to be coherent across all of them, including for the
+//     native client, which holds a bearer grant rather than a cookie. A
+//     cookie-issuing proxy in front of one origin cannot express that.
+//
+// So the boundary is in-process, applied outermost on every listener
+// (listeners.go), and the five explicit Enforce call sites are deliberately
+// not collapsed into a loop: they are the enforcement audit.
+//
+// What is still delegated is everything a library does better: OIDC discovery
+// and token verification (coreos/go-oidc), the OAuth2 exchange (x/oauth2),
+// and password hashing (x/crypto/argon2). What is written here is what no
+// library provides safely for this shape: the session store, the CSRF and
+// origin policy, the enforcement boundary itself, and the native-client
+// grant flow.
 package auth
 
 import (
