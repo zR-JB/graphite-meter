@@ -686,13 +686,13 @@ func TestActivate_NetworkReset(t *testing.T) {
 func TestAuthTokenResultIsBoundToCurrentServer(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.BaseURL = "https://new.example"
-	next, _ := m.Update(authTokenMsg{token: "secret", origin: "https://old.example"})
+	next, _ := m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://old.example"})
 	m = next.(model)
 	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
 		t.Fatal("stale authorization result was retained")
 	}
 
-	next, _ = m.Update(authTokenMsg{token: "secret", origin: "https://new.example"})
+	next, _ = m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://new.example"})
 	m = next.(model)
 	if m.cfg.AuthToken != "secret" || m.cfg.AuthOrigin != "https://new.example" {
 		t.Fatal("matching authorization result was not retained")
@@ -1332,5 +1332,44 @@ func BenchmarkViewComplete(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		benchmarkView = m.View()
+	}
+}
+
+// A browser approval stays outstanding for up to two minutes. If the operator
+// switches servers meanwhile, the detached poll must not be able to mark the
+// newer, healthy preparation as failed.
+func TestStaleAuthMessagesDoNotClobberNewerPreparation(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.prepareSeq = 2
+	m.prepareStatus = "ready"
+
+	updated, _ := m.Update(authChallengeMsg{seq: 1, err: errors.New("stale challenge")})
+	m = updated.(model)
+	if m.prepareStatus != "ready" || m.prepareError != "" {
+		t.Fatalf("stale challenge error changed state to %q %q", m.prepareStatus, m.prepareError)
+	}
+
+	updated, _ = m.Update(authTokenMsg{seq: 1, err: errors.New("stale poll")})
+	m = updated.(model)
+	if m.prepareStatus != "ready" || m.prepareError != "" {
+		t.Fatalf("stale poll error changed state to %q %q", m.prepareStatus, m.prepareError)
+	}
+
+	updated, _ = m.Update(authTokenMsg{seq: 1, token: "grant", origin: "https://elsewhere.example"})
+	m = updated.(model)
+	if m.cfg.AuthToken != "" {
+		t.Fatal("stale grant was adopted")
+	}
+}
+
+func TestCurrentAuthMessagesStillPublishFailure(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.prepareSeq = 2
+	m.prepareStatus = "authorizing"
+
+	updated, _ := m.Update(authTokenMsg{seq: 2, err: errors.New("browser approval timed out")})
+	m = updated.(model)
+	if m.prepareStatus != "failed" || !strings.Contains(m.prepareError, "browser approval timed out") {
+		t.Fatalf("current poll failure = %q %q", m.prepareStatus, m.prepareError)
 	}
 }

@@ -119,10 +119,16 @@ func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 	return login, nil
 }
 
+// Poll waits for the browser approval, returning the grant. Transport errors
+// are retried rather than surfaced immediately — the server may be restarting
+// while the operator is still in the browser — but the last one is retained so
+// a deadline reports why the wait failed instead of a bare
+// "context deadline exceeded".
 func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	defer p.close()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var lastErr error
 	for {
 		body, _ := json.Marshal(map[string]string{"verifier": p.verifier})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, bytes.NewReader(body))
@@ -131,6 +137,7 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		res, err := p.client.Do(req)
+		lastErr = err
 		if err == nil {
 			var out struct {
 				Token string `json:"token"`
@@ -146,7 +153,13 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return "", ctx.Err()
+			}
+			if lastErr != nil {
+				return "", fmt.Errorf("server unreachable while waiting for browser approval: %w", lastErr)
+			}
+			return "", errors.New("browser approval timed out")
 		case <-ticker.C:
 		}
 	}

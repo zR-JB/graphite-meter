@@ -82,9 +82,15 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(clone)
 }
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
-	u, _ := url.Parse(cfg.AuthOrigin)
 	token := cfg.authToken()
-	client := &http.Client{Transport: authTransport{token: token, hostname: u.Hostname(), base: base}}
+	// An unparseable origin leaves the pinned hostname empty, which makes
+	// authTransport refuse every request rather than send the grant to a host
+	// it cannot name.
+	var hostname string
+	if u, err := url.Parse(cfg.AuthOrigin); err == nil {
+		hostname = u.Hostname()
+	}
+	client := &http.Client{Transport: authTransport{token: token, hostname: hostname, base: base}}
 	if token != "" {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")

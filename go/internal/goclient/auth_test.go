@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAuthenticationLoginURLAcceptsCanonicalHostnameOnAnotherPort(t *testing.T) {
@@ -139,5 +140,73 @@ func TestClassifyAuthFailureDetectsRevokedGrant(t *testing.T) {
 	var authErr *AuthRequiredError
 	if !errors.As(err, &authErr) || authErr.URL != "https://meter.example/login" {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+// An AuthOrigin that does not parse used to be dereferenced blind, taking the
+// client down. It must instead leave the pinned hostname empty — which, with
+// no grant to send, means an ordinary unauthenticated request.
+func TestAuthenticatedClientSurvivesUnparseableOrigin(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.BaseURL = "https://meter.example"
+	cfg.AuthToken = "secret"
+	cfg.AuthOrigin = "https://meter.example\x7f:bad"
+	seen := "unset"
+	client := authenticatedClient(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		seen = r.Header.Get("Authorization")
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
+	}))
+	req, _ := http.NewRequest(http.MethodGet, "https://meter.example/probe", nil)
+	if _, err := client.Do(req); err != nil {
+		t.Fatal(err)
+	}
+	if seen != "" {
+		t.Fatalf("authorization=%q, want no grant", seen)
+	}
+}
+
+// Poll retries transport errors, but a deadline must report why the wait
+// failed rather than a bare "context deadline exceeded".
+func TestPollSurfacesLastTransportErrorOnDeadline(t *testing.T) {
+	p := &PendingAuthorization{
+		verifier: "verifier", tokenURL: "https://meter.example/auth/cli/token", close: func() {},
+		client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("connection refused")
+		})},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := p.Poll(ctx)
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("err=%v, want the retained transport error", err)
+	}
+}
+
+func TestPollReportsTimeoutWhenTheServerKeptAnswering(t *testing.T) {
+	p := &PendingAuthorization{
+		verifier: "verifier", tokenURL: "https://meter.example/auth/cli/token", close: func() {},
+		client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"pending"}`)), Header: http.Header{}, Request: r}, nil
+		})},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := p.Poll(ctx)
+	if err == nil || !strings.Contains(err.Error(), "browser approval timed out") {
+		t.Fatalf("err=%v, want a timeout the operator can act on", err)
+	}
+}
+
+func TestPollPropagatesCancellation(t *testing.T) {
+	p := &PendingAuthorization{
+		verifier: "verifier", tokenURL: "https://meter.example/auth/cli/token", close: func() {},
+		client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"pending"}`)), Header: http.Header{}, Request: r}, nil
+		})},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.Poll(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v, want context.Canceled", err)
 	}
 }
