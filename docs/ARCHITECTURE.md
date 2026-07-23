@@ -291,7 +291,7 @@ the primary summary.
 | `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                       |
 | `ping-worker.ts`            | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread.                                                               |
-| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by both the upload worker and the experimental chunked-download path. |
+| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                   |
 
 ### Testing
 
@@ -299,10 +299,6 @@ Pure logic uses Bun unit tests; browser behavior uses Playwright in Chromium and
 and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
-
-## Current experimental feature
-
-- **Chunked download** is an opt-in adaptive-chunk alternative to long streams.
 
 ## Reserved contract surface
 

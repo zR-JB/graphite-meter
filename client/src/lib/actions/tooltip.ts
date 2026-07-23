@@ -276,4 +276,12 @@ export const JARGON = {
     "Connection profile selects the physical first hop. Local Ethernet uses a 1500-byte MTU, loopback has no physical wire, and the tunnel preset uses a 1420-byte inner MTU with 60 bytes of encapsulation.",
   compTransport:
     "Automatic reads the browser-facing protocol from Resource Timing, so HTTPS and a reverse proxy are handled at the correct hop. Expert overrides are available for testing unusual HTTP/QUIC paths.",
+  unitBits:
+    "Bits per second — Mbit/s, Gbit/s. How internet plans are sold, so this is what you compare against your contract.",
+  unitBytes:
+    "Bytes per second — MB/s, GB/s. How download managers report speed. One byte is eight bits, so these numbers are 8× smaller.",
+  unitDecimal:
+    "SI prefixes, 1000 per step — kbit/s, Mbit/s, Gbit/s. The convention for network rates.",
+  unitBinary:
+    "IEC prefixes, 1024 per step — Kibit/s, Mibit/s, Gibit/s. The convention for memory and file sizes; the same speed reads about 2.4% lower per step than decimal.",
 } as const;

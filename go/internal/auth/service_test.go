@@ -228,10 +228,13 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 // The pre-paint theme script is only allowed to run because the CSP pins its
 // digest, so every page must ship the exact bytes that digest covers.
 func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
-	sum := sha256.Sum256([]byte(authThemeJS))
-	pin := "script-src 'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	digest := func(asset string) string {
+		sum := sha256.Sum256([]byte(asset))
+		return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	}
+	pin := "script-src " + digest(authThemeJS) + " " + digest(authPendingJS)
 	if policy := authPageCSP(""); !strings.Contains(policy, pin) {
-		t.Fatalf("CSP %q does not pin the embedded theme script", policy)
+		t.Fatalf("CSP %q does not pin both embedded scripts", policy)
 	}
 
 	pages := map[string]struct {
@@ -248,16 +251,47 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		_, after, found := strings.Cut(rendered.String(), "<script>")
-		script, closed := "", false
-		if found {
-			script, _, closed = strings.Cut(after, "</script>")
+		// Every rendered script must be byte-identical to a hashed asset, or
+		// the CSP blocks it: html/template's JS lexer would otherwise strip
+		// the comments the digests cover.
+		rest := rendered.String()
+		scripts := 0
+		for {
+			_, after, found := strings.Cut(rest, "<script>")
+			if !found {
+				break
+			}
+			script, remainder, closed := strings.Cut(after, "</script>")
+			if !closed {
+				t.Fatalf("%s renders an unterminated inline script", name)
+			}
+			if script != authThemeJS && script != authPendingJS {
+				t.Fatalf("%s script does not match a digest pinned in the CSP", name)
+			}
+			scripts++
+			rest = remainder
 		}
-		if !closed {
+		if scripts == 0 {
 			t.Fatalf("%s renders no inline script", name)
 		}
-		if script != authThemeJS {
-			t.Fatalf("%s script does not match the digest pinned in the CSP", name)
+	}
+}
+
+func TestFormPagesCarryTheSubmitScript(t *testing.T) {
+	pages := map[string]struct {
+		tmpl *template.Template
+		data any
+	}{
+		"login": {loginTemplate, loginView{Styles: authStyles, Password: true, OIDC: true, Provider: "Provider"}},
+		"cli":   {cliTemplate, map[string]any{"Styles": authStyles, "Code": "ABCD-1234", "Challenge": "c", "CSRF": "t"}},
+	}
+	for name, page := range pages {
+		var rendered bytes.Buffer
+		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !strings.Contains(rendered.String(), authPendingJS) {
+			t.Errorf("%s submits a form without the pending-state script", name)
 		}
 	}
 }
@@ -820,6 +854,7 @@ func TestGeneratedAuthAssetsAreCurrent(t *testing.T) {
 	for path, generated := range map[string]string{
 		"../../../client/src/auth/auth.css":      authCSS,
 		"../../../client/src/auth/theme.js":      authThemeJS,
+		"../../../client/src/auth/pending.js":    authPendingJS,
 		"../../../client/src/auth/login.tmpl":    loginHTML,
 		"../../../client/src/auth/cli.tmpl":      cliHTML,
 		"../../../client/src/auth/cli-done.tmpl": cliDoneHTML,

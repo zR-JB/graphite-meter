@@ -6,9 +6,12 @@ A reverse proxy introduces two independent protocol hops:
 browser or TUI  <-- H1 / H2 / H3 -->  proxy  <-- usually clear H1 -->  Graphite Meter
 ```
 
-Graphite Meter advertises the proxy origin once as `negotiated`. The browser reports its actual proxy-facing H1/H2/H3 protocol, while `/probe` separately reports what reached Graphite Meter. A proxy may own TLS, ALPN, HTTP/3 Alt-Svc, and ports 80/443 without changing the clear H1 upstream.
+Graphite Meter advertises the proxy origin once as `negotiated`. The browser reports its actual
+proxy-facing H1/H2/H3 protocol, while `/probe` separately reports what reached Graphite Meter. A
+proxy may own TLS, ALPN, HTTP/3 Alt-Svc, and ports 80/443 without changing the clear H1 upstream.
 
-## Proxy-only deployment
+The server-side setting is small (full reference:
+[CONFIGURATION.md](CONFIGURATION.md#advertised-endpoints-and-public-origins)):
 
 ```env
 GM_ADVERTISED_NATIVE_ENDPOINTS=none
@@ -16,69 +19,95 @@ GM_PUBLIC_ORIGINS=self
 GM_TRUSTED_PROXIES=172.30.0.0/24
 ```
 
-Use `GM_PUBLIC_THROUGHPUT_ORIGINS` when the proxy cannot tunnel WebSockets. Use `GM_PUBLIC_LATENCY_ORIGINS` for a separate WebSocket origin. To expose deterministic native protocol tests as well, leave the desired native endpoints advertised and add `GM_PUBLIC_ORIGINS=self`.
+Use `GM_PUBLIC_THROUGHPUT_ORIGINS` when the proxy cannot tunnel WebSockets, and
+`GM_PUBLIC_LATENCY_ORIGINS` for a separate WebSocket origin. To expose deterministic native
+protocol tests as well, leave the desired native endpoints advertised alongside
+`GM_PUBLIC_ORIGINS=self`.
 
-The browser discovers everything through same-origin `/preflight`; it does not need a separate preflight URL. An advertised direct native origin is fetched cross-origin using Graphite Meter's CORS policy.
-
-Browser WebSocket validation is based on the actual `HI`/`READY` exchange, not the HTTP version of an unrelated `/probe` request. The native TUI's WebSocket library uses HTTP/1.1 Upgrade, so its public proxy endpoint must accept H1 Upgrade even when normal proxy traffic negotiates H2.
+The browser discovers everything through same-origin `/preflight`. The native TUI's WebSocket
+library uses HTTP/1.1 Upgrade, so its proxy endpoint must accept H1 Upgrade even when normal
+proxy traffic negotiates H2.
 
 ## nginx
 
+Every directive below changes an nginx default that would otherwise break measurement or the
+trust model; nothing is decorative.
+
 ```nginx
-location = /upload/progress {
-    proxy_pass http://graphite-meter:7246;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Forwarded "";
-    proxy_set_header X-Forwarded-For "";
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_buffering off;
-    proxy_cache off;
-    gzip off;
+# Forward WebSocket upgrades; close upstream connections otherwise.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
 }
 
-location / {
-    proxy_pass http://graphite-meter:7246;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header Forwarded "";
-    proxy_set_header X-Forwarded-For "";
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $http_host;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-}
-```
+server {
+    # listen / TLS as usual …
 
-## Caddy
+    location / {
+        proxy_pass http://graphite-meter:7246;
 
-```caddyfile
-meter.example {
-    reverse_proxy graphite-meter:7246 {
-        header_up -Forwarded
-        header_up -X-Forwarded-For
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
+        # nginx speaks HTTP/1.0 upstream by default; WebSockets and streamed
+        # responses need 1.1.
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # nginx sends $proxy_host as Host and no forwarding headers by default.
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+
+        # Client-supplied forwarding headers must not reach the server: its
+        # trust model reads X-Real-IP from the proxy alone.
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-For "";
+
+        # Response buffering is on by default and would batch the live
+        # /upload/progress NDJSON stream.
+        proxy_buffering off;
     }
 }
 ```
 
-Caddy can offer public H1/H2/H3 while using clear H1 upstream. Its Alt-Svc header describes Caddy's UDP 443 service; Graphite Meter's native H3 bootstrap remains independent.
+Not needed on stock nginx: `proxy_cache` is off unless a cache zone is configured, and proxied
+responses are not gzipped unless `gzip_proxied` says so.
+
+## Caddy
+
+Caddy streams responses, proxies WebSockets, and (since 2.5) sets `X-Forwarded-Proto` and
+`X-Forwarded-Host` itself while distrusting incoming values from untrusted peers. What it does
+not do by default:
+
+```caddyfile
+meter.example {
+    reverse_proxy graphite-meter:7246 {
+        # The address header the server trusts.
+        header_up X-Real-IP {remote_host}
+        # Caddy would append to X-Forwarded-For; the server wants client
+        # forwarding headers removed entirely.
+        header_up -Forwarded
+        header_up -X-Forwarded-For
+    }
+}
+```
+
+Caddy's Alt-Svc header describes Caddy's own UDP 443 HTTP/3 service; Graphite Meter's native H3
+bootstrap remains independent.
 
 ## Measurement requirements
 
 - WebSocket Upgrade/CONNECT must reach `/ws/ping`.
 - `/upload/progress` is live NDJSON and must not be buffered, cached, compressed, or transformed.
-- Preserve `Host` and standard forwarding headers.
-- Set `GM_TRUSTED_PROXIES` only to proxy peers as seen by Graphite Meter. Trusted headers affect client identity and admission accounting, not endpoint discovery.
-- Apply public connection, handshake, packet-rate, and bandwidth policy at the proxy or firewall. Application bandwidth throttling corrupts measurements.
+- Preserve `Host` and set the forwarding headers as above.
+- Set `GM_TRUSTED_PROXIES` only to proxy peers as Graphite Meter sees them. Trusted headers
+  affect client identity and admission accounting, not endpoint discovery.
+- Apply connection, handshake, packet-rate, and bandwidth policy at the proxy or firewall.
+  Application bandwidth throttling corrupts measurements.
 
-When application authentication is enabled, the trusted proxy must set `X-Real-IP` from its connection peer, remove `Forwarded` and `X-Forwarded-For`, and overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`. Its socket CIDR must be listed in `GM_TRUSTED_PROXIES`, and the reconstructed origin must exactly match `GM_AUTH_PUBLIC_URL`. Redact the query string for `/auth/oidc/callback` from access and error logs. Do not also apply provider `forward_auth`; Graphite Meter owns its OIDC redirect and session boundary.
-
-The selected `/probe` reports normalized client address, address source, and the proxy-to-server protocol. The UI labels this separately from the browser-to-proxy protocol.
-
-See [CONFIGURATION.md](CONFIGURATION.md) for the complete environment reference and native/hybrid examples.
+With authentication enabled, the trusted proxy must set `X-Real-IP` from its connection peer,
+remove `Forwarded` and `X-Forwarded-For`, and overwrite `X-Forwarded-Proto` and
+`X-Forwarded-Host` — exactly what the examples above do. Its socket CIDR must be in
+`GM_TRUSTED_PROXIES`, and the reconstructed origin must match `GM_AUTH_PUBLIC_URL` exactly.
+Redact the `/auth/oidc/callback` query string from access and error logs. Do not add provider
+`forward_auth`; Graphite Meter owns its OIDC redirect and session boundary.

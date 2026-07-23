@@ -228,6 +228,10 @@ export class RealBackend implements RunnerBackend {
   });
 
   #disposed = false;
+  /** False while the page is hidden: the idle keepalive stays stopped so the
+   *  browser can park the tab. A run overrides it — starting one is a
+   *  deliberate foreground act. */
+  #background = true;
 
   constructor(opts: RealBackendOptions = {}) {
     this.#opts = opts;
@@ -1146,7 +1150,18 @@ export class RealBackend implements RunnerBackend {
     // The run (or abort) just ended — resume the idle keepalive so the
     // connectivity pill stays live again instead of freezing at its
     // last-known state until the next probe/run.
-    if (!this.#disposed) this.#idle.start();
+    if (!this.#disposed && this.#background) this.#idle.start();
+  }
+
+  /** Suspend the idle keepalive while the page is hidden. Stopping it closes
+   *  the ping socket and its worker, which is what lets the browser park the
+   *  tab; resuming re-probes, so the pill reports a fresh edge. */
+  setBackgroundActivity(enabled: boolean): void {
+    if (this.#background === enabled) return;
+    this.#background = enabled;
+    if (this.#disposed) return;
+    if (enabled) this.#idle.start();
+    else this.#idle.stop();
   }
 
   dispose(): void {
