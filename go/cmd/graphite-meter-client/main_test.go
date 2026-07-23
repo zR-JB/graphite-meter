@@ -544,14 +544,14 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 		t.Errorf("edit value on re-entry = %q, want the unchanged BaseURL %q (not the cancelled edit)", m.edit.input.Value(), baseline)
 	}
 
-	next, _ = m.handleKey(keyRunes("y"))
+	next, _ = m.handleKey(keyRunes("9"))
 	m = next.(model)
 	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if m.edit.kind != editNone {
 		t.Errorf("edit.kind after commit = %v, want editNone", m.edit.kind)
 	}
-	if want := baseline + "y"; m.cfg.BaseURL != want {
+	if want := baseline + "9"; m.cfg.BaseURL != want {
 		t.Errorf("BaseURL after committing the re-edit = %q, want %q", m.cfg.BaseURL, want)
 	}
 }
@@ -976,16 +976,69 @@ func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 	m.section = sectionServers
 	m.row = len(serverPresets)
 
-	next, _ := m.handleKey(keyRunes("h"))
-	edited := next.(model)
-	if edited.edit.kind != editURL || edited.edit.input.Value() != "h" {
-		t.Errorf("typing on the Custom URL row gave kind=%v value=%q, want editURL seeded with %q", edited.edit.kind, edited.edit.input.Value(), "h")
+	// Every printable rune seeds the editor — including r, v, j, k, and q,
+	// which are bindings everywhere else: a hostname may start with any of
+	// them.
+	for _, seed := range []string{"h", "r", "v", "j", "k", "q", "?"} {
+		next, _ := m.handleKey(keyRunes(seed))
+		edited := next.(model)
+		if edited.edit.kind != editURL || edited.edit.input.Value() != seed {
+			t.Errorf("typing %q on the Custom URL row gave kind=%v value=%q, want editURL seeded with it", seed, edited.edit.kind, edited.edit.input.Value())
+		}
+		if edited.mode != modeConfigure {
+			t.Errorf("typing %q left configure mode", seed)
+		}
+	}
+
+	// ctrl+c is not a rune and still quits.
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Error("ctrl+c on the Custom URL row returned no quit cmd")
 	}
 
 	m.row = 0 // a preset row is not a text field
-	next, _ = m.handleKey(keyRunes("h"))
+	next, _ := m.handleKey(keyRunes("h"))
 	if kept := next.(model); kept.edit.kind != editNone {
 		t.Errorf("typing on a preset row started edit %v, want none", kept.edit.kind)
+	}
+}
+
+func TestCommitEdit_RejectsANonURL(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	before := m.cfg.BaseURL
+	for _, raw := range []string{"not a url", "meter.example:7246", "ftp://meter.example", "http://"} {
+		m.edit = beginEdit(editURL, "url", raw)
+		m.commitEdit()
+		if m.edit.kind != editURL || m.edit.err == "" {
+			t.Errorf("committing %q: kind=%v err=%q, want the field kept open with a reason", raw, m.edit.kind, m.edit.err)
+		}
+		if m.cfg.BaseURL != before {
+			t.Errorf("committing %q changed BaseURL to %q", raw, m.cfg.BaseURL)
+		}
+	}
+}
+
+func TestUpdate_StaleRunMessagesAreDropped(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.runSeq = 2
+	m.events = make(chan goclient.Event)
+
+	got, cmd := m.Update(eventsMsg{seq: 1, events: []goclient.Event{{Kind: goclient.EventStage, Stage: "download"}}})
+	mm := got.(model)
+	if mm.stage != "" || cmd != nil {
+		t.Errorf("stale eventsMsg applied: stage=%q cmd=%v, want dropped", mm.stage, cmd)
+	}
+
+	got, _ = m.Update(doneMsg{seq: 1, err: errors.New("boom")})
+	mm = got.(model)
+	if mm.complete || mm.err != nil {
+		t.Errorf("stale doneMsg applied: complete=%v err=%v, want dropped", mm.complete, mm.err)
+	}
+
+	got, _ = m.Update(doneMsg{seq: 2, err: nil})
+	if mm = got.(model); !mm.complete {
+		t.Error("current-run doneMsg was not applied")
 	}
 }
 
@@ -1402,11 +1455,11 @@ func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
 	m.events = events
 	m.complete = true
 
-	got, cmd := m.Update(eventsMsg{{
+	got, cmd := m.Update(eventsMsg{events: []goclient.Event{{
 		Kind:   goclient.EventResult,
 		Stage:  "bidirectional",
 		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24},
-	}})
+	}}})
 	if cmd == nil {
 		t.Fatal("completed runs must keep waiting for buffered events")
 	}
@@ -1451,10 +1504,10 @@ func TestThroughputRateAndScale(t *testing.T) {
 
 func TestEventsMsgAppliesBatch(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	got, _ := m.Update(eventsMsg{
+	got, _ := m.Update(eventsMsg{events: []goclient.Event{
 		{Kind: goclient.EventStage, Stage: "download"},
 		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 1000}},
-	})
+	}})
 	mm := got.(model)
 	if mm.stage != "download" || mm.rates[goclient.Down].BytesPerSec != 1000 {
 		t.Fatalf("batch was not applied atomically: stage=%q rates=%+v", mm.stage, mm.rates)
@@ -1493,8 +1546,8 @@ func TestUpdate_WindowSize(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	got, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	mm := got.(model)
-	if mm.width != 100 || mm.height != 40 {
-		t.Errorf("width=%d height=%d, want 100/40", mm.width, mm.height)
+	if mm.width != 100 {
+		t.Errorf("width=%d, want 100", mm.width)
 	}
 }
 
@@ -1511,8 +1564,8 @@ func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 
 	got, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 45})
 	mm := got.(model)
-	if mm.width != 120 || mm.height != 45 {
-		t.Errorf("width=%d height=%d, want 120/45", mm.width, mm.height)
+	if mm.width != 120 {
+		t.Errorf("width=%d, want 120", mm.width)
 	}
 	if mm.mode != modeRun || mm.stage != "download" || mm.status != "measure" {
 		t.Errorf("resize disturbed run state: mode=%v stage=%q status=%q", mm.mode, mm.stage, mm.status)
@@ -1554,10 +1607,10 @@ func TestUpdate_EventsMsg(t *testing.T) {
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
 
-	got, cmd := m.Update(eventsMsg{
+	got, cmd := m.Update(eventsMsg{events: []goclient.Event{
 		{Kind: goclient.EventStage, Stage: "x"},
 		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 42}},
-	})
+	}})
 	mm := got.(model)
 	if mm.stage != "x" {
 		t.Errorf("stage = %q, want x", mm.stage)
@@ -1569,7 +1622,7 @@ func TestUpdate_EventsMsg(t *testing.T) {
 		t.Error("expected a non-nil cmd to keep waiting for more events")
 	}
 
-	got, cmd = mm.Update(eventsMsg{{Kind: goclient.EventComplete}})
+	got, cmd = mm.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventComplete}}})
 	mm = got.(model)
 	if !mm.complete {
 		t.Error("expected complete after EventComplete")
@@ -1585,25 +1638,26 @@ func TestWaitEventsDrainsBuffered(t *testing.T) {
 		events <- goclient.Event{Kind: goclient.EventStage, Stage: string(rune('0' + i))}
 	}
 	close(events)
-	msg, ok := waitEvents(events)().(eventsMsg)
-	if !ok || len(msg) != cap(events) {
-		t.Fatalf("waitEvents returned %T with %d events", msg, len(msg))
+	msg, ok := waitEvents(0, events)().(eventsMsg)
+	if !ok || len(msg.events) != cap(events) {
+		t.Fatalf("waitEvents returned %T with %d events", msg, len(msg.events))
 	}
 }
 
 func BenchmarkUpdateEventBatch(b *testing.B) {
-	events := make(eventsMsg, 64)
-	for i := range events {
+	batch := make([]goclient.Event, 64)
+	for i := range batch {
 		direction := goclient.Down
 		if i%2 == 1 {
 			direction = goclient.Up
 		}
-		events[i] = goclient.Event{
+		batch[i] = goclient.Event{
 			Kind:       goclient.EventThroughput,
 			Direction:  direction,
 			Throughput: goclient.ThroughputSample{BytesPerSec: float64(100_000_000 + i)},
 		}
 	}
+	events := eventsMsg{events: batch}
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
@@ -1620,7 +1674,6 @@ var benchmarkView string
 func BenchmarkViewConfigure(b *testing.B) {
 	m := newModel(goclient.DefaultConfig())
 	m.width = 100
-	m.height = 30
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1632,7 +1685,6 @@ func BenchmarkViewTransfer(b *testing.B) {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
 	m.width = 100
-	m.height = 30
 	m.stage = "bidirectional"
 	m.status = "measure"
 	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000, TotalBytes: 1 << 30}
@@ -1654,7 +1706,6 @@ func BenchmarkViewComplete(b *testing.B) {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
 	m.width = 100
-	m.height = 30
 	m.complete = true
 	m.status = "complete"
 	m.results = []goclient.Result{{

@@ -91,15 +91,19 @@ func (m model) header(w int) string {
 	return line + "\n" + mutedStyle.Render("native go client "+goclient.Version) + "  " + accentStyle.Render(target)
 }
 
-// splitColumns divides w into two panels separated by a two-cell gutter. Below
-// 96 cells neither panel stays readable side by side, so both take the full
-// width and the caller stacks them.
+// splitColumns divides w into two bordered panels separated by a two-cell
+// gutter. Each panel's border draws two columns outside its lipgloss width, so
+// the content widths split w minus the gutter and both border pairs — the pair
+// then renders exactly w columns wide. Below 96 cells neither panel stays
+// readable side by side, so both take the full width and the caller stacks
+// them.
 func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 	if w < 96 {
 		return w, w, false
 	}
-	leftW = (w - 2) / 2
-	return leftW, w - leftW - 2, true
+	inner := w - 6
+	leftW = inner / 2
+	return leftW, inner - leftW, true
 }
 
 func (m model) configView(w, top int) string {
@@ -111,7 +115,9 @@ func (m model) configView(w, top int) string {
 	// The menu panel opens two lines under the tab bar, whatever the terminal
 	// width: the summary panel is beside it or below it, never above.
 	m.lay.rowTop = top + 2 + panelContentTop
-	m.lay.rowRight = shellMargin + leftW
+	// The menu panel's rendered span includes the border columns outside its
+	// lipgloss width.
+	m.lay.rowRight = shellMargin + leftW + 2
 	menu := panelStyle.Width(leftW).Render(m.sectionView(leftW - 4))
 	summary := panelStyle.Width(rightW).Render(m.planView(rightW - 4))
 	if twoCol {

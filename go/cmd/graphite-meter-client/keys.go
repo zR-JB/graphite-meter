@@ -27,9 +27,9 @@ type keymap struct {
 }
 
 var keys = keymap{
-	sections: key.NewBinding(key.WithKeys("tab", "shift+tab", "right", "left"), key.WithHelp("tab/←/→", "section")),
-	rows:     key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "row")),
-	activate: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "open")),
+	sections: key.NewBinding(key.WithKeys("tab", "shift+tab", "right", "left"), key.WithHelp("tab/⇧tab/←/→", "section")),
+	rows:     key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓/j/k", "row")),
+	activate: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter/space", "open")),
 	run:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "run")),
 	verify:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "recheck")),
 	cancel:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,8 +20,17 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-type eventsMsg []goclient.Event
-type doneMsg struct{ err error }
+// eventsMsg and doneMsg carry the sequence of the run that produced them, so
+// a batch read from a finished run's channel cannot land in a later run's
+// model — the same guard preparationMsg carries as prepareSeq.
+type eventsMsg struct {
+	seq    int
+	events []goclient.Event
+}
+type doneMsg struct {
+	seq int
+	err error
+}
 type preparationMsg struct {
 	seq        int
 	connection *goclient.PreparedConnection
@@ -206,10 +216,9 @@ var serverPresets = []serverPreset{
 }
 
 type model struct {
-	cfg    goclient.Config
-	mode   mode
-	width  int
-	height int
+	cfg   goclient.Config
+	mode  mode
+	width int
 
 	section section
 	row     int
@@ -225,6 +234,9 @@ type model struct {
 	// it, so the clocks and the frames advance together.
 	now time.Time
 
+	// runSeq stamps every message a run emits; a superseded run's messages
+	// carry an older sequence and are dropped.
+	runSeq int
 	events <-chan goclient.Event
 	done   <-chan error
 	cancel context.CancelFunc
@@ -324,7 +336,7 @@ func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
 }
 
-func waitEvents(events <-chan goclient.Event) tea.Cmd {
+func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := <-events
 		if !ok {
@@ -335,19 +347,19 @@ func waitEvents(events <-chan goclient.Event) tea.Cmd {
 			select {
 			case e, ok := <-events:
 				if !ok {
-					return eventsMsg(batch)
+					return eventsMsg{seq: seq, events: batch}
 				}
 				batch = append(batch, e)
 			default:
-				return eventsMsg(batch)
+				return eventsMsg{seq: seq, events: batch}
 			}
 		}
 	}
 }
 
-func waitDone(done <-chan error) tea.Cmd {
+func waitDone(seq int, done <-chan error) tea.Cmd {
 	return func() tea.Msg {
-		return doneMsg{err: <-done}
+		return doneMsg{seq: seq, err: <-done}
 	}
 }
 
@@ -355,7 +367,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -443,14 +454,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = "Client approved. Verifying authenticated transports…"
 		return m.reprepare(nil)
 	case eventsMsg:
+		if msg.seq != m.runSeq {
+			return m, nil
+		}
 		m.now = time.Now()
-		for _, event := range msg {
+		for _, event := range msg.events {
 			m.apply(event)
 		}
 		if m.mode == modeRun && m.err == nil {
-			return m, waitEvents(m.events)
+			return m, waitEvents(m.runSeq, m.events)
 		}
 	case doneMsg:
+		if msg.seq != m.runSeq {
+			return m, nil
+		}
 		var authErr *goclient.AuthRequiredError
 		if errors.As(msg.err, &authErr) {
 			if m.cancel != nil {
@@ -493,6 +510,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
+	case m.urlRowRune(msg):
+		// On the Custom URL row every printable rune is text, not a binding:
+		// a hostname may start with r, q, or j. The row opens its editor
+		// carrying the rune, and a bracketed paste lands whole the same way.
+		// ctrl+c still quits and the arrow/tab/enter keys still navigate.
+		m.edit = beginEdit(editURL, "url", string(msg.Runes))
+		m.notice = "Editing server URL. Enter applies, esc cancels."
+		return m, nil
 	case key.Matches(msg, keys.quit):
 		if m.cancel != nil {
 			m.cancel()
@@ -526,14 +551,16 @@ func (m model) handleConfigureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startRun()
 	case key.Matches(msg, keys.verify):
 		return m.reprepare(nil)
-	case m.section == sectionServers && m.row == len(serverPresets) && msg.Type == tea.KeyRunes && !msg.Alt:
-		// The custom URL row is a text field, so runes it receives while merely
-		// selected open the editor carrying them. A bracketed paste arrives as
-		// one rune batch and lands whole.
-		m.edit = beginEdit(editURL, "url", string(msg.Runes))
-		m.notice = "Editing server URL. Enter applies, esc cancels."
 	}
 	return m, nil
+}
+
+// urlRowRune reports whether msg is printable text typed or pasted on the
+// selected Custom URL row of the configure screen.
+func (m model) urlRowRune(msg tea.KeyMsg) bool {
+	return m.mode == modeConfigure && !m.cancelPrompt &&
+		m.section == sectionServers && m.row == len(serverPresets) &&
+		msg.Type == tea.KeyRunes && !msg.Alt
 }
 
 func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -661,6 +688,10 @@ func (m *model) commitEdit() {
 	case editURL:
 		if raw == "" {
 			m.editRejected("Server URL cannot be empty.")
+			return
+		}
+		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
 			return
 		}
 		if raw != m.cfg.BaseURL {
@@ -829,6 +860,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	}()
 
 	m.mode = modeRun
+	m.runSeq++
 	m.events = events
 	m.done = done
 	m.cancel = cancel
@@ -847,7 +879,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.latency = goclient.LatencySample{}
 	m.stages = plannedStages(cfg)
 	m.notice = "Run started. Press esc to cancel."
-	return m, tea.Batch(waitEvents(events), waitDone(done), m.spin.Tick)
+	return m, tea.Batch(waitEvents(m.runSeq, events), waitDone(m.runSeq, done), m.spin.Tick)
 }
 
 func (m *model) apply(e goclient.Event) {
