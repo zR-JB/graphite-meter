@@ -5,11 +5,21 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
+const (
+	// shellMargin is shellStyle's horizontal margin. Mouse coordinates are
+	// absolute, so hit-testing adds it back.
+	shellMargin = 2
+	// panelContentTop is the distance from a panel's first line to its first
+	// content line: the rounded border plus panelStyle's padding line.
+	panelContentTop = 2
+)
+
 var (
-	shellStyle      = lipgloss.NewStyle().Margin(1, 2)
+	shellStyle      = lipgloss.NewStyle().Margin(1, shellMargin)
 	titleStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57")).Padding(0, 1)
 	pillStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("86")).Padding(0, 1)
 	panelStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(1, 2)
@@ -26,27 +36,59 @@ var (
 	subtleRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
 )
 
+// layout records where View last drew the clickable parts of the configure
+// screen. View takes the model by value, so the record lives behind a pointer
+// every copy shares. Positions are absolute terminal cells.
+type layout struct {
+	tabY     int
+	tabs     []span // one per section, in tab order
+	rowTop   int    // absolute y of the first line of the menu panel's body
+	rowRight int    // first column past the menu panel
+	rows     []int  // absolute y of each menu row, in row order
+}
+
+type span struct{ from, to int }
+
+func (l *layout) reset() {
+	l.tabs = l.tabs[:0]
+	l.rows = l.rows[:0]
+}
+
+// markRow records the menu row about to be appended to a section body of the
+// given lines. Rows render in row order, so their positions land in that order
+// too. The panel wraps its content at w, so a row's position is the wrapped
+// height of everything above it rather than the line count.
+func (l *layout) markRow(lines []string, w int) {
+	wrap := lipgloss.NewStyle().Width(w)
+	offset := 0
+	for _, line := range lines {
+		offset += lipgloss.Height(wrap.Render(line))
+	}
+	l.rows = append(l.rows, l.rowTop+offset)
+}
+
 func (m model) View() string {
-	w := m.width
-	if w < 76 {
-		w = 76
-	}
-	inner := w - 4
-	if inner > 118 {
-		inner = 118
-	}
+	w := m.innerWidth()
+	m.lay.reset()
 
 	var b strings.Builder
-	b.WriteString(m.header(inner))
+	b.WriteString(m.header(w))
 	b.WriteString("\n")
 	if m.mode == modeRun {
-		b.WriteString(m.runView(inner))
+		b.WriteString(m.runView(w))
 	} else {
-		b.WriteString(m.configView(inner))
+		// shellStyle's top margin pushes every drawn line down by one.
+		b.WriteString(m.configView(w, 1+strings.Count(b.String(), "\n")))
 	}
 	b.WriteString("\n")
 	b.WriteString(m.helpView())
 	return shellStyle.Render(b.String())
+}
+
+// innerWidth is the content width inside the shell margin: floored so both
+// panels stay legible, capped so lines do not sprawl on wide terminals.
+func (m model) innerWidth() int {
+	return clamp(m.width-4, 72, 118)
 }
 
 func (m model) header(w int) string {
@@ -77,12 +119,16 @@ func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 	return leftW, w - leftW - 2, true
 }
 
-func (m model) configView(w int) string {
+func (m model) configView(w, top int) string {
 	var b strings.Builder
-	b.WriteString(m.tabBar(w))
+	b.WriteString(m.tabBar(w, top))
 	b.WriteString("\n\n")
 
 	leftW, rightW, twoCol := splitColumns(w)
+	// The menu panel opens two lines under the tab bar, whatever the terminal
+	// width: the summary panel is beside it or below it, never above.
+	m.lay.rowTop = top + 2 + panelContentTop
+	m.lay.rowRight = shellMargin + leftW
 	menu := panelStyle.Width(leftW).Render(m.sectionView(leftW - 4))
 	summary := panelStyle.Width(rightW).Render(m.planView(rightW - 4))
 	if twoCol {
@@ -99,14 +145,19 @@ func (m model) configView(w int) string {
 	return b.String()
 }
 
-func (m model) tabBar(w int) string {
+func (m model) tabBar(w, y int) string {
+	m.lay.tabY = y
+	x := shellMargin
 	parts := make([]string, 0, len(sectionLabels))
 	for i, label := range sectionLabels {
 		style := tabStyle
 		if section(i) == m.section {
 			style = activeTabStyle
 		}
-		parts = append(parts, style.Render(label))
+		tab := style.Render(label)
+		m.lay.tabs = append(m.lay.tabs, span{from: x, to: x + lipgloss.Width(tab)})
+		x += lipgloss.Width(tab)
+		parts = append(parts, tab)
 	}
 	line := lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 	if lipgloss.Width(line) < w {
@@ -141,6 +192,7 @@ func (m model) serversView(w int) string {
 			mark = "●"
 		}
 		line := fmt.Sprintf("%s %-12s %s", mark, preset.name, mutedStyle.Render(preset.url))
+		m.lay.markRow(lines, w)
 		lines = append(lines, m.menuLine(i, line, w))
 		lines = append(lines, mutedStyle.Render("  "+preset.note))
 	}
@@ -151,6 +203,7 @@ func (m model) serversView(w int) string {
 	if m.edit.kind == editURL {
 		custom = "● Custom URL  " + m.edit.input.View() + m.editError()
 	}
+	m.lay.markRow(lines, w)
 	lines = append(lines, m.menuLine(len(serverPresets), custom, w))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -228,6 +281,7 @@ func (m model) editError() string {
 func (m model) listWithTitle(title string, rows []string, w int) string {
 	lines := []string{accentStyle.Render(title)}
 	for i, row := range rows {
+		m.lay.markRow(lines, w)
 		lines = append(lines, m.menuLine(i, row, w))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -383,6 +437,17 @@ func (m model) resultsView(w int) string {
 		))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// finalReport is what the process prints once the alt screen is torn down,
+// which takes everything the TUI drew with it. The ASCII profile keeps the
+// surviving scrollback plain text.
+func (m model) finalReport() string {
+	if !m.complete || len(m.results) == 0 {
+		return ""
+	}
+	lipgloss.SetColorProfile(termenv.Ascii)
+	return m.resultsView(m.innerWidth())
 }
 
 // isLatencyResult reports whether a result carries latency percentiles rather
