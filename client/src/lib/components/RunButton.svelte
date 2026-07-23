@@ -76,6 +76,10 @@
     transform: translateY(-1px);
     filter: brightness(1.04);
   }
+  .engage:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
   .engage.running {
     background: var(--err-soft);
     color: var(--err);

@@ -241,6 +241,10 @@
     font-weight: 700;
     cursor: pointer;
   }
+  button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
   @container (max-width: 360px) {
     .options {
       grid-template-columns: 1fr;

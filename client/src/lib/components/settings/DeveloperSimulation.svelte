@@ -180,6 +180,10 @@
     background: var(--brand-soft);
     color: var(--brand-strong);
   }
+  button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
   button:disabled {
     opacity: 0.45;
     cursor: not-allowed;

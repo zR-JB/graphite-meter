@@ -24,6 +24,8 @@
   --dur-hover: 120ms;
   --dur-slide: 180ms;
 
+  --focus-ring: 2px solid var(--brand);
+
   --canvas: #131518;
   --surface-1: #1c1f23;
   --surface-inset: #0f1012;
@@ -198,7 +200,7 @@ button:disabled {
   cursor: not-allowed;
 }
 :focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+  outline: var(--focus-ring);
   outline-offset: 2px;
 }
 .separator {

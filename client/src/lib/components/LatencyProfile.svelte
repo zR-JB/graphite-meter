@@ -315,7 +315,7 @@
     text-underline-offset: 3px;
   }
   .card-head h3.term:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
     border-radius: var(--radius-xs);
   }

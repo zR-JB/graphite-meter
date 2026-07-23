@@ -112,6 +112,11 @@
   .tab:hover {
     color: var(--text);
   }
+  /* Inside the recessed track: the ring rides the tab's own edge. */
+  .tab:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
   .tab.active {
     background: var(--brand-soft);
     box-shadow: var(--elev-tile);

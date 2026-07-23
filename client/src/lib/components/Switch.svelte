@@ -122,7 +122,7 @@
   }
 
   input:focus-visible + .track {
-    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline: var(--focus-ring);
     outline-offset: 2px;
   }
 

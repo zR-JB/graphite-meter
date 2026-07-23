@@ -335,6 +335,11 @@
   .diagnostics-card summary:hover {
     color: var(--text);
   }
+  /* Full-bleed against a clipping card, so the ring goes inside the edge. */
+  .diagnostics-card summary:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: -2px;
+  }
   .diagnostics {
     display: grid;
     gap: 12px;
@@ -358,6 +363,17 @@
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  button:hover {
+    border-color: color-mix(in srgb, var(--brand) 45%, var(--border-strong));
+    color: var(--brand-strong);
+  }
+  button:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   .sr-status {
     position: absolute;
