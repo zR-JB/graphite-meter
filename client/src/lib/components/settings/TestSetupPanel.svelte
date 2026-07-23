@@ -3,7 +3,7 @@
   import type { RunnerConfig } from "../../runner/contract";
   import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
-  import { JARGON } from "../../actions/tooltip";
+  import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import CompensationEditor from "./CompensationEditor.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
@@ -281,12 +281,14 @@
             type="button"
             class:active={store.unitKind === "bits"}
             aria-pressed={store.unitKind === "bits"}
+            use:tooltip={JARGON.unitBits}
             onclick={() => (store.unitKind = "bits")}>Bits</button
           >
           <button
             type="button"
             class:active={store.unitKind === "bytes"}
             aria-pressed={store.unitKind === "bytes"}
+            use:tooltip={JARGON.unitBytes}
             onclick={() => (store.unitKind = "bytes")}>Bytes</button
           >
         </div>
@@ -298,12 +300,14 @@
             type="button"
             class:active={store.unitBase === "base10"}
             aria-pressed={store.unitBase === "base10"}
+            use:tooltip={JARGON.unitDecimal}
             onclick={() => (store.unitBase = "base10")}>Decimal</button
           >
           <button
             type="button"
             class:active={store.unitBase === "base2"}
             aria-pressed={store.unitBase === "base2"}
+            use:tooltip={JARGON.unitBinary}
             onclick={() => (store.unitBase = "base2")}>Binary</button
           >
         </div>
