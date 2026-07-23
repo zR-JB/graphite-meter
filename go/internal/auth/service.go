@@ -37,8 +37,13 @@ type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial
 //	grants         ≤ 8 per session; deleted with their session.
 //	approvals      ≤ 256 total, ≤ 8 per session, each ≤ 2 minutes; swept on
 //	               every /auth/cli page load and with their session.
-//	attempts       ≤ 2048 addresses, ≤ 5 attempts per address per minute.
-//	globalAttempts ≤ 60 password attempts per minute across all addresses.
+//	attempts       ≤ maxBudgetKeys (2048) keys, ≤ maxAddressAttempts (5) per
+//	               key per minute; keyed per IPv4 address and per IPv6 /64.
+//	globalAttempts ≤ maxGlobalAttempts (60) password attempts per minute
+//	               across all addresses.
+//	exchanges      ≤ maxBudgetKeys keys, ≤ maxAddressExchanges (10) OIDC token
+//	               exchanges per key per minute, keyed the same way.
+//	ceilingLogged  one timestamp per global ceiling; fixed size.
 //	oidc.tx        ≤ 256 transactions total, ≤ 8 per client address, each
 //	               ≤ 10 minutes; swept on every /auth/oidc/start.
 //
@@ -54,7 +59,9 @@ type Service struct {
 	sessions       map[[32]byte]*session
 	grants         map[[32]byte]*session
 	attempts       map[string]loginAttempt
+	exchanges      map[string]loginAttempt
 	globalAttempts []time.Time
+	ceilingLogged  map[string]time.Time
 	approvals      map[string]*cliApproval
 	oidc           *oidcState
 	loginTemplate  *template.Template
@@ -64,7 +71,7 @@ type Service struct {
 }
 
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
-	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
+	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
 	if cfg.Mode == "off" {
 		return s, nil
 	}

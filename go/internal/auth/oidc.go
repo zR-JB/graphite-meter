@@ -19,6 +19,13 @@ import (
 	"golang.org/x/oauth2"
 )
 
+const (
+	// maxOIDCTransactions bounds in-flight authorization requests overall.
+	maxOIDCTransactions = 256
+	// maxClientOIDCTransactions bounds them per client address budget.
+	maxClientOIDCTransactions = 8
+)
+
 type oidcTransaction struct {
 	state, nonce, verifier string
 	browser                [32]byte
@@ -246,7 +253,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
 	}
-	client := addr.String()
+	client := budgetKey(addr)
 	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: bh, expires: s.now().Add(10 * time.Minute), client: client, cliChallenge: r.FormValue("challenge")}
 	o := s.oidc
 	o.mu.Lock()
@@ -262,9 +269,13 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 			perClient++
 		}
 	}
-	if len(o.tx) >= 256 || perClient >= 8 {
+	global := len(o.tx) >= maxOIDCTransactions
+	if global || perClient >= maxClientOIDCTransactions {
 		o.mu.Unlock()
 		s.counters.capacity.Add(1)
+		if global {
+			s.noteCeiling("oidc-transaction", now)
+		}
 		s.oidcLoginFailure(w, r, reasonTransactionCapacity)
 		return
 	}
@@ -333,6 +344,14 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	iss := first(q["iss"])
 	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
 		s.oidcLoginFailure(w, r, reasonResponseIssuer)
+		return
+	}
+	// The exchange is the one anonymous path that produces an outbound request
+	// to the identity provider, which commonly sits on a private network. The
+	// transaction caps above free on use and so bound concurrency, not volume;
+	// this bounds volume.
+	if !s.allowExchange(r) {
+		s.oidcLoginFailure(w, r, reasonExchangeRateLimited)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
