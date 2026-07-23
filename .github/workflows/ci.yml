@@ -120,13 +120,7 @@ jobs:
       # the CSP style hash is derived from the generated CSS, so a drifted
       # stylesheet is a blank login page, not a cosmetic difference.
       - name: Generated auth assets match their source
-        working-directory: go/internal/auth
-        run: |
-          go run ./cmd/authassets
-          if ! git diff --exit-code -- assets_generated.go; then
-            echo "::error::assets_generated.go is stale; run 'go generate ./internal/auth' and commit the result"
-            exit 1
-          fi
+        run: just check-generated
       - name: Test and coverage floor (just server-test)
         run: just server-test
 
@@ -194,7 +188,8 @@ jobs:
       - name: Install browsers
         run: bunx playwright install --with-deps chromium firefox
       - name: Browser accessibility and compatibility
-        run: bun run test:e2e
+        working-directory: .
+        run: just client-e2e
 
   smoke:
     name: Smoke

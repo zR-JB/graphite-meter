@@ -129,6 +129,17 @@ server-check:
     cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
     cd go && go vet ./...
 
+# Regenerate the embedded auth assets and fail if they drift from source. The
+# pre-commit hook and ci.yml both call this recipe.
+check-generated:
+    #!/usr/bin/env sh
+    set -e
+    (cd go/internal/auth && go run ./cmd/authassets)
+    if ! git diff --quiet -- go/internal/auth/assets_generated.go; then
+        echo "assets_generated.go is stale; run 'go generate ./internal/auth' and commit the result"
+        exit 1
+    fi
+
 # Static analysis + vulnerability scan. ci.yml calls this exact recipe, so the
 # local gate and GitHub CI cannot describe different checks.
 go-lint:
@@ -150,9 +161,19 @@ server-test:
     awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
         || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
 
-# Run the main local CI gates — the same recipes ci.yml invokes. Docker smoke,
-# the cross-build matrix, CodeQL, and E2E remain CI-only orchestration.
-ci: client-ci server-check go-lint server-test
+# Playwright browser tests (chromium + firefox). ci.yml calls this recipe after
+# installing the browsers. Slow (~45s), so it is not in the pre-commit hook;
+# run it explicitly or via `just ci-full`.
+client-e2e:
+    cd client && bun run test:e2e
+
+# The fast local gate — the recipes the pre-commit hook and ci.yml both run.
+ci: check-generated client-ci server-check go-lint server-test
+
+# Everything CI runs that is meaningful on a workstation: the fast gate plus the
+# browser E2E. The Docker smoke job and the cross-build matrix stay CI-only
+# infrastructure (a container runtime / other toolchains).
+ci-full: ci client-e2e
 
 # --- Go native TUI client (graphite-meter-client) ---
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.
