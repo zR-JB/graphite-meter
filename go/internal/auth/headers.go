@@ -79,6 +79,9 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// allowedCORSMethod names the methods each measurement path may be preflighted
+// for; an unlisted path is refused. The paths are pinned by api/routes.txt
+// (routes_test.go).
 func allowedCORSMethod(path, method string) bool {
 	switch path {
 	case "/preflight", "/probe", "/download":

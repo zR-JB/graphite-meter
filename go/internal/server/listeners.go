@@ -27,6 +27,22 @@ import (
 
 const downloadBlockSize = 256 * 1024
 
+// Measurement route paths — the mounting half of the cross-language pin. The
+// client table is client/src/lib/runner/real/backendPure.ts (ROUTES) and the
+// per-target defaults are wire.Default{Throughput,Latency}Routes; all three
+// assert against api/routes.txt (routes_test.go, routes.test.ts).
+//
+// Preflight advertises origins only — the paths are not on the wire — so every
+// language keeps its own table and the pin is what makes the tables agree.
+const (
+	routeProbe          = "/probe"
+	routeDownload       = "/download"
+	routeUpload         = "/upload"
+	routeUploadSession  = "/upload/session"
+	routeUploadProgress = "/upload/progress"
+	routePing           = "/ws/ping"
+)
+
 type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.Endpoint
 	download, uploadSession, upload  endpoint.Endpoint
@@ -117,7 +133,7 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	if topology.bootstrap {
 		probe = e.bootstrapProbe
 	}
-	reg.RegisterHTTP("/probe", probe)
+	reg.RegisterHTTP(routeProbe, probe)
 	if topology.transfers {
 		transfer := func(h endpoint.Endpoint) endpoint.Endpoint {
 			if topology.requiredProto == 0 {
@@ -125,13 +141,13 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 			}
 			return protocolEndpoint{Endpoint: h, major: topology.requiredProto}
 		}
-		reg.RegisterHTTP("/download", transfer(e.download))
-		reg.RegisterHTTP("/upload/session", transfer(e.uploadSession))
-		reg.RegisterHTTP("/upload", transfer(e.upload))
-		reg.RegisterHTTP("/upload/progress", transfer(e.uploadProgress))
+		reg.RegisterHTTP(routeDownload, transfer(e.download))
+		reg.RegisterHTTP(routeUploadSession, transfer(e.uploadSession))
+		reg.RegisterHTTP(routeUpload, transfer(e.upload))
+		reg.RegisterHTTP(routeUploadProgress, transfer(e.uploadProgress))
 	}
 	if topology.latency {
-		reg.RegisterWS("/ws/ping", e.ping)
+		reg.RegisterWS(routePing, e.ping)
 	}
 	inner := http.NewServeMux()
 	if authn != nil && authn.Enabled() {
@@ -153,7 +169,7 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		publicOrigin = authn.PublicOrigin()
 	}
 	m := http.NewServeMux()
-	for _, path := range []string{"/download", "/upload", "/upload/progress", "/ws/ping"} {
+	for _, path := range []string{routeDownload, routeUpload, routeUploadProgress, routePing} {
 		m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
 	}
 	m.Handle("/", inner)

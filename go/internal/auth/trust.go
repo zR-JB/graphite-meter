@@ -127,6 +127,8 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 			return false
 		}
 	}
+	// A WebSocket upgrade is exempt from CORS, so the ping route demands the
+	// public Origin outright. Path pinned by api/routes.txt (routes_test.go).
 	if r.URL.Path == "/ws/ping" && r.Header.Get("Origin") != s.public.String() {
 		return false
 	}

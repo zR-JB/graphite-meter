@@ -111,6 +111,9 @@ func (s *Service) isPublicAuthRoute(method, path string) bool {
 	return (s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid") && (method == http.MethodPost && path == "/auth/oidc/start" || method == http.MethodGet && path == "/auth/oidc/callback")
 }
 
+// isMeasurementRoute enumerates the paths the boundary treats as measurement
+// traffic: the routes pinned by api/routes.txt plus the discovery endpoint,
+// which no route table carries. routes_test.go asserts the enumeration.
 func isMeasurementRoute(path string) bool {
 	switch path {
 	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping":

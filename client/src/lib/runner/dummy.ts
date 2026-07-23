@@ -10,6 +10,7 @@ import type {
   PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
+import { ROUTES } from "./real/backendPure";
 import { BUILD } from "../buildenv";
 
 export interface DummyOptions {
@@ -207,11 +208,11 @@ export class DummyBackend implements RunnerBackend {
               protocol: "http1",
               tls: secure,
               routes: {
-                probe: "/probe",
-                download: "/download",
-                upload: "/upload",
-                uploadSession: "/upload/session",
-                uploadProgress: "/upload/progress",
+                probe: ROUTES.probe,
+                download: ROUTES.download,
+                upload: ROUTES.upload,
+                uploadSession: ROUTES.uploadSession,
+                uploadProgress: ROUTES.uploadProgress,
               },
             },
           },
@@ -225,7 +226,7 @@ export class DummyBackend implements RunnerBackend {
               transport: "websocket",
               protocol: "http1",
               tls: secure,
-              routes: { probe: "/probe", ping: "/ws/ping" },
+              routes: { probe: ROUTES.probe, ping: ROUTES.ping },
             },
           },
         },

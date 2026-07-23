@@ -38,6 +38,7 @@ import {
   selectLatencyTarget,
   browserProtocolMatchesTarget,
   classifyTransportDiscovery,
+  ROUTES,
 } from "./real/backendPure";
 import { TransportUnavailableError } from "./real/transportError";
 import {
@@ -749,12 +750,12 @@ export class RealBackend implements RunnerBackend {
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
       if (dir === "down") {
-        const path = this.#throughputTarget?.routes.download ?? "/download";
+        const path = this.#throughputTarget?.routes.download ?? ROUTES.download;
         return chunkDownload
           ? `${base}${path}?cb=${cb}`
           : `${base}${path}?bytes=${PER_STREAM_BYTES}&cb=${cb}`;
       }
-      const path = this.#throughputTarget?.routes.upload ?? "/upload";
+      const path = this.#throughputTarget?.routes.upload ?? ROUTES.upload;
       const idParam = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
       return `${base}${path}?cb=${cb}${idParam}`;
     };
@@ -808,7 +809,7 @@ export class RealBackend implements RunnerBackend {
 
   async #mintUploadSession(base: string): Promise<string> {
     const path =
-      this.#throughputTarget?.routes.uploadSession ?? "/upload/session";
+      this.#throughputTarget?.routes.uploadSession ?? ROUTES.uploadSession;
     // Own deadline + the run's abort: fetch must reject within the timeout even
     // when the request hangs, so the stage skips instead of max-stalling.
     const ctl = new AbortController();
