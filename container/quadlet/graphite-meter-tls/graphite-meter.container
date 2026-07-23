@@ -1,0 +1,33 @@
+[Unit]
+Description=Graphite Meter TLS speed-test server
+Documentation=https://github.com/zR-JB/graphite-meter
+Requires=certbot-bootstrap.service
+After=certbot-bootstrap.service network-online.target
+Wants=certbot-renew.service network-online.target
+
+[Container]
+ContainerName=graphite-meter
+Image=ghcr.io/zr-jb/graphite-meter:latest
+AutoUpdate=registry
+
+# Rootless host networking avoids pasta/slirp throughput limits. Do not add
+# PublishPort entries when this is enabled: the process binds host ports directly.
+Network=host
+
+EnvironmentFile=graphite-meter.env
+
+# Mount the complete tree because live/ contains symlinks into archive/.
+Volume=./letsencrypt:/etc/letsencrypt:ro,Z
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=10min
+
+# The bootstrap unit normally guarantees these exist. This also protects
+# against accidental deletion or an incomplete mount.
+ExecStartPre=%h/.config/containers/systemd/graphite-meter-tls/verify-cert.sh
+
+[Install]
+WantedBy=default.target

@@ -14,8 +14,13 @@ Two ways to run it:
   `Image=graphite-meter.build`, so a start builds first, then runs. Requires
   **Podman 5.0+** (`.build` unit support).
 
-For an isolated server using the published image and reachable only through its
-own Tailscale identity, see [`tailscale-sidecar/`](./tailscale-sidecar/).
+Two complete multi-unit deployments live in subdirectories:
+
+- [`graphite-meter-tls/`](./graphite-meter-tls/) — all four native listeners on
+  a public hostname, with a Let's Encrypt certificate issued and renewed by
+  certbot over the Cloudflare DNS-01 challenge.
+- [`tailscale-sidecar/`](./tailscale-sidecar/) — an isolated server reachable
+  only through its own Tailscale identity, with no published ports.
 
 ## Default: run the published image
 
