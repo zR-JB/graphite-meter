@@ -54,6 +54,19 @@
       <strong class="name">{label}</strong>
     </div>
     <button
+      class="signout everywhere"
+      type="submit"
+      name="scope"
+      value="all"
+      use:tooltip={"Sign out everywhere — end every session for this account, including ones you can no longer reach"}
+      aria-label={`Sign out ${label} everywhere`}
+    >
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <path d="M10 3v7" />
+        <path d="M6 5.5a6 6 0 1 0 8 0" />
+      </svg>
+    </button>
+    <button
       class="signout"
       type="submit"
       title="Sign out"
@@ -84,6 +97,7 @@
   }
   .identity {
     display: flex;
+    flex: 1 1 auto;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
@@ -124,7 +138,6 @@
     flex: none;
     width: 32px;
     height: 100%;
-    margin-left: auto;
     place-items: center;
     border: 0;
     border-left: 1px solid var(--border);
