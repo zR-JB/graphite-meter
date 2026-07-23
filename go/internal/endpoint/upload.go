@@ -91,7 +91,7 @@ func (u *Upload) Handle(s transport.Session) error {
 		if id != "" {
 			owner := ""
 			if _, r, ok := s.HTTP(); ok {
-				owner = uploadOwner(r, u.trusted)
+				owner = ClientKey(r, u.trusted)
 			}
 			a, access := u.store.getOrCreateFor(id, owner)
 			if access != uploadAccessOK {

@@ -8,7 +8,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-func uploadOwner(r *http.Request, trusted []netip.Prefix) string {
+// ClientKey is the stable per-client key both upload ownership and admission
+// accounting bucket by: the authenticated subject when present, else the
+// client's IPv4 address or IPv6 /64. A single IPv6 allocation routinely covers
+// 2^64 addresses, so the /64 is the meaningful unit.
+func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
 		return "principal:" + p.Subject
 	}

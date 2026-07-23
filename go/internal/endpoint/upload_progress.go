@@ -56,7 +56,7 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return transport.ErrUnsupported
 	}
 	id := r.URL.Query().Get("id")
-	owner := uploadOwner(r, e.trusted)
+	owner := ClientKey(r, e.trusted)
 	if r.Method == http.MethodDelete {
 		if access := e.store.finishFor(id, owner); access != uploadAccessOK {
 			writeUploadAccessError(w, access)

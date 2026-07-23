@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 )
 
 type requestAdmission struct {
@@ -25,20 +25,6 @@ type requestAdmission struct {
 
 func newRequestAdmission(globalMax, clientMax int, maxLifetime time.Duration) *requestAdmission {
 	return &requestAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, maxLifetime: maxLifetime}
-}
-
-func clientKey(r *http.Request, trusted []netip.Prefix) string {
-	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
-		return "principal:" + p.Subject
-	}
-	addr := transport.ResolveClientAddress(r, trusted).Addr.Unmap()
-	if !addr.IsValid() {
-		return "unknown"
-	}
-	if addr.Is6() {
-		return netip.PrefixFrom(addr, 64).Masked().String()
-	}
-	return addr.String()
 }
 
 func (a *requestAdmission) acquire(key string) (release func(), status int) {
@@ -89,7 +75,7 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 			next.ServeHTTP(w, r)
 			return
 		}
-		release, status := a.acquire(clientKey(r, trusted))
+		release, status := a.acquire(endpoint.ClientKey(r, trusted))
 		if status != 0 {
 			setAdmissionHeaders(w, r, publicOrigin)
 			w.Header().Set("Retry-After", "1")

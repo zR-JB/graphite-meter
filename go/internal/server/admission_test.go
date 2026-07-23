@@ -73,8 +73,8 @@ func TestClientKeyGroupsIPv6ByPrefix(t *testing.T) {
 	b := httptest.NewRequest(http.MethodGet, "/", nil)
 	a.RemoteAddr = "[2001:db8:1::1]:1"
 	b.RemoteAddr = "[2001:db8:1::ffff]:2"
-	if clientKey(a, nil) != clientKey(b, nil) {
-		t.Fatalf("same /64 produced %q and %q", clientKey(a, nil), clientKey(b, nil))
+	if endpoint.ClientKey(a, nil) != endpoint.ClientKey(b, nil) {
+		t.Fatalf("same /64 produced %q and %q", endpoint.ClientKey(a, nil), endpoint.ClientKey(b, nil))
 	}
 }
 
@@ -83,7 +83,7 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 	r.RemoteAddr = "10.0.0.2:1234"
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	if got := clientKey(r, trusted); got != "198.51.100.9" {
+	if got := endpoint.ClientKey(r, trusted); got != "198.51.100.9" {
 		t.Fatalf("client key = %q", got)
 	}
 }
