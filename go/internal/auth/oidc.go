@@ -112,7 +112,10 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 		UserInfo       string `json:"userinfo_endpoint"`
 		JWKS           string `json:"jwks_uri"`
 	}
-	_ = p.Claims(&meta)
+	if err := p.Claims(&meta); err != nil {
+		o.debugln("OIDC discovery failed reason=metadata_claims")
+		return nil, &discoveryFailure{reason: "metadata_claims"}
+	}
 	ep := p.Endpoint()
 	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) || !validProviderURL(meta.JWKS) {
 		o.debugln("OIDC discovery failed reason=invalid_endpoint_metadata")

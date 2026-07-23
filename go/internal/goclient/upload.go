@@ -242,14 +242,17 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 				}
 			case "error":
 				if !ready {
-					ready = true
 					p.ready <- fmt.Errorf("upload progress: %s", event.Message)
 				}
 				return
 			}
 		}
 		if !ready {
-			p.ready <- fmt.Errorf("upload progress closed before ready")
+			if err := scanner.Err(); err != nil {
+				p.ready <- fmt.Errorf("upload progress read: %w", err)
+			} else {
+				p.ready <- fmt.Errorf("upload progress closed before ready")
+			}
 		}
 	}()
 	select {
@@ -312,7 +315,7 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 		window: func(stats *rateStats) {
 			n, elapsed := p.n.Load(), p.t.Load()
 			if n >= baselineN && elapsed >= baselineT {
-				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT))
+				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT)) //nosec G115 -- guarded elapsed >= baselineT; diff fits int64
 			}
 		},
 		sample: func(now time.Time, stats *rateStats) {
@@ -340,7 +343,7 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 					TotalBytes:    measuredTotal,
 					StreamCount:   streams,
 					ServerAuth:    true,
-					MeasurementAt: time.Duration(active - baselineT),
+					MeasurementAt: time.Duration(active - baselineT), //nosec G115 -- active >= baselineT (monotonic); diff fits int64
 				},
 			})
 		},

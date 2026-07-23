@@ -55,7 +55,7 @@ func (p *Ping) Handle(s transport.Session) error {
 
 		switch f.Op {
 		case wire.OpPING:
-			pong := wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Since(startMono).Nanoseconds())}
+			pong := wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Since(startMono).Nanoseconds())} //nosec G115 -- elapsed since start is non-negative
 			if err := bus.Send(wire.Encode(pong)); err != nil {
 				return nil // conn gone mid-reply — nothing to report
 			}

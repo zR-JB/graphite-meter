@@ -115,8 +115,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			if !waitForUploadPosts(r.Context().Done(), agg) {
 				return nil
 			}
-			n := uint64(agg.bytes.Load())
-			elapsed := uint64(agg.elapsedNanos(monoNanos()))
+			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
+			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
 			return nil
 		case <-heartbeat.C:
@@ -125,8 +125,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			}
 			flusher.Flush()
 		case <-tick.C:
-			n := uint64(agg.bytes.Load())
-			elapsed := uint64(agg.elapsedNanos(monoNanos()))
+			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
+			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {
 				lastBytes = n
 				if !emit(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: elapsed}) {

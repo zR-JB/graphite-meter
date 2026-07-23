@@ -158,8 +158,11 @@ func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Ti
 }
 
 // setCSRFCookie is deliberately readable by the client: the SPA mirrors it into
-// the X-CSRF-Token header for the double-submit check.
+// the X-CSRF-Token header for the double-submit check. HttpOnly is therefore
+// intentionally omitted — the token is not a bearer secret; the session cookie
+// beside it is HttpOnly.
 func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
+	//nosec G124 -- HttpOnly is intentionally omitted so the SPA can read the CSRF token.
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, SameSite: http.SameSiteStrictMode})
 }
 

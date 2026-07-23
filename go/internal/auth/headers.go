@@ -40,6 +40,11 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 }
 
 func authenticatedSecurityHeaders(h http.Header) {
+	// HSTS is scoped to this exact host, deliberately without includeSubDomains:
+	// a homelab commonly runs many services under one base domain, and forcing
+	// HTTPS onto every sibling subdomain would break the ones that are plain HTTP
+	// or self-signed. This host opts itself in; it does not speak for its
+	// neighbours.
 	h.Set("Strict-Transport-Security", "max-age=31536000")
 	h.Set("X-Frame-Options", "DENY")
 	// The application bundles its own scripts and connects to measurement

@@ -151,7 +151,7 @@ func (s *UploadStore) ensureTokenKey() bool {
 
 func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
 	var payload [8 + len(nonce)]byte
-	binary.BigEndian.PutUint64(payload[:8], uint64(issued))
+	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- issued is a positive monotonic-nanos timestamp
 	copy(payload[8:], nonce[:])
 	mac := hmac.New(sha256.New, s.tokenKey[:])
 	_, _ = mac.Write(payload[:])
@@ -172,7 +172,7 @@ func (s *UploadStore) validID(id string) bool {
 	if !hmac.Equal(tag, mac.Sum(nil)) {
 		return false
 	}
-	issued := int64(binary.BigEndian.Uint64(payload[:8]))
+	issued := int64(binary.BigEndian.Uint64(payload[:8])) //nosec G115 -- round-trips the value signID wrote
 	now := monoNanos()
 	return issued > 0 && issued <= now && now-issued <= int64(uploadTokenTTL)
 }
@@ -273,12 +273,6 @@ func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	}
 	agg.finishOnce.Do(func() { close(agg.finished) })
 	return uploadAccessOK
-}
-
-// finish marks the client-owned upload stage lifecycle as closed. Completion is
-// explicit: the progress stream never guesses from a quiet gap between POSTs.
-func (s *UploadStore) finish(id string) bool {
-	return s.finishFor(id, "") == uploadAccessOK
 }
 
 // get returns the existing aggregate for id without creating one.
