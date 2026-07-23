@@ -376,6 +376,11 @@ func keyRunes(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+// keyPaste is what a bracketed paste delivers: every rune in one message.
+func keyPaste(s string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s), Paste: true}
+}
+
 func TestHandleKey_TabCyclesSections(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	order := []section{sectionStages, sectionTiming, sectionNetwork, sectionRun, sectionServers}
@@ -490,7 +495,7 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 	if m.edit.kind != editURL {
 		t.Fatalf("edit.kind after starting an edit = %v, want editURL", m.edit.kind)
 	}
-	baseline := m.edit.value
+	baseline := m.edit.input.Value()
 
 	next, _ = m.handleKey(keyRunes("x"))
 	m = next.(model)
@@ -507,8 +512,8 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 	// cancelled "x" typed in the previous attempt.
 	next, _ = m.activate()
 	m = next.(model)
-	if m.edit.value != baseline {
-		t.Errorf("edit.value on re-entry = %q, want the unchanged BaseURL %q (not the cancelled edit)", m.edit.value, baseline)
+	if m.edit.input.Value() != baseline {
+		t.Errorf("edit value on re-entry = %q, want the unchanged BaseURL %q (not the cancelled edit)", m.edit.input.Value(), baseline)
 	}
 
 	next, _ = m.handleKey(keyRunes("y"))
@@ -577,8 +582,8 @@ func TestActivate_ServerCustomStartsEdit(t *testing.T) {
 	if m.edit.kind != editURL {
 		t.Errorf("edit.kind = %v, want editURL", m.edit.kind)
 	}
-	if m.edit.value != m.cfg.BaseURL {
-		t.Errorf("edit.value = %q, want current BaseURL %q", m.edit.value, m.cfg.BaseURL)
+	if m.edit.input.Value() != m.cfg.BaseURL {
+		t.Errorf("edit value = %q, want current BaseURL %q", m.edit.input.Value(), m.cfg.BaseURL)
 	}
 }
 
@@ -620,8 +625,8 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 		if mm.edit.field != field {
 			t.Errorf("row %d edit.field = %q, want %q", row, mm.edit.field, field)
 		}
-		if mm.edit.value != m.durationValue(row) {
-			t.Errorf("row %d edit.value = %q, want %q", row, mm.edit.value, m.durationValue(row))
+		if mm.edit.input.Value() != m.durationValue(row) {
+			t.Errorf("row %d edit value = %q, want %q", row, mm.edit.input.Value(), m.durationValue(row))
 		}
 	}
 }
@@ -686,7 +691,7 @@ func TestChangingServerClearsAuthorization(t *testing.T) {
 	m.cfg.BaseURL = "https://old.example"
 	m.cfg.AuthToken = "secret"
 	m.cfg.AuthOrigin = "https://old.example"
-	m.edit = editState{kind: editURL, field: "url", value: "https://new.example"}
+	m.edit = beginEdit(editURL, "url", "https://new.example")
 	m.commitEdit()
 	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
 		t.Fatal("authorization was retained after editing the server")
@@ -695,20 +700,20 @@ func TestChangingServerClearsAuthorization(t *testing.T) {
 
 func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.edit = editState{kind: editURL, field: "url", value: ""}
+	m.edit = beginEdit(editURL, "url", "")
 
 	next, _ := m.handleKey(keyRunes("h"))
 	m = next.(model)
 	next, _ = m.handleKey(keyRunes("i"))
 	m = next.(model)
-	if m.edit.value != "hi" {
-		t.Fatalf("edit.value after typing = %q, want %q", m.edit.value, "hi")
+	if m.edit.input.Value() != "hi" {
+		t.Fatalf("edit value after typing = %q, want %q", m.edit.input.Value(), "hi")
 	}
 
 	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = next.(model)
-	if m.edit.value != "h" {
-		t.Fatalf("edit.value after backspace = %q, want %q", m.edit.value, "h")
+	if m.edit.input.Value() != "h" {
+		t.Fatalf("edit value after backspace = %q, want %q", m.edit.input.Value(), "h")
 	}
 
 	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
@@ -723,17 +728,101 @@ func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 
 func TestHandleEditKey_BackspaceOnEmptyIsNoop(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.edit = editState{kind: editURL, value: ""}
+	m.edit = beginEdit(editURL, "", "")
 	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = next.(model)
-	if m.edit.value != "" {
-		t.Errorf("edit.value after backspace on empty = %q, want empty", m.edit.value)
+	if m.edit.input.Value() != "" {
+		t.Errorf("edit value after backspace on empty = %q, want empty", m.edit.input.Value())
+	}
+}
+
+func TestUpdate_PasteFillsTheURLField(t *testing.T) {
+	const url = "https://meter.example.com:7247"
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionServers
+	m.row = len(serverPresets) // the "Custom URL" row
+
+	next, _ := m.Update(keyPaste(url))
+	m = next.(model)
+	if m.edit.kind != editURL {
+		t.Fatalf("edit.kind after pasting on the selected Custom URL row = %v, want editURL", m.edit.kind)
+	}
+	if m.edit.input.Value() != url {
+		t.Fatalf("field after paste = %q, want %q", m.edit.input.Value(), url)
+	}
+
+	next, _ = m.Update(keyPaste("/base"))
+	m = next.(model)
+	if want := url + "/base"; m.edit.input.Value() != want {
+		t.Fatalf("field after a second paste = %q, want %q", m.edit.input.Value(), want)
+	}
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if want := url + "/base"; m.cfg.BaseURL != want {
+		t.Errorf("BaseURL after committing the pasted URL = %q, want %q", m.cfg.BaseURL, want)
+	}
+}
+
+func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionServers
+	m.row = len(serverPresets)
+
+	next, _ := m.handleKey(keyRunes("h"))
+	edited := next.(model)
+	if edited.edit.kind != editURL || edited.edit.input.Value() != "h" {
+		t.Errorf("typing on the Custom URL row gave kind=%v value=%q, want editURL seeded with %q", edited.edit.kind, edited.edit.input.Value(), "h")
+	}
+
+	m.row = 0 // a preset row is not a text field
+	next, _ = m.handleKey(keyRunes("h"))
+	if kept := next.(model); kept.edit.kind != editNone {
+		t.Errorf("typing on a preset row started edit %v, want none", kept.edit.kind)
+	}
+}
+
+func TestHandleEditKey_CursorMovementAndRuneSafeDelete(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.edit = beginEdit(editURL, "url", "hé")
+
+	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = next.(model)
+	if m.edit.input.Value() != "h" {
+		t.Fatalf("value after backspacing a multi-byte rune = %q, want %q", m.edit.input.Value(), "h")
+	}
+
+	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyHome})
+	m = next.(model)
+	next, _ = m.handleKey(keyRunes("x"))
+	m = next.(model)
+	if m.edit.input.Value() != "xh" {
+		t.Errorf("value after typing at the line start = %q, want %q", m.edit.input.Value(), "xh")
+	}
+}
+
+func TestCommitEdit_RejectionKeepsTheFieldOpen(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.edit = beginEdit(editDuration, "download", "nope")
+	m.commitEdit()
+
+	if m.edit.kind != editDuration || m.edit.input.Value() != "nope" {
+		t.Fatalf("rejected edit = %v/%q, want the field still open on the typed text", m.edit.kind, m.edit.input.Value())
+	}
+	if m.edit.err == "" {
+		t.Error("rejected edit has no inline error")
+	}
+
+	next, _ := m.handleKey(keyRunes("!"))
+	m = next.(model)
+	if m.edit.err != "" {
+		t.Errorf("inline error %q survived further typing", m.edit.err)
 	}
 }
 
 func TestCommitEdit_URL(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.edit = editState{kind: editURL, field: "url", value: "  http://example.test:9  "}
+	m.edit = beginEdit(editURL, "url", "  http://example.test:9  ")
 	m.commitEdit()
 	if m.cfg.BaseURL != "http://example.test:9" {
 		t.Errorf("BaseURL after commit = %q, want trimmed URL", m.cfg.BaseURL)
@@ -743,7 +832,7 @@ func TestCommitEdit_URL(t *testing.T) {
 	}
 
 	prevURL := m.cfg.BaseURL
-	m.edit = editState{kind: editURL, field: "url", value: "   "}
+	m.edit = beginEdit(editURL, "url", "   ")
 	m.commitEdit()
 	if m.cfg.BaseURL != prevURL {
 		t.Errorf("BaseURL should be unchanged on empty commit, got %q", m.cfg.BaseURL)
@@ -775,7 +864,7 @@ func TestCommitEdit_Duration(t *testing.T) {
 		t.Run(c.field+"_"+c.value, func(t *testing.T) {
 			m := newModel(goclient.DefaultConfig())
 			before := c.check(m.cfg)
-			m.edit = editState{kind: editDuration, field: c.field, value: c.value}
+			m.edit = beginEdit(editDuration, c.field, c.value)
 			m.commitEdit()
 			got := c.check(m.cfg)
 			if c.wantErr {
@@ -813,7 +902,7 @@ func TestCommitEdit_Int(t *testing.T) {
 		t.Run(c.value, func(t *testing.T) {
 			m := newModel(goclient.DefaultConfig())
 			before := m.cfg.TransferStreams.Forced
-			m.edit = editState{kind: editInt, value: c.value}
+			m.edit = beginEdit(editInt, "", c.value)
 			m.commitEdit()
 			if c.wantErr {
 				if m.cfg.TransferStreams.Forced != before {
@@ -828,12 +917,12 @@ func TestCommitEdit_Int(t *testing.T) {
 
 func TestCommitEdit_AutomaticStreams(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.edit = editState{kind: editInt, field: "auto-streams", value: "1"}
+	m.edit = beginEdit(editInt, "auto-streams", "1")
 	m.commitEdit()
 	if m.cfg.TransferStreams.AutomaticMax != 1 {
 		t.Fatalf("automatic max = %d, want 1", m.cfg.TransferStreams.AutomaticMax)
 	}
-	m.edit = editState{kind: editInt, field: "auto-streams", value: "0"}
+	m.edit = beginEdit(editInt, "auto-streams", "0")
 	m.commitEdit()
 	if m.cfg.TransferStreams.AutomaticMax != 1 {
 		t.Fatalf("invalid automatic max changed to %d", m.cfg.TransferStreams.AutomaticMax)

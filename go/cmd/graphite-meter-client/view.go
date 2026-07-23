@@ -149,7 +149,7 @@ func (m model) serversView(w int) string {
 		custom = "● Custom URL  " + m.cfg.BaseURL
 	}
 	if m.edit.kind == editURL {
-		custom = "● Custom URL  " + valueStyle.Render(m.edit.value+"█")
+		custom = "● Custom URL  " + m.edit.input.View() + m.editError()
 	}
 	lines = append(lines, m.menuLine(len(serverPresets), custom, w))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -176,7 +176,7 @@ func (m model) timingView(w int) string {
 		valueLine("Ping interval", m.cfg.PingInterval.String(), "cadence"),
 	}
 	if m.edit.kind == editDuration {
-		rows[m.row] = valueLine(timingLabel(m.row), m.edit.value+"█", "editing")
+		rows[m.row] = valueLine(timingLabel(m.row), m.edit.input.View(), "editing") + m.editError()
 	}
 	return m.listWithTitle("Timing", rows, w)
 }
@@ -198,10 +198,10 @@ func (m model) networkView(w int) string {
 		warnStyle.Render("Reset to defaults"),
 	}
 	if m.edit.field == "auto-streams" {
-		rows[3] = valueLine("Auto H1 max", m.edit.value+"█", "editing")
+		rows[3] = valueLine("Auto H1 max", m.edit.input.View(), "editing") + m.editError()
 	}
 	if m.edit.field == "streams" {
-		rows[4] = valueLine("Streams", m.edit.value+"█", "editing")
+		rows[4] = valueLine("Streams", m.edit.input.View(), "editing") + m.editError()
 	}
 	return m.listWithTitle("Connections", rows, w)
 }
@@ -214,6 +214,15 @@ func (m model) runMenuView(w int) string {
 		label = warnStyle.Render(label)
 	}
 	return m.listWithTitle("Connection readiness", []string{label}, w)
+}
+
+// editError trails the field being edited with the reason its last commit was
+// rejected, so the answer sits where the eye already is.
+func (m model) editError() string {
+	if m.edit.err == "" {
+		return ""
+	}
+	return "  " + errorStyle.Render(m.edit.err)
 }
 
 func (m model) listWithTitle(title string, rows []string, w int) string {
@@ -384,7 +393,7 @@ func isLatencyResult(r goclient.Result) bool {
 
 func (m model) helpView() string {
 	if m.edit.kind != editNone {
-		return mutedStyle.Render("type to edit • enter apply • esc cancel • ctrl+c quit")
+		return mutedStyle.Render("type or paste • ←/→ home/end move • enter apply • esc cancel • ctrl+c quit")
 	}
 	if m.mode == modeRun {
 		return mutedStyle.Render("c/esc cancel • m menus after finish • r rerun after finish • q quit")

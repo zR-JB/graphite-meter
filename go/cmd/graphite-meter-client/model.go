@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
@@ -70,7 +72,20 @@ const (
 type editState struct {
 	kind  editKind
 	field string
-	value string
+	input textinput.Model
+	err   string
+}
+
+// beginEdit seeds a focused field with value. The cursor is static because
+// nothing else in this program drives redraws from a blink command.
+func beginEdit(kind editKind, field, value string) editState {
+	in := textinput.New()
+	in.Prompt = ""
+	in.TextStyle = valueStyle
+	in.Cursor.SetMode(cursor.CursorStatic)
+	in.SetValue(value)
+	in.Focus()
+	return editState{kind: kind, field: field, input: in}
 }
 
 type serverPreset struct {
@@ -291,6 +306,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.complete = true
 		return m, nil
+	default:
+		// The clipboard read behind ctrl+v answers with a message only the text
+		// input understands.
+		if m.edit.kind != editNone {
+			var cmd tea.Cmd
+			m.edit.input, cmd = m.edit.input.Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
 }
@@ -341,21 +364,35 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.row = clamp(m.row+1, 0, m.rowCount()-1)
 	case "enter", " ":
-		before := m.cfg
-		updated, cmd := m.activate()
-		next := updated.(model)
-		if next.mode == modeConfigure && next.edit.kind == editNone && next.cfg != before {
-			return next.reprepare(cmd)
-		}
-		return next, cmd
+		return m.confirm()
 	case "r":
 		return m.startRun()
 	case "v":
 		return m.reprepare(nil)
 	case "esc":
 		m.notice = "Configuration kept. Press q to quit or r to run."
+	default:
+		// The custom URL row is a text field, so runes it receives while merely
+		// selected open the editor carrying them. A bracketed paste arrives as
+		// one rune batch and lands whole.
+		if m.section == sectionServers && m.row == len(serverPresets) && msg.Type == tea.KeyRunes && !msg.Alt {
+			m.edit = beginEdit(editURL, "url", string(msg.Runes))
+			m.notice = "Editing server URL. Enter applies, esc cancels."
+		}
 	}
 	return m, nil
+}
+
+// confirm activates the selected row and re-checks the connection when that
+// changed the configuration the current preparation was made for.
+func (m model) confirm() (tea.Model, tea.Cmd) {
+	before := m.cfg
+	updated, cmd := m.activate()
+	next := updated.(model)
+	if next.mode == modeConfigure && next.edit.kind == editNone && next.cfg != before {
+		return next.reprepare(cmd)
+	}
+	return next, cmd
 }
 
 func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -376,28 +413,32 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.reprepare(nil)
 		}
 		return m, nil
-	case "backspace", "ctrl+h":
-		if len(m.edit.value) > 0 {
-			m.edit.value = m.edit.value[:len(m.edit.value)-1]
-		}
-		return m, nil
 	}
-	if len(msg.Runes) > 0 {
-		m.edit.value += string(msg.Runes)
-	}
-	return m, nil
+	m.edit.err = ""
+	var cmd tea.Cmd
+	m.edit.input, cmd = m.edit.input.Update(msg)
+	return m, cmd
+}
+
+// editRejected keeps the field open so the offending text stays editable.
+func (m *model) editRejected(reason string) {
+	m.edit.err = reason
+	m.notice = reason
+}
+
+func (m *model) editAccepted(notice string) {
+	m.edit = editState{}
+	m.notice = notice
 }
 
 func (m *model) commitEdit() {
-	raw := strings.TrimSpace(m.edit.value)
+	raw := strings.TrimSpace(m.edit.input.Value())
 	field := m.edit.field
-	kind := m.edit.kind
-	m.edit = editState{}
 
-	switch kind {
+	switch m.edit.kind {
 	case editURL:
 		if raw == "" {
-			m.notice = "Server URL cannot be empty."
+			m.editRejected("Server URL cannot be empty.")
 			return
 		}
 		if raw != m.cfg.BaseURL {
@@ -405,11 +446,11 @@ func (m *model) commitEdit() {
 			m.cfg.AuthOrigin = ""
 		}
 		m.cfg.BaseURL = raw
-		m.notice = "Custom server URL set."
+		m.editAccepted("Custom server URL set.")
 	case editDuration:
 		d, err := time.ParseDuration(raw)
 		if err != nil || d < 0 {
-			m.notice = "Use Go duration syntax, for example 800ms, 4s, or 1m."
+			m.editRejected("Use Go duration syntax, for example 800ms, 4s, or 1m.")
 			return
 		}
 		switch field {
@@ -417,36 +458,36 @@ func (m *model) commitEdit() {
 			m.cfg.Warmup = d
 		case "latency":
 			if d == 0 {
-				m.notice = "Latency duration must be greater than zero."
+				m.editRejected("Latency duration must be greater than zero.")
 				return
 			}
 			m.cfg.LatencyDuration = d
 		case "download":
 			if d == 0 {
-				m.notice = "Download duration must be greater than zero."
+				m.editRejected("Download duration must be greater than zero.")
 				return
 			}
 			m.cfg.DownloadDuration = d
 		case "upload":
 			if d == 0 {
-				m.notice = "Upload duration must be greater than zero."
+				m.editRejected("Upload duration must be greater than zero.")
 				return
 			}
 			m.cfg.UploadDuration = d
 		case "bidirectional":
 			if d == 0 {
-				m.notice = "Bidirectional duration must be greater than zero."
+				m.editRejected("Bidirectional duration must be greater than zero.")
 				return
 			}
 			m.cfg.BidirectionalDuration = d
 		case "ping":
 			if d == 0 {
-				m.notice = "Ping interval must be greater than zero."
+				m.editRejected("Ping interval must be greater than zero.")
 				return
 			}
 			m.cfg.PingInterval = d
 		}
-		m.notice = "Timing updated."
+		m.editAccepted("Timing updated.")
 	case editInt:
 		n, err := strconv.Atoi(raw)
 		min := 0
@@ -455,10 +496,10 @@ func (m *model) commitEdit() {
 		}
 		if err != nil || n < min || n > 128 {
 			if field == "auto-streams" {
-				m.notice = "Automatic H1 max must be an integer from 1 to 128."
+				m.editRejected("Automatic H1 max must be an integer from 1 to 128.")
 				return
 			}
-			m.notice = "Streams must be 0 (automatic) or an integer from 1 to 128."
+			m.editRejected("Streams must be 0 (automatic) or an integer from 1 to 128.")
 			return
 		}
 		if field == "auto-streams" {
@@ -466,7 +507,7 @@ func (m *model) commitEdit() {
 		} else {
 			m.cfg.TransferStreams.Forced = n
 		}
-		m.notice = "Transfer stream policy updated."
+		m.editAccepted("Transfer stream policy updated.")
 	}
 }
 
@@ -483,7 +524,7 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 			m.notice = "Selected " + preset.name + "."
 			return m, nil
 		}
-		m.edit = editState{kind: editURL, field: "url", value: m.cfg.BaseURL}
+		m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
 		m.notice = "Editing server URL. Enter applies, esc cancels."
 	case sectionStages:
 		switch m.row {
@@ -500,21 +541,7 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		}
 		m.notice = "Stage profile updated."
 	case sectionTiming:
-		m.edit = editState{kind: editDuration, value: m.durationValue(m.row)}
-		switch m.row {
-		case 0:
-			m.edit.field = "warmup"
-		case 1:
-			m.edit.field = "latency"
-		case 2:
-			m.edit.field = "download"
-		case 3:
-			m.edit.field = "upload"
-		case 4:
-			m.edit.field = "bidirectional"
-		case 5:
-			m.edit.field = "ping"
-		}
+		m.edit = beginEdit(editDuration, timingFields[m.row], m.durationValue(m.row))
 		m.notice = "Editing duration. Use values like 800ms, 4s, or 1m."
 	case sectionNetwork:
 		switch m.row {
@@ -530,10 +557,10 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
 			m.notice = "Throughput protocol updated."
 		case 3:
-			m.edit = editState{kind: editInt, field: "auto-streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax)}
+			m.edit = beginEdit(editInt, "auto-streams", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax))
 			m.notice = "Editing maximum automatic HTTP/1 streams. Use 1 through 128."
 		case 4:
-			m.edit = editState{kind: editInt, field: "streams", value: fmt.Sprintf("%d", m.cfg.TransferStreams.Forced)}
+			m.edit = beginEdit(editInt, "streams", fmt.Sprintf("%d", m.cfg.TransferStreams.Forced))
 			m.notice = "Editing streams per direction. Use 0 for automatic or 1 through 128 to force."
 		case 5:
 			m.cfg.InsecureSkipTLSVerify = !m.cfg.InsecureSkipTLSVerify
@@ -664,6 +691,9 @@ func (m model) rowCount() int {
 		return 1
 	}
 }
+
+// timingFields names the duration each Timing row edits, in row order.
+var timingFields = []string{"warmup", "latency", "download", "upload", "bidirectional", "ping"}
 
 func (m model) durationValue(row int) string {
 	switch row {
