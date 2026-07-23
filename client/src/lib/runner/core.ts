@@ -102,6 +102,7 @@ export interface RunnerBackend {
   onStageEnd(activity: PhaseActivity, flush?: boolean): void | Promise<void>;
   onComplete(): void;
   onAbort(): void;
+  dispose?(): void;
   onReconfigure?(stages: RunnerConfig["stages"]): void;
   idleHintMs?(): number;
   injectAnomaly?(a: RunnerAnomaly): void;
@@ -311,6 +312,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         t: this.#measuredElapsed,
       },
     });
+  }
+
+  dispose(): void {
+    this.#backend.dispose?.();
+    this.abort();
   }
 
   /* ================= LIVE RECONFIGURE ================= */

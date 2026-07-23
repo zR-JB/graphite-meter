@@ -99,6 +99,22 @@ type preparationMsg struct {
 	err        error
 }
 
+// Both auth messages carry the prepareSeq of the preparation that started the
+// authorization. A browser approval can stay outstanding for two minutes, so
+// without the sequence a poll detached by a server switch can still land and
+// overwrite the newer preparation's state.
+type authChallengeMsg struct {
+	seq     int
+	pending *goclient.PendingAuthorization
+	err     error
+}
+type authTokenMsg struct {
+	seq    int
+	token  string
+	origin string
+	err    error
+}
+
 type mode int
 
 const (
@@ -206,6 +222,21 @@ func prepareConnection(seq int, cfg goclient.Config) tea.Cmd {
 	}
 }
 
+func beginAuthorization(seq int, cfg goclient.Config, authURL string) tea.Cmd {
+	return func() tea.Msg {
+		p, err := goclient.BeginAuthorization(cfg, authURL)
+		return authChallengeMsg{seq: seq, pending: p, err: err}
+	}
+}
+func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		token, err := p.Poll(ctx)
+		return authTokenMsg{seq: seq, token: token, origin: p.Origin, err: err}
+	}
+}
+
 func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	m.prepareSeq++
 	m.prepareStatus = "checking"
@@ -254,6 +285,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
+			var authErr *goclient.AuthRequiredError
+			if errors.As(msg.err, &authErr) {
+				m.prepareStatus = "authorizing"
+				m.prepareError = ""
+				m.notice = "Authentication is required. Preparing browser approval…"
+				return m, beginAuthorization(m.prepareSeq, m.cfg, authErr.URL)
+			}
 			m.prepareStatus = "failed"
 			m.prepareError = msg.err.Error()
 			m.prepared = nil
@@ -272,6 +310,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.discovery = &pf
 		}
 		return m, nil
+	case authChallengeMsg:
+		if msg.seq != m.prepareSeq {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.prepareStatus = "failed"
+			m.prepareError = msg.err.Error()
+			return m, nil
+		}
+		m.notice = fmt.Sprintf("Approve in browser: %s  Verification code: %s", msg.pending.BrowserURL, msg.pending.Code)
+		return m, pollAuthorization(msg.seq, msg.pending)
+	case authTokenMsg:
+		if msg.seq != m.prepareSeq {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.prepareStatus = "failed"
+			m.prepareError = msg.err.Error()
+			return m, nil
+		}
+		currentOrigin, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL)
+		if err != nil || !strings.EqualFold(currentOrigin, msg.origin) {
+			m.notice = "Server changed while approval was pending. Authorization was discarded."
+			return m.reprepare(nil)
+		}
+		m.cfg.AuthToken = msg.token
+		m.cfg.AuthOrigin = msg.origin
+		m.notice = "Client approved. Verifying authenticated transports…"
+		return m.reprepare(nil)
 	case eventsMsg:
 		for _, event := range msg {
 			m.apply(event)
@@ -280,6 +347,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitEvents(m.events)
 		}
 	case doneMsg:
+		var authErr *goclient.AuthRequiredError
+		if errors.As(msg.err, &authErr) {
+			if m.cancel != nil {
+				m.cancel()
+			}
+			m.complete = true
+			m.mode = modeConfigure
+			m.prepared = nil
+			m.prepareStatus = "authorizing"
+			m.notice = "Authentication expired. Preparing browser approval…"
+			return m, beginAuthorization(m.prepareSeq, m.cfg, authErr.URL)
+		}
 		if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
 			m.err = msg.err
 			m.status = "error"
@@ -398,6 +477,10 @@ func (m *model) commitEdit() {
 			m.notice = "Server URL cannot be empty."
 			return
 		}
+		if raw != m.cfg.BaseURL {
+			m.cfg.AuthToken = ""
+			m.cfg.AuthOrigin = ""
+		}
 		m.cfg.BaseURL = raw
 		m.notice = "Custom server URL set."
 	case editDuration:
@@ -469,6 +552,10 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionServers:
 		if m.row < len(serverPresets) {
 			preset := serverPresets[m.row]
+			if preset.url != m.cfg.BaseURL {
+				m.cfg.AuthToken = ""
+				m.cfg.AuthOrigin = ""
+			}
 			m.cfg.BaseURL = preset.url
 			m.notice = "Selected " + preset.name + "."
 			return m, nil
@@ -559,12 +646,13 @@ func (m model) startRun() (model, tea.Cmd) {
 				return goclient.RunPrepared(ctx, cfg, prepared, emit)
 			}
 		}
-		done <- run(ctx, cfg, func(e goclient.Event) {
+		runErr := run(ctx, cfg, func(e goclient.Event) {
 			select {
 			case events <- e:
 			case <-ctx.Done():
 			}
 		})
+		done <- goclient.ClassifyAuthFailure(ctx, cfg, runErr)
 		close(events)
 	}()
 

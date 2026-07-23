@@ -181,6 +181,7 @@ export async function validateConnections(
   force = false,
   requestedRole?: ConnectionRole,
 ): Promise<InfraInfo> {
+  if (!booted) throw new DOMException("Runner is not active", "AbortError");
   const config = $state.snapshot(store.config);
   const key = connectionKey(config, store.transportDiscovery);
   const draftKey = connectionDraftKey(config);
@@ -199,6 +200,7 @@ export async function validateConnections(
   validating = roles;
   markValidation(roles, "checking", undefined, undefined, config);
   const transactionCurrent = (): boolean =>
+    booted &&
     !abort.signal.aborted &&
     seq === validationSeq &&
     connectionDraftKey($state.snapshot(store.config)) === draftKey;
@@ -309,7 +311,8 @@ function ingestRunnerEvent(event: RunnerEvent) {
 }
 
 function refreshAfterTransition() {
-  if (!store.isRunning) void validateConnections(true).catch(() => {});
+  if (booted && !store.isRunning)
+    void validateConnections(true).catch(() => {});
 }
 
 function refreshAfterVisibility() {
@@ -409,10 +412,18 @@ export function injectAnomaly(a: RunnerAnomaly) {
 
 export function teardownRunner() {
   booted = false;
+  validationSeq++;
+  runner?.dispose?.();
+  runner = null;
+  prepared = null;
+  pendingValidation = false;
+  validating = [];
   validationAbort?.abort();
   validationAbort = null;
   window.removeEventListener("online", refreshAfterTransition);
   document.removeEventListener("visibilitychange", refreshAfterVisibility);
   unsub?.();
   unsub = null;
+  store.reset();
+  store.transportDiscovery = null;
 }

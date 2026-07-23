@@ -75,6 +75,9 @@ RUN CGO_ENABLED=0 go build \
 # ---------------------------------------------------------------------------
 FROM scratch
 COPY --from=server /graphite-meter /graphite-meter
+# Outbound OIDC discovery, token exchange, UserInfo, and JWKS requests need the
+# public CA roots. A scratch image does not provide them on its own.
+COPY --from=server /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 EXPOSE 7246/tcp
 EXPOSE 7247/tcp
 EXPOSE 7248/tcp

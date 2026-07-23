@@ -59,6 +59,11 @@ import {
   fmtBytes,
   fmtMs,
 } from "../../debug";
+import {
+  redirectForCredentials,
+  sessionAuthenticationRequired,
+  authenticationRequired,
+} from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
@@ -73,21 +78,40 @@ type InMsg =
       debug?: boolean;
       id?: number;
       chunk?: boolean;
+      credentials?: RequestCredentials;
+      headers?: HeadersInit;
     }
   | { type: "measure"; seq: number }
   | { type: "stop" };
 /** Worker → main. */
 type OutMsg =
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
-  | { type: "error"; recoverable: boolean; detail: string };
+  | { type: "error"; recoverable: boolean; detail: string }
+  | { type: "auth-required" };
 
 export function recoverableDownloadStatus(status: number): boolean {
   return status !== 429 && status !== 503;
 }
 
+export function downloadFetchInit(
+  signal: AbortSignal,
+  requestCredentials: RequestCredentials,
+  requestHeaders?: HeadersInit,
+): RequestInit {
+  return {
+    signal,
+    cache: "no-store",
+    credentials: requestCredentials,
+    headers: requestHeaders,
+    redirect: redirectForCredentials(requestCredentials),
+  };
+}
+
 // Narrow `self` to the dedicated-worker scope so postMessage/onmessage type
 // cleanly under the combined DOM + WebWorker libs.
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
+let credentials: RequestCredentials = "same-origin";
+let headers: HeadersInit | undefined;
 
 /** Post a delta no more often than this (ms); flushed on stream end / stop. */
 const POST_INTERVAL_MS = 50;
@@ -137,6 +161,8 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
     chunk = msg.chunk ?? false;
+    credentials = msg.credentials ?? "same-origin";
+    headers = msg.headers;
     nextBytes = CHUNK_SIZER.minBytes;
     rateEwma = 0;
     measureSeq = 0;
@@ -211,10 +237,14 @@ async function run(url: string): Promise<void> {
     const reqUrl = chunk ? `${url}&bytes=${sentBytes}` : url;
     const fetchStart = performance.now();
     try {
-      const res = await fetch(reqUrl, {
-        signal: abort.signal,
-        cache: "no-store",
-      });
+      const res = await fetch(
+        reqUrl,
+        downloadFetchInit(abort.signal, credentials, headers),
+      );
+      if (authenticationRequired(res)) {
+        post({ type: "auth-required" });
+        return;
+      }
       if (!res.ok || !res.body) {
         post({
           type: "error",
@@ -235,6 +265,17 @@ async function run(url: string): Promise<void> {
       }
     } catch (err) {
       if (stopped) return; // aborted by stop() — a clean teardown, not an error
+      if (
+        credentials === "include" &&
+        (await sessionAuthenticationRequired(
+          self.location.origin,
+          abort.signal,
+        ))
+      ) {
+        stopped = true;
+        post({ type: "auth-required" });
+        return;
+      }
       flushProgress();
       post({ type: "error", recoverable: true, detail: String(err) });
       return; // the main thread decides whether to restart this lane

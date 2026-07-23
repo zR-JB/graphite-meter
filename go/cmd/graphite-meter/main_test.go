@@ -43,6 +43,24 @@ func TestAdmissionFlags(t *testing.T) {
 	}
 }
 
+func TestExplicitAuthFlagsAreRejectedWhileOff(t *testing.T) {
+	for _, args := range [][]string{
+		{"-auth-oidc-provider-name", "Authelia"},
+		{"-auth-public-url="},
+		{"-auth-oidc-allowed-groups="},
+	} {
+		cfg := config.Default()
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		registerFlags(fs, &cfg)
+		if err := fs.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("explicit auth flags %q accepted while authentication is off", args)
+		}
+	}
+}
+
 func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
 	t.Setenv("GM_H2_ADDR", ":7248")
 	cfg, err := config.Load()

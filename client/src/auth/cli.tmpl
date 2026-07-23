@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNmRiMGI4IiBzdHJva2Utd2lkdGg9IjIiPjxwYXRoIGQ9Ik0xMiAyLjYgMy45IDcuM3Y5LjRsOC4xIDQuNyA4LjEtNC43VjcuM1oiLz48cGF0aCBkPSJNMTIgMTIgMTguNiA4LjIiIHN0cm9rZS13aWR0aD0iMi4yIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIyLjEiIGZpbGw9IiM2ZGIwYjgiIHN0cm9rZT0ibm9uZSIvPjwvc3ZnPg==">
+    <title>Approve client · Graphite Meter</title>
+    <style>{{.Styles}}</style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Approve terminal client</h1>
+      <p>Confirm that this code matches the code in your terminal.</p>
+      <code class="code">{{.Code}}</code>
+      <form method="post" action="/auth/cli/approve">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <input type="hidden" name="challenge" value="{{.Challenge}}">
+        <button type="submit">Approve this client</button>
+      </form>
+    </main>
+  </body>
+</html>

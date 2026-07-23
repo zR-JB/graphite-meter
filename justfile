@@ -89,6 +89,10 @@ client-test:
 client-watch:
     cd client && bun run dev
 
+# Preview the real no-JavaScript login page on loopback only.
+auth-preview mode="hybrid" oidc_ready="true":
+    cd go && go run ./internal/auth/cmd/authpreview -mode {{quote(mode)}} -oidc-ready={{quote(oidc_ready)}}
+
 # Output lives inside the client tree so Vite's dev-server fs.allow is happy.
 # Regenerate client discovery and path-probe types from the JSON Schemas.
 client-gen-types:

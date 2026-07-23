@@ -155,5 +155,8 @@ func unexpectedStatus(res *http.Response) error {
 	if res == nil {
 		return fmt.Errorf("empty HTTP response")
 	}
+	if err := authResponseError(res); err != nil {
+		return err
+	}
 	return fmt.Errorf("HTTP %d from %s", res.StatusCode, res.Request.URL.String())
 }

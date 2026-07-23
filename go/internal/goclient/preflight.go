@@ -29,6 +29,9 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if err := authResponseError(res); err != nil {
+			return wire.Preflight{}, err
+		}
 		return wire.Preflight{}, fmt.Errorf("preflight returned HTTP %d", res.StatusCode)
 	}
 	var pf wire.Preflight
@@ -75,6 +78,9 @@ func getProbe(ctx context.Context, hc *http.Client, target *wire.ThroughputTarge
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if err := authResponseError(res); err != nil {
+			return wire.Probe{}, "", err
+		}
 		return wire.Probe{}, "", fmt.Errorf("probe returned HTTP %d", res.StatusCode)
 	}
 	var p wire.Probe
@@ -99,6 +105,9 @@ func getLatencyProbe(ctx context.Context, hc *http.Client, target *wire.LatencyT
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		if err := authResponseError(res); err != nil {
+			return wire.Probe{}, err
+		}
 		return wire.Probe{}, fmt.Errorf("latency probe returned HTTP %d", res.StatusCode)
 	}
 	var p wire.Probe
@@ -115,8 +124,11 @@ func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.L
 	}
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	conn, _, err := websocket.Dial(verifyCtx, u, &websocket.DialOptions{HTTPClient: hc, CompressionMode: websocket.CompressionDisabled})
+	conn, response, err := websocket.Dial(verifyCtx, u, &websocket.DialOptions{HTTPClient: hc, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
+		if authErr := authResponseError(response); authErr != nil {
+			return authErr
+		}
 		return fmt.Errorf("latency WebSocket connection failed: %w", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")

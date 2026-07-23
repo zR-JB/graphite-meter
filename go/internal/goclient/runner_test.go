@@ -25,7 +25,11 @@ import (
 func TestHTTP3ClientStartsAtMinimumPacketSize(t *testing.T) {
 	hc, closeClient := protocolClient(DefaultConfig(), "http3", func() *http.Transport { return &http.Transport{} })
 	defer closeClient()
-	tr, ok := hc.Transport.(*http3.Transport)
+	wrapped, ok := hc.Transport.(authTransport)
+	if !ok {
+		t.Fatal("HTTP/3 client has no authentication boundary")
+	}
+	tr, ok := wrapped.base.(*http3.Transport)
 	if !ok || tr.QUICConfig == nil {
 		t.Fatal("HTTP/3 client has no QUIC configuration")
 	}

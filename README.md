@@ -41,6 +41,8 @@ Graphite Meter is built to measure the link, not the tool: in Chrome it sustains
 - **Native TUI client** — a full interactive terminal client
   (`graphite-meter-client`) that speaks the same wire protocol and runs the same stages against
   any Graphite Meter server.
+- **Optional private access** — protect every transport with an operator password,
+  OIDC, or both.
 - **Modern, responsive UI** — dark and light themes, equally at home on a phone and a
   desktop.
 - **Independent throughput and latency transports** — Fetch throughput can use HTTP/1.1 clear,

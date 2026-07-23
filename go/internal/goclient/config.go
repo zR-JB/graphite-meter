@@ -70,6 +70,8 @@ type Config struct {
 	DownloadBytesPerStream int64
 	UploadBytesPerStream   int64
 	InsecureSkipTLSVerify  bool
+	AuthToken              string
+	AuthOrigin             string
 	MaxIdleConnsPerHost    int
 	ResponseHeaderTimeout  time.Duration
 	ExpectContinueTimeout  time.Duration

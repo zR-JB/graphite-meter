@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +43,60 @@ const preparationFreshness = 30 * time.Second
 
 func preparationKey(cfg Config) string {
 	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, needsLatency)
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, needsLatency, cfg.authToken() != "")
+}
+
+func canonicalOrigin(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", errors.New("invalid server URL")
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
+}
+
+func CanonicalServerOrigin(raw string) (string, error) { return canonicalOrigin(raw) }
+
+func (cfg Config) authToken() string {
+	origin, err := canonicalOrigin(cfg.BaseURL)
+	if err != nil || !strings.EqualFold(origin, cfg.AuthOrigin) {
+		return ""
+	}
+	return cfg.AuthToken
+}
+
+type authTransport struct {
+	token, hostname string
+	base            http.RoundTripper
+}
+
+func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.token == "" {
+		return t.base.RoundTrip(r)
+	}
+	if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), t.hostname) {
+		return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
+	}
+	clone := r.Clone(r.Context())
+	clone.Header = r.Header.Clone()
+	clone.Header.Set("Authorization", "Bearer "+t.token)
+	return t.base.RoundTrip(clone)
+}
+func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
+	token := cfg.authToken()
+	// An unparseable origin leaves the pinned hostname empty, which makes
+	// authTransport refuse every request rather than send the grant to a host
+	// it cannot name.
+	var hostname string
+	if u, err := url.Parse(cfg.AuthOrigin); err == nil {
+		hostname = u.Hostname()
+	}
+	client := &http.Client{Transport: authTransport{token: token, hostname: hostname, base: base}}
+	if token != "" {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return errors.New("authenticated measurement endpoints must not redirect")
+		}
+	}
+	return client
 }
 
 func (p *PreparedConnection) FreshFor(cfg Config) bool {
@@ -99,6 +154,12 @@ func baseTransport(cfg Config) *http.Transport {
 
 func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
+	if cfg.authToken() != "" {
+		u, err := url.Parse(cfg.BaseURL)
+		if err != nil || u.Scheme != "https" || cfg.InsecureSkipTLSVerify {
+			return nil, fmt.Errorf("authenticated operation requires verified HTTPS -url")
+		}
+	}
 	switch cfg.ThroughputProtocol {
 	case "auto", "http1", "http2", "http3":
 	default:
@@ -106,7 +167,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	}
 	discoveryTransport := baseTransport(cfg)
 	defer discoveryTransport.CloseIdleConnections()
-	discoveryClient := &http.Client{Transport: discoveryTransport}
+	discoveryClient := authenticatedClient(cfg, discoveryTransport)
 
 	pf, err := getPreflight(ctx, discoveryClient, cfg.BaseURL)
 	if err != nil {
@@ -140,7 +201,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	wsp.SetHTTP1(true)
 	wsTransport.Protocols = wsp
 	defer wsTransport.CloseIdleConnections()
-	wsClient := &http.Client{Transport: wsTransport}
+	wsClient := authenticatedClient(cfg, wsTransport)
 	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
 	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
 	if latencyErr != nil && needsLatency {
@@ -185,7 +246,7 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	wsp.SetHTTP1(true)
 	wsTransport.Protocols = wsp
 	defer wsTransport.CloseIdleConnections()
-	wsClient := &http.Client{Transport: wsTransport}
+	wsClient := authenticatedClient(cfg, wsTransport)
 	pf := prepared.Preflight
 	probe := prepared.Probe
 	latencyTarget := prepared.LatencyTarget
@@ -542,7 +603,7 @@ func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport
 	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify} //nolint:gosec
 	if protocol == "http3" {
 		tr := &http3.Transport{TLSClientConfig: tlsConfig, QUICConfig: transport.NewQUICConfig()}
-		return &http.Client{Transport: tr}, func() { _ = tr.Close() }
+		return authenticatedClient(cfg, tr), func() { _ = tr.Close() }
 	}
 	tr := makeHTTP()
 	tr.TLSClientConfig = tlsConfig
@@ -552,5 +613,5 @@ func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport
 		p.SetHTTP2(protocol == "http2")
 		tr.Protocols = p
 	}
-	return &http.Client{Transport: tr}, tr.CloseIdleConnections
+	return authenticatedClient(cfg, tr), tr.CloseIdleConnections
 }
