@@ -61,8 +61,7 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			forbidden(w)
 			return
 		}
-		public := listener.UI && s.isPublicAuthRoute(r.Method, r.URL.Path)
-		if public {
+		if listener.UI && s.isPublicAuthRoute(r.Method, r.URL.Path) {
 			if !t.Secure || !t.Canonical {
 				s.writeAuthRequired(w, r, listener)
 				return
@@ -70,33 +69,42 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !t.Secure {
-			s.writeAuthRequired(w, r, listener)
-			return
-		}
-		p, ok := s.authenticate(r)
-		if !ok {
-			s.writeAuthRequired(w, r, listener)
-			return
-		}
-		if p.Bearer && !isMeasurementRoute(r.URL.Path) {
-			forbidden(w)
-			return
-		}
-		if p.session != nil {
-			ctx, cancel := context.WithCancelCause(r.Context())
-			stop := context.AfterFunc(p.session.ctx, func() { cancel(errSessionEnded) })
-			defer func() { stop(); cancel(nil) }()
-			r = r.WithContext(context.WithValue(ctx, principalKey{}, p))
-		} else {
-			r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
-		}
-		if !s.validRequestOrigin(r, p) {
-			forbidden(w)
-			return
-		}
-		next.ServeHTTP(w, r)
+		s.serveAuthenticated(w, r, next, listener, t)
 	})
+}
+
+// serveAuthenticated handles a request that requires a principal: it demands
+// TLS, authenticates, confines bearer grants to measurement routes, binds the
+// principal (and its session-cancellation) to the request context, and enforces
+// the cross-origin rules before dispatching. Enforce has already run the
+// routing, preflight, and public-route guards.
+func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
+	if !t.Secure {
+		s.writeAuthRequired(w, r, listener)
+		return
+	}
+	p, ok := s.authenticate(r)
+	if !ok {
+		s.writeAuthRequired(w, r, listener)
+		return
+	}
+	if p.Bearer && !isMeasurementRoute(r.URL.Path) {
+		forbidden(w)
+		return
+	}
+	if p.session != nil {
+		ctx, cancel := context.WithCancelCause(r.Context())
+		stop := context.AfterFunc(p.session.ctx, func() { cancel(errSessionEnded) })
+		defer func() { stop(); cancel(nil) }()
+		r = r.WithContext(context.WithValue(ctx, principalKey{}, p))
+	} else {
+		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
+	}
+	if !s.validRequestOrigin(r, p) {
+		forbidden(w)
+		return
+	}
+	next.ServeHTTP(w, r)
 }
 
 // isPublicAuthRoute enumerates the routes reachable without a principal. Every

@@ -137,7 +137,7 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 	})
 
 	t.Run("validRequestOrigin", func(t *testing.T) {
-		assertEnumerates(t, "trust.go validRequestOrigin", []string{ping}, enumeratedPaths(t, "trust.go", "validRequestOrigin"))
+		assertEnumerates(t, "trust.go wsPingOriginAllowed", []string{ping}, enumeratedPaths(t, "trust.go", "wsPingOriginAllowed"))
 
 		s := testService(t)
 		_, sess, err := s.createSession("subject", "Name", "local", time.Time{})

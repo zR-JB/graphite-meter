@@ -424,21 +424,36 @@ func (a AuthConfig) validateOIDC() error {
 		return fmt.Errorf("GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive")
 	}
 	wantsOIDC := a.Mode == "oidc" || a.Mode == "hybrid"
-	hasOIDC := a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0
-	oidcComplete := a.OIDCIssuer != "" && a.OIDCClientID != "" && (a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
-	if wantsOIDC && !oidcComplete {
+	if wantsOIDC && !a.oidcComplete() {
 		return fmt.Errorf("OIDC authentication requires issuer, client ID, one client secret source, and allowed groups")
 	}
-	if !wantsOIDC && hasOIDC {
+	if !wantsOIDC && a.oidcConfigured() {
 		return fmt.Errorf("OIDC settings configured while OIDC authentication is disabled")
 	}
-	if wantsOIDC {
-		issuer, err := url.Parse(a.OIDCIssuer)
-		if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
-			return fmt.Errorf("GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment")
-		}
+	if wantsOIDC && !validOIDCIssuer(a.OIDCIssuer) {
+		return fmt.Errorf("GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment")
 	}
 	return a.validateProviderName(wantsOIDC)
+}
+
+// oidcConfigured reports whether any OIDC setting is present at all.
+func (a AuthConfig) oidcConfigured() bool {
+	return a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" ||
+		a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0
+}
+
+// oidcComplete reports whether every setting an OIDC login needs is present.
+func (a AuthConfig) oidcComplete() bool {
+	return a.OIDCIssuer != "" && a.OIDCClientID != "" &&
+		(a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
+}
+
+// validOIDCIssuer accepts only a bare HTTPS origin/path — no credentials,
+// query, or fragment — as the issuer.
+func validOIDCIssuer(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Hostname() != "" &&
+		u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
 
 func (a AuthConfig) validateProviderName(wantsOIDC bool) error {
