@@ -15,6 +15,7 @@
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
+  import { phaseKicker, phaseMessage } from "./phasePresentation";
 
   let visible = $state(false);
   let prevPhase = store.phase;
@@ -46,58 +47,9 @@
   });
 
   /** Short uppercase eyebrow naming the lifecycle stage. */
-  function kicker(p: typeof store.phase): string {
-    switch (p) {
-      case "connecting":
-        return "Connecting";
-      case "warmup":
-        return "Warmup";
-      case "latency":
-        return "Latency";
-      case "download":
-        return "Download";
-      case "upload":
-        return "Upload";
-      case "bidirectional":
-        return "Bidirectional";
-      case "complete":
-        return "Complete";
-      case "aborted":
-        return "Aborted";
-      case "error":
-        return "Error";
-      default:
-        return "Standby";
-    }
-  }
-
-  /** Plain-language message for the active phase. */
-  function message(p: typeof store.phase): string {
-    switch (p) {
-      case "connecting":
-        return "Verifying selected transport";
-      case "warmup":
-        return "Calibrating transport";
-      case "latency":
-        return "Measuring path latency";
-      case "download":
-        return "Receiving stream";
-      case "upload":
-        return "Sending stream";
-      case "bidirectional":
-        return "Sending + receiving";
-      case "complete":
-        return "Complete";
-      case "aborted":
-        return "Sequence stopped";
-      case "error":
-        return store.error
-          ? reasonLabel(store.error.reason)
-          : "Runner needs attention";
-      default:
-        return "Ready";
-    }
-  }
+  const kicker = phaseKicker;
+  const message = (p: typeof store.phase): string =>
+    phaseMessage(p, store.error ? reasonLabel(store.error.reason) : null);
 
   $effect(() => {
     const phase = store.phase;
