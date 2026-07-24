@@ -84,7 +84,7 @@ func (h *wtDownload) serveDatagrams(ctx context.Context, sess *webtransport.Sess
 		if derr != nil || f.Op != wire.OpSIZE {
 			continue
 		}
-		sink := datagramSink{sess: sess}
+		sink := datagramSink{conn: sess}
 		go h.download.Handle(transport.NewWebTransportStreamSession(ctx, sizeQuery(f.Bytes), sink, nil, "")) //nolint:errcheck // the sink reports client loss, not a server error
 	}
 }
@@ -108,7 +108,7 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 	owner := ClientKey(r, h.trusted)
 	go h.serveProgress(ctx, sess, query.Get("id"), owner)
 	if query.Get("datagrams") != "" {
-		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, datagramSource{sess: sess, ctx: ctx}, owner)) //nolint:errcheck // a closed session ends the drain
+		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, datagramSource{conn: sess, ctx: ctx}, owner)) //nolint:errcheck // a closed session ends the drain
 	}
 	for {
 		str, err := sess.AcceptUniStream(ctx)
@@ -151,11 +151,11 @@ func sizeQuery(bytes uint64) url.Values {
 
 // datagramSink splits a download into unreliable datagrams. What arrives is
 // goodput; what does not is loss the client sees directly.
-type datagramSink struct{ sess *webtransport.Session }
+type datagramSink struct{ conn transport.DatagramConn }
 
 func (s datagramSink) Write(p []byte) (int, error) {
 	for off := 0; off < len(p); off += wtDatagramPayload {
-		if err := s.sess.SendDatagram(p[off:min(off+wtDatagramPayload, len(p))]); err != nil {
+		if err := s.conn.SendDatagram(p[off:min(off+wtDatagramPayload, len(p))]); err != nil {
 			return off, err
 		}
 	}
@@ -165,12 +165,12 @@ func (s datagramSink) Write(p []byte) (int, error) {
 // datagramSource reads received datagrams as the byte stream the upload counter
 // drains.
 type datagramSource struct {
-	sess *webtransport.Session
+	conn transport.DatagramConn
 	ctx  context.Context
 }
 
 func (s datagramSource) Read(p []byte) (int, error) {
-	data, err := s.sess.ReceiveDatagram(s.ctx)
+	data, err := s.conn.ReceiveDatagram(s.ctx)
 	if err != nil {
 		return 0, err
 	}
