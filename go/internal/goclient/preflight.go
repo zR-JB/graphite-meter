@@ -63,11 +63,12 @@ func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
 	}
 }
 
+// The advertised transport survives normalization; only the origin is resolved.
 func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {
-	t.ID, t.Origin, t.Transport, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), "fetch-stream", strings.HasPrefix(origin, "https://"), wire.DefaultThroughputRoutes()
+	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultThroughputRoutes()
 }
 func normalizeLatencyTarget(t *wire.LatencyTarget, origin string) {
-	t.ID, t.Origin, t.Transport, t.Protocol, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), "websocket", "http1", strings.HasPrefix(origin, "https://"), wire.DefaultLatencyRoutes()
+	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultLatencyRoutes()
 }
 
 func getProbe(ctx context.Context, hc *http.Client, target *wire.ThroughputTarget) (wire.Probe, string, error) {

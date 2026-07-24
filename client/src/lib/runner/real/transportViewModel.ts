@@ -1,8 +1,5 @@
 import type { DiscoveredTarget, TransportDiscovery } from "../contract";
-import type {
-  FetchThroughputTarget,
-  WebSocketLatencyTarget,
-} from "../../api/endpoints";
+import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import {
   isLoopbackHostname,
   selectLatencyTarget,
@@ -19,7 +16,7 @@ const NOT_ADVERTISED = "Not offered in /preflight.";
 const DISCOVERY_PENDING = "Checking server transports…";
 
 function automaticDetail(
-  target: FetchThroughputTarget | WebSocketLatencyTarget,
+  target: FetchThroughputTarget | LatencyTarget,
   discovery: TransportDiscovery,
   role: "throughput" | "latency",
 ): string {
@@ -31,7 +28,7 @@ function automaticDetail(
 }
 
 function advertisedDetail(
-  entry: DiscoveredTarget<FetchThroughputTarget | WebSocketLatencyTarget>,
+  entry: DiscoveredTarget<FetchThroughputTarget | LatencyTarget>,
   discovery: TransportDiscovery,
 ): string {
   if (entry.state === "not-advertised") return NOT_ADVERTISED;

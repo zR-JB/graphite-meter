@@ -13,8 +13,8 @@ function parsePin(text: string): Record<string, string> {
     const line = lines[i].trim();
     if (line === "" || line.startsWith("#")) continue;
     const parts = line.split("|");
-    if (parts.length !== 2)
-      throw new Error(`line ${i + 1}: want 2 fields: ${line}`);
+    if (parts.length !== 3)
+      throw new Error(`line ${i + 1}: want 3 fields: ${line}`);
     pinned[parts[0].trim()] = parts[1].trim();
   }
   if (Object.keys(pinned).length === 0) throw new Error("pin is empty");

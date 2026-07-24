@@ -12,15 +12,16 @@ import type {
 } from "../contract";
 import type {
   FetchThroughputTarget,
-  WebSocketLatencyTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
 } from "../../api/endpoints";
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
 
 /** Server route paths, the TS half of a cross-language pin. Preflight advertises
- *  origins only, so Go keeps its own table (go/internal/server/listeners.go,
- *  go/internal/wire/preflight.go). Both halves assert against api/routes.txt
- *  (routes.test.ts, routes_test.go). */
+ *  origins and transports only, so Go keeps its own table
+ *  (go/internal/server/listeners.go, go/internal/wire/preflight.go). Both halves
+ *  assert against api/routes.txt (routes.test.ts, routes_test.go). */
 export const ROUTES = {
   probe: "/probe",
   download: "/download",
@@ -28,6 +29,9 @@ export const ROUTES = {
   uploadSession: "/upload/session",
   uploadProgress: "/upload/progress",
   ping: "/ws/ping",
+  wtDownload: "/wt/download",
+  wtUpload: "/wt/upload",
+  wtPing: "/wt/ping",
 } as const;
 
 export function protocolFromNextHop(
@@ -64,26 +68,59 @@ function usableFromPage(
   }
 }
 
-/** Classify the logical server catalog once for both selection and settings. */
+/** Classify the logical server catalog once for both selection and settings.
+ *  Entries are keyed by origin; a WebTransport throughput endpoint folds onto
+ *  its origin's entry as `wt`, since it is the same server reached another way. */
 export function classifyTransportDiscovery(
-  throughputEndpoints: (ThroughputEndpoint | FetchThroughputTarget)[],
-  latencyEndpoints: (LatencyEndpoint | WebSocketLatencyTarget)[],
+  throughputEndpoints: (
+    ThroughputEndpoint | FetchThroughputTarget | WebTransportThroughputTarget
+  )[],
+  latencyEndpoints: (LatencyEndpoint | LatencyTarget)[],
   pageOrigin: string,
   pageSecure: boolean,
   pageProtocol?: string,
 ): TransportDiscovery {
-  const resolve = (baseUrl: string): string =>
-    baseUrl === "." ? pageOrigin : new URL(baseUrl, pageOrigin).origin;
-  const throughputTargets = throughputEndpoints.map((endpoint) => {
-    const origin = resolve(
-      endpoint.baseUrl ?? ("origin" in endpoint ? endpoint.origin : "."),
-    );
-    return {
+  const resolve = (endpoint: { baseUrl?: string; origin?: string }): string => {
+    const baseUrl = endpoint.baseUrl ?? endpoint.origin ?? ".";
+    return baseUrl === "." ? pageOrigin : new URL(baseUrl, pageOrigin).origin;
+  };
+  const stateOf = (origin: string): "advertised" | "browser-blocked" =>
+    usableFromPage(origin, origin.startsWith("https://"), pageSecure)
+      ? "advertised"
+      : "browser-blocked";
+
+  const throughput: TransportDiscovery["throughput"] = {};
+  for (const endpoint of throughputEndpoints) {
+    const origin = resolve(endpoint);
+    const tls = origin.startsWith("https://");
+    const entry = (throughput[origin] ??= { state: stateOf(origin) });
+    if (endpoint.transport === "webtransport") {
+      entry.wt = {
+        ...endpoint,
+        id: origin,
+        origin,
+        transport: "webtransport",
+        protocol: "http3",
+        tls,
+        routes: {
+          probe: ROUTES.probe,
+          wtDownload: ROUTES.wtDownload,
+          wtUpload: ROUTES.wtUpload,
+          uploadSession: ROUTES.uploadSession,
+          uploadProgress: ROUTES.uploadProgress,
+        },
+      };
+      continue;
+    }
+    // A target naming its protocol outranks a negotiated one: selection can only
+    // act on a named protocol.
+    if (entry.target && entry.target.protocol !== "negotiated") continue;
+    entry.target = {
       ...endpoint,
       id: origin,
       origin,
-      transport: "fetch-stream" as const,
-      tls: origin.startsWith("https://"),
+      transport: "fetch-stream",
+      tls,
       routes: {
         probe: ROUTES.probe,
         download: ROUTES.download,
@@ -92,48 +129,37 @@ export function classifyTransportDiscovery(
         uploadProgress: ROUTES.uploadProgress,
       },
     };
-  });
-  const latencyTargets = latencyEndpoints.map((endpoint) => {
-    const origin = resolve(
-      endpoint.baseUrl ?? ("origin" in endpoint ? endpoint.origin : "."),
-    );
-    return {
-      ...endpoint,
-      id: origin,
-      origin,
-      transport: "websocket" as const,
-      protocol: "http1" as const,
-      tls: origin.startsWith("https://"),
-      routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-    };
-  });
-  const throughput: TransportDiscovery["throughput"] = {};
-  for (const target of throughputTargets) {
-    // One entry per origin. A target naming its protocol outranks a negotiated
-    // one: selection can only act on a named protocol.
-    const current = throughput[target.origin]?.target;
-    if (current && current.protocol !== "negotiated") continue;
-    throughput[target.origin] = {
-      state: usableFromPage(target.origin, target.tls, pageSecure)
-        ? "advertised"
-        : "browser-blocked",
-      target,
-    };
   }
-  const latency = Object.fromEntries(
-    latencyTargets.map((target) => {
-      const id = target.origin;
-      return [
-        id,
-        {
-          state: usableFromPage(target.origin, target.tls, pageSecure)
-            ? ("advertised" as const)
-            : ("browser-blocked" as const),
-          target,
-        },
-      ];
-    }),
-  );
+
+  const latency: TransportDiscovery["latency"] = {};
+  for (const endpoint of latencyEndpoints) {
+    const origin = resolve(endpoint);
+    const tls = origin.startsWith("https://");
+    // WebTransport wins a shared origin: its datagram bus measures real loss.
+    if (latency[origin]?.target?.transport === "webtransport") continue;
+    const target: LatencyTarget =
+      endpoint.transport === "webtransport"
+        ? {
+            ...endpoint,
+            id: origin,
+            origin,
+            transport: "webtransport",
+            protocol: "http3",
+            tls,
+            routes: { probe: ROUTES.probe, wtPing: ROUTES.wtPing },
+          }
+        : {
+            ...endpoint,
+            id: origin,
+            origin,
+            transport: "websocket",
+            protocol: "http1",
+            tls,
+            routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+          };
+    latency[origin] = { state: stateOf(origin), target };
+  }
+
   return {
     generation: "",
     engineVersion: "",
@@ -183,22 +209,39 @@ export function throughputTargetKey(
   return target ? `${target.id}\n${target.origin}` : "";
 }
 
-/** Select latency independently. Auto follows page security, not throughput. */
+/** Select latency independently. Auto prefers WebTransport, whose datagram bus
+ *  measures real loss, then follows page security rather than throughput.
+ *  `webTransport` is what this client can actually drive. */
 export function selectLatencyTarget(
   discovery: TransportDiscovery,
   selection: "auto" | string,
-): WebSocketLatencyTarget | null {
+  webTransport = false,
+): LatencyTarget | null {
+  const runnable = (target?: LatencyTarget): boolean =>
+    !!target && (webTransport || target.transport !== "webtransport");
   if (selection !== "auto") {
     const entry = discovery.latency[selection];
-    return entry?.state === "advertised" ? (entry.target ?? null) : null;
+    return entry?.state === "advertised" && runnable(entry.target)
+      ? (entry.target ?? null)
+      : null;
   }
   const advertised = Object.values(discovery.latency)
-    .filter((entry) => entry.state === "advertised" && entry.target)
+    .filter((entry) => entry.state === "advertised" && runnable(entry.target))
     .map((entry) => entry.target!);
   return (
+    advertised.find((target) => target.transport === "webtransport") ??
     advertised.find((target) => target.origin === discovery.pageOrigin) ??
     (advertised.length === 1 ? advertised[0] : null)
   );
+}
+
+/** The WebTransport view of a selected throughput origin, when advertised. */
+export function webTransportThroughputTarget(
+  discovery: TransportDiscovery,
+  origin: string,
+): WebTransportThroughputTarget | null {
+  const entry = discovery.throughput[origin];
+  return entry?.state === "advertised" ? (entry.wt ?? null) : null;
 }
 
 /** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything

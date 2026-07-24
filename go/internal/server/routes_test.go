@@ -31,11 +31,11 @@ func loadRoutePin(t *testing.T) map[string]string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		name, path, ok := strings.Cut(line, "|")
-		if !ok {
-			t.Fatalf("line %d: want 2 fields: %q", lineNumber, line)
+		fields := strings.Split(line, "|")
+		if len(fields) != 3 {
+			t.Fatalf("line %d: want 3 fields: %q", lineNumber, line)
 		}
-		pinned[strings.TrimSpace(name)] = strings.TrimSpace(path)
+		pinned[strings.TrimSpace(fields[0])] = strings.TrimSpace(fields[1])
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan route pin: %v", err)
@@ -63,6 +63,9 @@ func TestRoutesMatchPin(t *testing.T) {
 		"uploadSession":  {routeUploadSession, throughput.UploadSession},
 		"uploadProgress": {routeUploadProgress, throughput.UploadProgress},
 		"ping":           {routePing, latency.Ping},
+		"wtDownload":     {routeWTDownload, throughput.WTDownload},
+		"wtUpload":       {routeWTUpload, throughput.WTUpload},
+		"wtPing":         {routeWTPing, latency.WTPing},
 	}
 	if len(sites) != len(pinned) {
 		t.Errorf("Go declares %d routes; %d are pinned", len(sites), len(pinned))

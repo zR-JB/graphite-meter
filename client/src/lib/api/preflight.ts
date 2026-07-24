@@ -24,8 +24,10 @@ export interface Preflight {
 }
 export interface ThroughputEndpoint {
   baseUrl: BaseUrl;
+  transport: "fetch-stream" | "webtransport";
   protocol: "http1" | "http2" | "http3" | "negotiated";
 }
 export interface LatencyEndpoint {
   baseUrl: BaseUrl;
+  transport: "websocket" | "webtransport";
 }

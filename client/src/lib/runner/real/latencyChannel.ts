@@ -4,10 +4,7 @@
 // samples into the core.
 import type { CoreHost } from "../core";
 import type { PingCadence, TransportKind } from "../contract";
-import type {
-  FetchThroughputTarget,
-  WebSocketLatencyTarget,
-} from "../../api/endpoints";
+import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import { authEnabled, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
 import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
@@ -55,7 +52,7 @@ const IDLE_RESPAWN_MS = 2000;
 
 export interface LatencyChannelDeps {
   host: () => CoreHost;
-  target: () => WebSocketLatencyTarget | null;
+  target: () => LatencyTarget | null;
   /** Stall/resume reported by the ping worker, for the coordinator to reconcile
    *  with the stage-level flag the byte lanes also drive. */
   stall: (detail: string) => void;
@@ -90,10 +87,9 @@ export class LatencyChannel {
     const host = this.#deps.host();
     const cfg = host.config!;
     const channel = this.#deps.target();
-    const latencyRoute = channel?.routes.ping;
-    if (!channel || channel.transport !== "websocket" || !latencyRoute)
+    if (!channel || channel.transport !== "websocket" || !channel.routes.ping)
       throw new Error("latency target not resolved");
-    const url = httpToWs(channel.origin) + latencyRoute;
+    const url = httpToWs(channel.origin) + channel.routes.ping;
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
     const replyDriven = cadence === "reply-driven";
     // Reply-driven uses this only for its loss sweep; its sends are driven by
@@ -205,7 +201,7 @@ export class LatencyChannel {
 export interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
-  latencyTarget: () => WebSocketLatencyTarget | null;
+  latencyTarget: () => LatencyTarget | null;
 }
 
 /** The persistent idle ping: connectivity indicator plus the preflight RTT
@@ -238,9 +234,9 @@ export class IdleKeepalive {
     if (this.#active && this.#targetKey === targetKey) return;
     if (this.#active) this.stop();
     const channel = this.#deps.latencyTarget();
-    const latencyRoute = channel?.routes.ping;
-    if (!channel || channel.transport !== "websocket" || !latencyRoute) return;
-    const url = httpToWs(channel.origin) + latencyRoute;
+    if (!channel || channel.transport !== "websocket" || !channel.routes.ping)
+      return;
+    const url = httpToWs(channel.origin) + channel.routes.ping;
     this.#active = true;
     this.#targetKey = targetKey;
     // The store latches its pulse offline on connection-lost. A fresh worker's

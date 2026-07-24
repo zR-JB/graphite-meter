@@ -12,6 +12,7 @@ import {
   classifyTransportDiscovery,
   isLoopbackHostname,
   throughputTargetKey,
+  webTransportThroughputTarget,
   ROUTES,
 } from "./real/backendPure";
 import type { PhaseActivity, RunnerConfig } from "./contract";
@@ -56,8 +57,8 @@ const discovery = (
 
 test("proxy endpoints resolve relative to preflight and negotiate the browser hop", () => {
   const catalog = classifyTransportDiscovery(
-    [{ baseUrl: ".", protocol: "negotiated" }],
-    [{ baseUrl: "." }],
+    [{ baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" }],
+    [{ baseUrl: ".", transport: "websocket" }],
     "https://meter.example",
     true,
     "h2",
@@ -74,8 +75,12 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
 test("deterministic native target wins when self resolves to the same origin", () => {
   const catalog = classifyTransportDiscovery(
     [
-      { baseUrl: "https://meter.example", protocol: "http1" },
-      { baseUrl: ".", protocol: "negotiated" },
+      {
+        baseUrl: "https://meter.example",
+        transport: "fetch-stream",
+        protocol: "http1",
+      },
+      { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
     ],
     [],
     "https://meter.example",
@@ -91,8 +96,16 @@ test("deterministic native target wins when self resolves to the same origin", (
 test("native endpoints remain deterministic and mixed content stays blocked", () => {
   const catalog = classifyTransportDiscovery(
     [
-      { baseUrl: "http://meter:7246", protocol: "http1" },
-      { baseUrl: "https://meter:7248", protocol: "http2" },
+      {
+        baseUrl: "http://meter:7246",
+        transport: "fetch-stream",
+        protocol: "http1",
+      },
+      {
+        baseUrl: "https://meter:7248",
+        transport: "fetch-stream",
+        protocol: "http2",
+      },
     ],
     [],
     "https://ui.example",
@@ -109,6 +122,43 @@ test("native endpoints remain deterministic and mixed content stays blocked", ()
       "http/1.1",
     ),
   ).toBe(false);
+});
+
+test("WebTransport folds onto its origin and leads latency auto-selection", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://meter:7249",
+        transport: "fetch-stream",
+        protocol: "http3",
+      },
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport",
+        protocol: "http3",
+      },
+    ],
+    [
+      { baseUrl: "https://meter:7247", transport: "websocket" },
+      { baseUrl: "https://meter:7249", transport: "webtransport" },
+    ],
+    "https://meter:7249",
+    true,
+    "h3",
+  );
+  const entry = catalog.throughput["https://meter:7249"];
+  expect(entry.target?.transport).toBe("fetch-stream");
+  expect(entry.wt?.routes.wtDownload).toBe(ROUTES.wtDownload);
+  expect(webTransportThroughputTarget(catalog, "https://meter:7249")).toBe(
+    entry.wt!,
+  );
+
+  // A client that cannot drive WebTransport never selects it.
+  expect(selectLatencyTarget(catalog, "auto")?.transport).toBe("websocket");
+  expect(selectLatencyTarget(catalog, "https://meter:7249", false)).toBeNull();
+  const wt = selectLatencyTarget(catalog, "auto", true);
+  expect(wt?.transport).toBe("webtransport");
+  expect(wt?.origin).toBe("https://meter:7249");
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {
@@ -323,13 +373,27 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     generation: withH2 ? "b" : "a",
     capabilities: {
       throughput: [
-        { baseUrl: "http://meter.test:7246", protocol: "http1" },
-        { baseUrl: "https://proxy.test", protocol: "negotiated" },
+        {
+          baseUrl: "http://meter.test:7246",
+          transport: "fetch-stream",
+          protocol: "http1",
+        },
+        {
+          baseUrl: "https://proxy.test",
+          transport: "fetch-stream",
+          protocol: "negotiated",
+        },
         ...(withH2
-          ? [{ baseUrl: "https://meter.test:7248", protocol: "http2" as const }]
+          ? [
+              {
+                baseUrl: "https://meter.test:7248",
+                transport: "fetch-stream",
+                protocol: "http2" as const,
+              },
+            ]
           : []),
       ],
-      latency: [{ baseUrl: "http://meter.test:7246" }],
+      latency: [{ baseUrl: "http://meter.test:7246", transport: "websocket" }],
     },
   });
 

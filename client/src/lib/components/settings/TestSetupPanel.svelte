@@ -3,7 +3,7 @@
   import type { ProtocolTarget, RunnerConfig } from "../../runner/contract";
   import type {
     FetchThroughputTarget,
-    WebSocketLatencyTarget,
+    LatencyTarget,
   } from "../../api/endpoints";
   import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
@@ -18,7 +18,7 @@
   let { running = false }: Props = $props();
 
   function targetOption(
-    target: FetchThroughputTarget | WebSocketLatencyTarget,
+    target: FetchThroughputTarget | LatencyTarget,
     observedProtocol?: ProtocolTarget,
   ) {
     return {

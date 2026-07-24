@@ -13,10 +13,7 @@ import type {
   ConnectionRole,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import type {
-  FetchThroughputTarget,
-  WebSocketLatencyTarget,
-} from "../api/endpoints";
+import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 import type { Preflight } from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
@@ -154,7 +151,7 @@ export class RealBackend implements RunnerBackend {
   #activeTransport: TransportKind | null = null;
   /** Independent role bindings are frozen from probe until the next run. */
   #throughputTarget: FetchThroughputTarget | null = null;
-  #latencyTarget: WebSocketLatencyTarget | null = null;
+  #latencyTarget: LatencyTarget | null = null;
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;

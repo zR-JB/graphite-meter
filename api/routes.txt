@@ -1,22 +1,28 @@
 # Graphite Meter — HTTP route pin (shared across Go / TS).
 #
 # Format (one route per non-comment, non-blank line):
-#   <name> | <path>
+#   <name> | <path> | <kind>
 #
 #   name = the key every implementation uses for the route
 #   path = the exact path the server mounts and the client requests
+#   kind = http | ws | wt, the transport that reaches the route. A wt route is
+#          an HTTP/3 CONNECT session carrying no credentials, so it is mounted
+#          only on public listeners and the auth boundary does not enumerate it.
 #
-# Routes are never transmitted: preflight advertises origins only (the Routes
-# fields are json:"-"), so each site carries its own table and this file is what
-# keeps the tables byte-identical. Every route test loads THIS file as its
-# fixture:
+# Routes are never transmitted: preflight advertises origins and transports only
+# (the Routes fields are json:"-"), so each site carries its own table and this
+# file is what keeps the tables byte-identical. Every route test loads THIS file
+# as its fixture:
 #   Go — go/internal/server/routes_test.go (listeners.go + wire/preflight.go)
 #   Go — go/internal/auth/routes_test.go (the enforcement boundary's own lists)
 #   TS — client/src/lib/runner/real/routes.test.ts (backendPure.ts ROUTES)
 
-probe | /probe
-download | /download
-upload | /upload
-uploadSession | /upload/session
-uploadProgress | /upload/progress
-ping | /ws/ping
+probe | /probe | http
+download | /download | http
+upload | /upload | http
+uploadSession | /upload/session | http
+uploadProgress | /upload/progress | http
+ping | /ws/ping | ws
+wtDownload | /wt/download | wt
+wtUpload | /wt/upload | wt
+wtPing | /wt/ping | wt

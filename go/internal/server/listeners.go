@@ -37,6 +37,9 @@ const (
 	routeUploadSession  = "/upload/session"
 	routeUploadProgress = "/upload/progress"
 	routePing           = "/ws/ping"
+	routeWTDownload     = "/wt/download"
+	routeWTUpload       = "/wt/upload"
+	routeWTPing         = "/wt/ping"
 )
 
 type endpoints struct {

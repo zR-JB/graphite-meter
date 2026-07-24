@@ -21,9 +21,11 @@ const routePinPath = "../../../api/routes.txt"
 // enumerations carry it and this test names it.
 const preflightPath = "/preflight"
 
-// loadRoutePin parses api/routes.txt into name → path. The parser is a copy of
-// the one in go/internal/server/routes_test.go because auth cannot import
-// server without inverting the dependency.
+// loadRoutePin parses api/routes.txt into name → path, dropping the WebTransport
+// routes: they are CONNECT sessions mounted only on public listeners, so the
+// boundary never sees them. The parser is a copy of the one in
+// go/internal/server/routes_test.go because auth cannot import server without
+// inverting the dependency.
 func loadRoutePin(t *testing.T) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(routePinPath)
@@ -36,11 +38,14 @@ func loadRoutePin(t *testing.T) map[string]string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		name, path, ok := strings.Cut(line, "|")
-		if !ok {
-			t.Fatalf("want 2 fields: %q", line)
+		fields := strings.Split(line, "|")
+		if len(fields) != 3 {
+			t.Fatalf("want 3 fields: %q", line)
 		}
-		pinned[strings.TrimSpace(name)] = strings.TrimSpace(path)
+		if strings.TrimSpace(fields[2]) == "wt" {
+			continue
+		}
+		pinned[strings.TrimSpace(fields[0])] = strings.TrimSpace(fields[1])
 	}
 	if len(pinned) == 0 {
 		t.Fatal("route pin is empty; expected populated routes")

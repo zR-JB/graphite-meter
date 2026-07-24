@@ -111,7 +111,7 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 				return
 			}
 		}
-		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: "fetch-stream", Protocol: protocol, TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultThroughputRoutes()})
+		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportFetchStream, Protocol: protocol, TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultThroughputRoutes()})
 	}
 	addLatency := func(base string) {
 		base = strings.TrimRight(base, "/")
@@ -120,7 +120,7 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 				return
 			}
 		}
-		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: "websocket", Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
+		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
 	}
 	native := []struct {
 		name, public, scheme, addr, protocol string

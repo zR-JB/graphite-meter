@@ -1,7 +1,4 @@
-import type {
-  FetchThroughputTarget,
-  WebSocketLatencyTarget,
-} from "../../api/endpoints";
+import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import type { ProtocolTarget, TransportDiscovery } from "../contract";
 import { httpProtocolLabel } from "../protocol";
 
@@ -19,10 +16,18 @@ export interface TargetPresentation {
  *  version the ping socket rides is unknown here. */
 export function describeTarget(
   discovery: TransportDiscovery,
-  target: FetchThroughputTarget | WebSocketLatencyTarget,
+  target: FetchThroughputTarget | LatencyTarget,
   observedProtocol?: ProtocolTarget,
 ): TargetPresentation {
   const security = target.tls ? "TLS" : "clear";
+  if (target.transport === "webtransport") {
+    const mechanism = `WebTransport · ${httpProtocolLabel("http3")}`;
+    return {
+      label: `${mechanism} · ${security}`,
+      summary: `${mechanism} datagrams · ${security}`,
+      advertisedDetail: `Datagram bus over ${httpProtocolLabel("http3")} · ${target.origin}`,
+    };
+  }
   if (target.transport === "websocket") {
     const nativeH1 =
       discovery.throughput[target.origin]?.target?.protocol === "http1";

@@ -29,16 +29,20 @@
     "baseUrl": { "type": "string", "pattern": "^(\\.|https?://[^/]+)$" },
     "throughputEndpoint": {
       "type": "object", "additionalProperties": false,
-      "required": ["baseUrl", "protocol"],
+      "required": ["baseUrl", "transport", "protocol"],
       "properties": {
         "baseUrl": { "$ref": "#/$defs/baseUrl" },
+        "transport": { "enum": ["fetch-stream", "webtransport"] },
         "protocol": { "enum": ["http1", "http2", "http3", "negotiated"] }
       }
     },
     "latencyEndpoint": {
       "type": "object", "additionalProperties": false,
-      "required": ["baseUrl"],
-      "properties": { "baseUrl": { "$ref": "#/$defs/baseUrl" } }
+      "required": ["baseUrl", "transport"],
+      "properties": {
+        "baseUrl": { "$ref": "#/$defs/baseUrl" },
+        "transport": { "enum": ["websocket", "webtransport"] }
+      }
     }
   }
 }

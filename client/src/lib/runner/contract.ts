@@ -3,7 +3,8 @@
 
 import type {
   FetchThroughputTarget,
-  WebSocketLatencyTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
 } from "../api/endpoints";
 
 /* ---------- Lifecycle ---------- */
@@ -382,6 +383,12 @@ export interface DiscoveredTarget<T> {
   target?: T;
 }
 
+/** One throughput origin. `wt` is the same origin reached over WebTransport,
+ *  present when the server advertises it. */
+export interface DiscoveredThroughput extends DiscoveredTarget<FetchThroughputTarget> {
+  wt?: WebTransportThroughputTarget;
+}
+
 /** Server-advertised transports classified against the page that uses them.
  * Emitted as soon as /preflight completes, ahead of selection and probing. */
 export interface TransportDiscovery {
@@ -392,8 +399,8 @@ export interface TransportDiscovery {
   pageOrigin: string;
   pageSecure: boolean;
   pageProtocol?: string;
-  throughput: Record<string, DiscoveredTarget<FetchThroughputTarget>>;
-  latency: Record<string, DiscoveredTarget<WebSocketLatencyTarget>>;
+  throughput: Record<string, DiscoveredThroughput>;
+  latency: Record<string, DiscoveredTarget<LatencyTarget>>;
 }
 
 /* ---------- The event union the UI listens to ---------- */

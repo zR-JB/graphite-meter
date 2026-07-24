@@ -4,12 +4,27 @@
   "generation": "test-generation",
   "capabilities": {
     "throughput": [
-      { "baseUrl": "http://speed.example:7246", "protocol": "http1" },
-      { "baseUrl": ".", "protocol": "negotiated" }
+      {
+        "baseUrl": "http://speed.example:7246",
+        "transport": "fetch-stream",
+        "protocol": "http1"
+      },
+      {
+        "baseUrl": "https://speed.example:7249",
+        "transport": "fetch-stream",
+        "protocol": "http3"
+      },
+      {
+        "baseUrl": "https://speed.example:7249",
+        "transport": "webtransport",
+        "protocol": "http3"
+      },
+      { "baseUrl": ".", "transport": "fetch-stream", "protocol": "negotiated" }
     ],
     "latency": [
-      { "baseUrl": "http://speed.example:7246" },
-      { "baseUrl": "." }
+      { "baseUrl": "http://speed.example:7246", "transport": "websocket" },
+      { "baseUrl": "https://speed.example:7249", "transport": "webtransport" },
+      { "baseUrl": ".", "transport": "websocket" }
     ]
   }
 }
