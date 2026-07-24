@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // shellMargin is shellStyle's horizontal margin.
@@ -239,12 +238,9 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
-	caps := m.capabilities()
-	throughputChoices := originChoices(caps.ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
-	latencyChoices := originChoices(caps.LatencyTargets, func(t wire.LatencyTarget) string { return t.Origin })
 	rows := []string{
-		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, throughputChoices),
-		endpointRow("Latency endpoint", m.cfg.LatencyTarget, latencyChoices),
+		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, m.throughputChoices()),
+		endpointRow("Latency endpoint", m.cfg.LatencyTarget, m.latencyChoices()),
 		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated only"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
 		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 = automatic"),

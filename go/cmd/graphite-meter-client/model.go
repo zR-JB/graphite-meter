@@ -600,12 +600,10 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionConnections:
 		switch m.row {
 		case 0:
-			choices := originChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
-			m.cfg.ThroughputTarget = nextChoice(m.cfg.ThroughputTarget, choices)
+			m.cfg.ThroughputTarget = nextEndpoint(m.cfg.ThroughputTarget, m.throughputChoices())
 			m.notice = "Throughput endpoint updated."
 		case 1:
-			choices := originChoices(m.capabilities().LatencyTargets, func(t wire.LatencyTarget) string { return t.Origin })
-			m.cfg.LatencyTarget = nextChoice(m.cfg.LatencyTarget, choices)
+			m.cfg.LatencyTarget = nextEndpoint(m.cfg.LatencyTarget, m.latencyChoices())
 			m.notice = "Latency endpoint updated."
 		case 2:
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
@@ -684,22 +682,66 @@ func (m model) capabilities() wire.Capabilities {
 	return m.discovery.Capabilities
 }
 
-// originChoices is the cycle offered for an endpoint row: "auto" first, then each
-// discovered origin. Discovery can advertise one origin under several spellings,
-// so origin.Key decides equivalence and the first spelling wins.
-func originChoices[T any](targets []T, originOf func(T) string) []string {
-	choices := []string{"auto"}
+// throughputChoices and latencyChoices are what the two endpoint rows cycle
+// through. A discovered origin is named by the protocol it fixes rather than by
+// its URL: a server usually offers one hostname on several ports, so the
+// protocol is what tells the choices apart. "Automatic" is named by where the
+// last check resolved it, which is kept across configuration changes and so
+// never blanks mid-cycle.
+func (m model) throughputChoices() []endpointChoice {
+	choices := endpointChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) endpointChoice {
+		return endpointChoice{value: t.Origin, label: protocolFacts(t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)}
+	})
+	if m.prepared != nil {
+		choices[0].note = "→ " + shortOrigin(m.cfg.BaseURL, m.prepared.ThroughputTarget.Origin)
+	}
+	return choices
+}
+
+func (m model) latencyChoices() []endpointChoice {
+	choices := endpointChoices(m.capabilities().LatencyTargets, func(t wire.LatencyTarget) endpointChoice {
+		return endpointChoice{value: t.Origin, label: protocolFacts(t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)}
+	})
+	if m.prepared != nil && m.prepared.LatencyTarget != nil {
+		choices[0].note = "→ " + shortOrigin(m.cfg.BaseURL, m.prepared.LatencyTarget.Origin)
+	}
+	return choices
+}
+
+// endpointChoice is one stop of an endpoint row's cycle: the value the
+// configuration holds, what selecting it means, and where it points. Both
+// descriptions come from discovery, which the model keeps across configuration
+// changes, so the row says what it offers without waiting for a connection.
+type endpointChoice struct {
+	value string
+	label string
+	note  string
+}
+
+// endpointChoices is the cycle offered for an endpoint row: "auto" first, then
+// each discovered origin. Discovery can advertise one origin under several
+// spellings, so origin.Key decides equivalence and the first spelling wins.
+func endpointChoices[T any](targets []T, describe func(T) endpointChoice) []endpointChoice {
+	choices := []endpointChoice{{value: "auto", label: "Automatic"}}
 	seen := map[string]struct{}{origin.Key("auto"): {}}
 	for _, target := range targets {
-		value := originOf(target)
-		key := origin.Key(value)
+		choice := describe(target)
+		key := origin.Key(choice.value)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		choices = append(choices, value)
+		choices = append(choices, choice)
 	}
 	return choices
+}
+
+func nextEndpoint(current string, choices []endpointChoice) string {
+	values := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		values = append(values, choice.value)
+	}
+	return nextChoice(current, values)
 }
 
 func nextChoice(current string, choices []string) string {

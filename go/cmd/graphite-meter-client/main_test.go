@@ -2355,16 +2355,39 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 	}
 }
 
-func TestEndpointRowShowsChoicePosition(t *testing.T) {
-	choices := []string{"auto", "https://meter.example:7248"}
-	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices), "")
-	for _, want := range []string{"Throughput endpoint", "https://meter.example:7248", "‹2/2›"} {
+// An endpoint row has to say what the choice under the cursor is. The origins
+// a server advertises usually differ by port alone, so the protocol each one
+// fixes is what tells them apart.
+func TestEndpointRowNamesTheChoice(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.BaseURL = "https://meter.example:7247"
+	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{Origin: "https://meter.example:7247", Protocol: "http1", TLS: true},
+			{Origin: "https://meter.example:7248", Protocol: "http2", TLS: true},
+			{Origin: "https://elsewhere.example", Protocol: "negotiated", TLS: true},
+		},
+	}}
+	choices := m.throughputChoices()
+
+	m.cfg.ThroughputTarget = "https://meter.example:7248"
+	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, choices), "")
+	for _, want := range []string{"Throughput endpoint", "HTTP/2 · TLS", "‹3/4›", ":7248"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("endpoint row = %q, want %q", got, want)
 		}
 	}
+
+	// An origin on another host is named by that host, not by a bare port.
+	other := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://elsewhere.example", choices), "")
+	for _, want := range []string{"Negotiated · TLS", "elsewhere.example"} {
+		if !strings.Contains(other, want) {
+			t.Errorf("off-host endpoint row = %q, want %q", other, want)
+		}
+	}
+
 	automatic := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices), "")
-	for _, want := range []string{"Automatic", "‹1/2›"} {
+	for _, want := range []string{"Automatic", "‹1/4›"} {
 		if !strings.Contains(automatic, want) {
 			t.Errorf("automatic endpoint row = %q, want %q", automatic, want)
 		}

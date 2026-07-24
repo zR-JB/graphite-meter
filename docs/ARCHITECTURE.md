@@ -210,7 +210,8 @@ and loss ratio.
 
 The TUI has five configuration sections (Server — the local-dev preset plus a custom URL, taken as
 typed: a missing scheme becomes `http://`, and a missing port is the scheme's own; Run
-setup; Timing; Connections — stream count and TLS verification; Start) and a live telemetry view
+setup; Timing; Connections — endpoint choices, each named by the protocol it fixes and whether it
+is encrypted, plus stream count and TLS verification; Start) and a live telemetry view
 (session panel, stage timeline, ASCII throughput bars, a running results log). Keys: `tab`/arrows
 to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run or run again, `v`
 to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
