@@ -23,10 +23,15 @@ export default defineConfig({
     },
     { name: "firefox", use: { browserName: "firefox" } },
   ],
+  // Serves a bundle the caller has already built (`just client-e2e` builds
+  // first). Keeping `vite build` out of this command matters: the timeout below
+  // is a *startup* budget, and folding a cold production build into it left no
+  // headroom on a loaded CI runner, which timed the suite out before a single
+  // test ran.
   webServer: {
-    command:
-      "bun run build:bundle && bun run preview -- --host 127.0.0.1 --port 4173",
+    command: "bun run preview -- --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
   },
 });
