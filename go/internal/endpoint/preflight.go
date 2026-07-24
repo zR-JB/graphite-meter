@@ -58,11 +58,10 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	return p.buildForHost(host)
 }
 
-// ConnectOrigins is the set of distinct cross-origin measurement targets this
-// server advertises to a browser on the given host, for the authenticated
-// CSP's connect-src. It is derived from the very targets /preflight returns, so
-// the policy can never omit an origin the client is told to use. The UI's own
-// origin ("." / self) is excluded — connect-src 'self' already covers it.
+// ConnectOrigins lists the distinct cross-origin measurement targets advertised
+// to a browser on host, for the authenticated CSP's connect-src. It reads the
+// same targets /preflight returns, so the policy can never omit an origin the
+// client is told to use. The UI's own origin (".") is covered by 'self'.
 func (p *Preflight) ConnectOrigins(host string) []string {
 	pf := p.buildForHost(host)
 	seen := map[string]bool{"": true, ".": true}
@@ -82,14 +81,13 @@ func (p *Preflight) ConnectOrigins(host string) []string {
 	return out
 }
 
-// buildForHost assembles the advertised targets for host. Native listeners come
-// first, then the configured public origins; both add-helpers deduplicate by
-// origin so the same endpoint reached two ways is advertised once. A throughput
-// origin claimed under two different protocols becomes "negotiated" — the client
-// cannot know in advance which one a proxy in front of it will select.
+// buildForHost assembles the advertised targets for host: native listeners
+// first, then the configured public origins.
 func (p *Preflight) buildForHost(host string) wire.Preflight {
 	throughput := make([]wire.ThroughputTarget, 0)
 	latency := make([]wire.LatencyTarget, 0)
+	// Dedupe by origin, so one endpoint reached two ways is advertised once. Two
+	// protocols on one origin become "negotiated": a proxy in front picks one.
 	addThroughput := func(base, protocol string) {
 		base = strings.TrimRight(base, "/")
 		for i := range throughput {

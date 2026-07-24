@@ -19,9 +19,9 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// eventsMsg and doneMsg carry the sequence of the run that produced them, so
-// a batch read from a finished run's channel cannot land in a later run's
-// model — the same guard preparationMsg carries as prepareSeq.
+// eventsMsg and doneMsg carry the sequence of the run that produced them. A
+// batch read from a finished run's channel cannot land in a later run's model.
+// preparationMsg carries the same guard as prepareSeq.
 type eventsMsg struct {
 	seq    int
 	events []goclient.Event
@@ -36,10 +36,10 @@ type preparationMsg struct {
 	err        error
 }
 
-// Both auth messages carry the prepareSeq of the preparation that started the
-// authorization. A browser approval can stay outstanding for two minutes, so
-// without the sequence a poll detached by a server switch can still land and
-// overwrite the newer preparation's state.
+// Both auth messages carry the prepareSeq of the preparation that starts the
+// authorization. A browser approval stays outstanding for up to two minutes.
+// The sequence stops a poll detached by a server switch from overwriting a
+// newer preparation.
 type authChallengeMsg struct {
 	seq     int
 	pending *goclient.PendingAuthorization
@@ -102,17 +102,15 @@ func beginEdit(kind editKind, field, value string) editState {
 
 // prepareStep is the first step of the connection handshake the current
 // preparation attempt has not proven. Prepare answers the whole handshake with
-// a single result, so the model only advances this where a message carries the
-// evidence: a challenge proves the server answered, a PreparationError proves
-// the preflight body decoded, and only a finished preparation proves the
-// target origins resolved.
+// a single result, so the model advances this only where a message carries the
+// evidence named beside each step.
 type prepareStep int
 
 const (
-	stepReach prepareStep = iota
-	stepPreflight
-	stepOrigins
-	stepReady
+	stepReach     prepareStep = iota
+	stepPreflight             // an auth challenge proves the server answered
+	stepOrigins               // a PreparationError proves the preflight body decoded
+	stepReady                 // a finished preparation proves the origins resolved
 )
 
 type checkState int
@@ -236,12 +234,13 @@ type model struct {
 	stages  []stageProgress
 }
 
+// animationFPS paces the spinner frames, the elapsed clocks, and the rate
+// glide, all of which advance on the spinner's frame tick.
+const animationFPS = 20
+
 func newModel(cfg goclient.Config) model {
-	// The spinner's frame tick is the animation clock: clocks, the rate glide,
-	// and the frames all advance on it, so it runs faster than MiniDot's
-	// default to keep the motion fluid.
 	dial := spinner.MiniDot
-	dial.FPS = time.Second / 20
+	dial.FPS = time.Second / animationFPS
 	spin := spinner.New(spinner.WithSpinner(dial))
 	spin.Style = accentStyle
 	return model{
@@ -313,10 +312,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
 	case m.urlRowRune(msg):
-		// On the Custom URL row every printable rune is text, not a binding:
-		// a hostname may start with r, q, or j. The row opens its editor
-		// carrying the rune, and a bracketed paste lands whole the same way.
-		// ctrl+c still quits and the arrow/tab/enter keys still navigate.
+		// A bracketed paste arrives as one rune message and lands whole.
 		m.edit = beginEdit(editURL, "url", string(msg.Runes))
 		m.notice = "Editing server URL. Enter applies, esc cancels."
 		return m, nil
@@ -358,7 +354,9 @@ func (m model) handleConfigureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // urlRowRune reports whether msg is printable text typed or pasted on the
-// selected Custom URL row of the configure screen.
+// selected Custom URL row. There every rune is text, not a binding: a hostname
+// may start with r, q, or j. ctrl+c is not a rune, so quit and the navigation
+// keys still reach their handlers.
 func (m model) urlRowRune(msg tea.KeyMsg) bool {
 	return m.mode == modeConfigure && !m.cancelPrompt &&
 		m.section == sectionServers && m.row == len(serverPresets) &&
@@ -398,9 +396,9 @@ func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse resolves a click against the positions View recorded. A click on
-// an unselected row only selects it; clicking the selected row activates it,
-// which is what enter does and what opens a text field.
+// handleMouse resolves a click against the positions View records. A click on
+// an unselected row selects it. A click on the selected row activates it, as
+// enter does.
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m, nil
@@ -434,8 +432,8 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// confirm activates the selected row and re-checks the connection when that
-// changed the configuration the current preparation was made for.
+// confirm activates the selected row. A configuration edit invalidates the
+// current preparation, so it starts a fresh connection check.
 func (m model) confirm() (tea.Model, tea.Cmd) {
 	before := m.cfg
 	updated, cmd := m.activate()
@@ -499,8 +497,8 @@ func (m *model) commitURL(raw string) {
 		m.editRejected("Server URL cannot be empty.")
 		return
 	}
-	// A bare host means HTTPS: the presets carry their schemes, so what is
-	// typed without one is a remote host, and remote servers answer TLS.
+	// A bare host means HTTPS. Presets carry their own schemes, so a
+	// scheme-less entry is a remote host, and remote servers answer TLS.
 	if !strings.Contains(raw, "://") {
 		raw = "https://" + raw
 	}

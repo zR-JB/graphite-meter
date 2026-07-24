@@ -43,20 +43,24 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 		return wire.Preflight{}, err
 	}
 	baseOrigin.Path, baseOrigin.RawQuery, baseOrigin.Fragment = "", "", ""
-	// "." is the wire's "self" placeholder: a server behind a reverse proxy
-	// cannot know its public origin, so the client substitutes the origin the
-	// preflight request actually resolved to, redirects included.
+	resolveSelfOrigins(&pf, baseOrigin.String())
+	return pf, nil
+}
+
+// resolveSelfOrigins replaces the wire's "." self placeholder with the origin
+// the preflight request resolves to, redirects included. A server behind a
+// reverse proxy cannot know its own public origin.
+func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
 	for i := range pf.Capabilities.ThroughputTargets {
 		if pf.Capabilities.ThroughputTargets[i].Origin == "." {
-			normalizeThroughputTarget(&pf.Capabilities.ThroughputTargets[i], baseOrigin.String())
+			normalizeThroughputTarget(&pf.Capabilities.ThroughputTargets[i], resolved)
 		}
 	}
 	for i := range pf.Capabilities.LatencyTargets {
 		if pf.Capabilities.LatencyTargets[i].Origin == "." {
-			normalizeLatencyTarget(&pf.Capabilities.LatencyTargets[i], baseOrigin.String())
+			normalizeLatencyTarget(&pf.Capabilities.LatencyTargets[i], resolved)
 		}
 	}
-	return pf, nil
 }
 
 func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {

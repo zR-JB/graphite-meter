@@ -237,8 +237,8 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 	}
 }
 
-// A preparation attempt runs detached from the model, so starting a new one
-// must invalidate whatever the previous attempt is still about to answer.
+// A preparation attempt runs detached from the model. Starting a new one
+// invalidates whatever an older attempt is still about to answer.
 func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	superseded := m.prepareSeq
@@ -536,8 +536,8 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 		t.Errorf("BaseURL changed to %q after a cancelled edit, want unchanged %q", m.cfg.BaseURL, baseline)
 	}
 
-	// Re-entering the edit should reflect the still-unchanged config, not the
-	// cancelled "x" typed in the previous attempt.
+	// Re-entering the edit reflects the committed config, not the discarded
+	// "x" of a canceled attempt.
 	next, _ = m.activate()
 	m = next.(model)
 	if m.edit.input.Value() != baseline {
@@ -975,9 +975,8 @@ func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 	m.section = sectionServers
 	m.row = len(serverPresets)
 
-	// Every printable rune seeds the editor — including r, v, j, k, and q,
-	// which are bindings everywhere else: a hostname may start with any of
-	// them.
+	// Every printable rune seeds the editor, including r, v, j, k, and q,
+	// which bind elsewhere. A hostname may start with any of them.
 	for _, seed := range []string{"h", "r", "v", "j", "k", "q", "?"} {
 		next, _ := m.handleKey(keyRunes(seed))
 		edited := next.(model)
@@ -1211,8 +1210,8 @@ func TestCommitEdit_AutomaticStreams(t *testing.T) {
 	}
 }
 
-// A recheck costs a round trip, so only a commit that moved the configuration
-// starts one.
+// A recheck costs a round trip, so a commit that leaves the configuration
+// identical starts none.
 func TestHandleEditKey_ApplyRechecksOnlyWhatChanged(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	seq := m.prepareSeq
@@ -2319,7 +2318,7 @@ func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
 }
 
 // populatedRunModel is a run-screen model with live bars, a timeline, latency,
-// and results — the visually densest frame, exercising every fit path.
+// and results: the visually densest frame, exercising every fit path.
 func populatedRunModel(width int) model {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
@@ -2338,16 +2337,17 @@ func populatedRunModel(width int) model {
 	return m
 }
 
-// TestRenderedFramesNeverExceedWidth is the end-to-end guarantee behind the
-// fitLine/fitBlock render path: whatever the content, no drawn line may be
-// wider than the frame, or the layout wraps and corrupts. It drives the full
-// View pipeline for the configure and run screens across widths from cramped to
-// wide, including one narrower than a long target label. Below 44 cells the
-// innerWidth floor (40) plus the shell's 4-cell margin deliberately overflows a
-// too-small terminal, so the bound is max(width, 44).
+// frameBound is the widest line View may draw at a terminal width. The
+// innerWidth floor of 40 plus the shell's 4-cell margin deliberately overflows
+// a terminal narrower than 44 cells.
+func frameBound(width int) int { return max(width, 44) }
+
+// TestRenderedFramesNeverExceedWidth is the guarantee behind the
+// fitLine/fitBlock render path: whatever the content, no drawn line is wider
+// than the frame, or the layout wraps and corrupts.
 func TestRenderedFramesNeverExceedWidth(t *testing.T) {
 	for _, width := range []int{40, 60, 80, 100, 140, 200} {
-		bound := max(width, 44)
+		bound := frameBound(width)
 		frames := map[string]string{
 			"configure": func() string { m := newModel(goclient.DefaultConfig()); m.width = width; return m.View() }(),
 			"run":       populatedRunModel(width).View(),

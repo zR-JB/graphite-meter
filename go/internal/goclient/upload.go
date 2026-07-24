@@ -97,18 +97,10 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		q.Set("lane", strconv.Itoa(lane))
 		q.Set("cb", strconv.FormatInt(time.Now().UnixNano(), 10))
 		u.RawQuery = q.Encode()
-		// A fixed Content-Length body (mirroring the download's fixed-size GET),
-		// NOT a chunked stream: a chunked request forces the server to drain the
-		// body through its chunk-framing reader in small pieces, roughly halving
-		// upload throughput on a fast link. A known length lets the server read
-		// large slices straight from the socket, so up matches down.
-		body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
+		req, err := r.newKnownLengthUpload(ctx, u.String(), block)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.ContentLength = r.cfg.UploadBytesPerStream
 		res, err := r.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -125,14 +117,28 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 	return nil
 }
 
+// newKnownLengthUpload declares an exact Content-Length so the server reads
+// large slices straight from the socket, matching the download's sized GET.
+// Chunked framing drains the body in small pieces, roughly halving upload
+// throughput on a fast link.
+func (r *runner) newKnownLengthUpload(ctx context.Context, target string, block []byte) (*http.Request, error) {
+	body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = r.cfg.UploadBytesPerStream
+	return req, nil
+}
+
 // cyclingBody is a request body that repeats block until it has emitted limit
-// bytes, then returns io.EOF — so the POST carries an exact Content-Length. A
-// limit <= 0 cycles without end.
+// bytes, then returns io.EOF. A limit <= 0 cycles without end.
 type cyclingBody struct {
 	ctx   context.Context
 	block []byte
 	off   int
-	limit int64 // total bytes to emit before EOF; <= 0 means unbounded
+	limit int64 // total bytes to emit, <= 0 means unbounded
 	sent  int64
 }
 

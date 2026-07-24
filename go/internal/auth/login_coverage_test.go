@@ -45,8 +45,8 @@ func TestPasswordLoginWrongPassword(t *testing.T) {
 
 func TestPasswordLoginThrottled(t *testing.T) {
 	s := testService(t)
-	// Spend the per-address budget, then the next attempt is refused before the
-	// hash is ever checked.
+	// Spend the per-address budget, then the next attempt is refused without
+	// ever reaching the hash.
 	for i := 0; i < maxAddressAttempts; i++ {
 		if !s.allowAttempt(passwordPost(s, "secret")) {
 			t.Fatalf("attempt %d refused early", i)

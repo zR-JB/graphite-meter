@@ -41,8 +41,7 @@ func main() {
 }
 
 // parseConfig loads the base configuration, applies the command-line flags in
-// args, and validates the result. Split from main so the flag surface and the
-// validation wiring are testable without spawning a process.
+// args, and validates the result.
 func parseConfig(name string, args []string) (config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -59,10 +58,9 @@ func parseConfig(name string, args []string) (config.Config, error) {
 	return cfg, nil
 }
 
-// hashPassword reads a password twice from stdin (echoing nothing when it is a
-// terminal), confirms the two match, and writes the Argon2id PHC hash to out.
-// prompts carries the interactive "Password:" cues. stdin, out, and prompts are
-// injected so the flow is testable over pipes.
+// hashPassword reads a password twice from stdin, without echo when stdin is a
+// terminal, requires the two entries to match, and writes the Argon2id PHC hash
+// to out. Interactive cues go to prompts.
 func hashPassword(stdin *os.File, out, prompts io.Writer) error {
 	in := bufio.NewReader(stdin)
 	fmt.Fprint(prompts, "Password: ")

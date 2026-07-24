@@ -10,8 +10,8 @@ import (
 )
 
 // UploadProgress streams the selected throughput target's authoritative upload
-// counter as NDJSON. The initial ready record is flushed before upload lanes are
-// allowed to start; blank lines are heartbeats and never carry measurement data.
+// counter as NDJSON. The ready record flushes first, then upload lanes may
+// start. Blank lines are heartbeats and never carry measurement data.
 type UploadProgress struct {
 	store   *UploadStore
 	trusted []netip.Prefix

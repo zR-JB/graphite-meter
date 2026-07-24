@@ -56,12 +56,10 @@ type LatencyTarget struct {
 // LatencyRoutes are the paths a LatencyTarget serves.
 type LatencyRoutes struct{ Probe, Ping string }
 
-// DefaultThroughputRoutes returns the routes a discovered target carries,
-// filled in client-side because Routes is json:"-" — the paths are never
-// transmitted. They are pinned against the paths the server mounts
-// (go/internal/server/listeners.go) and the client table
-// (client/src/lib/runner/real/backendPure.ts) by api/routes.txt; the assertion
-// lives in go/internal/server/routes_test.go.
+// DefaultThroughputRoutes returns the paths a discovered target serves. They
+// never cross the wire. api/routes.txt pins them against the server mounts
+// (internal/server/listeners.go) and the client table
+// (client/src/lib/runner/real/backendPure.ts); internal/server/routes_test.go asserts it.
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{"/probe", "/download", "/upload", "/upload/session", "/upload/progress"}
 }

@@ -103,7 +103,7 @@ func TestDownloadDeterministicAndIncompressible(t *testing.T) {
 
 	a, b := get(), get()
 	if !bytes.Equal(a, b) {
-		t.Fatal("two downloads differ — stream is not deterministic")
+		t.Fatal("two downloads differ, stream is not deterministic")
 	}
 	// Body must be the block, wrapping at the block boundary.
 	if !bytes.Equal(a[:len(block)], block) {
@@ -160,9 +160,8 @@ func TestDownloadContextCancel(t *testing.T) {
 	dl := NewDownload(block, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// A sink that cancels the context after the first write, then keeps
-	// counting: the loop must observe Done() and return rather than stream all
-	// 10 MiB.
+	// The sink cancels the context after the first write and keeps counting: the
+	// loop must observe Done() and return instead of streaming all 10 MiB.
 	sink := &cancelOnWrite{cancel: cancel}
 	s := &fakeSession{ctx: ctx, query: "bytes=" + strconv.Itoa(10<<20), sink: sink}
 
@@ -170,7 +169,7 @@ func TestDownloadContextCancel(t *testing.T) {
 		t.Fatalf("handle: %v", err)
 	}
 	if sink.n >= int64(10<<20) {
-		t.Errorf("wrote %d bytes — cancellation did not stop the stream", sink.n)
+		t.Errorf("wrote %d bytes, cancellation did not stop the stream", sink.n)
 	}
 }
 

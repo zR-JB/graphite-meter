@@ -67,8 +67,8 @@ func TestIPv6SiblingsShareOneExchangeBudget(t *testing.T) {
 }
 
 // The token exchange is the only anonymous path that produces an outbound
-// request to the identity provider, so it needs a volume bound of its own —
-// the transaction caps free on use and bound only concurrency.
+// request to the identity provider, so it needs a volume bound of its own.
+// The transaction caps free on use and bound only concurrency.
 func TestTokenExchangeIsThrottledPerAddress(t *testing.T) {
 	s := testService(t)
 	address := "203.0.113.7:40000"

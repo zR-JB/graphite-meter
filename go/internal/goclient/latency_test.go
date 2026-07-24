@@ -99,8 +99,8 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 }
 
 // newIntermittentLossPingServer answers every PING except every dropEvery'th
-// one (by ID), which it silently swallows — a mixed pattern of hits and
-// misses rather than an all-respond or a never-respond peer.
+// one (by ID), which it silently swallows. The pattern mixes hits and misses
+// rather than an all-respond or a never-respond peer.
 func newIntermittentLossPingServer(t *testing.T, dropEvery uint32) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -167,9 +167,9 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 	}
 }
 
-// TestMeasureLatencyClosedConnectionDoesNotHang checks that a peer dropping the
-// connection before measurement even starts (start never fires, simulating a
-// still-in-progress warmup) surfaces an error promptly instead of hanging.
+// TestMeasureLatencyClosedConnectionDoesNotHang checks that a peer dropping
+// the connection while measurement is still gated (start never fires, a warmup
+// in progress) surfaces an error promptly instead of hanging.
 func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {

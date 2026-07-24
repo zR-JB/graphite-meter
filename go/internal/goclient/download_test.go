@@ -12,8 +12,8 @@ import (
 
 // newCountingDownloadServer serves the "bytes" query param's worth of data on
 // the first request, then hangs on every later request until the client's
-// context is cancelled — letting tests observe exactly one completed transfer
-// before forcing cancellation.
+// context is cancelled. A test sees exactly one completed transfer, then
+// forces cancellation.
 func newCountingDownloadServer(size int) *httptest.Server {
 	var reqs atomic.Int32
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -114,9 +114,9 @@ func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
 	}
 }
 
-// TestMeasureDownloadContextCancelStopsEarly checks that cancelling mid-measurement
-// returns well before the configured elapsed window, and that the lane goroutines
-// are joined (no hang) rather than left running.
+// TestMeasureDownloadContextCancelStopsEarly checks that cancelling
+// mid-measurement returns well under the configured elapsed window, and that
+// the lane goroutines are joined (no hang) rather than left running.
 func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	srv := newBytesEchoDownloadServer()
 	defer srv.Close()
@@ -133,8 +133,8 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	done := make(chan struct{})
 	begin := time.Now()
 	go func() {
-		// The window is long (5s) so a hang would fail the test's own deadline
-		// well before the stage's configured window would naturally end.
+		// The window is long (5s), so a hang trips the test's own deadline well
+		// under the stage's configured window.
 		_, _ = r.measureDownload(ctx, "download", 5*time.Second, start)
 		close(done)
 	}()

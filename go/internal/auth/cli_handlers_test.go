@@ -54,9 +54,8 @@ func TestCliPageRedirectsToLoginWithoutSession(t *testing.T) {
 }
 
 func TestCliPageRejectsBearerPrincipal(t *testing.T) {
-	// A valid terminal grant must not drive the approval page: only the browser
-	// session may approve. cliPage sees the Bearer principal and redirects to
-	// /login rather than rendering — so a grant can never approve itself.
+	// Only the browser session may approve: cliPage sees the Bearer principal
+	// and redirects to /login, so a grant can never approve itself.
 	s := testService(t)
 	_, sess, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))

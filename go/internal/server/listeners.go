@@ -26,13 +26,10 @@ import (
 
 const downloadBlockSize = 256 * 1024
 
-// Measurement route paths — the mounting half of the cross-language pin. The
-// client table is client/src/lib/runner/real/backendPure.ts (ROUTES) and the
-// per-target defaults are wire.Default{Throughput,Latency}Routes; all three
-// assert against api/routes.txt (routes_test.go, routes.test.ts).
-//
-// Preflight advertises origins only — the paths are not on the wire — so every
-// language keeps its own table and the pin is what makes the tables agree.
+// Measurement route paths, the mounting half of the cross-language pin.
+// /preflight advertises origins only, so every language keeps its own table.
+// The other two are client/src/lib/runner/real/backendPure.ts (ROUTES) and
+// wire.Default{Throughput,Latency}Routes. api/routes.txt pins all three.
 const (
 	routeProbe          = "/probe"
 	routeDownload       = "/download"
@@ -176,14 +173,17 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	return m
 }
 
+// disableNagle stops Nagle batching a small latency probe into the following
+// write and inflating every sample. A connection that refuses it still measures.
+func disableNagle(c net.Conn) {
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+	}
+}
+
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-		if tc, ok := c.(*net.TCPConn); ok {
-			// Nagle would batch the small latency probes into the following
-			// write and inflate every sample. Best-effort: a connection that
-			// refuses the option still measures, just less precisely.
-			_ = tc.SetNoDelay(true)
-		}
+		disableNagle(c)
 		return ctx
 	}}
 }
@@ -195,8 +195,20 @@ func hardenAuthenticatedServer(s *http.Server, enabled bool) {
 	}
 }
 
-// Run binds every configured listener only after certificate validation and
-// shuts the logical server down as one unit.
+// pinConnectOrigins restricts the authenticated CSP's connect-src to the
+// measurement origins /preflight advertises for the canonical UI host, the only
+// host auth accepts. It derives them from the targets the client is handed, so
+// it cannot omit one.
+func pinConnectOrigins(cfg *config.Config, authn *auth.Service) {
+	u, err := url.Parse(cfg.Auth.PublicURL)
+	if err != nil {
+		return
+	}
+	authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
+}
+
+// Run validates the config and certificate, binds every configured listener,
+// and shuts the logical server down as one unit.
 func Run(ctx context.Context, cfg *config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -220,13 +232,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	spa := static.Handler()
 	if authn.Enabled() {
 		spa = static.AuthenticatedHandler()
-		// Pin the authenticated CSP's connect-src to exactly the measurement
-		// origins /preflight advertises on the canonical UI host (auth requires
-		// requests on that host). Derived from the same targets the client is
-		// handed, so it can never omit one.
-		if u, perr := url.Parse(cfg.Auth.PublicURL); perr == nil {
-			authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
-		}
+		pinConnectOrigins(cfg, authn)
 	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
@@ -261,9 +267,8 @@ func (b *listenerBuild) closeOpened() {
 	}
 }
 
-// tcpTLS binds a TLS-over-TCP listener and appends it as a service. It is the
-// shared shape of the HTTPS H1, H2, and H3-bootstrap listeners, which differ
-// only in name, protocol, ALPN, mux topology, handler, and UI flag.
+// tcpTLS binds a TLS-over-TCP listener and appends it as a service. The HTTPS
+// H1, H2, and H3-bootstrap listeners share it.
 func (b *listenerBuild) tcpTLS(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
 	mux := listenerMuxConfigured(b.ctx, b.e, topo, handler, b.authn)
 	s := baseServer(b.authn.Enforce(mux, l), proto)
@@ -290,8 +295,7 @@ func h1Protocols() *http.Protocols {
 
 // assemble builds every configured listener into b.services.
 func (b *listenerBuild) assemble(spa http.Handler) error {
-	// Clear HTTP/1.1: always present. When auth is on it is a trusted-proxy
-	// upstream only; direct requests are refused and GET / redirects to HTTPS.
+	// Clear HTTP/1.1 is the one listener bound unconditionally.
 	h1 := baseServer(b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, b.authn), auth.Listener{UI: true}), h1Protocols())
 	hardenAuthenticatedServer(h1, b.authn.Enabled())
 	h1ln, err := net.Listen("tcp", b.cfg.Native.H1)
@@ -365,9 +369,8 @@ func (b *listenerBuild) assembleH3() error {
 			return err
 		}, stop: func(ctx context.Context) error {
 			err := h3.Shutdown(ctx)
-			// The graceful shutdown result is the one worth reporting; the
-			// listener and transport are closed unconditionally to free the
-			// UDP socket even when it failed.
+			// The listener and transport close unconditionally to free the UDP
+			// socket. The graceful shutdown result is the one worth reporting.
 			_ = quicListener.Close()
 			_ = quicTransport.Close()
 			return err

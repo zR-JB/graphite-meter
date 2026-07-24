@@ -551,9 +551,8 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 		duration time.Duration
 	}{
 		{"single stream", 1, 500 * time.Millisecond},
-		// Spawning and connecting 128 lanes under the race detector can take
-		// most of a small runner's half second, leaving no window for a byte
-		// to land; the clamp case gets headroom for its startup cost.
+		// Spawning 128 lanes under the race detector eats most of a half
+		// second, so the clamp case gets headroom for its startup cost.
 		{"clamped to the max of 128", 999, 2 * time.Second},
 	}
 	for _, c := range cases {
@@ -612,7 +611,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 }
 
 // TestRunTransferStageFanInErrorCancelsSiblingLane checks that when one lane
-// of a transfer stage fails, its sibling — still actively transferring — is
+// of a transfer stage fails, its sibling, still actively transferring, is
 // cancelled promptly rather than left running until its own duration expires.
 func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	var downloadBytesServed atomic.Int64
@@ -627,9 +626,8 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 		_, _ = w.Write(make([]byte, n))
 	})
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
-		// Give the download lane time to get well into transferring before
-		// the upload side fails, so the failure genuinely lands mid-transfer
-		// for its sibling rather than racing it at start-up.
+		// The delay lets the download lane get well into transferring, so this
+		// failure lands mid-transfer for its sibling rather than racing start-up.
 		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusInternalServerError)
 	})

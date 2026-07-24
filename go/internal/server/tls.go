@@ -18,7 +18,8 @@ import (
 
 const certPollInterval = time.Minute
 
-// certificateManager validates before bind and atomically swaps complete renewals.
+// certificateManager fails construction on an invalid certificate, so a bad
+// certificate stops startup. It atomically swaps complete renewals.
 type certificateManager struct {
 	cfg     *config.Config
 	current atomic.Pointer[tls.Certificate]
@@ -60,7 +61,7 @@ func (m *certificateManager) reload(now time.Time) error {
 		if !public.enabled || public.origin == "" {
 			continue
 		}
-		// Config validation has already rejected an unparseable public origin.
+		// Config validation guarantees every public origin parses.
 		u, _ := url.Parse(public.origin)
 		if err := leaf.VerifyHostname(u.Hostname()); err != nil {
 			return fmt.Errorf("TLS certificate incompatible with %s: %w", u.Hostname(), err)

@@ -33,8 +33,9 @@ type Principal struct {
 }
 
 // Enforce applies the authentication boundary to next. It is installed outermost
-// on every listener, so admission accounting, body reads, and WebSocket
-// upgrades all happen behind it.
+// on every listener, so admission accounting, body reads, and WebSocket upgrades
+// all happen behind it. Its call sites stay enumerated rather than looped: they
+// are the enforcement audit.
 func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	if !s.Enabled() {
 		return next
@@ -73,11 +74,10 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	})
 }
 
-// serveAuthenticated handles a request that requires a principal: it demands
-// TLS, authenticates, confines bearer grants to measurement routes, binds the
-// principal (and its session-cancellation) to the request context, and enforces
-// the cross-origin rules before dispatching. Enforce has already run the
-// routing, preflight, and public-route guards.
+// serveAuthenticated serves a request that needs a principal, downstream of
+// Enforce's routing, preflight, and public-route guards. It demands TLS,
+// authenticates, confines bearer grants to measurement routes, binds the
+// principal and its session cancellation, then enforces the cross-origin rules.
 func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
 	if !t.Secure {
 		s.writeAuthRequired(w, r, listener)
@@ -132,9 +132,8 @@ func isMeasurementRoute(path string) bool {
 
 // rotateSuppliedSession revokes the session named by the request's own session
 // cookie, if it still keys a live one, as part of issuing sess. The password
-// login POST is same-site, so the browser attaches the prior session cookie;
-// the OIDC callback is cross-site and does not, so that path captures the prior
-// session at /auth/oidc/start instead (see oidcTransaction.prior).
+// login POST is same-site, so the browser attaches that cookie. The OIDC
+// callback is cross-site and does not (see oidcTransaction.prior).
 func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		s.revokeSessionHash(sha256.Sum256([]byte(c.Value)), sess)
@@ -219,8 +218,8 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	return p, ok
 }
 
-// SessionEnded reports whether ctx was cancelled because the principal's
-// session was revoked or expired mid-request.
+// SessionEnded reports whether ctx carries the cancellation cause set when the
+// principal's session is revoked or expires mid-request.
 func SessionEnded(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), errSessionEnded)
 }

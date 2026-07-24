@@ -10,11 +10,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// Registry maps paths to endpoints. The HTTP mux is built by walking it; bus
-// endpoints (WebSocket today) resolve from the same registry. Adding an
-// endpoint is a Register call — no listener code changes. There is no
-// WebTransport dispatcher; that contract surface is inactive in this release
-// and slated to be activated (see docs/ARCHITECTURE.md#roadmap).
+// Registry maps paths to endpoints. The HTTP mux is built by walking it, and bus
+// endpoints (WebSocket) resolve from the same registry. Adding an endpoint is one
+// Register call, no listener code changes. WebTransport has no dispatcher
+// (docs/ARCHITECTURE.md#roadmap).
 type Registry struct {
 	httpEndpoints map[string]Endpoint
 	wsEndpoints   map[string]Endpoint
@@ -34,15 +33,15 @@ func (r *Registry) RegisterHTTP(path string, e Endpoint) {
 }
 
 // RegisterWS mounts an endpoint as a WebSocket bus at path. The upgrade is an
-// HTTP/1.1 Upgrade on the existing h1 origin — no new listener.
+// HTTP/1.1 Upgrade on the existing h1 origin, no new listener.
 func (r *Registry) RegisterWS(path string, e Endpoint) {
 	r.wsEndpoints[path] = e
 }
 
-// Mount attaches all registered endpoints onto mux: HTTP request/response
-// handlers and WebSocket bus upgrades. parent bounds every bus's lifetime — it is
-// the server's run context, so srv.Shutdown cancels it and in-flight bus handlers
-// (conn.Read/Write) return promptly instead of hanging the shutdown window.
+// Mount attaches every registered endpoint onto mux: HTTP request/response
+// handlers and WebSocket bus upgrades. parent bounds every bus's lifetime.
+// Passing the server's run context lets srv.Shutdown unblock handlers parked in
+// conn.Read/Write instead of hanging the shutdown window.
 func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 	r.MountWithOrigin(parent, mux, "")
 }
@@ -64,14 +63,9 @@ func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 }
 
 // wsAdapterWithOrigin upgrades the request to a WebSocket and runs the endpoint
-// against a websocketSession exposing the message bus.
-//
-// An empty allowedOrigin is public mode: cross-origin upgrades are allowed
-// (InsecureSkipVerify) to mirror the permissive Access-Control-Allow-Origin: *
-// the HTTP endpoints already set — this is a public, auth-less, cookie-less
-// measurement bus (app on :7246 measuring against :7248), so there is no session
-// state for a forged origin to abuse. A non-empty allowedOrigin means the server
-// does hold session state, so the upgrade is pinned to that one UI origin.
+// against a websocketSession exposing the message bus. A non-empty allowedOrigin
+// means the server holds session state, so the upgrade is pinned to that one UI
+// origin. An empty allowedOrigin is public mode.
 func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if allowedOrigin != "" && r.Header.Get("Origin") != "" && r.Header.Get("Origin") != allowedOrigin {
@@ -79,6 +73,8 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 			return
 		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			// Public mode is auth-less and cookie-less, holding no session state a
+			// forged origin could abuse. It mirrors the wildcard CORS on HTTP.
 			InsecureSkipVerify: allowedOrigin == "",
 			OriginPatterns: func() []string {
 				if allowedOrigin == "" {
@@ -94,14 +90,11 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 		if err != nil {
 			return // Accept already wrote the handshake-failure response
 		}
-		// Message-bus frames are tiny text control messages (opcodes.go); cap the
-		// read well below the library default so a peer cannot force a large
-		// buffered allocation per connection.
+		// Bus frames are tiny text control messages (opcodes.go). A read limit well
+		// under the library default stops a peer forcing a large buffered allocation.
 		conn.SetReadLimit(2048)
-		// The conn is hijacked, so r.Context() is no longer reliable (see Accept
-		// docs). Bound the bus with a context derived from the SERVER's run context
-		// (not Background): cancelled when Handle returns AND on srv.Shutdown, so a
-		// handler parked in conn.Read/Write unblocks at shutdown instead of hanging.
+		// Accept hijacks the conn, which makes r.Context() unreliable (see its
+		// docs). parent keeps the bus bounded by the server's shutdown instead.
 		var ctx context.Context
 		var cancel context.CancelFunc
 		if deadline, ok := r.Context().Deadline(); ok {
@@ -150,11 +143,10 @@ func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
 	})
 }
 
-// setCommonHeaders lets the client measure cross-origin (app on :7246,
-// measuring against :7248) while still reading accurate Resource Timing, which
-// Timing-Allow-Origin gates. An empty origin is public mode and answers with
-// wildcards; a named origin narrows every header to it and admits credentials,
-// which a wildcard may never do.
+// setCommonHeaders admits cross-origin measurement: the UI and the measurement
+// listener sit on different ports. Timing-Allow-Origin gates Resource Timing.
+// An empty origin is public mode and answers with wildcards. A named origin
+// narrows every header to it and admits credentials, which a wildcard may not.
 func setCommonHeaders(w http.ResponseWriter, origin string) {
 	h := w.Header()
 	if origin != "" {

@@ -46,6 +46,8 @@ type PublicOrigins struct {
 
 // AuthConfig holds the authentication settings read from GM_AUTH_*.
 type AuthConfig struct {
+	// Explicit is true when the operator sets any GM_AUTH_* variable other than
+	// the mode, even to its default value.
 	Explicit          bool
 	Mode              string
 	PublicURL         string
@@ -113,11 +115,7 @@ func Load() (Config, error) {
 	} {
 		if v, ok := os.LookupEnv(env.name); ok {
 			*env.dst = strings.TrimSpace(v)
-			// Explicit records that the operator set an auth setting even when its
-			// value equals the default, so mode=off can reject a half-configured
-			// deployment. GM_AUTH_MODE is excluded because setting it is how one
-			// asks for a mode, including "off".
-			if strings.HasPrefix(env.name, "GM_AUTH_") && env.name != "GM_AUTH_MODE" {
+			if marksAuthExplicit(env.name) {
 				c.Auth.Explicit = true
 			}
 		}
@@ -170,18 +168,27 @@ func Load() (Config, error) {
 			if err != nil {
 				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q: %w", raw, err)
 			}
-			// A default route trusts every client's forwarding headers, so any
-			// caller could spoof X-Real-IP to mint a fresh rate-limit budget per
-			// request or assert X-Forwarded-Proto=https on cleartext. There is no
-			// legitimate reason to trust the whole internet as a proxy; require the
-			// operator to name the proxy's actual CIDR.
-			if prefix.Bits() == 0 {
+			if isDefaultRoute(prefix) {
 				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q trusts every address; list the proxy's actual CIDR instead", raw)
 			}
 			c.TrustedProxies = append(c.TrustedProxies, prefix.Masked())
 		}
 	}
 	return c, nil
+}
+
+// marksAuthExplicit reports whether the named variable counts as configuring
+// authentication. GM_AUTH_MODE is excluded: setting it is how one asks for a
+// mode, including "off".
+func marksAuthExplicit(name string) bool {
+	return strings.HasPrefix(name, "GM_AUTH_") && name != "GM_AUTH_MODE"
+}
+
+// isDefaultRoute reports whether prefix covers every address. Trusting one lets
+// any caller spoof X-Real-IP for a fresh rate-limit budget, or assert
+// X-Forwarded-Proto=https over cleartext.
+func isDefaultRoute(prefix netip.Prefix) bool {
+	return prefix.Bits() == 0
 }
 
 func splitList(raw string) []string {
@@ -266,7 +273,7 @@ func envInt(name string, fallback int) (int, error) {
 	return n, nil
 }
 
-// validOrigin reports whether value is a bare origin — scheme and host only,
+// validOrigin reports whether value is a bare origin: scheme and host only,
 // with no path, credentials, query, or fragment. An empty scheme accepts either
 // http or https; allowSelf additionally permits the literal "self".
 func validOrigin(value, scheme string, allowSelf bool) bool {
@@ -478,8 +485,8 @@ func (a AuthConfig) oidcComplete() bool {
 		(a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
 }
 
-// validOIDCIssuer accepts only a bare HTTPS origin/path — no credentials,
-// query, or fragment — as the issuer.
+// validOIDCIssuer accepts as the issuer only a bare HTTPS origin or path, with
+// no credentials, query, or fragment.
 func validOIDCIssuer(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" &&

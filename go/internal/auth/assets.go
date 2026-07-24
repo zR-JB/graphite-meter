@@ -17,11 +17,10 @@ var (
 	authPendingHash  = cspHash(authPendingJS)
 )
 
-// page parses an auth page together with the "theme" and "pending" templates
-// its markup includes. Each script arrives as a template.JS value because
-// html/template emits those byte for byte, while comments in literal script
-// text are dropped by its JS lexer — the served bytes must match the digests
-// authThemeHash and authPendingHash pin.
+// page parses an auth page with the "theme" and "pending" templates its markup
+// includes. Scripts arrive as template.JS because html/template emits those
+// byte for byte, while its JS lexer drops comments from literal script text.
+// The served bytes must match the digests authThemeHash and authPendingHash pin.
 func page(name, text string) *template.Template {
 	scripts := template.FuncMap{
 		"themeJS":   func() template.JS { return template.JS(authThemeJS) },

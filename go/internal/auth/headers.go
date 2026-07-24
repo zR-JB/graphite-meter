@@ -1,8 +1,8 @@
 package auth
 
 // headers.go is the response-header policy: the CSP and hardening headers
-// applied to authenticated and pre-auth responses, and the only CORS surface
-// reachable without a principal — the headers-only measurement preflight.
+// applied to authenticated and pre-auth responses. The headers-only measurement
+// preflight is the only CORS surface reachable without a principal.
 
 import (
 	"net/http"
@@ -25,21 +25,30 @@ func securityHeaders(h http.Header) {
 	h.Set("Content-Security-Policy", authPageCSP(""))
 }
 
-// authPageCSP locks the login surface to its own inline stylesheet and
-// pre-paint theme script, each pinned by hash; no other source may load.
-// Signing in works without scripting: the form posts natively, and the theme
-// script only carries the app's stored theme over. connect-src 'self' lets the
-// pending.js enhancement post the same-origin password and CLI-approval forms
-// with fetch (swapping errors in place instead of navigating); it fetches
-// nowhere else. form-action widens only to the discovered authorization origin.
-// img-src allows data: and nothing else, which covers the inlined favicon
-// without opening a route to any remote host.
+// authPageCSP is the login surface's policy: default-src 'none' admits nothing,
+// and every source below is one the login page serves itself.
 func authPageCSP(authorizationOrigin string) string {
+	// form-action widens only to the discovered authorization origin, so the
+	// OIDC sign-in form can post to the provider.
 	formAction := "'self'"
 	if authorizationOrigin != "" {
 		formAction += " " + authorizationOrigin
 	}
-	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'; connect-src 'self'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
+	return strings.Join([]string{
+		"default-src 'none'",
+		// The stylesheet and both scripts are inline and pinned by digest.
+		// Scripting stays optional: the sign-in form posts natively.
+		"style-src 'sha256-" + authStyleHash + "'",
+		"script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'",
+		// pending.js posts the same-origin sign-in forms with fetch, swapping
+		// errors in place instead of navigating. It fetches nowhere else.
+		"connect-src 'self'",
+		// data: covers the inlined favicon and admits no remote host.
+		"img-src data:",
+		"form-action " + formAction,
+		"frame-ancestors 'none'",
+		"base-uri 'none'",
+	}, "; ")
 }
 
 func (s *Service) loginSecurityHeaders(h http.Header) {
@@ -64,13 +73,13 @@ func appCSP(scriptHash, connectExtra string) string {
 	return csp
 }
 
+// hstsThisHostOnly omits includeSubDomains: a homelab runs many services under
+// one base domain, and plain-HTTP or self-signed siblings break when forced to
+// HTTPS. This host opts itself in and does not speak for its neighbours.
+const hstsThisHostOnly = "max-age=31536000"
+
 func (s *Service) authenticatedSecurityHeaders(h http.Header) {
-	// HSTS is scoped to this exact host, deliberately without includeSubDomains:
-	// a homelab commonly runs many services under one base domain, and forcing
-	// HTTPS onto every sibling subdomain would break the ones that are plain HTTP
-	// or self-signed. This host opts itself in; it does not speak for its
-	// neighbours.
-	h.Set("Strict-Transport-Security", "max-age=31536000")
+	h.Set("Strict-Transport-Security", hstsThisHostOnly)
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy", appCSP(appScriptHash, s.connectSrc))
 	h.Set("Referrer-Policy", "same-origin")
@@ -79,8 +88,8 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 }
 
 // corsPreflight answers the CORS preflight for measurement routes. It is the one
-// unauthenticated path through Enforce, and writes headers only — never a body
-// and never a principal-bearing response.
+// unauthenticated path through Enforce, and writes headers only: never a body,
+// never a principal-bearing response.
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
 	if !secure || r.Header.Get("Origin") != s.public.String() {
 		forbidden(w)

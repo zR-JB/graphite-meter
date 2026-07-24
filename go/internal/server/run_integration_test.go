@@ -111,8 +111,8 @@ func TestRunServesTLSH1(t *testing.T) {
 }
 
 // TestRunServesH3 exercises assembleH3: the QUIC UDP listener plus its TCP
-// Alt-Svc bootstrap companion. It only proves the sockets bind and shut down
-// cleanly — an H3 client round-trip is out of scope here.
+// Alt-Svc bootstrap companion. It proves only that the sockets bind and shut
+// down cleanly: an H3 client round-trip is out of scope here.
 func TestRunServesH3(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
@@ -165,7 +165,7 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 	}
 }
 
-// TestRunRejectsInvalidConfig proves Run validates before binding anything.
+// TestRunRejectsInvalidConfig proves Run rejects a bad config without binding.
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.MaxConnections = -1 // fails validateLimits

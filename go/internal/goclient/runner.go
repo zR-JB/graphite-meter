@@ -87,16 +87,21 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	clone.Header.Set("Authorization", "Bearer "+t.token)
 	return t.base.RoundTrip(clone)
 }
+
+// pinnedHostname is empty for an origin that does not parse, which makes
+// authTransport refuse every request rather than send the grant to a host it
+// cannot name.
+func pinnedHostname(origin string) string {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
 	token := cfg.authToken()
-	// An unparseable origin leaves the pinned hostname empty, which makes
-	// authTransport refuse every request rather than send the grant to a host
-	// it cannot name.
-	var hostname string
-	if u, err := url.Parse(cfg.AuthOrigin); err == nil {
-		hostname = u.Hostname()
-	}
-	client := &http.Client{Transport: authTransport{token: token, hostname: hostname, base: base}}
+	client := &http.Client{Transport: authTransport{token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
 	if token != "" {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")
@@ -309,18 +314,18 @@ type runner struct {
 	target        *wire.ThroughputTarget
 	latencyTarget *wire.LatencyTarget
 	emit          func(Event)
-	// Idle RTT captured from the latency stage; used to stretch later stages'
-	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
+	// Idle RTT from the latency stage, stretching later stages' warmup so TCP
+	// slow-start fills the BDP (0 until measured).
 	idleRTT time.Duration
 }
 
 // laneStagger spreads lane starts so their congestion windows don't ramp in
-// lockstep (synchronised overshoot → synchronised loss/backoff).
+// lockstep: synchronised overshoot means synchronised loss and backoff.
 const laneStagger = 75 * time.Millisecond
 
-// adaptiveWarmup stretches a stage's warmup to ~10 RTTs (the configured value as
-// floor, capped) so slow-start finishes before the measured window opens. rtt <= 0
-// (latency stage not yet run / disabled) ⇒ the configured value.
+// adaptiveWarmup stretches a stage's warmup to ~10 RTTs so slow-start finishes
+// while the measured window is still closed. The configured value is the floor
+// and ceil the cap; rtt <= 0 (latency stage disabled or unrun) takes the floor.
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	const slowStartRTTs = 10
 	const ceil = 4 * time.Second
@@ -334,9 +339,9 @@ func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	return w
 }
 
-// laneStaggerStep is the per-lane spawn delay, shrunk so even the last lane (of
-// up to 128) spawns within half the warmup window — laneStagger is only the cap.
-// 0 ⇒ one lane or no warmup ⇒ spawn together.
+// laneStaggerStep is the per-lane spawn delay. Even the last lane (of up to
+// 128) spawns within half the warmup window; laneStagger is only the cap.
+// One lane or no warmup gives 0, so every lane spawns together.
 func (r *runner) laneStaggerStep() time.Duration {
 	if r.streams <= 1 {
 		return 0

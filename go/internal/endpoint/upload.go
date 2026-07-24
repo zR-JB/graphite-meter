@@ -11,16 +11,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// Upload sinks the client's streamed bytes for the upload measurement: it drains
-// the request body to io.Discard through a pooled scratch buffer, counting but
-// never accumulating (zero allocation, no buffering).
-//
-// When the request carries a server-minted ?id=, each drained chunk is also added
-// to that test's shared per-id aggregate (across all its parallel POST lanes), so
-// the SERVER's drained count — not the browser's upload.onprogress — becomes the
-// authoritative upload result, read live by the /upload/progress progress bus.
-// Without an id the POST still drains and counts, but only the client sees the
-// total.
+// Upload sinks the client's streamed bytes for the upload measurement, draining
+// the body through a pooled scratch buffer without accumulating it. A server-
+// minted ?id= folds every chunk into that test's shared aggregate, so the
+// SERVER's drained count is authoritative and readable from /upload/progress.
 type Upload struct {
 	meter   *Meter       // optional verbose per-second logger; nil unless -verbose
 	store   *UploadStore // optional per-id aggregate; nil disables server-authoritative counting
@@ -28,8 +22,8 @@ type Upload struct {
 }
 
 // uploadReadTimeout bounds a single stuck POST's body read so a half-open lane
-// can't pin a goroutine indefinitely. Generous vs a normal ~10–20 s upload stage;
-// each POST on a keep-alive connection gets its own fresh deadline.
+// cannot pin a goroutine indefinitely. Generous against a normal 10 to 20 s
+// upload stage; each POST on a keep-alive connection gets a fresh deadline.
 const uploadReadTimeout = 120 * time.Second
 
 // NewUpload builds the upload endpoint. meter may be nil (no verbose logging);
@@ -51,8 +45,8 @@ func (u *Upload) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 // io.Discard's internal 8 KiB so a saturated link costs far fewer read syscalls.
 const uploadBufSize = 256 * 1024
 
-// scratchPool reuses drain buffers across uploads — zero per-request allocation.
-// Stores *[]byte so Get/Put don't box the slice header.
+// scratchPool reuses drain buffers across uploads for zero per-request
+// allocation. It stores *[]byte so Get/Put do not box the slice header.
 var scratchPool = sync.Pool{
 	New: func() any {
 		b := make([]byte, uploadBufSize)
@@ -60,12 +54,10 @@ var scratchPool = sync.Pool{
 	},
 }
 
-// discardSink counts via the io.Copy return value while throwing the bytes away.
-// It deliberately does NOT implement io.ReaderFrom, so io.CopyBuffer uses our
-// large pooled buffer instead of io.Discard's small internal one. When verbose,
-// it also feeds each drained chunk to the meter for live per-second logging; when
-// an aggregate is attached, it folds the chunk into the test's server-
-// authoritative per-id count and elapsed-time clock.
+// discardSink counts bytes via io.Copy's return value and drops them. It must
+// NOT implement io.ReaderFrom: that makes io.CopyBuffer bypass the large pooled
+// buffer for io.Discard's small internal one. An attached meter or aggregate
+// sees every chunk.
 type discardSink struct {
 	meter *Meter
 	agg   *uploadAgg // nil unless the POST carried a valid server-minted ?id=
@@ -84,10 +76,8 @@ func (s discardSink) Write(p []byte) (int, error) {
 // Handle drains the upload source, counting bytes. A clean EOF echoes the count
 // as JSON; a mid-stream cancel (client aborted the measurement) stops quietly.
 func (u *Upload) Handle(s transport.Session) error {
-	// Resolve the test's shared aggregate from a server-minted ?id=; nil for an
-	// empty/invalid id or over the live cap, in which case this POST still
-	// drains and counts, just not server-authoritatively. posts is a
-	// diagnostics gauge only — the TTL sweeper owns deletion.
+	// A server-minted ?id= joins this POST to its test's shared aggregate. Without
+	// a valid one the POST still drains and counts, just not authoritatively.
 	var agg *uploadAgg
 	if u.store != nil {
 		id := s.Query().Get("id")
@@ -115,11 +105,8 @@ func (u *Upload) Handle(s transport.Session) error {
 		return err
 	}
 
-	// Bound a single stuck POST's body read (idiomatic per-request deadline via the
-	// ResponseController). The streaming download/upload server has no global
-	// ReadTimeout — that would kill long legit uploads — so we scope it per POST.
-	// Best effort: a ResponseWriter that cannot set deadlines simply runs unbounded,
-	// exactly as it would without this call.
+	// Per-request deadline: the streaming server sets no global ReadTimeout, which
+	// would cut long legitimate uploads. A writer without deadlines runs unbounded.
 	if w, _, ok := s.HTTP(); ok {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
 	}
@@ -130,13 +117,12 @@ func (u *Upload) Handle(s transport.Session) error {
 	u.meter.Open()
 	defer u.meter.Close()
 
-	// CopyBuffer reads until EOF or a read error; the http server cancels the
-	// body read when the request context is cancelled, so this returns promptly
-	// on client disconnect.
+	// The http server cancels the body read on request-context cancellation, so
+	// CopyBuffer returns promptly when the client disconnects.
 	n, copyErr := io.CopyBuffer(discardSink{meter: u.meter, agg: agg}, src, *bufp)
 	if copyErr != nil {
-		// Client aborted the stream (the common case for a streaming upload
-		// measurement) — the connection is gone, so there's nothing to reply to.
+		// The client aborted the stream, the common case here. The connection is
+		// gone, so there is nothing to reply to.
 		return nil
 	}
 

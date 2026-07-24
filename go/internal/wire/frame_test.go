@@ -96,9 +96,9 @@ func TestCodecMatchesCorpus(t *testing.T) {
 	}
 }
 
-// render produces the canonical "op=…;k=v;…" form the decode rows pin. It is the
-// test's mirror of the corpus's expected column — kept here, not in the codec,
-// since it is a test artifact (the codec only ever emits on-wire frames).
+// render produces the canonical "op=…;k=v;…" form the decode rows pin. It mirrors
+// the corpus expected column and belongs to the test: the codec emits on-wire
+// frames only.
 func render(f Frame) string {
 	switch f.Op {
 	case OpREADY:

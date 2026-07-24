@@ -10,9 +10,16 @@ import (
 	"time"
 )
 
+const (
+	maxApprovals        = 256
+	maxSessionApprovals = 8
+	maxSessionGrants    = 8
+	approvalLifetime    = 2 * time.Minute
+)
+
 // cliApproval is one pending browser approval of a native-client grant: a
 // verification code shown on both sides, bound to the approving session, valid
-// for two minutes and never persisted.
+// for approvalLifetime and never persisted.
 type cliApproval struct {
 	code     string
 	session  *session
@@ -59,13 +66,13 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 				count++
 			}
 		}
-		if len(s.approvals) >= 256 || count >= 8 {
+		if len(s.approvals) >= maxApprovals || count >= maxSessionApprovals {
 			s.mu.Unlock()
 			s.counters.capacity.Add(1)
 			forbidden(w)
 			return
 		}
-		approval = &cliApproval{code: verificationCode(challenge), session: p.session, expires: now.Add(2 * time.Minute)}
+		approval = &cliApproval{code: verificationCode(challenge), session: p.session, expires: now.Add(approvalLifetime)}
 		s.approvals[challenge] = approval
 	}
 	s.mu.Unlock()
@@ -127,13 +134,12 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		s.writeGrantPending(w)
 		return
 	}
-	// Consumed only once a grant actually exists: deleting before the RNG can
-	// fail would burn the approval and force the operator through a second
-	// browser confirmation for a server-side error.
+	// The approval is consumed only once a grant exists: an RNG failure must not
+	// cost the operator a second browser confirmation.
 	delete(s.approvals, challenge)
 	h := sha256.Sum256([]byte(grant))
 	sess := approval.session
-	if len(sess.grants) >= 8 {
+	if len(sess.grants) >= maxSessionGrants {
 		for old := range sess.grants {
 			delete(sess.grants, old)
 			delete(s.grants, old)

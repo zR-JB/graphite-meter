@@ -5,17 +5,22 @@ import (
 	"testing"
 )
 
-// clearConfigEnv removes the listener, origin, and proxy variables so Load sees
-// the operator's environment as empty. t.Setenv registers the restore that runs
-// when the test ends; os.Unsetenv then makes the variable absent rather than
-// empty, which Load distinguishes. Unsetenv cannot fail for a name t.Setenv has
-// just accepted.
+// clearConfigEnv makes the listener, origin, and proxy variables absent, so Load
+// sees the operator's environment as empty.
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"GM_H1_ADDR", "GM_H1_TLS_ADDR", "GM_H2_ADDR", "GM_H3_ADDR", "GM_TLS_CERT", "GM_TLS_KEY", "GM_H1_PUBLIC_ORIGIN", "GM_H1_TLS_PUBLIC_ORIGIN", "GM_H2_PUBLIC_ORIGIN", "GM_H3_PUBLIC_ORIGIN", "GM_ADVERTISED_NATIVE_ENDPOINTS", "GM_PUBLIC_ORIGINS", "GM_PUBLIC_THROUGHPUT_ORIGINS", "GM_PUBLIC_LATENCY_ORIGINS", "GM_SERVER_NAME", "GM_SERVER_LOCATION", "GM_VERBOSE", "GM_TRUSTED_PROXIES"} {
-		t.Setenv(key, "")
-		_ = os.Unsetenv(key)
+		unsetEnv(t, key)
 	}
+}
+
+// unsetEnv makes key absent for the duration of the test. Load distinguishes an
+// absent variable from an empty one, so t.Setenv registers the restore and
+// os.Unsetenv clears the value. Unsetenv cannot fail for a name t.Setenv accepts.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	_ = os.Unsetenv(key)
 }
 
 func TestDefaultIsNativeH1Only(t *testing.T) {

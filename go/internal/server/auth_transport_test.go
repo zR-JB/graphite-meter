@@ -210,10 +210,9 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	return out.Token
 }
 
-// Every other test in this package asserts a 403. If a regression nil-ed
-// r.TLS on the HTTP/3 handler, or dropped the bearer path, the whole suite
-// would still pass while no authenticated request worked at all. This is the
-// positive path over the real transports.
+// The positive path over the real transports. Every other test in this package
+// asserts a 403, so a nil r.TLS on the HTTP/3 handler or a dropped bearer path
+// satisfies them all while no authenticated request works.
 func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)

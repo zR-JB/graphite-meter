@@ -7,18 +7,10 @@ import (
 	"time"
 )
 
-// Meter is an optional, verbose-mode throughput logger for a transfer endpoint
-// (the server-side counterpart to the client's debug logging). Endpoints Add()
-// bytes as they stream and Open()/Close() around each request; a background
-// goroutine started by Run() logs the aggregate per-second rate plus the live
-// connection count.
-//
-// Every method is nil-safe, so the endpoints call them unconditionally — when
-// verbose logging is off the *Meter is nil and each call is a cheap nil check.
-//
-// Line shape (matches the client's "[gm:...]" tagging so both sides read alike):
-//
-//	[gm:server:download] 9.41 Gbit/s · 4 conns · 1176.25 MB this window
+// Meter logs one transfer endpoint's aggregate throughput once per second under
+// verbose mode. Endpoints Add bytes and Open/Close around each request; Run does
+// the logging. A nil *Meter is a working no-op, so endpoints call every method
+// unconditionally and pay only a nil check when verbose logging is off.
 type Meter struct {
 	name  string
 	bytes atomic.Int64 // cumulative bytes moved, ever
@@ -49,9 +41,10 @@ func (m *Meter) Close() {
 	}
 }
 
-// Run logs the per-second byte rate until ctx is cancelled. Start it once per
-// meter in its own goroutine. A quiet second (no bytes, no open connections) is
-// skipped so the log only speaks while a test is actually running. nil-safe.
+// Run logs the per-second byte rate and live connection count until ctx is
+// cancelled, tagged "[gm:<name>]" like the client's own debug lines. Start it
+// once per meter in its own goroutine. A second with no bytes and no open
+// connections logs nothing. nil-safe.
 func (m *Meter) Run(ctx context.Context) {
 	if m == nil {
 		return

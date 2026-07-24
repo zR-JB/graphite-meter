@@ -21,6 +21,16 @@ func testFS() fstest.MapFS {
 	}
 }
 
+// noRedirectClient rejects every redirect, so a redirect loop fails the test
+// instead of hanging until the client's redirect cap trips.
+func noRedirectClient() *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return fmt.Errorf("unexpected redirect to %s", req.URL)
+		},
+	}
+}
+
 func get(t *testing.T, srv *httptest.Server, path string) (int, string) {
 	t.Helper()
 	resp, err := http.Get(srv.URL + path)
@@ -80,9 +90,8 @@ func TestHandlerMissingAssetWithExtensionIs404(t *testing.T) {
 	srv := httptest.NewServer(handlerFor(testFS()))
 	defer srv.Close()
 
-	// /assets/missing.js has an extension but isn't in the fixture: it must
-	// 404, NOT fall back to index.html (a stale-build 404 must fail loudly,
-	// not serve HTML for a requested script).
+	// An extensioned path missing from the fixture must 404. Serving HTML for
+	// a requested script hides a stale build.
 	status, _ := get(t, srv, "/assets/missing.js")
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", status)
@@ -106,9 +115,8 @@ func TestHandlerCleansPathTraversal(t *testing.T) {
 	srv := httptest.NewServer(handlerFor(testFS()))
 	defer srv.Close()
 
-	// path.Clean collapses "/assets/../index.html" to "/index.html" before the
-	// fs lookup, so a traversal attempt can only ever reach paths already
-	// inside the fs root — it must never escape it or 500.
+	// path.Clean collapses "/assets/../index.html" to "/index.html", so the fs
+	// lookup only ever sees paths inside the fs root.
 	status, body := get(t, srv, "/assets/../index.html")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
@@ -122,17 +130,9 @@ func TestHandlerDeepPathTraversalFallsBackToIndex(t *testing.T) {
 	srv := httptest.NewServer(handlerFor(testFS()))
 	defer srv.Close()
 
-	// Enough ".." segments to walk above the fs root collapse under
-	// path.Clean to a path outside the fixture, landing on the SPA fallback —
-	// not an escape from the embedded fs, and (regression check) not a
-	// redirect loop: disallow redirects so a loop fails the test instead of
-	// hanging until the client's redirect cap trips.
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return fmt.Errorf("unexpected redirect to %s", req.URL)
-		},
-	}
-	resp, err := client.Get(srv.URL + "/../../../etc/passwd")
+	// ".." segments walking above the fs root collapse under path.Clean to a
+	// path outside the fixture, landing on the SPA fallback, not an escape.
+	resp, err := noRedirectClient().Get(srv.URL + "/../../../etc/passwd")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -154,18 +154,9 @@ func TestHandlerSPAFallbackForTrailingSlashRouteDoesNotRedirectLoop(t *testing.T
 	srv := httptest.NewServer(handlerFor(testFS()))
 	defer srv.Close()
 
-	// A trailing-slash client route (e.g. "/settings/") is extensionless and
-	// missing from the fixture, so it hits the same SPA-fallback branch as
-	// "/results" above. It is the shape that redirect-loops if the fallback
-	// ever delegates to http.FileServer: FileServer's "./" redirect is a fixed
-	// point for a path already ending in "/". Disallow redirects so that fails
-	// loudly instead of hanging until the client's redirect cap trips.
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return fmt.Errorf("unexpected redirect to %s", req.URL)
-		},
-	}
-	resp, err := client.Get(srv.URL + "/settings/")
+	// FileServer redirects a path ending in "/" to "./", the same path, so this
+	// route loops if the SPA fallback ever delegates to http.FileServer.
+	resp, err := noRedirectClient().Get(srv.URL + "/settings/")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -221,9 +212,8 @@ func TestHandlerHeadRequestMatchesGetHeaders(t *testing.T) {
 }
 
 func TestScriptCSPHash(t *testing.T) {
-	// The exact inline pre-paint script the client build emits; its digest is
-	// what a browser computes for the CSP 'sha256-…' source, cross-checked
-	// independently. A change to the script must change this hash in lockstep.
+	// The exact inline pre-paint script the client build emits. Its digest is
+	// what a browser computes for the CSP 'sha256-...' source.
 	const inline = `try{e=localStorage.getItem("graphite-meter:v1"),t=e?JSON.parse(e).theme:null,r=t==="light"||t==="dark"?t:matchMedia("(prefers-color-scheme: light)").matches?"light":"dark",document.documentElement.setAttribute("data-theme",r)}catch(c){}var e,t,r;`
 	html := []byte(`<!doctype html><head><style>x</style> <script>` + inline +
 		`</script> <script type="module" src="/assets/app.js"></script></head>`)

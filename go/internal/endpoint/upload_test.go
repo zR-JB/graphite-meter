@@ -111,9 +111,9 @@ func TestUploadStopsOnReadError(t *testing.T) {
 }
 
 // TestUploadAbortKeepsPartialAggregateAndDecrementsPosts checks a mid-stream
-// abort on an id'd upload: bytes drained before the error are kept (never
-// rolled back), and posts is decremented via defer even on the error path —
-// the lane-count invariant must hold whether Handle returns via EOF or error.
+// abort on an id'd upload: already-drained bytes are kept, never rolled back,
+// and posts is decremented via defer on the error path too. The lane-count
+// invariant holds whether Handle returns via EOF or via error.
 func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
@@ -168,9 +168,9 @@ func TestUploadOverCapIDIsRejected(t *testing.T) {
 	}
 }
 
-// TestUploadEmptyBodyIDCreatesZeroByteAggregate checks a zero-byte POST for
-// an id'd upload still creates an aggregate — the POST itself is the first
-// touch — reporting zero bytes, since a zero-length read never reaches
+// TestUploadEmptyBodyIDCreatesZeroByteAggregate checks a zero-byte POST for an
+// id'd upload still creates an aggregate: the POST itself is the first touch.
+// It reports zero bytes, since a zero-length read never reaches
 // discardSink.Write and so never calls recordChunk.
 func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 	store := NewUploadStore()

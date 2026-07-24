@@ -262,9 +262,8 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	if policy := authPageCSP(""); !strings.Contains(policy, pin) {
 		t.Fatalf("CSP %q does not pin both embedded scripts", policy)
 	}
-	// pending.js posts the same-origin password/CLI forms with fetch; without
-	// connect-src 'self' the login CSP's default-src 'none' blocks that fetch
-	// and a JS-enabled sign-in silently fails with no native fallback.
+	// pending.js posts the sign-in forms with fetch; without connect-src 'self'
+	// the login CSP's default-src 'none' blocks it and sign-in silently fails.
 	if policy := authPageCSP(""); !strings.Contains(policy, "connect-src 'self'") {
 		t.Fatalf("login CSP %q does not allow the same-origin sign-in fetch", policy)
 	}
@@ -283,9 +282,8 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		// Every rendered script must be byte-identical to a hashed asset, or
-		// the CSP blocks it: html/template's JS lexer would otherwise strip
-		// the comments the digests cover.
+		// A rendered script must match a hashed asset byte for byte or the CSP
+		// blocks it; html/template's JS lexer strips comments from literal text.
 		rest := rendered.String()
 		scripts := 0
 		for {
@@ -862,9 +860,8 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 		return out
 	}
-	// auth.css states the light palette twice, once per data-theme and once as
-	// the OS-preference fallback, so consecutive repeats collapse. The two
-	// blocks drifting apart survives the collapse and fails the comparison.
+	// auth.css states the light palette twice, per data-theme and as the OS
+	// fallback, so consecutive repeats collapse. Drift between them survives.
 	collapse := func(in []string) []string {
 		out := in[:0:0]
 		for _, value := range in {

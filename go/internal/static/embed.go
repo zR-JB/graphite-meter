@@ -19,11 +19,10 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-// AppScriptCSPHash is the CSP 'sha256-…' digest of the single inline pre-paint
-// <script> in the embedded index.html, or "" when no real build is embedded
-// (the tracked placeholder). It is computed from the embedded bytes, so it
-// always matches the page actually served — a client rebuild can never leave it
-// stale, and there is nothing to regenerate.
+// AppScriptCSPHash is the CSP 'sha256-...' digest of the single inline
+// pre-paint <script> in the embedded index.html, "" for the tracked
+// placeholder. It is computed from the embedded bytes, so it matches the page
+// actually served.
 func AppScriptCSPHash() string {
 	b, err := fs.ReadFile(distFS, "dist/index.html")
 	if err != nil {
@@ -32,10 +31,10 @@ func AppScriptCSPHash() string {
 	return scriptCSPHash(b)
 }
 
-// scriptCSPHash extracts the one attribute-less inline <script> from html and
-// returns the base64 sha256 of its exact text content — the form a CSP
-// 'sha256-…' source expects. The bundle's own module script carries a src
-// attribute, so the bare "<script>" delimiter matches only the inline one.
+// scriptCSPHash returns the base64 sha256 of the one attribute-less inline
+// <script>'s exact text, the form a CSP 'sha256-...' source expects. The
+// bundle's own module script carries a src attribute, so the bare "<script>"
+// delimiter matches only the inline one.
 func scriptCSPHash(html []byte) string {
 	_, afterOpen, found := bytes.Cut(html, []byte("<script>"))
 	if !found {
@@ -49,9 +48,9 @@ func scriptCSPHash(html []byte) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-// distRoot returns the embedded build rooted at dist/. fs.Sub only rejects a
-// malformed path, so a failure here means this path and the //go:embed
-// directive disagree — a build-time mistake, not a runtime condition.
+// distRoot returns the embedded build rooted at dist/. fs.Sub rejects only a
+// malformed path, so a failure means this path and the //go:embed directive
+// disagree.
 func distRoot() fs.FS {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
@@ -78,7 +77,7 @@ func handlerForAuthenticated(fsys fs.FS) http.Handler {
 	base := handlerFor(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if name != "" && name != "." && path.Ext(name) != "" {
+		if isAssetPath(name) {
 			base.ServeHTTP(w, r)
 			return
 		}
@@ -99,9 +98,9 @@ func handlerForAuthenticated(fsys fs.FS) http.Handler {
 	})
 }
 
-// handlerFor builds the SPA-fallback handler over fsys. Split out from
-// Handler so tests can exercise the routing logic against an in-memory fs.FS
-// instead of the real embedded dist.
+// handlerFor builds the SPA-fallback handler over fsys. Taking an fs.FS lets
+// tests exercise the routing against an in-memory fixture instead of the real
+// embedded dist.
 func handlerFor(fsys fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(fsys))
 
@@ -115,27 +114,26 @@ func handlerFor(fsys fs.FS) http.Handler {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		// A missing path with an extension (e.g. a content-hashed /assets/*.js)
-		// must 404, not fall back to index.html: serving HTML for a missing
-		// script fails strict MIME checks and the browser caches that failure,
-		// turning a stale build into a sticky error.
-		if path.Ext(name) != "" {
+		// Serving index.html for a missing script fails strict MIME checks and
+		// the browser caches that failure, making a stale build sticky.
+		if isAssetPath(name) {
 			http.NotFound(w, r)
 			return
 		}
-		// SPA fallback: serve index.html's content for unknown (extensionless)
-		// routes so client-side routing works. Served directly via
-		// ServeContent rather than rewriting the request path and delegating
-		// to fileServer: FileServer redirects any request whose path ends in
-		// "index.html" to "./" to canonicalize the URL, which loops forever
-		// once the path already resolves back to itself (e.g. a trailing
-		// slash route, or ".." segments collapsing to one).
 		serveIndex(w, r, fsys)
 	})
 }
 
-// serveIndex writes fsys's index.html to w, matching http.ServeContent's
-// caching/range/content-type handling without going through fileServer.
+// isAssetPath reports whether name addresses a build file rather than a client
+// route. Build files carry an extension, client routes do not.
+func isAssetPath(name string) bool {
+	return path.Ext(name) != ""
+}
+
+// serveIndex writes fsys's index.html to w with http.ServeContent's
+// caching/range/content-type handling. It bypasses http.FileServer, which
+// redirects any path ending in "index.html" to "./" and so loops forever on a
+// path that resolves back to itself (a trailing slash route, or ".." segments).
 func serveIndex(w http.ResponseWriter, r *http.Request, fsys fs.FS) {
 	f, err := fsys.Open("index.html")
 	if err != nil {

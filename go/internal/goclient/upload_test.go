@@ -32,7 +32,7 @@ func TestCyclingBodyWrapsDeterministically(t *testing.T) {
 }
 
 func TestCyclingBodyStopsAtLimit(t *testing.T) {
-	// limit exercises the fixed-Content-Length path: the body emits exactly
+	// limit exercises the known-Content-Length path: the body emits exactly
 	// `limit` bytes (wrapping the block) and then reports io.EOF.
 	b := &cyclingBody{ctx: context.Background(), block: []byte{1, 2, 3}, limit: 7}
 	var got []byte
@@ -115,13 +115,10 @@ func TestMintUploadID(t *testing.T) {
 	})
 }
 
-// TestUploadLaneDrainsBytes checks uploadLane streams its cycling body to the
-// server and that the server-observed byte count grows without bound while
-// the lane runs, then stops promptly on cancellation. The upload stream is
-// intentionally endless (matching the real client, which relies on the caller
-// to stop it once the stage's measurement window closes) so there is no
-// natural "final total" to await; the test instead waits for a threshold to be
-// crossed and confirms the lane joins quickly once cancelled.
+// TestUploadLaneDrainsBytes checks uploadLane streams its cycling body until
+// cancelled. The stream is endless by design, since the caller stops it when
+// the stage's window closes, so the test waits for a byte threshold instead of
+// a final total, then confirms the lane joins promptly.
 func TestUploadLaneDrainsBytes(t *testing.T) {
 	var served atomic.Uint64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,10 +175,10 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 	}
 }
 
-// newAbruptCloseUploadServer reads a little of each request's body then
-// aborts the handler, dropping the connection without ever sending a
-// response — simulating a server that vanishes mid-transfer rather than one
-// that responds cleanly or is merely slow.
+// newAbruptCloseUploadServer reads a little of each request's body then aborts
+// the handler, dropping the connection without a response. It simulates a
+// server that vanishes mid-transfer rather than one that responds cleanly or
+// is merely slow.
 func newAbruptCloseUploadServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 8*1024)
@@ -207,7 +204,7 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 		close(done)
 	}()
 
-	// Let the lane hit and retry past several abrupt drops before cancelling.
+	// The sleep lets the lane hit and retry past several abrupt drops.
 	time.Sleep(150 * time.Millisecond)
 	cancel()
 	select {

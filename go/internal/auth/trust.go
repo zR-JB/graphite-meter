@@ -20,10 +20,9 @@ import (
 type trust struct{ Secure, Canonical bool }
 
 // requestTrust evaluates a request against the trust boundary. Direct TLS is
-// believed on its own; a cleartext request is believed only from a configured
+// believed on its own. A cleartext request is believed only from a configured
 // trusted proxy, and only when a single, non-list X-Forwarded-Proto and
-// X-Forwarded-Host say https and the canonical host. Anything else is
-// untrusted, which is also what an untrusted peer forging those headers gets.
+// X-Forwarded-Host say https and the canonical host. Anything else is untrusted.
 func (s *Service) requestTrust(r *http.Request) trust {
 	if r.TLS != nil {
 		return trust{Secure: true, Canonical: equalHost(r.Host, s.public.Host)}
@@ -106,10 +105,9 @@ func (s *Service) authClientAddress(r *http.Request) (netip.Addr, bool) {
 }
 
 // validRequestOrigin enforces the origin, Sec-Fetch-Site, and double-submit
-// CSRF rules on an authenticated request as a sequence of independent, named
-// checks. A bearer principal is exempt from everything past the Origin header
-// (it has no ambient cookie to abuse); a cookie principal must clear every
-// rule.
+// CSRF rules as a sequence of independent, named checks. A bearer principal
+// stops at the Origin header, having no ambient cookie to abuse. A cookie
+// principal must clear every rule.
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 	if !s.originHeaderAllowed(r) {
 		return false
@@ -124,7 +122,7 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 }
 
 // originHeaderAllowed passes when there is no Origin header or it is the public
-// UI origin. It is the one rule every request — bearer or cookie — must clear.
+// UI origin. Every request, bearer or cookie, must clear this one rule.
 func (s *Service) originHeaderAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	return origin == "" || origin == s.public.String()

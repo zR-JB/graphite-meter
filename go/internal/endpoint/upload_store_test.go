@@ -270,12 +270,10 @@ func TestUploadStoreDeleteIdempotent(t *testing.T) {
 	}
 }
 
-// TestUploadStoreSweepBoundary checks the sweeper's idle-cutoff comparison
-// near the TTL edge: an aggregate touched just inside the TTL survives, one
-// touched just past it is reaped. (An exact-nanosecond tie isn't asserted —
-// sweep's own monoNanos() call advances between statements, so a true tie is
-// inherently racy; a safe margin on both sides still pins down the same
-// "< cutoff" comparison sweep uses.)
+// TestUploadStoreSweepBoundary checks the idle-cutoff comparison at the TTL
+// edge: an aggregate touched just inside the TTL survives, one just past it is
+// reaped. An exact-nanosecond tie is racy and unasserted, since sweep's own
+// monoNanos() advances between statements. A margin pins the same comparison.
 func TestUploadStoreSweepBoundary(t *testing.T) {
 	s := NewUploadStore()
 	const ttl = 200 * time.Millisecond
@@ -327,11 +325,10 @@ func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
 	}
 }
 
-// TestUploadStoreConcurrentGetAndSweep races get/getOrCreate against a
-// sweeper reaping a mix of already-expired and still-fresh aggregates — the
-// real shape of production traffic hitting the store while RunSweeper ticks.
-// The point is race-safety (run with -race) and that `live` never desyncs
-// from the actual shard contents.
+// TestUploadStoreConcurrentGetAndSweep races get/getOrCreate against a sweeper
+// reaping a mix of expired and fresh aggregates, the shape of real traffic
+// hitting the store while RunSweeper ticks. It checks race-safety (run with
+// -race) and that `live` never desyncs from the actual shard contents.
 func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	s := NewUploadStore()
 	const n = 200

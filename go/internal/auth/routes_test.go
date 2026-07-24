@@ -43,7 +43,7 @@ func loadRoutePin(t *testing.T) map[string]string {
 		pinned[strings.TrimSpace(name)] = strings.TrimSpace(path)
 	}
 	if len(pinned) == 0 {
-		t.Fatal("route pin is empty — expected populated routes")
+		t.Fatal("route pin is empty; expected populated routes")
 	}
 	return pinned
 }

@@ -20,9 +20,9 @@ const (
 	panelContentTop = 2
 )
 
-// layout records where View last drew the clickable parts of the configure
-// screen. View takes the model by value, so the record lives behind a pointer
-// every copy shares. Positions are absolute terminal cells.
+// layout records where View draws the clickable parts of the configure screen.
+// View takes the model by value, so the record lives behind a pointer every
+// copy shares. Positions are absolute terminal cells.
 type layout struct {
 	tabY     int
 	tabs     []span // one per section, in tab order
@@ -38,10 +38,9 @@ func (l *layout) reset() {
 	l.rows = l.rows[:0]
 }
 
-// markRow records the menu row about to be appended to a section body of the
-// given lines. Rows render in row order, so their positions land in that order
-// too. fitBlock truncates every body line to the panel width, so each line
-// occupies exactly one row and the position is the line count.
+// markRow records the position of the menu row about to be appended to lines.
+// fitBlock truncates every body line to the panel width, so a line occupies
+// exactly one row and the position is the line count.
 func (l *layout) markRow(lines []string) {
 	l.rows = append(l.rows, l.rowTop+len(lines))
 }
@@ -64,17 +63,16 @@ func (m model) View() string {
 	return shellStyle.Render(b.String())
 }
 
-// innerWidth is the content width inside the shell margin. The terminal's full
-// width is used — bars and columns grow with it — with only a floor under
-// which no layout stays legible.
+// innerWidth is the content width inside the shell margin. Bars and columns
+// grow with the terminal, down to a floor under which no layout stays legible.
 func (m model) innerWidth() int {
 	return max(m.width-4, 40)
 }
 
 // fitLine truncates one rendered line to w cells, ANSI-aware, so panel content
 // never wraps: a cramped terminal loses a line's tail, not its layout. A line
-// already within width is returned untouched — the vast majority of lines —
-// which skips lipgloss's whole render pipeline for them.
+// already within width returns untouched, skipping lipgloss's render pipeline
+// for the common case.
 func fitLine(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
@@ -83,8 +81,8 @@ func fitLine(s string, w int) string {
 }
 
 // fitBlock applies fitLine to every line of a panel body. It walks the block
-// without allocating a line slice and, when nothing overflows, returns the
-// input unchanged so the common in-width case allocates nothing.
+// without allocating a line slice and returns the input unchanged when nothing
+// overflows, so the common in-width case allocates nothing.
 func fitBlock(s string, w int) string {
 	var b strings.Builder
 	changed := false
@@ -94,7 +92,7 @@ func fitBlock(s string, w int) string {
 		fitted := fitLine(line, w)
 		if fitted != line && !changed {
 			b.Grow(len(s))
-			b.WriteString(s[:len(s)-len(rest)]) // verbatim lines before this one
+			b.WriteString(s[:len(s)-len(rest)]) // the verbatim prefix up to this line
 			changed = true
 		}
 		if changed {
@@ -131,18 +129,24 @@ func (m model) header(w int) string {
 	return line + "\n" + fitLine(mutedStyle.Render("native go client "+goclient.Version)+"  "+accentStyle.Render(target), w)
 }
 
-// splitColumns divides w into two bordered panels separated by a two-cell
-// gutter. Each panel's border draws two columns outside its lipgloss width, so
-// the content widths split w minus the gutter and both border pairs — the pair
-// then renders exactly w columns wide. Below 96 cells neither panel stays
-// readable side by side, so both take the full width — minus their own border
-// pair, so a stacked panel renders the same w columns — and the caller stacks
-// them.
+const (
+	// panelBorderWidth is the column pair a panel's rounded border draws
+	// outside its lipgloss width.
+	panelBorderWidth = 2
+	// gutterWidth separates two side-by-side panels.
+	gutterWidth = 2
+	// twoColumnMin is the narrowest w where two panels stay readable side by
+	// side. Below it the caller stacks them.
+	twoColumnMin = 96
+)
+
+// splitColumns sizes panel content so a rendered pair, or one stacked panel,
+// spans exactly w columns.
 func splitColumns(w int) (leftW, rightW int, twoCol bool) {
-	if w < 96 {
-		return w - 2, w - 2, false
+	if w < twoColumnMin {
+		return w - panelBorderWidth, w - panelBorderWidth, false
 	}
-	inner := w - 6
+	inner := w - gutterWidth - 2*panelBorderWidth
 	leftW = inner / 2
 	return leftW, inner - leftW, true
 }
@@ -156,9 +160,7 @@ func (m model) configView(w, top int) string {
 	// The menu panel opens two lines under the tab bar, whatever the terminal
 	// width: the summary panel is beside it or below it, never above.
 	m.lay.rowTop = top + 2 + panelContentTop
-	// The menu panel's rendered span includes the border columns outside its
-	// lipgloss width.
-	m.lay.rowRight = shellMargin + leftW + 2
+	m.lay.rowRight = shellMargin + leftW + panelBorderWidth
 	menu := panelStyle.Width(leftW).Render(fitBlock(m.sectionView(leftW-4), leftW-4))
 	summary := panelStyle.Width(rightW).Render(fitBlock(m.planView(rightW-4), rightW-4))
 	if twoCol {
@@ -193,9 +195,8 @@ func (m model) tabBar(w, y int) string {
 	if lipgloss.Width(line) < w {
 		line += subtleRuleStyle.Render(strings.Repeat("─", w-lipgloss.Width(line)))
 	}
-	// On a terminal narrower than the bar the trailing tabs clip; one long line
-	// would otherwise widen the whole shell block, padding every other line
-	// past the terminal.
+	// Clipping the trailing tabs holds the shell block at w. A longer line pads
+	// every other line past the terminal.
 	return fitLine(line, w)
 }
 
@@ -307,8 +308,8 @@ func (m model) runMenuView(w int) string {
 	return m.listWithTitle("Start", []string{label}, w)
 }
 
-// editError trails the field being edited with the reason its last commit was
-// rejected, so the answer sits where the eye already is.
+// editError trails the edited field with the reason its last commit fails, so
+// the answer sits where the eye already is.
 func (m model) editError() string {
 	if m.edit.err == "" {
 		return ""
@@ -459,9 +460,8 @@ func (m model) summaryView(w int) string {
 }
 
 // timelineView is the run's stage timeline. A measuring stage runs for exactly
-// its configured duration, so its bar is determinate; the warmup window is
-// adapted to the measured RTT inside the engine and never reported, so warmup
-// counts up under an indeterminate spinner instead of down.
+// its configured duration, so its bar is determinate. The warmup window is
+// never reported, so warmup counts up under an indeterminate spinner.
 func (m model) timelineView(w int) []string {
 	if len(m.stages) == 0 {
 		return nil

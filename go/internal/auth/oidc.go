@@ -24,6 +24,8 @@ const (
 	maxOIDCTransactions = 256
 	// maxClientOIDCTransactions bounds them per client address budget.
 	maxClientOIDCTransactions = 8
+	// oidcTransactionLifetime bounds how long one authorization request stands.
+	oidcTransactionLifetime = 10 * time.Minute
 )
 
 type oidcTransaction struct {
@@ -263,7 +265,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := budgetKey(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(10 * time.Minute), client: client, cliChallenge: r.FormValue("challenge")}
+	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: r.FormValue("challenge")}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
@@ -350,11 +352,20 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.completeOIDCSignIn(w, r, tx, idToken, name)
 }
 
+// carryCLIChallenge forwards a well-formed CLI challenge onto r.URL. It runs
+// ahead of the fallible checks, so a later failure's /login redirect carries it.
+func carryCLIChallenge(r *http.Request, challenge string) {
+	if !validChallenge(challenge) {
+		return
+	}
+	values := r.URL.Query()
+	values.Set("challenge", challenge)
+	r.URL.RawQuery = values.Encode()
+}
+
 // resolveOIDCTransaction validates the callback parameters and consumes the
 // one-time transaction, returning it plus the authorization code. It writes the
-// failure response and returns ok=false on any mismatch. The cliChallenge is
-// forwarded onto r.URL before the fallible checks so a later failure's /login
-// redirect still carries it.
+// failure response and returns ok=false on any mismatch.
 func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request) (oidcTransaction, string, bool) {
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
@@ -378,10 +389,8 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 	}
 	o.mu.Unlock()
 	clearTransactionCookie(w)
-	if ok && validChallenge(tx.cliChallenge) {
-		values := r.URL.Query()
-		values.Set("challenge", tx.cliChallenge)
-		r.URL.RawQuery = values.Encode()
+	if ok {
+		carryCLIChallenge(r, tx.cliChallenge)
 	}
 	if !ok || !s.now().Before(tx.expires) || tx.browser != browserHash || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
 		s.counters.replayExpiry.Add(1)
@@ -393,10 +402,8 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 		s.oidcLoginFailure(w, r, reasonResponseIssuer)
 		return oidcTransaction{}, "", false
 	}
-	// The exchange is the one anonymous path that produces an outbound request
-	// to the identity provider, which commonly sits on a private network. The
-	// transaction caps above free on use and so bound concurrency, not volume;
-	// this bounds volume.
+	// The transaction caps above free on use, so they bound concurrency. This
+	// bounds the volume of outbound requests to the identity provider.
 	if !s.allowExchange(r) {
 		s.oidcLoginFailure(w, r, reasonExchangeRateLimited)
 		return oidcTransaction{}, "", false
@@ -484,11 +491,9 @@ func firstNonEmpty(values ...string) string {
 }
 
 // writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
-// callback is the tail of a navigation the identity provider started, so it is
-// cross-site: a redirect from here would be followed without the SameSite=Strict
-// session cookie just set, and the visitor would land back on /login. Rendering
-// a page instead makes the next hop same-site, because this document initiates
-// it, and the cookie rides along.
+// callback is the tail of a provider-initiated navigation, so it is cross-site:
+// a redirect from here travels without the SameSite=Strict session cookie just
+// set. A rendered page makes the next hop same-site, and the cookie rides along.
 func (s *Service) writeSignedInInterstitial(w http.ResponseWriter, challenge string) {
 	if !validChallenge(challenge) {
 		challenge = ""

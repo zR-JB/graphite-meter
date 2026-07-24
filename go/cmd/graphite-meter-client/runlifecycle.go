@@ -27,9 +27,9 @@ const (
 )
 
 // stageProgress is one row of the run screen's timeline. duration is the
-// configured measurement window, which the engine holds to exactly. The warmup
-// window is stretched to the measured RTT inside the engine and is not
-// reported, so a warming stage can only be timed by elapsed.
+// configured measurement window, which the engine holds to exactly. The engine
+// stretches warmup to the measured RTT and never reports that window, so a
+// warming stage is timed by elapsed alone.
 type stageProgress struct {
 	name     string
 	duration time.Duration
@@ -383,9 +383,9 @@ func (m *model) enterStage(e goclient.Event) {
 	}
 }
 
-// finishStage closes a timeline row. A stage emits its results only once every
-// lane has stopped, so the first one proves the measurement window closed; the
-// rest of the stage's results land on a row that is already done.
+// finishStage closes a timeline row. A stage emits results only once every
+// lane stops, so the first result proves the window closed and the rest land
+// on a row already done.
 func (m *model) finishStage(stage string) {
 	for i := range m.stages {
 		if m.stages[i].name == stage && m.stages[i].state != stagePending {
@@ -394,8 +394,8 @@ func (m *model) finishStage(stage string) {
 	}
 }
 
-// stopStages marks whichever stage was running when the run ended early, so a
-// canceled or failed run does not leave a row spinning forever.
+// stopStages marks whichever stage is mid-flight when a run ends early, so a
+// canceled or failed run leaves no row spinning forever.
 func (m *model) stopStages() {
 	for i := range m.stages {
 		if s := m.stages[i].state; s == stageWarmup || s == stageMeasuring {

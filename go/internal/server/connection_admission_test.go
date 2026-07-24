@@ -17,8 +17,8 @@ type testAddr string
 func (a testAddr) Network() string { return "tcp" }
 func (a testAddr) String() string  { return string(a) }
 
-// scriptedConn is a net.Conn stub that reports a fixed remote address and
-// records whether Accept closed it after an admission refusal.
+// scriptedConn is a net.Conn stub with a preset remote address. It records
+// whether Accept closes it on an admission refusal.
 type scriptedConn struct {
 	net.Conn
 	remote net.Addr
@@ -28,7 +28,7 @@ type scriptedConn struct {
 func (c *scriptedConn) RemoteAddr() net.Addr { return c.remote }
 func (c *scriptedConn) Close() error         { c.closed = true; return nil }
 
-// scriptedListener hands out a fixed queue of conns, then io.EOF.
+// scriptedListener hands out a preset queue of conns, then io.EOF.
 type scriptedListener struct {
 	conns []net.Conn
 	i     int
@@ -89,9 +89,8 @@ func TestSocketKeyIPv6AndTrustedProxy(t *testing.T) {
 }
 
 func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
-	// clientMax 1: the first conn from a client is admitted, a second from the
-	// same client is closed and skipped, and Accept returns the next admissible
-	// conn from a different client in a single call.
+	// clientMax 1: Accept closes the second conn from a client and returns the
+	// next admissible one in the same call.
 	a := newConnectionAdmission(5, 1, nil)
 	over := &scriptedConn{remote: testAddr("192.0.2.1:2")}
 	ln := admittedListener{

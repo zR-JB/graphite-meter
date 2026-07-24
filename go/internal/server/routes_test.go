@@ -41,7 +41,7 @@ func loadRoutePin(t *testing.T) map[string]string {
 		t.Fatalf("scan route pin: %v", err)
 	}
 	if len(pinned) == 0 {
-		t.Fatal("route pin is empty — expected populated routes")
+		t.Fatal("route pin is empty: expected populated routes")
 	}
 	return pinned
 }

@@ -8,13 +8,10 @@ import (
 	"testing"
 )
 
-// credentialOutcomes are the reasons that must stay generic because their
-// distinctness would reveal another identity's authorization state — the OIDC
-// group/subject/signature outcomes — or an attack indicator (CSRF). The single
-// operator password (reasonPasswordMismatch) and rate limiting
-// (reasonThrottled) are deliberately absent: the code is open source, so a
-// vague message hides nothing, and the real defense is the rate limit and the
-// memory-hard hash, not message vagueness.
+// credentialOutcomes must stay generic: telling them apart reveals another
+// identity's authorization state (the OIDC group, subject, and signature
+// outcomes) or an attack indicator (CSRF). The operator password and rate
+// limiting are absent by design, they say so plainly.
 var credentialOutcomes = []reason{
 	reasonCSRFOriginMissing,
 	reasonCSRFOriginMismatch,
@@ -62,7 +59,7 @@ func TestSafeNoticesDescribeServerOrFormStateOnly(t *testing.T) {
 		reasonTransactionCookie:   noticeStale,
 	}
 	if len(reasonNotices) != len(want) {
-		t.Fatalf("safe subset has %d entries, want %d — new entries need a security review", len(reasonNotices), len(want))
+		t.Fatalf("safe subset has %d entries, want %d; new entries need a security review", len(reasonNotices), len(want))
 	}
 	for why, n := range want {
 		if got := noticeFor(why); got != n {

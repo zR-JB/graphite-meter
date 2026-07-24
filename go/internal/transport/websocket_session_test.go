@@ -12,10 +12,9 @@ import (
 	"github.com/coder/websocket"
 )
 
-// TestWebSocketSession drives a websocketSession over a real WebSocket upgrade
-// (httptest.NewServer + a real client dial, no mocking of the socket): the
-// non-bus seams report their documented values, and the bus round-trips a text
-// message end-to-end.
+// TestWebSocketSession drives a websocketSession over a real WebSocket upgrade:
+// the non-bus seams report their documented values, and the bus round-trips a
+// text message end-to-end.
 func TestWebSocketSession(t *testing.T) {
 	srvErrs := make(chan error, 16)
 	srvDone := make(chan struct{})
@@ -30,6 +29,8 @@ func TestWebSocketSession(t *testing.T) {
 			srvErrs <- fmt.Errorf("accept: %w", err)
 			return
 		}
+		// CloseNow skips the close handshake: the client sends no close frame,
+		// so a graceful Close blocks for 5s waiting on the reply.
 		defer conn.CloseNow()
 
 		check := func(cond bool, format string, args ...any) {
@@ -70,10 +71,6 @@ func TestWebSocketSession(t *testing.T) {
 		if err := bus.Send("echo:" + msg); err != nil {
 			srvErrs <- fmt.Errorf("Send: %w", err)
 		}
-		// CloseNow (deferred above) skips the graceful close handshake: the
-		// client is done reading once it gets the echo, so a graceful Close
-		// here would block up to 5s waiting for a close-frame reply it never
-		// sends.
 	})
 
 	srv := httptest.NewServer(handler)
