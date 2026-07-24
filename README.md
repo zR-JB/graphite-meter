@@ -70,7 +70,7 @@ The same measurement engine without a browser: `graphite-meter-client` is an int
 that runs the same stages over the same wire protocol against any Graphite Meter server — and
 pushes rates a browser can't.
 
-- Full run setup in the terminal: server presets, stage selection, timings, transport and
+- Full run setup in the terminal: server URL, stage selection, timings, transport and
   stream choices, with live bars, loaded latency, and per-stage progress.
 - Throughput and latency targets are chosen independently, so you can pin a protocol
   (HTTP/1.1, HTTP/2, HTTP/3) instead of trusting negotiation.

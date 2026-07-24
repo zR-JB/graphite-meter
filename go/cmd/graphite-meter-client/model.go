@@ -171,9 +171,7 @@ type serverPreset struct {
 }
 
 var serverPresets = []serverPreset{
-	{name: "Local dev", url: "http://127.0.0.1:7246", note: "default HTTP listener"},
-	{name: "Local TLS", url: "https://127.0.0.1:7247", note: "dedicated HTTPS HTTP/1.1 listener"},
-	{name: "LAN host", url: "http://graphite-meter.local:7246", note: "mDNS or local DNS"},
+	{name: "Local dev", url: "http://127.0.0.1:7246", note: "HTTP listener"},
 }
 
 type model struct {
@@ -486,13 +484,14 @@ func (m *model) commitURL(raw string) {
 		m.editRejected("Server URL cannot be empty.")
 		return
 	}
-	// A bare host means HTTPS. Presets carry their own schemes, so a
-	// scheme-less entry is a remote host, and remote servers answer TLS.
+	// A scheme-less entry is completed, never upgraded: what is typed is what
+	// is dialed. The scheme alone decides the port when none is given, which is
+	// http's 80 and https's 443.
 	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
+		raw = "http://" + raw
 	}
 	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
+		m.editRejected("Use an http:// or https:// URL with a host, for example https://meter.example.")
 		return
 	}
 	if raw != m.cfg.BaseURL {

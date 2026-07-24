@@ -108,13 +108,14 @@ const (
 )
 
 // splitColumns sizes panel content so a rendered pair, or one stacked panel,
-// spans exactly w columns.
+// spans exactly w columns. The left panel takes the larger share: it holds the
+// labelled rows, where the right panel holds short readings.
 func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 	if w < twoColumnMin {
 		return w - panelBorderWidth, w - panelBorderWidth, false
 	}
 	inner := w - gutterWidth - 2*panelBorderWidth
-	leftW = inner / 2
+	leftW = inner * 11 / 20
 	return leftW, inner - leftW, true
 }
 
@@ -175,26 +176,33 @@ func (m model) sectionView(w int) string {
 	}
 }
 
+// serverURLColumn is the width the URL column holds, so a preset's note starts
+// where the row above it does. A longer URL pushes its own note right rather
+// than wrapping the row.
+const serverURLColumn = 21
+
+// serversView is one row per server: the mark, the name, the URL, and what the
+// entry is, all on the line the selection highlights.
 func (m model) serversView(w int) string {
 	lines := []string{accentStyle.Render("Server Selection")}
 	active := activePreset(m.cfg.BaseURL)
+	row := func(selected bool, name, url, note string) string {
+		return strings.TrimRight(fmt.Sprintf("%s %-10s %s  %s", checkbox(selected), name, url, note), " ")
+	}
 	for i, preset := range serverPresets {
-		mark := " "
-		if i == active {
-			mark = "●"
-		}
-		line := fmt.Sprintf("%s %-12s %s", mark, preset.name, mutedStyle.Render(preset.url))
+		line := row(i == active, preset.name, valueStyle.Render(pad(preset.url, serverURLColumn)), mutedStyle.Render(preset.note))
 		lines = append(lines, m.menuLine(i, line, w))
-		lines = append(lines, mutedStyle.Render("  "+preset.note))
 	}
-	custom := "○ Custom URL  " + m.cfg.BaseURL
-	if active == -1 {
-		custom = "● Custom URL  " + m.cfg.BaseURL
-	}
+	url, note := valueStyle.Render(pad(m.cfg.BaseURL, serverURLColumn)), ""
 	if m.edit.kind == editURL {
-		custom = "● Custom URL  " + m.edit.input.View() + m.editError()
+		url = m.edit.input.View()
+		note = mutedStyle.Render("enter applies · esc cancels") + m.editError()
 	}
-	lines = append(lines, m.menuLine(len(serverPresets), custom, w))
+	lines = append(lines,
+		m.menuLine(len(serverPresets), row(active == -1, "Custom URL", url, note), w),
+		"",
+		mutedStyle.Render("No port → :80 for http, :443 for https."),
+	)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
@@ -203,8 +211,8 @@ func (m model) stagesView(w int) string {
 		toggleLine("Latency", m.cfg.Stages.Latency, "idle RTT baseline"),
 		toggleLine("Download", m.cfg.Stages.Download, "server to client"),
 		toggleLine("Upload", m.cfg.Stages.Upload, "client to server"),
-		toggleLine("Bidirectional", m.cfg.Stages.Bidirectional, "download and upload together"),
-		toggleLine("Loaded latency", m.cfg.LoadedLatency, "ping during transfer stages"),
+		toggleLine("Bidirectional", m.cfg.Stages.Bidirectional, "both directions at once"),
+		toggleLine("Loaded latency", m.cfg.LoadedLatency, "ping during transfers"),
 	}
 	return m.listWithTitle("Stage Profile", rows, w)
 }
@@ -228,18 +236,13 @@ func (m model) networkView(w int) string {
 	caps := m.capabilities()
 	throughputChoices := originChoices(caps.ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
 	latencyChoices := originChoices(caps.LatencyTargets, func(t wire.LatencyTarget) string { return t.Origin })
-	resolvedThroughput, resolvedLatency := "", ""
-	if m.prepared.FreshFor(m.cfg) {
-		resolvedThroughput = m.prepared.ThroughputSummary()
-		resolvedLatency = m.prepared.LatencySummary()
-	}
 	rows := []string{
-		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, throughputChoices, resolvedThroughput),
-		endpointRow("Latency endpoint", m.cfg.LatencyTarget, latencyChoices, resolvedLatency),
-		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated endpoints"),
+		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, throughputChoices),
+		endpointRow("Latency endpoint", m.cfg.LatencyTarget, latencyChoices),
+		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated only"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
-		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 automatic; 1–128 forced"),
-		toggleLine("Unsafe: skip TLS verification", m.cfg.InsecureSkipTLSVerify, "advanced; all native TLS requests"),
+		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 = automatic"),
+		toggleLine("Skip TLS verify", m.cfg.InsecureSkipTLSVerify, "unsafe"),
 		warnStyle.Render("Reset to defaults"),
 	}
 	if m.edit.field == "auto-streams" {
@@ -281,13 +284,15 @@ func (m model) listWithTitle(title string, rows []string, w int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
+// menuLine draws one row, highlighted when it is the selected one. The content
+// is cut to the panel first: a highlight styled at a set width wraps whatever
+// overflows onto a second line, which would break the row alignment the
+// selection marker relies on.
 func (m model) menuLine(i int, s string, w int) string {
-	prefix := "  "
-	if i == m.row {
-		prefix = "› "
-		s = selectedStyle.Width(max(12, w-2)).Render(s)
+	if i != m.row {
+		return "  " + s
 	}
-	return prefix + s
+	return "› " + selectedStyle.Width(max(12, w-2)).Render(fitLine(s, w-2))
 }
 
 func (m model) planView(w int) string {

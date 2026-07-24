@@ -58,18 +58,22 @@ func runOrder(cfg goclient.Config) []string {
 	return lines
 }
 
+// labelColumn is the width every menu row's label holds, so the values beside
+// them line up down the panel.
+const labelColumn = 22
+
 func toggleLine(label string, on bool, note string) string {
-	return fmt.Sprintf("%s %-22s %s", checkbox(on), label, mutedStyle.Render(note))
+	return fmt.Sprintf("%s %-*s %s", checkbox(on), labelColumn-2, label, mutedStyle.Render(note))
 }
 
 func valueLine(label, value, note string) string {
-	return fmt.Sprintf("%-24s %s  %s", label, valueStyle.Render(value), mutedStyle.Render(note))
+	return fmt.Sprintf("%-*s %s  %s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(note))
 }
 
 // endpointRow is an endpoint selector line: the configured choice with its
-// position in the cycle enter walks. The note beside it is the concrete target
-// a preparation resolves it to.
-func endpointRow(label, configured string, choices []string, resolved string) string {
+// position in the cycle enter walks. What a preparation resolves it to is on
+// the readiness panel beside it, which is where every resolved figure lives.
+func endpointRow(label, configured string, choices []string) string {
 	pos := ""
 	for i, c := range choices {
 		if c == configured {
@@ -77,11 +81,16 @@ func endpointRow(label, configured string, choices []string, resolved string) st
 			break
 		}
 	}
-	note := mutedStyle.Render("enter cycles")
-	if resolved != "" {
-		note = mutedStyle.Render("→ " + resolved)
+	return fmt.Sprintf("%-*s %s%s", labelColumn, label, valueStyle.Render(targetChoiceLabel(configured)), pos)
+}
+
+// pad widens s to at least w cells. Styling is applied after padding, so the
+// padding is counted in cells rather than in escape bytes.
+func pad(s string, w int) string {
+	if len(s) >= w {
+		return s
 	}
-	return fmt.Sprintf("%-24s %s%s  %s", label, valueStyle.Render(targetChoiceLabel(configured)), pos, note)
+	return s + strings.Repeat(" ", w-len(s))
 }
 
 func checkbox(on bool) string {

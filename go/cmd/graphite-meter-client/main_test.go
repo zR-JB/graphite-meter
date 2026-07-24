@@ -188,11 +188,10 @@ func TestRunOrder(t *testing.T) {
 }
 
 func TestActivePreset(t *testing.T) {
-	if got := activePreset(serverPresets[0].url); got != 0 {
-		t.Errorf("activePreset(preset0) = %d, want 0", got)
-	}
-	if got := activePreset(serverPresets[1].url); got != 1 {
-		t.Errorf("activePreset(preset1) = %d, want 1", got)
+	for i, preset := range serverPresets {
+		if got := activePreset(preset.url); got != i {
+			t.Errorf("activePreset(%q) = %d, want %d", preset.url, got, i)
+		}
 	}
 	if got := activePreset("http://example.invalid:9999"); got != -1 {
 		t.Errorf("activePreset(unknown) = %d, want -1", got)
@@ -661,13 +660,14 @@ func TestHandleKey_RoutesByScreenState(t *testing.T) {
 		{
 			name: "space activates the selected row",
 			setup: func(m model) model {
-				m.section, m.row = sectionServers, 1
+				m.section, m.row = sectionServers, 0
+				m.cfg.BaseURL = "http://elsewhere.invalid:9999"
 				return m
 			},
 			key: keyRunes(" "),
 			check: func(t *testing.T, m model, _ tea.Cmd) {
-				if m.cfg.BaseURL != serverPresets[1].url {
-					t.Errorf("BaseURL = %q, want %q", m.cfg.BaseURL, serverPresets[1].url)
+				if m.cfg.BaseURL != serverPresets[0].url {
+					t.Errorf("BaseURL = %q, want %q", m.cfg.BaseURL, serverPresets[0].url)
 				}
 				if m.prepareSeq != 2 {
 					t.Errorf("seq = %d, want the new server checked", m.prepareSeq)
@@ -753,15 +753,16 @@ func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
 func TestActivate_ServerPreset(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionServers
-	m.row = 1
+	m.row = 0
+	m.cfg.BaseURL = "http://elsewhere.invalid:9999"
 
 	next, _ := m.activate()
 	m = next.(model)
-	if m.cfg.BaseURL != serverPresets[1].url {
-		t.Errorf("BaseURL after activating preset 1 = %q, want %q", m.cfg.BaseURL, serverPresets[1].url)
+	if m.cfg.BaseURL != serverPresets[0].url {
+		t.Errorf("BaseURL after activating preset 0 = %q, want %q", m.cfg.BaseURL, serverPresets[0].url)
 	}
-	if !strings.Contains(m.notice, serverPresets[1].name) {
-		t.Errorf("notice = %q, want mention of %q", m.notice, serverPresets[1].name)
+	if !strings.Contains(m.notice, serverPresets[0].name) {
+		t.Errorf("notice = %q, want mention of %q", m.notice, serverPresets[0].name)
 	}
 }
 
@@ -1016,12 +1017,22 @@ func TestCommitEdit_RejectsANonURL(t *testing.T) {
 	}
 }
 
-func TestCommitEdit_BareHostBecomesHTTPS(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.edit = beginEdit(editURL, "url", "meter.example:7247")
-	m.commitEdit()
-	if m.edit.kind != editNone || m.cfg.BaseURL != "https://meter.example:7247" {
-		t.Errorf("kind=%v BaseURL=%q, want the committed host upgraded to https", m.edit.kind, m.cfg.BaseURL)
+// A typed URL is completed, never rewritten: a missing scheme is filled in and
+// a given one is left alone, ports included.
+func TestCommitEdit_URLIsTakenAsTyped(t *testing.T) {
+	cases := map[string]string{
+		"meter.example:7247":       "http://meter.example:7247",
+		"meter.example":            "http://meter.example",
+		"https://meter.example":    "https://meter.example",
+		"http://meter.example:900": "http://meter.example:900",
+	}
+	for typed, want := range cases {
+		m := newModel(goclient.DefaultConfig())
+		m.edit = beginEdit(editURL, "url", typed)
+		m.commitEdit()
+		if m.edit.kind != editNone || m.cfg.BaseURL != want {
+			t.Errorf("%q committed as %q (kind=%v), want %q", typed, m.cfg.BaseURL, m.edit.kind, want)
+		}
 	}
 }
 
@@ -2308,18 +2319,18 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 	}
 }
 
-func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
+func TestEndpointRowShowsChoicePosition(t *testing.T) {
 	choices := []string{"auto", "https://meter.example:7248"}
-	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices, ""), "")
-	for _, want := range []string{"‹2/2›", "enter cycles"} {
+	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices), "")
+	for _, want := range []string{"Throughput endpoint", "https://meter.example:7248", "‹2/2›"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("endpoint row = %q, want %q", got, want)
 		}
 	}
-	resolved := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices, "https://meter.example:7248 · http2"), "")
-	for _, want := range []string{"Automatic", "‹1/2›", "→ https://meter.example:7248 · http2"} {
-		if !strings.Contains(resolved, want) {
-			t.Errorf("resolved endpoint row = %q, want %q", resolved, want)
+	automatic := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices), "")
+	for _, want := range []string{"Automatic", "‹1/2›"} {
+		if !strings.Contains(automatic, want) {
+			t.Errorf("automatic endpoint row = %q, want %q", automatic, want)
 		}
 	}
 }
