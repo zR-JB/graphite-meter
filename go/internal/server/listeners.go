@@ -181,18 +181,16 @@ func disableNagle(c net.Conn) {
 	}
 }
 
+// baseServer configures a listener's server. Every accepted connection holds a
+// connection-admission slot until it closes, and ReadHeaderTimeout does not
+// bound a connection idling between requests, so IdleTimeout is what keeps an
+// idle peer from pinning a slot. That is a capacity property of the socket, not
+// of authentication, so both bounds apply on every listener.
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
-	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 		disableNagle(c)
 		return ctx
 	}}
-}
-
-func hardenAuthenticatedServer(s *http.Server, enabled bool) {
-	if enabled {
-		s.IdleTimeout = 60 * time.Second
-		s.MaxHeaderBytes = 32 << 10
-	}
 }
 
 // pinConnectOrigins restricts the authenticated CSP's connect-src to the
@@ -272,7 +270,6 @@ func (b *listenerBuild) closeOpened() {
 func (b *listenerBuild) tcpTLS(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
 	mux := listenerMuxConfigured(b.ctx, b.e, topo, handler, b.authn)
 	s := baseServer(b.authn.Enforce(mux, l), proto)
-	hardenAuthenticatedServer(s, b.authn.Enabled())
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		b.closeOpened()
@@ -297,7 +294,6 @@ func h1Protocols() *http.Protocols {
 func (b *listenerBuild) assemble(spa http.Handler) error {
 	// Clear HTTP/1.1 is the one listener bound unconditionally.
 	h1 := baseServer(b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, b.authn), auth.Listener{UI: true}), h1Protocols())
-	hardenAuthenticatedServer(h1, b.authn.Enabled())
 	h1ln, err := net.Listen("tcp", b.cfg.Native.H1)
 	if err != nil {
 		return err

@@ -145,16 +145,12 @@ func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 	}
 }
 
-func TestHardenAuthenticatedServer(t *testing.T) {
-	off := &http.Server{}
-	hardenAuthenticatedServer(off, false)
-	if off.IdleTimeout != 0 || off.MaxHeaderBytes != 0 {
-		t.Fatalf("auth-off server was hardened: idle=%v max=%d", off.IdleTimeout, off.MaxHeaderBytes)
-	}
-	on := &http.Server{}
-	hardenAuthenticatedServer(on, true)
-	if on.IdleTimeout != 60*time.Second || on.MaxHeaderBytes != 32<<10 {
-		t.Fatalf("auth-on server not hardened: idle=%v max=%d", on.IdleTimeout, on.MaxHeaderBytes)
+// An idle connection holds an admission slot on every listener, so the bounds
+// that release it must not depend on authentication being configured.
+func TestBaseServerBoundsIdleConnections(t *testing.T) {
+	s := baseServer(http.NotFoundHandler(), nil)
+	if s.IdleTimeout != 60*time.Second || s.MaxHeaderBytes != 32<<10 {
+		t.Fatalf("server not hardened: idle=%v max=%d", s.IdleTimeout, s.MaxHeaderBytes)
 	}
 }
 
