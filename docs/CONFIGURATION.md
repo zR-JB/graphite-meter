@@ -26,7 +26,7 @@ in this repository:
 | `7247/tcp` | `GM_H1_TLS_ADDR` | HTTPS UI, API, transfers, and WSS latency.                |
 | `7248/tcp` | `GM_H2_ADDR`     | HTTP/2 measurement only.                                  |
 | `7249/tcp` | `GM_H3_ADDR`     | HTTP/3 Alt-Svc bootstrap probe only.                      |
-| `7249/udp` | `GM_H3_ADDR`     | HTTP/3 QUIC measurement.                                  |
+| `7249/udp` | `GM_H3_ADDR`     | HTTP/3 QUIC measurement, plus WebTransport sessions.      |
 
 Only 7246 and 7247 serve a browser; 7248 and 7249 are strict measurement targets. The routes each
 listener owns are in [ARCHITECTURE.md](ARCHITECTURE.md#the-go-measurement-server).
@@ -106,7 +106,9 @@ connections — otherwise an anonymous client can pull sustained traffic at your
 ## Authentication
 
 Off by default. When enabled, every UI asset, discovery request, probe, transfer, progress
-stream, and WebSocket requires a browser session or terminal grant.
+stream, and WebSocket requires a browser session or terminal grant. WebTransport is neither
+mounted nor advertised while authentication is on: a session carries neither cookies nor an
+`Authorization` header, so it cannot cross the enforcement boundary.
 
 | Environment                       | Flag                             | Default    | Meaning                                                              |
 | --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------------- |
@@ -244,7 +246,9 @@ inside the TUI before a run starts.
 | `--url`                    | `http://127.0.0.1:7246` | Server base URL. Nothing is dialled until it is picked in the TUI or rechecked with `v`.       |
 | `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
 | `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
-| `--latency-origin`         | `auto`                  | Discovered WebSocket latency origin.                                                           |
+| `--throughput-transport`   | `auto`                  | `auto`, `fetch-stream`, or `webtransport`; `auto` leads with WebTransport where advertised.     |
+| `--latency-origin`         | `auto`                  | Discovered latency origin.                                                                     |
+| `--latency-transport`      | `auto`                  | `auto`, `websocket`, or `webtransport`; datagrams measure loss a WebSocket cannot show.         |
 | `--stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.      |
 | `--warmup`                 | `800ms`                 | Per-stage warmup before measurement starts.                                                    |
 | `--latency-duration`       | `4s`                    | Latency stage window.                                                                          |

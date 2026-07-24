@@ -10,10 +10,9 @@
 #   For encode: <input> is a canonical op=...;arg=... spec; <expected> is the
 #               exact on-wire string the encoder must produce.
 #
-# Opcodes and semantics are defined in api/wire.md. This file is populated in
-# Stage 4 (WebSocket latency) and Stage 5 (WebTransport); the rows below are the
-# initial happy-path + boundary set. Every implementation's wire test loads THIS
-# file as its fixture.
+# Opcodes and semantics are defined in api/wire.md. The rows below are the
+# happy-path + boundary set for every channel. Every implementation's wire test
+# loads THIS file as its fixture.
 
 # --- decode ---
 decode | READY | op=READY

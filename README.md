@@ -35,6 +35,8 @@ Built to measure the link, not the tool: in Chrome it sustains up to **60 Gbit/s
 - **Deploys the way you already deploy** — direct with native HTTP/1.1, HTTP/2, and HTTP/3
   listeners, behind nginx or Caddy, or both at once; clients measure the protocol they actually
   reached, so a proxy in front doesn't falsify results.
+- **WebTransport where HTTP/3 runs** — transfers ride QUIC streams, and pings ride unreliable
+  datagrams, so reported loss is packets that never arrived rather than a stalled TCP queue.
 - **Optional private access** — operator password, OIDC with a group allowlist, or both,
   covering every asset, transfer, and WebSocket.
 - **Featherweight** — a single static Go binary (~10 MB, browser client embedded,
@@ -73,7 +75,8 @@ pushes rates a browser can't.
 - Full run setup in the terminal: server URL, stage selection, timings, transport and
   stream choices, with live bars, loaded latency, and per-stage progress.
 - Throughput and latency targets are chosen independently, so you can pin a protocol
-  (HTTP/1.1, HTTP/2, HTTP/3) instead of trusting negotiation.
+  (HTTP/1.1, HTTP/2, HTTP/3) or a transport (fetch streams, WebSocket, WebTransport) instead of
+  trusting negotiation.
 - Works against authenticated servers: it shows a verification code and opens the approval page
   in your browser when you press `enter`, then holds the grant in memory only.
 

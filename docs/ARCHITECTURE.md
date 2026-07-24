@@ -19,14 +19,14 @@ go/                           Go module: the measurement server + a native Bubbl
   internal/config/            Server env-var/flag configuration.
   internal/server/            Listener bootstrap, mux wiring.
   internal/endpoint/          One Go type per HTTP/WS route (preflight, download, upload, ping, ...).
-  internal/transport/         The Session abstraction (HTTP and WebSocket; WebTransport shape reserved).
+  internal/transport/         The Session abstraction (HTTP, WebSocket, and WebTransport).
   internal/wire/              Shared wire-protocol types (frames, opcodes, preflight structs).
   internal/goclient/          The native TUI client's measurement engine (shares the wire protocol).
   internal/static/            //go:embed wrapper that serves the built Svelte client.
 api/                          Cross-language contract, source of truth for client/server agreement:
                                  preflight schema/golden — logical discovery
                                  probe schema/golden     — selected-path evidence
-                                 wire.md / wire.testvectors.txt                — message protocol + reserved WT shapes
+                                 wire.md / wire.testvectors.txt                — message protocol + stream preambles
 container/                    Deployment: image-based docker-compose.yml + quadlet unit (default),
                                the multi-stage Dockerfile, and build-from-source variants.
 ```
@@ -109,12 +109,16 @@ navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/r
 | `/upload/session`        | POST         | selected throughput target, JSON     | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream.                                                                                              |
 | `/upload`                | POST         | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                      |
 | `/ws/ping`               | WS upgrade   | WebSocket                            | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                              |
+| `/wt/ping`               | CONNECT      | HTTP/3 WebTransport                  | The same echo over session datagrams, where a ping that never returns is real packet loss rather than a stalled queue.                                                                          |
+| `/wt/download`           | CONNECT      | HTTP/3 WebTransport                  | One bidirectional stream per lane, each opened with a `SIZE,<bytes>` preamble that sizes the response on that same stream. A `SIZE` datagram floods the request as datagrams instead.           |
+| `/wt/upload`             | CONNECT      | HTTP/3 WebTransport                  | Client unidirectional streams are upload bytes; one bidirectional stream carries the `/upload/progress` records, so the counter rides the connection under test. `?id=` names the upload.       |
 | `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON   | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop.            |
 | `/` (anything unmatched) | GET          | H1/H1-TLS UI listeners               | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it). |
 
-No WebTransport channel is advertised and no route is mounted. Its dependency, schema variants,
-wire opcodes, and commented HTTP/3 configuration are retained as inactive contract surface; they
-do not describe a runtime capability.
+WebTransport is mounted and advertised wherever HTTP/3 is configured, except under authentication:
+a session carries neither cookies nor an `Authorization` header, so it cannot cross the enforcement
+boundary. One session holds one request-admission slot for its whole life, where a fetch target
+takes one per request.
 
 ### Server-authoritative upload accounting
 
@@ -143,7 +147,7 @@ for one bad frame. Full spec: [`api/wire.md`](../api/wire.md); shared byte-exact
 | `READY` | S→C       | `READY`                  | Bus is up.                                                                  |
 | `PING`  | C→S       | `PING,<id>`              | Latency probe; `id` is a client-owned monotonic uint32.                     |
 | `PONG`  | S→C       | `PONG,<id>;TIME,<nanos>` | Echo; `id` verbatim, server clock is diagnostics-only.                      |
-| `SIZE`  | C→S       | `SIZE,<bytes>`           | Reserved WebTransport download-size request; no runtime consumer.           |
+| `SIZE`  | C→S       | `SIZE,<bytes>`           | WebTransport download size, as a stream preamble or a datagram.             |
 | `BYE`   | C→S       | `BYE`                    | Graceful bus close.                                                         |
 | `ERR`   | S→C       | `ERR,<code>,<text>`      | Non-fatal protocol error.                                                   |
 
@@ -172,8 +176,9 @@ reported numbers — it never influences what the client reports.
 Every endpoint is written once against a `Session` interface (`Context`, `Query`, `Proto`, `HTTP`,
 `OpenDownloadSink`/`OpenUploadSource`, `Bus`), so it doesn't need to know whether it's
 running over HTTP or a WebSocket bus. Two concrete sessions exist — `httpSession` (H1/H2/H3
-request/response) and `websocketSession` (message bus). The interface retains WebTransport-shaped
-stream and bus seams, but there is no WebTransport session implementation.
+request/response), `websocketSession` (message bus), and `webtransportSession`, which wraps either
+one accepted stream or the session's datagram channel. A WebTransport session hosts many logical
+requests, so each is dispatched into the same endpoints HTTP serves.
 
 `internal/config`, `internal/transport`, `internal/server`, `internal/static`, and
 `internal/endpoint/registry.go` have unit tests alongside the rest of `internal/endpoint`
@@ -195,8 +200,9 @@ run concurrently during a transfer stage, to measure RTT-under-load / bufferbloa
 the idle baseline).
 
 Transport: protocol-specific streamed HTTP GET/POST clients for throughput and its NDJSON upload
-progress, plus an independently selected HTTP/1.1 WebSocket for latency. WebTransport is not
-attempted — the `SIZE` opcode exists in the shared wire package but this client never sends it.
+progress, plus an independently selected latency channel. Both roles run over WebTransport when the
+server advertises it, falling back to fetch streams and a WebSocket; `-throughput-transport` and
+`-latency-transport` name one explicitly.
 
 To reduce measurement noise, the runner adaptively stretches warmup to roughly 10x the measured
 idle RTT (floor = configured warmup, ceiling 4s) so TCP slow start finishes before the measured
@@ -295,7 +301,8 @@ the primary summary.
 | `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                |
 | `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                       |
-| `ping-worker.ts`            | Owns the `/ws/ping` connection and the entire RTT/loss algorithm, off the main thread.                                                               |
+| `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss algorithm, off the main thread.                                                 |
+| `wt-transfer-worker.ts`     | Owns one WebTransport session and every lane stream on it; for upload it also carries the progress feed and the finalizing DELETE.                   |
 | `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                   |
 
 ### Testing
@@ -305,19 +312,8 @@ and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
 
-## Reserved contract surface
-
-- **Reserved WebTransport contract** is inactive in this release. It is neither mounted nor
-  advertised; H3 throughput and upload progress use fetch over QUIC, while latency independently
-  uses a separately advertised WebSocket endpoint. Activating it for both lanes is on the
-  [roadmap](#roadmap).
-
 ## Roadmap
 
-- **WebTransport for latency and throughput (one of the next releases)** — activate the reserved
-  contract so both lanes run over QUIC. Bidirectional streams give throughput a symmetric path
-  instead of today's fetch-stream down and POST up, and datagrams make packet loss directly
-  measurable, which a TCP-backed WebSocket cannot report because retransmits hide it.
 - **Multi-server testing** — select one configured server or run against several servers in one
   pass. Protocol targets in one discovery document currently remain listeners of one logical
   server, not independent servers.

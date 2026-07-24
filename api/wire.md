@@ -1,11 +1,10 @@
 # Graphite Meter — Message-Bus Wire Protocol (normative)
 
-This spec governs the **message-based channels only**. The WebSocket latency bus (`/ws/ping`)
-implements it. WebTransport datagrams (`/wt/ping`) and the `SIZE` control for `/wt/download` are
-reserved contract entries; no WebTransport route is mounted or advertised. The plain
-request/response HTTP endpoints (`/preflight`, `/probe`, `/download`, `/upload/session`, `/upload`,
-`/upload/progress`) are **not** covered here — they use normal HTTP (query params, status codes,
-streaming bodies).
+This spec governs the **message-based channels only**: the WebSocket latency bus (`/ws/ping`), the
+WebTransport datagram bus (`/wt/ping`), and the control frames that open a WebTransport stream. The
+plain request/response HTTP endpoints (`/preflight`, `/probe`, `/download`, `/upload/session`,
+`/upload`, `/upload/progress`) are **not** covered here — they use normal HTTP (query params, status
+codes, streaming bodies).
 
 The Go and TypeScript implementations MUST agree with the shared conformance corpus
 `api/wire.testvectors.txt`; the Rust rewrite must preserve the same contract. The opcode keywords
@@ -67,8 +66,8 @@ records as `GET /upload/progress`.
   `rtt = now() − pending[id]`, deletes the entry, and immediately sends the next `PING` (the
   on-receive→send-next chain).
 - A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
-  not physical packet loss because TCP retransmits. The reserved unreliable WT-datagram channel is
-  the contract shape that can expose datagram loss directly.
+  not physical packet loss because TCP retransmits. The same eviction on the unreliable WT-datagram
+  channel is physical packet loss, which is why that bus is preferred where it is advertised.
 - A small **in-flight window** (1–4 pings) keeps one delayed or missing response from deadlocking
   the chain; an interval pacer is the floor and the on-receive send is the responsive fast path.
 
