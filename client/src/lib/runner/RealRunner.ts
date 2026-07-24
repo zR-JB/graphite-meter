@@ -6,6 +6,7 @@ import type {
   InfraInfo,
   EngineInfo,
   TransportKind,
+  TransportDiscovery,
   TransportRole,
   FlowDirection,
   PhaseActivity,
@@ -82,7 +83,7 @@ interface PathEvidence {
 const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   "fetch-stream": true,
   websocket: true,
-  webtransport: false,
+  webtransport: typeof WebTransport !== "undefined",
 };
 
 /** Byte and timing bookkeeping for one active transfer direction. Each
@@ -315,6 +316,7 @@ export class RealBackend implements RunnerBackend {
     this.#latencyTarget = selectLatencyTarget(
       discovery,
       config.transports.latencyTarget,
+      RUNNABLE_TRANSPORT.webtransport,
     );
     const needsLatency =
       config.stages.latency ||
@@ -441,7 +443,7 @@ export class RealBackend implements RunnerBackend {
     // Keepalive RTTs supply the pre-test ping median: RTT is client-measured,
     // the server sends 0. A ping failure must not fail preflight.
     if (needsLatency && role !== "throughput")
-      await this.#idle.verifyReady(signal);
+      await this.#verifyLatencyChannel(discovery, config, signal);
     const probeRtts =
       needsLatency && role !== "throughput"
         ? await this.#idle.collectRtts(signal)
@@ -482,7 +484,9 @@ export class RealBackend implements RunnerBackend {
     return {
       name: "real",
       version: BUILD.clientVersion, // built with the client
-      latencyTransports: ["websocket"],
+      latencyTransports: RUNNABLE_TRANSPORT.webtransport
+        ? ["webtransport-datagrams", "websocket"]
+        : ["websocket"],
       throughputTransports: ["fetch-streams"],
     };
   }
@@ -582,6 +586,34 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= TRANSPORT NEGOTIATION ================= */
+  /** Prove the selected ping bus answers. An advertised WebTransport target
+   *  still needs UDP to reach the server, so a failure reselects the WebSocket
+   *  target once before the run commits. */
+  async #verifyLatencyChannel(
+    discovery: TransportDiscovery,
+    config: RunnerConfig,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    try {
+      await this.#idle.verifyReady(signal);
+      return;
+    } catch (error) {
+      if (this.#latencyTarget?.transport !== "webtransport") throw error;
+    }
+    this.#idle.stop();
+    this.#latencyTarget = selectLatencyTarget(
+      discovery,
+      config.transports.latencyTarget,
+      false,
+    );
+    if (!this.#latencyTarget)
+      throw new TransportUnavailableError(
+        "WebTransport latency channel did not establish",
+        { role: "latency" },
+      );
+    await this.#idle.verifyReady(signal);
+  }
+
   /** Try transports in role order, reporting every attempt to the UI. A null
    *  result means the caller should skip/fail that stage based on its role. */
   #negotiateTransport(role: TransportRole): TransportKind | null {
@@ -620,15 +652,18 @@ export class RealBackend implements RunnerBackend {
           role === "latency" && this.#latencyTarget?.transport === "websocket";
         break;
       case "webtransport":
-        advertised = false;
+        advertised =
+          role === "latency"
+            ? this.#latencyTarget?.transport === "webtransport"
+            : false;
         break;
     }
     return advertised ? null : "not advertised by server";
   }
 
-  /** WebTransport heads the preference order but is never serviced, its contract
-   *  being reserved and inactive, so every role resolves to the fallback:
-   *  WebSocket for pings, fetch streams for byte lanes. */
+  /** WebTransport heads the preference order: its datagram bus measures real
+   *  packet loss. A role falls back to WebSocket pings or fetch-stream lanes
+   *  when the server does not advertise it or this client cannot drive it. */
   #transportOrder(role: TransportRole): TransportKind[] {
     return role === "latency"
       ? ["webtransport", "websocket"]

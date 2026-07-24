@@ -1,5 +1,5 @@
 // The two ping channels: the stage-scoped latency channel and the persistent
-// idle keepalive. The ping worker owns its WebSocket, its reconnects and the
+// idle keepalive. The ping worker owns its bus, its reconnects and the
 // RTT timestamps; these classes own the worker's lifecycle and route its
 // samples into the core.
 import type { CoreHost } from "../core";
@@ -50,6 +50,18 @@ const PROBE_PING_COUNT = 5;
 const PROBE_PING_TIMEOUT_MS = 1500;
 const IDLE_RESPAWN_MS = 2000;
 
+/** The bus URL for a target, or null when the target does not speak `kind`.
+ *  WebSocket needs the ws(s) scheme; WebTransport dials the https origin. */
+function pingUrl(
+  target: LatencyTarget | null,
+  kind: TransportKind,
+): string | null {
+  if (!target || target.transport !== kind) return null;
+  return target.transport === "webtransport"
+    ? target.origin + target.routes.wtPing
+    : httpToWs(target.origin) + target.routes.ping;
+}
+
 export interface LatencyChannelDeps {
   host: () => CoreHost;
   target: () => LatencyTarget | null;
@@ -79,17 +91,14 @@ export class LatencyChannel {
   }
 
   /** Open the latency (ping) channel over `kind` and warm it. The ping worker
-   *  owns the WebSocket and the ping algorithm. Its warmup pings stay inside the
-   *  worker; measure() flips reporting on over that same socket. */
+   *  owns the bus and the ping algorithm. Its warmup pings stay inside the
+   *  worker; measure() flips reporting on over that same connection. */
   prime(kind: TransportKind, isLatencyStage = false): void {
-    if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
-
     const host = this.#deps.host();
     const cfg = host.config!;
     const channel = this.#deps.target();
-    if (!channel || channel.transport !== "websocket" || !channel.routes.ping)
-      throw new Error("latency target not resolved");
-    const url = httpToWs(channel.origin) + channel.routes.ping;
+    const url = pingUrl(channel, kind);
+    if (!url) throw new Error("latency target not resolved");
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
     const replyDriven = cadence === "reply-driven";
     // Reply-driven uses this only for its loss sweep; its sends are driven by
@@ -123,6 +132,7 @@ export class LatencyChannel {
     worker.postMessage({
       type: "start",
       url,
+      transport: kind,
       intervalMs,
       replyDriven,
       maxInFlight: replyDriven
@@ -150,7 +160,7 @@ export class LatencyChannel {
     this.#worker?.postMessage({ type: "measure" });
   }
 
-  /** Stop + terminate the ping worker (closes its WebSocket). Idempotent. */
+  /** Stop + terminate the ping worker (closes its bus). Idempotent. */
   teardown(): void {
     this.#active = false;
     this.#clearEstablishTimer();
@@ -227,16 +237,15 @@ export class IdleKeepalive {
   }
 
   /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
-   *  a no-op without a websocket latency target. Each run end restarts it, so
+   *  a no-op without a resolvable latency target. Each run end restarts it, so
    *  the connectivity pill stays live outside a test. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     const targetKey = `${throughputTargetKey(this.#deps.throughputTarget())}\n${this.#deps.latencyTarget()?.id ?? ""}`;
     if (this.#active && this.#targetKey === targetKey) return;
     if (this.#active) this.stop();
     const channel = this.#deps.latencyTarget();
-    if (!channel || channel.transport !== "websocket" || !channel.routes.ping)
-      return;
-    const url = httpToWs(channel.origin) + channel.routes.ping;
+    const url = channel && pingUrl(channel, channel.transport);
+    if (!channel || !url) return;
     this.#active = true;
     this.#targetKey = targetKey;
     // The store latches its pulse offline on connection-lost. A fresh worker's
@@ -257,6 +266,7 @@ export class IdleKeepalive {
     worker.postMessage({
       type: "start",
       url,
+      transport: channel.transport,
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,
@@ -281,7 +291,7 @@ export class IdleKeepalive {
     }
     this.#probeCollect?.finish();
     this.#probeReady?.finish(
-      new TransportUnavailableError("latency WebSocket validation stopped", {
+      new TransportUnavailableError("latency channel validation stopped", {
         role: "latency",
       }),
     );
@@ -333,12 +343,12 @@ export class IdleKeepalive {
         else resolve();
       };
       const aborted = (): void =>
-        finish(new Error("latency WebSocket validation aborted"));
+        finish(new Error("latency channel validation aborted"));
       const timer = setTimeout(
         () =>
           finish(
             new TransportUnavailableError(
-              "latency WebSocket did not become ready",
+              "latency channel did not become ready",
               { role: "latency" },
             ),
           ),
