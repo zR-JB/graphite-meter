@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net/url"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -25,8 +25,8 @@ func (s *wtSession) close() {
 	_ = s.dialer.Close()
 }
 
-// wtDial opens a session on origin's path, carrying query as the session URL's
-// parameters: a stream has no URL of its own.
+// wtDial opens a session on origin's path. query carries every parameter: a
+// stream has no URL of its own, so the CONNECT URL speaks for the session.
 func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Values) (*wtSession, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
@@ -70,12 +70,12 @@ func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.Lat
 	return nil
 }
 
-// verifyThroughputWebTransport proves a download session can be opened, so
-// automatic selection can fall back before the run starts.
+// verifyThroughputWebTransport proves a session can be established. bytes=0
+// asks the server to serve nothing.
 func verifyThroughputWebTransport(ctx context.Context, cfg Config, target *wire.ThroughputTarget) error {
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	sess, err := wtDial(verifyCtx, cfg, target.Origin, target.Routes.WTDownload, nil)
+	sess, err := wtDial(verifyCtx, cfg, target.Origin, target.Routes.WTDownload, url.Values{"bytes": {"0"}})
 	if err != nil {
 		return err
 	}
@@ -96,17 +96,21 @@ func (b wtBus) Recv(ctx context.Context) (string, error) {
 
 func (b wtBus) Close() { b.sess.close() }
 
-// downloadLaneWT runs one lane on its own bidirectional stream: the SIZE
-// preamble sizes the response, and an exhausted stream is reopened.
+// wtDownloadQuery names what the session serves; the server opens the streams.
+func (r *runner) wtDownloadQuery() url.Values {
+	return url.Values{
+		"bytes":   {strconv.FormatInt(r.cfg.DownloadBytesPerStream, 10)},
+		"streams": {strconv.Itoa(r.streams)},
+	}
+}
+
+// downloadLaneWT accepts and drains the server-opened streams. Every lane runs
+// the same accept loop, so a replaced stream lands on whichever lane is free.
 func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64) error {
-	preamble := wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpSIZE, Bytes: uint64(r.cfg.DownloadBytesPerStream)}) //nosec G115 -- configured size is non-negative
 	buf := make([]byte, 1024*1024)
 	for ctx.Err() == nil {
-		str, err := sess.OpenStreamSync(ctx)
+		str, err := sess.AcceptUniStream(ctx)
 		if err != nil {
-			return laneStopError(ctx, err)
-		}
-		if _, err := io.WriteString(str, preamble); err != nil {
 			return laneStopError(ctx, err)
 		}
 		// A blocked stream read does not observe the context on its own.
@@ -121,7 +125,6 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 			}
 		}
 		stopOnCancel()
-		_ = str.Close()
 	}
 	return nil
 }
@@ -150,15 +153,14 @@ func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte
 	return nil
 }
 
-// openUploadProgressWT reads the same NDJSON feed off a bidirectional stream of
-// the upload session, so the counter rides the connection under test.
+// openUploadProgressWT reads the NDJSON feed off the one stream the server
+// opens on an upload session, so the counter rides the connection under test.
 func (r *runner) openUploadProgressWT(ctx context.Context, sess *wtSession, id string) (*uploadProgress, error) {
-	str, err := sess.OpenStreamSync(ctx)
+	acceptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	str, err := sess.AcceptUniStream(acceptCtx)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := io.WriteString(str, wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpHI, Proto: "wt"})); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upload progress stream: %w", err)
 	}
 	base, err := r.endpoint(r.routes().UploadProgress)
 	if err != nil {
@@ -167,13 +169,12 @@ func (r *runner) openUploadProgressWT(ctx context.Context, sess *wtSession, id s
 	return r.readUploadProgress(ctx, wtProgressStream{str}, withUploadID(base, id))
 }
 
-// wtProgressStream ends its reader on close: closing a stream shuts the write
-// side, while a blocked read needs its own cancellation.
-type wtProgressStream struct{ *webtransport.Stream }
+// wtProgressStream gives the receive stream the Close a blocked reader needs.
+type wtProgressStream struct{ *webtransport.ReceiveStream }
 
 func (s wtProgressStream) Close() error {
 	s.CancelRead(0)
-	return s.Stream.Close()
+	return nil
 }
 
 // laneStopError reports a cancelled stage as a clean stop rather than a failure.

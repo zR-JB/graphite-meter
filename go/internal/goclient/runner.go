@@ -302,8 +302,12 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	}
 	emit(event)
 
+	streams := cfg.TransferStreams.Resolve(target.Protocol)
+	if target.Transport == wire.TransportWebTransport {
+		streams = cfg.TransferStreams.ResolveWebTransport()
+	}
 	r := runner{
-		cfg: cfg, streams: cfg.TransferStreams.Resolve(target.Protocol),
+		cfg: cfg, streams: streams,
 		http: transfer, websocketHTTP: wsClient,
 		target: target, latencyTarget: latencyTarget,
 		emit: emit,

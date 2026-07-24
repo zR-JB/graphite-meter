@@ -93,48 +93,47 @@ func TestWebTransportPingEchoesOverDatagrams(t *testing.T) {
 	}
 }
 
-// TestWebTransportDownloadServesTheRequestedSize proves the SIZE preamble sizes
-// exactly that lane's stream, and that a bad preamble leaves the session usable.
+// TestWebTransportDownloadServesTheRequestedSize proves the CONNECT query sizes
+// the server-opened lanes, and that an exhausted lane is replaced.
 func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/download")
+	sess := dialWT(t, dialer, base+"/wt/download?bytes=1048576&streams=2")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	const want = 1 << 20
-	str, err := sess.OpenStreamSync(context.Background())
-	if err != nil {
-		t.Fatalf("open stream: %v", err)
+	for lane := range 3 {
+		str, err := sess.AcceptUniStream(ctx)
+		if err != nil {
+			t.Fatalf("accept lane %d: %v", lane, err)
+		}
+		n, err := io.Copy(io.Discard, str)
+		if err != nil {
+			t.Fatalf("read lane %d: %v", lane, err)
+		}
+		if n != want {
+			t.Fatalf("lane %d served %d bytes, want %d", lane, n, want)
+		}
 	}
-	if _, err := io.WriteString(str, wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpSIZE, Bytes: want})); err != nil {
-		t.Fatalf("write preamble: %v", err)
-	}
-	n, err := io.Copy(io.Discard, str)
-	if err != nil {
-		t.Fatalf("read lane: %v", err)
-	}
-	if n != want {
-		t.Fatalf("lane served %d bytes, want %d", n, want)
-	}
+}
 
-	bad, err := sess.OpenStreamSync(context.Background())
-	if err != nil {
-		t.Fatalf("open second stream: %v", err)
-	}
-	if _, err := io.WriteString(bad, "NOPE\n"); err != nil {
-		t.Fatalf("write bad preamble: %v", err)
-	}
-	reply, err := io.ReadAll(bad)
-	if err != nil {
-		t.Fatalf("read rejection: %v", err)
-	}
-	if !strings.HasPrefix(string(reply), wire.OpERR+","+wire.ErrBadOp) {
-		t.Fatalf("bad preamble reply = %q, want an ERR frame", reply)
+// TestWebTransportVerifySessionServesNothing pins the bytes=0 transport check:
+// the session establishes and no stream arrives.
+func TestWebTransportVerifySessionServesNothing(t *testing.T) {
+	base, _, dialer := wtTestServer(t)
+	sess := dialWT(t, dialer, base+"/wt/download?bytes=0")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if str, err := sess.AcceptUniStream(ctx); err == nil {
+		t.Fatalf("verify session opened a stream: %v", str)
 	}
 }
 
 // TestWebTransportUploadCountsLanesOnItsProgressStream runs a whole upload over
 // one session: the id is minted over HTTP, lanes are unidirectional streams, and
-// the server-authoritative counter rides a bidirectional stream of that same
-// session.
+// the server-authoritative counter rides the one stream the server opens on
+// that same session.
 func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 	base, httpBase, dialer := wtTestServer(t)
 
@@ -153,12 +152,11 @@ func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 	}
 
 	sess := dialWT(t, dialer, base+"/wt/upload?id="+minted.UploadID)
-	progress, err := sess.OpenStreamSync(context.Background())
+	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelAccept()
+	progress, err := sess.AcceptUniStream(acceptCtx)
 	if err != nil {
-		t.Fatalf("open progress stream: %v", err)
-	}
-	if _, err := io.WriteString(progress, wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpHI, Proto: "wt"})); err != nil {
-		t.Fatalf("write progress preamble: %v", err)
+		t.Fatalf("accept progress stream: %v", err)
 	}
 	records := bufio.NewScanner(progress)
 	if !readProgressType(t, records, "ready") {

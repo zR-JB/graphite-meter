@@ -109,8 +109,6 @@ func render(f Frame) string {
 		return "op=PING;id=" + u32(f.ID)
 	case OpPONG:
 		return "op=PONG;id=" + u32(f.ID) + ";nanos=" + u64(f.Nanos)
-	case OpSIZE:
-		return "op=SIZE;bytes=" + u64(f.Bytes)
 	case OpHI:
 		return "op=HI;proto=" + f.Proto
 	case OpERR:
@@ -138,8 +136,6 @@ func parseCanonical(t *testing.T, line int, spec string) Frame {
 			f.ID = uint32(n)
 		case "nanos":
 			f.Nanos = mustU64(t, line, v)
-		case "bytes":
-			f.Bytes = mustU64(t, line, v)
 		case "proto":
 			f.Proto = v
 		case "code":

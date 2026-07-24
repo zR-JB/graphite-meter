@@ -19,7 +19,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 	var lane func(context.Context, int) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		// One session hosts every lane; each lane opens its own stream on it.
-		sess, err := wtDial(ctx, r.cfg, r.target.Origin, r.routes().WTDownload, nil)
+		sess, err := wtDial(ctx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
 		if err != nil {
 			return Result{}, err
 		}

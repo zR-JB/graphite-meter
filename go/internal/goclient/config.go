@@ -42,6 +42,15 @@ func (p TransferStreamPolicy) Resolve(protocol string) int {
 	return p.AutomaticMax
 }
 
+// ResolveWebTransport is the WebTransport count: one continuous stream per
+// direction, since nothing turns around per request; a forced count passes.
+func (p TransferStreamPolicy) ResolveWebTransport() int {
+	if p.Forced > 0 {
+		return p.Forced
+	}
+	return 1
+}
+
 func (p TransferStreamPolicy) Label(protocol string) string {
 	if p.Forced > 0 {
 		return fmt.Sprintf("Forced · %d per direction", p.Forced)

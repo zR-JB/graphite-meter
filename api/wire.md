@@ -1,10 +1,9 @@
 # Graphite Meter — Message-Bus Wire Protocol (normative)
 
-This spec governs the **message-based channels only**: the WebSocket latency bus (`/ws/ping`), the
-WebTransport datagram bus (`/wt/ping`), and the control frames that open a WebTransport stream. The
-plain request/response HTTP endpoints (`/preflight`, `/probe`, `/download`, `/upload/session`,
-`/upload`, `/upload/progress`) are **not** covered here — they use normal HTTP (query params, status
-codes, streaming bodies).
+This spec governs the **message-based channels only**: the WebSocket latency bus (`/ws/ping`) and
+the WebTransport datagram bus (`/wt/ping`). The plain request/response HTTP endpoints
+(`/preflight`, `/probe`, `/download`, `/upload/session`, `/upload`, `/upload/progress`) are
+**not** covered here — they use normal HTTP (query params, status codes, streaming bodies).
 
 The Go and TypeScript implementations MUST agree with the shared conformance corpus
 `api/wire.testvectors.txt`; the Rust rewrite must preserve the same contract. The opcode keywords
@@ -14,10 +13,8 @@ are additionally pinned as a shared constant table in each implemented language
 ## Framing
 
 - **One logical message per WS frame / per WT datagram.** WS frames and QUIC datagrams are already
-  message-delimited, so there is **no length prefix** and **no trailing newline**.
-- **Stream preambles are the one newline-terminated form.** WebTransport byte streams carry no
-  framing, so a stream that opens with a control frame terminates it with `\n` (at most 64 bytes,
-  including the newline). Everything after it is raw payload on the same stream.
+  message-delimited, so there is **no length prefix** and **no trailing newline**. WebTransport byte
+  streams carry no messages at all: every parameter rides the session's CONNECT URL.
 - **ASCII text.** Format: `OP` or `OP,arg[,arg...]`. The opcode is a fixed uppercase keyword.
 - **Parsing** is `indexOf(',')` slicing — never JSON, never regex. The id/number args are plain integers.
 - Unknown opcode or malformed args → the receiver replies `ERR,<code>,<text>` (non-fatal) and ignores
@@ -31,21 +28,20 @@ are additionally pinned as a shared constant table in each implemented language
 | S→C | `READY` | ws, wt | Bus is up; the client may begin the ping chain. |
 | C→S | `PING,<id>` | ws, wt-dgram | Latency probe. `<id>` = client-owned monotonic **uint32** counter (see Ids). |
 | S→C | `PONG,<id>;TIME,<nanos>` | ws, wt-dgram | Echo. `<id>` copied **verbatim**. `<nanos>` = server monotonic clock (uint64 ns) at receive — **diagnostics/skew only**. RTT is measured purely client-side as `recv − send` using the client's own clock. |
-| C→S | `SIZE,<bytes>` | wt (download) | Request `<bytes>` (uint64). As a stream preamble the bytes arrive on that same stream; as a datagram they arrive as datagrams. The WebTransport analogue of `GET /download?bytes=N`. |
 | C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
 | S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
 
 ## WebTransport routes
 
-Sessions are opened with extended CONNECT on the HTTP/3 origin. The session URL carries what a
-query string carries elsewhere; a stream carries nothing, so anything per-stream is a preamble.
-A QUIC stream reaches the peer on its first write, which is what a preamble is for.
+Sessions are opened with extended CONNECT on the HTTP/3 origin. A stream carries no metadata of
+its own, so the CONNECT URL query carries every parameter and the server opens the streams whose
+content it defines. Streams are raw bytes end to end.
 
-| Route | Streams | Datagrams |
-|---|---|---|
-| `/wt/ping` | none | the message bus above, one frame per datagram |
-| `/wt/download` | one bidi stream per lane, opened with `SIZE,<bytes>` | `SIZE,<bytes>` requests the same bytes as datagrams |
-| `/wt/upload?id=&datagrams=` | client uni streams are raw upload bytes; one bidi stream opened with `HI,wt` is the progress feed | counted as upload bytes when the session URL sets `datagrams=` |
+| Route | Query | Streams | Datagrams |
+|---|---|---|---|
+| `/wt/ping` | — | none | the message bus above, one frame per datagram |
+| `/wt/download` | `bytes=&streams=&datagrams=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server sends one flood of `bytes` total |
+| `/wt/upload` | `id=&datagrams=` | client unidirectional streams are raw upload bytes; the server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes |
 
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON

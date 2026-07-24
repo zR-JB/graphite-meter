@@ -2,27 +2,30 @@ package endpoint
 
 import (
 	"context"
-	"errors"
-	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// A WebTransport session hosts many logical requests, so each accepted stream
-// and the datagram channel is dispatched into the same endpoints HTTP serves.
-// The session URL carries what a query string would: /wt/upload?id=&datagrams=.
+// A WebTransport session hosts many logical requests, and a stream carries no
+// metadata of its own, so every parameter rides the session's CONNECT URL:
+// /wt/download?bytes=&streams=&datagrams= and /wt/upload?id=&datagrams=.
+// The server opens the download lanes and the upload progress feed, so no
+// stream needs an opening frame to announce itself.
 
 // WTHandler serves one accepted WebTransport session until it ends.
 type WTHandler interface {
 	HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request)
 }
+
+// wtMaxStreams caps the download lanes one session may request.
+const wtMaxStreams = 16
 
 // wtDatagramPayload keeps a flooded datagram inside QUICInitialPacketSize once
 // QUIC, HTTP/3 and WebTransport framing is accounted for.
@@ -40,53 +43,50 @@ func (h *wtPing) HandleSession(ctx context.Context, sess *webtransport.Session, 
 
 type wtDownload struct{ download Endpoint }
 
-// NewWTDownload serves download lanes as bidirectional streams, each opened
-// with a SIZE preamble, or as a datagram flood when SIZE arrives as a datagram.
+// NewWTDownload serves ?bytes= per lane on ?streams= server-opened streams,
+// each replaced when exhausted, or as one datagram flood when ?datagrams= is
+// set. bytes=0 establishes a session that serves nothing, the transport check.
 func NewWTDownload(download Endpoint) WTHandler { return &wtDownload{download: download} }
 
-func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, _ *http.Request) {
-	go h.serveDatagrams(ctx, sess)
-	for {
-		str, err := sess.AcceptStream(ctx)
+func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
+	query := r.URL.Query()
+	if query.Get("bytes") == "0" {
+		<-ctx.Done()
+		return
+	}
+	if query.Get("datagrams") != "" {
+		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, datagramSink{conn: sess}, nil, ""))
+		return
+	}
+	var wg sync.WaitGroup
+	for range wtStreamCount(query) {
+		wg.Go(func() { h.serveLane(ctx, sess, query) })
+	}
+	wg.Wait()
+}
+
+// serveLane keeps one lane filled: open a stream, write the requested bytes,
+// close, replace, until the session ends.
+func (h *wtDownload) serveLane(ctx context.Context, sess *webtransport.Session, query url.Values) {
+	for ctx.Err() == nil {
+		str, err := sess.OpenUniStreamSync(ctx)
 		if err != nil {
 			return
 		}
-		go h.serveStream(ctx, str)
+		// A write blocked on flow control does not observe the context on its own.
+		stopOnCancel := context.AfterFunc(ctx, func() { str.CancelWrite(0) })
+		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, str, nil, ""))
+		stopOnCancel()
+		_ = str.Close()
 	}
 }
 
-// serveStream answers one lane's SIZE preamble on that same stream. A bad
-// preamble closes the stream and leaves the session up.
-func (h *wtDownload) serveStream(ctx context.Context, str *webtransport.Stream) {
-	defer str.Close()
-	f, err := wire.ReadStreamPreamble(str)
-	if err != nil {
-		var de *wire.DecodeError
-		if errors.As(err, &de) {
-			_, _ = io.WriteString(str, wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpERR, Code: de.Code, Text: de.Text}))
-		}
-		return
+func wtStreamCount(query url.Values) int {
+	n, err := strconv.Atoi(query.Get("streams"))
+	if err != nil || n < 1 {
+		return 1
 	}
-	if f.Op != wire.OpSIZE {
-		_, _ = io.WriteString(str, wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpERR, Code: wire.ErrBadOp, Text: f.Op}))
-		return
-	}
-	_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, sizeQuery(f.Bytes), str, nil, ""))
-}
-
-func (h *wtDownload) serveDatagrams(ctx context.Context, sess *webtransport.Session) {
-	for {
-		data, err := sess.ReceiveDatagram(ctx)
-		if err != nil {
-			return
-		}
-		f, derr := wire.Decode(string(data))
-		if derr != nil || f.Op != wire.OpSIZE {
-			continue
-		}
-		sink := datagramSink{conn: sess}
-		go h.download.Handle(transport.NewWebTransportStreamSession(ctx, sizeQuery(f.Bytes), sink, nil, "")) //nolint:errcheck // the sink reports client loss, not a server error
-	}
+	return min(n, wtMaxStreams)
 }
 
 type wtUpload struct {
@@ -95,8 +95,8 @@ type wtUpload struct {
 	trusted  []netip.Prefix
 }
 
-// NewWTUpload drains upload lanes opened as unidirectional streams and serves
-// the progress feed on a bidirectional stream of the same session.
+// NewWTUpload drains client-opened streams as upload lanes and serves the
+// progress feed on one server-opened stream from session establishment.
 func NewWTUpload(upload Endpoint, progress *UploadProgress, trusted []netip.Prefix) WTHandler {
 	return &wtUpload{upload: upload, progress: progress, trusted: trusted}
 }
@@ -120,37 +120,36 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 }
 
 func (h *wtUpload) serveLane(ctx context.Context, str *webtransport.ReceiveStream, query url.Values, owner string) {
-	_ = str.SetReadDeadline(time.Now().Add(uploadReadTimeout))
-	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, str, owner))
+	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout}
+	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
 }
 
-// serveProgress runs the NDJSON feed on each bidirectional stream the client
-// opens with a HI preamble; a second concurrent one is refused by the feed
-// itself. A QUIC stream reaches the peer on its first write, so the preamble is
-// what announces the stream at all.
 func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, id, owner string) {
-	for {
-		str, err := sess.AcceptStream(ctx)
-		if err != nil {
-			return
-		}
-		go func() {
-			defer str.Close()
-			if f, err := wire.ReadStreamPreamble(str); err != nil || f.Op != wire.OpHI {
-				_, _ = io.WriteString(str, wire.EncodeStreamPreamble(wire.Frame{Op: wire.OpERR, Code: wire.ErrBadOp, Text: "progress preamble"}))
-				return
-			}
-			h.progress.HandleStream(ctx, id, owner, str)
-		}()
+	str, err := sess.OpenUniStreamSync(ctx)
+	if err != nil {
+		return
 	}
+	defer str.Close()
+	defer context.AfterFunc(ctx, func() { str.CancelWrite(0) })()
+	h.progress.HandleStream(ctx, id, owner, str)
 }
 
-func sizeQuery(bytes uint64) url.Values {
-	return url.Values{"bytes": {strconv.FormatUint(bytes, 10)}}
+// idleTimeoutReader re-arms the stream's read deadline before every Read, so a
+// lane is bounded by inactivity rather than one absolute deadline, matching the
+// fetch path's per-POST bound.
+type idleTimeoutReader struct {
+	str     *webtransport.ReceiveStream
+	timeout time.Duration
+}
+
+func (r idleTimeoutReader) Read(p []byte) (int, error) {
+	_ = r.str.SetReadDeadline(time.Now().Add(r.timeout))
+	return r.str.Read(p)
 }
 
 // datagramSink splits a download into unreliable datagrams. What arrives is
-// goodput; what does not is loss the client sees directly.
+// goodput; what does not is loss the client sees directly. SendDatagram blocks
+// on quic-go's bounded send queue, so the flood stays congestion-paced.
 type datagramSink struct{ conn transport.DatagramConn }
 
 func (s datagramSink) Write(p []byte) (int, error) {
