@@ -67,7 +67,9 @@ func (m model) ShortHelp() []key.Binding {
 	case m.mode == modeRun:
 		return []key.Binding{keys.cancel, keys.help, keys.quit}
 	case m.auth != nil && !m.authOpened:
-		return []key.Binding{keys.approve, keys.verify, keys.help, keys.quit}
+		// enter belongs to the approval until the page is opened, so the row it
+		// would otherwise activate is not offered.
+		return []key.Binding{keys.approve, keys.sections, keys.rows, keys.run, keys.verify, keys.help, keys.quit}
 	default:
 		return []key.Binding{keys.sections, keys.rows, keys.activate, keys.run, keys.verify, keys.help, keys.quit}
 	}

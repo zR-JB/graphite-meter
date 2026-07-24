@@ -767,6 +767,10 @@ func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
 			m.mode, m.complete = modeRun, true
 			return m
 		}},
+		{"awaiting approval", func(m model) model {
+			m.auth = &goclient.PendingAuthorization{Code: "ABCDE"}
+			return m
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
