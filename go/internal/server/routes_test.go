@@ -63,6 +63,7 @@ func TestRoutesMatchPin(t *testing.T) {
 		"uploadSession":  {routeUploadSession, throughput.UploadSession},
 		"uploadProgress": {routeUploadProgress, throughput.UploadProgress},
 		"ping":           {routePing, latency.Ping},
+		"wtSession":      {routeWTSession, throughput.WTSession, latency.WTSession},
 		"wtDownload":     {routeWTDownload, throughput.WTDownload},
 		"wtUpload":       {routeWTUpload, throughput.WTUpload},
 		"wtPing":         {routeWTPing, latency.WTPing},

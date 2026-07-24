@@ -37,6 +37,7 @@ const (
 	routeUpload         = "/upload"
 	routeUploadSession  = "/upload/session"
 	routeUploadProgress = "/upload/progress"
+	routeWTSession      = "/wt/session"
 	routePing           = "/ws/ping"
 	routeWTDownload     = "/wt/download"
 	routeWTUpload       = "/wt/upload"
@@ -100,7 +101,7 @@ type muxTopology struct {
 	spa, discovery, latency, transfers, bootstrap bool
 	requiredProto                                 int
 	// wt mounts the WebTransport routes as extended CONNECT upgraders. Set on
-	// the HTTP/3 listener only, and only in public mode.
+	// the HTTP/3 listener only.
 	wt *webtransport.Server
 }
 
@@ -148,6 +149,7 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		}
 		reg.RegisterHTTP(routeDownload, transfer(e.download))
 		reg.RegisterHTTP(routeUploadSession, transfer(e.uploadSession))
+		reg.RegisterHTTP(routeWTSession, transfer(endpoint.NewWTSession(wtTokenMinter(authn))))
 		reg.RegisterHTTP(routeUpload, transfer(e.upload))
 		reg.RegisterHTTP(routeUploadProgress, transfer(e.uploadProgress))
 	}
@@ -187,6 +189,15 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	}
 	m.Handle("/", inner)
 	return m
+}
+
+// wtTokenMinter adapts the auth service's CONNECT-token mint; nil when
+// authentication is off, so /wt/session answers with an empty token.
+func wtTokenMinter(authn *auth.Service) endpoint.WTTokenMinter {
+	if authn == nil || !authn.Enabled() {
+		return nil
+	}
+	return authn.MintWebTransportToken
 }
 
 // disableNagle stops Nagle batching a small latency probe into the following
@@ -373,16 +384,13 @@ func (b *listenerBuild) assembleH3() error {
 		quicConfig.MaxIncomingUniStreams = 32
 	}
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
-	// A WebTransport session carries neither cookies nor an Authorization header,
-	// so it cannot cross the enforcement boundary and is public-mode only. The
-	// origin check mirrors the wildcard CORS the other public routes answer with.
-	var wt *webtransport.Server
-	if !b.authn.Enabled() {
-		wt = &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
-		// Advertises the WebTransport settings and wraps ConnContext, so it must
-		// run before the listener starts.
-		webtransport.ConfigureHTTP3Server(h3)
-	}
+	// The enforcement boundary authenticates a CONNECT before the upgrade runs,
+	// via Authorization or a minted single-use URL token, so the origin check
+	// mirrors the wildcard CORS the public routes answer with.
+	wt := &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
+	// Advertises the WebTransport settings and wraps ConnContext, so it must
+	// run before the listener starts.
+	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{})
 	if b.authn.Enabled() {
 		h3.MaxHeaderBytes = 32 << 10
@@ -401,20 +409,13 @@ func (b *listenerBuild) assembleH3() error {
 	}
 	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress", addr: b.cfg.Native.H3, network: "udp",
 		run: func() error {
-			var err error
-			if wt != nil {
-				err = serveWebTransport(b.ctx, wt, quicListener)
-			} else {
-				err = h3.ServeListener(quicListener)
-			}
+			err := serveWebTransport(b.ctx, wt, quicListener)
 			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			return err
 		}, stop: func(ctx context.Context) error {
-			if wt != nil {
-				_ = wt.Close()
-			}
+			_ = wt.Close()
 			err := h3.Shutdown(ctx)
 			// The listener and transport close unconditionally to free the UDP
 			// socket. The graceful shutdown result is the one worth reporting.

@@ -5,7 +5,7 @@
 import type { CoreHost } from "../core";
 import type { PingCadence, TransportKind } from "../contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
-import { authEnabled, redirectToLogin } from "../../auth";
+import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
 import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
@@ -60,6 +60,23 @@ function pingUrl(
   return target.transport === "webtransport"
     ? target.origin + target.routes.wtPing
     : httpToWs(target.origin) + target.routes.ping;
+}
+
+/** Token mint for a WebTransport ping dial, when authentication is on. Minting
+ *  is a measurement mutation, so it carries the CSRF header and credentials. */
+function pingMint(target: LatencyTarget | null):
+  | {
+      url: string;
+      headers?: Record<string, string>;
+      credentials?: RequestCredentials;
+    }
+  | undefined {
+  if (!authEnabled || target?.transport !== "webtransport") return undefined;
+  return {
+    url: target.origin + target.routes.wtSession,
+    headers: { ...csrfHeader() },
+    credentials: "include",
+  };
 }
 
 export interface LatencyChannelDeps {
@@ -133,6 +150,7 @@ export class LatencyChannel {
       type: "start",
       url,
       transport: kind,
+      mint: pingMint(channel),
       intervalMs,
       replyDriven,
       maxInFlight: replyDriven
@@ -267,6 +285,7 @@ export class IdleKeepalive {
       type: "start",
       url,
       transport: channel.transport,
+      mint: pingMint(channel),
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,

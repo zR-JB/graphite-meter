@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -26,7 +28,9 @@ func (s *wtSession) close() {
 }
 
 // wtDial opens a session on origin's path. query carries every parameter: a
-// stream has no URL of its own, so the CONNECT URL speaks for the session.
+// stream has no URL of its own, so the CONNECT URL speaks for the session. An
+// authentication grant rides the CONNECT's Authorization header, under the same
+// origin pinning the HTTP transport applies.
 func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Values) (*wtSession, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
@@ -35,11 +39,19 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
+	var hdr http.Header
+	if token := cfg.authToken(); token != "" {
+		parsed, err := url.Parse(u)
+		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.AuthOrigin)) {
+			return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
+		}
+		hdr = http.Header{"Authorization": {"Bearer " + token}}
+	}
 	dialer := &webtransport.Dialer{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		QUICConfig:      transport.NewQUICConfig(),
 	}
-	_, sess, err := dialer.Dial(ctx, u, nil)
+	_, sess, err := dialer.Dial(ctx, u, hdr)
 	if err != nil {
 		_ = dialer.Close()
 		return nil, fmt.Errorf("webtransport dial %s: %w", u, err)

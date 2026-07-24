@@ -8,6 +8,12 @@ export interface WtStartOptions {
   dir: "down" | "up";
   lanes: number;
   datagrams: boolean;
+  /** Token mint the worker calls before dialing, when authentication is on. */
+  mint?: {
+    url: string;
+    headers?: Record<string, string>;
+    credentials?: RequestCredentials;
+  };
   progressUrl?: string;
   headers?: Record<string, string>;
   credentials?: RequestCredentials;

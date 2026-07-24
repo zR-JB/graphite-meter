@@ -21,11 +21,9 @@ const routePinPath = "../../../api/routes.txt"
 // enumerations carry it and this test names it.
 const preflightPath = "/preflight"
 
-// loadRoutePin parses api/routes.txt into name → path, dropping the WebTransport
-// routes: they are CONNECT sessions mounted only on public listeners, so the
-// boundary never sees them. The parser is a copy of the one in
-// go/internal/server/routes_test.go because auth cannot import server without
-// inverting the dependency.
+// loadRoutePin parses api/routes.txt into name → path. The parser is a copy of
+// the one in go/internal/server/routes_test.go because auth cannot import
+// server without inverting the dependency.
 func loadRoutePin(t *testing.T) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(routePinPath)
@@ -41,9 +39,6 @@ func loadRoutePin(t *testing.T) map[string]string {
 		fields := strings.Split(line, "|")
 		if len(fields) != 3 {
 			t.Fatalf("want 3 fields: %q", line)
-		}
-		if strings.TrimSpace(fields[2]) == "wt" {
-			continue
 		}
 		pinned[strings.TrimSpace(fields[0])] = strings.TrimSpace(fields[1])
 	}
@@ -113,7 +108,7 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 		t.Fatal("ping: not in the route pin")
 	}
 	measurement := append(slices.Sorted(maps.Values(pinned)), preflightPath)
-	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete}
+	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodConnect}
 
 	t.Run("isMeasurementRoute", func(t *testing.T) {
 		assertEnumerates(t, "wrap.go isMeasurementRoute", measurement, enumeratedPaths(t, "wrap.go", "isMeasurementRoute"))

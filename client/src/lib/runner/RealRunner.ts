@@ -620,15 +620,42 @@ export class RealBackend implements RunnerBackend {
     this.#closeAll();
   }
 
+  /** Token mint the WebTransport workers call before each dial. Minting is a
+   *  measurement mutation, so it carries the CSRF header and credentials. */
+  #wtMint(origin: string, route: string): WtStartOptions["mint"] {
+    if (!authEnabled) return undefined;
+    return {
+      url: `${origin}${route}`,
+      headers: {
+        ...(this.#authHeaders() as Record<string, string> | undefined),
+        ...csrfHeader(),
+      },
+      credentials: "include",
+    };
+  }
+
   /** Dial a bare WT session (bytes=0: the server serves nothing) and await
    *  ready under a deadline. The run commits to what this proves. */
   async #verifyWtThroughput(signal?: AbortSignal): Promise<boolean> {
     const wt = this.#wtThroughputTarget;
     if (!wt) return false;
     try {
-      const session = new WebTransport(
-        `${wt.origin}${wt.routes.wtDownload}?bytes=0`,
-      );
+      let url = `${wt.origin}${wt.routes.wtDownload}?bytes=0`;
+      if (authEnabled) {
+        const minted = await authenticatedFetch(
+          `${wt.origin}${wt.routes.wtSession}`,
+          {
+            method: "POST",
+            cache: "no-store",
+            signal,
+            headers: { ...this.#authHeaders(), ...csrfHeader() },
+          },
+        );
+        const body = (await minted.json()) as { token?: unknown };
+        if (typeof body.token === "string" && body.token !== "")
+          url += `&token=${encodeURIComponent(body.token)}`;
+      }
+      const session = new WebTransport(url);
       const close = (): void => session.close();
       signal?.addEventListener("abort", close, { once: true });
       const deadline = setTimeout(close, WT_VERIFY_TIMEOUT_MS);
@@ -846,6 +873,7 @@ export class RealBackend implements RunnerBackend {
         dir,
         lanes: streams,
         datagrams,
+        mint: this.#wtMint(wt.origin, wt.routes.wtSession),
       });
       this.#spawnWorker(dir, 0);
       return;
@@ -890,6 +918,7 @@ export class RealBackend implements RunnerBackend {
         dir,
         lanes: streams,
         datagrams: this.#host!.config!.experimentalDatagramThroughput,
+        mint: this.#wtMint(wt.origin, wt.routes.wtSession),
         progressUrl: `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`,
         headers: {
           ...(this.#authHeaders() as Record<string, string> | undefined),

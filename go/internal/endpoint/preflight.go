@@ -122,8 +122,7 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 		}
 		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
 	}
-	// WebTransport is the same HTTP/3 origin reached over QUIC sessions. It
-	// carries no credentials, so it is neither mounted nor advertised under auth.
+	// WebTransport is the same HTTP/3 origin reached over QUIC sessions.
 	addWebTransport := func(base string) {
 		base = strings.TrimRight(base, "/")
 		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
@@ -145,7 +144,7 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 			if e.latency {
 				addLatency(base)
 			}
-			if e.webTransport && p.cfg.Auth.Mode == "off" {
+			if e.webTransport {
 				addWebTransport(base)
 			}
 		}

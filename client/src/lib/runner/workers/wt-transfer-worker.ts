@@ -11,6 +11,8 @@
  * worker reads incoming streams for both and only opens the upload lanes.
  * ============================================================ */
 
+import { mintWtToken, withWtToken, type WtMint } from "./wtToken";
+
 /** Records of the server's upload feed, relayed verbatim to the main thread. */
 type ProgressMsg =
   | { type: "open" }
@@ -25,6 +27,7 @@ type InMsg =
       dir: "down" | "up";
       lanes: number;
       datagrams: boolean;
+      mint?: WtMint;
       progressUrl?: string;
       headers?: Record<string, string>;
       credentials?: RequestCredentials;
@@ -82,8 +85,12 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 };
 
 async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
+  const token = await mintWtToken(msg.mint);
+  if (stopped) return;
   try {
-    session = new WebTransport(msg.url, { congestionControl: "throughput" });
+    session = new WebTransport(withWtToken(msg.url, token), {
+      congestionControl: "throughput",
+    });
     await Promise.race([
       session.ready,
       new Promise((_, reject) =>

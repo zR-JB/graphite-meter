@@ -28,6 +28,7 @@ export const ROUTES = {
   upload: "/upload",
   uploadSession: "/upload/session",
   uploadProgress: "/upload/progress",
+  wtSession: "/wt/session",
   ping: "/ws/ping",
   wtDownload: "/wt/download",
   wtUpload: "/wt/upload",
@@ -104,6 +105,7 @@ export function classifyTransportDiscovery(
         tls,
         routes: {
           probe: ROUTES.probe,
+          wtSession: ROUTES.wtSession,
           wtDownload: ROUTES.wtDownload,
           wtUpload: ROUTES.wtUpload,
           uploadSession: ROUTES.uploadSession,
@@ -146,7 +148,11 @@ export function classifyTransportDiscovery(
             transport: "webtransport",
             protocol: "http3",
             tls,
-            routes: { probe: ROUTES.probe, wtPing: ROUTES.wtPing },
+            routes: {
+              probe: ROUTES.probe,
+              wtSession: ROUTES.wtSession,
+              wtPing: ROUTES.wtPing,
+            },
           }
         : {
             ...endpoint,

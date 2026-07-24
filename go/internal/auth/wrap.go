@@ -58,6 +58,10 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			s.corsPreflight(w, r, t.Secure)
 			return
 		}
+		if r.Method == http.MethodConnect && isWebTransportRoute(r.URL.Path) {
+			s.serveWebTransportConnect(w, r, next, listener, t)
+			return
+		}
 		if (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/")) && (!listener.UI || !t.Canonical) {
 			forbidden(w)
 			return
@@ -124,7 +128,8 @@ func (s *Service) isPublicAuthRoute(method, path string) bool {
 // which no route table carries. routes_test.go asserts the enumeration.
 func isMeasurementRoute(path string) bool {
 	switch path {
-	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping":
+	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping",
+		"/wt/session", "/wt/download", "/wt/upload", "/wt/ping":
 		return true
 	}
 	return false

@@ -32,6 +32,7 @@ type session struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	grants                  map[[32]byte]struct{}
+	wtTokens                map[[32]byte]struct{}
 	csrf                    string
 }
 
@@ -51,7 +52,7 @@ func (s *Service) createSession(subject, name, provider string, expires time.Tim
 		return "", nil, err
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), expires)
-	sess := &session{hash: h, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]struct{}{}, csrf: csrf}
+	sess := &session{hash: h, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]struct{}{}, wtTokens: map[[32]byte]struct{}{}, csrf: csrf}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
@@ -80,6 +81,9 @@ func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
 	for grant := range sess.grants {
 		delete(s.grants, grant)
+	}
+	for token := range sess.wtTokens {
+		delete(s.wtTokens, token)
 	}
 	for challenge, approval := range s.approvals {
 		if approval.session == sess {
@@ -136,6 +140,7 @@ func (s *Service) sweep(ctx context.Context) {
 		case <-t.C:
 			s.mu.Lock()
 			s.expireLocked(s.now())
+			s.expireWTTokensLocked(s.now())
 			s.mu.Unlock()
 		}
 	}

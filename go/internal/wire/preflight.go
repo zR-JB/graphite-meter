@@ -50,7 +50,7 @@ type ThroughputTarget struct {
 // ThroughputRoutes are the paths a ThroughputTarget serves.
 type ThroughputRoutes struct {
 	Probe, Download, Upload, UploadSession, UploadProgress string
-	WTDownload, WTUpload                                   string
+	WTSession, WTDownload, WTUpload                        string
 }
 
 // LatencyTarget is one ping endpoint. Only baseUrl and the transport cross the
@@ -65,7 +65,7 @@ type LatencyTarget struct {
 }
 
 // LatencyRoutes are the paths a LatencyTarget serves.
-type LatencyRoutes struct{ Probe, Ping, WTPing string }
+type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
 
 // DefaultThroughputRoutes returns the paths a discovered target serves. They
 // never cross the wire. api/routes.txt pins them against the server mounts
@@ -75,14 +75,14 @@ func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{
 		Probe: "/probe", Download: "/download", Upload: "/upload",
 		UploadSession: "/upload/session", UploadProgress: "/upload/progress",
-		WTDownload: "/wt/download", WTUpload: "/wt/upload",
+		WTSession: "/wt/session", WTDownload: "/wt/download", WTUpload: "/wt/upload",
 	}
 }
 
 // DefaultLatencyRoutes returns the latency-target counterpart of
 // DefaultThroughputRoutes, pinned the same way.
 func DefaultLatencyRoutes() LatencyRoutes {
-	return LatencyRoutes{Probe: "/probe", Ping: "/ws/ping", WTPing: "/wt/ping"}
+	return LatencyRoutes{Probe: "/probe", Ping: "/ws/ping", WTSession: "/wt/session", WTPing: "/wt/ping"}
 }
 
 // UnmarshalJSON reads the wire shape and derives the client-side fields.

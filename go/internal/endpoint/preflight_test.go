@@ -33,22 +33,23 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	}
 }
 
-// WebTransport carries no credentials, so it is not advertised behind auth.
-func TestPreflightSkipsWebTransportUnderAuth(t *testing.T) {
+// A CONNECT authenticates with a minted token, so auth does not hide the
+// WebTransport targets.
+func TestPreflightAdvertisesWebTransportUnderAuth(t *testing.T) {
 	cfg := config.Default()
 	cfg.Native.H3 = ":7249"
 	cfg.NativePublic.H3 = "https://meter.example:7249"
 	cfg.Auth.Mode = "password"
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	throughput, latency := false, false
 	for _, target := range pf.Capabilities.ThroughputTargets {
-		if target.Transport == wire.TransportWebTransport {
-			t.Fatalf("throughput advertises WebTransport under auth: %+v", target)
-		}
+		throughput = throughput || target.Transport == wire.TransportWebTransport
 	}
 	for _, target := range pf.Capabilities.LatencyTargets {
-		if target.Transport == wire.TransportWebTransport {
-			t.Fatalf("latency advertises WebTransport under auth: %+v", target)
-		}
+		latency = latency || target.Transport == wire.TransportWebTransport
+	}
+	if !throughput || !latency {
+		t.Fatalf("WebTransport advertised: throughput=%t latency=%t, want both", throughput, latency)
 	}
 }
 

@@ -38,6 +38,7 @@ export interface WebTransportThroughputTarget extends Omit<
   tls: boolean;
   routes: {
     probe: string;
+    wtSession: string;
     wtDownload: string;
     wtUpload: string;
     uploadSession: string;
@@ -69,7 +70,7 @@ export interface WebTransportLatencyTarget extends Omit<
   transport: "webtransport";
   protocol: "http3";
   tls: boolean;
-  routes: { probe: string; wtPing: string };
+  routes: { probe: string; wtSession: string; wtPing: string };
 }
 
 export type LatencyTarget = WebSocketLatencyTarget | WebTransportLatencyTarget;

@@ -6,8 +6,8 @@
 #   name = the key every implementation uses for the route
 #   path = the exact path the server mounts and the client requests
 #   kind = http | ws | wt, the transport that reaches the route. A wt route is
-#          an HTTP/3 CONNECT session carrying no credentials, so it is mounted
-#          only on public listeners and the auth boundary does not enumerate it.
+#          an HTTP/3 extended-CONNECT session; under authentication it carries a
+#          bearer grant or a single-use token minted at /wt/session.
 #
 # Routes are never transmitted: preflight advertises origins and transports only
 # (the Routes fields are json:"-"), so each site carries its own table and this
@@ -22,6 +22,7 @@ download | /download | http
 upload | /upload | http
 uploadSession | /upload/session | http
 uploadProgress | /upload/progress | http
+wtSession | /wt/session | http
 ping | /ws/ping | ws
 wtDownload | /wt/download | wt
 wtUpload | /wt/upload | wt

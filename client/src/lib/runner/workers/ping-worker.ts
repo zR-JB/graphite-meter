@@ -19,6 +19,7 @@ import {
   type RttEstimate,
 } from "./rttEstimator";
 import { nextBackoff } from "./backoff";
+import { mintWtToken, withWtToken, type WtMint } from "./wtToken";
 import { PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
 
@@ -29,6 +30,7 @@ type InMsg =
       type: "start";
       url: string;
       transport: "websocket" | "webtransport";
+      mint?: WtMint;
       intervalMs: number;
       replyDriven: boolean;
       maxInFlight: number;
@@ -79,6 +81,7 @@ interface PingLink {
 
 let url = "";
 let transport: "websocket" | "webtransport" = "websocket";
+let mint: WtMint | undefined;
 let link: PingLink | null = null;
 let measuring = false;
 let stopped = false;
@@ -121,6 +124,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
     case "start":
       url = m.url;
       transport = m.transport;
+      mint = m.mint;
       intervalMs = m.intervalMs;
       replyDriven = m.replyDriven;
       maxInFlight = m.maxInFlight;
@@ -158,7 +162,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 
 function connect(): void {
   if (stopped) return;
-  if (transport === "webtransport") connectWebTransport();
+  if (transport === "webtransport") void connectWebTransport();
   else connectWebSocket();
 }
 
@@ -208,10 +212,14 @@ function connectWebSocket(): void {
 }
 
 /** One wire message per datagram, so the read loop needs no framing. */
-function connectWebTransport(): void {
+async function connectWebTransport(): Promise<void> {
+  const token = await mintWtToken(mint);
+  if (stopped) return;
   let wt: WebTransport;
   try {
-    wt = new WebTransport(url, { congestionControl: "low-latency" });
+    wt = new WebTransport(withWtToken(url, token), {
+      congestionControl: "low-latency",
+    });
   } catch (err) {
     scheduleReconnect(String(err));
     return;
