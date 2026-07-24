@@ -394,6 +394,19 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 	}
 	select {
 	case <-runCtx.Done():
+		// A failing listener sends its error before it cancels, so when the
+		// cancellation came from one the error is already buffered. Take it:
+		// both cases are ready then, select chooses at random, and returning
+		// nil here would report a bind failure as a clean shutdown — the
+		// process would exit 0 instead of logging the fault.
+		select {
+		case err := <-errs:
+			if err != nil {
+				shutdown(services)
+				return err
+			}
+		default:
+		}
 	case err := <-errs:
 		if err != nil {
 			cancel()
