@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"os"
@@ -84,7 +85,7 @@ func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
 }
 
 func TestParseConfigAppliesFlagsAndValidates(t *testing.T) {
-	cfg, err := parseConfig("test", []string{"-name", "edge-1", "-max-connections", "128", "-h1-addr", "127.0.0.1:9100"})
+	cfg, err := parseConfig("test", []string{"-name", "edge-1", "-max-connections", "128", "-h1-addr", "127.0.0.1:9100"}, io.Discard)
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
 	}
@@ -100,11 +101,17 @@ func TestParseConfigAppliesFlagsAndValidates(t *testing.T) {
 }
 
 func TestParseConfigRejectsInvalidFlagAndConfig(t *testing.T) {
-	if _, err := parseConfig("test", []string{"-not-a-flag"}); err == nil {
+	if _, err := parseConfig("test", []string{"-not-a-flag"}, io.Discard); err == nil {
 		t.Fatal("parseConfig accepted an unknown flag")
 	}
-	if _, err := parseConfig("test", []string{"-max-connections", "-5"}); err == nil {
+	if _, err := parseConfig("test", []string{"-max-connections", "-5"}, io.Discard); err == nil {
 		t.Fatal("parseConfig accepted a configuration that fails validation")
+	}
+}
+
+func TestParseConfigReportsHelpRequest(t *testing.T) {
+	if _, err := parseConfig("test", []string{"-h"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseConfig(-h) = %v, want flag.ErrHelp", err)
 	}
 }
 

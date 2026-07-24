@@ -27,7 +27,10 @@ func main() {
 		}
 		return
 	}
-	cfg, err := parseConfig("graphite-meter", os.Args[1:])
+	cfg, err := parseConfig("graphite-meter", os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return // -h printed the usage on stderr.
+	}
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
@@ -41,13 +44,14 @@ func main() {
 }
 
 // parseConfig loads the base configuration, applies the command-line flags in
-// args, and validates the result.
-func parseConfig(name string, args []string) (config.Config, error) {
+// args, and validates the result. Flag errors and the -h usage go to usage.
+func parseConfig(name string, args []string, usage io.Writer) (config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return config.Config{}, err
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(usage)
 	registerFlags(fs, &cfg)
 	if err := fs.Parse(args); err != nil {
 		return config.Config{}, err

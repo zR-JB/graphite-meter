@@ -39,6 +39,7 @@ type fakeOIDC struct {
 	jwksStatus     int
 	userinfoStatus int
 	discoveries    int
+	mistypedMeta   bool
 }
 
 func newFakeOIDC(t *testing.T) *fakeOIDC {
@@ -58,10 +59,15 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/.well-known/openid-configuration":
 		f.mu.Lock()
 		f.discoveries++
+		mistyped := f.mistypedMeta
 		f.mu.Unlock()
+		var responseIssuer any = true
+		if mistyped {
+			responseIssuer = "yes"
+		}
 		writeJSON(w, map[string]any{
 			"issuer": f.server.URL, "authorization_endpoint": f.server.URL + "/authorize", "token_endpoint": f.server.URL + "/token",
-			"jwks_uri": f.server.URL + "/jwks", "userinfo_endpoint": f.server.URL + "/userinfo", "authorization_response_iss_parameter_supported": true,
+			"jwks_uri": f.server.URL + "/jwks", "userinfo_endpoint": f.server.URL + "/userinfo", "authorization_response_iss_parameter_supported": responseIssuer,
 		})
 	case "/jwks":
 		f.mu.Lock()
@@ -296,6 +302,22 @@ func TestOIDCStartupDoesNotProbeProtectedProviderEndpoints(t *testing.T) {
 	s := f.service(t)
 	if !s.oidc.ready() {
 		t.Fatal("successful discovery did not make OIDC available")
+	}
+}
+
+// A provider whose discovery document mistypes an optional field still yields
+// valid endpoints, so discovery must complete rather than fail permanently.
+func TestOIDCDiscoveryToleratesMistypedOptionalMetadata(t *testing.T) {
+	f := newFakeOIDC(t)
+	f.mu.Lock()
+	f.mistypedMeta = true
+	f.mu.Unlock()
+	s := f.service(t)
+	if !s.oidc.ready() {
+		t.Fatal("a mistyped optional metadata field disabled OIDC")
+	}
+	if s.oidc.responseIssuer {
+		t.Fatal("responseIssuer decoded from a mistyped field")
 	}
 }
 

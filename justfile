@@ -91,7 +91,7 @@ client-watch:
 
 # Preview the real no-JavaScript login page on loopback only.
 auth-preview mode="hybrid" oidc_ready="true":
-    cd go && go run ./internal/auth/cmd/authpreview -mode {{quote(mode)}} -oidc-ready={{quote(oidc_ready)}}
+    cd go && go run ./internal/auth/cmd/authpreview --mode {{quote(mode)}} --oidc-ready={{quote(oidc_ready)}}
 
 # Output lives inside the client tree so Vite's dev-server fs.allow is happy.
 # Regenerate client discovery and path-probe types from the JSON Schemas.
@@ -140,13 +140,25 @@ check-generated:
         exit 1
     fi
 
+# Pinned lint tools. Their install path carries the version, so a bump here
+# rebuilds instead of reusing the cached binary. govulncheck reads the live
+# vulnerability database, which its own version does not freeze.
+staticcheck_version := "2025.1.1"
+govulncheck_version := "v1.6.0"
+
 # Static analysis + vulnerability scan. ci.yml calls this exact recipe, so the
 # local gate and GitHub CI cannot describe different checks.
 go-lint:
-    cd go && test -x "$(go env GOPATH)/bin/staticcheck" || go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
-    cd go && test -x "$(go env GOPATH)/bin/govulncheck" || go install golang.org/x/vuln/cmd/govulncheck@latest
-    cd go && "$(go env GOPATH)/bin/staticcheck" ./...
-    cd go && "$(go env GOPATH)/bin/govulncheck" ./...
+    #!/usr/bin/env sh
+    set -e
+    tools="$(go env GOPATH)/bin/gm-lint"
+    staticcheck_dir="$tools/staticcheck-{{staticcheck_version}}"
+    govulncheck_dir="$tools/govulncheck-{{govulncheck_version}}"
+    test -x "$staticcheck_dir/staticcheck" || GOBIN="$staticcheck_dir" go install honnef.co/go/tools/cmd/staticcheck@{{staticcheck_version}}
+    test -x "$govulncheck_dir/govulncheck" || GOBIN="$govulncheck_dir" go install golang.org/x/vuln/cmd/govulncheck@{{govulncheck_version}}
+    cd go
+    "$staticcheck_dir/staticcheck" ./...
+    "$govulncheck_dir/govulncheck" ./...
 
 # Race-detector tests plus the coverage floor. ci.yml calls this recipe, so the
 # floor is enforced identically locally and in CI. Raise the floor as coverage
@@ -163,13 +175,13 @@ server-test:
 
 # Playwright browser tests (chromium + firefox). ci.yml calls this recipe after
 # installing the browsers. Slow (~45s), so it is not in the pre-commit hook;
-# run it explicitly or via `just ci-full`.
-# Builds the bundle first so playwright's webServer only starts preview.
+# run it explicitly or via `just ci-full`. The bundle is rebuilt by test:e2e,
+# since playwright's webServer previews dist.
 client-e2e:
-    cd client && bun run build:bundle
     cd client && bun run test:e2e
 
-# The fast local gate — the recipes the pre-commit hook and ci.yml both run.
+# The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
+# all but go-lint, and only those matching the staged files.
 ci: check-generated client-ci server-check go-lint server-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the

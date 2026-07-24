@@ -77,8 +77,21 @@ func (p *Preflight) ConnectOrigins(host string) []string {
 	}
 	for _, t := range pf.Capabilities.LatencyTargets {
 		add(t.Origin)
+		// Not every engine matches a wss:// URL against an https:// source.
+		add(websocketOrigin(t.Origin))
 	}
 	return out
+}
+
+// websocketOrigin maps an http(s) origin to its ws(s) form, "" for anything else.
+func websocketOrigin(target string) string {
+	switch {
+	case strings.HasPrefix(target, "https://"):
+		return "wss://" + strings.TrimPrefix(target, "https://")
+	case strings.HasPrefix(target, "http://"):
+		return "ws://" + strings.TrimPrefix(target, "http://")
+	}
+	return ""
 }
 
 // buildForHost assembles the advertised targets for host: native listeners

@@ -538,15 +538,13 @@ func (m *model) commitDuration(raw, field string) {
 		"bidirectional": {&m.cfg.BidirectionalDuration, "Bidirectional duration must be greater than zero."},
 		"ping":          {&m.cfg.PingInterval, "Ping interval must be greater than zero."},
 	}
-	s, ok := slots[field]
-	if !ok {
-		return
+	if s, ok := slots[field]; ok {
+		if d == 0 && s.zeroError != "" {
+			m.editRejected(s.zeroError)
+			return
+		}
+		*s.ptr = d
 	}
-	if d == 0 && s.zeroError != "" {
-		m.editRejected(s.zeroError)
-		return
-	}
-	*s.ptr = d
 	m.editAccepted("Timing updated.")
 }
 

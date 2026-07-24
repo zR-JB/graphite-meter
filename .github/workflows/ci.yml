@@ -103,11 +103,13 @@ jobs:
           cache-dependency-path: go/go.sum
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
       # Cache the compiled lint tools so go-lint does not rebuild staticcheck and
-      # govulncheck on every run. Keyed by their versions in the justfile.
+      # govulncheck on every run. Their install path carries the pinned version,
+      # so a restored cache can never satisfy a bumped tool.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/go/bin
-          key: go-lint-tools-staticcheck-2025.1.1-govulncheck-latest
+          path: ~/go/bin/gm-lint
+          key: go-lint-tools-${{ hashFiles('justfile') }}
+          restore-keys: go-lint-tools-
       # These recipes are the single source of truth for the Go checks; `just
       # ci` runs the same ones locally, so the two cannot drift.
       - name: Format and vet (just server-check)

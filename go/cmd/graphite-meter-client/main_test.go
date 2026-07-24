@@ -2362,8 +2362,14 @@ func TestRenderedFramesNeverExceedWidth(t *testing.T) {
 	}
 }
 
-// TestRenderRunFrame prints one real run-screen frame (ANSI included) so the
-// rendered terminal output can be eyeballed: go test -run TestRenderRunFrame -v.
+// TestRenderRunFrame checks the run screen carries its live readouts, and logs
+// the frame (ANSI included) for eyeballing: go test -run TestRenderRunFrame -v.
 func TestRenderRunFrame(t *testing.T) {
-	t.Log("\n" + populatedRunModel(100).View())
+	frame := populatedRunModel(100).View()
+	t.Log("\n" + frame)
+	for _, want := range []string{"Session", "Live Telemetry", "bidirectional / measure", "3.00 ms", "Stages"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("run frame missing %q", want)
+		}
+	}
 }

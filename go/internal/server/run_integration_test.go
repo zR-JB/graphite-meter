@@ -159,10 +159,15 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 	cfg.Native.H1TLS = occupied.Addr().String() // bind fails here
 	cfg.TLSCert, cfg.TLSKey = cert, key
 
-	err = Run(context.Background(), &cfg)
-	if err == nil {
+	if err = Run(t.Context(), &cfg); err == nil {
 		t.Fatal("Run succeeded despite a listener that could not bind")
 	}
+	// The H1 listener bound before the failure, so its port must be free again.
+	reclaimed, err := net.Listen("tcp", cfg.Native.H1)
+	if err != nil {
+		t.Fatalf("the first listener kept %s after the bind failure: %v", cfg.Native.H1, err)
+	}
+	reclaimed.Close()
 }
 
 // TestRunRejectsInvalidConfig proves Run rejects a bad config without binding.

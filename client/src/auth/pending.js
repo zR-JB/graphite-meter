@@ -29,6 +29,18 @@ function encode(form) {
   return body;
 }
 
+/**
+ * A rejection redirects back to the page being viewed (same path, error query),
+ * a success to another page.
+ * @param {Response} response
+ * @param {{pathname: string}} here
+ */
+function leftThisPage(response, here) {
+  return (
+    response.redirected && new URL(response.url).pathname !== here.pathname
+  );
+}
+
 document.addEventListener("submit", (event) => {
   const form = event.target;
   if (!(form instanceof HTMLFormElement) || form.dataset.busy) return;
@@ -50,12 +62,9 @@ document.addEventListener("submit", (event) => {
     redirect: "follow",
   })
     .then((response) => {
-      const redirectedToApp =
-        response.redirected &&
-        new URL(response.url).pathname !== action.pathname;
       // The app document goes unparsed: DOMParser checks its inline styles
       // against this page's strict CSP and logs a spurious violation.
-      if (redirectedToApp) {
+      if (leftThisPage(response, location)) {
         location.assign(response.url);
         return;
       }

@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -82,13 +83,16 @@ func TestConnectOriginsListsCrossOriginTargetsAndSkipsSelf(t *testing.T) {
 	cfg.Public.Latency = []string{"https://ping.example"}
 
 	got := NewPreflight(&cfg).ConnectOrigins("meter.example")
+	// Latency targets carry a ws(s) form as well: the WebSocket URL scheme.
 	want := map[string]bool{
 		"https://meter.example":    true,
+		"wss://meter.example":      true,
 		"https://download.example": true,
 		"https://ping.example":     true,
+		"wss://ping.example":       true,
 	}
 	if len(got) != len(want) {
-		t.Fatalf("ConnectOrigins = %v, want the three cross-origins", got)
+		t.Fatalf("ConnectOrigins = %v, want %d origins", got, len(want))
 	}
 	for _, o := range got {
 		if o == "." || o == "" {
@@ -107,5 +111,19 @@ func TestConnectOriginsEmptyWhenEverythingIsSelf(t *testing.T) {
 	cfg.Public.Both = []string{"self"}
 	if got := NewPreflight(&cfg).ConnectOrigins("meter.example"); len(got) != 0 {
 		t.Fatalf("ConnectOrigins with only self = %v, want empty", got)
+	}
+}
+
+func TestConnectOriginsCarriesWebSocketSchemes(t *testing.T) {
+	cfg := config.Default()
+	cfg.AdvertiseAllNative = false
+	cfg.AdvertisedNative = map[string]bool{}
+	cfg.Public.Latency = []string{"https://ping.example", "http://plain.example:7246"}
+
+	got := NewPreflight(&cfg).ConnectOrigins("meter.example")
+	for _, want := range []string{"wss://ping.example", "ws://plain.example:7246"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("ConnectOrigins = %v, want it to contain %q", got, want)
+		}
 	}
 }

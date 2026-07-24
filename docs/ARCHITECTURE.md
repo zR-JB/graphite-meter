@@ -161,7 +161,7 @@ allow only one progress stream per id. Progress heartbeats do not extend aggrega
 
 ### Meter (`internal/endpoint/meter.go`)
 
-Not a scoring or unit-conversion system — a purely optional, `GM_VERBOSE`/`-verbose`-gated,
+Not a scoring or unit-conversion system — a purely optional, `GM_VERBOSE`/`--verbose`-gated,
 nil-safe per-second logger of server-observed throughput and live connection count
 (`[gm:server:download] 9.41 Gbit/s · 4 conns · 1.18 GB this window`). It exists so an operator can
 sanity-check the server's own drained/served rate against kernel counters or the client's
