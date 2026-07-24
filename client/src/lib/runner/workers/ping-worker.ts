@@ -29,8 +29,9 @@
  *     estimator could never learn the link slowed — lost pings carry no RTT — and
  *     would false-flag loss forever.
  *   • Loss = timeout-only: over TCP/WS this is a stalled socket/queue, NOT real
- *     packet loss (TCP retransmits). Measuring real loss would need WebTransport
- *     datagrams, whose contract is reserved and inactive.
+ *     packet loss (TCP retransmits). Measuring real loss needs WebTransport
+ *     datagrams, reserved and inactive in this release and slated to be
+ *     activated (docs/ARCHITECTURE.md#roadmap).
  *   • Auto-reconnect: a handoff often drops the TCP socket outright. On an
  *     unexpected close the worker clears in-flight pings (a connection gap, not
  *     per-packet loss), emits `stall`, and reconnects with capped backoff; on

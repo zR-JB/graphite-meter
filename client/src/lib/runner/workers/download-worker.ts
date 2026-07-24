@@ -32,8 +32,9 @@
  *     h1.1 origin). The Blob is referenced, not copied, so the footprint stays flat.
  * The worker message protocol is the same shape both ways (download posts
  * `progress` byte deltas; upload posts `alive` per completed POST), so RealBackend's
- * pool treats them uniformly. A truly symmetric path would need WebTransport,
- * whose contract is reserved and inactive (docs/ARCHITECTURE.md#reserved-contract-surface).
+ * pool treats them uniformly. A truly symmetric path needs WebTransport, whose
+ * contract is reserved and inactive in this release and slated to be activated
+ * (docs/ARCHITECTURE.md#roadmap).
  *
  * ── Firefox download RAM caveat (known, documented, not a bug we can fix) ──
  * When the LINK is faster than this read loop (loopback / fast LAN), Firefox

@@ -13,8 +13,8 @@ import (
 // Registry maps paths to endpoints. The HTTP mux is built by walking it; bus
 // endpoints (WebSocket today) resolve from the same registry. Adding an
 // endpoint is a Register call — no listener code changes. There is no
-// WebTransport dispatcher; that contract surface is inactive by design (see
-// docs/ARCHITECTURE.md#reserved-contract-surface).
+// WebTransport dispatcher; that contract surface is inactive in this release
+// and slated to be activated (see docs/ARCHITECTURE.md#roadmap).
 type Registry struct {
 	httpEndpoints map[string]Endpoint
 	wsEndpoints   map[string]Endpoint
