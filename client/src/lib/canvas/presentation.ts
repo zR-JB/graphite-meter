@@ -93,8 +93,7 @@ export class PresentationScheduler {
     if (!pending) return;
     const delay = FRAME_MS - (this.#environment.now() - this.#lastFrame);
     if (delay > 1) {
-      // Wake half a frame early so the animation frame it requests lands on
-      // the budgeted slot rather than the one after it.
+      // Wake half a frame early so the requested frame lands on the budgeted slot.
       this.#timer = this.#environment.setTimer(
         () => {
           this.#timer = 0;

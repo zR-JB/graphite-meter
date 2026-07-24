@@ -14,18 +14,16 @@ import { presentation, type PresentationHandle } from "./presentation";
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencySample[];
-  /** False when latency is fully disabled: the latency line and the right
-   *  axis are suppressed so the chart reads as throughput-only. */
+  /** False when latency is disabled: the latency line and right axis are
+   *  suppressed. */
   latencyEnabled: boolean;
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
   phaseStartedAtMs: number;
-  /** Monotonic run counter from the store. A change marks a new run, and the
-   *  engine drops all accumulated per-run state. */
+  /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
-  /** Absolute throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered
-   *  upstream. Shared verbatim with the gauge dial
-   *  (store.displayScaleBytesPerSec) so both instruments scale identically. */
+  /** Throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered upstream.
+   *  Identical to store.displayScaleBytesPerSec so the gauge dial matches. */
   scaleBytesPerSec: number;
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
@@ -41,9 +39,8 @@ export interface ChartFormatters {
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
-  /** The single lane's rate during download/upload. Null during bidirectional,
-   *  which reports its two lanes separately below, and null where the cursor
-   *  sits outside the throughput data. */
+  /** Single-lane rate during download/upload. Null during bidirectional and
+   *  outside the throughput data. */
   bytesPerSec: number | null;
   /** Bidirectional's two concurrent lanes; null outside that phase. */
   downBytesPerSec: number | null;
@@ -149,7 +146,7 @@ export class ChartEngine implements CanvasEngine {
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
   #gradH = -1;
-  // Samples own data attribution; spans retain sample-free warmup boundaries.
+  // Phase boundaries only; each sample carries its own phase for attribution.
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
@@ -370,8 +367,8 @@ export class ChartEngine implements CanvasEngine {
     }
     this.#indexData(d);
 
-    // Track exact runner-owned boundaries. Sample timestamps cannot represent
-    // a sample-free warmup and therefore are not a phase clock.
+    // Sample timestamps cannot mark a sample-free warmup, so the runner's
+    // boundary is the phase clock.
     if (d.phase !== this.#lastPhase) {
       const phaseStart =
         d.phase === "complete" || d.phase === "error"
@@ -445,7 +442,7 @@ export class ChartEngine implements CanvasEngine {
     return rtts[Math.min(rtts.length - 1, Math.ceil(0.95 * rtts.length) - 1)];
   }
 
-  /* ---------- coordinate maps ---------- */
+  /* Coordinate maps. */
   #x(t: number): number {
     const plotW = this.#w - PAD_L - PAD_R;
     return (
@@ -494,8 +491,8 @@ export class ChartEngine implements CanvasEngine {
     this.#drawHover(ctx);
   }
 
-  /** Phase colour for the ribbon / labels (null = not shown). Warmup borrows the
-   *  muted body-text grey so it recedes instead of competing with a lane colour. */
+  /** Ribbon and label colour, null when the phase shows none. Warmup uses the
+   *  muted body-text grey so it recedes behind the lane colours. */
   #phaseColor(phase: Phase): string | null {
     if (phase === "warmup") return this.#colors.textSoft;
     if (phase === "latency") return this.#colors.signal;

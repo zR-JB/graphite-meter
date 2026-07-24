@@ -1,8 +1,8 @@
 // Reactive matchMedia wrapper for JS-visible breakpoints. Create it from
 // component init/reactive context because it owns Svelte runes.
 export function mediaQuery(query: string) {
-  // Seeded eagerly so the first render already has the real answer; the effect
-  // below only starts after mount.
+  // Seeded eagerly. The effect starts at mount, and first render needs the
+  // real answer.
   let matches = $state(
     typeof window !== "undefined" ? window.matchMedia(query).matches : false,
   );

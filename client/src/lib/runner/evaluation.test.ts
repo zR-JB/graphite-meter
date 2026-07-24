@@ -2,14 +2,10 @@ import { test, expect } from "bun:test";
 import { RunAccumulator } from "./evaluation";
 import type { AdaptiveDurationConfig } from "./contract";
 
-// Regression coverage: once early stopping actually arms for a phase,
-// the reported headline must be either
-//   (a) the average of the ENTIRE early-stopping phase (arm point → end) when
-//       stability holds the whole way through, or
-//   (b) the average of the ENTIRE measurement phase (start → end) when
-//       stability breaks at any point after arming —
-// never just the trailing contiguous stable run, which can be a strict
-// (and misleading) subset of both.
+// Regression coverage: once early stopping arms for a phase, the headline must
+// be the mean of the ENTIRE early-stopping phase (arm → end) when stability
+// holds throughout, else the mean of the ENTIRE measurement phase (start → end).
+// Never the trailing contiguous stable run, a misleading subset of both.
 
 const adaptive: AdaptiveDurationConfig = {
   enabled: true,
@@ -47,12 +43,12 @@ test("early stop reports the entire uninterrupted early-completion window", () =
     push(accum, v);
   }
   // Flat plateau: score converges to 1 once the confidence window (last 48
-  // samples) is pure plateau, latching a stable run well before we arm.
+  // samples) is pure plateau, latching a stable run well ahead of the arm.
   for (let i = 0; i < 90; i++) {
     samples.push(1000);
     push(accum, 1000);
   }
-  // Early stop arms here — coverage/threshold gates satisfied mid-plateau,
+  // Early stop arms here: coverage/threshold gates satisfied mid-plateau, the
   // same as core.ts's #maybeArmGlide calling this the instant shouldExitPhase
   // first returns true.
   accum.noteEarlyStop("download");
@@ -95,10 +91,8 @@ test("early stop destabilizes after arming → averages the entire measurement p
     samples.push(v);
     push(accum, v);
   }
-  // ...and even fully recovers on a NEW stable run before the phase ends —
-  // this is the exact regression case: a naive "still stable at finish"
-  // check would wrongly report just this trailing run's mean (3000) instead
-  // of the whole phase's.
+  // ...and fully recovers on a NEW stable run by the phase end. The regression
+  // case: a naive "still stable at finish" check reports only that run's 3000.
   for (let i = 0; i < 100; i++) {
     samples.push(3000);
     push(accum, 3000);
@@ -109,7 +103,7 @@ test("early stop destabilizes after arming → averages the entire measurement p
   expect(result.method).toBe("full-average");
   expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
   expect(result.meanBytesPerSec).toBeCloseTo(result.fullAverageBytesPerSec, 6);
-  // Must NOT be the trailing-run-only figure the old bug would have reported.
+  // Must NOT be the trailing-run-only figure.
   expect(result.meanBytesPerSec).not.toBeCloseTo(3000, 0);
 });
 
@@ -127,7 +121,7 @@ test("a trailing stable run does not hide the earlier ramp", () => {
     samples.push(1000);
     push(accum, 1000);
   }
-  // Early stop never armed; the earlier ramp must still remain in the result.
+  // Early stop never arms; the ramp must still remain in the result.
 
   const result = accum.throughputResult("download");
 
@@ -188,8 +182,8 @@ test("bidirectional: one lane still empty (staggered start) reports the other co
   const accum = new RunAccumulator();
   accum.reset();
 
-  // Download lane has started reporting; upload hasn't sent a sample yet —
-  // mirrors the real backend's staggered lane spawn.
+  // The download lane reports while upload has sent nothing, mirroring the real
+  // backend's staggered lane spawn.
   for (let i = 0; i < 10; i++) {
     accum.pushThroughput("bidirectional", "down", 700, 700, 1);
   }
@@ -218,8 +212,7 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   }
   const erraticScore = erratic.confidence("bidirectional").score;
 
-  // Proves the single stability window is fed by BOTH lanes' pushes (down+up
-  // combined), not just one — an erratic down lane alone must still drag the
-  // shared score down even though up never wavers.
+  // The single stability window is fed by BOTH lanes' pushes: an erratic down
+  // lane alone still drags the shared score down while up never wavers.
   expect(stableScore).toBeGreaterThan(erraticScore);
 });

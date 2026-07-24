@@ -15,8 +15,8 @@ export interface TargetPresentation {
 }
 
 /** Name a target for the UI. A WebSocket claims HTTP/1.1 only when the
- *  throughput target sharing its origin names that protocol; anywhere else the
- *  version the ping socket rides is not known here. */
+ *  throughput target sharing its origin names that protocol. Elsewhere the HTTP
+ *  version the ping socket rides is unknown here. */
 export function describeTarget(
   discovery: TransportDiscovery,
   target: FetchThroughputTarget | WebSocketLatencyTarget,

@@ -319,7 +319,7 @@
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
   }
-  /* Keep this in sync with .result-card min-height and GaugePanel's result slot. */
+  /* Matches .result-card min-height and GaugePanel's results-slot reserve. */
   .result-cards.reserve {
     min-height: 64px;
   }
@@ -522,9 +522,9 @@
     color: var(--text-soft);
   }
 
-  /* Compact strip: one slim row per finished or active stage, showing icon,
-     label, and number. It shows earlier stages while the next one runs, and is
-     small by construction, with no card chrome, pip, or wire-estimate line. */
+  /* Compact strip: one slim row per finished or active stage, carrying icon,
+     label, and number. Earlier stages stay visible while the next one runs.
+     No card chrome, pip, or wire-estimate line. */
   .result-chips {
     display: flex;
     flex-direction: column;

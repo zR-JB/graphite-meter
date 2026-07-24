@@ -7,11 +7,13 @@
     type PresentationHandle,
   } from "../canvas/presentation";
 
-  // CSS size of the sparkline; mirrors the canvas width/height attributes and
-  // the .spark rule so the backing store can be scaled by the device ratio.
+  // CSS size of the sparkline. Mirrors the canvas width/height attributes and
+  // the .spark rule, so the backing store scales by the device ratio.
   const CSS_WIDTH = 36;
   const CSS_HEIGHT = 16;
   const FALLBACK_COLOR = "#888";
+  // presentation keeps animating while a render returns true.
+  const PARKED = false;
 
   let canvasEl = $state<HTMLCanvasElement>();
   let canvasPresentation: PresentationHandle;
@@ -26,14 +28,12 @@
         .trim() || FALLBACK_COLOR;
   }
 
-  // Returns whether the scheduler should keep animating: the sparkline is a
-  // one-shot repaint, so it always parks after drawing and is re-armed by
-  // invalidate().
+  // A one-shot repaint, re-armed by invalidate().
   function draw(): boolean {
     const canvas = canvasEl;
-    if (!canvas) return false;
+    if (!canvas) return PARKED;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return false;
+    if (!ctx) return PARKED;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const deviceWidth = Math.round(CSS_WIDTH * dpr);
     const deviceHeight = Math.round(CSS_HEIGHT * dpr);
@@ -45,7 +45,7 @@
     ctx.clearRect(0, 0, CSS_WIDTH, CSS_HEIGHT);
 
     const samples = spark;
-    if (samples.length < 2) return false;
+    if (samples.length < 2) return PARKED;
     const min = Math.min(...samples);
     const max = Math.max(...samples);
     const range = max - min || 1;
@@ -61,7 +61,7 @@
       else ctx.moveTo(x, y);
     });
     ctx.stroke();
-    return false;
+    return PARKED;
   }
 
   $effect(() => {

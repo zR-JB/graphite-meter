@@ -14,8 +14,8 @@ interface DismissInput {
 export type SheetGestureIntent = "pending" | "drag" | "scroll";
 
 // Stays "pending" inside a 10px slop radius so a tap never nudges the sheet.
-// Anything but a downward, mostly-vertical pull from an unscrolled body belongs
-// to the content underneath, and the sheet must not steal it.
+// A pull that is upward, mostly horizontal, or from a scrolled body belongs to
+// the content underneath.
 export function sheetGestureIntent(
   deltaX: number,
   deltaY: number,
@@ -27,9 +27,8 @@ export function sheetGestureIntent(
   return "drag";
 }
 
-// Either a pull past roughly a quarter of the sheet, or a shorter flick that was
-// still moving when the finger left: the time bound keeps a fast drag that ended
-// in a pause from counting as a flick.
+// A flick counts only while the finger still moves at release. The
+// releasedAfterMs bound rejects a fast drag that ends in a pause.
 export function shouldDismissSheet({
   distance,
   height,
@@ -42,8 +41,8 @@ export function shouldDismissSheet({
   return farEnough || recentFlick;
 }
 
-// Reference counted because several sheets can be mounted at once, and the
-// first one to close must not restore the page while another still holds it.
+// Reference counted: several sheets can be mounted at once. The first to close
+// must not restore the page while another still holds it.
 let pageLockCount = 0;
 let pageBeforeLock:
   | {
@@ -53,7 +52,7 @@ let pageBeforeLock:
     }
   | undefined;
 
-// `overflow: hidden` alone does not stop scrolling behind a sheet on iOS, so the
+// iOS keeps scrolling the page behind a sheet under `overflow: hidden`. The
 // body is pinned with `position: fixed` and offset to fake the scroll position.
 function lockPage() {
   pageLockCount++;
@@ -106,6 +105,10 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   const reducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  // Wider viewports dock the panel, where a downward drag means nothing.
+  const isBottomSheetLayout = () =>
+    window.matchMedia("(max-width: 759px)").matches;
+
   function setPageLocked(locked: boolean) {
     if (locked === pageLocked) return;
     pageLocked = locked;
@@ -137,14 +140,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     }
   }
 
-  // Only the narrow layout renders the panel as a bottom sheet; wider viewports
-  // dock it, where a downward drag would mean nothing.
   function onStart(event: TouchEvent) {
-    if (
-      !opts.enabled ||
-      event.touches.length !== 1 ||
-      !window.matchMedia("(max-width: 759px)").matches
-    )
+    if (!opts.enabled || event.touches.length !== 1 || !isBottomSheetLayout())
       return;
     const touch = event.touches[0];
     const scroller =
@@ -189,8 +186,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     event.preventDefault();
     const elapsed = Math.max(1, event.timeStamp - gesture.lastAt);
     const instantVelocity = (touch.clientY - gesture.lastY) / elapsed;
-    // Smoothed, because a single frame's delta is noisy enough to read a steady
-    // drag as a flick.
+    // Smoothed: a single frame's delta is noisy enough to read a steady drag
+    // as a flick.
     gesture.velocity = gesture.velocity * 0.65 + instantVelocity * 0.35;
     gesture.lastY = touch.clientY;
     gesture.lastAt = event.timeStamp;
@@ -220,8 +217,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
         return;
       }
       animate(0, true);
-      // Inline styles come off only once the --dur-slide transition has run;
-      // dropping them mid-flight would snap the sheet instead of gliding it.
+      // Inline styles come off once the --dur-slide transition finishes. An
+      // earlier reset snaps the sheet instead of gliding it.
       resetTimer = window.setTimeout(reset, 200);
       return;
     }
@@ -240,8 +237,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   }
 
   node.addEventListener("touchstart", onStart, { passive: true });
-  // Non-passive: a committed drag has to preventDefault to suppress the browser's
-  // own scroll and pull-to-refresh.
+  // Non-passive: a committed drag calls preventDefault to suppress the browser
+  // scroll and pull-to-refresh.
   node.addEventListener("touchmove", onMove, { passive: false });
   node.addEventListener("touchend", onEnd, { passive: true });
   node.addEventListener("touchcancel", onEnd, { passive: true });

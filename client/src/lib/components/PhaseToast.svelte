@@ -1,28 +1,32 @@
 <script lang="ts">
-  /* Transient phase-change announcer: a fixed, bottom-right toast that
-     surfaces a message each time `store.phase` changes, then auto-dismisses.
-     role="status" plus aria-live="polite" gives screen readers one calm
-     announcement per transition; GaugePanel's mirror carries the per-value
-     detail. Under reduced motion it fades instead of sliding. */
+  /* Transient phase-change announcer, pinned bottom-right: one message per
+     `store.phase` change, then auto-dismiss. role="status" with
+     aria-live="polite" gives screen readers one calm announcement per
+     transition. GaugePanel's mirror carries the per-value detail. */
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
   import { phaseKicker, phaseMessage } from "./phasePresentation";
 
   // A terminal or skipped-stage notice earns a longer read than a routine
-  // phase blink: the run just ended or lost a stage, and a 1.35s flash
-  // undersells that.
+  // phase blink.
   const LINGER_ALERT_MS = 3200;
   const LINGER_COMPLETE_MS = 2200;
   const LINGER_PHASE_MS = 1350;
+
+  function lingerMs(phase: typeof store.phase, skipped: boolean): number {
+    if (skipped || phase === "aborted" || phase === "error")
+      return LINGER_ALERT_MS;
+    return phase === "complete" ? LINGER_COMPLETE_MS : LINGER_PHASE_MS;
+  }
 
   let visible = $state(false);
   let prevPhase = store.phase;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  // A skipped stage takes over the toast briefly (err-tinted): it usually
-  // coincides with the next stage's phase transition, so it gets priority
-  // over the routine phase message until its timer clears it.
+  // A skipped stage takes over the toast briefly, err-tinted. It coincides
+  // with the next stage's transition, so it outranks the routine phase
+  // message until its timer clears.
   let skipMessage = $state<string | null>(null);
   let prevFailCount = 0;
   const STAGE_LABEL: Record<string, string> = {
@@ -32,8 +36,8 @@
     bidirectional: "Bi-dir",
   };
 
-  // A stall (connection lost) holds the toast for as long as it lasts. It is
-  // not a phase transition, so it gets its own sticky visibility and clears the
+  // A stall (connection lost) holds the toast for its whole duration. It is
+  // not a phase transition, so it owns its own visibility and clears the
   // moment `measuring` goes true. store.stallInfo carries the reason copy.
   const stalled = $derived(store.isRunning && !store.measuring);
   const stallMessage = $derived.by(() => {
@@ -54,13 +58,7 @@
 
     visible = true;
     if (timer) clearTimeout(timer);
-    const linger = untrack(() => skipMessage)
-      ? LINGER_ALERT_MS
-      : phase === "aborted" || phase === "error"
-        ? LINGER_ALERT_MS
-        : phase === "complete"
-          ? LINGER_COMPLETE_MS
-          : LINGER_PHASE_MS;
+    const linger = lingerMs(phase, untrack(() => skipMessage) != null);
     timer = setTimeout(() => {
       visible = false;
       skipMessage = null;
@@ -86,9 +84,8 @@
     prevFailCount = failures.length;
   });
 
-  // While stalled the toast is sticky (no auto-dismiss): it stays up for the
-  // whole dead-air window and clears the instant the link resumes. Cancel any
-  // pending auto-dismiss timer so a phase toast doesn't hide the stall notice.
+  // Dropping the auto-dismiss timer holds the stall notice for the whole
+  // dead-air window, past any phase toast underneath it.
   $effect(() => {
     if (stalled && timer) {
       clearTimeout(timer);
@@ -169,8 +166,8 @@
     font-weight: 700;
   }
 
-  /* Reduced motion: no slide/scale; pin the resting transform so it
-     never animates in. */
+  /* Reduced motion: the resting transform is pinned, so the toast fades in
+     without a slide or scale. */
   @media (prefers-reduced-motion: reduce) {
     .phase-toast {
       transform: none;

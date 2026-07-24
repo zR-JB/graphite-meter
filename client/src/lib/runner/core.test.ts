@@ -12,8 +12,8 @@ import type {
 // ---------------------------------------------------------------------------
 // Fake clock + captured tick callback.
 //
-// The runner uses one deadline timer plus performance.now(). Both are patched
-// so tests can advance the measured clock deterministically.
+// The runner uses one deadline timer plus the monotonic clock. Both are patched
+// so tests advance the measured clock deterministically.
 // ---------------------------------------------------------------------------
 let fakeNow = 0;
 let tickCallback: (() => void) | null = null;
@@ -471,7 +471,7 @@ test("watchdog auto-stalls a measured phase after prolonged sample silence", asy
   advance(800); // under the 1500ms watchdog threshold
   expect(events.some((e) => e.type === "stall")).toBe(false);
 
-  advance(800); // cumulative silence now exceeds 1500ms
+  advance(800); // cumulative silence exceeds 1500ms
   const stall = events.find((e) => e.type === "stall");
   expect(stall).toBeDefined();
   if (stall?.type === "stall") {
@@ -631,7 +631,7 @@ test("adaptive early-finish arms and completes the run well before the nominal d
   wallAdvanced += 100;
 
   expect(core.phase).toBe("complete");
-  // The run finished after ~120ms of wall time, nowhere near the 2000ms budget.
+  // The run finishes in ~120ms of wall time, nowhere near the 2000ms budget.
   expect(wallAdvanced).toBeLessThan(cfg.duration.downloadMs / 2);
 });
 
@@ -657,7 +657,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
 
   // A steady ramp (never plateaus) keeps both the variance and the
   // first-vs-last-third slope of the confidence window high, so the
-  // stability score never reaches the 0.9 gate — unlike the flat feed above.
+  // stability score never reaches the 0.9 gate, unlike the flat feed above.
   const N = 50;
   for (let i = 0; i < N; i++) {
     advance(100);

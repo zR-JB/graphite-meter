@@ -1,7 +1,7 @@
 // Resolves the configured transfer-stream policy after protocol selection.
 // Automatic H1 respects its configured browser-pool ceiling. Multiplexed
-// protocols overlap finite upload POSTs; their downloads need one stream only,
-// since a multiplexed connection already carries it at the full connection rate.
+// protocols overlap finite upload POSTs. Their downloads need one stream: a
+// multiplexed connection already carries it at the full connection rate.
 import type {
   FlowDirection,
   ProtocolTarget,

@@ -1,4 +1,4 @@
-// Svelte tooltip action plus the shared jargon dictionary used by metric labels
+// Svelte tooltip action plus the shared jargon dictionary for metric labels
 // and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 
@@ -88,7 +88,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   }
 
   // Centred on the anchor, flipped to the opposite side when the requested one
-  // would run off the viewport, then clamped inside the margin either way.
+  // overflows the viewport, then clamped inside the margin.
   function place() {
     if (!bubble) return;
     const anchor = node.getBoundingClientRect();
@@ -130,8 +130,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
     window.addEventListener("blur", hide);
     document.addEventListener("visibilitychange", onVisibilityDismiss);
-    // Capture phase: scroll does not bubble, and the bubble is positioned fixed,
-    // so it would drift away from its anchor inside any scrolling container.
+    // Capture phase: scroll does not bubble, and a fixed bubble drifts from
+    // its anchor inside a scrolling container.
     document.addEventListener("scroll", hide, true);
     document.addEventListener("pointerdown", onDocumentPointerDown, true);
   }
@@ -203,8 +203,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     hide();
   }
 
-  // A tap on a control has to run the control, so only inert jargon shows a tip
-  // on touch; without hover there is nothing to close it but the timer.
+  // A tap on a control runs the control, so only inert jargon shows a tip on
+  // touch. Without hover, only the timer closes it.
   function onPointerUp(event: PointerEvent) {
     if (event.pointerType !== "touch") return;
     if (touchOpen) {

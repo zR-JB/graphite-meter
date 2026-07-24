@@ -79,8 +79,8 @@
     return Math.min(Math.max(CARD_PAD, desired), maxLeft);
   });
 
-  // The domain-free helpers live in ./latencyProfile; these thin wrappers bind
-  // the reactive chart domain so the template call sites stay terse.
+  // ./latencyProfile holds the domain-free helpers. These wrappers bind the
+  // reactive chart domain, keeping the template call sites terse.
   const pos = (value: number | null) => domainPos(value, domain);
   const rangeWidth = (min: number | null, max: number | null) =>
     domainRangeWidth(min, max, domain);
@@ -605,10 +605,9 @@
     }
   }
 
-  /* Bare variant: sits inside a host panel as a peer of the gauge. It drops the
-     card frame and the header so the host panel (an inset surface matching the
-     gauge) provides the chrome. Lanes get a raised backdrop so each reads as
-     its own row, and lane internals keep their full sizing. */
+  /* Bare variant: a peer of the gauge inside a host panel. The host's inset
+     surface provides the chrome, so the card frame and header drop out. Lanes
+     take a raised backdrop, each reading as its own row. */
   .bare {
     border: 0;
     border-radius: 0;

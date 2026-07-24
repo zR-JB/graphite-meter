@@ -2,10 +2,9 @@
  * The Graphite Meter: download read-and-count worker
  * ============================================================
  * One worker per parallel download stream. It streams GET /download, counts
- * each chunk's byteLength and discards the chunk, so the payload never crosses
- * the thread boundary and memory stays O(1). Only `{ bytes }` deltas go back,
- * batched to ~50 ms. The lane re-fetches until stopped; `stop` aborts the fetch
- * and a recoverable failure lets the main thread restart this lane alone.
+ * each chunk's byteLength and discards it, so the payload never crosses the
+ * thread boundary and memory stays O(1). Only `{ bytes }` deltas go back,
+ * batched to ~50 ms. The lane re-fetches until `stop` aborts the fetch.
  * ============================================================ */
 
 import {
@@ -25,8 +24,8 @@ import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
  *  selects the experimental mode: adaptively-sized `&bytes=N` requests (see
- *  autosize.ts) on one keep-alive connection, preserving cwnd, instead of a
- *  single 64 GiB stream. Default off, for A/B-ing ramp responsiveness. */
+ *  autosize.ts) over one keep-alive connection, preserving cwnd. Default off
+ *  runs one 64 GiB stream; the flag A/B-tests ramp responsiveness. */
 type InMsg =
   | {
       type: "start";
@@ -101,12 +100,11 @@ let measureSeq = 0;
 let windowBytes = 0;
 let windowStart = 0;
 
-/** Stream index, only used to tag debug lines (`dl-worker#<id>`). */
+/** Stream index, tagging debug lines only (`dl-worker#<id>`). */
 let streamId = 0;
-/** Raw-receive debug window: bytes since the last 1 Hz log, its start time, and
- *  the running per-stream total. Independent of the 50 ms progress batching, so
- *  it reflects exactly what this reader pulls off the socket, the figure to
- *  compare against btop and the server `-verbose` log. */
+/** Raw-receive debug window, independent of the 50 ms progress batching: bytes
+ *  since the last 1 Hz log, its start time, and the per-stream total. Reflects
+ *  what this reader pulls off the socket, comparable to btop and `-verbose`. */
 let dbgWinBytes = 0;
 let dbgWinStart = 0;
 let dbgTotal = 0;
@@ -220,7 +218,7 @@ async function run(url: string): Promise<void> {
         ));
       }
     } catch (err) {
-      if (stopped) return; // stop() aborted it: a clean teardown, not an error
+      if (stopped) return; // stop() aborted it: a clean teardown
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(
@@ -254,8 +252,8 @@ function byobReader(
 
 /** Read a response body to completion, feeding each chunk's byte count to
  *  `count`. fetch plus a reader is the only way to read and discard a streamed
- *  response at O(1) memory: XHR buffers the whole response internally, so a
- *  multi-GiB download would exhaust memory. */
+ *  response at O(1) memory: XHR buffers the whole response internally, which a
+ *  multi-GiB download exhausts. */
 async function readBody(
   body: ReadableStream<Uint8Array>,
   count: (n: number) => void,

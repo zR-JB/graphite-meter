@@ -1,8 +1,8 @@
 /* ============================================================
- * The Graphite Meter — Sample statistics helpers
+ * The Graphite Meter: sample statistics helpers
  * Pure, engine-agnostic descriptors over raw sample arrays.
- * Extracted from dummy.ts so the dummy and a real runner reduce
- * samples identically (shared by the evaluation core).
+ * Shared by the evaluation core, so the dummy and a real runner
+ * reduce samples identically.
  * ============================================================ */
 
 /** Median of an unsorted array; 0 for empty. */
@@ -13,7 +13,7 @@ export function median(xs: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-/** Nearest-rank percentile (p in 0–100); 0 for empty. */
+/** Nearest-rank percentile (p in 0..100); 0 for empty. */
 export function percentile(xs: number[], p: number): number {
   if (!xs.length) return 0;
   const s = [...xs].sort((a, b) => a - b);
@@ -24,7 +24,7 @@ export function percentile(xs: number[], p: number): number {
   return s[idx];
 }
 
-/** Mean of absolute consecutive differences — the jitter proxy; 0 for <2 samples. */
+/** Mean of absolute consecutive differences: the jitter proxy. 0 for <2 samples. */
 export function meanAbsDeviation(xs: number[]): number {
   if (xs.length < 2) return 0;
   let acc = 0;

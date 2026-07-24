@@ -2,10 +2,10 @@ import { test, expect } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Svelte's {@html expr} bypasses auto-escaping, so a server- or user-derived
-// string reaching one is XSS. App pages carry a permissive script-src (only the
-// login surface is hash-pinned), so such an XSS reads the CSRF token, mints a
-// measurement grant, and forges same-origin requests: full account compromise.
+// Svelte's {@html expr} bypasses auto-escaping. A server- or user-derived
+// string reaching one is XSS. App pages carry a permissive script-src; only
+// the login surface is hash-pinned. That XSS reads the CSRF token, mints a
+// measurement grant, and forges same-origin requests: account compromise.
 
 // Expressions vetted as build-time SVG markup. An entry asserts the value never
 // carries anything from the network.
@@ -46,6 +46,6 @@ test("every {@html} sink renders only a vetted static-icon expression", () => {
     offenders,
     `Unvetted {@html} sink(s). If the expression can only hold trusted ` +
       `build-time markup, add it to ALLOWED in this file; otherwise it is an ` +
-      `XSS sink — render as text or sanitize:\n${offenders.join("\n")}`,
+      `XSS sink: render as text or sanitize.\n${offenders.join("\n")}`,
   ).toEqual([]);
 });

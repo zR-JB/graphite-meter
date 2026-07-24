@@ -21,10 +21,9 @@ test("download requests retain bearer credentials", () => {
   expect(new Headers(init.headers).get("authorization")).toBe("Bearer grant");
 });
 
-// The worker's own 403 handling has to be marker-qualified for the same
-// reason the main thread's is: a bare 403 from a proxy in front of the
-// server is a transfer failure, not an expired session, and reporting it as
-// `auth-required` tears the run down and navigates away from the console.
+// Only the marker means an expired session. A bare 403 from a proxy in front
+// of the server means a transfer failure. Treating that as `auth-required`
+// tears the run down and navigates away from the console.
 test("only a marker-qualified 403 stops a lane as auth-required", () => {
   const response = (status: number, headers: Record<string, string> = {}) =>
     new Response("", { status, headers });
@@ -39,7 +38,6 @@ test("only a marker-qualified 403 stops a lane as auth-required", () => {
     authenticationRequired(response(403, { "Graphite-Meter-Auth": "denied" })),
   ).toBe(false);
 
-  // ...and an unqualified 403 stays on the ordinary error path, where the
-  // lane is restartable rather than terminal.
+  // An unqualified 403 stays on the ordinary error path, where the lane restarts.
   expect(recoverableDownloadStatus(403)).toBe(true);
 });

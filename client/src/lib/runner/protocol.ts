@@ -5,7 +5,7 @@ import type {
 } from "./contract";
 
 /** Canonicalize protocol identifiers from Resource Timing, Go net/http, and
- * configured targets before policy or presentation consumes them. */
+ * configured targets into one ProtocolTarget vocabulary. */
 export function normalizeHttpProtocol(
   protocol?: string,
 ): ProtocolTarget | undefined {

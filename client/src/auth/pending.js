@@ -1,18 +1,10 @@
-/* Submit feedback and smooth in-place errors for the server-rendered auth
-   pages. A sign-in POST is otherwise a full navigation, and password
-   verification is deliberately slow, so the button would sit unchanged and then
-   its spinner would freeze the instant the browser commits the navigation.
-
-   This marks the submitted form busy (the CSS shows a spinner) and, for the
-   same-origin password and CLI-approval forms, submits with fetch: a rejection
-   swaps the card in place instead of navigating, so the spinner never freezes,
-   and a success follows through to the app. It degrades to a native submit
-   whenever fetch or the DOM APIs are unavailable, and always for the OIDC form,
-   which must navigate to the identity provider.
-
-   The body is sent url-encoded (not multipart) because the server parses it
-   with ParseForm. go/internal/auth serves this file verbatim and pins its
-   sha256 in the Content-Security-Policy, so it must stay dependency-free. */
+/* Submit feedback and in-place errors for the server-rendered auth pages.
+   A native sign-in POST leaves a dead spinner: password verification is
+   deliberately slow, and the browser freezes animations the instant a
+   navigation commits. Same-origin password and CLI-approval forms submit with
+   fetch, so a rejection swaps the card in place and a success follows the
+   redirect. go/internal/auth serves this file verbatim and pins its sha256 in
+   the Content-Security-Policy, so it must stay dependency-free. */
 const INPLACE = new Set(["/auth/password", "/auth/cli/approve"]);
 
 /**
@@ -25,7 +17,10 @@ function setBusy(form, busy) {
   for (const button of form.querySelectorAll("button")) button.disabled = busy;
 }
 
-/** @param {HTMLFormElement} form */
+/**
+ * Url-encoded body, not multipart: the server parses it with ParseForm.
+ * @param {HTMLFormElement} form
+ */
 function encode(form) {
   const body = new URLSearchParams();
   new FormData(form).forEach((value, key) => {
@@ -55,13 +50,12 @@ document.addEventListener("submit", (event) => {
     redirect: "follow",
   })
     .then((response) => {
-      // A successful sign-in redirects to the app; follow it without parsing.
-      // Parsing the app document here would evaluate its inline styles against
-      // this page's strict CSP and log a spurious violation.
-      if (
+      const redirectedToApp =
         response.redirected &&
-        new URL(response.url).pathname !== action.pathname
-      ) {
+        new URL(response.url).pathname !== action.pathname;
+      // The app document goes unparsed: DOMParser checks its inline styles
+      // against this page's strict CSP and logs a spurious violation.
+      if (redirectedToApp) {
         location.assign(response.url);
         return;
       }
@@ -72,7 +66,7 @@ document.addEventListener("submit", (event) => {
         const current = document.querySelector("main.card");
         if (card && current) {
           current.replaceWith(document.importNode(card, true));
-          // Put the operator back on the field they'll retry in.
+          // Inserted nodes ignore autofocus, so focus the retry field here.
           const focus = document.querySelector("input[autofocus]");
           if (focus instanceof HTMLElement) focus.focus();
         } else if (response.ok) location.assign(response.url);

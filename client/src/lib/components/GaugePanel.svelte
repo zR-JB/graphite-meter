@@ -195,9 +195,9 @@
     return rampHasFramesLeft;
   }
 
-  // The live region mirrors a per-frame value, so mid-phase announcements are
-  // rate-limited to one per second: a screen reader needs that long to finish a
-  // sentence. Phase changes and non-running updates jump the queue.
+  // The live region mirrors a per-frame value. Mid-phase announcements wait a
+  // second apart, the time a screen reader needs to finish a sentence. Phase
+  // changes and idle updates jump the queue.
   const ANNOUNCE_INTERVAL_MS = 1000;
   let announcement = $state("");
   let pendingAnnouncement = "";
@@ -340,10 +340,10 @@
     container-type: inline-size;
     container-name: viz;
   }
-  /* The instrument grid: one named-area grid places stage-head, gauge, Engage,
-     and the optional latency panel, so the arrangement flips at a single
-     breakpoint. The gauge+latency row is a content-independent track, so the
-     latency panel's own scrolling never stretches the gauge's height. */
+  /* The instrument grid places stage-head, gauge, Engage, and the optional
+     latency panel, so one breakpoint flips the whole arrangement. Its
+     gauge+latency track is content-independent: the latency panel scrolls
+     inside its own height. */
   .instrument {
     display: grid;
     gap: var(--space-3);
@@ -356,8 +356,7 @@
       "latency" auto
       / 1fr;
   }
-  /* No latency panel at all: drop its row entirely (rather than leaving an
-     empty track) at any width. */
+  /* No latency panel: its row disappears at every width. */
   .instrument:not(:has(.latency-panel)) {
     grid-template:
       "stagehead" auto
@@ -434,8 +433,8 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    /* Keep the number clear of the gauge ring's sides. The inline padding also
-       bounds how wide the value grows before the cqmin sizing reins it in. */
+    /* Keeps the number clear of the gauge ring's sides. The inline padding
+       also bounds how wide the value grows until cqmin sizing reins it in. */
     padding-inline: 9%;
     pointer-events: none;
   }
@@ -483,9 +482,9 @@
     line-height: 1.35;
     color: var(--text-muted);
   }
-  /* Terminal-state headline (aborted / error): the WHAT, above the softer
-     action line. Error is err-tinted; a user abort stays neutral (it isn't a
-     failure) but reads at full text strength so the state is unmissable. */
+  /* Terminal-state headline (aborted / error) above the softer action line.
+     Error is err-tinted. A user abort stays neutral at full text strength, so
+     the state is unmissable. */
   .gauge-status {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -537,8 +536,8 @@
   }
 
   /* Results slot: empty at idle, a compact strip mid-run, the full card grid
-     once complete. The min-height reserve holds in every state so the gauge
-     above keeps one size. 760px fits all 4 cards in one row (4x181px + 3x12px
+     once complete. The min-height reserve holds in every state, so the gauge
+     above keeps one size. 760px fits 4 cards in one row (4x181px + 3x12px
      gap); the 600px measure used above wraps them 3-then-1. */
   .results-slot {
     width: 100%;

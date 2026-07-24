@@ -1,5 +1,5 @@
-// LocalStorage schema for user settings. Load is defensive so old or partial
-// blobs merge onto the current defaults instead of breaking startup.
+// LocalStorage schema for user settings.
+// Load merges stale or partial blobs onto the current defaults.
 import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/real/streamPolicy";
 import { DEFAULT_CONFIG } from "./store.svelte";
@@ -48,9 +48,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Persisted blobs may be stale, partial, or hand-edited.
+// Keys absent from the defaults and leaves of the wrong type fall back.
 function deepMergeOverDefaults<T>(base: T, source: unknown): T {
-  // Persisted blobs may be old, partial, or hand-edited. Walk only default keys
-  // and type-check leaves so schema changes fall back instead of crashing load.
   if (!isPlainObject(base)) {
     if (source === undefined) return base;
     if (Array.isArray(base))
@@ -101,8 +101,8 @@ export function loadPersisted(): PersistedState {
   if (!isPlainObject(parsed)) return defaults;
   const merged = deepMergeOverDefaults(defaults, parsed);
 
-  // deepMergeOverDefaults only walks keys the current schema still has, so every
-  // key an older blob spelled differently has to be mapped across by hand.
+  // deepMergeOverDefaults walks only keys the current schema defines.
+  // Legacy spellings need explicit mapping below.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
   merged.config.pingCadence = coercePingCadence(
     parsedConfig?.pingCadence,
@@ -154,8 +154,7 @@ export function loadPersisted(): PersistedState {
   const parsedParams = isPlainObject(parsedCompensation?.params)
     ? parsedCompensation.params
     : null;
-  // Blobs written before automatic detection existed hold a numeric IP family;
-  // that is an explicit expert choice, so keep it rather than reverting to auto.
+  // A numeric IP family is an explicit expert override and survives hydration.
   const savedIPVersion = parsedParams?.ipVersion;
   if (savedIPVersion === "auto" || savedIPVersion === 4 || savedIPVersion === 6)
     merged.config.compensation.params.ipVersion = savedIPVersion;
@@ -193,7 +192,7 @@ export function savePersisted(snapshot: PersistedState): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
-    // Blocked site data or a full quota must not break the running session;
-    // settings simply do not survive a reload.
+    // Blocked site data or a full quota must not break the session.
+    // Settings then do not survive a reload.
   }
 }

@@ -131,8 +131,8 @@
   /* This file is the source of truth for two hand-kept copies; no build step
      derives either, so a token change here is only half the edit.
      - client/index.html pre-paint <style>: --canvas as a literal hex per theme
-       (`html { background }` and `[data-theme=light]`), because the bundle —
-       and thus this file — loads too late to own the first frame.
+       (`html { background }` and `[data-theme=light]`), because the bundle,
+       and thus this file, loads too late to own the first frame.
      - client/src/auth/auth.css: the token subset the server-rendered auth
        pages need. A Go test pins its colors, --focus-ring, and
        --edge-highlight against this file; radii, type, and motion are
@@ -278,9 +278,9 @@ body {
 }
 
 /* Desktop shell: #console is exactly 100dvh, so the document must never
-   scroll vertically either — clip it so a stray overflowing box (or a
-   focus-reveal chasing one) can only ever scroll a container inside the
-   shell, never shift the whole UI out of view. Below the stacked breakpoint
+   scroll vertically either. Clipping it leaves a stray overflowing box (or a
+   focus-reveal chasing one) able to scroll only a container inside the shell,
+   never to shift the whole UI out of view. Below the stacked breakpoint
    the document is the intended scroller and stays untouched. */
 @media (min-width: 760px) {
   /* bp: stacked (complement) */

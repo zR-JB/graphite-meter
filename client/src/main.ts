@@ -3,9 +3,8 @@ import { mount } from "svelte";
 import App from "./App.svelte";
 import { STORAGE_KEY } from "./lib/state/persistence";
 
-// Backstop for the inline theme script in index.html, which is what actually
-// gets the first frame right; this only covers the case where that script was
-// blocked or stripped, since the bundle loads well after first paint.
+// The inline theme script in index.html gets the first frame right.
+// This bundle loads after first paint, so it only covers that script going missing.
 (function applyThemePrePaint() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);

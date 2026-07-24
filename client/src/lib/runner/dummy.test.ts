@@ -11,9 +11,9 @@ import type {
 import type { DummyOptions, DummySampleContext } from "./dummy";
 
 // dummy.ts reads BUILD.clientVersion, which buildenv.ts fills in from Vite
-// `define` tokens (__GM_*__) at bundle time — they don't exist under plain
-// `bun test`, so buildenv.ts throws on import unless it's mocked first. Must
-// happen before the (dynamic) import of dummy.ts below.
+// `define` tokens (__GM_*__) at bundle time. Those do not exist under plain
+// `bun test`, so buildenv.ts throws on import unless mocked first, ahead of the
+// dynamic import of dummy.ts below.
 mock.module("../buildenv", () => ({
   BUILD: {
     defaultEngine: "dummy",
@@ -26,9 +26,9 @@ mock.module("../buildenv", () => ({
 const { DummyBackend } = await import("./dummy");
 type DummyBackendInstance = InstanceType<typeof DummyBackend>;
 
-// A minimal but complete RunnerConfig fixture (mirrors schedule.test.ts's
-// BASE_CONFIG — store.svelte.ts's DEFAULT_CONFIG can't be imported outside
-// Svelte's runtime).
+// A minimal but complete RunnerConfig fixture, mirroring schedule.test.ts's
+// BASE_CONFIG: store.svelte.ts's DEFAULT_CONFIG cannot be imported outside
+// Svelte's runtime.
 const BASE_CONFIG: RunnerConfig = {
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
@@ -497,10 +497,10 @@ test("packetDropAt: loss probability jumps to 60% in the declared window", () =>
 
 test("injectAnomaly latency-spike: scales rtt by the default 3x within its window, then clears", () => {
   const { backend, host } = makeBackend({ profile: "fiber", seed: 1 });
-  host.setPhase("download"); // any non-idle phase — injectAnomaly requires a running host
+  host.setPhase("download"); // any non-idle phase; injectAnomaly needs a running host
   host.setElapsed(1000);
 
-  // Baseline RTT before the spike.
+  // Baseline RTT ahead of the spike.
   tick(backend, { activity: LATENCY_ACTIVITY, elapsed: 1000, realNow: 1000 });
   const baseline = host.latency.at(-1)!.rttMs;
 
@@ -523,8 +523,8 @@ test("injectAnomaly packet-loss: raises loss probability to the default 60% with
   host.setPhase("download");
   host.setElapsed(1000);
   // Widen the window (magnitude stays default 0.6) so enough pings land inside
-  // it to estimate a probability — the fast unloaded cadence only samples
-  // every 80ms, and the default 900ms window barely fits ~11.
+  // it to estimate a probability: the fast unloaded cadence samples every 80ms,
+  // and the default 900ms window barely fits ~11.
   backend.injectAnomaly!({ kind: "packet-loss", durationMs: 20000 });
 
   for (let i = 0; i < 150; i++) {
@@ -600,8 +600,8 @@ test("injectAnomaly is a no-op while idle (no config, or phase idle)", () => {
   backend.injectAnomaly!({ kind: "latency-spike" });
   expect(host.stalls).toHaveLength(0);
 
-  // Confirm no live anomaly was queued: a subsequent latency tick (even after
-  // manually flipping the phase) shows no spike.
+  // Confirm no live anomaly is queued: a subsequent latency tick, even with the
+  // phase flipped manually, shows no spike.
   host.setPhase("download");
   host.setElapsed(0);
   tick(backend, { activity: LATENCY_ACTIVITY, elapsed: 100, realNow: 100 });

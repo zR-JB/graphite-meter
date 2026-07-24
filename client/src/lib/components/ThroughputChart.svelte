@@ -14,6 +14,8 @@
   let hover = $state<HoverInfo | null>(null);
   let hoverX: number | null = null;
   let hoverPresentation: PresentationHandle;
+  // presentation keeps animating while a render returns true.
+  const PARKED = false;
 
   // Invalidate only for state read by ChartEngine.
   $effect(() => {
@@ -38,8 +40,7 @@
     hoverX = e.offsetX;
     hoverPresentation?.invalidate();
   }
-  // Returns whether the scheduler should keep animating: hover readout is a
-  // one-shot repaint, so it always parks and is re-armed by invalidate().
+  // A one-shot repaint, re-armed by invalidate().
   function updateHover() {
     engine.setHover(hoverX);
     hover = engine.hoverInfo();
@@ -51,7 +52,7 @@
       hover.rtt == null
     )
       hover = null;
-    return false;
+    return PARKED;
   }
   function onLeave() {
     hoverX = null;
@@ -154,10 +155,9 @@
 </section>
 
 <style>
-  /* Flat milled tile on the faceplate (quieter than the gauge well). A flex
-     column so the plot can stretch when the console stage grants this section
-     extra height (desktop; see Console's .stage > .chart rule) while the
-     140px floor keeps it legible when it doesn't (mobile/stacked flow). */
+  /* Flat milled tile on the faceplate, quieter than the gauge well. The flex
+     column lets the plot stretch into whatever height Console's
+     .stage > .chart rule grants, down to the 140px floor in stacked flow. */
   .chart {
     display: flex;
     flex-direction: column;
@@ -167,9 +167,8 @@
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
   }
-  /* Secondary to the gauge hero: fills whatever height the tile is granted,
-     never less than the compact floor. The plot screen is a shallow recess
-     set into the tile. */
+  /* Secondary to the gauge hero: a shallow recess in the tile, filling the
+     granted height down to the compact floor. */
   .plot {
     position: relative;
     flex: 1 1 auto;

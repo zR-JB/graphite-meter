@@ -19,7 +19,7 @@ import { normalizeHttpProtocol } from "../protocol";
 
 /** Server route paths, the TS half of a cross-language pin. Preflight advertises
  *  origins only, so Go keeps its own table (go/internal/server/listeners.go,
- *  go/internal/wire/preflight.go) and both halves assert against api/routes.txt
+ *  go/internal/wire/preflight.go). Both halves assert against api/routes.txt
  *  (routes.test.ts, routes_test.go). */
 export const ROUTES = {
   probe: "/probe",

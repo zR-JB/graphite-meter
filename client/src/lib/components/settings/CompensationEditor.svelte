@@ -38,12 +38,13 @@
     ["quicConnIdMinBytes", "QUIC CID min", 0, 20, 1],
     ["quicConnIdMaxBytes", "QUIC CID max", 0, 20, 1],
   ] as const;
-  // Every profile preset hardcodes IPv4, but the IP version is an independent
-  // user override, so it survives a profile change.
+  // Every profile preset hardcodes IPv4; the IP version is a separate user override.
   function reseedProfile() {
-    const ipVersion = compensation.params.ipVersion;
+    const preservedIpVersion = compensation.params.ipVersion;
     const preset = applyConnectionProfile(compensation.profile);
-    Object.assign(compensation.params, preset.params, { ipVersion });
+    Object.assign(compensation.params, preset.params, {
+      ipVersion: preservedIpVersion,
+    });
   }
 </script>
 

@@ -1,7 +1,7 @@
 <script lang="ts">
-  // SettingsPanel gates this whole tab on GM_CLIENT_DEV_TOOLS; the simulation
-  // is gated separately on GM_CLIENT_ALLOW_DUMMY, so a dev-tools build without
-  // the dummy runner keeps debug logging but drops the injectAnomaly path.
+  // SettingsPanel gates this tab on GM_CLIENT_DEV_TOOLS.
+  // GM_CLIENT_ALLOW_DUMMY gates the simulation separately. A dev-tools build
+  // without the dummy runner keeps debug logging and drops anomaly injection.
   import { store } from "../../state/store.svelte";
   import Switch from "../Switch.svelte";
   import DeveloperSimulation from "./DeveloperSimulation.svelte";

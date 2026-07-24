@@ -5,8 +5,8 @@
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
-  // Once complete, show "Run again" instead of "Engage" to make re-running
-  // obvious. Pairs with R key + the ShortcutHints strip.
+  // A resolved run relabels the button "Run again", pairing with the R key
+  // and the ShortcutHints strip.
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||

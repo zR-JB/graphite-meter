@@ -310,8 +310,8 @@ class AppStore {
   });
 
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {
-    // Do not pin the error phase offline forever: connection failures latch
-    // connectivity once, then the restarted keepalive can report recovery.
+    // A connection failure latches connectivity offline once.
+    // The keepalive that follows can clear it again.
     if (this.isRunning && !this.measuring) return "offline";
     if (this.connectivity === "offline") return "offline";
     if (this.rollingLossPct > 5) return "unstable";
@@ -448,8 +448,8 @@ class AppStore {
   });
 
   #unitIndex = $derived.by(() => {
-    // Unit prefix follows the observed raw peak, not the rounded-up dial ceiling,
-    // so readings do not flip to "0.xx" just because scale headroom increased.
+    // The prefix follows the raw peak, not the rounded-up dial ceiling.
+    // Dial headroom alone must not flip readings to "0.xx".
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     const refBytesPerSec =
       typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
@@ -637,8 +637,8 @@ export const store = new AppStore();
 const SAVE_DEBOUNCE_MS = 250;
 
 if (typeof window !== "undefined") {
-  // The inline boot script sets data-theme before paint; this effect keeps it
-  // synced afterward, including live OS changes when theme is "auto".
+  // The inline boot script sets data-theme pre-paint.
+  // This effect tracks later changes, including live OS switches under "auto".
   let systemPrefersLight = $state(systemThemeDefault() === "light");
   if (window.matchMedia) {
     window

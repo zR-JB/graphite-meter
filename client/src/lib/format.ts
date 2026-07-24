@@ -67,8 +67,8 @@ export function rateScaleIndex(
   base: UnitBase,
   headroom = 1,
 ): number {
-  // `headroom` delays prefix promotion so values near 1000 do not flip between
-  // e.g. 999 Mbit/s and 1.00 Gbit/s as samples jitter around the boundary.
+  // `headroom` delays prefix promotion. Values near the boundary stop flipping
+  // between 999 Mbit/s and 1.00 Gbit/s as samples jitter.
   const k = base === "base10" ? 1000 : 1024;
   if (baseUnits < headroom) return 0;
   return Math.max(
@@ -98,8 +98,8 @@ export function rawRateFrom(
 }
 
 export function sharedThroughputScale(peakBytesPerSec: number): number {
-  // Throughput scale is always chosen in bit/s, then converted back to bytes/s,
-  // so bits and bytes displays share the same visual ceiling.
+  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and
+  // bytes displays share one visual ceiling.
   if (peakBytesPerSec <= 0) return 1.25e7;
   return ceil125(peakBytesPerSec * 8) / 8;
 }
@@ -122,7 +122,7 @@ export function quantile(sorted: number[], q: number): number | null {
 export function niceStep(span: number): number {
   if (span <= 0) return 1;
   const base = 10 ** Math.floor(Math.log10(span));
-  const mantissa = span / base; // 1 to 10
+  const mantissa = span / base; // [1, 10)
   return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
 }
 

@@ -36,8 +36,8 @@ export async function classifyAuthenticationFailure(
   localSignal?: AbortSignal,
 ): Promise<boolean> {
   if (!authEnabled || localSignal?.aborted) return false;
-  // Concurrent failures (parallel transfer workers) must share one probe, or a
-  // single expiry fans out into a burst of /auth/session requests.
+  // Parallel transfer workers share one probe: a single expiry must not fan
+  // out into a burst of /auth/session requests.
   const pending = (pendingClassification ??= sessionAuthenticationRequired(
     location.origin,
   ));

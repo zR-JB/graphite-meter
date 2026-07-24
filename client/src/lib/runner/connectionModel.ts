@@ -63,9 +63,9 @@ export function connectionSelection(
     : config.transports.latencyTarget;
 }
 
-/** Whether the run will open a latency path at all: the idle latency stage, or
- *  a transfer stage whose loaded pings are not suppressed. A latency selection
- *  that is never opened must not invalidate a cached preparation. */
+/** Whether the run opens a latency path at all: the idle latency stage, or a
+ *  transfer stage whose loaded pings are not suppressed. A latency selection
+ *  that never opens must not invalidate a cached preparation. */
 function latencyPathNeeded(config: RunnerConfig): boolean {
   return (
     config.stages.latency ||
@@ -162,7 +162,7 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-  // "current"/"auto" have no entry of their own — they resolve to whichever
+  // "current"/"auto" have no entry of their own: they resolve to whichever
   // advertised target the selector picks.
   if (selection !== "current" && selection !== "auto")
     return discovery[role][selection]?.state ?? "not-advertised";

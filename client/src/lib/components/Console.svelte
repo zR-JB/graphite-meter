@@ -114,6 +114,18 @@
     );
   }
 
+  // Space and Enter already activate these natively.
+  function selfActivating(el: EventTarget | null): boolean {
+    if (!(el instanceof HTMLElement)) return false;
+    const tag = el.tagName;
+    return (
+      tag === "BUTTON" ||
+      tag === "A" ||
+      tag === "SUMMARY" ||
+      el.getAttribute("role") === "button"
+    );
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
     if (isEditable(e.target)) return;
@@ -135,18 +147,7 @@
     }
 
     if (e.key === " " || e.key === "Enter") {
-      const t = e.target;
-      if (t instanceof HTMLElement) {
-        const tag = t.tagName;
-        // Let native button/link activation win so Enter does not double-toggle.
-        if (
-          tag === "BUTTON" ||
-          tag === "A" ||
-          tag === "SUMMARY" ||
-          t.getAttribute("role") === "button"
-        )
-          return;
-      }
+      if (selfActivating(e.target)) return;
       engage();
       e.preventDefault();
       return;
@@ -290,7 +291,7 @@
     onResetWidth={() => resetDockWidth("right")}
   />
 
-  <!-- Transient phase-change toast: fixed, bottom-right. -->
+  <!-- Transient phase-change toast, pinned bottom-right. -->
   <PhaseToast />
 
   {#if resetConfirmOpen}
@@ -336,10 +337,10 @@
 </main>
 
 <style>
-  /* Console grid: the stage owns the middle. The dock columns are 0-width until
-     a panel docks on a wide screen, where the panel (a <SidePanel> grid child
-     via display:contents) slots into leftdock/rightdock and pushes the stage.
-     Below the dock breakpoint the panels are flyout overlays. */
+  /* Console grid: the stage owns the middle, the dock columns are 0-width
+     until a panel docks on a wide screen. A docked <SidePanel> reaches
+     leftdock/rightdock through display:contents and pushes the stage. Below
+     the dock breakpoint the panels are flyout overlays. */
   #console {
     display: grid;
     /* Inline --dock-left/right drive these, 0 when not docked-open. The 46vw
@@ -370,16 +371,14 @@
     overscroll-behavior: contain;
   }
   /* Spare height splits gauge-first: 3 shares to the gauge, 1 to the chart.
-     Neither may shrink below its own content. Under min-height:0 the gauge
-     panel under-shrinks until its controls overlap the chart; with the content
-     floor the stage column overflows and the stage scrolls instead. */
+     The auto basis is a content floor: below it the gauge controls overlap the
+     chart, so the stage column overflows and scrolls instead. */
   .stage > :global(.gauge-panel) {
     flex: 3 1 auto;
   }
-  /* The chart grows into leftover height (its canvas re-rasterizes via its
-     ResizeObserver) but stays visibly secondary: capped so a very tall
-     viewport returns the excess to the gauge rather than growing a second
-     hero. Its content floor (140px plot) is the flex-basis. */
+  /* The chart takes leftover height, capped so a tall viewport returns the
+     excess to the gauge. Its ResizeObserver re-rasterizes the canvas, and its
+     flex-basis is the 140px plot floor. */
   .stage > :global(.chart) {
     flex: 1 0 auto;
     max-height: 340px;
@@ -387,8 +386,8 @@
   .status {
     grid-area: status;
     font-size: 11px;
-    /* Fixed-height chrome strip: clip anything that can't fit rather than let
-       text spill out or wrap past the 28px row at awkward widths. */
+    /* A 28px chrome strip. Clip whatever cannot fit: at awkward widths the
+       text spills out or wraps past the row. */
     min-width: 0;
     overflow: hidden;
   }
@@ -504,9 +503,8 @@
   }
 
   /* Under 760px the document scrolls, not the stage. An overscroll-containing
-     stage captures wheel and touch gestures over the middle, has nothing to
-     scroll internally, and refuses to chain them out, so the page cannot be
-     scrolled from its center. Overflowing visibly returns scroll to the page. */
+     stage swallows wheel and touch gestures over its middle. Visible overflow
+     returns them to the page. */
   @media (max-width: 759px) {
     /* bp: stacked */
     #console {

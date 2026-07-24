@@ -1,13 +1,10 @@
 /* ============================================================
- * The Graphite Meter — Evaluation core (RunAccumulator)
- * Engine-agnostic accumulation + reduction of raw samples.
- *
- * Owns everything that turns a stream of raw throughput/latency
- * samples into headline results: per-phase accumulation, the
- * adaptive confidence windows, the hysteretic stable-run tracker,
- * and the final result reducers. It contains NO simulation and NO
- * network I/O — both the dummy and a real runner push their raw
- * samples in here so identical samples yield identical results.
+ * The Graphite Meter: evaluation core (RunAccumulator)
+ * Engine-agnostic accumulation and reduction of raw samples:
+ * per-phase accumulation, the adaptive confidence windows, the
+ * hysteretic stable-run tracker, and the final result reducers.
+ * No simulation and no network I/O, so identical samples from the
+ * dummy or from a real runner yield identical results.
  * ============================================================ */
 
 import type {
@@ -43,8 +40,8 @@ export class RunAccumulator {
   // the same throughput reducer as a normal transfer phase.
   #biDown: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
   #biUp: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
-  // Latest per-lane rate, so each bidi push can record the COMBINED (down+up)
-  // rate into the confidence window — the single stability signal for the phase.
+  // Latest per-lane rate, so each bidi push records the COMBINED (down+up) rate
+  // into the confidence window: the single stability signal for the phase.
   #biLastDown = 0;
   #biLastUp = 0;
   #idleRtts: number[] = [];
@@ -61,13 +58,12 @@ export class RunAccumulator {
   #phaseLatency: (number | null)[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
-  // Each holds the index into its phase's sample array where the *current*
-  // stable run began (or -1 when not currently stable), plus the last stability
-  // score seen.
+  // Each holds the index into its phase's sample array where the current stable
+  // run starts, or -1 while it is not stable, plus the latest stability score.
   #dlStableStart = -1;
   #ulStableStart = -1;
   #latStableStart = -1;
-  // Bidi tracks ONE stable run, over the combined-rate confidence window — the
+  // Bidi tracks ONE stable run over the combined-rate confidence window: the
   // phase has a single early-stop signal even though it reports two lanes.
   #biStableStart = -1;
   #dlFinalScore = 0;
@@ -85,7 +81,7 @@ export class RunAccumulator {
   #biEarlyStopBroken = false;
   #latEarlyStopStart = -1;
 
-  /** Reset all run state — call at the start of each run. */
+  /** Reset all run state. Call at the start of each run. */
   reset(): void {
     this.#dl = { samples: [], bytes: 0, serverAuthoritative: false };
     this.#ul = { samples: [], bytes: 0, serverAuthoritative: false };
@@ -133,9 +129,8 @@ export class RunAccumulator {
   /* ================= SAMPLE INGEST ================= */
 
   /** Record a transfer sample: instantaneous bytes/sec plus exact bytes and
-   *  duration for time-weighted final reduction, tagged with direction.
-   *  In download/upload `dir` matches the phase; in bidirectional it routes the
-   *  sample to the down or up lane and feeds the COMBINED rate (this lane +
+   *  duration for time-weighted reduction, tagged with direction. Bidirectional
+   *  routes the sample to its lane and feeds the COMBINED rate (this lane plus
    *  the other lane's latest) into the single confidence window. */
   pushThroughput(
     phase: "download" | "upload" | "bidirectional",
@@ -188,7 +183,7 @@ export class RunAccumulator {
   /* ================= STABILITY ================= */
 
   /** Stability for the active measured phase over its current confidence
-   *  window — the single signal the pip, the early-finish decision, and the
+   *  window: the single signal the pip, the early-finish decision, and the
    *  result selection all read. */
   confidence(phase: StagePhase): ConfidenceScore | LatencyConfidenceScore {
     return phase === "latency"
@@ -196,12 +191,10 @@ export class RunAccumulator {
       : transferConfidence(this.#phaseBytesPerSec);
   }
 
-  /** Update the per-phase trailing-stable-run index from this tick's score,
-   *  with hysteresis: the run opens (records the latest sample index) once the
-   *  score crosses `stabilityThreshold` and closes (-1) only after it drops
-   *  below `stabilityThreshold − STABILITY_HYSTERESIS` — so a score hovering at
-   *  the boundary doesn't toggle the stable state. Returns the latched state;
-   *  at finish a ≥0 index means "still on a stable plateau". */
+  /** Update the per-phase trailing-stable-run index from this tick's score. The
+   *  run opens at the latest sample index and closes to -1; `isStillStable`
+   *  supplies the hysteresis. Returns the latched state, where at finish a ≥0
+   *  index means the phase is still on a stable plateau. */
   trackStableRun(
     phase: StagePhase,
     score: number,

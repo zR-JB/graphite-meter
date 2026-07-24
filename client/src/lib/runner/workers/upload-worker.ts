@@ -3,9 +3,8 @@
  * ============================================================
  * One worker per parallel upload stream. It builds one incompressible Blob pool
  * from CSPRNG bytes, which gzip and br cannot shrink, and POSTs zero-copy slices
- * of it in a loop over plain HTTP/1.1. The server drains and counts the bytes and
- * relays the authoritative total over /upload/progress (see
- * upload-progress-worker.ts); this worker keeps the lane saturated, nothing more.
+ * of it in a loop over plain HTTP/1.1. The server drains and counts the bytes;
+ * upload-progress-worker.ts relays the authoritative total. This lane saturates.
  * ============================================================ */
 
 import {
@@ -53,7 +52,7 @@ const UPLOAD_TOTAL_POOL_BYTES = 64 * 1024 * 1024;
 /** Pool floor keeps the autosizer useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
 
-/* ---- Closed-loop POST sizing (per-worker, no kills; see autosize.ts) ---- */
+/* ---- Closed-loop POST sizing, per worker (see autosize.ts) ---- */
 /** Wall-time each POST aims to span. The lower bound is about ACCURACY: the
  *  request/response turnaround stays inside the server's elapsed-time
  *  denominator, so a too-short POST lowers the measured rate. 500 ms keeps that
@@ -114,8 +113,8 @@ let stopped = false;
 let abort: AbortController | null = null;
 /** The reused incompressible pool Blob, built once on first start. Each POST is
  *  a zero-copy `pool.slice`, so fetch references the pool's backing store. An
- *  ArrayBuffer body is copied on every call instead, churning gigabytes/sec on a
- *  fast link, faster than GC reclaims it. Never rebuild a Blob per POST. */
+ *  ArrayBuffer body copies on every call instead, churning gigabytes/sec on a
+ *  fast link, faster than GC reclaims it. */
 let pool: Blob | null = null;
 /** The 4 MiB incompressible source block, filled once with CSPRNG bytes and
  *  repeated to build the pool (caps the construction-time heap peak). Typed over
@@ -132,7 +131,7 @@ let nextBytes = MIN_POST_BYTES;
 /** This lane's smoothed throughput (bytes/sec); 0 until the first POST completes. */
 let rateEwma = 0;
 
-/** Stream index, only used to tag debug lines (`ul-worker#<id>`). */
+/** Stream index, tagging debug lines only (`ul-worker#<id>`). */
 let streamId = 0;
 /** Completed-POST debug window: server-drained bytes since the last 1 Hz log,
  *  its start time, and the running per-stream total. One step per POST rather
@@ -197,6 +196,13 @@ function buildPool(): void {
   poolBytes = poolTargetBytes;
 }
 
+/** Drain the tiny JSON echo so the keep-alive connection serves the next POST:
+ *  an unread body pins it and stalls the lane. The POST is already complete, so
+ *  a failed drain costs at most one connection. */
+async function drainForKeepAlive(res: Response): Promise<void> {
+  await res.arrayBuffer().catch(() => {});
+}
+
 /** POST adaptively-sized slices of the pool in a loop to keep the lane saturated
  *  for the whole stage. Mirrors download-worker.ts's re-fetch loop: a fresh
  *  AbortController per POST, `stop` aborts it, a network error ends the lane
@@ -224,10 +230,7 @@ async function run(url: string): Promise<void> {
         post({ type: "auth-required" });
         return;
       }
-      // Drain the tiny JSON echo so this keep-alive connection is reusable for the
-      // next POST (an unread body can pin the connection and stall the lane). The
-      // POST is already complete, so a failure to drain costs at most a connection.
-      await res.arrayBuffer().catch(() => {});
+      await drainForKeepAlive(res);
       if (!res.ok) {
         post({
           type: "error",
@@ -236,8 +239,8 @@ async function run(url: string): Promise<void> {
         });
         return; // RealBackend decides whether to restart this lane
       }
-      // One full slice was drained by the server: the lane is alive. NO bytes — the
-      // /upload/progress count is authoritative; this only resets the restart counter.
+      // The server drained a full slice: the lane is alive. No bytes travel here,
+      // /upload/progress is authoritative; this only resets the restart counter.
       post({ type: "alive" });
       ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
         sentBytes,
@@ -263,7 +266,7 @@ async function run(url: string): Promise<void> {
         }
       }
     } catch (err) {
-      if (stopped) return; // aborted by stop() — a clean teardown, not an error
+      if (stopped) return; // stop() aborted it: a clean teardown
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(

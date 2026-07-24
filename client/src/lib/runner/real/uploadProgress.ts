@@ -99,8 +99,8 @@ export class UploadProgressChannel {
       this.#onMessage(e.data);
     };
     worker.onerror = (): void => {
-      /* the worker owns reconnect; a hard worker error just means no server bytes
-       * until it recovers, which the stall watchdog already covers. */
+      /* the worker owns reconnect. A hard worker error means no server bytes
+       * until it recovers, which the stall watchdog covers. */
     };
     worker.postMessage({
       type: "start",
@@ -160,7 +160,7 @@ export class UploadProgressChannel {
 
   /** A message from the /upload/progress worker. Server counts are the sole
    *  upload byte source, so a dropped socket is the only way the up stage ends
-   *  without samples: the worker brackets its reconnect with `stall`/`resume`.
+   *  without samples. The worker brackets its reconnect with `stall`/`resume`.
    *  POST lanes are separate connections and keep uploading across that gap. */
   #onMessage(msg: ProgressOutMsg | AuthRequiredMsg): void {
     const lane = this.#deps.lane();
