@@ -1,4 +1,8 @@
-import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
+import type {
+  FetchThroughputTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
+} from "../../api/endpoints";
 import type { ProtocolTarget, TransportDiscovery } from "../contract";
 import { httpProtocolLabel } from "../protocol";
 
@@ -16,12 +20,20 @@ export interface TargetPresentation {
  *  version the ping socket rides is unknown here. */
 export function describeTarget(
   discovery: TransportDiscovery,
-  target: FetchThroughputTarget | LatencyTarget,
+  target: FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
   observedProtocol?: ProtocolTarget,
 ): TargetPresentation {
   const security = target.tls ? "TLS" : "clear";
   if (target.transport === "webtransport") {
     const mechanism = `WebTransport · ${httpProtocolLabel("http3")}`;
+    // The throughput view rides QUIC streams; the latency view rides datagrams.
+    if ("wtDownload" in target.routes) {
+      return {
+        label: `${mechanism} · ${security}`,
+        summary: `WebTransport streams · ${httpProtocolLabel("http3")} · ${security}`,
+        advertisedDetail: `QUIC stream session over ${httpProtocolLabel("http3")} · ${target.origin}`,
+      };
+    }
     return {
       label: `${mechanism} · ${security}`,
       summary: `${mechanism} datagrams · ${security}`,

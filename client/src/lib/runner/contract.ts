@@ -371,6 +371,7 @@ export interface InfraInfo {
   protocolNegotiated: string;
   selectedThroughputTarget?: string;
   selectedThroughputProtocol?: ProtocolTarget;
+  selectedThroughputTransport?: TransportKind;
   selectedLatencyTarget?: string;
   selectedLatencyTransport?: TransportKind;
   latencyProtocolNegotiated?: string;

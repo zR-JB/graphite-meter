@@ -38,8 +38,9 @@ import {
   protocolFromNextHop,
   selectThroughputTarget,
   selectLatencyTarget,
-  webTransportThroughputTarget,
+  fetchViewOfWebTransport,
   browserProtocolMatchesTarget,
+  WT_SELECTION_SUFFIX,
   classifyTransportDiscovery,
   ROUTES,
 } from "./real/backendPure";
@@ -318,7 +319,25 @@ export class RealBackend implements RunnerBackend {
       throw new TransportUnavailableError(`${selection} target unavailable`, {
         role: "throughput",
       });
-    const selected = { ...advertisedTarget };
+    // A WebTransport resolution keeps a fetch view of the same origin: /probe
+    // evidence and the upload id are HTTP whichever mechanism moves the bytes.
+    if (advertisedTarget.transport === "webtransport") {
+      if (!RUNNABLE_TRANSPORT.webtransport)
+        throw new TransportUnavailableError(
+          "webtransport is not supported by this client",
+          { role: "throughput" },
+        );
+      this.#wtThroughputTarget = advertisedTarget;
+    } else {
+      this.#wtThroughputTarget = null;
+    }
+    const selected =
+      advertisedTarget.transport === "webtransport"
+        ? {
+            ...(discovery.throughput[advertisedTarget.origin]?.target ??
+              fetchViewOfWebTransport(advertisedTarget)),
+          }
+        : { ...advertisedTarget };
     if (
       role === "latency" &&
       selected.protocol === "negotiated" &&
@@ -329,9 +348,6 @@ export class RealBackend implements RunnerBackend {
     )
       selected.protocol = previous.selectedThroughputProtocol;
     this.#throughputTarget = selected;
-    this.#wtThroughputTarget = RUNNABLE_TRANSPORT.webtransport
-      ? webTransportThroughputTarget(discovery, selected.origin)
-      : null;
     this.#latencyTarget = selectLatencyTarget(
       discovery,
       config.transports.latencyTarget,
@@ -411,9 +427,12 @@ export class RealBackend implements RunnerBackend {
       } finally {
         if (probeDeadline !== undefined) clearTimeout(probeDeadline);
       }
+      // The fetch-protocol evidence does not govern a committed WebTransport
+      // session, which is HTTP/3 by construction and verified separately.
       if (
         !pathProbe ||
-        !browserProtocolMatchesTarget(selected, firstHopProtocol)
+        (!this.#wtThroughputTarget &&
+          !browserProtocolMatchesTarget(selected, firstHopProtocol))
       )
         throw new TransportUnavailableError(
           `${selected.protocol} transport unavailable`,
@@ -433,6 +452,11 @@ export class RealBackend implements RunnerBackend {
     // dropped here, before the run commits; mid-run errors retry WT only.
     if (this.#wtThroughputTarget && role !== "latency") {
       if (!(await this.#verifyWtThroughput(signal))) {
+        if (selection.endsWith(WT_SELECTION_SUFFIX))
+          throw new TransportUnavailableError(
+            "webtransport session did not establish",
+            { role: "throughput" },
+          );
         this.#wtThroughputTarget = null;
         this.#host?.reportTransport({
           kind: "webtransport",
@@ -499,8 +523,11 @@ export class RealBackend implements RunnerBackend {
       engineVersion: pf.engineVersion,
       discoveryGeneration: pf.generation,
       protocolNegotiated: pathProbe.protocolNegotiated,
-      selectedThroughputTarget: selected.id,
+      selectedThroughputTarget: this.#wtThroughputTarget?.id ?? selected.id,
       selectedThroughputProtocol: selected.protocol,
+      selectedThroughputTransport: this.#wtThroughputTarget
+        ? "webtransport"
+        : "fetch-stream",
       selectedLatencyTarget: this.#latencyTarget?.id,
       selectedLatencyTransport: this.#latencyTarget?.transport,
       latencyProtocolNegotiated: latencyPathProbe?.protocolNegotiated,
@@ -750,13 +777,12 @@ export class RealBackend implements RunnerBackend {
     return advertised ? null : "not advertised by server";
   }
 
-  /** WebTransport heads the preference order: its datagram bus measures real
-   *  packet loss. A role falls back to WebSocket pings or fetch-stream lanes
-   *  when the server does not advertise it or this client cannot drive it. */
+  /** The committed transports, resolved and verified at probe time. Latency
+   *  prefers WebTransport for real packet loss; throughput rides WebTransport
+   *  only when the picker selects it (or nothing else is advertised). */
   #transportOrder(role: TransportRole): TransportKind[] {
-    return role === "latency"
-      ? ["webtransport", "websocket"]
-      : ["webtransport", "fetch-stream"];
+    if (role === "latency") return ["webtransport", "websocket"];
+    return this.#wtThroughputTarget ? ["webtransport"] : ["fetch-stream"];
   }
 
   /* ================= PRIME (warmup window): open, don't measure ================= */
@@ -771,6 +797,7 @@ export class RealBackend implements RunnerBackend {
       transfer: activity.transfer,
       dir,
       needsPing: needsPings(activity),
+      webTransport: this.#wtThroughputTarget !== null,
     });
   }
 

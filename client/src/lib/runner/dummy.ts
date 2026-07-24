@@ -268,6 +268,7 @@ export class DummyBackend implements RunnerBackend {
       selectedThroughputTarget: throughputId,
       selectedThroughputProtocol: "http1",
       selectedLatencyTarget: latencyId,
+      selectedThroughputTransport: "fetch-stream",
       selectedLatencyTransport: "websocket",
       latencyProtocolNegotiated: "http/1.1",
       firstHopProtocol: "http/1.1",

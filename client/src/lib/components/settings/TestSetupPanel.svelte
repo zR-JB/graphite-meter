@@ -4,6 +4,7 @@
   import type {
     FetchThroughputTarget,
     LatencyTarget,
+    WebTransportThroughputTarget,
   } from "../../api/endpoints";
   import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
@@ -18,20 +19,23 @@
   let { running = false }: Props = $props();
 
   function targetOption(
-    target: FetchThroughputTarget | LatencyTarget,
+    target:
+      FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
     observedProtocol?: ProtocolTarget,
   ) {
     return {
-      value: target.origin,
+      value: target.id,
       label: describeTarget(store.transportDiscovery!, target, observedProtocol)
         .label,
     };
   }
+  // One card per mechanism: an origin advertising WebTransport as well gets a
+  // second card for it, selected by its ::wt id.
   const throughputTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
-      (entry) =>
-        entry.target
+      (entry) => [
+        ...(entry.target
           ? [
               // The observed protocol only describes the path actually in use.
               targetOption(
@@ -42,7 +46,9 @@
                   : undefined,
               ),
             ]
-          : [],
+          : []),
+        ...(entry.wt ? [targetOption(entry.wt)] : []),
+      ],
     ),
   ]);
   const latencyTargets = $derived([

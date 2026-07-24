@@ -13,6 +13,7 @@ import {
   isLoopbackHostname,
   throughputTargetKey,
   webTransportThroughputTarget,
+  fetchViewOfWebTransport,
   ROUTES,
 } from "./real/backendPure";
 import type { PhaseActivity, RunnerConfig } from "./contract";
@@ -66,7 +67,8 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
   const target = selectThroughputTarget(catalog, "auto");
   expect(target?.origin).toBe("https://meter.example");
   expect(target?.protocol).toBe("negotiated");
-  expect(browserProtocolMatchesTarget(target!, "h2")).toBe(true);
+  if (target?.transport !== "fetch-stream") throw new Error("not fetch");
+  expect(browserProtocolMatchesTarget(target, "h2")).toBe(true);
   expect(selectLatencyTarget(catalog, "auto")?.origin).toBe(
     "https://meter.example",
   );
@@ -116,12 +118,9 @@ test("native endpoints remain deterministic and mixed content stays blocked", ()
   expect(selectThroughputTarget(catalog, "https://meter:7248")?.protocol).toBe(
     "http2",
   );
-  expect(
-    browserProtocolMatchesTarget(
-      selectThroughputTarget(catalog, "https://meter:7248")!,
-      "http/1.1",
-    ),
-  ).toBe(false);
+  const h2Target = selectThroughputTarget(catalog, "https://meter:7248");
+  if (h2Target?.transport !== "fetch-stream") throw new Error("not fetch");
+  expect(browserProtocolMatchesTarget(h2Target, "http/1.1")).toBe(false);
 });
 
 test("WebTransport folds onto its origin and leads latency auto-selection", () => {
@@ -148,9 +147,21 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   );
   const entry = catalog.throughput["https://meter:7249"];
   expect(entry.target?.transport).toBe("fetch-stream");
+  expect(entry.wt?.id).toBe("https://meter:7249::wt");
   expect(entry.wt?.routes.wtDownload).toBe(ROUTES.wtDownload);
   expect(webTransportThroughputTarget(catalog, "https://meter:7249")).toBe(
     entry.wt!,
+  );
+
+  // Auto prefers fetch; the ::wt id names the WebTransport view explicitly.
+  expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
+    "fetch-stream",
+  );
+  expect(
+    selectThroughputTarget(catalog, "https://meter:7249::wt")?.transport,
+  ).toBe("webtransport");
+  expect(selectThroughputTarget(catalog, "https://meter:7249")?.transport).toBe(
+    "fetch-stream",
   );
 
   // A client that cannot drive WebTransport never selects it.
@@ -159,6 +170,29 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   const wt = selectLatencyTarget(catalog, "auto", true);
   expect(wt?.transport).toBe("webtransport");
   expect(wt?.origin).toBe("https://meter:7249");
+});
+
+test("a WebTransport-only origin is auto's last resort and keeps a fetch view", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport",
+        protocol: "http3",
+      },
+    ],
+    [],
+    "https://ui.example",
+    true,
+    "h3",
+  );
+  const target = selectThroughputTarget(catalog, "auto");
+  expect(target?.transport).toBe("webtransport");
+  if (target?.transport !== "webtransport") throw new Error("not wt");
+  const view = fetchViewOfWebTransport(target);
+  expect(view.transport).toBe("fetch-stream");
+  expect(view.origin).toBe("https://meter:7249");
+  expect(view.routes.uploadSession).toBe(ROUTES.uploadSession);
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {

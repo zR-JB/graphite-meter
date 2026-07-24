@@ -87,6 +87,7 @@
         streams: describeTransferStreams(
           store.runConfig.transferStreams,
           store.infra?.selectedThroughputProtocol,
+          store.infra?.selectedThroughputTransport === "webtransport",
         ),
         compensation: store.config.compensation,
       },
@@ -203,6 +204,13 @@
           <dd>{connections.throughput.target?.origin ?? "—"}</dd>
         </div>
         <div>
+          <dt>Transports</dt>
+          <dd>
+            {store.infra?.selectedThroughputTransport ?? "—"} · {store.infra
+              ?.selectedLatencyTransport ?? "—"}
+          </dd>
+        </div>
+        <div>
           <dt>Latency origin</dt>
           <dd>{connections.latency.target?.origin ?? "—"}</dd>
         </div>
@@ -212,6 +220,7 @@
             {describeTransferStreams(
               store.runConfig.transferStreams,
               store.infra?.selectedThroughputProtocol,
+              store.infra?.selectedThroughputTransport === "webtransport",
             )}
           </dd>
         </div>

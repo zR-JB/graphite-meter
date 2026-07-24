@@ -98,7 +98,7 @@ export function classifyTransportDiscovery(
     if (endpoint.transport === "webtransport") {
       entry.wt = {
         ...endpoint,
-        id: origin,
+        id: `${origin}${WT_SELECTION_SUFFIX}`,
         origin,
         transport: "webtransport",
         protocol: "http3",
@@ -179,12 +179,23 @@ export function classifyTransportDiscovery(
   };
 }
 
+/** Suffix marking the WebTransport view of an origin in selection ids and the
+ *  picker, since one origin advertises both mechanisms. */
+export const WT_SELECTION_SUFFIX = "::wt";
+
 /** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;
- *  protocol evidence disambiguates multiple targets sharing an origin. */
+ *  protocol evidence disambiguates multiple targets sharing an origin. An
+ *  `origin::wt` selection names that origin's WebTransport view; auto prefers
+ *  fetch and takes a lone WebTransport-only origin as the last resort. */
 export function selectThroughputTarget(
   discovery: TransportDiscovery,
   selection: ThroughputTargetSelection,
-): FetchThroughputTarget | null {
+): FetchThroughputTarget | WebTransportThroughputTarget | null {
+  if (selection.endsWith(WT_SELECTION_SUFFIX)) {
+    const entry =
+      discovery.throughput[selection.slice(0, -WT_SELECTION_SUFFIX.length)];
+    return entry?.state === "advertised" ? (entry.wt ?? null) : null;
+  }
   if (selection !== "current" && selection !== "auto") {
     const entry = discovery.throughput[selection];
     return entry?.state === "advertised" ? (entry.target ?? null) : null;
@@ -192,10 +203,35 @@ export function selectThroughputTarget(
   const advertised = Object.values(discovery.throughput)
     .filter((entry) => entry.state === "advertised" && entry.target)
     .map((entry) => entry.target!);
-  return (
+  const fetch =
     advertised.find((target) => target.origin === discovery.pageOrigin) ??
-    (advertised.length === 1 ? advertised[0] : null)
+    (advertised.length === 1 ? advertised[0] : null);
+  if (fetch) return fetch;
+  const wtOnly = Object.values(discovery.throughput).filter(
+    (entry) => entry.state === "advertised" && !entry.target && entry.wt,
   );
+  return wtOnly.length === 1 ? wtOnly[0].wt! : null;
+}
+
+/** The fetch-stream view of a WebTransport-only origin: its HTTP routes serve
+ *  probe, upload minting, and the fetch fallback lanes. */
+export function fetchViewOfWebTransport(
+  target: WebTransportThroughputTarget,
+): FetchThroughputTarget {
+  return {
+    id: target.origin,
+    origin: target.origin,
+    transport: "fetch-stream",
+    protocol: "http3",
+    tls: target.tls,
+    routes: {
+      probe: ROUTES.probe,
+      download: ROUTES.download,
+      upload: ROUTES.upload,
+      uploadSession: ROUTES.uploadSession,
+      uploadProgress: ROUTES.uploadProgress,
+    },
+  };
 }
 
 export function browserProtocolMatchesTarget(
@@ -210,7 +246,7 @@ export function browserProtocolMatchesTarget(
 }
 
 export function throughputTargetKey(
-  target: FetchThroughputTarget | null,
+  target: FetchThroughputTarget | WebTransportThroughputTarget | null,
 ): string {
   return target ? `${target.id}\n${target.origin}` : "";
 }

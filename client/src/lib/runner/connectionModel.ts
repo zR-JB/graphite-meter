@@ -5,7 +5,11 @@ import type {
   RunnerConfig,
   TransportDiscovery,
 } from "./contract";
-import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
+import type {
+  FetchThroughputTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
+} from "../api/endpoints";
 import {
   selectLatencyTarget,
   selectThroughputTarget,
@@ -32,7 +36,8 @@ export interface ConnectionValidation {
 export interface ConnectionPresentation {
   role: ConnectionRole;
   selection: string;
-  target: FetchThroughputTarget | LatencyTarget | null;
+  target:
+    FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null;
   availability: "advertised" | "browser-blocked" | "not-advertised";
   validation: ConnectionValidationState;
   label: string;
@@ -77,7 +82,7 @@ function selectTarget(
   discovery: TransportDiscovery,
   role: ConnectionRole,
   selection: string,
-): FetchThroughputTarget | LatencyTarget | null {
+): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
   return role === "throughput"
     ? selectThroughputTarget(discovery, selection)
     : selectLatencyTarget(discovery, selection);

@@ -1,9 +1,14 @@
 import type { DiscoveredTarget, TransportDiscovery } from "../contract";
-import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
+import type {
+  FetchThroughputTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
+} from "../../api/endpoints";
 import {
   isLoopbackHostname,
   selectLatencyTarget,
   selectThroughputTarget,
+  WT_SELECTION_SUFFIX,
 } from "./backendPure";
 import { describeTarget } from "./targetPresentation";
 
@@ -16,7 +21,7 @@ const NOT_ADVERTISED = "Not offered in /preflight.";
 const DISCOVERY_PENDING = "Checking server transports…";
 
 function automaticDetail(
-  target: FetchThroughputTarget | LatencyTarget,
+  target: FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
   discovery: TransportDiscovery,
   role: "throughput" | "latency",
 ): string {
@@ -63,6 +68,16 @@ export function throughputOptionView(
           detail: "No offered target matches this page origin and protocol.",
         };
   }
+  if (selection.endsWith(WT_SELECTION_SUFFIX)) {
+    const entry =
+      discovery.throughput[selection.slice(0, -WT_SELECTION_SUFFIX.length)];
+    return {
+      disabled: entry?.state !== "advertised" || !entry.wt,
+      detail: entry?.wt
+        ? describeTarget(discovery, entry.wt).advertisedDetail
+        : NOT_ADVERTISED,
+    };
+  }
   const entry = discovery.throughput[selection];
   return {
     disabled: entry?.state !== "advertised",
@@ -76,7 +91,11 @@ export function latencyOptionView(
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
   if (selection === "auto") {
-    const target = selectLatencyTarget(discovery, selection);
+    const target = selectLatencyTarget(
+      discovery,
+      selection,
+      typeof WebTransport !== "undefined",
+    );
     return target
       ? {
           disabled: false,

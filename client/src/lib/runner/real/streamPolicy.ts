@@ -19,6 +19,9 @@ export interface TransferStreamOptions {
   transfer: readonly FlowDirection[];
   dir: FlowDirection;
   needsPing: boolean;
+  /** WebTransport lanes are continuous streams with no request turnaround, so
+   *  automatic mode runs one per direction. */
+  webTransport?: boolean;
   totalBudget?: number;
 }
 
@@ -33,6 +36,7 @@ export function transferStreamCount(opts: TransferStreamOptions): number {
   // control sockets already exist when these lanes start.
   if (opts.policy.mode === "forced")
     return normalizeStreamCount(opts.policy.count);
+  if (opts.webTransport) return 1;
   if (opts.protocol === "http2" || opts.protocol === "http3") {
     if (opts.dir === "up") return MULTIPLEXED_UPLOAD_STREAMS;
     return opts.protocol === "http3" ? HTTP3_DOWNLOAD_STREAMS : 1;
@@ -56,9 +60,11 @@ export function transferStreamCount(opts: TransferStreamOptions): number {
 export function describeTransferStreams(
   policy: TransferStreamPolicy,
   protocol?: ProtocolTarget,
+  webTransport = false,
 ): string {
   if (policy.mode === "forced")
     return `Forced · ${normalizeStreamCount(policy.count)} per direction`;
+  if (webTransport) return "Automatic · 1 continuous stream per direction";
   if (protocol === "http3")
     return `Automatic · ${HTTP3_DOWNLOAD_STREAMS} download / ${MULTIPLEXED_UPLOAD_STREAMS} upload`;
   if (protocol === "http2")
