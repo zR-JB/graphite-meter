@@ -768,6 +768,24 @@ func TestVerificationCodeIsAlwaysEightCharacters(t *testing.T) {
 	}
 }
 
+// The login page carries a CLI challenge into its forms only when it is
+// well-formed.
+func TestLoginPageOnlyCarriesValidChallenge(t *testing.T) {
+	s := testService(t)
+	sum := sha256.Sum256([]byte("terminal-verifier"))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	rr := httptest.NewRecorder()
+	s.loginPage(rr, secureRequest(http.MethodGet, "/login?challenge="+challenge, nil))
+	if !strings.Contains(rr.Body.String(), challenge) {
+		t.Fatalf("valid challenge was dropped: %s", rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	s.loginPage(rr, secureRequest(http.MethodGet, "/login?challenge=bogus-challenge", nil))
+	if strings.Contains(rr.Body.String(), "bogus-challenge") {
+		t.Fatal("invalid challenge was reflected")
+	}
+}
+
 func TestLoginFailurePreservesValidCLIChallenge(t *testing.T) {
 	s := testService(t)
 	verifier := "terminal-verifier"

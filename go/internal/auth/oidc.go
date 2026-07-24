@@ -264,7 +264,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := budgetKey(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: r.FormValue("challenge")}
+	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge"))}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
@@ -317,10 +317,11 @@ func exactlyOne(q url.Values, key string) (string, bool) {
 
 // validAuthCode holds an incoming authorization code to RFC 6749's grammar,
 // code = 1*VSCHAR (printable ASCII 0x20-0x7E). A compliant provider never issues
-// a code outside this range, so the check cannot reject a real one; it stops a
-// forged callback from relaying control bytes or binary to the provider's token
-// endpoint on an anonymous request. Length is left unbounded: the spec leaves
-// code size undefined and the client must not assume a bound.
+// a code outside this range, so the check cannot reject a real one. It keeps
+// out-of-grammar bytes from reaching the provider's token endpoint even
+// percent-encoded, and fails a malformed callback before the one-time
+// transaction is consumed. Length is left unbounded: the spec leaves code size
+// undefined and the client must not assume a bound.
 func validAuthCode(v string) bool {
 	if v == "" {
 		return false
