@@ -11,43 +11,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-const (
-	// shellMargin is shellStyle's horizontal margin. Mouse coordinates are
-	// absolute, so hit-testing adds it back.
-	shellMargin = 2
-	// panelContentTop is the distance from a panel's first line to its first
-	// content line: the rounded border plus panelStyle's padding line.
-	panelContentTop = 2
-)
-
-// layout records where View draws the clickable parts of the configure screen.
-// View takes the model by value, so the record lives behind a pointer every
-// copy shares. Positions are absolute terminal cells.
-type layout struct {
-	tabY     int
-	tabs     []span // one per section, in tab order
-	rowTop   int    // absolute y of the first line of the menu panel's body
-	rowRight int    // first column past the menu panel
-	rows     []int  // absolute y of each menu row, in row order
-}
-
-type span struct{ from, to int }
-
-func (l *layout) reset() {
-	l.tabs = l.tabs[:0]
-	l.rows = l.rows[:0]
-}
-
-// markRow records the position of the menu row about to be appended to lines.
-// fitBlock truncates every body line to the panel width, so a line occupies
-// exactly one row and the position is the line count.
-func (l *layout) markRow(lines []string) {
-	l.rows = append(l.rows, l.rowTop+len(lines))
-}
+// shellMargin is shellStyle's horizontal margin.
+const shellMargin = 2
 
 func (m model) View() string {
 	w := m.innerWidth()
-	m.lay.reset()
 
 	var b strings.Builder
 	b.WriteString(m.header(w))
@@ -55,8 +23,7 @@ func (m model) View() string {
 	if m.mode == modeRun {
 		b.WriteString(m.runView(w))
 	} else {
-		// shellStyle's top margin pushes every drawn line down by one.
-		b.WriteString(m.configView(w, 1+strings.Count(b.String(), "\n")))
+		b.WriteString(m.configView(w))
 	}
 	b.WriteString("\n")
 	b.WriteString(m.helpView())
@@ -151,16 +118,12 @@ func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 	return leftW, inner - leftW, true
 }
 
-func (m model) configView(w, top int) string {
+func (m model) configView(w int) string {
 	var b strings.Builder
-	b.WriteString(m.tabBar(w, top))
+	b.WriteString(m.tabBar(w))
 	b.WriteString("\n\n")
 
 	leftW, rightW, twoCol := splitColumns(w)
-	// The menu panel opens two lines under the tab bar, whatever the terminal
-	// width: the summary panel is beside it or below it, never above.
-	m.lay.rowTop = top + 2 + panelContentTop
-	m.lay.rowRight = shellMargin + leftW + panelBorderWidth
 	menu := panelStyle.Width(leftW).Render(fitBlock(m.sectionView(leftW-4), leftW-4))
 	summary := panelStyle.Width(rightW).Render(fitBlock(m.planView(rightW-4), rightW-4))
 	if twoCol {
@@ -177,19 +140,14 @@ func (m model) configView(w, top int) string {
 	return b.String()
 }
 
-func (m model) tabBar(w, y int) string {
-	m.lay.tabY = y
-	x := shellMargin
+func (m model) tabBar(w int) string {
 	parts := make([]string, 0, len(sectionLabels))
 	for i, label := range sectionLabels {
 		style := tabStyle
 		if section(i) == m.section {
 			style = activeTabStyle
 		}
-		tab := style.Render(label)
-		m.lay.tabs = append(m.lay.tabs, span{from: x, to: x + lipgloss.Width(tab)})
-		x += lipgloss.Width(tab)
-		parts = append(parts, tab)
+		parts = append(parts, style.Render(label))
 	}
 	line := lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 	if lipgloss.Width(line) < w {
@@ -226,7 +184,6 @@ func (m model) serversView(w int) string {
 			mark = "●"
 		}
 		line := fmt.Sprintf("%s %-12s %s", mark, preset.name, mutedStyle.Render(preset.url))
-		m.lay.markRow(lines)
 		lines = append(lines, m.menuLine(i, line, w))
 		lines = append(lines, mutedStyle.Render("  "+preset.note))
 	}
@@ -237,7 +194,6 @@ func (m model) serversView(w int) string {
 	if m.edit.kind == editURL {
 		custom = "● Custom URL  " + m.edit.input.View() + m.editError()
 	}
-	m.lay.markRow(lines)
 	lines = append(lines, m.menuLine(len(serverPresets), custom, w))
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -320,7 +276,6 @@ func (m model) editError() string {
 func (m model) listWithTitle(title string, rows []string, w int) string {
 	lines := []string{accentStyle.Render(title)}
 	for i, row := range rows {
-		m.lay.markRow(lines)
 		lines = append(lines, m.menuLine(i, row, w))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

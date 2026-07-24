@@ -185,7 +185,6 @@ type model struct {
 	row     int
 	edit    editState
 	notice  string
-	lay     *layout
 	spin    spinner.Model
 	help    help.Model
 	// cancelPrompt is the run screen waiting for the second esc that stops the
@@ -249,7 +248,6 @@ func newModel(cfg goclient.Config) model {
 		notice:        "Choose a server while the selected paths are checked.",
 		prepareSeq:    1,
 		prepareStatus: "checking",
-		lay:           &layout{},
 		spin:          spin,
 		help:          newHelp(),
 		now:           time.Now(),
@@ -281,8 +279,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	case tea.MouseMsg:
-		return m.handleMouse(msg)
 	case spinner.TickMsg:
 		return m.handleTick(msg)
 	case preparationMsg:
@@ -393,42 +389,6 @@ func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "canceling"
 	}
 	m.notice = "Canceling the run."
-	return m, nil
-}
-
-// handleMouse resolves a click against the positions View records. A click on
-// an unselected row selects it. A click on the selected row activates it, as
-// enter does.
-func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
-		return m, nil
-	}
-	if m.mode != modeConfigure || m.edit.kind != editNone {
-		return m, nil
-	}
-	if msg.Y == m.lay.tabY {
-		for i, tab := range m.lay.tabs {
-			if msg.X >= tab.from && msg.X < tab.to {
-				m.section = section(i)
-				m.row = clamp(m.row, 0, m.rowCount()-1)
-				break
-			}
-		}
-		return m, nil
-	}
-	if msg.X >= m.lay.rowRight {
-		return m, nil
-	}
-	for i, y := range m.lay.rows {
-		if y != msg.Y {
-			continue
-		}
-		if i == m.row {
-			return m.confirm()
-		}
-		m.row = i
-		return m, nil
-	}
 	return m, nil
 }
 

@@ -1785,17 +1785,17 @@ func TestCurrentAuthMessagesStillPublishFailure(t *testing.T) {
 	}
 }
 
-// --- mouse and layout ---
+// --- layout ---
 
-func mouseClick(x, y int) tea.MouseMsg {
-	return tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
-}
+var (
+	ansiPattern     = regexp.MustCompile("\x1b\\[[0-9;]*m")
+	selectionMarker = regexp.MustCompile(`│ +› `)
+)
 
-var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
-
-// TestView_RecordsWhatItDrew is the contract mouse hit-testing rests on: the
-// positions View records must be where the tabs and menu rows actually landed.
-func TestView_RecordsWhatItDrew(t *testing.T) {
+// TestView_DrawsOneSelectionPerScreen holds the configure screen's one piece of
+// positional state: whatever row the keyboard selects is the row the marker
+// lands on, at every width and in every section.
+func TestView_DrawsOneSelectionPerScreen(t *testing.T) {
 	for _, width := range []int{80, 120, 200} {
 		m := newModel(goclient.DefaultConfig())
 		m.width = width
@@ -1803,65 +1803,18 @@ func TestView_RecordsWhatItDrew(t *testing.T) {
 			m.section = sec
 			for row := 0; row < m.rowCount(); row++ {
 				m.row = row
-				lines := strings.Split(ansiPattern.ReplaceAllString(m.View(), ""), "\n")
-
-				y := m.lay.rows[row]
-				if y >= len(lines) || !strings.Contains(lines[y], "›") {
-					t.Errorf("width %d section %d row %d: recorded y=%d does not hold the selected row", width, sec, row, y)
+				view := ansiPattern.ReplaceAllString(m.View(), "")
+				// The marker opens a panel body line; "‹1/2›" cycle positions sit
+				// further along the line.
+				if got := len(selectionMarker.FindAllString(view, -1)); got != 1 {
+					t.Errorf("width %d section %d row %d: %d selection markers, want 1", width, sec, row, got)
 				}
-				for i, label := range sectionLabels {
-					tab := m.lay.tabs[i]
-					if line := lines[m.lay.tabY]; !strings.HasPrefix(line[tab.from+1:], label) {
-						t.Errorf("width %d: tab %q recorded at x=%d, line is %q", width, label, tab.from, line)
+				for _, label := range sectionLabels {
+					if !strings.Contains(view, label) {
+						t.Errorf("width %d: tab bar is missing %q", width, label)
 					}
 				}
 			}
-		}
-	}
-}
-
-func TestUpdate_MouseSelectsTabsAndRows(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.width = 120
-	_ = m.View()
-
-	timing := m.lay.tabs[sectionTiming]
-	next, _ := m.Update(mouseClick(timing.to-1, m.lay.tabY))
-	m = next.(model)
-	if m.section != sectionTiming {
-		t.Fatalf("section after clicking the Timing tab = %v, want sectionTiming", m.section)
-	}
-
-	_ = m.View()
-	next, _ = m.Update(mouseClick(shellMargin, m.lay.rows[2]))
-	m = next.(model)
-	if m.row != 2 {
-		t.Fatalf("row after clicking the third row = %d, want 2", m.row)
-	}
-
-	_ = m.View()
-	next, _ = m.Update(mouseClick(shellMargin, m.lay.rows[2]))
-	m = next.(model)
-	if m.edit.kind != editDuration || m.edit.field != "download" {
-		t.Errorf("clicking the selected row opened %v/%q, want the download duration editor", m.edit.kind, m.edit.field)
-	}
-}
-
-func TestUpdate_MouseIgnoresNonClicks(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.width = 120
-	m.row = 1
-	_ = m.View()
-
-	cases := map[string]tea.MouseMsg{
-		"beside the menu panel": mouseClick(m.lay.rowRight, m.lay.rows[0]),
-		"motion, not a press":   {X: shellMargin, Y: m.lay.rows[0], Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft},
-		"release, not a press":  {X: shellMargin, Y: m.lay.rows[0], Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft},
-	}
-	for name, msg := range cases {
-		next, _ := m.Update(msg)
-		if got := next.(model); got.row != 1 {
-			t.Errorf("%s moved the selection to row %d, want 1", name, got.row)
 		}
 	}
 }

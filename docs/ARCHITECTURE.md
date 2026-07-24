@@ -214,8 +214,9 @@ setup; Timing; Connections — stream count and TLS verification; Start) and a l
 to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run or run again, `v`
 to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
 finished one, `?` to expand the key list, `q` to quit; the footer lists every binding the screen on
-show accepts. CLI flags (all editable again inside the TUI before a run starts) are listed in
-[CONFIGURATION.md](CONFIGURATION.md#native-tui-client-flags).
+show accepts. Navigation is keyboard-only by design: the client never turns on mouse reporting, so
+the terminal keeps its own text selection and copy. CLI flags (all editable again inside the TUI
+before a run starts) are listed in [CONFIGURATION.md](CONFIGURATION.md#native-tui-client-flags).
 
 `internal/goclient` (stats, config normalization, preflight, the adaptive-warmup/lane-stagger
 runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model` state machine in
