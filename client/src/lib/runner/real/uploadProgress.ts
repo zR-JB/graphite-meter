@@ -113,6 +113,34 @@ export class UploadProgressChannel {
     return ready;
   }
 
+  /** Take over a feed another worker already carries: the WebTransport upload
+   *  session runs it on the same connection as its lanes. That worker also owns
+   *  the finalizing DELETE, so teardown only waits for the terminal record. */
+  attach(worker: Worker): Promise<boolean> {
+    this.#resetCounters();
+    this.#worker = worker;
+    return new Promise<boolean>((resolve) => {
+      const finish = (established: boolean): void => {
+        if (this.#ready?.finish !== finish) return;
+        clearTimeout(timer);
+        this.#ready = null;
+        resolve(established);
+      };
+      const timer = setTimeout(
+        () => finish(false),
+        PROGRESS_ESTABLISH_TIMEOUT_MS,
+      );
+      this.#ready = { finish };
+    });
+  }
+
+  /** Feed one relayed record in. Used by the WebTransport upload worker, whose
+   *  messages reach the main thread through the lane channel. */
+  accept(msg: ProgressOutMsg | AuthRequiredMsg): void {
+    if (msg.type === "open") this.#ready?.finish(true);
+    this.#onMessage(msg);
+  }
+
   /** Open the measured window: the first progress frame after this boundary
    *  becomes the upload baseline, excluding warmup bytes and time together. */
   beginMeasure(): void {

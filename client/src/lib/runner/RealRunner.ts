@@ -14,7 +14,11 @@ import type {
   ConnectionRole,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
+import type {
+  FetchThroughputTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
+} from "../api/endpoints";
 import type { Preflight } from "../api/preflight";
 import type { Probe } from "../api/probe";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
@@ -34,6 +38,7 @@ import {
   protocolFromNextHop,
   selectThroughputTarget,
   selectLatencyTarget,
+  webTransportThroughputTarget,
   browserProtocolMatchesTarget,
   classifyTransportDiscovery,
   ROUTES,
@@ -43,6 +48,7 @@ import {
   downloadWorker,
   stopWorker,
   uploadWorker,
+  wtTransferWorker,
   type AuthRequiredMsg,
 } from "./real/workerPool";
 import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
@@ -100,6 +106,9 @@ interface ClientByteAggregation {
 
 interface LaneStreamState {
   dir: FlowDirection;
+  /** The stage activity this lane was primed for, so a transport that fails to
+   *  establish can be re-primed over the fallback. */
+  activity: PhaseActivity;
   /** The PhaseActivity.stage that owns this lane, and the target for failStage:
    *  a bidirectional lane failure reports against "bidirectional", never the
    *  direction-derived "download"/"upload" name. */
@@ -119,6 +128,8 @@ interface LaneStreamState {
   workers: (Worker | null)[];
   /** The fetch URL each stream worker (re)starts against, by index. */
   streamUrls: string[];
+  /** Where the WebTransport upload worker sends its finalizing DELETE. */
+  wtProgressUrl?: string;
   /** Per-lane byte windows awaiting the next aggregate sample. Each lane reports
    *  its own receive elapsed time, so the pool rate sums matching per-lane
    *  numerators and denominators. Client-counted download only: the
@@ -137,6 +148,9 @@ interface LaneStreamState {
   /** True once this direction has carried at least one byte. Gates the
    *  never-established early fail (see EARLY_FAIL_RESTARTS). */
   stageSawBytes: boolean;
+  /** Streams the WebTransport worker opens inside its one session; 0 for fetch
+   *  lanes, where each stream is its own worker. */
+  wtStreams: number;
   /** Per-lane consecutive restart counter (reset on recovery) + backoff timers. */
   laneRetry: number[];
   laneTimers: (ReturnType<typeof setTimeout> | null)[];
@@ -152,6 +166,8 @@ export class RealBackend implements RunnerBackend {
   #activeTransport: TransportKind | null = null;
   /** Independent role bindings are frozen from probe until the next run. */
   #throughputTarget: FetchThroughputTarget | null = null;
+  /** The same origin over WebTransport, when the server advertises it. */
+  #wtThroughputTarget: WebTransportThroughputTarget | null = null;
   #latencyTarget: LatencyTarget | null = null;
   #streamPolicy: TransferStreamPolicy = { mode: "auto", count: 1 };
   #discoveryOrigin = "";
@@ -255,6 +271,7 @@ export class RealBackend implements RunnerBackend {
     const previous = this.#probeInfo;
     if (role !== "throughput") this.#idle.stop();
     this.#throughputTarget = null;
+    this.#wtThroughputTarget = null;
     this.#latencyTarget = null;
     this.#discoveryProtocol = undefined;
     let pf: Preflight;
@@ -313,6 +330,9 @@ export class RealBackend implements RunnerBackend {
     )
       selected.protocol = previous.selectedThroughputProtocol;
     this.#throughputTarget = selected;
+    this.#wtThroughputTarget = RUNNABLE_TRANSPORT.webtransport
+      ? webTransportThroughputTarget(discovery, selected.origin)
+      : null;
     this.#latencyTarget = selectLatencyTarget(
       discovery,
       config.transports.latencyTarget,
@@ -487,7 +507,9 @@ export class RealBackend implements RunnerBackend {
       latencyTransports: RUNNABLE_TRANSPORT.webtransport
         ? ["webtransport-datagrams", "websocket"]
         : ["websocket"],
-      throughputTransports: ["fetch-streams"],
+      throughputTransports: RUNNABLE_TRANSPORT.webtransport
+        ? ["webtransport-streams", "fetch-streams"]
+        : ["fetch-streams"],
     };
   }
 
@@ -655,7 +677,7 @@ export class RealBackend implements RunnerBackend {
         advertised =
           role === "latency"
             ? this.#latencyTarget?.transport === "webtransport"
-            : false;
+            : this.#wtThroughputTarget !== null;
         break;
     }
     return advertised ? null : "not advertised by server";
@@ -694,7 +716,8 @@ export class RealBackend implements RunnerBackend {
     dir: FlowDirection,
     activity: PhaseActivity,
   ): void | Promise<void> {
-    if (kind !== "fetch-stream") throw new Error(`unsupported ${kind}`);
+    const wt = kind === "webtransport" ? this.#wtThroughputTarget : null;
+    if (kind === "webtransport" && !wt) throw new Error(`unsupported ${kind}`);
 
     // A stage names each direction once (bidirectional calls this twice, one per
     // direction): a duplicate call for the SAME direction is a real bug.
@@ -702,7 +725,10 @@ export class RealBackend implements RunnerBackend {
 
     const cfg = this.#host!.config!;
     const base = this.#throughputTarget!.origin;
-    const laneCount = this.#streamCount(activity, dir);
+    const streams = this.#streamCount(activity, dir);
+    // A WebTransport session is one worker whichever way it is measured: it
+    // opens `streams` lanes internally and reports them as one.
+    const laneCount = wt ? 1 : streams;
     // Bound the stagger so the last lane still spawns within half the warmup;
     // 0 with no warmup, so lanes spawn together, clear of the measured window.
     const staggerMs = laneStaggerMs(
@@ -716,6 +742,7 @@ export class RealBackend implements RunnerBackend {
 
     const state: LaneStreamState = {
       dir,
+      activity,
       stage: activity.stage,
       laneCount,
       chunkDownload,
@@ -737,6 +764,7 @@ export class RealBackend implements RunnerBackend {
       measuring: false,
       stalled: false,
       stageSawBytes: false,
+      wtStreams: 0,
       laneRetry: [],
       laneTimers: [],
     };
@@ -747,6 +775,11 @@ export class RealBackend implements RunnerBackend {
     // generated body up until the stage stops, keyed by a per-stage id.
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
+      if (wt) {
+        return dir === "down"
+          ? `${wt.origin}${wt.routes.wtDownload}`
+          : `${wt.origin}${wt.routes.wtUpload}?id=${encodeURIComponent(uploadId ?? "")}`;
+      }
       if (dir === "down") {
         const path = this.#throughputTarget?.routes.download ?? ROUTES.download;
         return chunkDownload
@@ -759,8 +792,9 @@ export class RealBackend implements RunnerBackend {
     };
 
     if (dir === "up")
-      return this.#primeUploadTransfer(dir, base, laneCount, url);
+      return this.#primeUploadTransfer(dir, base, laneCount, url, streams, wt);
 
+    state.wtStreams = wt ? streams : 0;
     for (let i = 0; i < laneCount; i++) {
       state.streamUrls[i] = url(i);
       this.#spawnLaneStaggered(dir, i);
@@ -776,6 +810,8 @@ export class RealBackend implements RunnerBackend {
     base: string,
     laneCount: number,
     url: (i: number, uploadId?: string) => string,
+    streams: number,
+    wt: WebTransportThroughputTarget | null,
   ): Promise<void> {
     const primedLane = this.#lanes[dir];
     let id: string;
@@ -792,6 +828,25 @@ export class RealBackend implements RunnerBackend {
     }
     const sessionLane = this.#lanes[dir];
     if (!this.#transferActive || !sessionLane) return;
+    sessionLane.wtStreams = wt ? streams : 0;
+    sessionLane.streamUrls[0] = url(0, id);
+    if (wt)
+      sessionLane.wtProgressUrl = `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`;
+    if (wt) {
+      // The session worker opens the feed before its lanes, so the counter is
+      // already running when bytes start. Spawning it is what establishes both.
+      this.#spawnWorker(dir, 0);
+      const attached = this.#lanes[dir]?.workers[0];
+      if (!attached) return;
+      if (!(await this.#uploadProgress.attach(attached))) {
+        this.#host!.failStage(
+          sessionLane.stage,
+          "connection-lost",
+          "upload progress channel could not be established",
+        );
+      }
+      return;
+    }
     // The progress stream is the authoritative upload meter. Establish it ahead
     // of the POST workers, so forced H1 lanes cannot take every connection slot.
     if (!(await this.#uploadProgress.prime(sessionLane.stage, id))) return;
@@ -858,7 +913,11 @@ export class RealBackend implements RunnerBackend {
   #spawnWorker(dir: FlowDirection, i: number): void {
     const state = this.#lanes[dir];
     if (!state) return; // torn down with a staggered/restart timer still pending
-    const w = dir === "down" ? downloadWorker() : uploadWorker();
+    const w = state.wtStreams
+      ? wtTransferWorker()
+      : dir === "down"
+        ? downloadWorker()
+        : uploadWorker();
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(dir, e.data, i);
     w.onerror = (e: ErrorEvent) =>
       this.#onWorkerError(dir, i, e.message || "worker error");
@@ -866,6 +925,10 @@ export class RealBackend implements RunnerBackend {
     w.postMessage({
       type: "start",
       url: state.streamUrls[i],
+      dir,
+      lanes: state.wtStreams,
+      bytesPerLane: PER_STREAM_BYTES,
+      progressUrl: state.wtProgressUrl,
       debug: debugEnabled(),
       id: i,
       streams: state.laneCount,
@@ -972,11 +1035,19 @@ export class RealBackend implements RunnerBackend {
       | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
       | { type: "alive" }
       | { type: "error"; recoverable: boolean; detail: string }
+      | {
+          type: "upload-progress";
+          msg: Parameters<UploadProgressChannel["accept"]>[0];
+        }
       | AuthRequiredMsg,
     i: number,
   ): void {
     const state = this.#lanes[dir];
     if (!state) return; // late message after teardown
+    if (msg.type === "upload-progress") {
+      this.#uploadProgress.accept(msg.msg);
+      return;
+    }
     if (msg.type === "auth-required") {
       this.#discardTransfer();
       redirectToLogin();
@@ -1020,6 +1091,21 @@ export class RealBackend implements RunnerBackend {
     if (!this.#transferActive) return;
     const state = this.#lanes[dir];
     if (!state) return;
+    // An advertised WebTransport session still needs UDP to reach the server.
+    // One that never carried a byte gives the direction back to fetch streams.
+    if (state.wtStreams && !state.stageSawBytes && !state.measuring) {
+      const activity = state.activity;
+      this.#releaseLane(dir);
+      this.#host!.reportTransport({
+        kind: "webtransport",
+        role: activity.stage,
+        status: "failed",
+        detail,
+      });
+      this.#activeTransport = "fetch-stream";
+      void this.#primeTransfer("fetch-stream", dir, activity);
+      return;
+    }
     if (!recoverable) {
       this.#host!.fail(
         "connection-lost",
@@ -1080,16 +1166,32 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
+  /** Drop one direction's lane state and its workers, leaving the stage active
+   *  so the direction can be primed again over another transport. */
+  #releaseLane(dir: FlowDirection): void {
+    const state = this.#lanes[dir];
+    if (!state) return;
+    delete this.#lanes[dir];
+    const timer = state.clientAggregation?.timer;
+    if (timer != null) clearInterval(timer);
+    for (const t of state.laneTimers) if (t) clearTimeout(t);
+    for (const w of state.workers) if (w) stopWorker(w);
+    if (dir === "up") void this.#uploadProgress.teardown(false);
+  }
+
   #stopTransferWorkers(): void {
     // Preserve the partial download cadence window at the stage boundary.
     const down = this.#lanes.down;
     if (down?.measuring && down.clientAggregation)
       this.#aggregateDownload(down, down.clientAggregation);
-    for (const state of Object.values(this.#lanes)) {
+    for (const [dir, state] of Object.entries(this.#lanes)) {
       if (!state) continue;
       const timer = state.clientAggregation?.timer;
       if (timer != null) clearInterval(timer);
       for (const t of state.laneTimers) if (t) clearTimeout(t);
+      // The WebTransport upload worker carries the progress feed too, so the
+      // progress channel finalizes and terminates it after the lanes stop.
+      if (dir === "up" && state.wtStreams) continue;
       for (const w of state.workers) if (w) stopWorker(w);
     }
   }
