@@ -19,7 +19,7 @@ func (m model) View() string {
 
 	var b strings.Builder
 	b.WriteString(m.header(w))
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 	if m.mode == modeRun {
 		b.WriteString(m.runView(w))
 	} else {
@@ -123,10 +123,16 @@ func (m model) configView(w int) string {
 	var b strings.Builder
 	b.WriteString(m.tabBar(w))
 	b.WriteString("\n\n")
+	// An outstanding approval is what the screen is waiting on, so it goes
+	// above the sections it is blocking.
+	if auth := m.authView(); auth != nil {
+		b.WriteString(panelStyle.Width(w - 2).Render(fitBlock(strings.Join(auth, "\n"), w-6)))
+		b.WriteString("\n\n")
+	}
 
 	leftW, rightW, twoCol := splitColumns(w)
 	menu := panelStyle.Width(leftW).Render(fitBlock(m.sectionView(leftW-4), leftW-4))
-	summary := panelStyle.Width(rightW).Render(fitBlock(m.planView(rightW-4), rightW-4))
+	summary := panelStyle.Width(rightW).Render(fitBlock(m.planView(), rightW-4))
 	if twoCol {
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, menu, "  ", summary))
 	} else {
@@ -295,7 +301,7 @@ func (m model) menuLine(i int, s string, w int) string {
 	return "› " + selectedStyle.Width(max(12, w-2)).Render(fitLine(s, w-2))
 }
 
-func (m model) planView(w int) string {
+func (m model) planView() string {
 	throughput, latency, observed := "Checking", "Checking", ""
 	// A pending check keeps the figures of the last verified one, dimmed:
 	// blanking them on every keypress made cycling an endpoint flicker.
@@ -311,12 +317,11 @@ func (m model) planView(w int) string {
 	if m.prepareError != "" {
 		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("Press v to retry."))
 	}
-	lines = append(lines, m.authView()...)
 	lines = append(lines,
 		"",
-		labelStyle.Render("Throughput ")+value.Render(throughput),
-		labelStyle.Render("Latency    ")+value.Render(latency),
-		labelStyle.Render("Observed   ")+value.Render(emptyDash(observed)),
+		field("Throughput", value.Render(throughput)),
+		field("Latency", value.Render(latency)),
+		field("Observed", value.Render(emptyDash(observed))),
 		"",
 		mutedStyle.Render("Run order"),
 	)
@@ -355,25 +360,29 @@ func (m model) checkGlyph(state checkState) string {
 
 // authView is the browser approval wait: the code the approval page asks the
 // operator to match, where that page lives, and how much of the polling window
-// is left. The browser opens on a keypress, so the code can be read first.
+// is left. The browser opens on a keypress, so the code can be read first, and
+// the panel is full width because the URL is long and worth copying by hand.
 func (m model) authView() []string {
 	if m.auth == nil {
 		return nil
 	}
 	waited := m.now.Sub(m.authSince)
-	prompt := accentStyle.Render("Press enter to open the approval page")
+	prompt := "Press enter to open the approval page in your browser"
 	if m.authOpened {
-		prompt = accentStyle.Render("Approve this client in the browser")
+		prompt = "Approve this client in the browser"
 	}
-	// The code sits in a bordered box, so its label is centered against the box
-	// rather than concatenated onto the box's top line.
-	code := lipgloss.JoinHorizontal(lipgloss.Center, labelStyle.Render("Match this code")+" ", codeStyle.Render(m.auth.Code))
+	// The code sits in a bordered box, so what stands beside it is centered
+	// against the box rather than concatenated onto the box's top line.
+	code := lipgloss.JoinHorizontal(lipgloss.Center,
+		labelStyle.Render("Match this code")+" ",
+		codeStyle.Render(m.auth.Code),
+		mutedStyle.Render("  waiting "+fmtClock(waited)+" · expires in "+fmtClock(authWait-waited)),
+	)
 	return []string{
+		m.spin.View() + " " + accentStyle.Render(prompt),
 		"",
-		m.spin.View() + " " + prompt,
 		code,
 		mutedStyle.Render(m.auth.BrowserURL),
-		mutedStyle.Render("waiting " + fmtClock(waited) + " · expires in " + fmtClock(authWait-waited)),
 	}
 }
 
@@ -414,12 +423,12 @@ func (m model) summaryView(w int) string {
 	}
 	lines := []string{
 		accentStyle.Render("Session"),
-		labelStyle.Render("Target  ") + valueStyle.Render(server),
-		labelStyle.Render("Stage   ") + mark + valueStyle.Render(emptyDash(m.stage)) + mutedStyle.Render(" / "+emptyDash(m.status)),
-		labelStyle.Render("Profile ") + valueStyle.Render(stageSummary(m.cfg.Stages)),
-		labelStyle.Render("Throughput") + valueStyle.Render(" "+emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol)),
-		labelStyle.Render("Latency   ") + valueStyle.Render(" "+emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol)),
-		labelStyle.Render("Streams ") + valueStyle.Render(m.cfg.TransferStreams.Label(m.target)) + mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String()),
+		field("Target", valueStyle.Render(server)),
+		field("Stage", mark+valueStyle.Render(emptyDash(m.stage))+mutedStyle.Render(" / "+emptyDash(m.status))),
+		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
+		field("Throughput", valueStyle.Render(emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol))),
+		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol))),
+		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.target))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
 		"",
 	}
 	lines = append(lines, m.timelineView(w)...)
@@ -484,21 +493,45 @@ func (m model) rateScale() float64 {
 	return s
 }
 
+// resultsView is the finished stages. Every throughput row is measured before
+// any is drawn, so one bar width serves them all and the figures beside them
+// are never cut by a row that happens to carry a longer note.
 func (m model) resultsView(w int) string {
 	lines := []string{accentStyle.Render("Results")}
 
+	type row struct{ head, tail string }
 	var scale float64
+	var bars []row
+	fixed := 0
 	for _, r := range m.results {
-		if !isLatencyResult(r) && r.PeakBps > scale {
+		if isLatencyResult(r) {
+			continue
+		}
+		if r.PeakBps > scale {
 			scale = r.PeakBps
 		}
+		dir := "down"
+		if r.Direction == goclient.Up {
+			dir = "up"
+		}
+		note := "peak " + fmtRate(r.PeakBps) + "  " + fmtBytes(r.TotalBytes)
+		if r.ServerAuth {
+			note += "  server-clock"
+		}
+		b := row{
+			head: mutedStyle.Render(pad(r.Stage, 13)) + " " + accentStyle.Render(pad(dir, 4)) + " ",
+			tail: "  " + valueStyle.Render(fmt.Sprintf("%13s", fmtRate(r.MeanBps))) + "  " + mutedStyle.Render(note),
+		}
+		bars = append(bars, b)
+		fixed = max(fixed, lipgloss.Width(b.head)+lipgloss.Width(b.tail))
 	}
-	barW := clamp(w-56, 10, 48)
+	barW := clamp(w-fixed, 8, 48)
 
+	next := 0
 	for _, r := range m.results {
 		if isLatencyResult(r) {
 			lines = append(lines, fmt.Sprintf("%s %s   p50 %s  p95 %s  %s",
-				mutedStyle.Render(fmt.Sprintf("%-13s", r.Stage)),
+				mutedStyle.Render(pad(r.Stage, 13)),
 				labelStyle.Render("latency"),
 				valueStyle.Render(fmtMs(r.Latency.P50)),
 				valueStyle.Render(fmtMs(r.Latency.P95)),
@@ -506,24 +539,9 @@ func (m model) resultsView(w int) string {
 			))
 			continue
 		}
-		bar := renderBar(r.MeanBps, scale, barW, false)
-		dir := "down"
-		if r.Direction == goclient.Up {
-			dir = "up"
-		}
-		auth := ""
-		if r.ServerAuth {
-			auth = mutedStyle.Render(" server-clock")
-		}
-		lines = append(lines, fmt.Sprintf("%s %s %s  %s  %s %s%s",
-			mutedStyle.Render(fmt.Sprintf("%-13s", r.Stage)),
-			accentStyle.Render(fmt.Sprintf("%-4s", dir)),
-			bar,
-			valueStyle.Render(fmt.Sprintf("%13s", fmtRate(r.MeanBps))),
-			mutedStyle.Render("peak "+fmtRate(r.PeakBps)),
-			mutedStyle.Render("total "+fmtBytes(r.TotalBytes)),
-			auth,
-		))
+		b := bars[next]
+		next++
+		lines = append(lines, b.head+renderBar(r.MeanBps, scale, barW, false)+b.tail)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

@@ -59,8 +59,18 @@ func runOrder(cfg goclient.Config) []string {
 }
 
 // labelColumn is the width every menu row's label holds, so the values beside
-// them line up down the panel.
-const labelColumn = 22
+// them line up down the panel. fieldColumn is the same idea for the readings
+// on the run screen, whose labels are single words.
+const (
+	labelColumn = 22
+	fieldColumn = 11
+)
+
+// field is one labelled reading. The value carries its own styling, so the
+// label is padded before it is rendered rather than after.
+func field(label, value string) string {
+	return labelStyle.Render(pad(label, fieldColumn)) + value
+}
 
 func toggleLine(label string, on bool, note string) string {
 	return fmt.Sprintf("%s %-*s %s", checkbox(on), labelColumn-2, label, mutedStyle.Render(note))
