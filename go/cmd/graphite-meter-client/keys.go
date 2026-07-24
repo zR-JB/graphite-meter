@@ -12,6 +12,7 @@ type keymap struct {
 	sections key.Binding
 	rows     key.Binding
 	activate key.Binding
+	approve  key.Binding
 	run      key.Binding
 	verify   key.Binding
 	cancel   key.Binding
@@ -30,6 +31,7 @@ var keys = keymap{
 	sections: key.NewBinding(key.WithKeys("tab", "shift+tab", "right", "left"), key.WithHelp("tab/⇧tab/←/→", "section")),
 	rows:     key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓/j/k", "row")),
 	activate: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter/space", "open")),
+	approve:  key.NewBinding(key.WithKeys("enter", " ", "o"), key.WithHelp("enter", "open the approval page")),
 	run:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "run")),
 	verify:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "recheck")),
 	cancel:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
@@ -64,6 +66,10 @@ func (m model) ShortHelp() []key.Binding {
 		return []key.Binding{keys.back, keys.rerun, keys.help, keys.quit}
 	case m.mode == modeRun:
 		return []key.Binding{keys.cancel, keys.help, keys.quit}
+	case m.auth != nil && !m.authOpened:
+		// enter belongs to the approval until the page is opened, so the row it
+		// would otherwise activate is not offered.
+		return []key.Binding{keys.approve, keys.sections, keys.rows, keys.run, keys.verify, keys.help, keys.quit}
 	default:
 		return []key.Binding{keys.sections, keys.rows, keys.activate, keys.run, keys.verify, keys.help, keys.quit}
 	}

@@ -44,7 +44,9 @@ func main() {
 	cfg.Stages = parseStages(stages)
 	cfg.PingInterval = parsePing(ping)
 
-	p := tea.NewProgram(newModel(cfg), tea.WithFPS(30), tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// No mouse reporting: the terminal keeps its own selection, so the screen
+	// stays copyable with the mouse or with a keyboard selection.
+	p := tea.NewProgram(newModel(cfg), tea.WithFPS(30), tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)

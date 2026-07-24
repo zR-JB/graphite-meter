@@ -81,14 +81,35 @@ func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
 	}
 }
 
+// prepareDebounce is the quiet period a configuration change waits out before
+// the connection is checked again. Cycling an endpoint row changes the
+// configuration on every press, and without the pause each press would tear
+// down the checklist and open a connection the next press invalidates.
+const prepareDebounce = 350 * time.Millisecond
+
+// reprepare puts the checklist back to the start and schedules a fresh check.
+// The last verified connection is kept for the readiness panel to show while
+// the new one is unproven, so a burst of keypresses moves the values it edits
+// and nothing else.
 func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	m.prepareSeq++
 	m.prepareStatus = "checking"
 	m.prepareStep = stepReach
 	m.prepareError = ""
-	m.prepared = nil
 	m.auth = nil
-	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
+	m.authOpened = false
+	tick := tea.Tick(prepareDebounce, func(time.Time) tea.Msg { return prepareDueMsg{seq: m.prepareSeq} })
+	return m, tea.Batch(cmd, tick, m.spin.Tick)
+}
+
+// handlePrepareDue opens the connection the last configuration change asked
+// for. A newer change has already bumped the sequence, so only the final change
+// of a burst reaches the network.
+func (m model) handlePrepareDue(msg prepareDueMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.prepareSeq {
+		return m, nil
+	}
+	return m, prepareConnection(m.prepareSeq, m.cfg)
 }
 
 func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
@@ -152,7 +173,8 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 				m.prepareStep = stepOrigins
 			}
 			m.prepareError = ""
-			m.notice = "Authentication is required. Preparing browser approval…"
+			m.focusServer()
+			m.notice = "This server requires authorization. Preparing the approval page…"
 			return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 		}
 		m.prepareStatus = "failed"
@@ -185,9 +207,11 @@ func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.auth = msg.pending
+	m.authOpened = false
 	m.authSince = time.Now()
 	m.now = m.authSince
-	m.notice = "Waiting for the browser approval."
+	m.focusServer()
+	m.notice = "Check the code below, then press enter to open the approval page."
 	return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
 }
 
@@ -242,7 +266,8 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		if m.prepareStep < stepPreflight {
 			m.prepareStep = stepPreflight
 		}
-		m.notice = "Authentication expired. Preparing browser approval…"
+		m.focusServer()
+		m.notice = "Authorization expired. Preparing the approval page…"
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 	}
 	if msg.err != nil {

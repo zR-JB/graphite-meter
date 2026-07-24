@@ -188,11 +188,10 @@ func TestRunOrder(t *testing.T) {
 }
 
 func TestActivePreset(t *testing.T) {
-	if got := activePreset(serverPresets[0].url); got != 0 {
-		t.Errorf("activePreset(preset0) = %d, want 0", got)
-	}
-	if got := activePreset(serverPresets[1].url); got != 1 {
-		t.Errorf("activePreset(preset1) = %d, want 1", got)
+	for i, preset := range serverPresets {
+		if got := activePreset(preset.url); got != i {
+			t.Errorf("activePreset(%q) = %d, want %d", preset.url, got, i)
+		}
 	}
 	if got := activePreset("http://example.invalid:9999"); got != -1 {
 		t.Errorf("activePreset(unknown) = %d, want -1", got)
@@ -220,9 +219,45 @@ func TestTargetChoiceLabelFallsBackToTheRawTarget(t *testing.T) {
 	}
 }
 
+// A launch reaches no server on its own. Picking one is what starts the check,
+// including re-picking the server the client already holds.
+func TestLaunchChecksNothingUntilAServerIsPicked(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("launch opened a connection on its own")
+	}
+	if m.prepareStatus != statusIdle {
+		t.Fatalf("launch status = %q, want %q", m.prepareStatus, statusIdle)
+	}
+	for _, c := range m.connectionChecks() {
+		if c.state != checkPending {
+			t.Errorf("check %q = %v at launch, want pending", c.label, c.state)
+		}
+	}
+
+	// The preset already holds the configured URL, so nothing changes but the
+	// check still runs.
+	m.section, m.row = sectionServers, 0
+	m.cfg.BaseURL = serverPresets[0].url
+	updated, cmd := m.confirm()
+	m = updated.(model)
+	if cmd == nil || m.prepareStatus != "checking" {
+		t.Fatalf("picking the current server left status %q with cmd %v", m.prepareStatus, cmd != nil)
+	}
+
+	// So does applying the URL editor over an unchanged URL.
+	m.prepareStatus = statusIdle
+	m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
+	updated, cmd = m.handleEditKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m = updated.(model); cmd == nil || m.prepareStatus != "checking" {
+		t.Fatalf("reapplying the same URL left status %q with cmd %v", m.prepareStatus, cmd != nil)
+	}
+}
+
 func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.prepareSeq = 2
+	m.prepareStatus = "checking"
 
 	updated, _ := m.Update(preparationMsg{seq: 1, err: errors.New("old")})
 	m = updated.(model)
@@ -259,6 +294,38 @@ func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 	m = updated.(model)
 	if m.prepareStatus != "ready" || m.prepared == nil {
 		t.Fatalf("current preparation was not adopted: status=%q prepared=%v", m.prepareStatus, m.prepared)
+	}
+}
+
+// Cycling an endpoint row edits the configuration on every press. Only the
+// last press of a burst may reach the network, and the readiness panel holds
+// the figures of the last verified connection until a new one lands.
+func TestEndpointCyclingChecksOnceAndHoldsTheLastFigures(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section, m.row = sectionConnections, 2
+	updated, _ := m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}})
+	m = updated.(model)
+
+	var due []prepareDueMsg
+	for range 3 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = next.(model)
+		due = append(due, prepareDueMsg{seq: m.prepareSeq})
+	}
+	if m.cfg.ThroughputProtocol != "http3" {
+		t.Fatalf("three presses left the protocol at %q, want the third choice", m.cfg.ThroughputProtocol)
+	}
+	if m.prepared == nil {
+		t.Error("the last verified connection was dropped, so the panel has nothing to show")
+	}
+
+	for _, msg := range due[:len(due)-1] {
+		if _, cmd := m.Update(msg); cmd != nil {
+			t.Errorf("superseded debounce %d opened a connection", msg.seq)
+		}
+	}
+	if _, cmd := m.Update(due[len(due)-1]); cmd == nil {
+		t.Error("the last change never reached the network")
 	}
 }
 
@@ -661,13 +728,14 @@ func TestHandleKey_RoutesByScreenState(t *testing.T) {
 		{
 			name: "space activates the selected row",
 			setup: func(m model) model {
-				m.section, m.row = sectionServers, 1
+				m.section, m.row = sectionServers, 0
+				m.cfg.BaseURL = "http://elsewhere.invalid:9999"
 				return m
 			},
 			key: keyRunes(" "),
 			check: func(t *testing.T, m model, _ tea.Cmd) {
-				if m.cfg.BaseURL != serverPresets[1].url {
-					t.Errorf("BaseURL = %q, want %q", m.cfg.BaseURL, serverPresets[1].url)
+				if m.cfg.BaseURL != serverPresets[0].url {
+					t.Errorf("BaseURL = %q, want %q", m.cfg.BaseURL, serverPresets[0].url)
 				}
 				if m.prepareSeq != 2 {
 					t.Errorf("seq = %d, want the new server checked", m.prepareSeq)
@@ -735,6 +803,10 @@ func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
 			m.mode, m.complete = modeRun, true
 			return m
 		}},
+		{"awaiting approval", func(m model) model {
+			m.auth = &goclient.PendingAuthorization{Code: "ABCDE"}
+			return m
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -753,15 +825,16 @@ func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
 func TestActivate_ServerPreset(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionServers
-	m.row = 1
+	m.row = 0
+	m.cfg.BaseURL = "http://elsewhere.invalid:9999"
 
 	next, _ := m.activate()
 	m = next.(model)
-	if m.cfg.BaseURL != serverPresets[1].url {
-		t.Errorf("BaseURL after activating preset 1 = %q, want %q", m.cfg.BaseURL, serverPresets[1].url)
+	if m.cfg.BaseURL != serverPresets[0].url {
+		t.Errorf("BaseURL after activating preset 0 = %q, want %q", m.cfg.BaseURL, serverPresets[0].url)
 	}
-	if !strings.Contains(m.notice, serverPresets[1].name) {
-		t.Errorf("notice = %q, want mention of %q", m.notice, serverPresets[1].name)
+	if !strings.Contains(m.notice, serverPresets[0].name) {
+		t.Errorf("notice = %q, want mention of %q", m.notice, serverPresets[0].name)
 	}
 }
 
@@ -1016,12 +1089,22 @@ func TestCommitEdit_RejectsANonURL(t *testing.T) {
 	}
 }
 
-func TestCommitEdit_BareHostBecomesHTTPS(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.edit = beginEdit(editURL, "url", "meter.example:7247")
-	m.commitEdit()
-	if m.edit.kind != editNone || m.cfg.BaseURL != "https://meter.example:7247" {
-		t.Errorf("kind=%v BaseURL=%q, want the committed host upgraded to https", m.edit.kind, m.cfg.BaseURL)
+// A typed URL is completed, never rewritten: a missing scheme is filled in and
+// a given one is left alone, ports included.
+func TestCommitEdit_URLIsTakenAsTyped(t *testing.T) {
+	cases := map[string]string{
+		"meter.example:7247":       "http://meter.example:7247",
+		"meter.example":            "http://meter.example",
+		"https://meter.example":    "https://meter.example",
+		"http://meter.example:900": "http://meter.example:900",
+	}
+	for typed, want := range cases {
+		m := newModel(goclient.DefaultConfig())
+		m.edit = beginEdit(editURL, "url", typed)
+		m.commitEdit()
+		if m.edit.kind != editNone || m.cfg.BaseURL != want {
+			t.Errorf("%q committed as %q (kind=%v), want %q", typed, m.cfg.BaseURL, m.edit.kind, want)
+		}
 	}
 }
 
@@ -1785,17 +1868,71 @@ func TestCurrentAuthMessagesStillPublishFailure(t *testing.T) {
 	}
 }
 
-// --- mouse and layout ---
+// TestAuthChallengeWaitsForTheOperator holds the two halves of the approval
+// prompt: the browser stays shut until a key asks for it, and the prompt lands
+// on the server selection, which is what asked the server for a grant.
+func TestAuthChallengeWaitsForTheOperator(t *testing.T) {
+	opened := 0
+	m := newModel(goclient.DefaultConfig())
+	m.openApproval = func(*goclient.PendingAuthorization) { opened++ }
+	m.section, m.row = sectionTiming, 3
 
-func mouseClick(x, y int) tea.MouseMsg {
-	return tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	pending := &goclient.PendingAuthorization{BrowserURL: "https://meter.example/auth/cli", Code: "ABCDE"}
+	updated, _ := m.Update(authChallengeMsg{seq: m.prepareSeq, pending: pending})
+	m = updated.(model)
+
+	if opened != 0 {
+		t.Fatalf("browser opened %d times before a keypress, want 0", opened)
+	}
+	if m.section != sectionServers || m.row != activePreset(m.cfg.BaseURL) {
+		t.Fatalf("approval landed on section %d row %d, want the server row", m.section, m.row)
+	}
+	if view := ansiPattern.ReplaceAllString(strings.Join(m.authView(), "\n"), ""); !strings.Contains(view, "ABCDE") {
+		t.Errorf("approval panel = %q, want the code on show", view)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if opened != 1 || !m.authOpened {
+		t.Fatalf("enter opened the browser %d times (authOpened=%v), want once", opened, m.authOpened)
+	}
+
+	// With the page open, enter belongs to the selected row again.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if opened != 1 {
+		t.Errorf("browser opened %d times, want no second launch", opened)
+	}
 }
 
-var ansiPattern = regexp.MustCompile("\x1b\\[[0-9;]*m")
+// A run that dies on a revoked grant restarts the approval, which belongs on
+// the server selection just as the first one did.
+func TestExpiredGrantReturnsToTheServerSelection(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.section, m.row = sectionConnections, 2
 
-// TestView_RecordsWhatItDrew is the contract mouse hit-testing rests on: the
-// positions View records must be where the tabs and menu rows actually landed.
-func TestView_RecordsWhatItDrew(t *testing.T) {
+	updated, _ := m.Update(doneMsg{seq: m.runSeq, err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}})
+	m = updated.(model)
+	if m.mode != modeConfigure || m.section != sectionServers {
+		t.Fatalf("expired grant left the screen at mode %d section %d", m.mode, m.section)
+	}
+	if m.prepareStatus != "authorizing" {
+		t.Errorf("prepareStatus = %q, want authorizing", m.prepareStatus)
+	}
+}
+
+// --- layout ---
+
+var (
+	ansiPattern     = regexp.MustCompile("\x1b\\[[0-9;]*m")
+	selectionMarker = regexp.MustCompile(`│ +› `)
+)
+
+// TestView_DrawsOneSelectionPerScreen holds the configure screen's one piece of
+// positional state: whatever row the keyboard selects is the row the marker
+// lands on, at every width and in every section.
+func TestView_DrawsOneSelectionPerScreen(t *testing.T) {
 	for _, width := range []int{80, 120, 200} {
 		m := newModel(goclient.DefaultConfig())
 		m.width = width
@@ -1803,65 +1940,18 @@ func TestView_RecordsWhatItDrew(t *testing.T) {
 			m.section = sec
 			for row := 0; row < m.rowCount(); row++ {
 				m.row = row
-				lines := strings.Split(ansiPattern.ReplaceAllString(m.View(), ""), "\n")
-
-				y := m.lay.rows[row]
-				if y >= len(lines) || !strings.Contains(lines[y], "›") {
-					t.Errorf("width %d section %d row %d: recorded y=%d does not hold the selected row", width, sec, row, y)
+				view := ansiPattern.ReplaceAllString(m.View(), "")
+				// The marker opens a panel body line; "‹1/2›" cycle positions sit
+				// further along the line.
+				if got := len(selectionMarker.FindAllString(view, -1)); got != 1 {
+					t.Errorf("width %d section %d row %d: %d selection markers, want 1", width, sec, row, got)
 				}
-				for i, label := range sectionLabels {
-					tab := m.lay.tabs[i]
-					if line := lines[m.lay.tabY]; !strings.HasPrefix(line[tab.from+1:], label) {
-						t.Errorf("width %d: tab %q recorded at x=%d, line is %q", width, label, tab.from, line)
+				for _, label := range sectionLabels {
+					if !strings.Contains(view, label) {
+						t.Errorf("width %d: tab bar is missing %q", width, label)
 					}
 				}
 			}
-		}
-	}
-}
-
-func TestUpdate_MouseSelectsTabsAndRows(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.width = 120
-	_ = m.View()
-
-	timing := m.lay.tabs[sectionTiming]
-	next, _ := m.Update(mouseClick(timing.to-1, m.lay.tabY))
-	m = next.(model)
-	if m.section != sectionTiming {
-		t.Fatalf("section after clicking the Timing tab = %v, want sectionTiming", m.section)
-	}
-
-	_ = m.View()
-	next, _ = m.Update(mouseClick(shellMargin, m.lay.rows[2]))
-	m = next.(model)
-	if m.row != 2 {
-		t.Fatalf("row after clicking the third row = %d, want 2", m.row)
-	}
-
-	_ = m.View()
-	next, _ = m.Update(mouseClick(shellMargin, m.lay.rows[2]))
-	m = next.(model)
-	if m.edit.kind != editDuration || m.edit.field != "download" {
-		t.Errorf("clicking the selected row opened %v/%q, want the download duration editor", m.edit.kind, m.edit.field)
-	}
-}
-
-func TestUpdate_MouseIgnoresNonClicks(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.width = 120
-	m.row = 1
-	_ = m.View()
-
-	cases := map[string]tea.MouseMsg{
-		"beside the menu panel": mouseClick(m.lay.rowRight, m.lay.rows[0]),
-		"motion, not a press":   {X: shellMargin, Y: m.lay.rows[0], Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft},
-		"release, not a press":  {X: shellMargin, Y: m.lay.rows[0], Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft},
-	}
-	for name, msg := range cases {
-		next, _ := m.Update(msg)
-		if got := next.(model); got.row != 1 {
-			t.Errorf("%s moved the selection to row %d, want 1", name, got.row)
 		}
 	}
 }
@@ -1895,9 +1985,16 @@ func TestConnectionChecksFollowTheHandshake(t *testing.T) {
 		want  []checkState
 	}{
 		{
-			name:  "checking",
+			name:  "not checked",
 			setup: func(m *model) {},
-			want:  []checkState{checkActive, checkPending, checkPending, checkPending},
+			want:  []checkState{checkPending, checkPending, checkPending, checkPending},
+		},
+		{
+			name: "checking",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "checking", stepReach
+			},
+			want: []checkState{checkActive, checkPending, checkPending, checkPending},
 		},
 		{
 			name: "unreachable",
@@ -2301,18 +2398,41 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 	}
 }
 
-func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
-	choices := []string{"auto", "https://meter.example:7248"}
-	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices, ""), "")
-	for _, want := range []string{"‹2/2›", "enter cycles"} {
+// An endpoint row has to say what the choice under the cursor is. The origins
+// a server advertises usually differ by port alone, so the protocol each one
+// fixes is what tells them apart.
+func TestEndpointRowNamesTheChoice(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.BaseURL = "https://meter.example:7247"
+	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{Origin: "https://meter.example:7247", Protocol: "http1", TLS: true},
+			{Origin: "https://meter.example:7248", Protocol: "http2", TLS: true},
+			{Origin: "https://elsewhere.example", Protocol: "negotiated", TLS: true},
+		},
+	}}
+	choices := m.throughputChoices()
+
+	m.cfg.ThroughputTarget = "https://meter.example:7248"
+	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, choices), "")
+	for _, want := range []string{"Throughput endpoint", "HTTP/2 · TLS", "‹3/4›", ":7248"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("endpoint row = %q, want %q", got, want)
 		}
 	}
-	resolved := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices, "https://meter.example:7248 · http2"), "")
-	for _, want := range []string{"Automatic", "‹1/2›", "→ https://meter.example:7248 · http2"} {
-		if !strings.Contains(resolved, want) {
-			t.Errorf("resolved endpoint row = %q, want %q", resolved, want)
+
+	// An origin on another host is named by that host, not by a bare port.
+	other := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://elsewhere.example", choices), "")
+	for _, want := range []string{"Negotiated · TLS", "elsewhere.example"} {
+		if !strings.Contains(other, want) {
+			t.Errorf("off-host endpoint row = %q, want %q", other, want)
+		}
+	}
+
+	automatic := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices), "")
+	for _, want := range []string{"Automatic", "‹1/4›"} {
+		if !strings.Contains(automatic, want) {
+			t.Errorf("automatic endpoint row = %q, want %q", automatic, want)
 		}
 	}
 }

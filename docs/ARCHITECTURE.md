@@ -208,14 +208,19 @@ peak across ~100ms samples (upload uses the server receiver, download the local 
 latency as min/mean/P50/P95 (linear-interpolated percentiles), jitter (mean absolute deviation),
 and loss ratio.
 
-The TUI has five configuration sections (Server — three built-in presets plus a custom URL; Run
-setup; Timing; Connections — stream count and TLS verification; Start) and a live telemetry view
-(session panel, stage timeline, ASCII throughput bars, a running results log). Keys: `tab`/arrows
+The TUI has five configuration sections (Server — the local-dev preset plus a custom URL, taken as
+typed: a missing scheme becomes `http://`, and a missing port is the scheme's own; Run
+setup; Timing; Connections — endpoint choices, each named by the protocol it fixes and whether it
+is encrypted, plus stream count and TLS verification; Start) and a live telemetry view
+(session panel, stage timeline, ASCII throughput bars, a running results log). A launched client
+checks nothing: `--url` is a default, not a destination, so the connection checklist stays idle
+until a server is picked with `enter` (or a check is asked for with `v`). Keys: `tab`/arrows
 to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run or run again, `v`
 to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
 finished one, `?` to expand the key list, `q` to quit; the footer lists every binding the screen on
-show accepts. CLI flags (all editable again inside the TUI before a run starts) are listed in
-[CONFIGURATION.md](CONFIGURATION.md#native-tui-client-flags).
+show accepts. Navigation is keyboard-only by design: the client never turns on mouse reporting, so
+the terminal keeps its own text selection and copy. CLI flags (all editable again inside the TUI
+before a run starts) are listed in [CONFIGURATION.md](CONFIGURATION.md#native-tui-client-flags).
 
 `internal/goclient` (stats, config normalization, preflight, the adaptive-warmup/lane-stagger
 runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model` state machine in

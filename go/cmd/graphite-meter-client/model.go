@@ -36,6 +36,11 @@ type preparationMsg struct {
 	err        error
 }
 
+// prepareDueMsg is the debounce timer of the preparation it carries the
+// sequence of. A later configuration change bumps the sequence, so the timer of
+// a superseded change fires into nothing.
+type prepareDueMsg struct{ seq int }
+
 // Both auth messages carry the prepareSeq of the preparation that starts the
 // authorization. A browser approval stays outstanding for up to two minutes.
 // The sequence stops a poll detached by a server switch from overwriting a
@@ -129,12 +134,19 @@ type check struct {
 	note  string
 }
 
+// statusIdle is where a launched client sits until the operator points it at a
+// server. Nothing is dialled and nothing is claimed about the path, so the
+// screen carries no result — good or bad — that the operator did not ask for.
+const statusIdle = "not checked"
+
 // connectionChecks is the readiness checklist for the current preparation
 // attempt. Authorization is orthogonal to the handshake order: a server can
 // demand it at the preflight request itself or at a later target probe.
 func (m model) connectionChecks() []check {
 	state := func(step prepareStep) checkState {
 		switch {
+		case m.prepareStatus == statusIdle:
+			return checkPending
 		case m.prepareStep > step:
 			return checkDone
 		case m.prepareStep < step:
@@ -171,9 +183,7 @@ type serverPreset struct {
 }
 
 var serverPresets = []serverPreset{
-	{name: "Local dev", url: "http://127.0.0.1:7246", note: "default HTTP listener"},
-	{name: "Local TLS", url: "https://127.0.0.1:7247", note: "dedicated HTTPS HTTP/1.1 listener"},
-	{name: "LAN host", url: "http://graphite-meter.local:7246", note: "mDNS or local DNS"},
+	{name: "Local dev", url: "http://127.0.0.1:7246", note: "HTTP listener"},
 }
 
 type model struct {
@@ -185,7 +195,6 @@ type model struct {
 	row     int
 	edit    editState
 	notice  string
-	lay     *layout
 	spin    spinner.Model
 	help    help.Model
 	// cancelPrompt is the run screen waiting for the second esc that stops the
@@ -226,6 +235,13 @@ type model struct {
 	prepareError                        string
 	auth                                *goclient.PendingAuthorization
 	authSince                           time.Time
+	// authOpened records that the approval page was sent to the browser. Until
+	// it is set, enter is the key that sends it; afterwards enter goes back to
+	// the row it belongs to.
+	authOpened bool
+	// openApproval launches the browser. It is a field so a test can watch the
+	// call instead of opening a window.
+	openApproval func(*goclient.PendingAuthorization)
 
 	rates   map[goclient.Direction]goclient.ThroughputSample
 	peaks   map[goclient.Direction]float64
@@ -246,10 +262,10 @@ func newModel(cfg goclient.Config) model {
 	return model{
 		cfg:           cfg,
 		mode:          modeConfigure,
-		notice:        "Choose a server while the selected paths are checked.",
+		openApproval:  (*goclient.PendingAuthorization).Open,
+		notice:        "Press enter on a server to check it.",
 		prepareSeq:    1,
-		prepareStatus: "checking",
-		lay:           &layout{},
+		prepareStatus: statusIdle,
 		spin:          spin,
 		help:          newHelp(),
 		now:           time.Now(),
@@ -259,9 +275,10 @@ func newModel(cfg goclient.Config) model {
 	}
 }
 
-func (m model) Init() tea.Cmd {
-	return tea.Batch(prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
-}
+// Init draws the configure screen and waits. A launch reaches no server on its
+// own: the URL a client starts with is a default, not a destination, and
+// dialling it unasked answers with a failure the operator never requested.
+func (m model) Init() tea.Cmd { return nil }
 
 // animating reports whether the screen changes without an incoming message:
 // the spinner frames and the elapsed clocks. Anything that enters one of these
@@ -281,10 +298,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	case tea.MouseMsg:
-		return m.handleMouse(msg)
 	case spinner.TickMsg:
 		return m.handleTick(msg)
+	case prepareDueMsg:
+		return m.handlePrepareDue(msg)
 	case preparationMsg:
 		return m.handlePreparation(msg)
 	case authChallengeMsg:
@@ -311,6 +328,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
+	case m.auth != nil && !m.authOpened && key.Matches(msg, keys.approve):
+		m.openApproval(m.auth)
+		m.authOpened = true
+		m.notice = "Approval page opened in the browser."
+		return m, nil
 	case m.urlRowRune(msg):
 		// A bracketed paste arrives as one rune message and lands whole.
 		m.edit = beginEdit(editURL, "url", string(msg.Runes))
@@ -396,49 +418,35 @@ func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse resolves a click against the positions View records. A click on
-// an unselected row selects it. A click on the selected row activates it, as
-// enter does.
-func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
-		return m, nil
+// focusServer puts the configure screen on the server the current URL names.
+// The server selection is what asks a server for authorization, so an approval
+// prompt lands beside the row that caused it. An open editor keeps the cursor:
+// the operator is mid-entry and the section is already on show.
+func (m *model) focusServer() {
+	m.mode = modeConfigure
+	if m.edit.kind != editNone {
+		return
 	}
-	if m.mode != modeConfigure || m.edit.kind != editNone {
-		return m, nil
-	}
-	if msg.Y == m.lay.tabY {
-		for i, tab := range m.lay.tabs {
-			if msg.X >= tab.from && msg.X < tab.to {
-				m.section = section(i)
-				m.row = clamp(m.row, 0, m.rowCount()-1)
-				break
-			}
-		}
-		return m, nil
-	}
-	if msg.X >= m.lay.rowRight {
-		return m, nil
-	}
-	for i, y := range m.lay.rows {
-		if y != msg.Y {
-			continue
-		}
-		if i == m.row {
-			return m.confirm()
-		}
+	m.section = sectionServers
+	m.row = len(serverPresets)
+	if i := activePreset(m.cfg.BaseURL); i >= 0 {
 		m.row = i
-		return m, nil
 	}
-	return m, nil
 }
 
 // confirm activates the selected row. A configuration edit invalidates the
-// current preparation, so it starts a fresh connection check.
+// current preparation, so it starts a fresh connection check. Picking a server
+// starts one whether or not the URL changed: that row is how an idle client is
+// pointed at something, and re-picking the server it already holds is a request
+// to check it.
 func (m model) confirm() (tea.Model, tea.Cmd) {
 	before := m.cfg
 	updated, cmd := m.activate()
 	next := updated.(model)
-	if next.mode == modeConfigure && next.edit.kind == editNone && next.cfg != before {
+	if next.mode != modeConfigure || next.edit.kind != editNone {
+		return next, cmd
+	}
+	if next.cfg != before || (m.section == sectionServers && m.row < len(serverPresets)) {
 		return next.reprepare(cmd)
 	}
 	return next, cmd
@@ -456,9 +464,11 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.edit = editState{}
 		return m, nil
 	case key.Matches(msg, keys.apply):
-		before := m.cfg
+		before, wasURL := m.cfg, m.edit.kind == editURL
 		m.commitEdit()
-		if m.cfg != before {
+		// Applying the URL editor is the other way to point an idle client at a
+		// server, so it checks even when the same URL is retyped.
+		if m.cfg != before || (wasURL && m.edit.kind == editNone) {
 			return m.reprepare(nil)
 		}
 		return m, nil
@@ -497,13 +507,14 @@ func (m *model) commitURL(raw string) {
 		m.editRejected("Server URL cannot be empty.")
 		return
 	}
-	// A bare host means HTTPS. Presets carry their own schemes, so a
-	// scheme-less entry is a remote host, and remote servers answer TLS.
+	// A scheme-less entry is completed, never upgraded: what is typed is what
+	// is dialed. The scheme alone decides the port when none is given, which is
+	// http's 80 and https's 443.
 	if !strings.Contains(raw, "://") {
-		raw = "https://" + raw
+		raw = "http://" + raw
 	}
 	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
+		m.editRejected("Use an http:// or https:// URL with a host, for example https://meter.example.")
 		return
 	}
 	if raw != m.cfg.BaseURL {
@@ -605,12 +616,10 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionConnections:
 		switch m.row {
 		case 0:
-			choices := originChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) string { return t.Origin })
-			m.cfg.ThroughputTarget = nextChoice(m.cfg.ThroughputTarget, choices)
+			m.cfg.ThroughputTarget = nextEndpoint(m.cfg.ThroughputTarget, m.throughputChoices())
 			m.notice = "Throughput endpoint updated."
 		case 1:
-			choices := originChoices(m.capabilities().LatencyTargets, func(t wire.LatencyTarget) string { return t.Origin })
-			m.cfg.LatencyTarget = nextChoice(m.cfg.LatencyTarget, choices)
+			m.cfg.LatencyTarget = nextEndpoint(m.cfg.LatencyTarget, m.latencyChoices())
 			m.notice = "Latency endpoint updated."
 		case 2:
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
@@ -689,22 +698,66 @@ func (m model) capabilities() wire.Capabilities {
 	return m.discovery.Capabilities
 }
 
-// originChoices is the cycle offered for an endpoint row: "auto" first, then each
-// discovered origin. Discovery can advertise one origin under several spellings,
-// so origin.Key decides equivalence and the first spelling wins.
-func originChoices[T any](targets []T, originOf func(T) string) []string {
-	choices := []string{"auto"}
+// throughputChoices and latencyChoices are what the two endpoint rows cycle
+// through. A discovered origin is named by the protocol it fixes rather than by
+// its URL: a server usually offers one hostname on several ports, so the
+// protocol is what tells the choices apart. "Automatic" is named by where the
+// last check resolved it, which is kept across configuration changes and so
+// never blanks mid-cycle.
+func (m model) throughputChoices() []endpointChoice {
+	choices := endpointChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) endpointChoice {
+		return endpointChoice{value: t.Origin, label: protocolFacts(t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)}
+	})
+	if m.prepared != nil {
+		choices[0].note = "→ " + shortOrigin(m.cfg.BaseURL, m.prepared.ThroughputTarget.Origin)
+	}
+	return choices
+}
+
+func (m model) latencyChoices() []endpointChoice {
+	choices := endpointChoices(m.capabilities().LatencyTargets, func(t wire.LatencyTarget) endpointChoice {
+		return endpointChoice{value: t.Origin, label: protocolFacts(t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)}
+	})
+	if m.prepared != nil && m.prepared.LatencyTarget != nil {
+		choices[0].note = "→ " + shortOrigin(m.cfg.BaseURL, m.prepared.LatencyTarget.Origin)
+	}
+	return choices
+}
+
+// endpointChoice is one stop of an endpoint row's cycle: the value the
+// configuration holds, what selecting it means, and where it points. Both
+// descriptions come from discovery, which the model keeps across configuration
+// changes, so the row says what it offers without waiting for a connection.
+type endpointChoice struct {
+	value string
+	label string
+	note  string
+}
+
+// endpointChoices is the cycle offered for an endpoint row: "auto" first, then
+// each discovered origin. Discovery can advertise one origin under several
+// spellings, so origin.Key decides equivalence and the first spelling wins.
+func endpointChoices[T any](targets []T, describe func(T) endpointChoice) []endpointChoice {
+	choices := []endpointChoice{{value: "auto", label: "Automatic"}}
 	seen := map[string]struct{}{origin.Key("auto"): {}}
 	for _, target := range targets {
-		value := originOf(target)
-		key := origin.Key(value)
+		choice := describe(target)
+		key := origin.Key(choice.value)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		choices = append(choices, value)
+		choices = append(choices, choice)
 	}
 	return choices
+}
+
+func nextEndpoint(current string, choices []endpointChoice) string {
+	values := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		values = append(values, choice.value)
+	}
+	return nextChoice(current, values)
 }
 
 func nextChoice(current string, choices []string) string {

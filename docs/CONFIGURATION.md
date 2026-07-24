@@ -187,8 +187,10 @@ The terminal client has no password prompt and stores nothing. Against an authen
 asks a browser to vouch for it, once per launch:
 
 1. The client generates a random verifier, keeps it in memory, and derives a challenge from it.
-2. It opens `${GM_AUTH_PUBLIC_URL}/auth/cli?challenge=…` in your browser and prints a short
-   verification code.
+2. It shows a short verification code and the approval URL
+   (`${GM_AUTH_PUBLIC_URL}/auth/cli?challenge=…`), and waits. Press `enter` to open that page in
+   your browser — nothing opens on its own, so the code can be read first, and the URL can be
+   opened by hand instead, on this machine or another one.
 3. The browser page shows the same code. Confirm they match, then approve. If they differ,
    something else asked for the approval — refuse it.
 4. The client exchanges its verifier for a grant. Approval expires **two minutes** after the
@@ -239,7 +241,7 @@ inside the TUI before a run starts.
 
 | Flag                       | Default                 | Meaning                                                                                        |
 | -------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `--url`                    | `http://127.0.0.1:7246` | Server base URL.                                                                               |
+| `--url`                    | `http://127.0.0.1:7246` | Server base URL. Nothing is dialled until it is picked in the TUI or rechecked with `v`.       |
 | `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
 | `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
 | `--latency-origin`         | `auto`                  | Discovered WebSocket latency origin.                                                           |

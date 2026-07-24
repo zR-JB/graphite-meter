@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -58,30 +59,87 @@ func runOrder(cfg goclient.Config) []string {
 	return lines
 }
 
+// labelColumn is the width every menu row's label holds, so the values beside
+// them line up down the panel. fieldColumn is the same idea for the readings
+// on the run screen, whose labels are single words.
+const (
+	labelColumn = 22
+	fieldColumn = 11
+)
+
+// field is one labelled reading. The value carries its own styling, so the
+// label is padded before it is rendered rather than after.
+func field(label, value string) string {
+	return labelStyle.Render(pad(label, fieldColumn)) + value
+}
+
 func toggleLine(label string, on bool, note string) string {
-	return fmt.Sprintf("%s %-22s %s", checkbox(on), label, mutedStyle.Render(note))
+	return fmt.Sprintf("%s %-*s %s", checkbox(on), labelColumn-2, label, mutedStyle.Render(note))
 }
 
 func valueLine(label, value, note string) string {
-	return fmt.Sprintf("%-24s %s  %s", label, valueStyle.Render(value), mutedStyle.Render(note))
+	return fmt.Sprintf("%-*s %s  %s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(note))
 }
 
-// endpointRow is an endpoint selector line: the configured choice with its
-// position in the cycle enter walks. The note beside it is the concrete target
-// a preparation resolves it to.
-func endpointRow(label, configured string, choices []string, resolved string) string {
-	pos := ""
+// endpointRow is an endpoint selector line: what the configured choice is,
+// where in the cycle enter walks it sits, and where it points. Both
+// descriptions come from discovery, so the row stands still while a connection
+// check runs.
+func endpointRow(label, configured string, choices []endpointChoice) string {
+	value, note, pos := targetChoiceLabel(configured), "", ""
 	for i, c := range choices {
-		if c == configured {
-			pos = mutedStyle.Render(fmt.Sprintf(" ‹%d/%d›", i+1, len(choices)))
+		if c.value == configured {
+			value, note = c.label, c.note
+			pos = fmt.Sprintf(" ‹%d/%d›", i+1, len(choices))
 			break
 		}
 	}
-	note := mutedStyle.Render("enter cycles")
-	if resolved != "" {
-		note = mutedStyle.Render("→ " + resolved)
+	row := fmt.Sprintf("%-*s %s%s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(pos))
+	if note != "" {
+		row += mutedStyle.Render("  " + note)
 	}
-	return fmt.Sprintf("%-24s %s%s  %s", label, valueStyle.Render(targetChoiceLabel(configured)), pos, note)
+	return row
+}
+
+// protocolFacts is what selecting a target means: the protocol it fixes and
+// whether it is encrypted. Discovery carries both for every origin it lists.
+func protocolFacts(protocol string, tls bool) string {
+	label := map[string]string{
+		"http1":      "HTTP/1.1",
+		"http2":      "HTTP/2",
+		"http3":      "HTTP/3",
+		"negotiated": "Negotiated",
+	}[protocol]
+	if label == "" {
+		label = emptyDash(protocol)
+	}
+	if tls {
+		return label + " · TLS"
+	}
+	return label + " · clear"
+}
+
+// shortOrigin names a target's origin against the server the client is talking
+// to. Native listeners differ from that server by port alone, so the port on
+// its own identifies them; anything else is named by host and port.
+func shortOrigin(base, target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		return target
+	}
+	if b, err := url.Parse(base); err == nil && u.Port() != "" && strings.EqualFold(b.Hostname(), u.Hostname()) {
+		return ":" + u.Port()
+	}
+	return u.Host
+}
+
+// pad widens s to at least w cells. Styling is applied after padding, so the
+// padding is counted in cells rather than in escape bytes.
+func pad(s string, w int) string {
+	if len(s) >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-len(s))
 }
 
 func checkbox(on bool) string {
