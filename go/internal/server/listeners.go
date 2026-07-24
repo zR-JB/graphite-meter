@@ -378,44 +378,24 @@ func (b *listenerBuild) assembleH3() error {
 // runServices starts every listener, then blocks until the context ends or a
 // listener fails, shutting the rest down on the way out.
 func runServices(ctx context.Context, cfg *config.Config, services []service) error {
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	errs := make(chan error, len(services))
 	for _, svc := range services {
 		log.Printf("graphite-meter %s listening on %s/%s (%s)", cfg.EngineVersion, svc.addr, svc.network, svc.name)
 		go func() {
-			if err := svc.run(); err != nil {
-				errs <- fmt.Errorf("%s: %w", svc.name, err)
-				cancel()
-			} else {
-				errs <- nil
+			err := svc.run()
+			if err != nil {
+				err = fmt.Errorf("%s: %w", svc.name, err)
 			}
+			errs <- err
 		}()
 	}
+	defer shutdown(services)
 	select {
-	case <-runCtx.Done():
-		// A failing listener sends its error before it cancels, so when the
-		// cancellation came from one the error is already buffered. Take it:
-		// both cases are ready then, select chooses at random, and returning
-		// nil here would report a bind failure as a clean shutdown — the
-		// process would exit 0 instead of logging the fault.
-		select {
-		case err := <-errs:
-			if err != nil {
-				shutdown(services)
-				return err
-			}
-		default:
-		}
+	case <-ctx.Done():
+		return nil
 	case err := <-errs:
-		if err != nil {
-			cancel()
-			shutdown(services)
-			return err
-		}
+		return err
 	}
-	shutdown(services)
-	return nil
 }
 
 func runAdmissionLog(ctx context.Context, requests *requestAdmission, connections *connectionAdmission) {

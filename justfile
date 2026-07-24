@@ -164,8 +164,7 @@ server-test:
 # Playwright browser tests (chromium + firefox). ci.yml calls this recipe after
 # installing the browsers. Slow (~45s), so it is not in the pre-commit hook;
 # run it explicitly or via `just ci-full`.
-# The bundle is built here rather than inside playwright's webServer command, so
-# a slow build cannot burn the server's startup timeout (see playwright.config.ts).
+# Builds the bundle first so playwright's webServer only starts preview.
 client-e2e:
     cd client && bun run build:bundle
     cd client && bun run test:e2e

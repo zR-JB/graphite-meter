@@ -49,17 +49,10 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 	}
 }
 
-// appCSP is the application (SPA) Content-Security-Policy. script-src pins the
-// bundle to same-origin plus the one inline pre-paint script by hash, which
-// also governs the same-origin module workers via the worker-src fallback; the
-// app uses no eval and no blob/data scripts. connect-src is 'self' plus the
-// cross-origin measurement targets the server advertises in /preflight
-// (connectExtra), and nothing else — so a script that did run could not
-// exfiltrate to an arbitrary host. img-src is left unpinned for the data:
-// favicon. The remaining directives are the subset the app never needs relaxed:
-// no <base> (so no relative-URL hijack), no plugins, forms post only same-origin
-// (the sign-out form), and no framing. The login surface overrides all of this
-// with its own strict hash-pinned policy.
+// appCSP is the application Content-Security-Policy. scriptHash pins the one
+// inline pre-paint script; connectExtra is the cross-origin measurement targets
+// from /preflight, so a script cannot reach any other host. img-src stays
+// unpinned for the data: favicon. The login pages carry their own policy.
 func appCSP(scriptHash, connectExtra string) string {
 	csp := "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'"
 	if connectExtra != "" {
