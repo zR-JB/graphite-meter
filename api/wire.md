@@ -16,6 +16,9 @@ are additionally pinned as a shared constant table in each implemented language
 
 - **One logical message per WS frame / per WT datagram.** WS frames and QUIC datagrams are already
   message-delimited, so there is **no length prefix** and **no trailing newline**.
+- **Stream preambles are the one newline-terminated form.** WebTransport byte streams carry no
+  framing, so a stream that opens with a control frame terminates it with `\n` (at most 64 bytes,
+  including the newline). Everything after it is raw payload on the same stream.
 - **ASCII text.** Format: `OP` or `OP,arg[,arg...]`. The opcode is a fixed uppercase keyword.
 - **Parsing** is `indexOf(',')` slicing — never JSON, never regex. The id/number args are plain integers.
 - Unknown opcode or malformed args → the receiver replies `ERR,<code>,<text>` (non-fatal) and ignores
@@ -29,7 +32,7 @@ are additionally pinned as a shared constant table in each implemented language
 | S→C | `READY` | ws, wt | Bus is up; the client may begin the ping chain. |
 | C→S | `PING,<id>` | ws, wt-dgram | Latency probe. `<id>` = client-owned monotonic **uint32** counter (see Ids). |
 | S→C | `PONG,<id>;TIME,<nanos>` | ws, wt-dgram | Echo. `<id>` copied **verbatim**. `<nanos>` = server monotonic clock (uint64 ns) at receive — **diagnostics/skew only**. RTT is measured purely client-side as `recv − send` using the client's own clock. |
-| C→S | `SIZE,<bytes>` | wt (download) | Request `<bytes>` (uint64) on the next opened uni-stream. The WebTransport analogue of `GET /download?bytes=N`. |
+| C→S | `SIZE,<bytes>` | wt (download) | Request `<bytes>` (uint64). As a stream preamble the bytes arrive on that same stream; as a datagram they arrive as datagrams. The WebTransport analogue of `GET /download?bytes=N`. |
 | C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
 | S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
 

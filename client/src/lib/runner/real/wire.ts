@@ -122,6 +122,12 @@ export function decode(msg: string): Frame {
   }
 }
 
+/** Render a Frame as a WebTransport stream preamble: WT byte streams carry no
+ *  framing, so an opening control frame is newline-terminated. */
+export function encodePreamble(f: Frame): string {
+  return `${encode(f)}\n`;
+}
+
 /** Render a Frame to its exact on-wire string. */
 export function encode(f: Frame): string {
   switch (f.op) {
