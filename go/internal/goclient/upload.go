@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type uploadSessionResponse struct {
@@ -24,20 +26,38 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	if err != nil {
 		return Result{}, err
 	}
-	progress, err := r.openUploadProgress(ctx, id)
-	if err != nil {
-		return Result{}, err
-	}
-	defer progress.close()
-
 	bodyBlock := make([]byte, 1024*1024)
 	if _, err := rand.Read(bodyBlock); err != nil {
 		return Result{}, err
 	}
 
-	lanes := r.startLanes(ctx, func(laneCtx context.Context, lane int) error {
-		return r.uploadLane(laneCtx, id, lane, bodyBlock)
-	})
+	var progress *uploadProgress
+	var lane func(context.Context, int) error
+	if r.targetTransport() == wire.TransportWebTransport {
+		// The lanes and their counter share one session, so progress reports the
+		// connection actually under test.
+		sess, err := wtDial(ctx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
+		if err != nil {
+			return Result{}, err
+		}
+		defer sess.close()
+		if progress, err = r.openUploadProgressWT(ctx, sess, id); err != nil {
+			return Result{}, err
+		}
+		lane = func(laneCtx context.Context, _ int) error {
+			return r.uploadLaneWT(laneCtx, sess, bodyBlock)
+		}
+	} else {
+		if progress, err = r.openUploadProgress(ctx, id); err != nil {
+			return Result{}, err
+		}
+		lane = func(laneCtx context.Context, i int) error {
+			return r.uploadLane(laneCtx, id, i, bodyBlock)
+		}
+	}
+	defer progress.close()
+
+	lanes := r.startLanes(ctx, lane)
 	defer lanes.cancel()
 	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
@@ -194,39 +214,50 @@ type uploadProgressEvent struct {
 	Message string `json:"message"`
 }
 
+// withUploadID appends the id to a progress URL, the address the DELETE that
+// finalizes an upload is sent to whatever transport carried the bytes.
+func withUploadID(base, id string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set("id", id)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
 	base, err := r.endpoint(r.routes().UploadProgress)
 	if err != nil {
 		return nil, err
 	}
-	u, err := url.Parse(base)
+	target := withUploadID(base, id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, err
-	}
-	q := u.Query()
-	q.Set("id", id)
-	u.RawQuery = q.Encode()
-	readCtx, cancel := context.WithCancel(ctx)
-	req, err := http.NewRequestWithContext(readCtx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		cancel()
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/x-ndjson")
 	res, err := r.http.Do(req)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		cancel()
 		defer res.Body.Close()
 		return nil, unexpectedStatus(res)
 	}
-	p := &uploadProgress{cancel: cancel, body: res.Body, client: r.http, url: u.String(), done: make(chan struct{}), ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	return r.readUploadProgress(ctx, res.Body, target)
+}
+
+// readUploadProgress consumes the NDJSON feed from body, whichever transport
+// carries it, and finalizes over HTTP at deleteURL.
+func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, deleteURL string) (*uploadProgress, error) {
+	readCtx, cancel := context.WithCancel(ctx)
+	p := &uploadProgress{cancel: cancel, body: body, client: r.http, url: deleteURL, done: make(chan struct{}), ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	context.AfterFunc(readCtx, func() { _ = body.Close() })
 	go func() {
 		defer close(p.done)
-		scanner := bufio.NewScanner(res.Body)
+		scanner := bufio.NewScanner(body)
 		ready := false
 		for scanner.Scan() {
 			if len(scanner.Bytes()) == 0 {

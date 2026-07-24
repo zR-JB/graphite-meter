@@ -13,6 +13,7 @@ import (
 
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -206,6 +207,60 @@ func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 		return
 	}
 	t.Fatal("progress stream never reported complete")
+}
+
+// TestGoClientRunsOverWebTransport drives the shipped client end to end on the
+// transport it selects automatically: datagram pings, stream lanes, and the
+// upload counter on the upload session.
+func TestGoClientRunsOverWebTransport(t *testing.T) {
+	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
+		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	cfg := config.Default()
+	cfg.Native.H1 = freeTCPAddr(t)
+	cfg.Native.H3 = freeTCPAddr(t)
+	cfg.TLSCert, cfg.TLSKey = cert, key
+	defer runUntilCancel(t, &cfg)()
+	waitForOK(t, http.DefaultClient, "http://"+cfg.Native.H1+"/preflight")
+
+	clientCfg := goclient.DefaultConfig()
+	clientCfg.BaseURL = "http://" + cfg.Native.H1
+	clientCfg.InsecureSkipTLSVerify = true
+	clientCfg.Stages = goclient.StageSet{Latency: true, Download: true, Upload: true}
+	clientCfg.Warmup = 100 * time.Millisecond
+	clientCfg.LatencyDuration = 300 * time.Millisecond
+	clientCfg.DownloadDuration = 500 * time.Millisecond
+	clientCfg.UploadDuration = 500 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	prepared, err := goclient.Prepare(ctx, clientCfg)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if got := prepared.ThroughputTarget.Transport; got != wire.TransportWebTransport {
+		t.Fatalf("throughput transport = %q, want webtransport", got)
+	}
+	if got := prepared.LatencyTarget.Transport; got != wire.TransportWebTransport {
+		t.Fatalf("latency transport = %q, want webtransport", got)
+	}
+
+	results := map[string]goclient.Result{}
+	err = goclient.RunPrepared(ctx, clientCfg, prepared, func(e goclient.Event) {
+		if e.Kind == goclient.EventResult && e.Result != nil {
+			results[e.Stage] = *e.Result
+		}
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if got := results["latency"].Latency.Count; got == 0 {
+		t.Error("latency stage collected no samples over datagrams")
+	}
+	for _, stage := range []string{"download", "upload"} {
+		if got := results[stage].TotalBytes; got == 0 {
+			t.Errorf("%s stage moved no bytes", stage)
+		}
+	}
 }
 
 func readProgressType(t *testing.T, records *bufio.Scanner, want string) bool {

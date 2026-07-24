@@ -62,7 +62,9 @@ type Config struct {
 	BaseURL                string
 	ThroughputTarget       string
 	ThroughputProtocol     string
+	ThroughputTransport    string
 	LatencyTarget          string
+	LatencyTransport       string
 	Stages                 StageSet
 	Warmup                 time.Duration
 	LatencyDuration        time.Duration
@@ -87,7 +89,9 @@ func DefaultConfig() Config {
 		BaseURL:                "http://127.0.0.1:7246",
 		ThroughputTarget:       "auto",
 		ThroughputProtocol:     "auto",
+		ThroughputTransport:    "auto",
 		LatencyTarget:          "auto",
+		LatencyTransport:       "auto",
 		Stages:                 StageSet{Latency: true, Download: true, Upload: true},
 		Warmup:                 800 * time.Millisecond,
 		LatencyDuration:        defaultLatencyDuration,
@@ -115,8 +119,14 @@ func (c Config) normalized() Config {
 	if c.ThroughputProtocol == "" {
 		c.ThroughputProtocol = "auto"
 	}
+	if c.ThroughputTransport == "" {
+		c.ThroughputTransport = "auto"
+	}
 	if c.LatencyTarget == "" {
 		c.LatencyTarget = "auto"
+	}
+	if c.LatencyTransport == "" {
+		c.LatencyTransport = "auto"
 	}
 	if c.Warmup < 0 {
 		c.Warmup = 0

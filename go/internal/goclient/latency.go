@@ -11,25 +11,63 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, start <-chan struct{}) (LatencyStats, error) {
-	if r.latencyTarget == nil {
-		return LatencyStats{}, fmt.Errorf("no latency target selected")
+// pingBus is the message channel the ping chain runs over. Loss on an
+// unreliable bus is physical packet loss; on a reliable one it is a stall.
+type pingBus interface {
+	Send(ctx context.Context, msg string) error
+	Recv(ctx context.Context) (string, error)
+	Close()
+}
+
+// wsBus carries the wire protocol as WebSocket text frames.
+type wsBus struct{ conn *websocket.Conn }
+
+func (b wsBus) Send(ctx context.Context, msg string) error {
+	return b.conn.Write(ctx, websocket.MessageText, []byte(msg))
+}
+
+func (b wsBus) Recv(ctx context.Context) (string, error) {
+	_, msg, err := b.conn.Read(ctx)
+	return string(msg), err
+}
+
+func (b wsBus) Close() { b.conn.Close(websocket.StatusNormalClosure, "") } //nolint:errcheck // the samples are already collected
+
+// dialPingBus opens the latency channel over the target's advertised transport.
+func (r *runner) dialPingBus(ctx context.Context) (pingBus, string, error) {
+	if r.latencyTarget.Transport == wire.TransportWebTransport {
+		sess, err := wtDial(ctx, r.cfg, r.latencyTarget.Origin, r.latencyTarget.Routes.WTPing, nil)
+		if err != nil {
+			return nil, "wt", err
+		}
+		return wtBus{sess: sess}, "wt", nil
 	}
 	u, err := wsEndpoint(r.latencyTarget.Origin, r.latencyTarget.Routes.Ping)
 	if err != nil {
-		return LatencyStats{}, err
+		return nil, "ws", err
 	}
 	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		if authErr := authResponseError(response); authErr != nil {
-			return LatencyStats{}, authErr
+			return nil, "ws", authErr
 		}
+		return nil, "ws", err
+	}
+	return wsBus{conn: conn}, "ws", nil
+}
+
+func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, start <-chan struct{}) (LatencyStats, error) {
+	if r.latencyTarget == nil {
+		return LatencyStats{}, fmt.Errorf("no latency target selected")
+	}
+	conn, proto, err := r.dialPingBus(ctx)
+	if err != nil {
 		return LatencyStats{}, err
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer conn.Close()
 	// A failed hello needs no handling here: the read goroutine below sees the
-	// same broken connection and reports it through recvErr.
-	_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})))
+	// same broken channel and reports it through recvErr.
+	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
 
 	measureCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -51,12 +89,12 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 
 	go func() {
 		for {
-			_, msg, err := conn.Read(measureCtx)
+			msg, err := conn.Recv(measureCtx)
 			if err != nil {
 				recvErr <- err
 				return
 			}
-			f, err := wire.Decode(string(msg))
+			f, err := wire.Decode(msg)
 			if err != nil {
 				continue
 			}
@@ -95,7 +133,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		nextID++
 		pending[id] = time.Now()
 		mu.Unlock()
-		return conn.Write(measureCtx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+		return conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpPING, ID: id}))
 	}
 	if err := send(); err != nil {
 		return LatencyStats{}, err
@@ -117,16 +155,16 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		case <-measureCtx.Done():
 			// BYE releases the server's session promptly; the samples are
 			// already collected, so a failed farewell changes nothing.
-			_ = conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
+			_ = conn.Send(context.Background(), wire.Encode(wire.Frame{Op: wire.OpBYE}))
 			return snapshot(), nil
 		case <-measureTimer:
-			_ = conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
+			_ = conn.Send(context.Background(), wire.Encode(wire.Frame{Op: wire.OpBYE}))
 			return snapshot(), nil
 		case err := <-recvErr:
 			if measureCtx.Err() != nil {
 				return snapshot(), nil
 			}
-			return LatencyStats{}, fmt.Errorf("latency WebSocket failed: %w", err)
+			return LatencyStats{}, fmt.Errorf("latency channel failed: %w", err)
 		case <-ticker.C:
 			if err := send(); err != nil {
 				return LatencyStats{}, err

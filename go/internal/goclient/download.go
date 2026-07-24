@@ -10,18 +10,33 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
-	path := r.routes().Download
-	base, err := r.endpoint(path)
-	if err != nil {
-		return Result{}, err
-	}
 	var total atomic.Uint64
-	lanes := r.startLanes(ctx, func(laneCtx context.Context, lane int) error {
-		return r.downloadLane(laneCtx, base, lane, &total)
-	})
+	var lane func(context.Context, int) error
+	if r.targetTransport() == wire.TransportWebTransport {
+		// One session hosts every lane; each lane opens its own stream on it.
+		sess, err := wtDial(ctx, r.cfg, r.target.Origin, r.routes().WTDownload, nil)
+		if err != nil {
+			return Result{}, err
+		}
+		defer sess.close()
+		lane = func(laneCtx context.Context, _ int) error {
+			return r.downloadLaneWT(laneCtx, sess, &total)
+		}
+	} else {
+		base, err := r.endpoint(r.routes().Download)
+		if err != nil {
+			return Result{}, err
+		}
+		lane = func(laneCtx context.Context, i int) error {
+			return r.downloadLane(laneCtx, base, i, &total)
+		}
+	}
+	lanes := r.startLanes(ctx, lane)
 	defer lanes.cancel()
 	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
