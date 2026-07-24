@@ -12,7 +12,7 @@
  * rides the connection under test.
  * ============================================================ */
 
-import { encodePreamble } from "../real/wire";
+import { encode, encodePreamble } from "../real/wire";
 
 /** Records of the server's upload feed, relayed verbatim to the main thread. */
 type ProgressMsg =
@@ -27,6 +27,7 @@ type InMsg =
       url: string;
       dir: "down" | "up";
       lanes: number;
+      datagrams: boolean;
       bytesPerLane: number;
       progressUrl?: string;
       headers?: Record<string, string>;
@@ -91,6 +92,10 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   }
   void session.closed.catch(() => fail(true, "webtransport session closed"));
   if (msg.dir === "down") {
+    if (msg.datagrams) {
+      void downloadDatagrams(msg.bytesPerLane * msg.lanes);
+      return;
+    }
     for (let i = 0; i < msg.lanes; i++) void downloadLane(msg.bytesPerLane);
     return;
   }
@@ -98,7 +103,50 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   if (!(await openProgress(msg.progressUrl, msg.headers, msg.credentials)))
     return;
   const block = incompressibleBlock();
+  if (msg.datagrams) {
+    void uploadDatagrams();
+    return;
+  }
   for (let i = 0; i < msg.lanes; i++) void uploadLane(block);
+}
+
+/** Experimental: ask for the whole request as datagrams and count what lands.
+ *  Loss shows up as missing goodput, since nothing is retransmitted. */
+async function downloadDatagrams(bytes: number): Promise<void> {
+  if (!session) return;
+  try {
+    const writer = session.datagrams.writable.getWriter();
+    await writer.write(
+      new TextEncoder().encode(encode({ op: "SIZE", bytes: BigInt(bytes) })),
+    );
+    writer.releaseLock();
+    const reader = session.datagrams.readable.getReader();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done || stopped) return;
+      countDownload((value as Uint8Array).byteLength);
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** Experimental: flood path-MTU-sized datagrams. The server counts what arrives
+ *  and the progress feed reports it, as with the stream lanes. */
+async function uploadDatagrams(): Promise<void> {
+  if (!session) return;
+  try {
+    const writer = session.datagrams.writable.getWriter();
+    const payload = new Uint8Array(session.datagrams.maxDatagramSize);
+    crypto.getRandomValues(payload);
+    while (!stopped) {
+      await writer.ready;
+      await writer.write(payload);
+      post({ type: "alive" });
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
 }
 
 /** One download lane: request bytes with a SIZE preamble, count what comes back

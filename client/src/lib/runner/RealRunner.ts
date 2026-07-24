@@ -151,6 +151,8 @@ interface LaneStreamState {
   /** Streams the WebTransport worker opens inside its one session; 0 for fetch
    *  lanes, where each stream is its own worker. */
   wtStreams: number;
+  /** Experimental: carry those lanes as datagrams instead of streams. */
+  wtDatagrams: boolean;
   /** Per-lane consecutive restart counter (reset on recovery) + backoff timers. */
   laneRetry: number[];
   laneTimers: (ReturnType<typeof setTimeout> | null)[];
@@ -765,6 +767,7 @@ export class RealBackend implements RunnerBackend {
       stalled: false,
       stageSawBytes: false,
       wtStreams: 0,
+      wtDatagrams: !!wt && cfg.experimentalDatagramThroughput,
       laneRetry: [],
       laneTimers: [],
     };
@@ -778,7 +781,9 @@ export class RealBackend implements RunnerBackend {
       if (wt) {
         return dir === "down"
           ? `${wt.origin}${wt.routes.wtDownload}`
-          : `${wt.origin}${wt.routes.wtUpload}?id=${encodeURIComponent(uploadId ?? "")}`;
+          : `${wt.origin}${wt.routes.wtUpload}?id=${encodeURIComponent(uploadId ?? "")}${
+              cfg.experimentalDatagramThroughput ? "&datagrams=1" : ""
+            }`;
       }
       if (dir === "down") {
         const path = this.#throughputTarget?.routes.download ?? ROUTES.download;
@@ -927,6 +932,7 @@ export class RealBackend implements RunnerBackend {
       url: state.streamUrls[i],
       dir,
       lanes: state.wtStreams,
+      datagrams: state.wtDatagrams,
       bytesPerLane: PER_STREAM_BYTES,
       progressUrl: state.wtProgressUrl,
       debug: debugEnabled(),

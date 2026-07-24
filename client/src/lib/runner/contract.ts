@@ -154,6 +154,10 @@ export interface RunnerConfig {
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
+  /** Experimental: move WebTransport throughput onto unreliable datagrams. What
+   *  arrives is goodput with loss visible, not the stream goodput the other
+   *  transports report. Default off. */
+  experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */
   transports: {
     throughputTarget: ThroughputTargetSelection;

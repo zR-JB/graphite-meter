@@ -447,6 +447,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       pingCadence: "reply-driven",
       loadedPingCadence: "medium",
       experimentalChunkedDownload: false,
+      experimentalDatagramThroughput: false,
       compensation: {
         profile: "loopback",
         transport: "auto",

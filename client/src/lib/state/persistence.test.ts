@@ -17,6 +17,7 @@ const FAKE_CONFIG: RunnerConfig = {
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
+  experimentalDatagramThroughput: false,
   transports: { throughputTarget: "auto", latencyTarget: "auto" },
   compensation: {
     profile: "lan",

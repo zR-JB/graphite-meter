@@ -435,6 +435,15 @@
     <p class="hint">
       Uses adaptive chunks instead of one long request per lane.
     </p>
+    <Switch
+      bind:checked={store.config.experimentalDatagramThroughput}
+      disabled={running}
+      label="Datagram throughput (experimental)"
+    />
+    <p class="hint">
+      Moves WebTransport transfers onto unreliable datagrams, so the rate is
+      what arrives rather than what a stream redelivers.
+    </p>
   </section>
 </div>
 

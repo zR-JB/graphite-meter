@@ -126,6 +126,7 @@ function makeConfig(
     loadedPingCadence: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
+    experimentalDatagramThroughput: false,
     transports: {
       throughputTarget: "current",
       latencyTarget: "auto",
