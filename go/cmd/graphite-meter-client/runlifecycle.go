@@ -126,7 +126,7 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.now = msg.Time
 	for dir, sample := range m.rates {
-		m.disp[dir] += (sample.BytesPerSec - m.disp[dir]) * 0.35
+		m.displayRates[dir] += (sample.BytesPerSec - m.displayRates[dir]) * 0.35
 	}
 	var cmd tea.Cmd
 	m.spin, cmd = m.spin.Update(msg)
@@ -245,12 +245,13 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Authentication expired. Preparing browser approval…"
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 	}
-	if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
-		m.err = msg.err
-		m.status = "error"
-	}
-	if msg.err != nil && strings.Contains(msg.err.Error(), "context canceled") {
-		m.status = "canceled"
+	if msg.err != nil {
+		if strings.Contains(msg.err.Error(), "context canceled") {
+			m.status = "canceled"
+		} else {
+			m.err = msg.err
+			m.status = "error"
+		}
 	}
 	m.stopStages()
 	m.complete = true
@@ -305,7 +306,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.now = time.Now()
 	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
 	m.peaks = map[goclient.Direction]float64{}
-	m.disp = map[goclient.Direction]float64{}
+	m.displayRates = map[goclient.Direction]float64{}
 	m.lostStreak = 0
 	m.results = nil
 	m.latency = goclient.LatencySample{}

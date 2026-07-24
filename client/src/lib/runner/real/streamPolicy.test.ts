@@ -97,9 +97,14 @@ test("stream diagnostics distinguish automatic and forced policy", () => {
   expect(describeTransferStreams({ mode: "forced", count: 9 }, "http3")).toBe(
     "Forced · 9 per direction",
   );
-  expect(normalizeStreamCount(Number.NaN)).toBe(1);
-  expect(normalizeStreamCount(999)).toBe(128);
   expect(describeTransferStreams({ mode: "auto", count: 3 }, "http1")).toBe(
     "Automatic · up to 3 per direction",
   );
+});
+
+test("stream counts are clamped to a usable range", () => {
+  expect(normalizeStreamCount(Number.NaN)).toBe(1);
+  expect(normalizeStreamCount(0)).toBe(1);
+  expect(normalizeStreamCount(2.4)).toBe(2);
+  expect(normalizeStreamCount(999)).toBe(128);
 });

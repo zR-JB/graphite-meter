@@ -202,8 +202,9 @@ func TestUploadStoreMint(t *testing.T) {
 	}
 }
 
-// TestUploadAggElapsedTime checks that TIME is wall time since the first byte,
-// including a long transfer stall. Synthetic timestamps keep it deterministic.
+// TestUploadAggElapsedTimeIncludesStalls checks that TIME is wall time since the
+// first byte, including a long transfer stall. Synthetic timestamps keep it
+// deterministic.
 func TestUploadAggElapsedTimeIncludesStalls(t *testing.T) {
 	var a uploadAgg
 	const ms = int64(time.Millisecond)

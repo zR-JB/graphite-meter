@@ -38,52 +38,56 @@ function parseCorpus(text: string): Row[] {
 
 // Canonical "op=…;k=v;…" render the decode rows pin — the TS mirror of the corpus
 // expected column (test artifact; the codec only emits on-wire frames).
-function render(f: Frame): string {
-  switch (f.op) {
+function render(frame: Frame): string {
+  switch (frame.op) {
     case "READY":
       return "op=READY";
     case "BYE":
       return "op=BYE";
     case "PING":
-      return `op=PING;id=${f.id}`;
+      return `op=PING;id=${frame.id}`;
     case "PONG":
-      return `op=PONG;id=${f.id};nanos=${f.nanos}`;
+      return `op=PONG;id=${frame.id};nanos=${frame.nanos}`;
     case "SIZE":
-      return `op=SIZE;bytes=${f.bytes}`;
+      return `op=SIZE;bytes=${frame.bytes}`;
     case "HI":
-      return `op=HI;proto=${f.proto}`;
+      return `op=HI;proto=${frame.proto}`;
     case "ERR":
-      return `op=ERR;code=${f.code};text=${f.text}`;
+      return `op=ERR;code=${frame.code};text=${frame.text}`;
   }
 }
 
 // Turn an "op=…;k=v;…" spec (encode rows' input column) into a Frame to feed encode.
 function parseCanonical(spec: string): Frame {
-  const m = new Map<string, string>();
+  const fields = new Map<string, string>();
   for (const kv of spec.split(";")) {
-    const e = kv.indexOf("=");
-    m.set(kv.slice(0, e), kv.slice(e + 1));
+    const eq = kv.indexOf("=");
+    fields.set(kv.slice(0, eq), kv.slice(eq + 1));
   }
-  const op = m.get("op");
+  const op = fields.get("op");
   switch (op) {
     case "READY":
       return { op: "READY" };
     case "BYE":
       return { op: "BYE" };
     case "PING":
-      return { op: "PING", id: Number(m.get("id")) };
+      return { op: "PING", id: Number(fields.get("id")) };
     case "PONG":
       return {
         op: "PONG",
-        id: Number(m.get("id")),
-        nanos: BigInt(m.get("nanos")!),
+        id: Number(fields.get("id")),
+        nanos: BigInt(fields.get("nanos")!),
       };
     case "SIZE":
-      return { op: "SIZE", bytes: BigInt(m.get("bytes")!) };
+      return { op: "SIZE", bytes: BigInt(fields.get("bytes")!) };
     case "HI":
-      return { op: "HI", proto: m.get("proto")! };
+      return { op: "HI", proto: fields.get("proto")! };
     case "ERR":
-      return { op: "ERR", code: m.get("code")!, text: m.get("text") ?? "" };
+      return {
+        op: "ERR",
+        code: fields.get("code")!,
+        text: fields.get("text") ?? "",
+      };
     default:
       throw new Error(`unknown canonical op ${op}`);
   }
@@ -91,26 +95,26 @@ function parseCanonical(spec: string): Frame {
 
 const rows = parseCorpus(await Bun.file(corpusPath).text());
 
-for (const r of rows) {
-  test(`${r.dir} L${r.line}: ${r.input}`, () => {
-    if (r.dir === "decode") {
-      const wantErr = r.expected.startsWith("ERR:")
-        ? r.expected.slice(4)
-        : null;
-      if (wantErr !== null) {
-        let thrown: unknown;
-        try {
-          decode(r.input);
-        } catch (e) {
-          thrown = e;
-        }
-        expect(thrown).toBeInstanceOf(DecodeError);
-        expect((thrown as DecodeError).code).toBe(wantErr);
-      } else {
-        expect(render(decode(r.input))).toBe(r.expected);
-      }
-    } else {
-      expect(encode(parseCanonical(r.input))).toBe(r.expected);
+for (const row of rows) {
+  test(`${row.dir} L${row.line}: ${row.input}`, () => {
+    if (row.dir === "encode") {
+      expect(encode(parseCanonical(row.input))).toBe(row.expected);
+      return;
     }
+    const wantErr = row.expected.startsWith("ERR:")
+      ? row.expected.slice(4)
+      : null;
+    if (wantErr === null) {
+      expect(render(decode(row.input))).toBe(row.expected);
+      return;
+    }
+    let thrown: unknown;
+    try {
+      decode(row.input);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(DecodeError);
+    expect((thrown as DecodeError).code).toBe(wantErr);
   });
 }

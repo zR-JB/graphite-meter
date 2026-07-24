@@ -2,20 +2,23 @@
   /* ============================================================
    * <PhaseToast> — transient phase-change announcer
    * A fixed, bottom-right toast that surfaces a contextual message
-   * each time `store.phase` changes, then auto-dismisses (~1.35s,
-   * ~2.2s on complete). role="status" + aria-live="polite" gives
-   * screen readers a calm, per-transition announcement (the gauge
-   * a11y mirror in GaugePanel handles the per-value detail).
-   *
-   * Reactivity: a single `$effect` watches `store.phase`; the kicker
-   * (eyebrow) and message are pure functions of the current phase.
-   * Tokens only. Reduced-motion: the slide/scale is dropped and
-   * it just fades / appears.
+   * each time `store.phase` changes, then auto-dismisses.
+   * role="status" + aria-live="polite" gives screen readers a calm,
+   * per-transition announcement (the gauge a11y mirror in GaugePanel
+   * handles the per-value detail). Reduced-motion: the slide/scale is
+   * dropped and it just fades / appears.
    * ============================================================ */
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
   import { phaseKicker, phaseMessage } from "./phasePresentation";
+
+  // A terminal or skipped-stage notice earns a longer read than a routine
+  // phase blink: the run just ended or lost a stage, and a 1.35s flash
+  // undersells that.
+  const LINGER_ALERT_MS = 3200;
+  const LINGER_COMPLETE_MS = 2200;
+  const LINGER_PHASE_MS = 1350;
 
   let visible = $state(false);
   let prevPhase = store.phase;
@@ -24,7 +27,7 @@
   // A skipped stage takes over the toast briefly (err-tinted): it usually
   // coincides with the next stage's phase transition, so it gets priority
   // over the routine phase message until its timer clears it.
-  let skipMsg = $state<string | null>(null);
+  let skipMessage = $state<string | null>(null);
   let prevFailCount = 0;
   const STAGE_LABEL: Record<string, string> = {
     latency: "Latency",
@@ -46,8 +49,6 @@
     return `Connection lost — ${tail}`;
   });
 
-  /** Short uppercase eyebrow naming the lifecycle stage. */
-  const kicker = phaseKicker;
   const message = (p: typeof store.phase): string =>
     phaseMessage(p, store.error ? reasonLabel(store.error.reason) : null);
 
@@ -58,19 +59,16 @@
 
     visible = true;
     if (timer) clearTimeout(timer);
-    // Linger longer on terminal states — complete, and especially aborted/error
-    // (the run just ended unexpectedly; a 1.35s blink undersells that) — or
-    // while a skip notice holds the toast; otherwise a brisk peek.
-    const linger = untrack(() => skipMsg)
-      ? 3200
+    const linger = untrack(() => skipMessage)
+      ? LINGER_ALERT_MS
       : phase === "aborted" || phase === "error"
-        ? 3200
+        ? LINGER_ALERT_MS
         : phase === "complete"
-          ? 2200
-          : 1350;
+          ? LINGER_COMPLETE_MS
+          : LINGER_PHASE_MS;
     timer = setTimeout(() => {
       visible = false;
-      skipMsg = null;
+      skipMessage = null;
     }, linger);
 
     return () => {
@@ -79,18 +77,18 @@
   });
 
   $effect(() => {
-    const fails = Object.values(store.stageFailures);
-    if (fails.length > prevFailCount) {
-      const f = fails[fails.length - 1];
-      skipMsg = `${STAGE_LABEL[f.stage]} skipped — ${f.message}`;
+    const failures = Object.values(store.stageFailures);
+    if (failures.length > prevFailCount) {
+      const latest = failures[failures.length - 1];
+      skipMessage = `${STAGE_LABEL[latest.stage]} skipped — ${latest.message}`;
       visible = true;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         visible = false;
-        skipMsg = null;
-      }, 3200);
+        skipMessage = null;
+      }, LINGER_ALERT_MS);
     }
-    prevFailCount = fails.length;
+    prevFailCount = failures.length;
   });
 
   // While stalled the toast is sticky (no auto-dismiss): it stays up for the
@@ -109,16 +107,22 @@
   class:visible={visible || stalled}
   class:alert={stalled ||
     (visible &&
-      (skipMsg != null ||
+      (skipMessage != null ||
         store.phase === "error" ||
         store.phase === "aborted"))}
   role="status"
   aria-live="polite"
 >
   <span class="kicker"
-    >{stalled ? "Link" : skipMsg ? "Skipped" : kicker(store.phase)}</span
+    >{stalled
+      ? "Link"
+      : skipMessage
+        ? "Skipped"
+        : phaseKicker(store.phase)}</span
   >
-  <strong>{stalled ? stallMessage : (skipMsg ?? message(store.phase))}</strong>
+  <strong
+    >{stalled ? stallMessage : (skipMessage ?? message(store.phase))}</strong
+  >
 </div>
 
 <style>

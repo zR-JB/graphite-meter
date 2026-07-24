@@ -45,10 +45,6 @@
  * one Blob and read nothing back (a tiny JSON echo, drained to free the keep-alive
  * connection). Same fetch/abort/re-loop skeleton both directions.
  *
- * Message protocol (RealBackend's pool drives both directions):
- *   in:  { type: 'start', url, debug?, id? } | { type: 'stop' }
- *   out: { type: 'alive' } | { type: 'error', recoverable, detail }
- *
  * ── Why a Blob pool + slice and not a per-POST ArrayBuffer ──
  * `fetch(body: arrayBuffer)` (like `xhr.send`) COPIES the body bytes every call, so
  * looping POSTs of a freshly-built multi-MiB body churn a copy per request — on a
@@ -117,8 +113,8 @@ const TARGET_POST_MS = 500;
 /** Smallest POST. Below this the per-request HTTP overhead dominates; it is also
  *  the size a freshly-dropped link converges down to within a few POSTs. */
 const MIN_POST_BYTES = 128 * 1024;
-/** Sizer tuning shared with autosize.ts (MAX is the pool size, set on `start`). */
-const SIZER: SizerCfg = {
+/** Sizer tuning shared with autosize.ts (maxBytes is the pool size, set on `start`). */
+const sizer: SizerCfg = {
   targetMs: TARGET_POST_MS,
   minBytes: MIN_POST_BYTES,
   maxBytes: MIN_POST_BYTES, // raised to the pool size in onmessage(start)
@@ -127,8 +123,9 @@ const SIZER: SizerCfg = {
   stepDown: 0.5,
 };
 /** The payload is built by repeating ONE filled block, so the peak transient heap
- *  during construction is ~block + payload, not the 2× a fresh Uint8Array(bufBytes)
- *  plus its Blob copy would cost (the iOS-Safari tab-kill guard at 1 stream). */
+ *  during construction is ~block + payload, not the 2× a fresh whole-pool
+ *  Uint8Array plus its Blob copy would cost (the iOS-Safari tab-kill guard at
+ *  1 stream). */
 const FILL_BLOCK_BYTES = 4 * 1024 * 1024;
 /** crypto.getRandomValues' hard per-call byte quota. */
 const RNG_CHUNK_BYTES = 65536;
@@ -139,11 +136,10 @@ export function uploadPoolBytes(
   deviceMemory?: number,
 ): number {
   streams = Math.max(1, streams);
-  const dm = deviceMemory;
-  if (typeof dm === "number") {
-    if (dm <= 2)
+  if (typeof deviceMemory === "number") {
+    if (deviceMemory <= 2)
       return Math.max(MIN_POOL_BYTES, Math.floor((16 * 1024 * 1024) / streams));
-    if (dm <= 4)
+    if (deviceMemory <= 4)
       return Math.max(MIN_POOL_BYTES, Math.floor((24 * 1024 * 1024) / streams));
   }
   return Math.max(
@@ -176,11 +172,11 @@ let pool: Blob | null = null;
  *  repeated to build the pool (caps the construction-time heap peak). Typed over
  *  ArrayBuffer (not the default ArrayBufferLike) so it is a valid BlobPart. */
 let fillBlock: Uint8Array<ArrayBuffer> | null = null;
-/** The pool's byte length = the autosizer's MAX. */
+/** Byte length of the pool as actually built. */
 let poolBytes = 0;
-/** Per-lane pool size, device-bounded so a phone cannot OOM. Also the autosizer's
- *  upper clamp. */
-let bufBytes = UPLOAD_TOTAL_POOL_BYTES;
+/** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the
+ *  autosizer's upper clamp. */
+let poolTargetBytes = UPLOAD_TOTAL_POOL_BYTES;
 /** Bytes the NEXT POST will send — the closed-loop variable. Starts at MIN for a
  *  fast first sample, then tracks TARGET_POST_MS × this lane's smoothed rate. */
 let nextBytes = MIN_POST_BYTES;
@@ -207,9 +203,9 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     headers = msg.headers ?? {};
     const deviceMemory = (navigator as unknown as { deviceMemory?: number })
       .deviceMemory;
-    bufBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
-    SIZER.maxBytes = bufBytes; // the pool is the size ceiling
-    nextBytes = Math.min(MIN_POST_BYTES, bufBytes);
+    poolTargetBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
+    sizer.maxBytes = poolTargetBytes; // the pool is the size ceiling
+    nextBytes = Math.min(MIN_POST_BYTES, poolTargetBytes);
     rateEwma = 0;
     dbgWinBytes = 0;
     dbgTotal = 0;
@@ -236,22 +232,22 @@ function incompressibleBlock(): Uint8Array<ArrayBuffer> {
   return b;
 }
 
-/** Build the reused pool by REPEATING one filled block up to bufBytes. The Blob
- *  copies each part into its own backing store, so the construction-time heap peak
- *  is ~block + pool (not the 2× a fresh Uint8Array(bufBytes) + its Blob copy would
- *  cost). Every POST then slices a view of it — no per-POST copy. */
+/** Build the reused pool by REPEATING one filled block up to poolTargetBytes. The
+ *  Blob copies each part into its own backing store, so the construction-time heap
+ *  peak is ~block + pool (not the 2× a fresh whole-pool Uint8Array + its Blob copy
+ *  would cost). Every POST then slices a view of it — no per-POST copy. */
 function buildPool(): void {
-  if (pool && poolBytes === bufBytes) return;
+  if (pool && poolBytes === poolTargetBytes) return;
   const block = incompressibleBlock();
   const parts: BlobPart[] = [];
-  let remaining = bufBytes;
+  let remaining = poolTargetBytes;
   while (remaining > 0) {
     const take = Math.min(remaining, block.byteLength);
     parts.push(take === block.byteLength ? block : block.subarray(0, take));
     remaining -= take;
   }
   pool = new Blob(parts, { type: "application/octet-stream" });
-  poolBytes = bufBytes;
+  poolBytes = poolTargetBytes;
 }
 
 /** POST adaptively-sized slices of the pool in a loop to keep the lane saturated
@@ -282,7 +278,8 @@ async function run(url: string): Promise<void> {
         return;
       }
       // Drain the tiny JSON echo so this keep-alive connection is reusable for the
-      // next POST (an unread body can pin the connection and stall the lane).
+      // next POST (an unread body can pin the connection and stall the lane). The
+      // POST is already complete, so a failure to drain costs at most a connection.
       await res.arrayBuffer().catch(() => {});
       if (!res.ok) {
         post({
@@ -299,7 +296,7 @@ async function run(url: string): Promise<void> {
         sentBytes,
         performance.now() - postStart,
         rateEwma,
-        SIZER,
+        sizer,
       ));
       if (debugEnabled()) {
         dbgWinBytes += sentBytes;

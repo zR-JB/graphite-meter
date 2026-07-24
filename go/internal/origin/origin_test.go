@@ -2,23 +2,26 @@ package origin
 
 import "testing"
 
-func TestKeyNormalizesHTTPOrigins(t *testing.T) {
-	for _, tc := range []struct{ a, b string }{
+func TestKeyNormalizesCasingAndDefaultPorts(t *testing.T) {
+	for _, tc := range []struct{ raw, want string }{
 		{"https://Meter.Example:443", "https://meter.example"},
 		{"http://meter.example:80", "http://meter.example"},
 		{"https://[::1]:443", "https://[::1]"},
 	} {
-		if Key(tc.a) != tc.b || !Equal(tc.a, tc.b) {
-			t.Errorf("Key(%q) = %q, want %q", tc.a, Key(tc.a), tc.b)
+		if got := Key(tc.raw); got != tc.want {
+			t.Errorf("Key(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+		if !Equal(tc.raw, tc.want) {
+			t.Errorf("Equal(%q, %q) = false, want true", tc.raw, tc.want)
 		}
 	}
 }
 
 func TestKeyPreservesDistinctAndRelativeOrigins(t *testing.T) {
 	if Equal("https://meter.example:444", "https://meter.example") {
-		t.Fatal("non-default port collapsed")
+		t.Errorf("Equal(%q, %q) = true, want false", "https://meter.example:444", "https://meter.example")
 	}
-	if Key(".") != "." {
-		t.Fatal("relative self marker changed")
+	if got := Key("."); got != "." {
+		t.Errorf("Key(%q) = %q, want %q", ".", got, ".")
 	}
 }

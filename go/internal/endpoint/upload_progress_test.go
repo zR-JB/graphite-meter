@@ -11,38 +11,44 @@ import (
 	"time"
 )
 
+// progressRecorder is a flushable, race-safe ResponseWriter: the handler under
+// test streams from its own goroutine while the test reads the body, and wrote
+// wakes the reader instead of making it poll.
 type progressRecorder struct {
-	mu sync.Mutex
-	h  http.Header
-	b  bytes.Buffer
-	n  chan struct{}
+	mu     sync.Mutex
+	header http.Header
+	body   bytes.Buffer
+	wrote  chan struct{}
 }
 
 func newProgressRecorder() *progressRecorder {
-	return &progressRecorder{h: make(http.Header), n: make(chan struct{}, 1)}
+	return &progressRecorder{header: make(http.Header), wrote: make(chan struct{}, 1)}
 }
-func (r *progressRecorder) Header() http.Header { return r.h }
+
+func (r *progressRecorder) Header() http.Header { return r.header }
 func (r *progressRecorder) WriteHeader(int)     {}
 func (r *progressRecorder) Write(p []byte) (int, error) {
 	r.mu.Lock()
-	n, err := r.b.Write(p)
+	n, err := r.body.Write(p)
 	r.mu.Unlock()
-	select {
-	case r.n <- struct{}{}:
-	default:
-	}
+	r.notify()
 	return n, err
 }
-func (r *progressRecorder) Flush() {
+func (r *progressRecorder) Flush() { r.notify() }
+
+// notify is a non-blocking nudge: waitProgressText re-reads the body after every
+// wake, so a coalesced signal loses nothing.
+func (r *progressRecorder) notify() {
 	select {
-	case r.n <- struct{}{}:
+	case r.wrote <- struct{}{}:
 	default:
 	}
 }
+
 func (r *progressRecorder) text() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.b.String()
+	return r.body.String()
 }
 
 func waitProgressText(t *testing.T, r *progressRecorder, part string) {
@@ -51,7 +57,7 @@ func waitProgressText(t *testing.T, r *progressRecorder, part string) {
 	defer deadline.Stop()
 	for !strings.Contains(r.text(), part) {
 		select {
-		case <-r.n:
+		case <-r.wrote:
 		case <-deadline.C:
 			t.Fatalf("progress stream never contained %q: %s", part, r.text())
 		}
@@ -70,11 +76,11 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	go func() { h.ServeHTTP(rec, req); close(done) }()
 
 	waitProgressText(t, rec, `{"type":"ready"}`)
-	if got := rec.Header().Get("Content-Type"); got != "application/x-ndjson" {
-		t.Fatalf("Content-Type = %q", got)
+	if got, want := rec.Header().Get("Content-Type"), "application/x-ndjson"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
 	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-store, no-transform" {
-		t.Fatalf("Cache-Control = %q", got)
+	if got, want := rec.Header().Get("Cache-Control"), "no-store, no-transform"; got != want {
+		t.Fatalf("Cache-Control = %q, want %q", got, want)
 	}
 	agg, ok := store.get(id)
 	if !ok {
@@ -88,7 +94,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	finish := httptest.NewRecorder()
 	h.ServeHTTP(finish, httptest.NewRequest(http.MethodDelete, "/upload/progress?id="+id, nil))
 	if finish.Code != http.StatusNoContent {
-		t.Fatalf("DELETE status = %d", finish.Code)
+		t.Fatalf("DELETE status = %d, want %d", finish.Code, http.StatusNoContent)
 	}
 	waitProgressText(t, rec, `"type":"complete","bytes":4096`)
 	select {
@@ -101,8 +107,8 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	// terminal response cannot strand a reconnecting client.
 	replay := httptest.NewRecorder()
 	h.ServeHTTP(replay, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
-	if !strings.Contains(replay.Body.String(), `"type":"complete","bytes":4096`) {
-		t.Fatalf("replayed body = %s", replay.Body.String())
+	if want := `"type":"complete","bytes":4096`; !strings.Contains(replay.Body.String(), want) {
+		t.Fatalf("replayed body = %s, want it to contain %q", replay.Body.String(), want)
 	}
 }
 
@@ -110,10 +116,10 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	httpAdapter(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=forged", nil))
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d", rec.Code)
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 	if !strings.Contains(rec.Body.String(), "unknown upload id") {
-		t.Fatalf("body = %s", rec.Body.String())
+		t.Fatalf("body = %s, want it to contain %q", rec.Body.String(), "unknown upload id")
 	}
 }
 
@@ -133,7 +139,7 @@ func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
 	duplicate := httptest.NewRecorder()
 	h.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
 	if duplicate.Code != http.StatusConflict {
-		t.Fatalf("duplicate status = %d", duplicate.Code)
+		t.Fatalf("duplicate status = %d, want %d", duplicate.Code, http.StatusConflict)
 	}
 	cancel()
 	<-done

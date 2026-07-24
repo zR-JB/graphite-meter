@@ -5,6 +5,9 @@
   import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { httpProtocolLabel } from "../runner/protocol";
 
+  type PathRole = "throughput" | "latency";
+  const PATH_ROLES = ["throughput", "latency"] as const;
+
   const connections = $derived(
     store.isRunning ? store.runConnections : store.connections,
   );
@@ -14,13 +17,13 @@
   const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
-  function status(state: string) {
-    return state === "verified"
+  function statusLabel(validation: string) {
+    return validation === "verified"
       ? "Ready"
-      : state[0].toUpperCase() + state.slice(1);
+      : validation[0].toUpperCase() + validation.slice(1);
   }
 
-  function clientEvidence(role: "throughput" | "latency") {
+  function clientEvidence(role: PathRole) {
     const connection = connections[role];
     if (!connection.clientIp) return "Pending";
     const source =
@@ -30,7 +33,7 @@
     return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
   }
 
-  function protocolEvidence(role: "throughput" | "latency") {
+  function protocolEvidence(role: PathRole) {
     const connection = connections[role];
     if (role === "latency")
       return connection.serverProtocol
@@ -41,7 +44,7 @@
     return `Browser to endpoint ${httpProtocolLabel(connection.browserProtocol)} · server received ${httpProtocolLabel(connection.serverProtocol)}`;
   }
 
-  function capability(value: string, role: "throughput" | "latency") {
+  function capability(value: string, role: PathRole) {
     if (value === "fetch-streams") return "Fetch streams";
     if (value === "websocket") return "WebSocket";
     if (value === "webtransport-streams") return "WebTransport streams";
@@ -53,7 +56,7 @@
     return value;
   }
 
-  function capabilities(role: "throughput" | "latency") {
+  function capabilities(role: PathRole) {
     const values =
       role === "throughput"
         ? engine?.throughputTransports
@@ -72,7 +75,7 @@
     return `${value.slice(0, 8)}…`;
   });
 
-  function report() {
+  function diagnosticReport() {
     return JSON.stringify(
       {
         clientVersion: BUILD.clientVersion,
@@ -93,7 +96,7 @@
   }
 
   async function copyReport() {
-    await navigator.clipboard.writeText(report());
+    await navigator.clipboard.writeText(diagnosticReport());
     copied = true;
     window.setTimeout(() => (copied = false), 1500);
   }
@@ -141,14 +144,13 @@
       </dl>
     </article>
 
-    {#each ["throughput", "latency"] as role}
-      {@const typedRole = role as "throughput" | "latency"}
-      {@const connection = connections[typedRole]}
+    {#each PATH_ROLES as role}
+      {@const connection = connections[role]}
       <article class="card path">
         <header>
           <h3>{role} path</h3>
           <mark data-state={connection.validation}
-            >{status(connection.validation)}</mark
+            >{statusLabel(connection.validation)}</mark
           >
         </header>
         <dl>
@@ -158,15 +160,15 @@
           </div>
           <div>
             <dt>
-              {typedRole === "throughput" ? "Observed HTTP" : "Path check"}
+              {role === "throughput" ? "Observed HTTP" : "Path check"}
             </dt>
-            <dd>{protocolEvidence(typedRole)}</dd>
+            <dd>{protocolEvidence(role)}</dd>
           </div>
           <div>
             <dt>Client</dt>
-            <dd>{clientEvidence(typedRole)}</dd>
+            <dd>{clientEvidence(role)}</dd>
           </div>
-          {#if typedRole === "throughput"}
+          {#if role === "throughput"}
             <div>
               <dt>Upload progress</dt>
               <dd>{uploadProgressPath}</dd>

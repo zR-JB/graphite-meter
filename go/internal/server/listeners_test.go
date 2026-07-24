@@ -38,7 +38,7 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s status = %d", path, rec.Code)
+			t.Errorf("%s status = %d, want 404", path, rec.Code)
 		}
 	}
 }
@@ -54,12 +54,12 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("h1 transfer status = %d", rec.Code)
+		t.Fatalf("h1 transfer status = %d, want 404", rec.Code)
 	}
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("H2 websocket status = %d", rec.Code)
+		t.Fatalf("H2 websocket status = %d, want 404", rec.Code)
 	}
 }
 
@@ -149,7 +149,7 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, req)
 			if recorder.Code != http.StatusForbidden || body.read != 0 {
-				t.Fatalf("status=%d body-read=%d", recorder.Code, body.read)
+				t.Fatalf("status=%d body-read=%d, want 403 with an unread body", recorder.Code, body.read)
 			}
 		})
 	}
@@ -182,15 +182,15 @@ func TestPublicH3Port(t *testing.T) {
 	cfg := config.Default()
 	cfg.Native.H3 = ":7249"
 	if got := publicH3Port(&cfg); got != "7249" {
-		t.Fatalf("default port = %q", got)
+		t.Fatalf("default port = %q, want %q", got, "7249")
 	}
 	cfg.NativePublic.H3 = "https://meter.example:18444"
 	if got := publicH3Port(&cfg); got != "18444" {
-		t.Fatalf("public port = %q", got)
+		t.Fatalf("public port = %q, want %q", got, "18444")
 	}
 	cfg.NativePublic.H3 = "https://meter.example"
 	if got := publicH3Port(&cfg); got != "443" {
-		t.Fatalf("default TLS port = %q", got)
+		t.Fatalf("default TLS port = %q, want %q", got, "443")
 	}
 }
 
@@ -202,7 +202,7 @@ func TestServeHandlesRequestsOverAnExplicitListener(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "pong")
+		_, _ = io.WriteString(w, "pong")
 	})
 	srv := &http.Server{Handler: mux}
 

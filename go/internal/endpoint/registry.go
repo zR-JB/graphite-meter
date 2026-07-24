@@ -33,9 +33,8 @@ func (r *Registry) RegisterHTTP(path string, e Endpoint) {
 }
 
 // RegisterWS mounts an endpoint as a WebSocket bus at path. The upgrade is an
-// HTTP/1.1 Upgrade on the existing h1 origin — no new listener. Reserved for
-// Stage 5 — see docs/ARCHITECTURE.md#roadmap: the WebTransport dispatcher will
-// reuse this same registry to resolve bus endpoints by path.
+// HTTP/1.1 Upgrade on the existing h1 origin — no new listener. The WebTransport
+// dispatcher will resolve bus endpoints from this same registry by path.
 func (r *Registry) RegisterWS(path string, e Endpoint) {
 	r.wsEndpoints[path] = e
 }
@@ -59,16 +58,20 @@ func (r *Registry) MountWithOrigin(parent context.Context, mux *http.ServeMux, o
 	}
 }
 
-// wsAdapter upgrades the request to a WebSocket and runs the endpoint against a
-// websocketSession exposing the message bus. Cross-origin upgrades are allowed
-// (InsecureSkipVerify) to mirror the permissive Access-Control-Allow-Origin: *
-// the HTTP endpoints already set — this is a public, auth-less, cookie-less
-// measurement bus (app on :7246 measuring against :7248), so there is no session
-// state for a forged origin to abuse.
+// wsAdapter is the public-mode wsAdapterWithOrigin: no origin restriction.
 func wsAdapter(parent context.Context, e Endpoint) http.Handler {
 	return wsAdapterWithOrigin(parent, e, "")
 }
 
+// wsAdapterWithOrigin upgrades the request to a WebSocket and runs the endpoint
+// against a websocketSession exposing the message bus.
+//
+// An empty allowedOrigin is public mode: cross-origin upgrades are allowed
+// (InsecureSkipVerify) to mirror the permissive Access-Control-Allow-Origin: *
+// the HTTP endpoints already set — this is a public, auth-less, cookie-less
+// measurement bus (app on :7246 measuring against :7248), so there is no session
+// state for a forged origin to abuse. A non-empty allowedOrigin means the server
+// does hold session state, so the upgrade is pinned to that one UI origin.
 func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if allowedOrigin != "" && r.Header.Get("Origin") != "" && r.Header.Get("Origin") != allowedOrigin {
@@ -81,6 +84,8 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 				if allowedOrigin == "" {
 					return nil
 				}
+				// allowedOrigin is the String() of a *url.URL the auth service
+				// already parsed at startup, so re-parsing it cannot fail.
 				u, _ := url.Parse(allowedOrigin)
 				return []string{u.Host}
 			}(),
@@ -125,11 +130,12 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 	})
 }
 
-// httpAdapter wraps an Endpoint as an http.Handler: it applies the global CORS
-// + timing headers, short-circuits CORS preflight OPTIONS, and runs the
-// endpoint against an httpSession.
+// httpAdapter is the public-mode httpAdapterWithOrigin: wildcard CORS.
 func httpAdapter(e Endpoint) http.Handler { return httpAdapterWithOrigin(e, "") }
 
+// httpAdapterWithOrigin wraps an Endpoint as an http.Handler: it applies the
+// global CORS + timing headers, short-circuits CORS preflight OPTIONS, and runs
+// the endpoint against an httpSession.
 func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setCommonHeaders(w, origin)
@@ -144,9 +150,11 @@ func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
 	})
 }
 
-// setCommonHeaders applies permissive CORS and Timing-Allow-Origin so the
-// client can measure cross-origin (app on :7246, measuring against :7248) with
-// accurate Resource Timing.
+// setCommonHeaders lets the client measure cross-origin (app on :7246,
+// measuring against :7248) while still reading accurate Resource Timing, which
+// Timing-Allow-Origin gates. An empty origin is public mode and answers with
+// wildcards; a named origin narrows every header to it and admits credentials,
+// which a wildcard may never do.
 func setCommonHeaders(w http.ResponseWriter, origin string) {
 	h := w.Header()
 	if origin != "" {

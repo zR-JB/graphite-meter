@@ -83,7 +83,6 @@ type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial
 //
 // Every bound trades availability for a store an anonymous caller cannot grow.
 type Service struct {
-	ctx            context.Context
 	cfg            config.AuthConfig
 	public         *url.URL
 	trusted        []netip.Prefix
@@ -117,8 +116,12 @@ func (s *Service) SetConnectOrigins(origins []string) {
 	s.connectSrc = strings.Join(origins, " ")
 }
 
+// New builds the authentication service for cfg. In "off" mode it returns a
+// service that wires nothing; otherwise it loads and validates the configured
+// credentials, performs OIDC discovery, and starts the sweeper and the security
+// log, all bound to ctx.
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
-	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
+	s := &Service{cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
 	if cfg.Mode == "off" {
 		return s, nil
 	}
@@ -190,8 +193,11 @@ func readSecret(inline, file string, limit int64) (string, error) {
 	return v, nil
 }
 
+// Enabled reports whether the authentication boundary is in force.
 func (s *Service) Enabled() bool { return s.cfg.Mode != "off" }
 
+// PublicOrigin is the canonical origin the boundary accepts, or "" when
+// authentication is off.
 func (s *Service) PublicOrigin() string {
 	if s.public == nil {
 		return ""

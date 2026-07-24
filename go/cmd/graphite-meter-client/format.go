@@ -231,22 +231,15 @@ func fmtMs(d time.Duration) string {
 	return fmt.Sprintf("%.2f ms", float64(d.Microseconds())/1000)
 }
 
-func clamp(v, min, max int) int {
-	if max < min {
-		return min
+func clamp(v, lo, hi int) int {
+	if hi < lo {
+		return lo
 	}
-	if v < min {
-		return min
+	if v < lo {
+		return lo
 	}
-	if v > max {
-		return max
+	if v > hi {
+		return hi
 	}
 	return v
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

@@ -14,10 +14,11 @@ import type {
   LiveRunConfig,
   NetworkRunner,
   RunnerAnomaly,
+  RunnerError,
   RunnerEvent,
 } from "./contract";
 import { RunnerCore } from "./core";
-// NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
+// DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
 // branch in getRunner(). When that token folds to `false` (a prod build with
 // GM_CLIENT_ALLOW_DUMMY=0), Rollup deletes the branch, this import becomes
 // unused, and — because dummy.ts is side-effect-free — the whole module is
@@ -30,6 +31,7 @@ import { BUILD } from "../buildenv";
 import {
   CONNECTION_FRESH_MS,
   CONNECTION_ROLES,
+  type ConnectionValidationState,
   connectionDraftKey,
   connectionDraftRoleKey,
   connectionKey,
@@ -40,7 +42,7 @@ import {
 } from "./connectionModel";
 
 let runner: NetworkRunner | null = null;
-let unsub: (() => void) | null = null;
+let unsubscribe: (() => void) | null = null;
 let validationAbort: AbortController | null = null;
 let validationSeq = 0;
 let booted = false;
@@ -62,6 +64,9 @@ if (typeof window !== "undefined") {
   $effect.root(() => {
     $effect(() => setDebugLogging(store.debugLogging));
     $effect(() => {
+      // Read every reactive dependency BEFORE the `booted` guard: `booted` is a
+      // plain variable, so an effect that bailed out early would never re-run
+      // once the runner boots.
       const changed = CONNECTION_ROLES.filter(
         (role) =>
           connectionDraftRoleKey(store.config, role) !==
@@ -87,6 +92,7 @@ if (typeof window !== "undefined") {
       pendingValidation = false;
       queueMicrotask(
         () =>
+          // A rejection is already recorded as a "failed" role by markValidation.
           void validateConnections(
             false,
             changed.length === 1 ? changed[0] : undefined,
@@ -127,9 +133,6 @@ function resolveEngine(): EngineKind {
 }
 
 export function getRunner(): NetworkRunner {
-  // The single integration seam. The core/UI/store are engine-agnostic; only
-  // the backend (sample source) is selected here.
-  //
   // The dummy branch is gated on the raw `__GM_ALLOW_DUMMY__` literal so that a
   // prod build (GM_CLIENT_ALLOW_DUMMY=0) folds it away and tree-shakes the
   // DummyBackend out — a real-only bundle then ignores any persisted/`?engine=`
@@ -151,7 +154,7 @@ function validationMessage(cause: unknown): string {
 
 function markValidation(
   roles: ConnectionRole[],
-  state: "checking" | "verified" | "failed" | "stale",
+  state: ConnectionValidationState,
   message?: string,
   verifiedAt?: number,
   config = store.config,
@@ -276,6 +279,15 @@ export async function validateConnections(
   }
 }
 
+/** Failures that leave the path's reachability unknown: the cached probe is no
+ *  longer trustworthy, so it is dropped and both roles are re-checked. */
+const PATH_INVALIDATING_REASONS = new Set<RunnerError["reason"]>([
+  "connection-lost",
+  "timeout",
+  "preflight-failed",
+  "transport-unavailable",
+]);
+
 function ingestRunnerEvent(event: RunnerEvent) {
   if (
     event.type === "transportDiscovery" &&
@@ -293,12 +305,7 @@ function ingestRunnerEvent(event: RunnerEvent) {
   }
   if (
     event.type === "error" &&
-    [
-      "connection-lost",
-      "timeout",
-      "preflight-failed",
-      "transport-unavailable",
-    ].includes(event.error.reason)
+    PATH_INVALIDATING_REASONS.has(event.error.reason)
   ) {
     prepared = null;
     markValidation(
@@ -311,6 +318,7 @@ function ingestRunnerEvent(event: RunnerEvent) {
 }
 
 function refreshAfterTransition() {
+  // A rejection is already recorded as a "failed" role by markValidation.
   if (booted && !store.isRunning)
     void validateConnections(true).catch(() => {});
 }
@@ -334,14 +342,15 @@ function refreshAfterVisibility() {
 }
 
 export async function bootRunner() {
-  const r = getRunner();
-  store.engineInfo = r.describe();
-  unsub = r.on(ingestRunnerEvent);
+  const engine = getRunner();
+  store.engineInfo = engine.describe();
+  unsubscribe = engine.on(ingestRunnerEvent);
   booted = true;
   for (const role of CONNECTION_ROLES)
     lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
+  // A rejection is already recorded as a "failed" role by markValidation.
   await validateConnections().catch(() => {});
 }
 
@@ -389,6 +398,7 @@ export function engage() {
 export function returnToStart() {
   if (store.isRunning) getRunner().abort();
   store.reset();
+  // A rejection is already recorded as a "failed" role by markValidation.
   void validateConnections(true).catch(() => {});
 }
 
@@ -431,8 +441,8 @@ export function teardownRunner() {
   validationAbort = null;
   window.removeEventListener("online", refreshAfterTransition);
   document.removeEventListener("visibilitychange", refreshAfterVisibility);
-  unsub?.();
-  unsub = null;
+  unsubscribe?.();
+  unsubscribe = null;
   store.reset();
   store.transportDiscovery = null;
 }

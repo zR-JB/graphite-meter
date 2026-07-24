@@ -10,7 +10,7 @@ import type {
   PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import { ROUTES } from "./real/backendPure";
+import { needsPings, ROUTES } from "./real/backendPure";
 import { BUILD } from "../buildenv";
 
 export interface DummyOptions {
@@ -372,14 +372,11 @@ export class DummyBackend implements RunnerBackend {
     // transfer stage. `activity.loadedLatency` already folds in the "skip loaded
     // latency when the latency stage is off" rule — resolved once by the
     // scheduler, never re-derived from config here.
-    const pingActive =
-      activity.stage === "latency" ||
-      (activity.transfer.length > 0 && activity.loadedLatency);
     const pingInterval =
       PING_INTERVAL[
         activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence
       ];
-    if (pingActive && realNow - this.#lastPingAt >= pingInterval) {
+    if (needsPings(activity) && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
       this.#synthLatency(activity, elapsed, segStart, segEnd);
     }
@@ -401,9 +398,7 @@ export class DummyBackend implements RunnerBackend {
         segEnd: this.#segmentStart + cfg.duration[`${activity.stage}Ms`],
         realNow: now,
       });
-      const pingActive =
-        activity.stage === "latency" ||
-        (activity.transfer.length > 0 && activity.loadedLatency);
+      const pingActive = needsPings(activity);
       const pingInterval = pingActive
         ? PING_INTERVAL[
             activity.stage === "latency"
@@ -512,8 +507,8 @@ export class DummyBackend implements RunnerBackend {
       if (Math.abs(frac - f) < 0.03) lossProb = 0.6;
     }
     // Live packet-loss anomaly: raise loss probability in-window.
-    const drop = this.#activeAnomaly("packet-loss", elapsed);
-    if (drop) lossProb = Math.max(lossProb, drop.magnitude);
+    const loss = this.#activeAnomaly("packet-loss", elapsed);
+    if (loss) lossProb = Math.max(lossProb, loss.magnitude);
     const lost = this.#rand() < lossProb;
 
     this.#host!.ingestLatency(rtt, underLoad, lost);
@@ -543,18 +538,18 @@ export class DummyBackend implements RunnerBackend {
     // Anchor the window at the core's current run clock — the same absolute
     // elapsed the synthesis hooks match anomalies against.
     const elapsed = host.elapsed;
-    const d =
+    const defaults =
       a.kind === "latency-spike"
         ? LIVE_ANOMALY_DEFAULTS.latencySpike
         : a.kind === "packet-loss"
           ? LIVE_ANOMALY_DEFAULTS.packetLoss
           : LIVE_ANOMALY_DEFAULTS.throughputDrop;
-    const durationMs = a.durationMs ?? d.durationMs;
+    const durationMs = a.durationMs ?? defaults.durationMs;
     this.#liveAnomalies.push({
       kind: a.kind,
       start: elapsed,
       end: elapsed + durationMs,
-      magnitude: a.magnitude ?? d.magnitude,
+      magnitude: a.magnitude ?? defaults.magnitude,
     });
   }
 

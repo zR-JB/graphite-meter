@@ -1,7 +1,7 @@
-// Pure phase-to-copy mapping split out of PhaseToast.svelte. The eyebrow
-// (kicker) and the plain-language message are functions of the phase alone;
-// the error message additionally takes the already-resolved reason label so
-// this module never reaches into the store.
+// Pure phase-to-copy mapping behind PhaseToast.svelte. The eyebrow (kicker)
+// and the plain-language message are functions of the phase alone; the error
+// message additionally takes the already-resolved reason label so this module
+// never reaches into the store.
 import type { Phase } from "../runner/contract";
 
 export function phaseKicker(p: Phase): string {

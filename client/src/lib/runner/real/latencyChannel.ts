@@ -117,15 +117,15 @@ export class LatencyChannel {
         );
       }, PING_ESTABLISH_TIMEOUT_MS);
     }
-    const w = pingWorker();
-    w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
+    const worker = pingWorker();
+    worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);
-    w.onerror = (e: ErrorEvent): void =>
+    worker.onerror = (e: ErrorEvent): void =>
       this.#onMessage({
         type: "stall",
         detail: e.message || "ping worker error",
       });
-    w.postMessage({
+    worker.postMessage({
       type: "start",
       url,
       intervalMs,
@@ -143,7 +143,7 @@ export class LatencyChannel {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: authEnabled,
     });
-    this.#worker = w;
+    this.#worker = worker;
   }
 
   /** Begin measuring on the already-open ping channel (opened in prime()).
@@ -180,12 +180,13 @@ export class LatencyChannel {
       return;
     }
     switch (msg.type) {
-      case "samples":
+      case "samples": {
         this.#clearEstablishTimer(); // a pong proves the channel works
-        for (const s of msg.samples) {
-          this.#deps.host().ingestLatency(s.rtt, this.#underLoad, s.lost);
-        }
+        const host = this.#deps.host();
+        for (const sample of msg.samples)
+          host.ingestLatency(sample.rtt, this.#underLoad, sample.lost);
         break;
+      }
       case "stall":
         this.#deps.stall(msg.detail);
         break;
@@ -193,7 +194,6 @@ export class LatencyChannel {
         this.#deps.resume();
         break;
       case "open":
-        break;
       case "ready":
         break;
     }
@@ -258,10 +258,10 @@ export class IdleKeepalive {
     // without this edge a link that recovered before the worker's first stall
     // would never un-latch it.
     this.#offline = true;
-    const w = pingWorker();
-    w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
+    const worker = pingWorker();
+    worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);
-    w.onerror = (e: ErrorEvent): void => {
+    worker.onerror = (e: ErrorEvent): void => {
       // Worker died without ever running its reconnect loop — most commonly the
       // script fetch itself failed because the (bundle-serving) server is down,
       // e.g. restarting the keepalive right after a connection-lost run. Report
@@ -273,7 +273,7 @@ export class IdleKeepalive {
       });
       this.#scheduleRespawn(intervalMs);
     };
-    w.postMessage({
+    worker.postMessage({
       type: "start",
       url,
       intervalMs,
@@ -285,8 +285,8 @@ export class IdleKeepalive {
       checkAuthentication: authEnabled,
     });
     // Report immediately (there is no keepalive warmup window).
-    w.postMessage({ type: "measure" });
-    this.#worker = w;
+    worker.postMessage({ type: "measure" });
+    this.#worker = worker;
   }
 
   /** Stop the idle keepalive — a real run is starting (onRunStart), or the
@@ -337,6 +337,9 @@ export class IdleKeepalive {
     });
   }
 
+  /** Resolve once the keepalive worker reports its socket ready, so a run can
+   *  refuse to start on a latency transport that never establishes. Rejects with
+   *  TransportUnavailableError on timeout or if the keepalive is stopped. */
   verifyReady(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     this.start(PROBE_PING_INTERVAL_MS);
@@ -345,7 +348,8 @@ export class IdleKeepalive {
         clearTimeout(timer);
         signal?.removeEventListener("abort", aborted);
         this.#probeReady = null;
-        error ? reject(error) : resolve();
+        if (error) reject(error);
+        else resolve();
       };
       const aborted = (): void =>
         finish(new Error("latency WebSocket validation aborted"));
@@ -393,9 +397,9 @@ export class IdleKeepalive {
     const host = this.#deps.host();
     switch (msg.type) {
       case "samples":
-        for (const s of msg.samples) {
-          if (this.#probeCollect && !s.lost) {
-            this.#probeCollect.rtts.push(s.rtt);
+        for (const sample of msg.samples) {
+          if (this.#probeCollect && !sample.lost) {
+            this.#probeCollect.rtts.push(sample.rtt);
             if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT)
               this.#probeCollect.finish();
           }
@@ -403,9 +407,9 @@ export class IdleKeepalive {
             type: "latency",
             sample: {
               t: 0,
-              rttMs: s.rtt,
+              rttMs: sample.rtt,
               underLoad: false,
-              lost: s.lost,
+              lost: sample.lost,
               phase: "idle",
             },
           });

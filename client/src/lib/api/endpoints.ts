@@ -1,5 +1,13 @@
 import type { LatencyEndpoint, ThroughputEndpoint } from "./preflight";
 
+/* A target is a preflight endpoint made addressable: the wire fields minus
+ * `baseUrl`, plus the absolute origin that base URL resolved against the page,
+ * the transport that reaches it, and its route paths. Preflight advertises
+ * origins only — the paths come from the client's own table in
+ * runner/real/backendPure.ts — so the target has to carry them. `baseUrl` stays
+ * as the unresolved wire value on targets built from a preflight response and is
+ * absent on ones built by hand. */
+
 export interface FetchThroughputTarget extends Omit<
   ThroughputEndpoint,
   "baseUrl"
@@ -31,5 +39,4 @@ export interface WebSocketLatencyTarget extends Omit<
   routes: { probe: string; ping: string };
 }
 
-export type ThroughputTarget = FetchThroughputTarget;
 export type LatencyTarget = WebSocketLatencyTarget;

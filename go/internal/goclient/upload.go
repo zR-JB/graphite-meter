@@ -19,7 +19,7 @@ type uploadSessionResponse struct {
 	UploadID string `json:"uploadId"`
 }
 
-func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.Duration, start <-chan struct{}) (Result, error) {
+func (r *runner) measureUpload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
 	id, err := r.mintUploadID(ctx)
 	if err != nil {
 		return Result{}, err
@@ -47,7 +47,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
-	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT, lanes.errs)
+	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, duration, baselineN, baselineT, lanes.errs)
 	lanes.stop()
 	progress.bye()
 	return stats.result(stage, Up, true), sampleErr
@@ -162,6 +162,10 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 }
 
 func (b *cyclingBody) Close() error { return nil }
+
+// http.NewRequest passes an io.ReadCloser body to the transport as-is instead
+// of wrapping it in io.NopCloser.
+var _ io.ReadCloser = (*cyclingBody)(nil)
 
 type uploadProgress struct {
 	cancel  context.CancelFunc
@@ -337,17 +341,14 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 				Stage:     stage,
 				Direction: Up,
 				Throughput: ThroughputSample{
-					Stage:         stage,
-					Direction:     Up,
-					BytesPerSec:   bps,
-					TotalBytes:    measuredTotal,
-					StreamCount:   streams,
-					ServerAuth:    true,
-					MeasurementAt: time.Duration(active - baselineT), //nosec G115 -- active >= baselineT (monotonic); diff fits int64
+					Stage:       stage,
+					Direction:   Up,
+					BytesPerSec: bps,
+					TotalBytes:  measuredTotal,
+					StreamCount: streams,
+					ServerAuth:  true,
 				},
 			})
 		},
 	}.run(ctx)
 }
-
-var _ io.ReadCloser = (*cyclingBody)(nil)

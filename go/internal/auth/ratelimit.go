@@ -145,9 +145,9 @@ func (s *Service) noteCeiling(what string, now time.Time) {
 // recentAttempts drops everything older than the attempt window.
 func recentAttempts(attempts []time.Time, now time.Time) []time.Time {
 	cutoff := now.Add(-attemptWindow)
-	first := 0
-	for first < len(attempts) && !attempts[first].After(cutoff) {
-		first++
+	start := 0
+	for start < len(attempts) && !attempts[start].After(cutoff) {
+		start++
 	}
-	return attempts[first:]
+	return attempts[start:]
 }

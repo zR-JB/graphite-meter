@@ -70,6 +70,9 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
 
+// changePosts adjusts the live lane count and nudges any waiter. The notify is a
+// non-blocking send into a buffered channel: a waiter re-reads posts after every
+// wake, so a coalesced or dropped nudge costs nothing.
 func (a *uploadAgg) changePosts(delta int32) {
 	a.posts.Add(delta)
 	select {
@@ -177,12 +180,8 @@ func (s *UploadStore) validID(id string) bool {
 	return issued > 0 && issued <= now && now-issued <= int64(uploadTokenTTL)
 }
 
-// getOrCreate returns the aggregate for id, creating it on first touch. It returns
-// (nil, false) when id is invalid (and no aggregate exists yet), or
-// the live-aggregate cap is reached. An EXISTING aggregate is always returned —
-// authentication and the cap apply only to the first create, so token expiry or
-// hitting the cap mid-test never strands a running test's later lanes. Every
-// successful call bumps lastTouchMono so upload activity never looks idle to the sweeper.
+// getOrCreate is getOrCreateFor with no owner, collapsing the access reason to a
+// plain ok.
 func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 	agg, access := s.getOrCreateFor(id, "")
 	return agg, access == uploadAccessOK
@@ -198,10 +197,18 @@ const (
 	uploadAccessOwnerMismatch
 )
 
+// getOrCreateFor is getOrCreateForActivity for a caller that is actually moving
+// upload bytes, so the touch refreshes the sweeper's idle clock.
 func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
 	return s.getOrCreateForActivity(id, owner, true)
 }
 
+// getOrCreateForActivity returns the aggregate for id, creating it on first
+// touch and attributing it to owner. An EXISTING aggregate is always returned to
+// its owner — id authentication and both caps apply only to the first create, so
+// token expiry or a cap reached mid-test never strands a running test's later
+// lanes. touch reports whether the caller's activity should keep the aggregate
+// looking busy to the sweeper.
 func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*uploadAgg, uploadAccess) {
 	if id == "" {
 		return nil, uploadAccessInvalid
@@ -263,6 +270,10 @@ func (s *UploadStore) releaseOwner(agg *uploadAgg) {
 	s.ownersMu.Unlock()
 }
 
+// finishFor marks id's upload complete on behalf of owner, releasing the progress
+// stream to emit its terminal record. Idempotent, so a retried DELETE is safe;
+// the aggregate itself lives on until the sweeper reaps it, which is what lets a
+// reconnecting client replay the completion.
 func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	agg, ok := s.get(id)
 	if !ok {

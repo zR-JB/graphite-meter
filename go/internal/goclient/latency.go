@@ -27,6 +27,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		return LatencyStats{}, err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	// A failed hello needs no handling here: the read goroutine below sees the
+	// same broken connection and reports it through recvErr.
 	_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})))
 
 	measureCtx, cancel := context.WithCancel(ctx)
@@ -93,7 +95,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err := send(); err != nil {
 		return LatencyStats{}, err
 	}
-	lossAfter := maxDuration(4*r.cfg.PingInterval, 250*time.Millisecond)
+	lossAfter := max(4*r.cfg.PingInterval, 250*time.Millisecond)
 	for {
 		select {
 		case <-start:
@@ -108,6 +110,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			defer timer.Stop()
 			measureTimer = timer.C
 		case <-measureCtx.Done():
+			// BYE releases the server's session promptly; the samples are
+			// already collected, so a failed farewell changes nothing.
 			_ = conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
 			return stats.snapshot(), nil
 		case <-measureTimer:
@@ -117,7 +121,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			if measureCtx.Err() != nil {
 				return stats.snapshot(), nil
 			}
-			return LatencyStats{}, fmt.Errorf("latency websocket failed: %w", err)
+			return LatencyStats{}, fmt.Errorf("latency WebSocket failed: %w", err)
 		case <-ticker.C:
 			if err := send(); err != nil {
 				return LatencyStats{}, err
@@ -142,11 +146,4 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			mu.Unlock()
 		}
 	}
-}
-
-func maxDuration(a, b time.Duration) time.Duration {
-	if a > b {
-		return a
-	}
-	return b
 }

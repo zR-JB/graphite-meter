@@ -41,14 +41,14 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" || w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatalf("rejection = %d headers %v", w.Code, w.Header())
+		t.Fatalf("rejection = %d headers %v, want 429 with Retry-After 1 and a wildcard origin", w.Code, w.Header())
 	}
 	close(release)
 	wg.Wait()
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/download", nil))
 	if w.Code != http.StatusOK {
-		t.Fatalf("request after release = %d", w.Code)
+		t.Fatalf("request after release = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
@@ -60,11 +60,11 @@ func TestRequestAdmissionGlobalLimit(t *testing.T) {
 	}
 	defer release()
 	if _, status := a.acquire("192.0.2.2"); status != http.StatusServiceUnavailable {
-		t.Fatalf("global rejection = %d", status)
+		t.Fatalf("global rejection = %d, want %d", status, http.StatusServiceUnavailable)
 	}
 	stats := a.stats()
 	if stats.active != 1 || stats.peak != 1 || stats.rejectedGlobal != 1 {
-		t.Fatalf("stats = %+v", stats)
+		t.Fatalf("stats = %+v, want 1 active, 1 peak, 1 global rejection", stats)
 	}
 }
 
@@ -84,7 +84,7 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	if got := endpoint.ClientKey(r, trusted); got != "198.51.100.9" {
-		t.Fatalf("client key = %q", got)
+		t.Fatalf("client key = %q, want %q", got, "198.51.100.9")
 	}
 }
 
@@ -121,7 +121,7 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 		t.Fatal("saturated WebSocket upgrade succeeded")
 	}
 	if res == nil || res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") != "1" {
-		t.Fatalf("upgrade response = %#v", res)
+		t.Fatalf("upgrade response = %#v, want 503 with Retry-After 1", res)
 	}
 }
 

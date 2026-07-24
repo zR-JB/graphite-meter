@@ -71,6 +71,16 @@ const UPLOAD_SESSION_TIMEOUT_MS = 3000;
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
+/** What `GET {path}/probe` proves about one role's path. Widens the generated
+ *  `Probe` shape's protocol field, which an InfraInfo carried over from an
+ *  earlier probe also has to fit. */
+interface PathEvidence {
+  clientIp: string;
+  clientIpVersion: 4 | 6;
+  clientIpSource: "socket" | "forwarded";
+  protocolNegotiated: string;
+}
+
 // Some transports are advertised by the protocol before this client can drive them.
 const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   "fetch-stream": true,
@@ -117,10 +127,8 @@ interface LaneStreamState {
   /** Per-lane byte windows waiting for the next aggregate sample. Each lane
    *  reports its own receive elapsed time, so the pool rate can be summed
    *  from matching per-lane numerators/denominators instead of a UI timer
-   *  tick. Populated by download progress messages only — an upload lane
-   *  reports no bytes (the server /upload/progress channel is the sole source). */
-  /** Present only for client-counted download. Server-counted upload has no
-   * local byte clock by construction. */
+   *  tick. Present only for client-counted download: server-counted upload has
+   *  no local byte clock (the /upload/progress channel is its sole source). */
   clientAggregation: ClientByteAggregation | null;
   /** Monotonic measurement epoch (download only). Warmup batches carry seq=0;
    *  late messages from an old epoch are ignored at the warmup/measure
@@ -148,10 +156,6 @@ export class RealBackend implements RunnerBackend {
   #abort: AbortController | null = null;
   /** The transport established for the active phase, for stall/fail reporting. */
   #activeTransport: TransportKind | null = null;
-  /** Server capabilities from the last successful probe (advertised origins +
-   *  endpoint paths + which transports are available). Stashed here so later
-   *  stages negotiate transports against what the server actually offers. */
-  #capabilities: Preflight["capabilities"] | null = null;
   /** Independent role bindings are frozen from probe until the next run. */
   #throughputTarget: FetchThroughputTarget | null = null;
   #latencyTarget: WebSocketLatencyTarget | null = null;
@@ -160,7 +164,7 @@ export class RealBackend implements RunnerBackend {
   #discoveryProtocol: string | undefined;
   #probeInfo: InfraInfo | null = null;
 
-  /* ---- transfer stage state (Stage 2 download, Stage 3 upload, Stage 6 bidi) ----
+  /* ---- transfer stage state ----
    *  Bidirectional primes BOTH directions on the SAME stage (onStageBegin calls
    *  #primeTransfer once per activity.transfer entry), so this is keyed by
    *  FlowDirection rather than singular fields — a standalone download/upload
@@ -253,8 +257,8 @@ export class RealBackend implements RunnerBackend {
    * Resolve `InfraInfo` (per-role client address, server identity, negotiated
    * protocols, engine version, pre-test ping). MAY `GET/WS {path}/ping` a few
    * times and emit pre-test `latency` samples (underLoad:false, negative `t`)
-   * via host.emit for the sparkline. On failure, throw — wire.ts maps a probe
-   * rejection to a `preflight-failed` error.
+   * via host.emit for the sparkline. On failure, throw — engine.svelte.ts maps a
+   * probe rejection to a `preflight-failed` error.
    * Cross-cutting: CORS + Timing-Allow-Origin for accurate timing.
    */
   async probe(
@@ -264,7 +268,6 @@ export class RealBackend implements RunnerBackend {
   ): Promise<InfraInfo> {
     const previous = this.#probeInfo;
     if (role !== "throughput") this.#idle.stop();
-    this.#capabilities = null;
     this.#throughputTarget = null;
     this.#latencyTarget = null;
     this.#discoveryProtocol = undefined;
@@ -290,7 +293,6 @@ export class RealBackend implements RunnerBackend {
       await classifyAuthenticationFailure(signal);
       throw new Error(`preflight request failed: ${String(cause)}`, { cause });
     }
-    this.#capabilities = pf.capabilities;
     const discovery = classifyTransportDiscovery(
       pf.capabilities.throughput,
       pf.capabilities.latency,
@@ -342,12 +344,7 @@ export class RealBackend implements RunnerBackend {
 
     const attempts = selected.protocol === "http3" ? 3 : 1;
     const deadline = performance.now() + 2000;
-    let pathProbe: {
-      clientIp: string;
-      clientIpVersion: 4 | 6;
-      clientIpSource: "socket" | "forwarded";
-      protocolNegotiated: string;
-    } | null =
+    let pathProbe: PathEvidence | null =
       role === "latency" && previous
         ? {
             clientIp: previous.clientIp,
@@ -424,14 +421,7 @@ export class RealBackend implements RunnerBackend {
         role: "throughput",
       });
 
-    let latencyPathProbe:
-      | {
-          clientIp: string;
-          clientIpVersion: 4 | 6;
-          clientIpSource: "socket" | "forwarded";
-          protocolNegotiated: string;
-        }
-      | undefined =
+    let latencyPathProbe: PathEvidence | undefined =
       role === "throughput" && previous?.latencyClientIp
         ? {
             clientIp: previous.latencyClientIp,
@@ -498,12 +488,6 @@ export class RealBackend implements RunnerBackend {
     };
     this.#probeInfo = info;
     return info;
-  }
-
-  /** The server capabilities captured by the last successful probe (or null
-   *  before probing). Consumed by later-stage transport negotiation. */
-  get capabilities(): Preflight["capabilities"] | null {
-    return this.#capabilities;
   }
 
   /** What THIS engine can drive today: WebSocket pings + fetch-stream transfer.
@@ -595,8 +579,7 @@ export class RealBackend implements RunnerBackend {
 
   /** A measured stage ended. Drain its authoritative boundary sample before
    *  the core reduces the result, then release its connections. */
-  onStageEnd(activity: PhaseActivity, flush = true): void | Promise<void> {
-    void activity;
+  onStageEnd(_activity: PhaseActivity, flush = true): void | Promise<void> {
     if (!flush) {
       this.#discardTransfer();
       this.#latency.teardown();
@@ -706,12 +689,11 @@ export class RealBackend implements RunnerBackend {
     const cfg = this.#host!.config!;
     const base = this.#throughputTarget!.origin;
     const laneCount = this.#streamCount(activity, dir);
-    const streams = laneCount;
     // Bound the stagger so the last lane (index laneCount−1) still spawns within
     // half the warmup; 0 when there's no warmup (lanes spawn together rather than
     // bleeding into the measured window).
     const staggerMs = laneStaggerMs(
-      streams,
+      laneCount,
       cfg.duration.warmupMs,
       LANE_STAGGER_MS,
     );
@@ -764,9 +746,10 @@ export class RealBackend implements RunnerBackend {
       return `${base}${path}?cb=${cb}${idParam}`;
     };
 
-    if (dir === "up") return this.#primeUploadTransfer(dir, base, streams, url);
+    if (dir === "up")
+      return this.#primeUploadTransfer(dir, base, laneCount, url);
 
-    for (let i = 0; i < streams; i++) {
+    for (let i = 0; i < laneCount; i++) {
       state.streamUrls[i] = url(i);
       this.#spawnLaneStaggered(dir, i);
     }
@@ -777,36 +760,38 @@ export class RealBackend implements RunnerBackend {
     // instead. Either way #measureTransfer starts the measurement path.
   }
 
+  /** The lane is re-read after every await: a teardown or abort in flight
+   *  clears `#lanes`, and continuing against a released lane would spawn
+   *  workers no one owns. */
   async #primeUploadTransfer(
     dir: FlowDirection,
     base: string,
-    streams: number,
+    laneCount: number,
     url: (i: number, uploadId?: string) => string,
   ): Promise<void> {
-    const primed = this.#lanes[dir];
+    const primedLane = this.#lanes[dir];
     let id: string;
     try {
       id = await this.#mintUploadSession(base);
-    } catch (cause) {
+    } catch {
       if (!this.#transferActive || !this.#lanes[dir]) return; // aborted/teardown while the warmup request was in flight
-      void cause;
       this.#host!.failStage(
-        primed!.stage,
+        primedLane!.stage,
         "protocol-error",
         "upload session request failed",
       );
       return;
     }
-    const state = this.#lanes[dir];
-    if (!this.#transferActive || !state) return;
+    const sessionLane = this.#lanes[dir];
+    if (!this.#transferActive || !sessionLane) return;
     // The progress stream is the authoritative upload meter. Establish it
     // before any POST workers so forced H1 lanes cannot occupy every browser
     // connection slot and queue the control channel behind the upload.
-    if (!(await this.#uploadProgress.prime(state.stage, id))) return;
-    const readyState = this.#lanes[dir];
-    if (!this.#transferActive || !readyState) return;
-    for (let i = 0; i < streams; i++) {
-      readyState.streamUrls[i] = url(i, id);
+    if (!(await this.#uploadProgress.prime(sessionLane.stage, id))) return;
+    const progressLane = this.#lanes[dir];
+    if (!this.#transferActive || !progressLane) return;
+    for (let i = 0; i < laneCount; i++) {
+      progressLane.streamUrls[i] = url(i, id);
       this.#spawnLaneStaggered(dir, i);
     }
   }
@@ -898,9 +883,9 @@ export class RealBackend implements RunnerBackend {
 
   /* ================= MEASURE — push real samples on the primed connections ====== */
   /** Begin measuring the already-open transfer stream(s) for `dir` (opened in
-   *  #primeTransfer — NEVER reopen). Per #readLoop, sum received/sent bytes/sec
-   *  across streams and push host.ingestThroughput(dir, bytesPerSec, bytes) at
-   *  ~16Hz. */
+   *  #primeTransfer — NEVER reopen). Download sums its lanes in
+   *  #aggregateDownload every THROUGHPUT_CADENCE_MS; upload is pushed by the
+   *  server-authoritative progress channel instead. */
   #measureTransfer(dir: FlowDirection): void {
     const state = this.#lanes[dir];
     if (!state) return; // priming failed (failStage) — nothing to measure

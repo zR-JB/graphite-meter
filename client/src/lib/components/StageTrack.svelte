@@ -22,28 +22,28 @@
     if (store.toggleStage(stage)) applyLiveRunConfig();
   }
 
-  const segs = $derived.by(() => {
-    const curI = stageIndex(store.phaseStage);
-    return STAGES.map((s) => {
-      const enabled = store.config.stages[s.key];
-      const failure = store.stageFailures[s.key];
-      const locked = !store.canToggleStage(s.key);
+  const segments = $derived.by(() => {
+    const currentIndex = stageIndex(store.phaseStage);
+    return STAGES.map((stage) => {
+      const enabled = store.config.stages[stage.key];
+      const failure = store.stageFailures[stage.key];
+      const locked = !store.canToggleStage(stage.key);
       const { state, fill } = segmentState(
         store.phase,
         store.phaseFraction,
-        s.key,
+        stage.key,
         enabled,
         !!failure,
-        curI,
+        currentIndex,
       );
       const reason = enabled
         ? failure
           ? "failed"
-          : lockReason(!locked, store.phase, store.phaseStage, s.key, state)
+          : lockReason(!locked, store.phase, store.phaseStage, stage.key, state)
         : store.phase !== "idle"
           ? "skipped"
           : null;
-      return { ...s, enabled, reason, locked, state, fill, failure };
+      return { ...stage, enabled, reason, locked, state, fill, failure };
     });
   });
 
@@ -57,13 +57,15 @@
     ),
   );
 
-  const totalSegs = $derived(segs.length + (bidi ? 1 : 0));
-  const quad = $derived(totalSegs >= 4);
+  const segmentCount = $derived(segments.length + (bidi ? 1 : 0));
+  const isQuad = $derived(segmentCount >= 4);
 </script>
 
-<fieldset class="stage-track" class:quad>
+<fieldset class="stage-track" class:quad={isQuad}>
   <legend class="sr-only">Test stages — tap to enable or disable</legend>
-  {#each segs as s (s.key)}
+  <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
+       `{@html s.icon}` sink by its exact expression text. -->
+  {#each segments as s (s.key)}
     <button
       type="button"
       class="seg seg--{s.state}"

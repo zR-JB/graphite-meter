@@ -42,14 +42,17 @@
     open = false;
   }
 
-  const MIN_W = 320;
-  function maxW() {
-    return Math.round(Math.min(720, window.innerWidth * 0.6));
+  const MIN_WIDTH = 320;
+  const MAX_WIDTH = 720;
+  // A docked panel never takes more than 60% of the viewport, so the stage keeps
+  // a usable share on narrow desktops.
+  function maxWidth() {
+    return Math.round(Math.min(MAX_WIDTH, window.innerWidth * 0.6));
   }
   let panelEl = $state<HTMLDivElement>();
 
   function clamp(px: number) {
-    return Math.max(MIN_W, Math.min(maxW(), px));
+    return Math.max(MIN_WIDTH, Math.min(maxWidth(), px));
   }
 
   function resizeBy(startWidth: number, delta: number) {
@@ -61,13 +64,13 @@
     e.preventDefault();
     const handle = e.currentTarget as HTMLElement;
     const startX = e.clientX;
-    const startW = panelEl.offsetWidth;
+    const startWidth = panelEl.offsetWidth;
     handle.setPointerCapture(e.pointerId);
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
 
     const onMove = (ev: PointerEvent) => {
-      resizeBy(startW, ev.clientX - startX);
+      resizeBy(startWidth, ev.clientX - startX);
     };
     const finish = () => {
       handle.removeEventListener("pointermove", onMove);
@@ -141,8 +144,8 @@
         role="slider"
         aria-orientation="horizontal"
         aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
-        aria-valuemin={MIN_W}
-        aria-valuemax={720}
+        aria-valuemin={MIN_WIDTH}
+        aria-valuemax={MAX_WIDTH}
         aria-valuenow={dockWidth}
         tabindex="0"
         onpointerdown={startResize}

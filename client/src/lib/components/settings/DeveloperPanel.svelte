@@ -1,14 +1,7 @@
 <script lang="ts">
-  /* ============================================================
-   * <DeveloperPanel> — Settings › Developer
-   * Hosts the debug-logging toggle and (when the build includes
-   * the dummy runner) the live anomaly-injection simulation.
-   *
-   * The whole tab only exists when GM_CLIENT_DEV_TOOLS is on (see
-   * SettingsPanel). The simulation sub-panel is gated separately on
-   * GM_CLIENT_ALLOW_DUMMY — a real-only build keeps debug logging
-   * but drops the simulation (and its injectAnomaly path).
-   * ============================================================ */
+  // SettingsPanel gates this whole tab on GM_CLIENT_DEV_TOOLS; the simulation
+  // is gated separately on GM_CLIENT_ALLOW_DUMMY, so a dev-tools build without
+  // the dummy runner keeps debug logging but drops the injectAnomaly path.
   import { store } from "../../state/store.svelte";
   import Switch from "../Switch.svelte";
   import DeveloperSimulation from "./DeveloperSimulation.svelte";

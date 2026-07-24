@@ -43,6 +43,8 @@
     hoverX = e.offsetX;
     hoverPresentation?.invalidate();
   }
+  // Returns whether the scheduler should keep animating: hover readout is a
+  // one-shot repaint, so it always parks and is re-armed by invalidate().
   function updateHover() {
     engine.setHover(hoverX);
     hover = engine.hoverInfo();
@@ -86,19 +88,19 @@
     engine.attach(canvasEl!);
     hoverPresentation = presentation.register(plotEl!, updateHover);
 
-    const mo = new MutationObserver(() => engine.invalidateTheme());
-    mo.observe(document.documentElement, {
+    const themeObserver = new MutationObserver(() => engine.invalidateTheme());
+    themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    const ro = new ResizeObserver(() => engine.invalidateTheme());
-    ro.observe(canvasEl!);
+    const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
+    resizeObserver.observe(canvasEl!);
 
     return () => {
       engine.destroy();
       hoverPresentation.destroy();
-      mo.disconnect();
-      ro.disconnect();
+      themeObserver.disconnect();
+      resizeObserver.disconnect();
     };
   });
 </script>

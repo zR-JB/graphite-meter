@@ -103,7 +103,7 @@
     teardownRunner();
   }
 
-  function inEditable(el: EventTarget | null): boolean {
+  function isEditable(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
     const tag = el.tagName;
     return (
@@ -116,7 +116,7 @@
 
   function onKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (inEditable(e.target)) return;
+    if (isEditable(e.target)) return;
     if (resetConfirmOpen) return;
 
     if (e.key === "Escape") {

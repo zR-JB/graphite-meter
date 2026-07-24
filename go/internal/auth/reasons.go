@@ -57,8 +57,8 @@ const (
 )
 
 // notice is the stable, non-secret code carried in the login page's `error`
-// query parameter. The wording lives in the template; only these four codes
-// ever cross the wire.
+// query parameter. The wording lives in the template; only the codes below ever
+// cross the wire.
 type notice string
 
 const (
@@ -92,8 +92,9 @@ func noticeFor(why reason) notice {
 	return noticeGeneric
 }
 
-// parseNotice accepts only the four known codes, so nothing from the query
-// string reaches the template unvalidated.
+// parseNotice accepts only the known codes, collapsing anything else to the
+// generic one, so nothing from the query string reaches the template
+// unvalidated.
 func parseNotice(raw string) notice {
 	switch notice(raw) {
 	case noticeProvider:

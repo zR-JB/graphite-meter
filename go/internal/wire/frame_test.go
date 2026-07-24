@@ -29,37 +29,37 @@ func loadCorpus(t *testing.T) []vector {
 	}
 	defer f.Close()
 
-	var vs []vector
-	sc := bufio.NewScanner(f)
-	ln := 0
-	for sc.Scan() {
-		ln++
-		line := strings.TrimSpace(sc.Text())
+	var vectors []vector
+	scanner := bufio.NewScanner(f)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		parts := strings.Split(line, "|")
 		if len(parts) != 3 {
-			t.Fatalf("line %d: want 3 fields, got %d: %q", ln, len(parts), line)
+			t.Fatalf("line %d: want 3 fields, got %d: %q", lineNo, len(parts), line)
 		}
 		dir := strings.TrimSpace(parts[0])
 		if dir != "encode" && dir != "decode" {
-			t.Fatalf("line %d: bad dir %q", ln, dir)
+			t.Fatalf("line %d: bad dir %q", lineNo, dir)
 		}
-		vs = append(vs, vector{
-			line:     ln,
+		vectors = append(vectors, vector{
+			line:     lineNo,
 			dir:      dir,
 			input:    strings.TrimSpace(parts[1]),
 			expected: strings.TrimSpace(parts[2]),
 		})
 	}
-	if err := sc.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan corpus: %v", err)
 	}
-	if len(vs) == 0 {
+	if len(vectors) == 0 {
 		t.Fatal("corpus is empty — expected populated test vectors")
 	}
-	return vs
+	return vectors
 }
 
 // TestCodecMatchesCorpus is the byte-exact conformance check both languages run

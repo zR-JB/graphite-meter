@@ -15,11 +15,17 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// Preflight advertises the measurement targets a client should use. generation
+// is a per-process random tag: a client that sees it change knows the server
+// restarted and its cached target list may be stale.
 type Preflight struct {
 	cfg        *config.Config
 	generation string
 }
 
+// NewPreflight builds the preflight endpoint for cfg with a fresh generation
+// tag. It panics if the system CSPRNG is unavailable, since every later answer
+// would otherwise share an indistinguishable generation.
 func NewPreflight(cfg *config.Config) *Preflight {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
@@ -27,6 +33,7 @@ func NewPreflight(cfg *config.Config) *Preflight {
 	}
 	return &Preflight{cfg: cfg, generation: hex.EncodeToString(id[:])}
 }
+
 func (p *Preflight) ID() string                 { return "preflight" }
 func (p *Preflight) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 func (p *Preflight) Handle(s transport.Session) error {
@@ -39,7 +46,11 @@ func (p *Preflight) Handle(s transport.Session) error {
 	return json.NewEncoder(w).Encode(p.build(r))
 }
 
+// build derives the bare hostname the client reached us on so native targets can
+// be advertised on that same name rather than a configured guess.
 func (p *Preflight) build(r *http.Request) wire.Preflight {
+	// SplitHostPort fails on a port-less Host; the fallback also unwraps the
+	// brackets of a literal IPv6 authority.
 	host, _, _ := net.SplitHostPort(r.Host)
 	if host == "" {
 		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
@@ -71,6 +82,11 @@ func (p *Preflight) ConnectOrigins(host string) []string {
 	return out
 }
 
+// buildForHost assembles the advertised targets for host. Native listeners come
+// first, then the configured public origins; both add-helpers deduplicate by
+// origin so the same endpoint reached two ways is advertised once. A throughput
+// origin claimed under two different protocols becomes "negotiated" — the client
+// cannot know in advance which one a proxy in front of it will select.
 func (p *Preflight) buildForHost(host string) wire.Preflight {
 	throughput := make([]wire.ThroughputTarget, 0)
 	latency := make([]wire.LatencyTarget, 0)
@@ -126,13 +142,17 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 	return wire.Preflight{Server: wire.ServerInfo{Name: p.cfg.ServerName, Location: p.cfg.ServerLocation}, EngineVersion: p.cfg.EngineVersion, Generation: p.generation, Capabilities: wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency}}
 }
 
-func publicBase(origin string) string {
-	if origin == "self" {
+// publicBase maps the config's "self" keyword to the wire's "." placeholder,
+// which the client resolves against the origin it loaded the UI from.
+func publicBase(configured string) string {
+	if configured == "self" {
 		return "."
 	}
-	return origin
+	return configured
 }
 
+// nativeOrigin returns the explicitly configured public origin, or synthesises
+// one from the request's host and the listener's own port.
 func nativeOrigin(public, scheme, host, addr string) string {
 	if public != "" {
 		return public

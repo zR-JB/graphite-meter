@@ -12,6 +12,8 @@ const FOCUSABLE_SELECTOR = [
 export function focusTrap(node: HTMLElement, active = true) {
   let enabled = active;
 
+  // A null offsetParent means the control sits in a hidden subtree, so it is
+  // unreachable by Tab and must not be part of the cycle.
   function getFocusable(): HTMLElement[] {
     return Array.from(
       node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
@@ -44,7 +46,8 @@ export function focusTrap(node: HTMLElement, active = true) {
 
   function focusFirst() {
     const first = getFocusable()[0];
-    // Wait one task so the opening panel has layout and focusable children.
+    // Deferred one task: focusing an element that is still hidden mid-open is a
+    // no-op, so the panel would open with focus left behind on the trigger.
     window.setTimeout(() => (first ?? node).focus(), 0);
   }
 

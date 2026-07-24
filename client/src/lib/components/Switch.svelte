@@ -15,8 +15,7 @@
      *  the toggle is vetoable (e.g. live-toggle constraints) and `checked`
      *  is treated as a one-way input rather than a bound value. */
     onToggle?: (next: boolean) => void;
-    /** Optional jargon-tooltip text for the label (mirrors bare-span usage
-     *  this replaces, e.g. JARGON.wireRate). */
+    /** Optional jargon-tooltip text for the label, e.g. JARGON.wireRate. */
     tooltip?: string;
   }
   let {

@@ -45,11 +45,14 @@ export class UploadProgressChannel {
   #worker: Worker | null = null;
   #ready: { finish: (ready: boolean) => void } | null = null;
   #done: (() => void) | null = null;
-  /** Latest cumulative server byte count and previous measured snapshot. */
-  #srvN = 0;
-  #srvPrevN = 0; // cumulative at the last delta fed into the live curve
-  #srvPrevT = 0; // server elapsed ns of that last delta — the live-curve denominator
-  #srvHaveStart = false;
+  /** Latest cumulative byte count the server reported. */
+  #serverBytes = 0;
+  /** Cumulative count at the last delta fed into the live curve. */
+  #curveBytes = 0;
+  /** Server elapsed ns of that last delta — the live-curve denominator. */
+  #curveNs = 0;
+  /** True once the measured window has its baseline frame. */
+  #haveBaseline = false;
 
   constructor(deps: UploadProgressDeps) {
     this.#deps = deps;
@@ -74,7 +77,7 @@ export class UploadProgressChannel {
     }
 
     const url = `${target.origin}${progressRoute}?id=${encodeURIComponent(uploadId)}`;
-    const w = uploadProgressWorker();
+    const worker = uploadProgressWorker();
     const ready = new Promise<boolean>((resolve) => {
       const finish = (established: boolean): void => {
         if (this.#ready?.finish !== finish) return;
@@ -92,30 +95,30 @@ export class UploadProgressChannel {
       }, PROGRESS_ESTABLISH_TIMEOUT_MS);
       this.#ready = { finish };
     });
-    w.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
+    worker.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
       if (e.data.type === "open") this.#ready?.finish(true);
       this.#onMessage(e.data);
     };
-    w.onerror = (): void => {
+    worker.onerror = (): void => {
       /* the worker owns reconnect; a hard worker error just means no server bytes
        * until it recovers, which the stall watchdog already covers. */
     };
-    w.postMessage({
+    worker.postMessage({
       type: "start",
       url,
       headers: this.#deps.headers(),
       csrf: csrfHeader(),
       credentials: authEnabled ? "include" : "same-origin",
     });
-    this.#worker = w;
+    this.#worker = worker;
     return ready;
   }
 
   /** Open the measured window: the first progress frame after this boundary
    *  becomes the upload baseline, excluding warmup bytes and time together. */
   beginMeasure(): void {
-    this.#srvHaveStart = false;
-    this.#srvPrevN = this.#srvN;
+    this.#haveBaseline = false;
+    this.#curveBytes = this.#serverBytes;
   }
 
   /** Stop the progress worker after the POST lanes. It explicitly finalizes the
@@ -123,9 +126,8 @@ export class UploadProgressChannel {
   teardown(finalize: boolean): Promise<void> {
     this.#ready?.finish(false);
     this.#ready = null;
-    const w = this.#worker;
-    if (!w) return Promise.resolve();
-    const worker = w;
+    const worker = this.#worker;
+    if (!worker) return Promise.resolve();
     if (!finalize) {
       if (this.#done) {
         this.#done();
@@ -136,38 +138,34 @@ export class UploadProgressChannel {
       return Promise.resolve();
     }
     return new Promise((resolve) => {
-      const timer = setTimeout(done, PROGRESS_BYE_GRACE_MS);
-      const self = this;
-      function done(): void {
+      const done = (): void => {
         clearTimeout(timer);
-        if (self.#done === done) self.#done = null;
-        if (self.#worker === worker) self.#worker = null;
+        if (this.#done === done) this.#done = null;
+        if (this.#worker === worker) this.#worker = null;
         worker.terminate();
         resolve();
-      }
+      };
+      const timer = setTimeout(done, PROGRESS_BYE_GRACE_MS);
       this.#done = done;
       worker.postMessage({ type: "stop" });
     });
   }
 
   #resetCounters(): void {
-    this.#srvN = 0;
-    this.#srvPrevN = 0;
-    this.#srvPrevT = 0;
-    this.#srvHaveStart = false;
+    this.#serverBytes = 0;
+    this.#curveBytes = 0;
+    this.#curveNs = 0;
+    this.#haveBaseline = false;
   }
 
-  /** A message from the /upload/progress progress worker. The server count is the SOLE
-   *  upload byte source: `bytes`/`complete` feed the live curve and effective result.
-   *  Because there is no client-side fallback, the socket dropping is the
-   *  only thing that can leave the up stage without samples — so the worker's
-   *  `stall`/`resume` bracket its reconnect. While
-   *  the socket is up, the 100 ms frames carry byte/time deltas; on reconnect the
-   *  cumulative count + the server's elapsed-time denominator
-   *  self-heal the headline. The POST lanes are separate connections, so a progress-
-   *  socket drop doesn't stop the transfer: the server keeps draining and accruing
-   *  elapsed time, and catch-up Δn / Δelapsed on reconnect is the true rate over
-   *  the gap — no client-side counting anywhere. */
+  /** A message from the /upload/progress worker. The server count is the SOLE
+   *  upload byte source: `bytes`/`complete` feed both the live curve and the
+   *  effective result, so losing this socket is the only thing that can leave the
+   *  up stage without samples — hence the worker's `stall`/`resume` around its
+   *  reconnect. The POST lanes are separate connections, so a progress-socket
+   *  drop does not stop the transfer: the server keeps draining and accruing
+   *  elapsed time, and the catch-up Δbytes / Δelapsed on reconnect is the true
+   *  rate over the gap. */
   #onMessage(msg: ProgressOutMsg | AuthRequiredMsg): void {
     const lane = this.#deps.lane();
     if (!this.#deps.transferActive() || !lane) return; // late message after teardown
@@ -203,30 +201,30 @@ export class UploadProgressChannel {
     }
     if (msg.type !== "bytes" && msg.type !== "complete") return; // open: nothing to do
 
-    // `srvT` is elapsed ns since the server received this id's first byte. It is
+    // Elapsed ns since the server received this id's first byte. It is
     // independent of local frame-arrival jitter, while deliberately retaining
     // measured stalls, reconnects and lane turnaround in the denominator.
-    const srvT = msg.t;
-    if (msg.n > this.#srvN) {
-      this.#srvN = msg.n; // cumulative + monotonic guard
+    const serverNs = msg.t;
+    if (msg.n > this.#serverBytes) {
+      this.#serverBytes = msg.n; // cumulative + monotonic guard
       lane.stageSawBytes = true;
     }
     if (!lane.measuring) return; // warmup bytes are excluded from the window
 
-    if (!this.#srvHaveStart) {
-      this.#srvHaveStart = true;
-      this.#srvPrevN = this.#srvN;
-      this.#srvPrevT = srvT;
+    if (!this.#haveBaseline) {
+      this.#haveBaseline = true;
+      this.#curveBytes = this.#serverBytes;
+      this.#curveNs = serverNs;
     }
     // Server bytes drive the live curve directly from the server stream — never
     // via the local #aggregate tick (whose fixed cadence would skew the rate).
     // Each sample is the byte delta between two server frames divided by the
     // server elapsed time between those frames, so the rate is correct at any
     // push cadence and a reconnect catch-up includes the entire gap.
-    const delta = this.#srvN - this.#srvPrevN;
-    const frameSec = (srvT - this.#srvPrevT) / 1e9;
-    this.#srvPrevN = this.#srvN;
-    this.#srvPrevT = srvT;
+    const delta = this.#serverBytes - this.#curveBytes;
+    const frameSec = (serverNs - this.#curveNs) / 1e9;
+    this.#curveBytes = this.#serverBytes;
+    this.#curveNs = serverNs;
     if (frameSec > 0) {
       host.ingestThroughput("up", delta / frameSec, delta, frameSec, true);
     }

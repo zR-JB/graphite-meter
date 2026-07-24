@@ -42,15 +42,15 @@
 
 {#snippet tabs()}
   <div class="tabs" role="tablist" aria-label="Settings sections">
-    {#each TABS as t (t.key)}
+    {#each TABS as tab (tab.key)}
       <button
         class="tab"
         role="tab"
-        class:active={store.settingsTab === t.key}
-        aria-selected={store.settingsTab === t.key}
-        onclick={() => (store.settingsTab = t.key)}
+        class:active={store.settingsTab === tab.key}
+        aria-selected={store.settingsTab === tab.key}
+        onclick={() => (store.settingsTab = tab.key)}
       >
-        {t.label}
+        {tab.label}
       </button>
     {/each}
   </div>

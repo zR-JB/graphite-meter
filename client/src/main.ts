@@ -1,11 +1,11 @@
-// Browser entry point: apply the saved theme before mounting the Svelte app.
 import "./app.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
 import { STORAGE_KEY } from "./lib/state/persistence";
 
-// Backstop theme application as the bundle loads. index.html seeds this
-// pre-paint; this covers cases where the inline script was blocked/stripped.
+// Backstop for the inline theme script in index.html, which is what actually
+// gets the first frame right; this only covers the case where that script was
+// blocked or stripped, since the bundle loads well after first paint.
 (function applyThemePrePaint() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -17,11 +17,11 @@ import { STORAGE_KEY } from "./lib/state/persistence";
           ? "light"
           : "dark";
     document.documentElement.setAttribute("data-theme", theme);
-  } catch {}
+  } catch {
+    // Corrupt or blocked storage: keep whatever the document already has.
+  }
 })();
 
-const app = mount(App, {
+mount(App, {
   target: document.getElementById("app")!,
 });
-
-export default app;

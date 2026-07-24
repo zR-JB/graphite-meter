@@ -153,7 +153,7 @@ func startOIDC(t *testing.T, s *Service, f *fakeOIDC) (state string, cookie *htt
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
 	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("start status=%d", rr.Code)
+		t.Fatalf("start status=%d, want 303", rr.Code)
 	}
 	location, err := url.Parse(rr.Header().Get("Location"))
 	if err != nil {
@@ -202,7 +202,7 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 			state, cookie := startOIDC(t, s, f)
 			rr := finishOIDC(s, state, cookie, "")
 			if rr.Code != test.want {
-				t.Fatalf("status=%d", rr.Code)
+				t.Fatalf("status=%d, want %d", rr.Code, test.want)
 			}
 			loggedIn := false
 			for _, c := range rr.Result().Cookies() {
@@ -210,8 +210,8 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 					loggedIn = true
 				}
 			}
-			if loggedIn != (test.name == "valid") {
-				t.Fatalf("loggedIn=%v", loggedIn)
+			if want := test.name == "valid"; loggedIn != want {
+				t.Fatalf("loggedIn=%v, want %v", loggedIn, want)
 			}
 		})
 	}
@@ -243,7 +243,7 @@ func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
 	s := f.service(t)
 	state, cookie := startOIDC(t, s, f)
 	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
-		t.Fatalf("first status=%d", rr.Code)
+		t.Fatalf("first status=%d, want 200", rr.Code)
 	}
 	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
 		t.Fatal("transaction replay accepted")
@@ -328,7 +328,7 @@ func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 		t.Fatalf("session cookie = %+v, want SameSite=Strict", session)
 	}
 	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Fatalf("content-type=%q", ct)
+		t.Fatalf("content-type=%q, want a text/html interstitial", ct)
 	}
 }
 

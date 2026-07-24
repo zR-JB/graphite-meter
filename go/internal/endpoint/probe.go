@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"encoding/json"
+
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -14,9 +15,12 @@ type Probe struct {
 	bootstrapPort string
 }
 
+// NewProbe builds the probe endpoint. bootstrapPort must be set only on the H3
+// TCP bootstrap listener, whose answers advertise the QUIC port via Alt-Svc.
 func NewProbe(cfg *config.Config, bootstrapPort string) *Probe {
 	return &Probe{cfg: cfg, bootstrapPort: bootstrapPort}
 }
+
 func (p *Probe) ID() string                 { return "probe" }
 func (p *Probe) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 
@@ -25,6 +29,8 @@ func (p *Probe) Handle(s transport.Session) error {
 	if !ok {
 		return transport.ErrUnsupported
 	}
+	// Alt-Svc points the browser at the QUIC port; closing the h1 connection
+	// stops it from reusing this socket and so lets the h3 race actually happen.
 	if p.bootstrapPort != "" && s.Proto() == transport.ProtoH1 {
 		w.Header().Set("Alt-Svc", `h3=":`+p.bootstrapPort+`"`)
 		w.Header().Set("Connection", "close")

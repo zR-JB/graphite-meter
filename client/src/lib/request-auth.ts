@@ -40,6 +40,9 @@ export async function sessionAuthenticationRequired(
     });
     return authenticationRequired(response);
   } catch {
+    // A transport failure, a refused redirect, or the timeout above is not
+    // evidence of expiry — only an explicit marker response is. Reporting one
+    // as expiry would bounce a user off a working page during a network blip.
     return false;
   } finally {
     clearTimeout(timeout);

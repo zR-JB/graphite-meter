@@ -17,6 +17,9 @@ type UploadProgress struct {
 	trusted []netip.Prefix
 }
 
+// NewUploadProgress builds the progress endpoint over store. The optional trusted
+// prefixes are the proxies whose forwarded-for headers may be believed when
+// checking that a stream's caller owns the upload it asks about.
 func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadProgress {
 	e := &UploadProgress{store: store}
 	if len(trusted) > 0 {
@@ -24,6 +27,7 @@ func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadPro
 	}
 	return e
 }
+
 func (e *UploadProgress) ID() string                 { return "upload-progress" }
 func (e *UploadProgress) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 
@@ -39,10 +43,14 @@ type uploadProgressEvent struct {
 	Message string `json:"message,omitempty"`
 }
 
-func waitForUploadPosts(ctx <-chan struct{}, agg *uploadAgg) bool {
+// waitForUploadPosts blocks until no POST lane is still draining into agg, so the
+// terminal count includes every in-flight lane rather than racing them. It
+// reports false if done fires first, meaning the client left and there is no one
+// to report the total to.
+func waitForUploadPosts(done <-chan struct{}, agg *uploadAgg) bool {
 	for agg.posts.Load() > 0 {
 		select {
-		case <-ctx:
+		case <-done:
 			return false
 		case <-agg.postsChanged:
 		}
@@ -69,6 +77,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return nil
 	}
+	// no-transform and X-Accel-Buffering tell intermediaries not to buffer or
+	// recode the stream; a proxy holding records back would stall the progress UI.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -86,6 +96,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return true
 	}
 
+	// Watching is not upload activity: a progress stream must never refresh the
+	// idle clock, or a client that stopped uploading would keep its slot forever.
 	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {
 		writeUploadAccessError(w, access)

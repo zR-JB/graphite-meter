@@ -50,7 +50,7 @@ const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
 const THROUGHPUT_DISPLAY_TAU_MS = 700;
 const THROUGHPUT_STABILITY_TAU_MS = 1800;
 
-type TpEma = {
+type DirectionalEma = {
   down: { v: number; t: number } | null;
   up: { v: number; t: number } | null;
 };
@@ -147,10 +147,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #stalledSinceWall = 0;
   #stallInfo: StallInfo | null = null;
 
-  #tpEma: TpEma = { down: null, up: null }; // display-smoothed (fast)
-  #tpEmaStable: TpEma = { down: null, up: null }; // stability-smoothed (slow)
-  #tpEmaPhase: Phase = "idle";
-  #dbgTpLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
+  #displayEma: DirectionalEma = { down: null, up: null }; // fast tau
+  #stabilityEma: DirectionalEma = { down: null, up: null }; // slow tau
+  #emaPhase: Phase = "idle";
+  #debugThroughputLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
   #stageFailures = new Map<TransportRole, StageFailure>();
 
@@ -211,7 +211,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#resetRunState();
 
     const from = this.#phase;
-    this.#setPhase("connecting");
+    this.#phase = "connecting";
     this.#lastEmittedPhase = "connecting";
     this.emit({
       type: "phase",
@@ -283,9 +283,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#lastSampleWall = 0;
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
-    this.#tpEma.down = this.#tpEma.up = null;
-    this.#tpEmaStable.down = this.#tpEmaStable.up = null;
-    this.#tpEmaPhase = "idle";
+    this.#displayEma.down = this.#displayEma.up = null;
+    this.#stabilityEma.down = this.#stabilityEma.up = null;
+    this.#emaPhase = "idle";
     this.#stagePreparing = false;
     this.#stagePreparationId++;
   }
@@ -303,7 +303,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stagePreparationId++;
     const from = this.#phase;
     this.#backend.onAbort();
-    this.#setPhase("aborted");
+    this.#phase = "aborted";
     this.emit({
       type: "phase",
       transition: {
@@ -328,10 +328,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   reconfigure(config: LiveRunConfig): void {
     if (!this.#running || !this.#cfg) return;
     const activeBefore = this.#activeSeg;
-    const stagesChanged = Object.keys(config.stages).some(
-      (stage) =>
-        config.stages[stage as keyof RunnerConfig["stages"]] !==
-        this.#cfg!.stages[stage as keyof RunnerConfig["stages"]],
+    const stageNames = Object.keys(
+      config.stages,
+    ) as (keyof RunnerConfig["stages"])[];
+    const stagesChanged = stageNames.some(
+      (stage) => config.stages[stage] !== this.#cfg!.stages[stage],
     );
     this.#cfg = { ...this.#cfg, ...config };
 
@@ -435,7 +436,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         };
         this.#activeSeg = seg;
         this.#lastEmittedPhase = seg.phase;
-        this.#setPhase(seg.phase);
+        this.#phase = seg.phase;
         this.emit({ type: "phase", transition });
         this.#beginAdaptivePhase();
 
@@ -531,19 +532,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // De-alias the rate TWICE from the same raw sample (see the two-tau rationale
     // above): the fast `display` rate every UI consumer reads, and the slow
     // `stable` rate the confidence accumulator reads. Byte totals stay raw/exact.
-    if (this.#tpEmaPhase !== this.#phase) {
-      this.#tpEma.down = this.#tpEma.up = null;
-      this.#tpEmaStable.down = this.#tpEmaStable.up = null;
-      this.#tpEmaPhase = this.#phase;
+    if (this.#emaPhase !== phase) {
+      this.#displayEma.down = this.#displayEma.up = null;
+      this.#stabilityEma.down = this.#stabilityEma.up = null;
+      this.#emaPhase = phase;
     }
     const display = this.#emaStep(
-      this.#tpEma,
+      this.#displayEma,
       dir,
       liveBytesPerSec,
       THROUGHPUT_DISPLAY_TAU_MS,
     );
     const stable = this.#emaStep(
-      this.#tpEmaStable,
+      this.#stabilityEma,
       dir,
       liveBytesPerSec,
       THROUGHPUT_STABILITY_TAU_MS,
@@ -557,20 +558,17 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       serverAuthoritative,
     );
     this.#updateStability();
-    if (debugEnabled()) {
-      const now = performance.now();
-      if (now - this.#dbgTpLogAt[dir] >= 1000) {
-        this.#dbgTpLogAt[dir] = now;
-        dlog("core:throughput", `${dir} de-alias`, {
-          source: fmtRate(liveBytesPerSec),
-          display: fmtRate(display),
-          stable: fmtRate(stable),
-          cumulative: fmtBytes(this.#bytesCumulative),
-          t: fmtMs(this.#measuredElapsed),
-        });
-      }
-    }
     const now = performance.now();
+    if (debugEnabled() && now - this.#debugThroughputLogAt[dir] >= 1000) {
+      this.#debugThroughputLogAt[dir] = now;
+      dlog("core:throughput", `${dir} de-alias`, {
+        source: fmtRate(liveBytesPerSec),
+        display: fmtRate(display),
+        stable: fmtRate(stable),
+        cumulative: fmtBytes(this.#bytesCumulative),
+        t: fmtMs(this.#measuredElapsed),
+      });
+    }
     if (now - this.#lastThroughputDisplayAt[dir] >= RUNNER_DEADLINE_MS) {
       this.#lastThroughputDisplayAt[dir] = now;
       this.emit({
@@ -590,7 +588,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
    *  (no startup lag), and a long stall gap resolves itself (dt grows, alpha→1, so
    *  the first post-stall sample snaps in rather than blending with a stale value).
    *  Phase-change reseeding is handled by the caller (shared across both stores). */
-  #emaStep(store: TpEma, dir: FlowDirection, raw: number, tau: number): number {
+  #emaStep(
+    store: DirectionalEma,
+    dir: FlowDirection,
+    raw: number,
+    tau: number,
+  ): number {
     const now = performance.now();
     const prev = store[dir];
     if (!prev) {
@@ -725,9 +728,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (now - this.#stalledSinceWall > MAX_STALL_MS) {
       // A stall never carries user-abort (that's the abort() path), but the type
       // is the broad TerminationReason; narrow to a failure reason for fail().
-      const r = this.#stallInfo?.reason;
+      const stalled = this.#stallInfo?.reason;
       const reason: RunnerError["reason"] =
-        r && r !== "user-abort" ? r : "connection-lost";
+        stalled && stalled !== "user-abort" ? stalled : "connection-lost";
       this.fail(reason, "Connection lost — gave up after max-stall timeout");
       return true;
     }
@@ -791,7 +794,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       },
       cause,
     };
-    this.#setPhase("error");
+    this.#phase = "error";
     this.#lastEmittedPhase = "error";
     this.emit({ type: "error", error });
   }
@@ -848,10 +851,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       (this.#glideTargetMeasured - this.#glideFromMeasured) * eased;
     // Monotonic: a jittery tick must never rewind the marker.
     this.#measuredElapsed = Math.max(this.#measuredElapsed, target);
-  }
-
-  #setPhase(p: Phase) {
-    this.#phase = p;
   }
 
   #waitForStageEnd(activity: PhaseActivity, done: () => void): boolean {
@@ -941,7 +940,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         durationMs: actualMs,
       };
 
-      this.#setPhase("complete");
+      this.#phase = "complete";
       this.#lastEmittedPhase = "complete";
       this.#backend.onComplete();
       this.emit({ type: "complete", result });

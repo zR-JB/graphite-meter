@@ -1,4 +1,4 @@
-// Pure geometry, formatting, and hover-selection logic split out of
+// Pure geometry, formatting, and hover-selection logic behind
 // LatencyProfile.svelte. Positions are relative to the chart's value domain,
 // passed in so this module never touches the rune store.
 import { fmtMs } from "../format";
@@ -71,10 +71,12 @@ export function nearestMetric(
   lane: LatencyLane,
   target: number,
 ): MetricKey | null {
-  return entries(lane).reduce<MetricKey | null>((best, e) => {
-    if (!best) return e.metric;
-    const bv = metricValue(lane, best)!;
-    return Math.abs(e.value - target) < Math.abs(bv - target) ? e.metric : best;
+  return entries(lane).reduce<MetricKey | null>((best, entry) => {
+    if (!best) return entry.metric;
+    const bestValue = metricValue(lane, best)!;
+    return Math.abs(entry.value - target) < Math.abs(bestValue - target)
+      ? entry.metric
+      : best;
   }, null);
 }
 

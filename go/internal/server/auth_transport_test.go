@@ -25,11 +25,10 @@ import (
 // service, the way Run wires them: the UI listener carries the login surface,
 // the measurement listeners carry nothing but measurement routes.
 type authenticatedStack struct {
-	authn                *auth.Service
-	origin, h2URL, h3URL string
-	session, csrf        *http.Cookie
-	uiClient, h2Client   *http.Client
-	h3Client             *http.Client
+	authn                        *auth.Service
+	origin, h2URL, h3URL         string
+	session, csrf                *http.Cookie
+	uiClient, h2Client, h3Client *http.Client
 }
 
 func newAuthenticatedStack(t *testing.T) *authenticatedStack {
@@ -164,9 +163,9 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 
-	page, _ := http.NewRequest(http.MethodGet, s.origin+"/auth/cli?challenge="+url.QueryEscape(challenge), nil)
-	page.AddCookie(s.session)
-	res, err := s.uiClient.Do(page)
+	pageReq, _ := http.NewRequest(http.MethodGet, s.origin+"/auth/cli?challenge="+url.QueryEscape(challenge), nil)
+	pageReq.AddCookie(s.session)
+	res, err := s.uiClient.Do(pageReq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +238,7 @@ func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 			body, _ := io.ReadAll(res.Body)
 			res.Body.Close()
 			if res.StatusCode != http.StatusOK || len(body) != 1 {
-				t.Fatalf("status=%d bytes=%d", res.StatusCode, len(body))
+				t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
 			}
 		})
 
@@ -253,7 +252,7 @@ func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 			body, _ := io.ReadAll(res.Body)
 			res.Body.Close()
 			if res.StatusCode != http.StatusOK || len(body) != 1 {
-				t.Fatalf("status=%d bytes=%d", res.StatusCode, len(body))
+				t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
 			}
 		})
 	}

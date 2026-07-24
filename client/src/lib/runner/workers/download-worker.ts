@@ -137,12 +137,13 @@ const CHUNK_SIZER: SizerCfg = {
 let abort: AbortController | null = null;
 let stopped = false;
 /** Chunked mode (experimental) + its closed-loop state. */
-let chunk = false;
+let chunked = false;
 let nextBytes = CHUNK_SIZER.minBytes;
 let rateEwma = 0;
 let measureSeq = 0;
-let acc = 0;
-let accStart = 0;
+/** Bytes counted since the last posted delta, and when that window opened. */
+let windowBytes = 0;
+let windowStart = 0;
 
 /** Stream index, only used to tag debug lines (`dl-worker#<id>`). */
 let streamId = 0;
@@ -160,7 +161,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
-    chunk = msg.chunk ?? false;
+    chunked = msg.chunk ?? false;
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers;
     nextBytes = CHUNK_SIZER.minBytes;
@@ -183,20 +184,20 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
 const post = (m: OutMsg) => ctx.postMessage(m);
 
 function resetProgressWindow(): void {
-  acc = 0;
-  accStart = performance.now();
+  windowBytes = 0;
+  windowStart = performance.now();
 }
 
 function flushProgress(now = performance.now()): void {
-  if (acc <= 0) {
-    accStart = now;
+  if (windowBytes <= 0) {
+    windowStart = now;
     return;
   }
-  const elapsedMs = now - accStart;
+  const elapsedMs = now - windowStart;
   if (elapsedMs > 0)
-    post({ type: "progress", bytes: acc, elapsedMs, seq: measureSeq });
-  acc = 0;
-  accStart = now;
+    post({ type: "progress", bytes: windowBytes, elapsedMs, seq: measureSeq });
+  windowBytes = 0;
+  windowStart = now;
 }
 
 async function run(url: string): Promise<void> {
@@ -209,7 +210,7 @@ async function run(url: string): Promise<void> {
     // main thread (~50 ms) and, when verbose, log the raw 1 Hz receive rate —
     // BEFORE any aggregation/EMA, the ground truth for "did the data reach JS?".
     const count = (n: number): void => {
-      acc += n;
+      windowBytes += n;
       const now = performance.now();
       if (now - lastPost >= POST_INTERVAL_MS) {
         flushProgress(now);
@@ -233,12 +234,12 @@ async function run(url: string): Promise<void> {
     };
     // Chunked mode appends the adaptive size; long-stream mode uses the URL as-is
     // (its ?bytes= is baked in by RealBackend). Time the whole fetch to resize next.
-    const sentBytes = nextBytes;
-    const reqUrl = chunk ? `${url}&bytes=${sentBytes}` : url;
+    const requestedBytes = nextBytes;
+    const requestUrl = chunked ? `${url}&bytes=${requestedBytes}` : url;
     const fetchStart = performance.now();
     try {
       const res = await fetch(
-        reqUrl,
+        requestUrl,
         downloadFetchInit(abort.signal, credentials, headers),
       );
       if (authenticationRequired(res)) {
@@ -254,10 +255,10 @@ async function run(url: string): Promise<void> {
         return;
       }
       await readBody(res.body, count);
-      flushProgress(); // flush tail
-      if (chunk) {
+      flushProgress(); // the window's remainder
+      if (chunked) {
         ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
-          sentBytes,
+          requestedBytes,
           performance.now() - fetchStart,
           rateEwma,
           CHUNK_SIZER,
@@ -300,12 +301,12 @@ async function readBody(
   if (byob) {
     let buf = new ArrayBuffer(READ_BUF_BYTES);
     for (;;) {
-      const { value, done } = await byob.read(new Uint8Array(buf));
-      if (done) break;
-      if (value && value.byteLength) count(value.byteLength);
+      const chunk = await byob.read(new Uint8Array(buf));
+      if (chunk.done) break;
+      if (chunk.value.byteLength) count(chunk.value.byteLength);
       // read() DETACHED our buffer and handed the same backing store back
       // inside `value`; reuse it for the next read so nothing is allocated.
-      buf = value!.buffer as ArrayBuffer;
+      buf = chunk.value.buffer as ArrayBuffer;
     }
     return;
   }

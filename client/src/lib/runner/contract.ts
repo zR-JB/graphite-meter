@@ -12,8 +12,8 @@ import type {
  *   idle → connecting → warmup → latency → warmup → download → warmup → upload → complete
  * A warmup is omitted when its stage is off or `duration.warmupMs <= 0`. There
  * is no standalone global warmup: each warmup primes only the stage that
- * follows it, so stages carry no cross-dependencies. See the warmup-contract
- * note below `RunnerConfig`. */
+ * follows it, so stages carry no cross-dependencies. See the stage-lifecycle &
+ * warmup contract at the end of this file. */
 export type Phase =
   | "idle"
   | "connecting"
@@ -65,8 +65,9 @@ export type ConnectivityState =
   | "unstable" // significant loss
   | "offline";
 
-/* ---------- Overhead compensation ---------- */
-/** Estimates forward-direction physical link occupancy from application bytes. */
+/* ---------- Overhead compensation ----------
+ * Estimates forward-direction physical link occupancy from application bytes. */
+
 /** Path the transfer takes — picks which overheads physically apply. Driven by
  *  the UI "Connection profile" preset; loopback has no link layer, a tunnel adds
  *  outer encapsulation, etc. (see applyConnectionProfile in compensation.ts). */
@@ -99,8 +100,8 @@ export interface OverheadCompensationConfig {
 }
 
 /* ---------- Adaptive duration ---------- */
-/** Confidence-based early phase exit. `enabled: false` by default, preserving
- *  fixed-duration behavior. */
+/** Confidence-based early phase exit. `enabled: false` runs every phase for its
+ *  full configured duration. */
 export interface AdaptiveDurationConfig {
   enabled: boolean;
   minCoverageRatio: number; // require ≥ this fraction of nominal duration first
@@ -470,7 +471,7 @@ export type RunnerEvent =
 /** A live, dev-only perturbation fired into a *running* engine. Unlike the
  *  construction-time `DummyOptions.anomalies` (phase fractions), these fire
  *  relative to the current moment in the active phase — the Settings
- *  Developer panel triggers them via `wire.injectAnomaly`. */
+ *  Developer panel triggers them via `injectAnomaly` in engine.svelte.ts. */
 export type RunnerAnomaly =
   | { kind: "latency-spike"; magnitude?: number; durationMs?: number } // rtt ×magnitude
   | { kind: "packet-loss"; magnitude?: number; durationMs?: number } // loss probability

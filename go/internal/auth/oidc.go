@@ -256,14 +256,14 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := sha256.Sum256([]byte(state))
-	bh := sha256.Sum256([]byte(browser))
+	browserHash := sha256.Sum256([]byte(browser))
 	addr, ok := s.authClientAddress(r)
 	if !ok {
 		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
 	}
 	client := budgetKey(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: bh, expires: s.now().Add(10 * time.Minute), client: client, cliChallenge: r.FormValue("challenge")}
+	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(10 * time.Minute), client: client, cliChallenge: r.FormValue("challenge")}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
@@ -368,7 +368,7 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 		s.oidcLoginFailure(w, r, reasonTransactionCookie)
 		return oidcTransaction{}, "", false
 	}
-	bh := sha256.Sum256([]byte(cookie.Value))
+	browserHash := sha256.Sum256([]byte(cookie.Value))
 	key := sha256.Sum256([]byte(state))
 	o := s.oidc
 	o.mu.Lock()
@@ -383,7 +383,7 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 		values.Set("challenge", tx.cliChallenge)
 		r.URL.RawQuery = values.Encode()
 	}
-	if !ok || !s.now().Before(tx.expires) || tx.browser != bh || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
+	if !ok || !s.now().Before(tx.expires) || tx.browser != browserHash || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
 		s.counters.replayExpiry.Add(1)
 		s.oidcLoginFailure(w, r, reasonTransactionReplay)
 		return oidcTransaction{}, "", false
@@ -434,8 +434,8 @@ func (s *Service) exchangeAndVerifyToken(ctx context.Context, tx oidcTransaction
 // authorizeOIDCUser fetches UserInfo, confirms the subject matches, enforces the
 // group allowlist, and derives the display name. why is "" on success.
 func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, token *oauth2.Token, idToken *oidc.IDToken, idClaims oidcIDClaims) (string, reason) {
-	ui, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
-	if err != nil || ui.Subject != idToken.Subject {
+	userInfo, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+	if err != nil || userInfo.Subject != idToken.Subject {
 		return "", reasonUserInfoOrSubject
 	}
 	var claims struct {
@@ -443,7 +443,7 @@ func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, tok
 		Username string   `json:"preferred_username"`
 		Groups   []string `json:"groups"`
 	}
-	if err := ui.Claims(&claims); err != nil || !allowedGroup(claims.Groups, s.cfg.OIDCAllowedGroups) {
+	if err := userInfo.Claims(&claims); err != nil || !allowedGroup(claims.Groups, s.cfg.OIDCAllowedGroups) {
 		if err == nil {
 			s.counters.groupDenial.Add(1)
 		}

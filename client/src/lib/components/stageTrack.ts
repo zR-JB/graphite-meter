@@ -1,16 +1,11 @@
-// Pure stage-rail derivation split out of StageTrack.svelte so bun tests can
+// Pure stage-rail derivation, kept out of StageTrack.svelte so bun tests can
 // exercise it without the rune store. The component reads store.phase,
 // phaseFraction, phaseStage, and the toggle guards and passes them in; these
 // functions own the pending/warmup/active/done/failed decision only.
 import type { Phase, TransportRole } from "../runner/contract";
 import type { StageKey } from "../state/store.svelte";
 
-export const TRACK_ORDER = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const;
+const TRACK_ORDER = ["latency", "download", "upload", "bidirectional"] as const;
 
 export type SegState =
   "disabled" | "warmup" | "active" | "done" | "failed" | "pending";
@@ -28,27 +23,28 @@ export function progressFill(phaseFraction: number): number {
   return Math.round(phaseFraction * 200) / 2;
 }
 
-// curI is stageIndex(phaseStage); enabled/failed come from the store config.
+// currentIndex is stageIndex(phaseStage); enabled/failed come from the store
+// config.
 export function segmentState(
   phase: Phase,
   phaseFraction: number,
   stage: StageKey,
   enabled: boolean,
   failed: boolean,
-  curI: number,
+  currentIndex: number,
 ): Segment {
   if (!enabled) return { state: "disabled", fill: 0 };
   if (failed) return { state: "failed", fill: 0 };
   if (phase === "complete") return { state: "done", fill: 100 };
-  const stI = TRACK_ORDER.indexOf(stage);
+  const index = TRACK_ORDER.indexOf(stage);
   if (phase === "warmup") {
-    if (stI < curI) return { state: "done", fill: 100 };
-    if (stI === curI) return { state: "warmup", fill: 0 };
+    if (index < currentIndex) return { state: "done", fill: 100 };
+    if (index === currentIndex) return { state: "warmup", fill: 0 };
     return { state: "pending", fill: 0 };
   }
-  if (curI === -1) return { state: "pending", fill: 0 };
-  if (stI < curI) return { state: "done", fill: 100 };
-  if (stI === curI)
+  if (currentIndex === -1) return { state: "pending", fill: 0 };
+  if (index < currentIndex) return { state: "done", fill: 100 };
+  if (index === currentIndex)
     return { state: "active", fill: progressFill(phaseFraction) };
   return { state: "pending", fill: 0 };
 }
@@ -83,7 +79,7 @@ export function lockReason(
   if (canToggle) return null;
   if (state === "done") return "done";
   if (phase === stage) return "running";
-  const curI = stageIndex(phaseStage);
-  const stI = TRACK_ORDER.indexOf(stage);
-  return curI >= 0 && stI < curI ? "done" : "upcoming";
+  const currentIndex = stageIndex(phaseStage);
+  const index = TRACK_ORDER.indexOf(stage);
+  return currentIndex >= 0 && index < currentIndex ? "done" : "upcoming";
 }

@@ -21,7 +21,7 @@ const (
 )
 
 // ErrUnsupported is returned by Session methods that the concrete transport
-// does not provide (e.g. OpenDownloadSink on a plain preflight request).
+// does not provide (e.g. OpenDownloadSink on a message-bus session).
 var ErrUnsupported = errors.New("transport: operation not supported on this session")
 
 // MessageBus is the message-delimited channel used by api/wire.md.
@@ -47,6 +47,6 @@ type Session interface {
 	OpenUploadSource() (io.Reader, error)
 
 	// Bus yields the control-message channel, when the session has one
-	// (websocketSession only, today).
+	// (websocketSession only).
 	Bus() (MessageBus, bool)
 }

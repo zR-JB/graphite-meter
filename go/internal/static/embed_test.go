@@ -21,8 +21,6 @@ func testFS() fstest.MapFS {
 	}
 }
 
-// get is a small helper: GETs path against the static handler and returns the
-// status and body.
 func get(t *testing.T, srv *httptest.Server, path string) (int, string) {
 	t.Helper()
 	resp, err := http.Get(srv.URL + path)
@@ -139,7 +137,10 @@ func TestHandlerDeepPathTraversalFallsBackToIndex(t *testing.T) {
 		t.Fatalf("GET: %v", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (SPA fallback)", resp.StatusCode)
@@ -155,9 +156,10 @@ func TestHandlerSPAFallbackForTrailingSlashRouteDoesNotRedirectLoop(t *testing.T
 
 	// A trailing-slash client route (e.g. "/settings/") is extensionless and
 	// missing from the fixture, so it hits the same SPA-fallback branch as
-	// "/results" above. Regression check: this shape used to redirect to
-	// "./" forever, because "./" resolved against a path already ending in
-	// "/" is a fixed point. Disallow redirects so a regression fails loudly.
+	// "/results" above. It is the shape that redirect-loops if the fallback
+	// ever delegates to http.FileServer: FileServer's "./" redirect is a fixed
+	// point for a path already ending in "/". Disallow redirects so that fails
+	// loudly instead of hanging until the client's redirect cap trips.
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return fmt.Errorf("unexpected redirect to %s", req.URL)
@@ -168,7 +170,10 @@ func TestHandlerSPAFallbackForTrailingSlashRouteDoesNotRedirectLoop(t *testing.T
 		t.Fatalf("GET: %v", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (SPA fallback)", resp.StatusCode)

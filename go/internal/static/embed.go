@@ -49,46 +49,53 @@ func scriptCSPHash(html []byte) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
+// distRoot returns the embedded build rooted at dist/. fs.Sub only rejects a
+// malformed path, so a failure here means this path and the //go:embed
+// directive disagree — a build-time mistake, not a runtime condition.
+func distRoot() fs.FS {
+	sub, err := fs.Sub(distFS, "dist")
+	if err != nil {
+		panic(err)
+	}
+	return sub
+}
+
 // Handler serves the embedded client as an SPA: a missing path falls back to
 // index.html so client-side routing works. With only the placeholder
 // embedded (no real build), unknown paths 404 instead.
 func Handler() http.Handler {
-	sub, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		panic(err)
-	}
-	return handlerFor(sub)
+	return handlerFor(distRoot())
 }
 
-// AuthenticatedHandler serves the same build while marking only protected
-// index responses. Assets remain byte-identical and the public-mode handler is
-// unchanged.
+// AuthenticatedHandler serves the same build as Handler, injecting a marker
+// <meta> into index responses so the client can tell auth is enabled. Requests
+// for files pass through to the same routing, byte-identical.
 func AuthenticatedHandler() http.Handler {
-	sub, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		panic(err)
-	}
-	return handlerForAuthenticated(sub)
+	return handlerForAuthenticated(distRoot())
 }
 
-func handlerForAuthenticated(sub fs.FS) http.Handler {
-	base := handlerFor(sub)
+func handlerForAuthenticated(fsys fs.FS) http.Handler {
+	base := handlerFor(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if name != "" && name != "." && path.Ext(name) != "" {
 			base.ServeHTTP(w, r)
 			return
 		}
-		b, err := fs.ReadFile(sub, "index.html")
+		index, err := fs.ReadFile(fsys, "index.html")
 		if err != nil {
 			base.ServeHTTP(w, r)
 			return
 		}
 		marker := []byte(`<meta name="graphite-meter-auth" content="enabled">`)
-		b = bytes.Replace(b, []byte("</head>"), append(marker, []byte("</head>")...), 1)
+		index = bytes.Replace(index, []byte("</head>"), append(marker, []byte("</head>")...), 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// The marked index differs from the public one for the same URL, so it
+		// must not be cached and later replayed under the other mode.
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(b)
+		// The response is already committed; a write failure is the client
+		// hanging up and there is nothing left to report.
+		_, _ = w.Write(index)
 	})
 }
 

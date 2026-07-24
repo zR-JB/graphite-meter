@@ -39,32 +39,29 @@ test("segmentState: complete fills every enabled segment", () => {
 });
 
 test("segmentState: warmup marks earlier done, current warming, later pending", () => {
-  // curI = index of the download stage.
-  const curI = stageIndex("download");
-  expect(segmentState("warmup", 0, "latency", true, false, curI).state).toBe(
-    "done",
-  );
-  expect(segmentState("warmup", 0, "download", true, false, curI).state).toBe(
-    "warmup",
-  );
-  expect(segmentState("warmup", 0, "upload", true, false, curI).state).toBe(
-    "pending",
-  );
+  const currentIndex = stageIndex("download");
+  expect(
+    segmentState("warmup", 0, "latency", true, false, currentIndex).state,
+  ).toBe("done");
+  expect(
+    segmentState("warmup", 0, "download", true, false, currentIndex).state,
+  ).toBe("warmup");
+  expect(
+    segmentState("warmup", 0, "upload", true, false, currentIndex).state,
+  ).toBe("pending");
 });
 
 test("segmentState: running fills the active stage from the fraction", () => {
-  const curI = stageIndex("download");
-  expect(segmentState("download", 0.25, "latency", true, false, curI)).toEqual({
-    state: "done",
-    fill: 100,
-  });
-  expect(segmentState("download", 0.25, "download", true, false, curI)).toEqual(
-    { state: "active", fill: 25 },
-  );
-  expect(segmentState("download", 0.25, "upload", true, false, curI)).toEqual({
-    state: "pending",
-    fill: 0,
-  });
+  const currentIndex = stageIndex("download");
+  expect(
+    segmentState("download", 0.25, "latency", true, false, currentIndex),
+  ).toEqual({ state: "done", fill: 100 });
+  expect(
+    segmentState("download", 0.25, "download", true, false, currentIndex),
+  ).toEqual({ state: "active", fill: 25 });
+  expect(
+    segmentState("download", 0.25, "upload", true, false, currentIndex),
+  ).toEqual({ state: "pending", fill: 0 });
 });
 
 test("segmentState: no active stage yet leaves everything pending", () => {

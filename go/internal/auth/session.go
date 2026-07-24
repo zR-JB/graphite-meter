@@ -37,9 +37,9 @@ type session struct {
 
 func (s *Service) createSession(subject, name, provider string, expires time.Time) (string, *session, error) {
 	now := s.now()
-	max := now.Add(sessionLifetime)
-	if expires.IsZero() || expires.After(max) {
-		expires = max
+	latest := now.Add(sessionLifetime)
+	if expires.IsZero() || expires.After(latest) {
+		expires = latest
 	}
 	raw, err := randomToken(32)
 	if err != nil {
@@ -145,13 +145,11 @@ func (s *Service) sweep(ctx context.Context) {
 
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
-	if _, err := randomBytes(b); err != nil {
+	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
-
-var randomBytes = rand.Read
 
 func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})

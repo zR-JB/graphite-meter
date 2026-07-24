@@ -55,9 +55,9 @@
     key: StageKey;
     metric: MetricKey;
     anchorPct: number;
-    trackW: number;
+    trackWidth: number;
   } | null>(null);
-  let cardW = $state(0);
+  let cardWidth = $state(0);
 
   const hoverLane = $derived(
     hover ? (lanes.find((l) => l.key === hover!.key) ?? null) : null,
@@ -70,12 +70,12 @@
   const CARD_PAD = 6;
   const cardLeft = $derived.by(() => {
     if (!hover) return 0;
-    const anchorPx = (hover.anchorPct / 100) * hover.trackW;
+    const anchorPx = (hover.anchorPct / 100) * hover.trackWidth;
     const preferRight = hover.anchorPct <= 50;
     const desired = preferRight
       ? anchorPx + CARD_GAP
-      : anchorPx - cardW - CARD_GAP;
-    const maxLeft = Math.max(CARD_PAD, hover.trackW - cardW - CARD_PAD);
+      : anchorPx - cardWidth - CARD_GAP;
+    const maxLeft = Math.max(CARD_PAD, hover.trackWidth - cardWidth - CARD_PAD);
     return Math.min(Math.max(CARD_PAD, desired), maxLeft);
   });
 
@@ -103,7 +103,7 @@
       hover = null;
       return;
     }
-    hover = { key, metric, anchorPct: pos(value), trackW: rect.width };
+    hover = { key, metric, anchorPct: pos(value), trackWidth: rect.width };
   }
   function clearHover() {
     hover = null;
@@ -212,7 +212,7 @@
               ></span>
               <div
                 class="hover-card"
-                bind:clientWidth={cardW}
+                bind:clientWidth={cardWidth}
                 style="left:{cardLeft}px"
               >
                 <div class="hc-head">

@@ -18,9 +18,12 @@ import (
 	"time"
 )
 
+// AuthRequiredError reports a server that refuses the request until the
+// operator approves a grant at URL.
 type AuthRequiredError struct{ URL string }
 
 func (e *AuthRequiredError) Error() string { return "authentication required at " + e.URL }
+
 func authResponseError(res *http.Response) error {
 	if res == nil {
 		return nil
@@ -31,6 +34,10 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
+// ClassifyAuthFailure re-checks the server after a run failed, turning runErr
+// into an AuthRequiredError when the grant has since been revoked. A transfer
+// cut short by revocation surfaces only as a stream error, so the cause has to
+// be recovered from a fresh request.
 func ClassifyAuthFailure(ctx context.Context, cfg Config, runErr error) error {
 	if runErr == nil || ctx.Err() != nil || cfg.authToken() == "" {
 		return runErr
@@ -70,6 +77,9 @@ type PendingAuthorization struct {
 	close              func()
 }
 
+// BeginAuthorization starts a PKCE exchange against authURL and opens the
+// operator's browser at it. The grant only ever travels over verified HTTPS, so
+// an unparseable, plaintext or -insecure server URL is refused outright.
 func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
 	if cfg.InsecureSkipTLSVerify {
 		return nil, errors.New("authenticated operation refuses -insecure")
@@ -142,6 +152,8 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 			var out struct {
 				Token string `json:"token"`
 			}
+			// A body that fails to decode leaves Token empty, which the checks
+			// below already treat as "not approved yet".
 			_ = json.NewDecoder(res.Body).Decode(&out)
 			_ = res.Body.Close()
 			if res.StatusCode == http.StatusOK && out.Token != "" {
@@ -165,6 +177,8 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	}
 }
 
+// openBrowser is best-effort: the caller also surfaces BrowserURL and Code, so
+// a headless or misconfigured desktop costs the operator nothing.
 func openBrowser(target string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

@@ -18,7 +18,7 @@ import (
 //
 // Line shape (matches the client's "[gm:...]" tagging so both sides read alike):
 //
-//	[gm:server:download] 9.41 Gbit/s · 4 conns · 1.18 GB this window
+//	[gm:server:download] 9.41 Gbit/s · 4 conns · 1176.25 MB this window
 type Meter struct {
 	name  string
 	bytes atomic.Int64 // cumulative bytes moved, ever
@@ -35,13 +35,14 @@ func (m *Meter) Add(n int) {
 	}
 }
 
-// Open / Close bracket an in-flight request so the log shows live concurrency.
+// Open marks a request as in flight so the log shows live concurrency. nil-safe.
 func (m *Meter) Open() {
 	if m != nil {
 		m.conns.Add(1)
 	}
 }
 
+// Close marks an in-flight request as finished. nil-safe.
 func (m *Meter) Close() {
 	if m != nil {
 		m.conns.Add(-1)
@@ -58,7 +59,7 @@ func (m *Meter) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var last int64
-	lastT := time.Now()
+	lastTick := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -69,12 +70,12 @@ func (m *Meter) Run(ctx context.Context) {
 			last = total
 			conns := m.conns.Load()
 			if delta == 0 && conns == 0 {
-				lastT = now
+				lastTick = now
 				continue
 			}
-			dt := now.Sub(lastT).Seconds()
-			lastT = now
-			gbit := float64(delta) * 8 / dt / 1e9 // SI base-10, matching the client
+			window := now.Sub(lastTick).Seconds()
+			lastTick = now
+			gbit := float64(delta) * 8 / window / 1e9 // SI base-10, matching the client
 			log.Printf("[gm:%s] %.2f Gbit/s · %d conns · %.2f MB this window",
 				m.name, gbit, conns, float64(delta)/1e6)
 		}

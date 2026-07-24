@@ -111,10 +111,6 @@ export function buildSegments(config: RunnerConfig): Timeline {
   return { segments: segs, totalMs: cursor };
 }
 
-function durationFor(phase: StagePhase, config: RunnerConfig): number {
-  return config.duration[`${phase}Ms`];
-}
-
 /** Rebuild the unfinished timeline after a safe live config change. Past
  * segments keep their actual boundaries, the active segment adopts its new
  * duration from its original start, and future stages are rebuilt normally. */
@@ -132,7 +128,7 @@ export function reconfigureTimeline(
     const duration =
       active.phase === "warmup"
         ? config.duration.warmupMs
-        : durationFor(active.phase, config);
+        : config.duration[`${active.phase}Ms`];
     kept.push({
       ...active,
       end: Math.max(elapsed, active.start + duration),

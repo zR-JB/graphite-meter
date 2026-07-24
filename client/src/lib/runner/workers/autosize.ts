@@ -30,19 +30,21 @@ export function nextTransferBytes(
   prevBytes: number,
   elapsedMs: number,
   prevEwma: number,
-  c: SizerCfg,
+  cfg: SizerCfg,
 ): { bytes: number; ewma: number } {
   if (elapsedMs <= 0) return { bytes: prevBytes, ewma: prevEwma };
   const observed = (prevBytes / elapsedMs) * 1000; // bytes/sec
   const ewma =
-    prevEwma === 0 ? observed : c.alpha * observed + (1 - c.alpha) * prevEwma;
-  const want = (ewma * c.targetMs) / 1000;
+    prevEwma === 0
+      ? observed
+      : cfg.alpha * observed + (1 - cfg.alpha) * prevEwma;
+  const want = (ewma * cfg.targetMs) / 1000;
   const stepped = Math.min(
-    prevBytes * c.stepUp,
-    Math.max(prevBytes * c.stepDown, want),
+    prevBytes * cfg.stepUp,
+    Math.max(prevBytes * cfg.stepDown, want),
   );
   return {
-    bytes: Math.floor(Math.min(c.maxBytes, Math.max(c.minBytes, stepped))),
+    bytes: Math.floor(Math.min(cfg.maxBytes, Math.max(cfg.minBytes, stepped))),
     ewma,
   };
 }

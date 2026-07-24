@@ -55,7 +55,7 @@ export class PingScheduler {
   complete(): void {
     if (!this.#running) return;
     if (this.pacing.kind === "reply-driven") {
-      this.#sendAndArm();
+      this.#sendAndArm(this.pacing.backupDelayMs);
       return;
     }
     this.#trySend();
@@ -64,7 +64,7 @@ export class PingScheduler {
   #trySend(): void {
     if (!this.#running) return;
     if (this.pacing.kind === "reply-driven") {
-      this.#sendAndArm();
+      this.#sendAndArm(this.pacing.backupDelayMs);
       return;
     }
     const now = this.clock.now();
@@ -82,17 +82,13 @@ export class PingScheduler {
     }
   }
 
-  #sendAndArm(): void {
+  #sendAndArm(backupDelayMs: () => number): void {
     if (this.#timer !== null) this.clock.clearTimeout(this.#timer);
     this.#timer = null;
     const now = this.clock.now();
     if (!this.send(now)) return;
     this.#lastSendAt = now;
-    this.#arm(
-      this.pacing.kind === "reply-driven"
-        ? this.pacing.backupDelayMs()
-        : this.pacing.intervalMs,
-    );
+    this.#arm(backupDelayMs());
   }
 
   #arm(delayMs: number): void {

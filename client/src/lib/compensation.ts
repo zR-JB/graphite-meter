@@ -34,7 +34,7 @@ export interface CompensationEstimate {
   available: boolean;
 }
 
-const C = {
+const WIRE = {
   ethernetBytes: 38, // 14 MAC + 4 FCS + 8 preamble/SFD + 12 inter-frame gap
   vlanBytes: 4,
   ipv4Bytes: 20,
@@ -115,7 +115,7 @@ export function estimateLiveCompensation(
     return identity(bytesPerSec, transport, config.profile !== "loopback");
 
   const raw = config.params;
-  const p = {
+  const params = {
     ...raw,
     ipVersion:
       raw.ipVersion === "auto" ? (detectedIPVersion ?? 4) : raw.ipVersion,
@@ -126,30 +126,31 @@ export function estimateLiveCompensation(
     quicConnIdMinBytes: clamp(raw.quicConnIdMinBytes, 0, 20),
     quicConnIdMaxBytes: clamp(raw.quicConnIdMaxBytes, 0, 20),
   };
-  const ip = p.ipVersion === 6 ? C.ipv6Bytes : C.ipv4Bytes;
-  const ethernet = C.ethernetBytes + (p.vlanTagged ? C.vlanBytes : 0);
-  const tunnel = Math.max(0, p.encapsulationBytes);
+  const ip = params.ipVersion === 6 ? WIRE.ipv6Bytes : WIRE.ipv4Bytes;
+  const ethernet =
+    WIRE.ethernetBytes + (params.vlanTagged ? WIRE.vlanBytes : 0);
+  const tunnel = Math.max(0, params.encapsulationBytes);
   const factors: CompensationFactor[] = [];
 
   let application = 1;
   if (transport === "http2") {
-    application *= (C.http2Payload + C.http2Header) / C.http2Payload;
+    application *= (WIRE.http2Payload + WIRE.http2Header) / WIRE.http2Payload;
     factors.push(
       factor(
         "application-framing",
         "HTTP/2 DATA frames",
-        C.http2Header / C.http2Payload,
+        WIRE.http2Header / WIRE.http2Payload,
         "high",
         "9 B per 16 KiB DATA frame",
       ),
     );
   } else if (transport === "http3-quic") {
-    application *= (C.http3Payload + C.http3Frame) / C.http3Payload;
+    application *= (WIRE.http3Payload + WIRE.http3Frame) / WIRE.http3Payload;
     factors.push(
       factor(
         "application-framing",
         "HTTP/3 DATA frames",
-        C.http3Frame / C.http3Payload,
+        WIRE.http3Frame / WIRE.http3Payload,
         "medium",
         "variable-length frame header",
       ),
@@ -157,7 +158,7 @@ export function estimateLiveCompensation(
   }
 
   if (transport === "https-tls" || transport === "http2") {
-    const ratio = C.tlsRecordOverhead / C.tlsRecordPayload;
+    const ratio = WIRE.tlsRecordOverhead / WIRE.tlsRecordPayload;
     application *= 1 + ratio;
     factors.push(
       factor(
@@ -175,25 +176,34 @@ export function estimateLiveCompensation(
   let high: number;
   if (transport === "http3-quic") {
     const link = (cid: number, pn: number): number => {
-      const quic = 1 + cid + pn + C.quicAeadTag;
-      const payload = Math.max(1, p.mtuBytes - ip - C.udpBytes - quic);
-      return (p.mtuBytes + tunnel + ethernet) / payload;
+      const quic = 1 + cid + pn + WIRE.quicAeadTag;
+      const payload = Math.max(1, params.mtuBytes - ip - WIRE.udpBytes - quic);
+      return (params.mtuBytes + tunnel + ethernet) / payload;
     };
-    const minCid = Math.min(p.quicConnIdMinBytes, p.quicConnIdMaxBytes);
-    const maxCid = Math.max(p.quicConnIdMinBytes, p.quicConnIdMaxBytes);
+    const minCid = Math.min(
+      params.quicConnIdMinBytes,
+      params.quicConnIdMaxBytes,
+    );
+    const maxCid = Math.max(
+      params.quicConnIdMinBytes,
+      params.quicConnIdMaxBytes,
+    );
     low = link(minCid, 1);
-    central = link(clamp(8, minCid, maxCid), C.quicPacketNumberTypical);
+    central = link(clamp(8, minCid, maxCid), WIRE.quicPacketNumberTypical);
     high = link(maxCid, 4);
   } else {
     const link = (options: number): number => {
-      const payload = Math.max(1, p.mtuBytes - ip - C.tcpBytes - options);
-      return (p.mtuBytes + tunnel + ethernet) / payload;
+      const payload = Math.max(
+        1,
+        params.mtuBytes - ip - WIRE.tcpBytes - options,
+      );
+      return (params.mtuBytes + tunnel + ethernet) / payload;
     };
     const minOptions = Math.max(
       0,
-      Math.min(p.tcpOptionsMinBytes, p.tcpOptionsMaxBytes),
+      Math.min(params.tcpOptionsMinBytes, params.tcpOptionsMaxBytes),
     );
-    const maxOptions = Math.max(minOptions, p.tcpOptionsMaxBytes);
+    const maxOptions = Math.max(minOptions, params.tcpOptionsMaxBytes);
     low = link(minOptions);
     central = link(maxOptions);
     high = central;
@@ -208,7 +218,7 @@ export function estimateLiveCompensation(
         : "Ethernet / IP / TCP",
       networkRatio,
       "medium",
-      `${p.mtuBytes} B MTU; ${p.ipVersion === 6 ? "IPv6" : "IPv4"}`,
+      `${params.mtuBytes} B MTU; ${params.ipVersion === 6 ? "IPv6" : "IPv4"}`,
     ),
   );
   if (tunnel > 0)
@@ -216,7 +226,7 @@ export function estimateLiveCompensation(
       factor(
         "encapsulation",
         "Tunnel encapsulation",
-        tunnel / p.mtuBytes,
+        tunnel / params.mtuBytes,
         "medium",
         `${tunnel} B outer overhead per packet`,
       ),
@@ -235,10 +245,10 @@ export function estimateLiveCompensation(
     factors,
     transport,
     assumptions: [
-      `${p.ipVersion === 6 ? "IPv6" : "IPv4"}, ${p.mtuBytes} B MTU`,
+      `${params.ipVersion === 6 ? "IPv6" : "IPv4"}, ${params.mtuBytes} B MTU`,
       transport === "http3-quic"
-        ? `${Math.min(p.quicConnIdMinBytes, p.quicConnIdMaxBytes)}–${Math.max(p.quicConnIdMinBytes, p.quicConnIdMaxBytes)} B QUIC connection ID`
-        : `${Math.min(p.tcpOptionsMinBytes, p.tcpOptionsMaxBytes)}–${Math.max(p.tcpOptionsMinBytes, p.tcpOptionsMaxBytes)} B TCP options`,
+        ? `${Math.min(params.quicConnIdMinBytes, params.quicConnIdMaxBytes)}–${Math.max(params.quicConnIdMinBytes, params.quicConnIdMaxBytes)} B QUIC connection ID`
+        : `${Math.min(params.tcpOptionsMinBytes, params.tcpOptionsMaxBytes)}–${Math.max(params.tcpOptionsMinBytes, params.tcpOptionsMaxBytes)} B TCP options`,
       ...(tunnel ? [`${tunnel} B tunnel encapsulation`] : []),
     ],
     available: true,

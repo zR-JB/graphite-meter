@@ -18,7 +18,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
@@ -62,18 +61,18 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 	if _, err := rand.Read(block); err != nil {
 		return nil, err
 	}
-	var dlMeter, ulMeter *endpoint.Meter
+	var downloadMeter, uploadMeter *endpoint.Meter
 	if cfg.Verbose {
-		dlMeter, ulMeter = endpoint.NewMeter("server:download"), endpoint.NewMeter("server:upload")
-		go dlMeter.Run(ctx)
-		go ulMeter.Run(ctx)
+		downloadMeter, uploadMeter = endpoint.NewMeter("server:download"), endpoint.NewMeter("server:upload")
+		go downloadMeter.Run(ctx)
+		go uploadMeter.Run(ctx)
 	}
 	store := endpoint.NewUploadStore()
 	go store.RunSweeper(ctx)
 	h3Port := publicH3Port(cfg)
 	return &endpoints{
 		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
-		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store, cfg.TrustedProxies),
+		download: endpoint.NewDownload(block, downloadMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(uploadMeter, store, cfg.TrustedProxies),
 		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
 		admission:      newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration),
 		trustedProxies: cfg.TrustedProxies,
@@ -90,6 +89,7 @@ func publicH3Port(cfg *config.Config) string {
 			return "443"
 		}
 	}
+	// Without a public origin the advertised port is the one H3 binds.
 	_, port, _ := net.SplitHostPort(cfg.Native.H3)
 	return port
 }
@@ -179,6 +179,9 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 		if tc, ok := c.(*net.TCPConn); ok {
+			// Nagle would batch the small latency probes into the following
+			// write and inflate every sample. Best-effort: a connection that
+			// refuses the option still measures, just less precisely.
 			_ = tc.SetNoDelay(true)
 		}
 		return ctx
@@ -249,8 +252,11 @@ type listenerBuild struct {
 	opened      []io.Closer
 }
 
+// closeOpened releases every socket bound so far, so a failed bind does not
+// leave the earlier listeners holding their ports.
 func (b *listenerBuild) closeOpened() {
 	for _, c := range b.opened {
+		// Nothing to recover from: the process is already unwinding a bind failure.
 		_ = c.Close()
 	}
 }
@@ -293,12 +299,12 @@ func (b *listenerBuild) assemble(spa http.Handler) error {
 		return err
 	}
 	b.opened = append(b.opened, h1ln)
-	h1name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
+	h1Name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
 	if b.authn.Enabled() {
-		h1name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
+		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
 	b.services = append(b.services, service{
-		name: h1name, addr: b.cfg.Native.H1, network: "tcp",
+		name: h1Name, addr: b.cfg.Native.H1, network: "tcp",
 		run: func() error { return serve(admittedListener{Listener: h1ln, admission: b.connections}, h1) }, stop: h1.Shutdown,
 	})
 
@@ -338,7 +344,6 @@ func (b *listenerBuild) assembleH3() error {
 	if b.authn.Enabled() {
 		h3.MaxHeaderBytes = 32 << 10
 	}
-	// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
 	pc, err := net.ListenPacket("udp", b.cfg.Native.H3)
 	if err != nil {
 		b.closeOpened()
@@ -360,6 +365,9 @@ func (b *listenerBuild) assembleH3() error {
 			return err
 		}, stop: func(ctx context.Context) error {
 			err := h3.Shutdown(ctx)
+			// The graceful shutdown result is the one worth reporting; the
+			// listener and transport are closed unconditionally to free the
+			// UDP socket even when it failed.
 			_ = quicListener.Close()
 			_ = quicTransport.Close()
 			return err
@@ -374,7 +382,6 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 	defer cancel()
 	errs := make(chan error, len(services))
 	for _, svc := range services {
-		svc := svc
 		log.Printf("graphite-meter %s listening on %s/%s (%s)", cfg.EngineVersion, svc.addr, svc.network, svc.name)
 		go func() {
 			if err := svc.run(); err != nil {
@@ -414,6 +421,9 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 	}
 }
 
+// shutdown gives every listener the same bounded budget to drain. Failures are
+// discarded: the caller is already returning, and one listener refusing to stop
+// must not keep the others running.
 func shutdown(services []service) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

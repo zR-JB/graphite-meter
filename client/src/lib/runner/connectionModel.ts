@@ -63,6 +63,29 @@ export function connectionSelection(
     : config.transports.latencyTarget;
 }
 
+/** Whether the run will open a latency path at all: the idle latency stage, or
+ *  a transfer stage whose loaded pings are not suppressed. A latency selection
+ *  that is never opened must not invalidate a cached preparation. */
+function latencyPathNeeded(config: RunnerConfig): boolean {
+  return (
+    config.stages.latency ||
+    (!config.skipLoadedLatencyWhenStageOff &&
+      (config.stages.download ||
+        config.stages.upload ||
+        config.stages.bidirectional))
+  );
+}
+
+function selectTarget(
+  discovery: TransportDiscovery,
+  role: ConnectionRole,
+  selection: string,
+): FetchThroughputTarget | WebSocketLatencyTarget | null {
+  return role === "throughput"
+    ? selectThroughputTarget(discovery, selection)
+    : selectLatencyTarget(discovery, selection);
+}
+
 export function validationRoles(
   config: RunnerConfig,
   validation: ConnectionValidation,
@@ -98,12 +121,7 @@ export function connectionKey(
   return JSON.stringify({
     throughput: connectionRoleKey(config, "throughput", discovery),
     latency: connectionRoleKey(config, "latency", discovery),
-    needsLatency:
-      config.stages.latency ||
-      (!config.skipLoadedLatencyWhenStageOff &&
-        (config.stages.download ||
-          config.stages.upload ||
-          config.stages.bidirectional)),
+    needsLatency: latencyPathNeeded(config),
   });
 }
 
@@ -116,15 +134,7 @@ export function connectionDraftRoleKey(
   const selection = connectionSelection(config, role);
   return role === "throughput"
     ? selection
-    : JSON.stringify({
-        selection,
-        needed:
-          config.stages.latency ||
-          (!config.skipLoadedLatencyWhenStageOff &&
-            (config.stages.download ||
-              config.stages.upload ||
-              config.stages.bidirectional)),
-      });
+    : JSON.stringify({ selection, needed: latencyPathNeeded(config) });
 }
 
 export function connectionDraftKey(config: RunnerConfig): string {
@@ -140,23 +150,11 @@ export function connectionRoleKey(
   discovery?: TransportDiscovery | null,
 ): string {
   const selection = connectionSelection(config, role);
-  const target = discovery
-    ? role === "throughput"
-      ? selectThroughputTarget(discovery, selection)
-      : selectLatencyTarget(discovery, selection)
-    : null;
+  const target = discovery ? selectTarget(discovery, role, selection) : null;
   const identity = target ? JSON.stringify(target) : selection;
   return role === "throughput"
     ? identity
-    : JSON.stringify({
-        identity,
-        needed:
-          config.stages.latency ||
-          (!config.skipLoadedLatencyWhenStageOff &&
-            (config.stages.download ||
-              config.stages.upload ||
-              config.stages.bidirectional)),
-      });
+    : JSON.stringify({ identity, needed: latencyPathNeeded(config) });
 }
 
 function availability(
@@ -164,15 +162,13 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-  if (selection === "current" || selection === "auto")
-    return role === "throughput"
-      ? selectThroughputTarget(discovery, selection)
-        ? "advertised"
-        : "not-advertised"
-      : selectLatencyTarget(discovery, selection)
-        ? "advertised"
-        : "not-advertised";
-  return discovery[role][selection]?.state ?? "not-advertised";
+  // "current"/"auto" have no entry of their own — they resolve to whichever
+  // advertised target the selector picks.
+  if (selection !== "current" && selection !== "auto")
+    return discovery[role][selection]?.state ?? "not-advertised";
+  return selectTarget(discovery, role, selection)
+    ? "advertised"
+    : "not-advertised";
 }
 
 export function presentConnections(
@@ -182,15 +178,8 @@ export function presentConnections(
   infra: InfraInfo | null,
 ): Record<ConnectionRole, ConnectionPresentation> {
   const make = (role: ConnectionRole): ConnectionPresentation => {
-    const selection =
-      role === "throughput"
-        ? config.transports.throughputTarget
-        : config.transports.latencyTarget;
-    const target = discovery
-      ? role === "throughput"
-        ? selectThroughputTarget(discovery, selection)
-        : selectLatencyTarget(discovery, selection)
-      : null;
+    const selection = connectionSelection(config, role);
+    const target = discovery ? selectTarget(discovery, role, selection) : null;
     const status = validation[role];
     const evidenceMatches = status.identity
       ? status.identity === connectionRoleKey(config, role, discovery)

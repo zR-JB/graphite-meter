@@ -85,12 +85,16 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 		defer release()
 		ctx, cancel := context.WithTimeout(r.Context(), a.maxLifetime)
 		defer cancel()
-		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != "/ws/ping" {
+		// Socket deadlines bound a transfer that stops reading its context, but
+		// they would tear the ping WebSocket down mid-stream, so that route is
+		// bounded by the context alone. Deadlines are advisory here: a transport
+		// that does not support them (HTTP/3) is served without.
+		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != routePing {
 			controller := http.NewResponseController(w)
 			_ = controller.SetReadDeadline(deadline)
 			_ = controller.SetWriteDeadline(deadline)
-			defer controller.SetReadDeadline(time.Time{})
-			defer controller.SetWriteDeadline(time.Time{})
+			defer func() { _ = controller.SetReadDeadline(time.Time{}) }()
+			defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

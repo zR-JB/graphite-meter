@@ -1,9 +1,8 @@
 /* ============================================================
  * The Graphite Meter — Adaptive Duration helper
  * Runner-agnostic confidence math for confidence-based early
- * phase exit. Pure TypeScript, zero Svelte / DOM deps so a real
- * engine can reuse it verbatim. Every coefficient below is named
- * and explained rather than left as a magic number.
+ * phase exit. Pure TypeScript, zero Svelte / DOM deps so any
+ * engine can reuse it verbatim.
  * ============================================================ */
 
 import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
@@ -47,13 +46,13 @@ const MIN_SLOPE_SEGMENT = 2;
  *  pip band; below it reads "low". The "high" band starts at the early-exit
  *  gate (stabilityThreshold), so "green pip" and "ready to finish early"
  *  coincide — one signal, no second meaning to reconcile. */
-export const STABILITY_MED_BAND = 0.6;
+const STABILITY_MED_BAND = 0.6;
 
 /** Hysteresis margin below `stabilityThreshold` for *leaving* the stable state.
  *  A connection becomes "stable" only at the full threshold, but stays stable
  *  until it drops this far below it — so the pip and the stable window don't
  *  flicker on and off around the boundary. Confidence shouldn't toggle. */
-export const STABILITY_HYSTERESIS = 0.08;
+const STABILITY_HYSTERESIS = 0.08;
 
 /** Schmitt trigger for the "stable" state: enter at `stabilityThreshold`, leave
  *  only once the score falls below `stabilityThreshold − STABILITY_HYSTERESIS`.
@@ -76,13 +75,13 @@ export function bandForState(stable: boolean, score: number): StabilityBand {
   return "low";
 }
 
-/* ---------- Pure stats (mirrors measurement-style helpers) ---------- */
+/* ---------- Pure stats ---------- */
 
-export function clamp(value: number, min: number, max: number): number {
+function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export function mean(values: number[]): number {
+function mean(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }

@@ -106,11 +106,10 @@ func (s *Service) authClientAddress(r *http.Request) (netip.Addr, bool) {
 }
 
 // validRequestOrigin enforces the origin, Sec-Fetch-Site, and double-submit
-// CSRF policy for an authenticated request.
-// validRequestOrigin enforces the cross-origin rules on an authenticated
-// request as a sequence of independent, named checks. A bearer principal is
-// exempt from everything past the Origin header (it has no ambient cookie to
-// abuse); a cookie principal must clear every rule.
+// CSRF rules on an authenticated request as a sequence of independent, named
+// checks. A bearer principal is exempt from everything past the Origin header
+// (it has no ambient cookie to abuse); a cookie principal must clear every
+// rule.
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 	if !s.originHeaderAllowed(r) {
 		return false

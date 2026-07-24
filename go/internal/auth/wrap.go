@@ -212,6 +212,8 @@ func forbidden(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusForbidden)
 }
 
+// PrincipalFromContext returns the principal Enforce bound to ctx. It reports
+// false on a request that never passed the boundary.
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok

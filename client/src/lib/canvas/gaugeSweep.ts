@@ -37,15 +37,13 @@ export function sweepTarget(s: SweepTargetInput): number {
   switch (s.phase) {
     case "download":
     case "upload":
-    case "bidirectional": {
+    case "bidirectional":
       return throughput();
-    }
     case "connecting":
     case "warmup":
       return 0.3; // indeterminate — connection probe, no meaningful rate yet
-    case "latency": {
+    case "latency":
       return latency();
-    }
     case "idle":
       return 0.1;
     case "complete":

@@ -24,6 +24,8 @@ const (
 	argonKeyLen         = 32
 )
 
+// HashPassword encodes password as an Argon2id PHC string using the parameters
+// this package will accept back, so a hash it mints always verifies here.
 func HashPassword(password string) (string, error) {
 	if err := validatePassword(password); err != nil {
 		return "", err
@@ -40,11 +42,11 @@ func HashPassword(password string) (string, error) {
 func parsePasswordHash(encoded string) ([]byte, []byte, error) {
 	parts := strings.Split(strings.TrimSpace(encoded), "$")
 	if len(parts) != 6 || parts[1] != "argon2id" || parts[2] != "v=19" {
-		return nil, nil, fmt.Errorf("password hash must be an Argon2id v=19 PHC string")
+		return nil, nil, errors.New("password hash must be an Argon2id v=19 PHC string")
 	}
 	params := strings.Split(parts[3], ",")
 	if len(params) != 3 {
-		return nil, nil, fmt.Errorf("password hash has invalid Argon2 parameters")
+		return nil, nil, errors.New("password hash has invalid Argon2 parameters")
 	}
 	want := []struct {
 		prefix string
@@ -52,7 +54,7 @@ func parsePasswordHash(encoded string) ([]byte, []byte, error) {
 	}{{"m=", uint64(argonMemory)}, {"t=", uint64(argonTime)}, {"p=", uint64(argonThreads)}}
 	for i, item := range want {
 		if !strings.HasPrefix(params[i], item.prefix) {
-			return nil, nil, fmt.Errorf("password hash has invalid Argon2 parameters")
+			return nil, nil, errors.New("password hash has invalid Argon2 parameters")
 		}
 		n, err := strconv.ParseUint(strings.TrimPrefix(params[i], item.prefix), 10, 32)
 		if err != nil || n != item.value {
@@ -82,7 +84,7 @@ func verifyPassword(encoded, password string) bool {
 
 func validatePassword(password string) error {
 	if len(password) == 0 || len(password) > 1024 {
-		return fmt.Errorf("password must contain 1 to 1024 bytes")
+		return errors.New("password must contain 1 to 1024 bytes")
 	}
 	if strings.ContainsAny(password, "\r\n") {
 		return errors.New("password must not contain line breaks")

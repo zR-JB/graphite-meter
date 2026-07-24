@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -75,7 +76,7 @@ func hashPassword(stdin *os.File, out, prompts io.Writer) error {
 		return err
 	}
 	if first != second {
-		return fmt.Errorf("passwords do not match")
+		return errors.New("passwords do not match")
 	}
 	encoded, err := auth.HashPassword(first)
 	if err != nil {
@@ -98,11 +99,12 @@ func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
 	fs.StringVar(&cfg.NativePublic.H3, "h3-public-origin", cfg.NativePublic.H3, "public origin of the native HTTP/3 listener")
 	fs.Func("advertised-native-endpoints", "all, none, or comma-separated native endpoint names", func(value string) error {
 		set, err := config.ParseAdvertisedNative(value)
-		if err == nil {
-			cfg.AdvertisedNative = set
-			cfg.AdvertiseAllNative = strings.TrimSpace(value) == "all"
+		if err != nil {
+			return err
 		}
-		return err
+		cfg.AdvertisedNative = set
+		cfg.AdvertiseAllNative = strings.TrimSpace(value) == "all"
+		return nil
 	})
 	fs.Func("public-origins", "comma-separated negotiated origins providing throughput and latency", func(value string) error { cfg.Public.Both = splitFlagList(value); return nil })
 	fs.Func("public-throughput-origins", "comma-separated negotiated throughput origins", func(value string) error { cfg.Public.Throughput = splitFlagList(value); return nil })

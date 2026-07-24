@@ -1,6 +1,7 @@
 import type { Phase, ThroughputSample } from "../runner/contract";
 
-// Pure helpers split out of the rune-based store so bun tests can import them.
+// Pure helpers, kept outside the rune-based store so bun tests can import them
+// without the Svelte runtime.
 export function canDisableBidirectional(
   phase: Phase,
   isRunning: boolean,
@@ -30,13 +31,13 @@ export function latestBidirectionalLanes(
   let seenDown = false;
   let seenUp = false;
   for (let i = throughput.length - 1; i >= 0; i--) {
-    const s = throughput[i];
-    if (s.phase !== "bidirectional") break;
-    if (s.dir === "down" && !seenDown) {
-      down = s.bytesPerSec;
+    const sample = throughput[i];
+    if (sample.phase !== "bidirectional") break;
+    if (sample.dir === "down" && !seenDown) {
+      down = sample.bytesPerSec;
       seenDown = true;
-    } else if (s.dir === "up" && !seenUp) {
-      up = s.bytesPerSec;
+    } else if (sample.dir === "up" && !seenUp) {
+      up = sample.bytesPerSec;
       seenUp = true;
     }
     if (seenDown && seenUp) break;

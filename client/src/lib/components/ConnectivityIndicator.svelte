@@ -7,49 +7,56 @@
     type PresentationHandle,
   } from "../canvas/presentation";
 
+  // CSS size of the sparkline; mirrors the canvas width/height attributes and
+  // the .spark rule so the backing store can be scaled by the device ratio.
+  const CSS_WIDTH = 36;
+  const CSS_HEIGHT = 16;
+  const FALLBACK_COLOR = "#888";
+
   let canvasEl = $state<HTMLCanvasElement>();
   let canvasPresentation: PresentationHandle;
 
   const spark = $derived(store.pulseLatency.slice(-16).map((s) => s.rttMs));
 
-  let sparkColor = "#888";
+  let sparkColor = FALLBACK_COLOR;
   function resolveColor() {
     sparkColor =
       getComputedStyle(document.documentElement)
         .getPropertyValue("--text-soft")
-        .trim() || "#888";
+        .trim() || FALLBACK_COLOR;
   }
 
+  // Returns whether the scheduler should keep animating: the sparkline is a
+  // one-shot repaint, so it always parks after drawing and is re-armed by
+  // invalidate().
   function draw(): boolean {
-    const c = canvasEl;
-    if (!c) return false;
-    const ctx = c.getContext("2d");
+    const canvas = canvasEl;
+    if (!canvas) return false;
+    const ctx = canvas.getContext("2d");
     if (!ctx) return false;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = 36;
-    const h = 16;
-    const width = Math.round(w * dpr);
-    const height = Math.round(h * dpr);
-    if (c.width !== width || c.height !== height) {
-      c.width = width;
-      c.height = height;
+    const deviceWidth = Math.round(CSS_WIDTH * dpr);
+    const deviceHeight = Math.round(CSS_HEIGHT * dpr);
+    if (canvas.width !== deviceWidth || canvas.height !== deviceHeight) {
+      canvas.width = deviceWidth;
+      canvas.height = deviceHeight;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
+    ctx.clearRect(0, 0, CSS_WIDTH, CSS_HEIGHT);
 
-    const vals = spark;
-    if (vals.length < 2) return false;
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
+    const samples = spark;
+    if (samples.length < 2) return false;
+    const min = Math.min(...samples);
+    const max = Math.max(...samples);
     const range = max - min || 1;
     ctx.strokeStyle = sparkColor;
     ctx.lineWidth = 1;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
-    vals.forEach((v, i) => {
-      const x = (i / (vals.length - 1)) * (w - 2) + 1;
-      const y = h - 1 - ((v - min) / range) * (h - 2);
+    samples.forEach((rttMs, i) => {
+      const x = (i / (samples.length - 1)) * (CSS_WIDTH - 2) + 1;
+      const y = CSS_HEIGHT - 1 - ((rttMs - min) / range) * (CSS_HEIGHT - 2);
       if (i) ctx.lineTo(x, y);
       else ctx.moveTo(x, y);
     });
@@ -58,24 +65,24 @@
   }
 
   $effect(() => {
-    spark;
+    void spark;
     canvasPresentation?.invalidate();
   });
 
   onMount(() => {
     resolveColor();
     canvasPresentation = presentation.register(canvasEl!, draw);
-    const mo = new MutationObserver(() => {
+    const themeObserver = new MutationObserver(() => {
       resolveColor();
       canvasPresentation.invalidate();
     });
-    mo.observe(document.documentElement, {
+    themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
     return () => {
       canvasPresentation.destroy();
-      mo.disconnect();
+      themeObserver.disconnect();
     };
   });
 </script>

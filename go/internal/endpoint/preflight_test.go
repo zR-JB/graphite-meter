@@ -13,11 +13,11 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	cfg.NativePublic = config.NativeOrigins{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
 	if len(pf.Capabilities.ThroughputTargets) != 4 || len(pf.Capabilities.LatencyTargets) != 2 {
-		t.Fatalf("capabilities = %+v", pf.Capabilities)
+		t.Fatalf("capabilities = %+v, want 4 throughput and 2 latency targets", pf.Capabilities)
 	}
 	for i, want := range []string{"http1", "http1", "http2", "http3"} {
 		if got := pf.Capabilities.ThroughputTargets[i].Protocol; got != want {
-			t.Fatalf("protocol[%d] = %q", i, got)
+			t.Fatalf("protocol[%d] = %q, want %q", i, got, want)
 		}
 	}
 }
@@ -31,10 +31,10 @@ func TestPreflightProxyOnlyAndRoles(t *testing.T) {
 	cfg.Public.Latency = []string{"https://ping.example"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
 	if got := pf.Capabilities.ThroughputTargets[0]; got.Origin != "." || got.Protocol != "negotiated" {
-		t.Fatalf("self throughput = %+v", got)
+		t.Fatalf("self throughput = %+v, want origin \".\" and protocol \"negotiated\"", got)
 	}
 	if len(pf.Capabilities.ThroughputTargets) != 3 || len(pf.Capabilities.LatencyTargets) != 3 {
-		t.Fatalf("capabilities = %+v", pf.Capabilities)
+		t.Fatalf("capabilities = %+v, want 3 throughput and 3 latency targets", pf.Capabilities)
 	}
 }
 
@@ -47,7 +47,7 @@ func TestPreflightMergesDuplicatePublicRoles(t *testing.T) {
 	cfg.Public.Latency = []string{"self"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
 	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
-		t.Fatalf("capabilities = %+v", pf.Capabilities)
+		t.Fatalf("capabilities = %+v, want 1 throughput and 1 latency target", pf.Capabilities)
 	}
 }
 
@@ -60,7 +60,7 @@ func TestPreflightMergesEquivalentDefaultPortOrigins(t *testing.T) {
 	cfg.Public.Latency = []string{"https://meter.example:443"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
 	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
-		t.Fatalf("capabilities = %+v", pf.Capabilities)
+		t.Fatalf("capabilities = %+v, want 1 throughput and 1 latency target", pf.Capabilities)
 	}
 }
 

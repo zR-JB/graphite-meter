@@ -31,7 +31,7 @@ export function pingWorker(): Worker {
 }
 
 /** Ask a worker to close its transport, then terminate it. */
-export function stopWorker(w: Worker): void {
-  w.postMessage({ type: "stop" });
-  w.terminate();
+export function stopWorker(worker: Worker): void {
+  worker.postMessage({ type: "stop" });
+  worker.terminate();
 }

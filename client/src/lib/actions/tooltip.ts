@@ -15,13 +15,14 @@ type TooltipParam = string | TooltipOptions;
 let uid = 0;
 const STYLE_ID = "gm-tooltip-styles";
 const HOVER_DELAY_MS = 350;
+const TOUCH_DISMISS_MS = 4000;
 
 function ensureStyles() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID)) return;
-  const el = document.createElement("style");
-  el.id = STYLE_ID;
-  el.textContent = `
+  const style = document.createElement("style");
+  style.id = STYLE_ID;
+  style.textContent = `
     .gm-tooltip {
       position: fixed;
       z-index: 200;
@@ -64,7 +65,7 @@ function ensureStyles() {
       color: var(--brand-strong);
     }
   `;
-  document.head.appendChild(el);
+  document.head.appendChild(style);
 }
 
 function normalize(param: TooltipParam): TooltipOptions {
@@ -77,29 +78,34 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
   let prevDescribedBy: string | null = null;
+  let touchOpen = false;
+  let autoDismissTimer = 0;
+  let hoverTimer = 0;
 
   // Non-interactive jargon terms still need keyboard focus for aria-describedby.
   if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
     node.tabIndex = 0;
   }
 
+  // Centred on the anchor, flipped to the opposite side when the requested one
+  // would run off the viewport, then clamped inside the margin either way.
   function place() {
     if (!bubble) return;
-    const r = node.getBoundingClientRect();
-    const b = bubble.getBoundingClientRect();
+    const anchor = node.getBoundingClientRect();
+    const bubbleBox = bubble.getBoundingClientRect();
     const margin = 8;
-    const cx = r.left + r.width / 2;
+    const anchorCenterX = anchor.left + anchor.width / 2;
     let top =
       opts.placement === "bottom"
-        ? r.bottom + margin
-        : r.top - b.height - margin;
-    if (top < margin) top = r.bottom + margin;
-    if (top + b.height > window.innerHeight - margin)
-      top = r.top - b.height - margin;
-    let left = cx - b.width / 2;
+        ? anchor.bottom + margin
+        : anchor.top - bubbleBox.height - margin;
+    if (top < margin) top = anchor.bottom + margin;
+    if (top + bubbleBox.height > window.innerHeight - margin)
+      top = anchor.top - bubbleBox.height - margin;
+    let left = anchorCenterX - bubbleBox.width / 2;
     left = Math.max(
       margin,
-      Math.min(left, window.innerWidth - b.width - margin),
+      Math.min(left, window.innerWidth - bubbleBox.width - margin),
     );
     bubble.style.top = `${Math.max(margin, top)}px`;
     bubble.style.left = `${left}px`;
@@ -124,13 +130,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
     window.addEventListener("blur", hide);
     document.addEventListener("visibilitychange", onVisibilityDismiss);
+    // Capture phase: scroll does not bubble, and the bubble is positioned fixed,
+    // so it would drift away from its anchor inside any scrolling container.
     document.addEventListener("scroll", hide, true);
     document.addEventListener("pointerdown", onDocumentPointerDown, true);
   }
-
-  let touchOpen = false;
-  let autoDismissTimer = 0;
-  let hoverTimer = 0;
 
   function clearHoverTimer() {
     if (hoverTimer) {
@@ -139,8 +143,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     }
   }
 
-  function onDocumentPointerDown(e: PointerEvent) {
-    const target = e.target as Node | null;
+  function onDocumentPointerDown(event: PointerEvent) {
+    const target = event.target as Node | null;
     if (target && (node.contains(target) || bubble?.contains(target))) return;
     hide();
   }
@@ -167,14 +171,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     document.removeEventListener("pointerdown", onDocumentPointerDown, true);
   }
 
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && bubble) {
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && bubble) {
       hide();
     }
   }
 
-  function onPointerEnter(e: PointerEvent) {
-    if (e.pointerType !== "mouse") return;
+  function onPointerEnter(event: PointerEvent) {
+    if (event.pointerType !== "mouse") return;
     if (opts.instant) {
       show();
       return;
@@ -185,11 +189,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       show();
     }, HOVER_DELAY_MS);
   }
-  function onPointerLeave(e: PointerEvent) {
-    if (e.pointerType !== "mouse") return;
+  function onPointerLeave(event: PointerEvent) {
+    if (event.pointerType !== "mouse") return;
     clearHoverTimer();
     hide();
   }
+  // Keyboard focus asks for the tip; focus landing from a click does not.
   function onFocus() {
     if (!node.matches(":focus-visible")) return;
     show();
@@ -198,8 +203,10 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     hide();
   }
 
-  function onPointerUp(e: PointerEvent) {
-    if (e.pointerType !== "touch") return;
+  // A tap on a control has to run the control, so only inert jargon shows a tip
+  // on touch; without hover there is nothing to close it but the timer.
+  function onPointerUp(event: PointerEvent) {
+    if (event.pointerType !== "touch") return;
     if (touchOpen) {
       hide();
       return;
@@ -208,11 +215,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     show();
     if (!bubble) return;
     touchOpen = true;
-    autoDismissTimer = window.setTimeout(hide, 4000);
+    autoDismissTimer = window.setTimeout(hide, TOUCH_DISMISS_MS);
   }
 
-  function onPointerDown(e: PointerEvent) {
-    if (e.pointerType !== "touch") hide();
+  function onPointerDown(event: PointerEvent) {
+    if (event.pointerType !== "touch") hide();
   }
 
   function onClick() {

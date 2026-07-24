@@ -6,11 +6,17 @@ import type { ProtocolTarget, TransportDiscovery } from "../contract";
 import { httpProtocolLabel } from "../protocol";
 
 export interface TargetPresentation {
+  /** Compact chip text. */
   label: string;
+  /** Connection-row text naming the mechanism as well as the protocol. */
   summary: string;
+  /** Settings-option text, naming the origin the entry resolves to. */
   advertisedDetail: string;
 }
 
+/** Name a target for the UI. A WebSocket claims HTTP/1.1 only when the
+ *  throughput target sharing its origin names that protocol; anywhere else the
+ *  version the ping socket rides is not known here. */
 export function describeTarget(
   discovery: TransportDiscovery,
   target: FetchThroughputTarget | WebSocketLatencyTarget,

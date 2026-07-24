@@ -64,7 +64,7 @@ func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	}
 	stats := a.stats()
 	if stats.active != 2 || stats.peak != 2 || stats.rejectedGlobal != 1 || stats.rejectedClient != 1 {
-		t.Fatalf("stats = %+v", stats)
+		t.Fatalf("stats = %+v, want 2 active, 2 peak, 1 global and 1 client rejection", stats)
 	}
 	releaseA()
 	releaseA()
@@ -84,7 +84,7 @@ func TestSocketKeyIPv6AndTrustedProxy(t *testing.T) {
 	}
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	if got := socketKey(testAddr("10.0.0.2:443"), trusted); got != "" {
-		t.Fatalf("trusted proxy key = %q", got)
+		t.Fatalf("trusted proxy key = %q, want the empty exemption key", got)
 	}
 }
 
@@ -167,6 +167,6 @@ func TestAdmittedConnReleasesOnce(t *testing.T) {
 	_ = conn.Close()
 	_ = conn.Close()
 	if called != 1 {
-		t.Fatalf("release called %d times", called)
+		t.Fatalf("release called %d times, want 1", called)
 	}
 }

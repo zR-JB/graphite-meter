@@ -1,9 +1,8 @@
-/* ============================================================
- * RealBackend pure helpers — origin/URL mapping, small math, and stage-
- * activity queries with no fetch/worker/websocket entanglement. Split out
- * of RealRunner.ts so they're unit-testable without pulling in its build-time
- * BUILD defines.
- * ============================================================ */
+/**
+ * RealRunner's pure helpers — origin/URL mapping, small math, and stage-activity
+ * queries with no fetch/worker/websocket entanglement. They live apart from
+ * RealRunner.ts so they are unit-testable without its build-time BUILD defines.
+ */
 
 import type {
   PhaseActivity,
@@ -57,7 +56,11 @@ export function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-function usableFromPage(origin: string, tls: boolean, pageSecure: boolean) {
+function usableFromPage(
+  origin: string,
+  tls: boolean,
+  pageSecure: boolean,
+): boolean {
   if (!pageSecure || tls) return true;
   try {
     return isLoopbackHostname(new URL(origin).hostname);
@@ -111,6 +114,8 @@ export function classifyTransportDiscovery(
   });
   const throughput: TransportDiscovery["throughput"] = {};
   for (const target of throughputTargets) {
+    // One entry per origin, and a target that names its protocol outranks a
+    // negotiated one — the named protocol is what selection can act on.
     const current = throughput[target.origin]?.target;
     if (current && current.protocol !== "negotiated") continue;
     throughput[target.origin] = {
@@ -212,8 +217,8 @@ export function httpToWs(origin: string): string {
 }
 
 /** Median of a non-empty number list (used for the pre-test ping). */
-export function median(xs: number[]): number {
-  const sorted = [...xs].sort((a, b) => a - b);
+export function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }

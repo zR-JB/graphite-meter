@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -40,7 +41,7 @@ func (m *certificateManager) reload(now time.Time) error {
 		return fmt.Errorf("load matching TLS certificate/key: %w", err)
 	}
 	if len(cert.Certificate) == 0 {
-		return fmt.Errorf("TLS certificate chain is empty")
+		return errors.New("TLS certificate chain is empty")
 	}
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
@@ -59,6 +60,7 @@ func (m *certificateManager) reload(now time.Time) error {
 		if !public.enabled || public.origin == "" {
 			continue
 		}
+		// Config validation has already rejected an unparseable public origin.
 		u, _ := url.Parse(public.origin)
 		if err := leaf.VerifyHostname(u.Hostname()); err != nil {
 			return fmt.Errorf("TLS certificate incompatible with %s: %w", u.Hostname(), err)
@@ -87,13 +89,13 @@ func (m *certificateManager) tlsConfig(nextProtos ...string) *tls.Config {
 }
 
 func (m *certificateManager) run(ctx context.Context) {
-	t := time.NewTicker(certPollInterval)
-	defer t.Stop()
+	ticker := time.NewTicker(certPollInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-t.C:
+		case now := <-ticker.C:
 			if err := m.reload(now); err != nil {
 				log.Printf("[gm:tls] renewal rejected; keeping last valid certificate: %v", err)
 			}

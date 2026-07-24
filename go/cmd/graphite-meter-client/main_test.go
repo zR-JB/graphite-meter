@@ -211,12 +211,12 @@ func TestTimingLabel(t *testing.T) {
 	}
 }
 
-func TestTargetChoiceLabel(t *testing.T) {
-	if got := targetChoiceLabel("ws-http1-tls"); got != "WebSocket · HTTP/1.1 · TLS" {
-		t.Fatalf("targetChoiceLabel() = %q", got)
+func TestTargetChoiceLabelFallsBackToTheRawTarget(t *testing.T) {
+	if got, want := targetChoiceLabel("ws-http1-tls"), "WebSocket · HTTP/1.1 · TLS"; got != want {
+		t.Fatalf("targetChoiceLabel(%q) = %q, want %q", "ws-http1-tls", got, want)
 	}
-	if got := targetChoiceLabel("custom-target"); got != "custom-target" {
-		t.Fatalf("custom target label = %q", got)
+	if got, want := targetChoiceLabel("custom-target"), "custom-target"; got != want {
+		t.Fatalf("targetChoiceLabel(%q) = %q, want %q", "custom-target", got, want)
 	}
 }
 
@@ -562,7 +562,7 @@ func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 		m := newModel(goclient.DefaultConfig())
 		m.cancel = func() { called = true }
 
-		next, cmd := m.handleKey(key)
+		_, cmd := m.handleKey(key)
 		if !called {
 			t.Errorf("key %q did not invoke cancel", key.String())
 		}
@@ -572,7 +572,6 @@ func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 		if _, ok := cmd().(tea.QuitMsg); !ok {
 			t.Errorf("key %q cmd() did not produce tea.QuitMsg", key.String())
 		}
-		_ = next
 	}
 }
 
@@ -1692,6 +1691,8 @@ func BenchmarkUpdateEventBatch(b *testing.B) {
 	}
 }
 
+// benchmarkView is a package-level sink, so the compiler cannot drop the View
+// call whose cost the benchmarks measure.
 var benchmarkView string
 
 func BenchmarkViewConfigure(b *testing.B) {
@@ -2304,10 +2305,7 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
 	choices := []string{"auto", "https://meter.example:7248"}
 	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices, ""), "")
-	for _, want := range []string{"Automatic", "‹2/2›", "enter cycles"} {
-		if want == "Automatic" {
-			continue
-		}
+	for _, want := range []string{"‹2/2›", "enter cycles"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("endpoint row = %q, want %q", got, want)
 		}

@@ -1,6 +1,10 @@
 <script lang="ts">
   import { store, DURATION_PRESETS } from "../../state/store.svelte";
-  import type { RunnerConfig } from "../../runner/contract";
+  import type { ProtocolTarget, RunnerConfig } from "../../runner/contract";
+  import type {
+    FetchThroughputTarget,
+    WebSocketLatencyTarget,
+  } from "../../api/endpoints";
   import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
   import { JARGON, tooltip } from "../../actions/tooltip";
@@ -13,23 +17,30 @@
   }
   let { running = false }: Props = $props();
 
+  function targetOption(
+    target: FetchThroughputTarget | WebSocketLatencyTarget,
+    observedProtocol?: ProtocolTarget,
+  ) {
+    return {
+      value: target.origin,
+      label: describeTarget(store.transportDiscovery!, target, observedProtocol)
+        .label,
+    };
+  }
   const throughputTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
       (entry) =>
         entry.target
           ? [
-              {
-                value: entry.target.origin,
-                label: describeTarget(
-                  store.transportDiscovery!,
-                  entry.target,
-                  store.connections.throughput.target?.origin ===
-                    entry.target.origin
-                    ? store.connections.throughput.observedProtocol
-                    : undefined,
-                ).label,
-              },
+              // The observed protocol only describes the path actually in use.
+              targetOption(
+                entry.target,
+                store.connections.throughput.target?.origin ===
+                  entry.target.origin
+                  ? store.connections.throughput.observedProtocol
+                  : undefined,
+              ),
             ]
           : [],
     ),
@@ -37,28 +48,12 @@
   const latencyTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
-      (entry) =>
-        entry.target
-          ? [
-              {
-                value: entry.target.origin,
-                label: describeTarget(store.transportDiscovery!, entry.target)
-                  .label,
-              },
-            ]
-          : [],
+      (entry) => (entry.target ? [targetOption(entry.target)] : []),
     ),
   ]);
 
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
-  const DURATION_KEYS = [
-    "warmupMs",
-    "latencyMs",
-    "downloadMs",
-    "uploadMs",
-    "bidirectionalMs",
-  ] as const;
   const DURATION_FIELDS = [
     ["warmupMs", "Warmup"],
     ["latencyMs", "Latency"],
@@ -66,11 +61,12 @@
     ["uploadMs", "Upload"],
     ["bidirectionalMs", "Bidirectional"],
   ] as const;
+  type DurationKey = (typeof DURATION_FIELDS)[number][0];
   function sameDuration(
     a: RunnerConfig["duration"],
     b: RunnerConfig["duration"],
   ) {
-    return DURATION_KEYS.every((key) => a[key] === b[key]);
+    return DURATION_FIELDS.every(([key]) => a[key] === b[key]);
   }
   function presetFromDuration(): Preset {
     for (const key of ["short", "medium", "long"] as const)
@@ -86,7 +82,7 @@
       applyLiveRunConfig();
     }
   }
-  function setDuration(key: (typeof DURATION_KEYS)[number], event: Event) {
+  function setDuration(key: DurationKey, event: Event) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     if (!Number.isFinite(value) || value < 0) return;
     store.config.duration[key] = value;
@@ -109,13 +105,15 @@
     store.config.adaptive[key] = value;
     applyLiveRunConfig();
   }
+  const activeDurationFields = $derived(
+    store.config.stages.bidirectional
+      ? DURATION_FIELDS
+      : DURATION_FIELDS.filter(([key]) => key !== "bidirectionalMs"),
+  );
   const presetCells = $derived.by(() => {
     const preset = durationMode;
     if (preset === "custom") return [];
-    const fields = store.config.stages.bidirectional
-      ? DURATION_FIELDS
-      : DURATION_FIELDS.filter(([key]) => key !== "bidirectionalMs");
-    return fields.map(([key, label]) => ({
+    return activeDurationFields.map(([key, label]) => ({
       label,
       value: `${+(DURATION_PRESETS[preset][key] / 1000).toFixed(1)}s`,
     }));
@@ -202,7 +200,7 @@
     />
     {#if durationMode === "custom"}
       <div class="duration-fields">
-        {#each DURATION_FIELDS.filter(([key]) => store.config.stages.bidirectional || key !== "bidirectionalMs") as [key, label]}
+        {#each activeDurationFields as [key, label]}
           <label>
             <span>{label} ms</span>
             <input

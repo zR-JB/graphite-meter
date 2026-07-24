@@ -204,10 +204,10 @@ type model struct {
 	done   <-chan error
 	cancel context.CancelFunc
 
-	// disp trails rates toward each authoritative sample on the animation
-	// tick, so the live bars and figures glide instead of jumping with every
-	// 100ms sample.
-	disp map[goclient.Direction]float64
+	// displayRates trail rates toward each authoritative sample on the
+	// animation tick, so the live bars and figures glide instead of jumping
+	// with every 100ms sample.
+	displayRates map[goclient.Direction]float64
 	// lostStreak counts consecutive lost pings; a good pong resets it. The
 	// latency line keeps its last value against a short streak instead of
 	// blinking between figure and timeout.
@@ -256,7 +256,7 @@ func newModel(cfg goclient.Config) model {
 		now:           time.Now(),
 		rates:         map[goclient.Direction]goclient.ThroughputSample{},
 		peaks:         map[goclient.Direction]float64{},
-		disp:          map[goclient.Direction]float64{},
+		displayRates:  map[goclient.Direction]float64{},
 	}
 }
 
@@ -554,11 +554,11 @@ func (m *model) commitDuration(raw, field string) {
 
 func (m *model) commitInt(raw, field string) {
 	n, err := strconv.Atoi(raw)
-	min := 0
+	lowest := 0
 	if field == "auto-streams" {
-		min = 1
+		lowest = 1
 	}
-	if err != nil || n < min || n > 128 {
+	if err != nil || n < lowest || n > 128 {
 		if field == "auto-streams" {
 			m.editRejected("Automatic H1 max must be an integer from 1 to 128.")
 			return

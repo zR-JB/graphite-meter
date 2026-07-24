@@ -43,6 +43,9 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 		return wire.Preflight{}, err
 	}
 	baseOrigin.Path, baseOrigin.RawQuery, baseOrigin.Fragment = "", "", ""
+	// "." is the wire's "self" placeholder: a server behind a reverse proxy
+	// cannot know its public origin, so the client substitutes the origin the
+	// preflight request actually resolved to, redirects included.
 	for i := range pf.Capabilities.ThroughputTargets {
 		if pf.Capabilities.ThroughputTargets[i].Origin == "." {
 			normalizeThroughputTarget(&pf.Capabilities.ThroughputTargets[i], baseOrigin.String())

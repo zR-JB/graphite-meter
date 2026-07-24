@@ -18,8 +18,9 @@ import (
 // When the request carries a server-minted ?id=, each drained chunk is also added
 // to that test's shared per-id aggregate (across all its parallel POST lanes), so
 // the SERVER's drained count — not the browser's upload.onprogress — becomes the
-// authoritative upload result, read live by the /upload/progress progress bus. Without
-// an id it behaves exactly as before (client self-counts).
+// authoritative upload result, read live by the /upload/progress progress bus.
+// Without an id the POST still drains and counts, but only the client sees the
+// total.
 type Upload struct {
 	meter   *Meter       // optional verbose per-second logger; nil unless -verbose
 	store   *UploadStore // optional per-id aggregate; nil disables server-authoritative counting
@@ -32,7 +33,9 @@ type Upload struct {
 const uploadReadTimeout = 120 * time.Second
 
 // NewUpload builds the upload endpoint. meter may be nil (no verbose logging);
-// store may be nil (no server-authoritative per-id counting).
+// store may be nil (no server-authoritative per-id counting). The optional
+// trusted prefixes are the proxies whose forwarded-for headers may be believed
+// when attributing an upload to a client.
 func NewUpload(meter *Meter, store *UploadStore, trusted ...[]netip.Prefix) *Upload {
 	u := &Upload{meter: meter, store: store}
 	if len(trusted) > 0 {
@@ -115,6 +118,8 @@ func (u *Upload) Handle(s transport.Session) error {
 	// Bound a single stuck POST's body read (idiomatic per-request deadline via the
 	// ResponseController). The streaming download/upload server has no global
 	// ReadTimeout — that would kill long legit uploads — so we scope it per POST.
+	// Best effort: a ResponseWriter that cannot set deadlines simply runs unbounded,
+	// exactly as it would without this call.
 	if w, _, ok := s.HTTP(); ok {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
 	}
@@ -139,6 +144,8 @@ func (u *Upload) Handle(s transport.Session) error {
 		h := w.Header()
 		h.Set("Content-Type", "application/json")
 		h.Set("Cache-Control", "no-store")
+		// The body is the last thing written; a failure here means the client is
+		// already gone and there is nowhere left to report it.
 		_, _ = io.WriteString(w, `{"bytes":`+strconv.FormatInt(n, 10)+`}`)
 	}
 	return nil

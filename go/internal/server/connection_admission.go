@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
@@ -26,6 +26,11 @@ func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *c
 	return &connectionAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, trusted: trusted}
 }
 
+// socketKey is the per-client bucket for a socket address. IPv6 is grouped by
+// /64 because a single subscriber routinely holds a whole prefix. Addresses
+// inside a trusted proxy range get the empty key, which exempts them from the
+// per-client limit: every proxied connection shares one socket address, so
+// counting them per client would cap the whole deployment.
 func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 	addrPort, err := netip.ParseAddrPort(addr.String())
 	if err != nil {
@@ -87,7 +92,7 @@ func (a *connectionAdmission) stats() admissionStats {
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
 	release, ok := a.acquire(info.RemoteAddr)
 	if !ok {
-		return nil, fmt.Errorf("connection capacity exhausted")
+		return nil, errors.New("connection capacity exhausted")
 	}
 	context.AfterFunc(ctx, release)
 	return ctx, nil
@@ -106,6 +111,8 @@ func (l admittedListener) Accept() (net.Conn, error) {
 		}
 		release, ok := l.admission.acquire(conn.RemoteAddr())
 		if !ok {
+			// A refused connection is dropped without a reply; nothing can be
+			// done about a close failure on a socket we are abandoning.
 			_ = conn.Close()
 			continue
 		}

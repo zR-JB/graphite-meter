@@ -143,9 +143,9 @@ func TestClassifyAuthFailureDetectsRevokedGrant(t *testing.T) {
 	}
 }
 
-// An AuthOrigin that does not parse used to be dereferenced blind, taking the
-// client down. It must instead leave the pinned hostname empty — which, with
-// no grant to send, means an ordinary unauthenticated request.
+// An AuthOrigin that does not parse must leave the pinned hostname empty
+// rather than fail the client — which, with no grant to send, means an
+// ordinary unauthenticated request.
 func TestAuthenticatedClientSurvivesUnparseableOrigin(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL = "https://meter.example"

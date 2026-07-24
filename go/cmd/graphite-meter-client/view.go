@@ -497,8 +497,8 @@ func (m model) liveView(w int) string {
 	scale := m.rateScale()
 	lines := []string{
 		accentStyle.Render("Live Telemetry"),
-		rateLine("download", m.disp[goclient.Down], scale, w),
-		rateLine("upload  ", m.disp[goclient.Up], scale, w),
+		rateLine("download", m.displayRates[goclient.Down], scale, w),
+		rateLine("upload  ", m.displayRates[goclient.Up], scale, w),
 		latencyLine(m.latency, m.lostStreak),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

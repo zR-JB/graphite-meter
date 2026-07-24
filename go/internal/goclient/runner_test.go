@@ -172,10 +172,7 @@ func TestWarmupGate(t *testing.T) {
 		var mu sync.Mutex
 		var events []Event
 		r := &runner{cfg: Config{Warmup: 0}, emit: func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }}
-		start, err := r.warmupGate(context.Background(), "download")
-		if err != nil {
-			t.Fatalf("warmupGate: %v", err)
-		}
+		start := r.warmupGate(context.Background(), "download")
 		select {
 		case <-start:
 		default:
@@ -196,10 +193,7 @@ func TestWarmupGate(t *testing.T) {
 			messages = append(messages, e.Message)
 			mu.Unlock()
 		}}
-		start, err := r.warmupGate(context.Background(), "download")
-		if err != nil {
-			t.Fatalf("warmupGate: %v", err)
-		}
+		start := r.warmupGate(context.Background(), "download")
 		select {
 		case <-start:
 			t.Fatal("start should not be closed before the warmup timer fires")

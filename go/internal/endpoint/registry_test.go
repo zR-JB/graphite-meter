@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,7 @@ func (e *echoEndpoint) ID() string                 { return e.id }
 func (e *echoEndpoint) Capabilities() Capabilities { return Capabilities{} }
 func (e *echoEndpoint) Handle(s transport.Session) error {
 	if w, _, ok := s.HTTP(); ok {
-		w.Write([]byte(e.id))
+		_, _ = w.Write([]byte(e.id)) // test double: a failed write shows up as a body mismatch
 		return nil
 	}
 	if bus, ok := s.Bus(); ok {
@@ -356,8 +357,4 @@ func TestMountShutdownCancelUnblocksWSHandler(t *testing.T) {
 	}
 }
 
-var errBoom = boomError{}
-
-type boomError struct{}
-
-func (boomError) Error() string { return "boom" }
+var errBoom = errors.New("boom")

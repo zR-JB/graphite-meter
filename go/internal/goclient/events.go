@@ -43,13 +43,12 @@ type Event struct {
 }
 
 type ThroughputSample struct {
-	Stage         string
-	Direction     Direction
-	BytesPerSec   float64
-	TotalBytes    uint64
-	StreamCount   int
-	ServerAuth    bool
-	MeasurementAt time.Duration
+	Stage       string
+	Direction   Direction
+	BytesPerSec float64
+	TotalBytes  uint64
+	StreamCount int
+	ServerAuth  bool
 }
 
 type LatencySample struct {

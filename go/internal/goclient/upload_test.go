@@ -63,15 +63,11 @@ func TestCyclingBodyStopsOnCancelledContext(t *testing.T) {
 }
 
 func TestMintUploadID(t *testing.T) {
-	newServer := func(handler http.HandlerFunc) *httptest.Server {
-		return httptest.NewServer(handler)
-	}
-
 	t.Run("success", func(t *testing.T) {
-		srv := newServer(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "abc-123"})
-		})
+		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 		id, err := r.mintUploadID(context.Background())
@@ -84,9 +80,9 @@ func TestMintUploadID(t *testing.T) {
 	})
 
 	t.Run("non-200 response is an error", func(t *testing.T) {
-		srv := newServer(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-		})
+		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 		if _, err := r.mintUploadID(context.Background()); err == nil {
@@ -95,10 +91,10 @@ func TestMintUploadID(t *testing.T) {
 	})
 
 	t.Run("empty uploadId is an error", func(t *testing.T) {
-		srv := newServer(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(uploadSessionResponse{})
-		})
+		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 		if _, err := r.mintUploadID(context.Background()); err == nil {
@@ -107,10 +103,10 @@ func TestMintUploadID(t *testing.T) {
 	})
 
 	t.Run("malformed JSON is an error", func(t *testing.T) {
-		srv := newServer(func(w http.ResponseWriter, r *http.Request) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte("not json"))
-		})
+		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 		if _, err := r.mintUploadID(context.Background()); err == nil {
@@ -148,7 +144,7 @@ func TestUploadLaneDrainsBytes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		r.uploadLane(ctx, "test-id", 0, block)
+		_ = r.uploadLane(ctx, "test-id", 0, block)
 		close(done)
 	}()
 
@@ -207,7 +203,7 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		r.uploadLane(ctx, "test-id", 0, block)
+		_ = r.uploadLane(ctx, "test-id", 0, block)
 		close(done)
 	}()
 

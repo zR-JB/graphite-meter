@@ -17,11 +17,11 @@ export const INITIAL_RTT_ESTIMATE: RttEstimate = {
 
 /** Fold an RTT sample into the SRTT/RTTVAR estimator (RFC 6298, α=1/8, β=1/4).
  *  The first sample seeds srtt directly and rttvar to half of it. */
-export function observeRtt(prev: RttEstimate, r: number): RttEstimate {
-  if (!prev.haveRtt) return { srtt: r, rttvar: r / 2, haveRtt: true };
+export function observeRtt(prev: RttEstimate, rttMs: number): RttEstimate {
+  if (!prev.haveRtt) return { srtt: rttMs, rttvar: rttMs / 2, haveRtt: true };
   return {
-    srtt: 0.875 * prev.srtt + 0.125 * r,
-    rttvar: 0.75 * prev.rttvar + 0.25 * Math.abs(prev.srtt - r),
+    srtt: 0.875 * prev.srtt + 0.125 * rttMs,
+    rttvar: 0.75 * prev.rttvar + 0.25 * Math.abs(prev.srtt - rttMs),
     haveRtt: true,
   };
 }

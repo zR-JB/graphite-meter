@@ -18,6 +18,9 @@ type uploadSessionResponse struct {
 	UploadID string `json:"uploadId"`
 }
 
+// NewUploadSession builds the token-minting endpoint. A nil store leaves the
+// route mounted but answering 503, so a client gets a clear refusal rather than
+// a 404 it would misread as an old server.
 func NewUploadSession(store *UploadStore) *UploadSession {
 	return &UploadSession{store: store}
 }
@@ -46,6 +49,7 @@ func (u *UploadSession) Handle(s transport.Session) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
+	// The id is base64url, so HTML escaping would only mangle it.
 	enc.SetEscapeHTML(false)
 	return enc.Encode(uploadSessionResponse{UploadID: id})
 }

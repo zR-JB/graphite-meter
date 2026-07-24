@@ -38,7 +38,7 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	var total atomic.Uint64
 	done := make(chan struct{})
 	go func() {
-		r.downloadLane(ctx, srv.URL, 0, &total)
+		_ = r.downloadLane(ctx, srv.URL, 0, &total)
 		close(done)
 	}()
 
@@ -133,7 +133,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	done := make(chan struct{})
 	begin := time.Now()
 	go func() {
-		// elapsed is long (5s) so a hang would fail the test's own deadline
+		// The window is long (5s) so a hang would fail the test's own deadline
 		// well before the stage's configured window would naturally end.
 		_, _ = r.measureDownload(ctx, "download", 5*time.Second, start)
 		close(done)
@@ -145,7 +145,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 		t.Fatal("measureDownload did not stop after context cancellation")
 	}
 	if elapsed := time.Since(begin); elapsed > 1500*time.Millisecond {
-		t.Errorf("measureDownload took %v to stop, want well under the 5s elapsed window", elapsed)
+		t.Errorf("measureDownload took %v to stop, want well under the 5s measurement window", elapsed)
 	}
 }
 
@@ -180,7 +180,7 @@ func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
 	var total atomic.Uint64
 	done := make(chan struct{})
 	go func() {
-		r.downloadLane(ctx, srv.URL, 0, &total)
+		_ = r.downloadLane(ctx, srv.URL, 0, &total)
 		close(done)
 	}()
 

@@ -244,28 +244,27 @@ function scheduleReconnect(detail: string): void {
 function ensureTimers(): void {
   // Eviction sweep: drop pings stalled past the adaptive timeout.
   sweeper ??= setInterval(sweep, Math.max(lossFloorMs, intervalMs));
-  // Batch flush.
   flusher ??= setInterval(flush, FLUSH_MS);
 }
 
 function onFrame(data: unknown): void {
   const recv = performance.now();
   if (typeof data !== "string") return; // the ping bus is text-only
-  let f;
+  let frame;
   try {
-    f = decode(data);
+    frame = decode(data);
   } catch {
     return; // ignore malformed / ERR frames — never tear the bus down
   }
-  if (f.op === "READY") {
+  if (frame.op === "READY") {
     post({ type: "ready" });
     return;
   }
-  if (f.op !== "PONG") return;
+  if (frame.op !== "PONG") return;
 
-  const sent = pending.get(f.id);
+  const sent = pending.get(frame.id);
   if (sent !== undefined) {
-    pending.delete(f.id);
+    pending.delete(frame.id);
     const rtt = recv - sent;
     rttEstimate = observeRtt(rttEstimate, rtt); // ALWAYS — keeps the loss-timeout estimator accurate
     // Reply-driven localhost sampling can outrun the UI. Only downsample what
@@ -274,16 +273,16 @@ function onFrame(data: unknown): void {
       lastReportAt = recv;
       outbox.push({ rtt, lost: false });
     }
-    if (!replyDriven || f.id === replyHeadId) scheduler?.complete();
+    if (!replyDriven || frame.id === replyHeadId) scheduler?.complete();
     return;
   }
 
   // Late pong: we already declared this ping lost (timeout too tight — typically
   // an abrupt RTT jump). LEARN from it so the timeout grows and we stop
   // false-flagging; don't emit (already counted lost).
-  const late = graveyard.get(f.id);
+  const late = graveyard.get(frame.id);
   if (late !== undefined) {
-    graveyard.delete(f.id);
+    graveyard.delete(frame.id);
     rttEstimate = observeRtt(rttEstimate, recv - late);
   }
   // else: unknown / duplicate id — ignore.
@@ -291,8 +290,9 @@ function onFrame(data: unknown): void {
 
 function sendPing(now: number): void {
   const id = nextId;
-  nextId = (nextId + 1) >>> 0; // uint32 wrap — the in-flight window is tiny, so a
-  // wrapped id can never collide with a still-pending one.
+  // uint32 wrap — the in-flight window is tiny, so a wrapped id can never
+  // collide with a still-pending one.
+  nextId = (nextId + 1) >>> 0;
   pending.set(id, now);
   if (replyDriven) replyHeadId = id;
   trySend(encode({ op: "PING", id }));

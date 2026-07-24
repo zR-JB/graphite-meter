@@ -13,15 +13,11 @@
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
 
-  const showLatency = $derived(store.latencyEnabled);
-
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
     if (store.phase === "idle") return "none";
     return "partial";
   });
-
-  const etaMs = $derived(store.totalEtaMs);
 
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();
@@ -86,7 +82,7 @@
       if (!s.lost && s.rttMs > peak) peak = s.rttMs;
     const target = peak * 1.1; // a touch of headroom so the peak isn't pegged
     return (
-      LATENCY_SCALE_LADDER.find((s) => s >= target) ??
+      LATENCY_SCALE_LADDER.find((step) => step >= target) ??
       LATENCY_SCALE_LADDER.at(-1)!
     );
   });
@@ -170,6 +166,8 @@
     status ? `${status.headline} — ${status.action}` : hint,
   );
 
+  // Wake the gauge loop for exactly the state GaugeEngine reads: it parks once a
+  // run settles, so anything untracked here would leave the dial frozen.
   $effect(() => {
     void store.phase;
     void store.throughput.length;
@@ -189,6 +187,8 @@
     decayPresentation?.invalidate();
   });
 
+  // Returns whether the scheduler should keep animating, i.e. whether the
+  // stall ramp still has frames left to play.
   function advanceDecay(now: number) {
     if (store.measuring || !store.stalledSince) return false;
     nowWall = now;
@@ -196,28 +196,36 @@
     return now - store.stalledSince < STALL_DECAY_MS;
   }
 
-  let a11y = $state("");
-  let pendingA11y = "";
-  let a11yTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastA11yAt = -Infinity;
-  let lastA11yPhase = "";
+  // The live region mirrors a value that updates every frame, so mid-phase
+  // announcements are rate-limited to one per second — a screen reader would
+  // otherwise never finish a sentence. Phase changes and any non-running update
+  // jump the queue so the state is announced the instant it changes.
+  const ANNOUNCE_INTERVAL_MS = 1000;
+  let announcement = $state("");
+  let pendingAnnouncement = "";
+  let announceTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastAnnouncedAt = -Infinity;
+  let lastAnnouncedPhase = "";
   $effect(() => {
-    const s = statusText;
     const phase = store.phase;
-    pendingA11y = s || `${display.value} ${display.unit}, phase ${phase}`;
+    pendingAnnouncement =
+      statusText || `${display.value} ${display.unit}, phase ${phase}`;
     const commit = () => {
-      a11y = pendingA11y;
-      lastA11yAt = performance.now();
-      lastA11yPhase = phase;
-      a11yTimer = null;
+      announcement = pendingAnnouncement;
+      lastAnnouncedAt = performance.now();
+      lastAnnouncedPhase = phase;
+      announceTimer = null;
     };
-    if (!store.isRunning || phase !== lastA11yPhase) {
-      if (a11yTimer) clearTimeout(a11yTimer);
+    if (!store.isRunning || phase !== lastAnnouncedPhase) {
+      if (announceTimer) clearTimeout(announceTimer);
       commit();
-    } else if (!a11yTimer) {
-      a11yTimer = setTimeout(
+    } else if (!announceTimer) {
+      announceTimer = setTimeout(
         commit,
-        Math.max(0, 1000 - (performance.now() - lastA11yAt)),
+        Math.max(
+          0,
+          ANNOUNCE_INTERVAL_MS - (performance.now() - lastAnnouncedAt),
+        ),
       );
     }
   });
@@ -243,21 +251,21 @@
     engine.attach(canvasEl!);
     decayPresentation = presentation.register(stageEl!, advanceDecay);
 
-    const mo = new MutationObserver(() => engine.invalidateTheme());
-    mo.observe(document.documentElement, {
+    const themeObserver = new MutationObserver(() => engine.invalidateTheme());
+    themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
 
-    const ro = new ResizeObserver(() => engine.invalidateTheme());
-    ro.observe(canvasEl!);
+    const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
+    resizeObserver.observe(canvasEl!);
 
     return () => {
-      if (a11yTimer) clearTimeout(a11yTimer);
+      if (announceTimer) clearTimeout(announceTimer);
       engine.destroy();
       decayPresentation.destroy();
-      mo.disconnect();
-      ro.disconnect();
+      themeObserver.disconnect();
+      resizeObserver.disconnect();
     };
   });
 </script>
@@ -273,7 +281,7 @@
           class="eta"
           use:tooltip={"Estimated run time at the saved duration"}
         >
-          ~{(etaMs / 1000).toFixed(0)}s
+          ~{(store.totalEtaMs / 1000).toFixed(0)}s
         </span>
       </div>
       <StageTrack />
@@ -298,12 +306,12 @@
           </div>
         {/if}
       </div>
-      <output class="sr-only" aria-live="polite">{a11y}</output>
+      <output class="sr-only" aria-live="polite">{announcement}</output>
     </div>
 
     <div class="engage-slot"><RunButton /></div>
 
-    {#if showLatency}
+    {#if store.latencyEnabled}
       <div class="latency-panel">
         <LatencyProfile bare />
       </div>

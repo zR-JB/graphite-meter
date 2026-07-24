@@ -190,20 +190,17 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	type outcome struct {
-		err error
-	}
-	done := make(chan outcome, 1)
+	done := make(chan error, 1)
 	begin := time.Now()
 	go func() {
 		_, err := r.measureLatency(ctx, "latency", false, 5*time.Second, start)
-		done <- outcome{err: err}
+		done <- err
 	}()
 
 	select {
-	case o := <-done:
-		if o.err == nil {
-			t.Error("want an error when the websocket closes before measurement starts")
+	case err := <-done:
+		if err == nil {
+			t.Error("want an error when the WebSocket closes before measurement starts")
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("measureLatency hung after the peer closed the connection")
