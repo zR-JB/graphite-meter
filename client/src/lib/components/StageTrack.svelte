@@ -1,10 +1,16 @@
 <script lang="ts">
   // Stage rail: maps store/core stage state into toggleable progress segments
   // for latency, download, upload, and optional bidirectional.
-  import { MEASURED_STAGES, store, type StageKey } from "../state/store.svelte";
+  import { store, type StageKey } from "../state/store.svelte";
   import { applyLiveRunConfig } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
+  import {
+    stageIndex,
+    segmentState,
+    bidirectionalState,
+    lockReason,
+  } from "./stageTrack";
 
   const STAGES: { key: StageKey; label: string; icon: string }[] = [
     { key: "latency", label: "Latency", icon: ICON.ping },
@@ -12,93 +18,54 @@
     { key: "upload", label: "Upload", icon: ICON.upload },
   ];
 
-  const TRACK_ORDER = [...MEASURED_STAGES, "bidirectional"] as const;
-  type TrackStageKey = (typeof TRACK_ORDER)[number];
-
-  type SegState =
-    "disabled" | "warmup" | "active" | "done" | "failed" | "pending";
-
-  const stageIndex = (stage: TrackStageKey | null) =>
-    stage ? TRACK_ORDER.indexOf(stage) : -1;
-
-  const progressFill = () => Math.round(store.phaseFraction * 200) / 2;
-
-  // Track state is visual only. The store/core own the actual stage rules and
-  // timeline; this maps them to pending/warmup/active/done/failed.
-  function segmentState(
-    stage: StageKey,
-    enabled: boolean,
-    failed: boolean,
-    curI: number,
-  ): { state: SegState; fill: number } {
-    if (!enabled) return { state: "disabled", fill: 0 };
-    if (failed) return { state: "failed", fill: 0 };
-    if (store.phase === "complete") return { state: "done", fill: 100 };
-    const stI = TRACK_ORDER.indexOf(stage);
-    if (store.phase === "warmup") {
-      if (stI < curI) return { state: "done", fill: 100 };
-      if (stI === curI) return { state: "warmup", fill: 0 };
-      return { state: "pending", fill: 0 };
-    }
-    if (curI === -1) return { state: "pending", fill: 0 };
-    if (stI < curI) return { state: "done", fill: 100 };
-    if (stI === curI) return { state: "active", fill: progressFill() };
-    return { state: "pending", fill: 0 };
-  }
-
   function onToggle(stage: StageKey) {
     if (store.toggleStage(stage)) applyLiveRunConfig();
   }
 
-  function lockReason(stage: StageKey, state: SegState): string | null {
-    if (store.canToggleStage(stage)) return null;
-    if (state === "done") return "done";
-    if (store.phase === stage) return "running";
-    const curI = stageIndex(store.phaseStage);
-    const stI = TRACK_ORDER.indexOf(stage);
-    return curI >= 0 && stI < curI ? "done" : "upcoming";
-  }
-
-  const segs = $derived.by(() => {
-    const curI = stageIndex(store.phaseStage);
-    return STAGES.map((s) => {
-      const enabled = store.config.stages[s.key];
-      const failure = store.stageFailures[s.key];
-      const locked = !store.canToggleStage(s.key);
-      const { state, fill } = segmentState(s.key, enabled, !!failure, curI);
+  const segments = $derived.by(() => {
+    const currentIndex = stageIndex(store.phaseStage);
+    return STAGES.map((stage) => {
+      const enabled = store.config.stages[stage.key];
+      const failure = store.stageFailures[stage.key];
+      const locked = !store.canToggleStage(stage.key);
+      const { state, fill } = segmentState(
+        store.phase,
+        store.phaseFraction,
+        stage.key,
+        enabled,
+        !!failure,
+        currentIndex,
+      );
       const reason = enabled
         ? failure
           ? "failed"
-          : lockReason(s.key, state)
+          : lockReason(!locked, store.phase, store.phaseStage, stage.key, state)
         : store.phase !== "idle"
           ? "skipped"
           : null;
-      return { ...s, enabled, reason, locked, state, fill, failure };
+      return { ...stage, enabled, reason, locked, state, fill, failure };
     });
   });
 
-  const bidi = $derived.by<{ state: SegState; fill: number } | null>(() => {
-    if (!store.config.stages.bidirectional) return null;
-    if (store.stageFailures.bidirectional) return { state: "failed", fill: 0 };
-    const p = store.phase;
-    if (p === "complete") return { state: "done", fill: 100 };
-    if (p === "warmup" && store.phaseStage === "bidirectional")
-      return { state: "warmup", fill: 0 };
-    if (p === "bidirectional")
-      return {
-        state: "active",
-        fill: progressFill(),
-      };
-    return { state: "pending", fill: 0 };
-  });
+  const bidi = $derived(
+    bidirectionalState(
+      store.phase,
+      store.phaseFraction,
+      store.phaseStage,
+      store.config.stages.bidirectional,
+      !!store.stageFailures.bidirectional,
+    ),
+  );
 
-  const totalSegs = $derived(segs.length + (bidi ? 1 : 0));
-  const quad = $derived(totalSegs >= 4);
+  const segmentCount = $derived(segments.length + (bidi ? 1 : 0));
+  const isQuad = $derived(segmentCount >= 4);
 </script>
 
-<fieldset class="stage-track" class:quad>
+<fieldset class="stage-track" class:quad={isQuad}>
   <legend class="sr-only">Test stages — tap to enable or disable</legend>
-  {#each segs as s (s.key)}
+  <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
+       `{@html s.icon}` sink by its exact expression text. -->
+  {#each segments as s (s.key)}
     <button
       type="button"
       class="seg seg--{s.state}"

@@ -1,3 +1,5 @@
+// Command authpreview serves the production login page on loopback with sample state.
+// The layout renders without a running identity provider.
 package main
 
 import (

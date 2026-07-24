@@ -14,18 +14,16 @@ import { presentation, type PresentationHandle } from "./presentation";
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencySample[];
-  /** False when latency is fully disabled — suppresses the latency line and
-   *  the right (latency) axis so the chart reads as throughput-only. */
+  /** False when latency is disabled: the latency line and right axis are
+   *  suppressed. */
   latencyEnabled: boolean;
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
   phaseStartedAtMs: number;
-  /** Monotonic run counter from the store; a change means a new run started
-   *  and the engine must drop all accumulated per-run state. */
+  /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
-  /** Absolute throughput Y-axis ceiling (bytes/s), shared verbatim with the gauge
-   *  dial (store.displayScaleBytesPerSec) so the two instruments are identically
-   *  scaled. Already dwell-filtered + tiered upstream; the chart just follows it. */
+  /** Throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered upstream.
+   *  Identical to store.displayScaleBytesPerSec so the gauge dial matches. */
   scaleBytesPerSec: number;
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
@@ -41,9 +39,8 @@ export interface ChartFormatters {
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
-  /** The single lane's rate during download/upload; null during bidirectional
-   *  (which reports its two lanes separately below) or where there's no
-   *  throughput data under the cursor at all. */
+  /** Single-lane rate during download/upload. Null during bidirectional and
+   *  outside the throughput data. */
   bytesPerSec: number | null;
   /** Bidirectional's two concurrent lanes; null outside that phase. */
   downBytesPerSec: number | null;
@@ -80,6 +77,14 @@ const PAD_R = 46;
 const PAD_T = 12;
 const PAD_B = 18;
 
+const PHASE_NAME: Partial<Record<Phase, string>> = {
+  warmup: "WARM-UP",
+  latency: "PING",
+  download: "DOWNLOAD",
+  upload: "UPLOAD",
+  bidirectional: "BI-DIR",
+};
+
 interface ThemeColors {
   download: string;
   downloadRgb: { r: number; g: number; b: number };
@@ -89,11 +94,8 @@ interface ThemeColors {
   warmup: string;
   signal: string;
   warn: string;
-  warnSoft: string;
   grid: string;
-  gridMajor: string;
   textSoft: string;
-  text: string;
   panel: string;
   brand: string;
 }
@@ -144,7 +146,7 @@ export class ChartEngine implements CanvasEngine {
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
   #gradH = -1;
-  // Samples own data attribution; spans retain sample-free warmup boundaries.
+  // Phase boundaries only; each sample carries its own phase for attribution.
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
   #hoverX: number | null = null;
@@ -164,7 +166,7 @@ export class ChartEngine implements CanvasEngine {
   };
   #latencyByPhase = new Map<Phase, LatencySample[]>();
 
-  #c: ThemeColors = {
+  #colors: ThemeColors = {
     download: "#6db0b8",
     downloadRgb: { r: 109, g: 176, b: 184 },
     upload: "#bda36c",
@@ -173,11 +175,8 @@ export class ChartEngine implements CanvasEngine {
     warmup: "#858c94",
     signal: "#8ba3ba",
     warn: "#c4a568",
-    warnSoft: "rgba(196,165,104,0.14)",
     grid: "rgba(211,219,227,0.05)",
-    gridMajor: "rgba(211,219,227,0.1)",
     textSoft: "#6a717a",
-    text: "#d9dce0",
     panel: "#1c1f23",
     brand: "#6db0b8",
   };
@@ -213,7 +212,7 @@ export class ChartEngine implements CanvasEngine {
 
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
-    // Cap at 2 — same rationale as the gauge: raster cost, not fidelity.
+    // Cap at 2: beyond that the raster cost grows without visible fidelity.
     this.#dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = this.#canvas.getBoundingClientRect();
     this.#w = Math.max(1, rect.width);
@@ -284,7 +283,7 @@ export class ChartEngine implements CanvasEngine {
     const g = (v: string, fb: string) => cs.getPropertyValue(v).trim() || fb;
     const download = g("--phase-download", "#6db0b8");
     const upload = g("--phase-upload", "#bda36c");
-    this.#c = {
+    this.#colors = {
       download,
       downloadRgb: hexToRgb(download),
       upload,
@@ -293,15 +292,16 @@ export class ChartEngine implements CanvasEngine {
       warmup: g("--phase-warmup", "#858c94"),
       signal: g("--signal", "#8ba3ba"),
       warn: g("--warn", "#c4a568"),
-      warnSoft: g("--warn-soft", "rgba(196,165,104,0.14)"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
-      gridMajor: g("--grid-line-major", "rgba(211,219,227,0.1)"),
       textSoft: g("--text-soft", "#6a717a"),
-      text: g("--text", "#d9dce0"),
       panel: g("--surface-1", "#1c1f23"),
       brand: g("--brand", "#6db0b8"),
     };
-    this.#gradH = -1; // colors changed → rebuild cached gradients on next draw
+    this.#invalidateGradients();
+  }
+
+  #invalidateGradients(): void {
+    this.#gradH = -1;
   }
 
   #areaGrad(
@@ -320,8 +320,8 @@ export class ChartEngine implements CanvasEngine {
         grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
         return grad;
       };
-      this.#gradDownload = make(this.#c.downloadRgb);
-      this.#gradUpload = make(this.#c.uploadRgb);
+      this.#gradDownload = make(this.#colors.downloadRgb);
+      this.#gradUpload = make(this.#colors.uploadRgb);
       this.#gradH = this.#h;
     }
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
@@ -367,8 +367,8 @@ export class ChartEngine implements CanvasEngine {
     }
     this.#indexData(d);
 
-    // Track exact runner-owned boundaries. Sample timestamps cannot represent
-    // a sample-free warmup and therefore are not a phase clock.
+    // Sample timestamps cannot mark a sample-free warmup, so the runner's
+    // boundary is the phase clock.
     if (d.phase !== this.#lastPhase) {
       const phaseStart =
         d.phase === "complete" || d.phase === "error"
@@ -427,26 +427,22 @@ export class ChartEngine implements CanvasEngine {
       rttMax = niceCeil(Math.max(this.#p95Cache.v * 1.3, 20));
     }
 
-    const target: Viewport = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
-    if (!this.#vpInit) {
-      this.#vp = { ...target };
-      this.#vpInit = true;
-    } else {
-      this.#vp = target;
-    }
+    this.#vp = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
+    this.#vpInit = true;
   }
 
-  #p95In(arr: LatencySample[], t0: number, t1: number): number {
-    const v: number[] = [];
-    const lo = lowerBoundAt(arr, t0);
-    const hi = lowerBoundAt(arr, t1);
-    for (let i = lo; i < hi; i++) if (!arr[i].lost) v.push(arr[i].rttMs);
-    if (!v.length) return 0;
-    v.sort((a, b) => a - b);
-    return v[Math.min(v.length - 1, Math.ceil(0.95 * v.length) - 1)];
+  #p95In(samples: LatencySample[], t0: number, t1: number): number {
+    const rtts: number[] = [];
+    const lo = lowerBoundAt(samples, t0);
+    const hi = lowerBoundAt(samples, t1);
+    for (let i = lo; i < hi; i++)
+      if (!samples[i].lost) rtts.push(samples[i].rttMs);
+    if (!rtts.length) return 0;
+    rtts.sort((a, b) => a - b);
+    return rtts[Math.min(rtts.length - 1, Math.ceil(0.95 * rtts.length) - 1)];
   }
 
-  /* ---------- coordinate maps ---------- */
+  /* Coordinate maps. */
   #x(t: number): number {
     const plotW = this.#w - PAD_L - PAD_R;
     return (
@@ -495,14 +491,14 @@ export class ChartEngine implements CanvasEngine {
     this.#drawHover(ctx);
   }
 
-  /** Phase colour for the ribbon / labels (null = not shown). Warmup is a
-   *  muted grey so it recedes and never reads like the (lavender) upload. */
+  /** Ribbon and label colour, null when the phase shows none. Warmup uses the
+   *  muted body-text grey so it recedes behind the lane colours. */
   #phaseColor(phase: Phase): string | null {
-    if (phase === "warmup") return this.#c.textSoft;
-    if (phase === "latency") return this.#c.signal;
-    if (phase === "download") return this.#c.download;
-    if (phase === "upload") return this.#c.upload;
-    if (phase === "bidirectional") return this.#c.bidirectional;
+    if (phase === "warmup") return this.#colors.textSoft;
+    if (phase === "latency") return this.#colors.signal;
+    if (phase === "download") return this.#colors.download;
+    if (phase === "upload") return this.#colors.upload;
+    if (phase === "bidirectional") return this.#colors.bidirectional;
     return null;
   }
 
@@ -542,7 +538,7 @@ export class ChartEngine implements CanvasEngine {
 
       ctx.beginPath();
       ctx.roundRect(chipX, chipY, chipW, chipH, 4);
-      ctx.fillStyle = this.#c.panel;
+      ctx.fillStyle = this.#colors.panel;
       ctx.fill();
       ctx.lineWidth = 1;
       ctx.strokeStyle = withAlpha(stat.stroke, 0.55);
@@ -559,13 +555,13 @@ export class ChartEngine implements CanvasEngine {
       const seg = all.filter((s) => s.phase === phase);
       const average = this.#get().resultRates[phase];
       if (seg.length < 2 || average == null) continue;
-      out.push(
-        this.#reduceStat(
-          seg,
-          phase === "download" ? this.#c.download : this.#c.upload,
-          average,
-        ),
-      );
+      out.push({
+        t0: seg[0].t,
+        t1: seg[seg.length - 1].t,
+        avg: average,
+        stroke:
+          phase === "download" ? this.#colors.download : this.#colors.upload,
+      });
     }
     for (const dir of ["down", "up"] as const) {
       const seg = all.filter(
@@ -574,37 +570,15 @@ export class ChartEngine implements CanvasEngine {
       const average =
         this.#get().resultRates[dir === "down" ? "bidiDown" : "bidiUp"];
       if (seg.length < 2 || average == null) continue;
-      out.push(
-        this.#reduceStat(
-          seg,
-          dir === "down" ? this.#c.download : this.#c.upload,
-          average,
-        ),
-      );
+      out.push({
+        t0: seg[0].t,
+        t1: seg[seg.length - 1].t,
+        avg: average,
+        stroke: dir === "down" ? this.#colors.download : this.#colors.upload,
+      });
     }
     return out;
   }
-
-  #reduceStat(
-    seg: ThroughputSample[],
-    stroke: string,
-    canonicalAverage: number,
-  ): PhaseStat {
-    return {
-      t0: seg[0].t,
-      t1: seg[seg.length - 1].t,
-      avg: canonicalAverage,
-      stroke,
-    };
-  }
-
-  #PHASE_NAME: Partial<Record<Phase, string>> = {
-    warmup: "WARM-UP",
-    latency: "PING",
-    download: "DOWNLOAD",
-    upload: "UPLOAD",
-    bidirectional: "BI-DIR",
-  };
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
     const ry = this.#h - PAD_B + 4;
@@ -632,7 +606,7 @@ export class ChartEngine implements CanvasEngine {
         ctx.font = '700 9px "JetBrains Mono", monospace';
         ctx.textAlign = "left";
         ctx.textBaseline = "alphabetic";
-        ctx.fillText(this.#PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
+        ctx.fillText(PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
       }
       if (s.phase === "warmup") warmupLabelled = true;
     }
@@ -655,7 +629,7 @@ export class ChartEngine implements CanvasEngine {
     const startT = Math.ceil(this.#vp.tMin / step) * step;
 
     ctx.lineWidth = 1;
-    ctx.strokeStyle = this.#c.grid;
+    ctx.strokeStyle = this.#colors.grid;
     ctx.globalAlpha = 0.55;
     const minorStep = step / 4;
     const minorStartT = Math.ceil(this.#vp.tMin / minorStep) * minorStep;
@@ -675,8 +649,8 @@ export class ChartEngine implements CanvasEngine {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    ctx.strokeStyle = this.#c.grid;
-    ctx.fillStyle = this.#c.textSoft;
+    ctx.strokeStyle = this.#colors.grid;
+    ctx.fillStyle = this.#colors.textSoft;
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = "center";
     ctx.beginPath();
@@ -778,7 +752,7 @@ export class ChartEngine implements CanvasEngine {
     const tMax = this.#vp.tMax;
     for (const lane of this.#throughputLanes()) {
       const stroke =
-        lane.area === "download" ? this.#c.download : this.#c.upload;
+        lane.area === "download" ? this.#colors.download : this.#colors.upload;
       const pts: { x: number; y: number }[] = [];
       const lo = Math.max(0, lowerBoundAt(lane.samples, tMin) - 1);
       const hi = Math.min(
@@ -827,7 +801,9 @@ export class ChartEngine implements CanvasEngine {
         x: this.#x(p.t),
         y: this.#yR(p.rttMs),
       }));
-      ctx.strokeStyle = segment[0].underLoad ? this.#c.warn : this.#c.signal;
+      ctx.strokeStyle = segment[0].underLoad
+        ? this.#colors.warn
+        : this.#colors.signal;
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.beginPath();
@@ -847,9 +823,7 @@ export class ChartEngine implements CanvasEngine {
         drawSegment();
         prevPhase = null;
       }
-      if (s.lost) {
-        continue;
-      }
+      if (s.lost) continue;
       segment.push({ t: s.t, rttMs: s.rttMs, underLoad: s.underLoad });
       prevPhase = s.phase;
     }
@@ -863,7 +837,7 @@ export class ChartEngine implements CanvasEngine {
     const top = PAD_T;
     const bot = this.#h - PAD_B;
     ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.fillStyle = this.#c.textSoft;
+    ctx.fillStyle = this.#colors.textSoft;
     // Left: throughput. Right: latency (omitted when latency is disabled).
     for (let i = 0; i <= 2; i++) {
       const frac = i / 2; // 0 top, 1 bottom
@@ -887,7 +861,7 @@ export class ChartEngine implements CanvasEngine {
     const x = Math.max(PAD_L, Math.min(this.#w - PAD_R, this.#hoverX));
     const top = PAD_T;
     const bot = this.#h - PAD_B;
-    ctx.strokeStyle = this.#c.brand;
+    ctx.strokeStyle = this.#colors.brand;
     ctx.lineWidth = 1;
     const gx = Math.round(x) + 0.5;
     ctx.beginPath();
@@ -897,31 +871,20 @@ export class ChartEngine implements CanvasEngine {
 
     const info = this.hoverInfo();
     if (!info) return;
+    const dot = (y: number, color: string): void => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    };
     // Dots ride the interpolated value (matches the chip + the drawn line).
-    if (info.bytesPerSec != null) {
-      ctx.fillStyle = this.#c.brand;
-      ctx.beginPath();
-      ctx.arc(x, this.#yL(info.bytesPerSec), 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    if (info.bytesPerSec != null)
+      dot(this.#yL(info.bytesPerSec), this.#colors.brand);
     // Bidirectional: one dot per lane, tinted to match its drawn line.
-    if (info.downBytesPerSec != null) {
-      ctx.fillStyle = this.#c.download;
-      ctx.beginPath();
-      ctx.arc(x, this.#yL(info.downBytesPerSec), 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    if (info.upBytesPerSec != null) {
-      ctx.fillStyle = this.#c.upload;
-      ctx.beginPath();
-      ctx.arc(x, this.#yL(info.upBytesPerSec), 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    if (info.rtt != null) {
-      ctx.fillStyle = this.#c.warn;
-      ctx.beginPath();
-      ctx.arc(x, this.#yR(info.rtt), 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    if (info.downBytesPerSec != null)
+      dot(this.#yL(info.downBytesPerSec), this.#colors.download);
+    if (info.upBytesPerSec != null)
+      dot(this.#yL(info.upBytesPerSec), this.#colors.upload);
+    if (info.rtt != null) dot(this.#yR(info.rtt), this.#colors.warn);
   }
 }

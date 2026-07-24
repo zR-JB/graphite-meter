@@ -10,7 +10,8 @@ func passwordAuthConfig(t *testing.T) Config {
 	c.Public.Throughput = []string{"https://meter.example"}
 	return c
 }
-func TestAuthConfigurationConstraints(t *testing.T) {
+
+func TestValidateRejectsInconsistentAuthConfiguration(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*Config)
@@ -31,12 +32,14 @@ func TestAuthConfigurationConstraints(t *testing.T) {
 		})
 	}
 }
-func TestCompletePasswordAuthConfiguration(t *testing.T) {
+
+func TestValidateAcceptsCompletePasswordAuth(t *testing.T) {
 	c := passwordAuthConfig(t)
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
+
 func TestAuthSettingsRejectedWhenOff(t *testing.T) {
 	c := Default()
 	c.Auth.PublicURL = "https://meter.example"

@@ -27,18 +27,27 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		return LatencyStats{}, err
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+	// A failed hello needs no handling here: the read goroutine below sees the
+	// same broken connection and reports it through recvErr.
 	_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"})))
 
 	measureCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	pending := make(map[uint32]time.Time)
-	var mu sync.Mutex
+	var mu sync.Mutex // guards pending and stats
 	var nextID uint32
 	stats := latencyStats{}
 	recvErr := make(chan error, 1)
 	var measuring atomic.Bool
 	var measureTimer <-chan time.Time
+	// The read goroutine outlives every return below, so stats must be
+	// snapshotted under mu.
+	snapshot := func() LatencyStats {
+		mu.Lock()
+		defer mu.Unlock()
+		return stats.snapshot()
+	}
 
 	go func() {
 		for {
@@ -60,15 +69,13 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			if ok {
 				delete(pending, f.ID)
 			}
-			mu.Unlock()
-			if !ok {
-				continue
-			}
-			if !measuring.Load() {
+			if !ok || !measuring.Load() {
+				mu.Unlock()
 				continue
 			}
 			rtt := now.Sub(sent)
 			stats.add(rtt, false)
+			mu.Unlock()
 			r.emit(Event{
 				Kind:    EventLatency,
 				At:      now,
@@ -93,7 +100,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err := send(); err != nil {
 		return LatencyStats{}, err
 	}
-	lossAfter := maxDuration(4*r.cfg.PingInterval, 250*time.Millisecond)
+	lossAfter := max(4*r.cfg.PingInterval, 250*time.Millisecond)
 	for {
 		select {
 		case <-start:
@@ -108,16 +115,18 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			defer timer.Stop()
 			measureTimer = timer.C
 		case <-measureCtx.Done():
+			// BYE releases the server's session promptly; the samples are
+			// already collected, so a failed farewell changes nothing.
 			_ = conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
-			return stats.snapshot(), nil
+			return snapshot(), nil
 		case <-measureTimer:
 			_ = conn.Write(context.Background(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpBYE})))
-			return stats.snapshot(), nil
+			return snapshot(), nil
 		case err := <-recvErr:
 			if measureCtx.Err() != nil {
-				return stats.snapshot(), nil
+				return snapshot(), nil
 			}
-			return LatencyStats{}, fmt.Errorf("latency websocket failed: %w", err)
+			return LatencyStats{}, fmt.Errorf("latency WebSocket failed: %w", err)
 		case <-ticker.C:
 			if err := send(); err != nil {
 				return LatencyStats{}, err
@@ -142,11 +151,4 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			mu.Unlock()
 		}
 	}
-}
-
-func maxDuration(a, b time.Duration) time.Duration {
-	if a > b {
-		return a
-	}
-	return b
 }

@@ -91,7 +91,7 @@ client-watch:
 
 # Preview the real no-JavaScript login page on loopback only.
 auth-preview mode="hybrid" oidc_ready="true":
-    cd go && go run ./internal/auth/cmd/authpreview -mode {{quote(mode)}} -oidc-ready={{quote(oidc_ready)}}
+    cd go && go run ./internal/auth/cmd/authpreview --mode {{quote(mode)}} --oidc-ready={{quote(oidc_ready)}}
 
 # Output lives inside the client tree so Vite's dev-server fs.allow is happy.
 # Regenerate client discovery and path-probe types from the JSON Schemas.
@@ -129,13 +129,65 @@ server-check:
     cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
     cd go && go vet ./...
 
-# Run server tests with the same race/shuffle settings used by CI.
-# Includes the preflight schema conformance test.
-server-test:
-    cd go && CGO_ENABLED=1 go test -race -shuffle=on ./...
+# Regenerate the embedded auth assets and fail if they drift from source. The
+# pre-commit hook and ci.yml both call this recipe.
+check-generated:
+    #!/usr/bin/env sh
+    set -e
+    (cd go/internal/auth && go run ./cmd/authassets)
+    if ! git diff --quiet -- go/internal/auth/assets_generated.go; then
+        echo "assets_generated.go is stale; run 'go generate ./internal/auth' and commit the result"
+        exit 1
+    fi
 
-# Run the main local CI gates. Docker smoke remains CI-only.
-ci: client-ci server-check server-test
+# Pinned lint tools. Their install path carries the version, so a bump here
+# rebuilds instead of reusing the cached binary. govulncheck reads the live
+# vulnerability database, which its own version does not freeze.
+staticcheck_version := "2025.1.1"
+govulncheck_version := "v1.6.0"
+
+# Static analysis + vulnerability scan. ci.yml calls this exact recipe, so the
+# local gate and GitHub CI cannot describe different checks.
+go-lint:
+    #!/usr/bin/env sh
+    set -e
+    tools="$(go env GOPATH)/bin/gm-lint"
+    staticcheck_dir="$tools/staticcheck-{{staticcheck_version}}"
+    govulncheck_dir="$tools/govulncheck-{{govulncheck_version}}"
+    test -x "$staticcheck_dir/staticcheck" || GOBIN="$staticcheck_dir" go install honnef.co/go/tools/cmd/staticcheck@{{staticcheck_version}}
+    test -x "$govulncheck_dir/govulncheck" || GOBIN="$govulncheck_dir" go install golang.org/x/vuln/cmd/govulncheck@{{govulncheck_version}}
+    cd go
+    "$staticcheck_dir/staticcheck" ./...
+    "$govulncheck_dir/govulncheck" ./...
+
+# Race-detector tests plus the coverage floor. ci.yml calls this recipe, so the
+# floor is enforced identically locally and in CI. Raise the floor as coverage
+# climbs; never lower it.
+server-test:
+    #!/usr/bin/env sh
+    set -e
+    cd go
+    CGO_ENABLED=1 go test -race -shuffle=on -coverprofile=cover.out ./...
+    total=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | tr -d '%')
+    echo "total statement coverage: ${total}%"
+    awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
+        || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
+
+# Playwright browser tests (chromium + firefox). ci.yml calls this recipe after
+# installing the browsers. Slow (~45s), so it is not in the pre-commit hook;
+# run it explicitly or via `just ci-full`. The bundle is rebuilt by test:e2e,
+# since playwright's webServer previews dist.
+client-e2e:
+    cd client && bun run test:e2e
+
+# The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
+# all but go-lint, and only those matching the staged files.
+ci: check-generated client-ci server-check go-lint server-test
+
+# Everything CI runs that is meaningful on a workstation: the fast gate plus the
+# browser E2E. The Docker smoke job and the cross-build matrix stay CI-only
+# infrastructure (a container runtime / other toolchains).
+ci-full: ci client-e2e
 
 # --- Go native TUI client (graphite-meter-client) ---
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.

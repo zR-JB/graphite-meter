@@ -3,9 +3,9 @@ import { buildSegments, reconfigureTimeline } from "./schedule";
 import type { RunnerConfig } from "./contract";
 
 // A minimal but complete RunnerConfig fixture. store.svelte.ts's DEFAULT_CONFIG
-// can't be imported here — it's a .svelte.ts module that runs Svelte 5 rune
-// calls ($state) at module scope, which don't exist outside the Svelte
-// compiler/runtime, so bun:test would throw "$state is not defined" on import.
+// cannot be imported here: it is a .svelte.ts module running Svelte 5 rune calls
+// ($state) at module scope, which do not exist outside the Svelte runtime, so
+// bun:test throws "$state is not defined" on import.
 const BASE_CONFIG: RunnerConfig = {
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,

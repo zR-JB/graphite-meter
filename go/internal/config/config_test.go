@@ -5,25 +5,35 @@ import (
 	"testing"
 )
 
+// clearConfigEnv makes the listener, origin, and proxy variables absent, so Load
+// sees the operator's environment as empty.
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"GM_H1_ADDR", "GM_H1_TLS_ADDR", "GM_H2_ADDR", "GM_H3_ADDR", "GM_TLS_CERT", "GM_TLS_KEY", "GM_H1_PUBLIC_ORIGIN", "GM_H1_TLS_PUBLIC_ORIGIN", "GM_H2_PUBLIC_ORIGIN", "GM_H3_PUBLIC_ORIGIN", "GM_ADVERTISED_NATIVE_ENDPOINTS", "GM_PUBLIC_ORIGINS", "GM_PUBLIC_THROUGHPUT_ORIGINS", "GM_PUBLIC_LATENCY_ORIGINS", "GM_SERVER_NAME", "GM_SERVER_LOCATION", "GM_VERBOSE", "GM_TRUSTED_PROXIES"} {
-		t.Setenv(key, "")
-		_ = os.Unsetenv(key)
+		unsetEnv(t, key)
 	}
+}
+
+// unsetEnv makes key absent for the duration of the test. Load distinguishes an
+// absent variable from an empty one, so t.Setenv registers the restore and
+// os.Unsetenv clears the value. Unsetenv cannot fail for a name t.Setenv accepts.
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	_ = os.Unsetenv(key)
 }
 
 func TestDefaultIsNativeH1Only(t *testing.T) {
 	c := Default()
 	if c.Native.H1 != ":7246" || c.Native.H1TLS != "" || c.Native.H2 != "" || c.Native.H3 != "" || !c.AdvertiseAllNative {
-		t.Fatalf("native listeners = %+v", c.Native)
+		t.Fatalf("native listeners = %+v, advertiseAll = %v, want only H1 on :7246 with advertiseAll true", c.Native, c.AdvertiseAllNative)
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestLoadEndpointConfiguration(t *testing.T) {
+func TestLoadAppliesEndpointEnvironment(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("GM_H1_TLS_ADDR", ":7247")
 	t.Setenv("GM_H2_ADDR", ":7248")
@@ -39,10 +49,10 @@ func TestLoadEndpointConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !c.AdvertisedNative[NativeH1TLS] || !c.AdvertisedNative[NativeH2] || len(c.AdvertisedNative) != 2 {
-		t.Fatalf("advertised = %#v", c.AdvertisedNative)
+		t.Fatalf("advertised = %#v, want exactly %q and %q", c.AdvertisedNative, NativeH1TLS, NativeH2)
 	}
 	if c.NativePublic.H2 != "https://h2.example" || len(c.Public.Both) != 2 {
-		t.Fatalf("public = %+v native = %+v", c.Public, c.NativePublic)
+		t.Fatalf("native = %+v, public = %+v, want H2 origin %q and 2 shared public origins", c.NativePublic, c.Public, "https://h2.example")
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
@@ -58,7 +68,7 @@ func TestValidateRejectsDisabledAdvertisement(t *testing.T) {
 	}
 }
 
-func TestValidateProxyOnly(t *testing.T) {
+func TestValidateAcceptsProxyOnlyDeployment(t *testing.T) {
 	c := Default()
 	c.AdvertiseAllNative = false
 	c.AdvertisedNative = map[string]bool{}
@@ -78,7 +88,7 @@ func TestValidateRequiresThroughput(t *testing.T) {
 	}
 }
 
-func TestValidateOriginsAndTLS(t *testing.T) {
+func TestValidateRejectsMissingTLSAndBadOrigins(t *testing.T) {
 	c := Default()
 	c.Native.H2 = ":7248"
 	if err := c.Validate(); err == nil {
@@ -117,14 +127,14 @@ func TestValidateNormalizesOriginsBeforeDuplicateChecks(t *testing.T) {
 	})
 }
 
-func TestParseAdvertisedNative(t *testing.T) {
+func TestParseAdvertisedNativeResolvesAliasesAndRejectsUnknown(t *testing.T) {
 	all, err := ParseAdvertisedNative("all")
 	if err != nil || len(all) != 4 {
-		t.Fatalf("all = %#v, %v", all, err)
+		t.Fatalf("ParseAdvertisedNative(\"all\") = %#v, %v, want 4 endpoints and no error", all, err)
 	}
 	none, err := ParseAdvertisedNative("none")
 	if err != nil || len(none) != 0 {
-		t.Fatalf("none = %#v, %v", none, err)
+		t.Fatalf("ParseAdvertisedNative(\"none\") = %#v, %v, want an empty set and no error", none, err)
 	}
 	if _, err := ParseAdvertisedNative("fictional"); err == nil {
 		t.Fatal("expected unknown endpoint error")

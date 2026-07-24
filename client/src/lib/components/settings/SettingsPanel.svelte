@@ -23,34 +23,32 @@
     onResetWidth,
   }: Props = $props();
 
-  // The active tab lives in the store (persisted), so reopening Settings lands
-  // on the last-viewed section rather than resetting to Test Setup.
+  // The active tab is store.settingsTab, persisted across reopens.
   type Tab = "setup" | "developer";
 
-  // The Developer tab only exists when the build includes dev tools
-  // (GM_CLIENT_DEV_TOOLS). The `...(false ? [...] : [])` spread folds to nothing
-  // in a prod build, and the gated render branch below drops the import — so the
-  // whole DeveloperPanel (debug logging + simulation) leaves the bundle. With
-  // Setup then the only tab, the tab bar itself is not rendered.
+  // __GM_DEV_TOOLS__ is a build-time constant. In a prod build this list and
+  // the gated branch below both fold away, dropping DeveloperPanel and its
+  // imports from the bundle.
+  const DEVELOPER_TAB: { key: Tab; label: string }[] = __GM_DEV_TOOLS__
+    ? [{ key: "developer", label: "Developer" }]
+    : [];
   const TABS: { key: Tab; label: string }[] = [
     { key: "setup", label: "Setup" },
-    ...(__GM_DEV_TOOLS__
-      ? [{ key: "developer" as Tab, label: "Developer" }]
-      : []),
+    ...DEVELOPER_TAB,
   ];
 </script>
 
 {#snippet tabs()}
   <div class="tabs" role="tablist" aria-label="Settings sections">
-    {#each TABS as t (t.key)}
+    {#each TABS as tab (tab.key)}
       <button
         class="tab"
         role="tab"
-        class:active={store.settingsTab === t.key}
-        aria-selected={store.settingsTab === t.key}
-        onclick={() => (store.settingsTab = t.key)}
+        class:active={store.settingsTab === tab.key}
+        aria-selected={store.settingsTab === tab.key}
+        onclick={() => (store.settingsTab = tab.key)}
       >
-        {t.label}
+        {tab.label}
       </button>
     {/each}
   </div>
@@ -73,14 +71,13 @@
   {#if __GM_DEV_TOOLS__ && store.settingsTab === "developer"}
     <DeveloperPanel running={store.isRunning} />
   {:else}
-    <!-- Default + fallback (also when a persisted "developer" tab was stripped). -->
+    <!-- Default, and the fallback for a persisted "developer" tab in a prod build. -->
     <TestSetupPanel running={store.isRunning} />
   {/if}
 </SidePanel>
 
 <style>
-  /* Tab switcher — a recessed segmented track with the active tab
-     lifted as a milled tile. */
+  /* Recessed segmented track; the active tab lifts as a milled tile. */
   .tabs {
     display: flex;
     gap: var(--space-1);

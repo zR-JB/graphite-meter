@@ -14,6 +14,8 @@
   let hover = $state<HoverInfo | null>(null);
   let hoverX: number | null = null;
   let hoverPresentation: PresentationHandle;
+  // presentation keeps animating while a render returns true.
+  const PARKED = false;
 
   // Invalidate only for state read by ChartEngine.
   $effect(() => {
@@ -26,15 +28,10 @@
     void store.stageResults.download;
     void store.stageResults.upload;
     void store.result?.bidirectional;
-    // Unit/base toggles only change the axis tick FORMAT, not the data — but the
-    // loop parks once a finished run settles, so without tracking them here a
-    // post-run toggle would never re-wake the loop and the ticks would freeze.
+    // Tick format only, but the loop parks after a run: tracking these re-arms
+    // it. unitLabel also moves with the raw peak's k/M/G/T prefix on its own.
     void store.unitBase;
     void store.unitKind;
-    // unitLabel changes whenever the shared prefix index (k/M/G/T) moves —
-    // that can happen from the raw peak alone, independent of
-    // displayScaleBytesPerSec (the DWELL-FILTERED sustained peak, a
-    // different signal) — so track it directly too.
     void store.unitLabel;
     engine?.wake();
   });
@@ -43,6 +40,7 @@
     hoverX = e.offsetX;
     hoverPresentation?.invalidate();
   }
+  // A one-shot repaint, re-armed by invalidate().
   function updateHover() {
     engine.setHover(hoverX);
     hover = engine.hoverInfo();
@@ -54,7 +52,7 @@
       hover.rtt == null
     )
       hover = null;
-    return false;
+    return PARKED;
   }
   function onLeave() {
     hoverX = null;
@@ -65,7 +63,7 @@
     engine = new ChartEngine(
       () => ({
         throughput: store.throughput,
-        latency: store.latency, // raw — the engine buckets the LINE itself; axis/hover use raw
+        latency: store.latency, // raw: the engine buckets the line, axis and hover use raw
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
         phaseStartedAtMs: store.phaseStartedAtMs,
@@ -86,19 +84,19 @@
     engine.attach(canvasEl!);
     hoverPresentation = presentation.register(plotEl!, updateHover);
 
-    const mo = new MutationObserver(() => engine.invalidateTheme());
-    mo.observe(document.documentElement, {
+    const themeObserver = new MutationObserver(() => engine.invalidateTheme());
+    themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    const ro = new ResizeObserver(() => engine.invalidateTheme());
-    ro.observe(canvasEl!);
+    const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
+    resizeObserver.observe(canvasEl!);
 
     return () => {
       engine.destroy();
       hoverPresentation.destroy();
-      mo.disconnect();
-      ro.disconnect();
+      themeObserver.disconnect();
+      resizeObserver.disconnect();
     };
   });
 </script>
@@ -157,10 +155,9 @@
 </section>
 
 <style>
-  /* Flat milled tile on the faceplate (quieter than the gauge well). A flex
-     column so the plot can stretch when the console stage grants this section
-     extra height (desktop; see Console's .stage > .chart rule) while the
-     140px floor keeps it legible when it doesn't (mobile/stacked flow). */
+  /* Flat milled tile on the faceplate, quieter than the gauge well. The flex
+     column lets the plot stretch into whatever height Console's
+     .stage > .chart rule grants, down to the 140px floor in stacked flow. */
   .chart {
     display: flex;
     flex-direction: column;
@@ -170,9 +167,8 @@
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
   }
-  /* Secondary to the gauge hero: fills whatever height the tile is granted,
-     never less than the compact floor. The plot screen is a shallow recess
-     set into the tile. */
+  /* Secondary to the gauge hero: a shallow recess in the tile, filling the
+     granted height down to the compact floor. */
   .plot {
     position: relative;
     flex: 1 1 auto;

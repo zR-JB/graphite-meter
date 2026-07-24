@@ -25,7 +25,7 @@ type OutMsg =
   | { type: "stall"; detail: string }
   | { type: "resume" }
   | { type: "auth-required" };
-type ProgressEvent = {
+type ProgressFrame = {
   type: "ready" | "progress" | "complete" | "error";
   bytes?: number;
   nanos?: number;
@@ -123,34 +123,35 @@ async function run(): Promise<void> {
   }
 }
 
+/** Sleep before the next reconnect attempt, cut short if `wakeReconnect` fires. */
 function reconnectDelay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(finish, ms);
-    function finish(): void {
+    const timer = setTimeout(wake, ms);
+    function wake(): void {
       clearTimeout(timer);
-      if (wakeReconnect === finish) wakeReconnect = null;
+      if (wakeReconnect === wake) wakeReconnect = null;
       resolve();
     }
-    wakeReconnect = finish;
+    wakeReconnect = wake;
   });
 }
 
 async function readEvents(body: ReadableStream<Uint8Array>): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  let pending = "";
+  let partialLine = "";
   for (;;) {
     const { value, done } = await reader.read();
-    pending += decoder.decode(value, { stream: !done });
-    const lines = pending.split("\n");
-    pending = lines.pop() ?? "";
+    partialLine += decoder.decode(value, { stream: !done });
+    const lines = partialLine.split("\n");
+    partialLine = lines.pop() ?? "";
     for (const line of lines) {
       if (line.trim() === "") continue;
-      let event: ProgressEvent;
+      let event: ProgressFrame;
       try {
-        event = JSON.parse(line) as ProgressEvent;
+        event = JSON.parse(line) as ProgressFrame;
       } catch {
-        continue;
+        continue; // a truncated or non-JSON line is never a measurement
       }
       if (event.type === "ready") {
         backoff = 0;
@@ -185,6 +186,9 @@ async function readEvents(body: ReadableStream<Uint8Array>): Promise<void> {
   }
 }
 
+/** Handle `stop`: ask the server to close the upload session. When the DELETE
+ *  lands, the stream itself delivers the final `complete` frame and tears down
+ *  there; when it does not, tear down locally so nothing keeps reconnecting. */
 async function finish(): Promise<void> {
   if (stopped || finishing) return;
   finishing = true;

@@ -39,6 +39,7 @@ type fakeOIDC struct {
 	jwksStatus     int
 	userinfoStatus int
 	discoveries    int
+	mistypedMeta   bool
 }
 
 func newFakeOIDC(t *testing.T) *fakeOIDC {
@@ -58,10 +59,15 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/.well-known/openid-configuration":
 		f.mu.Lock()
 		f.discoveries++
+		mistyped := f.mistypedMeta
 		f.mu.Unlock()
+		var responseIssuer any = true
+		if mistyped {
+			responseIssuer = "yes"
+		}
 		writeJSON(w, map[string]any{
 			"issuer": f.server.URL, "authorization_endpoint": f.server.URL + "/authorize", "token_endpoint": f.server.URL + "/token",
-			"jwks_uri": f.server.URL + "/jwks", "userinfo_endpoint": f.server.URL + "/userinfo", "authorization_response_iss_parameter_supported": true,
+			"jwks_uri": f.server.URL + "/jwks", "userinfo_endpoint": f.server.URL + "/userinfo", "authorization_response_iss_parameter_supported": responseIssuer,
 		})
 	case "/jwks":
 		f.mu.Lock()
@@ -153,7 +159,7 @@ func startOIDC(t *testing.T, s *Service, f *fakeOIDC) (state string, cookie *htt
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
 	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("start status=%d", rr.Code)
+		t.Fatalf("start status=%d, want 303", rr.Code)
 	}
 	location, err := url.Parse(rr.Header().Get("Location"))
 	if err != nil {
@@ -202,7 +208,7 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 			state, cookie := startOIDC(t, s, f)
 			rr := finishOIDC(s, state, cookie, "")
 			if rr.Code != test.want {
-				t.Fatalf("status=%d", rr.Code)
+				t.Fatalf("status=%d, want %d", rr.Code, test.want)
 			}
 			loggedIn := false
 			for _, c := range rr.Result().Cookies() {
@@ -210,8 +216,8 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 					loggedIn = true
 				}
 			}
-			if loggedIn != (test.name == "valid") {
-				t.Fatalf("loggedIn=%v", loggedIn)
+			if want := test.name == "valid"; loggedIn != want {
+				t.Fatalf("loggedIn=%v, want %v", loggedIn, want)
 			}
 		})
 	}
@@ -243,7 +249,7 @@ func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
 	s := f.service(t)
 	state, cookie := startOIDC(t, s, f)
 	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
-		t.Fatalf("first status=%d", rr.Code)
+		t.Fatalf("first status=%d, want 200", rr.Code)
 	}
 	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
 		t.Fatal("transaction replay accepted")
@@ -299,6 +305,22 @@ func TestOIDCStartupDoesNotProbeProtectedProviderEndpoints(t *testing.T) {
 	}
 }
 
+// A provider whose discovery document mistypes an optional field still yields
+// valid endpoints, so discovery must complete rather than fail permanently.
+func TestOIDCDiscoveryToleratesMistypedOptionalMetadata(t *testing.T) {
+	f := newFakeOIDC(t)
+	f.mu.Lock()
+	f.mistypedMeta = true
+	f.mu.Unlock()
+	s := f.service(t)
+	if !s.oidc.ready() {
+		t.Fatal("a mistyped optional metadata field disabled OIDC")
+	}
+	if s.oidc.responseIssuer {
+		t.Fatal("responseIssuer decoded from a mistyped field")
+	}
+}
+
 // The callback is the tail of a navigation the identity provider started. A
 // redirect there would be followed without the SameSite=Strict session cookie
 // the callback just set, bouncing a successful first login back to /login, so
@@ -328,7 +350,7 @@ func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 		t.Fatalf("session cookie = %+v, want SameSite=Strict", session)
 	}
 	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Fatalf("content-type=%q", ct)
+		t.Fatalf("content-type=%q, want a text/html interstitial", ct)
 	}
 }
 

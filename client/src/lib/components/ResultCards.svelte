@@ -14,88 +14,88 @@
   const dash = "—";
 
   function transferModel(phase: "download" | "upload") {
-    const st = store.liveStability[phase];
+    const stability = store.liveStability[phase];
     if (store.phase === phase) {
-      const comp = store.liveCompensation;
+      const live = store.liveCompensation;
       return {
-        measuredBytesPerSec: comp.measuredBytesPerSec,
-        estimatedBytesPerSec: comp.estimatedBytesPerSec,
-        lowerBytesPerSec: comp.lowerBytesPerSec,
-        upperBytesPerSec: comp.upperBytesPerSec,
-        available: comp.available,
-        multiplier: comp.totalMultiplier,
-        band: st?.band ?? "low",
-        score: st?.score ?? 0,
+        measuredBytesPerSec: live.measuredBytesPerSec,
+        estimatedBytesPerSec: live.estimatedBytesPerSec,
+        lowerBytesPerSec: live.lowerBytesPerSec,
+        upperBytesPerSec: live.upperBytesPerSec,
+        available: live.available,
+        multiplier: live.totalMultiplier,
+        band: stability?.band ?? "low",
+        score: stability?.score ?? 0,
         active: true,
-        has: comp.measuredBytesPerSec > 0,
+        has: live.measuredBytesPerSec > 0,
       };
     }
-    const res = store.stageResults[phase];
-    const comp =
+    const stageResult = store.stageResults[phase];
+    const compensation =
       phase === "download"
         ? store.downloadCompensation
         : store.uploadCompensation;
     return {
-      measuredBytesPerSec: res?.reportedBytesPerSec ?? 0,
-      estimatedBytesPerSec: comp.estimatedBytesPerSec,
-      lowerBytesPerSec: comp.lowerBytesPerSec,
-      upperBytesPerSec: comp.upperBytesPerSec,
-      available: comp.available,
-      multiplier: comp.totalMultiplier,
-      band: res?.band ?? st?.band ?? "low",
-      score: res?.stabilityScore ?? st?.score ?? 0,
+      measuredBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
+      estimatedBytesPerSec: compensation.estimatedBytesPerSec,
+      lowerBytesPerSec: compensation.lowerBytesPerSec,
+      upperBytesPerSec: compensation.upperBytesPerSec,
+      available: compensation.available,
+      multiplier: compensation.totalMultiplier,
+      band: stageResult?.band ?? stability?.band ?? "low",
+      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
-      has: !!res,
+      has: !!stageResult,
     };
   }
 
-  const dl = $derived.by(() => transferModel("download"));
-  const ul = $derived.by(() => transferModel("upload"));
+  const download = $derived.by(() => transferModel("download"));
+  const upload = $derived.by(() => transferModel("upload"));
 
   const bidi = $derived.by(() => {
     if (store.phase === "bidirectional") {
-      const b = store.liveBidirectional ?? { down: 0, up: 0 };
+      const live = store.liveBidirectional ?? { down: 0, up: 0 };
       return {
-        down: b.down,
-        up: b.up,
-        combined: b.down + b.up,
+        down: live.down,
+        up: live.up,
+        combined: live.down + live.up,
         band: "low" as const,
         score: 0,
         active: true,
-        has: b.down + b.up > 0,
+        has: live.down + live.up > 0,
       };
     }
-    const r = store.result?.bidirectional;
-    const down = r?.down.reportedBytesPerSec ?? 0;
-    const up = r?.up.reportedBytesPerSec ?? 0;
+    const result = store.result?.bidirectional;
+    const down = result?.down.reportedBytesPerSec ?? 0;
+    const up = result?.up.reportedBytesPerSec ?? 0;
     return {
       down,
       up,
       combined: down + up,
-      band: r?.down.band ?? "low",
-      score: r?.down.stabilityScore ?? 0,
+      band: result?.down.band ?? "low",
+      score: result?.down.stabilityScore ?? 0,
       active: false,
-      has: !!r,
+      has: !!result,
     };
   });
 
   const ping = $derived.by(() => {
-    const st = store.liveStability.latency;
+    const stability = store.liveStability.latency;
     if (store.phase === "latency") {
       return {
         ms: store.liveRtt,
-        band: st?.band ?? "low",
-        score: st?.score ?? 0,
+        band: stability?.band ?? "low",
+        score: stability?.score ?? 0,
         active: true,
         has: store.liveRtt > 0,
       };
     }
-    const lat = store.stageResults.latency;
-    const reported = lat?.reportedMs ?? null;
+    const stageResult = store.stageResults.latency;
+    const reported = stageResult?.reportedMs ?? null;
     return {
       ms: reported ?? store.liveRtt,
-      band: lat?.band ?? st?.band ?? "low",
-      score: lat?.stabilityScore ?? st?.score ?? 0,
+      band: stageResult?.band ?? stability?.band ?? "low",
+      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
       has: reported != null,
     };
@@ -109,22 +109,22 @@
     return `+${((multiplier - 1) * 100).toFixed(1)}%`;
   }
 
-  const pingShow = $derived(
+  const showPing = $derived(
     store.runConfig.stages.latency && (ping.active || ping.has),
   );
-  const dlShow = $derived(
-    store.runConfig.stages.download && (dl.active || dl.has),
+  const showDownload = $derived(
+    store.runConfig.stages.download && (download.active || download.has),
   );
-  const ulShow = $derived(
-    store.runConfig.stages.upload && (ul.active || ul.has),
+  const showUpload = $derived(
+    store.runConfig.stages.upload && (upload.active || upload.has),
   );
-  const bidiShow = $derived(
+  const showBidi = $derived(
     store.runConfig.stages.bidirectional && (bidi.active || bidi.has),
   );
 
-  const dlShown = $derived(store.toUnit(dl.measuredBytesPerSec));
-  const ulShown = $derived(store.toUnit(ul.measuredBytesPerSec));
-  const bidiShown = $derived(store.toUnit(bidi.combined));
+  const downloadInUnit = $derived(store.toUnit(download.measuredBytesPerSec));
+  const uploadInUnit = $derived(store.toUnit(upload.measuredBytesPerSec));
+  const bidiInUnit = $derived(store.toUnit(bidi.combined));
 
   const showWire = $derived(store.showWireEstimates);
 
@@ -135,7 +135,7 @@
   interface CardVM {
     key: string;
     icon: string;
-    ico: string; // accent class: dl | ul | bd | pg
+    accent: string; // accent class: dl | ul | bd | pg
     label: string;
     term: boolean; // dotted-underline jargon affordance (ping)
     active: boolean;
@@ -169,16 +169,16 @@
 
   function transferCard(
     phase: "download" | "upload",
-    model: typeof dl,
+    model: typeof download,
     hasVal: boolean,
     shown: number,
   ): CardVM {
-    const download = phase === "download";
+    const isDownload = phase === "download";
     return {
       key: phase,
-      icon: download ? ICON.download : ICON.upload,
-      ico: download ? "dl" : "ul",
-      label: download ? "Download" : "Upload",
+      icon: isDownload ? ICON.download : ICON.upload,
+      accent: isDownload ? "dl" : "ul",
+      label: isDownload ? "Download" : "Upload",
       term: false,
       active: model.active,
       hasVal,
@@ -193,13 +193,17 @@
 
   const cards = $derived.by<CardVM[]>(() => {
     const out: CardVM[] = [];
-    if (dlShow) out.push(transferCard("download", dl, dl.has, dlShown));
-    if (ulShow) out.push(transferCard("upload", ul, ul.has, ulShown));
-    if (bidiShow)
+    if (showDownload)
+      out.push(
+        transferCard("download", download, download.has, downloadInUnit),
+      );
+    if (showUpload)
+      out.push(transferCard("upload", upload, upload.has, uploadInUnit));
+    if (showBidi)
       out.push({
         key: "bidirectional",
         icon: ICON.bidirectional,
-        ico: "bd",
+        accent: "bd",
         label: "Bi-dir",
         term: false,
         active: bidi.active,
@@ -207,18 +211,18 @@
         showPip: bidi.has && !bidi.active,
         band: bidi.band,
         score: bidi.score,
-        num: bidi.has ? fmtSpeed(bidiShown) : dash,
+        num: bidi.has ? fmtSpeed(bidiInUnit) : dash,
         unit: store.unitLabel,
         sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
           : undefined,
         wire: null,
       });
-    if (pingShow)
+    if (showPing)
       out.push({
         key: "latency",
         icon: ICON.ping,
-        ico: "pg",
+        accent: "pg",
         label: "Ping",
         term: true,
         active: ping.active,
@@ -243,7 +247,7 @@
 {#snippet resultCard(c: CardVM)}
   <article class="result-card" class:active={c.active}>
     <header>
-      <span class="ico {c.ico}">{@html c.icon}</span>
+      <span class="ico {c.accent}">{@html c.icon}</span>
       {#if c.term}
         <span class="label term" use:tooltip={JARGON.ping}>{c.label}</span>
       {:else}
@@ -282,7 +286,7 @@
 
 {#snippet resultChip(c: CardVM)}
   <div class="result-chip" class:active={c.active}>
-    <span class="ico {c.ico}">{@html c.icon}</span>
+    <span class="ico {c.accent}">{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
     <span class="chip-val">
       <span class="num">{c.num}</span>
@@ -315,7 +319,7 @@
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
   }
-  /* Keep this in sync with .result-card min-height and GaugePanel's result slot. */
+  /* Matches .result-card min-height and GaugePanel's results-slot reserve. */
   .result-cards.reserve {
     min-height: 64px;
   }
@@ -509,7 +513,7 @@
     font-size: 11px;
   }
 
-  /* Guided empty-state line — quiet invitation while there's no data. */
+  /* Guided empty-state line: a quiet invitation while there is no data. */
   .metric-guidance {
     margin: var(--space-2) 0 0;
     text-align: center;
@@ -518,10 +522,9 @@
     color: var(--text-soft);
   }
 
-  /* ---- Compact strip (mobile-first "see earlier stages while the next one
-     runs") ---- One slim row per finished/active stage: icon + label + number,
-     no card chrome, no pip, no wire-estimate line. Deliberately smaller by
-     construction rather than a breakpoint-shrunk full card. */
+  /* Compact strip: one slim row per finished or active stage, carrying icon,
+     label, and number. Earlier stages stay visible while the next one runs.
+     No card chrome, pip, or wire-estimate line. */
   .result-chips {
     display: flex;
     flex-direction: column;

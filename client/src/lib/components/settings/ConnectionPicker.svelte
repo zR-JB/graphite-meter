@@ -38,7 +38,7 @@
     else store.config.transports.latencyTarget = value;
   }
 
-  function option(value: string) {
+  function optionView(value: string) {
     return role === "throughput"
       ? throughputOptionView(store.transportDiscovery, value)
       : latencyOptionView(store.transportDiscovery, value);
@@ -48,24 +48,24 @@
 <fieldset>
   <legend>{title}</legend>
   <div class="options">
-    {#each options as item (item.value)}
-      {@const view = option(item.value)}
+    {#each options as option (option.value)}
+      {@const view = optionView(option.value)}
       <label
         class="choice"
-        class:selected={selected === item.value}
+        class:selected={selected === option.value}
         class:unavailable={view.disabled || locked}
       >
         <input
           type="radio"
           name={`${role}-target`}
-          value={item.value}
-          checked={selected === item.value}
+          value={option.value}
+          checked={selected === option.value}
           disabled={view.disabled || locked}
-          onchange={() => select(item.value)}
+          onchange={() => select(option.value)}
         />
         <span class="radio-dot" aria-hidden="true"></span>
         <span class="copy">
-          <strong>{item.label}</strong>
+          <strong>{option.label}</strong>
           <small>{view.detail}</small>
         </span>
       </label>

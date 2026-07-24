@@ -1,13 +1,21 @@
 package auth
 
 // headers.go is the response-header policy: the CSP and hardening headers
-// applied to authenticated and pre-auth responses, and the only CORS surface
-// reachable without a principal — the headers-only measurement preflight.
+// applied to authenticated and pre-auth responses. The headers-only measurement
+// preflight is the only CORS surface reachable without a principal.
 
 import (
 	"net/http"
 	"strings"
+
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
+
+// appScriptHash pins the application's one inline pre-paint <script> in the
+// authenticated CSP. It is derived from the embedded build at startup, so it
+// tracks the served page exactly; it is "" when no real client is embedded
+// (a Go-only build or test), and script-src is then omitted.
+var appScriptHash = static.AppScriptCSPHash()
 
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
@@ -17,19 +25,30 @@ func securityHeaders(h http.Header) {
 	h.Set("Content-Security-Policy", authPageCSP(""))
 }
 
-// authPageCSP locks the login surface to its own inline stylesheet and
-// pre-paint theme script, each pinned by hash; no other source may load.
-// Signing in works without scripting: the script only carries the app's stored
-// theme over, and without it theme selection follows the OS preference.
-// form-action widens only to the discovered authorization origin. img-src
-// allows data: and nothing else, which covers the inlined favicon without
-// opening a route to any remote host.
+// authPageCSP is the login surface's policy: default-src 'none' admits nothing,
+// and every source below is one the login page serves itself.
 func authPageCSP(authorizationOrigin string) string {
+	// form-action widens only to the discovered authorization origin, so the
+	// OIDC sign-in form can post to the provider.
 	formAction := "'self'"
 	if authorizationOrigin != "" {
 		formAction += " " + authorizationOrigin
 	}
-	return "default-src 'none'; style-src 'sha256-" + authStyleHash + "'; script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'; img-src data:; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
+	return strings.Join([]string{
+		"default-src 'none'",
+		// The stylesheet and both scripts are inline and pinned by digest.
+		// Scripting stays optional: the sign-in form posts natively.
+		"style-src 'sha256-" + authStyleHash + "'",
+		"script-src 'sha256-" + authThemeHash + "' 'sha256-" + authPendingHash + "'",
+		// pending.js posts the same-origin sign-in forms with fetch, swapping
+		// errors in place instead of navigating. It fetches nowhere else.
+		"connect-src 'self'",
+		// data: covers the inlined favicon and admits no remote host.
+		"img-src data:",
+		"form-action " + formAction,
+		"frame-ancestors 'none'",
+		"base-uri 'none'",
+	}, "; ")
 }
 
 func (s *Service) loginSecurityHeaders(h http.Header) {
@@ -39,24 +58,38 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 	}
 }
 
-func authenticatedSecurityHeaders(h http.Header) {
-	h.Set("Strict-Transport-Security", "max-age=31536000")
+// appCSP is the application Content-Security-Policy. scriptHash pins the one
+// inline pre-paint script; connectExtra is the cross-origin measurement targets
+// from /preflight, so a script cannot reach any other host. img-src stays
+// unpinned for the data: favicon. The login pages carry their own policy.
+func appCSP(scriptHash, connectExtra string) string {
+	csp := "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'"
+	if connectExtra != "" {
+		csp += " " + connectExtra
+	}
+	if scriptHash != "" {
+		csp += "; script-src 'self' 'sha256-" + scriptHash + "'"
+	}
+	return csp
+}
+
+// hstsThisHostOnly omits includeSubDomains: a homelab runs many services under
+// one base domain, and plain-HTTP or self-signed siblings break when forced to
+// HTTPS. This host opts itself in and does not speak for its neighbours.
+const hstsThisHostOnly = "max-age=31536000"
+
+func (s *Service) authenticatedSecurityHeaders(h http.Header) {
+	h.Set("Strict-Transport-Security", hstsThisHostOnly)
 	h.Set("X-Frame-Options", "DENY")
-	// The application bundles its own scripts and connects to measurement
-	// origins chosen at runtime, so script-src/connect-src are not pinned here.
-	// These directives are the subset the app never needs relaxed: no <base>
-	// (so no relative-URL hijack), no plugins, and forms post only same-origin
-	// (the sign-out form). The login surface overrides this with its strict
-	// hash-pinned policy.
-	h.Set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
+	h.Set("Content-Security-Policy", appCSP(appScriptHash, s.connectSrc))
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 }
 
 // corsPreflight answers the CORS preflight for measurement routes. It is the one
-// unauthenticated path through Enforce, and writes headers only — never a body
-// and never a principal-bearing response.
+// unauthenticated path through Enforce, and writes headers only: never a body,
+// never a principal-bearing response.
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
 	if !secure || r.Header.Get("Origin") != s.public.String() {
 		forbidden(w)

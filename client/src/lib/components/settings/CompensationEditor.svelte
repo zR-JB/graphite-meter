@@ -30,7 +30,7 @@
     value,
     label: compensationTransportLabel(value),
   }));
-  const NUMBERS = [
+  const NUMBER_FIELDS = [
     ["mtuBytes", "MTU bytes", 576, 65536, 1],
     ["tcpOptionsMinBytes", "TCP options min", 0, 40, 4],
     ["tcpOptionsMaxBytes", "TCP options max", 0, 40, 4],
@@ -38,10 +38,13 @@
     ["quicConnIdMinBytes", "QUIC CID min", 0, 20, 1],
     ["quicConnIdMaxBytes", "QUIC CID max", 0, 20, 1],
   ] as const;
+  // Every profile preset hardcodes IPv4; the IP version is a separate user override.
   function reseedProfile() {
-    const ipVersion = compensation.params.ipVersion;
+    const preservedIpVersion = compensation.params.ipVersion;
     const preset = applyConnectionProfile(compensation.profile);
-    Object.assign(compensation.params, preset.params, { ipVersion });
+    Object.assign(compensation.params, preset.params, {
+      ipVersion: preservedIpVersion,
+    });
   }
 </script>
 
@@ -78,7 +81,7 @@
           </select>
         </label>
         <div class="fields">
-          {#each NUMBERS as [key, label, min, max, step]}
+          {#each NUMBER_FIELDS as [key, label, min, max, step]}
             <label
               ><span>{label}</span><input
                 type="number"

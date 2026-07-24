@@ -20,10 +20,9 @@ import (
 type trust struct{ Secure, Canonical bool }
 
 // requestTrust evaluates a request against the trust boundary. Direct TLS is
-// believed on its own; a cleartext request is believed only from a configured
+// believed on its own. A cleartext request is believed only from a configured
 // trusted proxy, and only when a single, non-list X-Forwarded-Proto and
-// X-Forwarded-Host say https and the canonical host. Anything else is
-// untrusted, which is also what an untrusted peer forging those headers gets.
+// X-Forwarded-Host say https and the canonical host. Anything else is untrusted.
 func (s *Service) requestTrust(r *http.Request) trust {
 	if r.TLS != nil {
 		return trust{Secure: true, Canonical: equalHost(r.Host, s.public.Host)}
@@ -106,39 +105,72 @@ func (s *Service) authClientAddress(r *http.Request) (netip.Addr, bool) {
 }
 
 // validRequestOrigin enforces the origin, Sec-Fetch-Site, and double-submit
-// CSRF policy for an authenticated request.
+// CSRF rules as a sequence of independent, named checks. A bearer principal
+// stops at the Origin header, having no ambient cookie to abuse. A cookie
+// principal must clear every rule.
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
+	if !s.originHeaderAllowed(r) {
+		return false
+	}
 	if p.Bearer {
-		return r.Header.Get("Origin") == "" || r.Header.Get("Origin") == s.public.String()
+		return true
 	}
-	if origin := r.Header.Get("Origin"); origin != "" && origin != s.public.String() {
+	return s.fetchSiteAllowed(r) &&
+		s.cookieMeasurementReadAllowed(r, p) &&
+		s.wsPingOriginAllowed(r) &&
+		s.mutationOriginAllowed(r, p)
+}
+
+// originHeaderAllowed passes when there is no Origin header or it is the public
+// UI origin. Every request, bearer or cookie, must clear this one rule.
+func (s *Service) originHeaderAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	return origin == "" || origin == s.public.String()
+}
+
+// fetchSiteAllowed rejects a cross-site fetch and any Sec-Fetch-Site value that
+// is not one the browser would send for a legitimate same-origin request.
+func (s *Service) fetchSiteAllowed(r *http.Request) bool {
+	site := r.Header.Get("Sec-Fetch-Site")
+	if site == "" {
+		return true
+	}
+	if site == "same-site" && r.Header.Get("Origin") != s.public.String() {
 		return false
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
-		if site == "same-site" && r.Header.Get("Origin") != s.public.String() {
-			return false
-		}
-		if site != "same-origin" && site != "same-site" && site != "none" {
-			return false
-		}
+	return site == "same-origin" || site == "same-site" || site == "none"
+}
+
+// cookieMeasurementReadAllowed makes a cookie-authenticated GET/HEAD on a
+// measurement route prove same-origin, since those routes stream credentialed
+// data a foreign page must not read.
+func (s *Service) cookieMeasurementReadAllowed(r *http.Request, p Principal) bool {
+	if p.session == nil || !isMeasurementRoute(r.URL.Path) {
+		return true
 	}
-	if p.session != nil && isMeasurementRoute(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-		if r.Header.Get("Origin") != s.public.String() && r.Header.Get("Sec-Fetch-Site") != "same-origin" {
-			return false
-		}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return true
 	}
-	// A WebSocket upgrade is exempt from CORS, so the ping route demands the
-	// public Origin outright. Path pinned by api/routes.txt (routes_test.go).
-	if r.URL.Path == "/ws/ping" && r.Header.Get("Origin") != s.public.String() {
+	return r.Header.Get("Origin") == s.public.String() || r.Header.Get("Sec-Fetch-Site") == "same-origin"
+}
+
+// wsPingOriginAllowed demands the public Origin outright: a WebSocket upgrade is
+// exempt from CORS. Path pinned by api/routes.txt (routes_test.go).
+func (s *Service) wsPingOriginAllowed(r *http.Request) bool {
+	return r.URL.Path != "/ws/ping" || r.Header.Get("Origin") == s.public.String()
+}
+
+// mutationOriginAllowed requires a matching Origin on every unsafe method, plus
+// a valid CSRF token on measurement mutations.
+func (s *Service) mutationOriginAllowed(r *http.Request, p Principal) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+		return true
+	}
+	if r.Header.Get("Origin") != s.public.String() {
 		return false
 	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-		if r.Header.Get("Origin") != s.public.String() {
-			return false
-		}
-		if isMeasurementRoute(r.URL.Path) && (p.session == nil || !constantEqual(p.session.csrf, r.Header.Get("X-CSRF-Token"))) {
-			return false
-		}
+	if isMeasurementRoute(r.URL.Path) {
+		return p.session != nil && constantEqual(p.session.csrf, r.Header.Get("X-CSRF-Token"))
 	}
 	return true
 }

@@ -1,9 +1,8 @@
 /// <reference types="svelte" />
 /// <reference types="vite/client" />
 
-// Build-time constants injected by Vite `define` (see vite.config.ts). These
-// are literal-substituted at build time; declared here so `svelte-check` (which
-// runs before `vite build` and never sees `define`) type-checks references.
+// Build-time constants literal-substituted by Vite `define` (see vite.config.ts).
+// `svelte-check` runs without `define`, so these declarations keep references typed.
 
 declare const __GM_DEFAULT_ENGINE__: "real" | "dummy";
 declare const __GM_ALLOW_DUMMY__: boolean;

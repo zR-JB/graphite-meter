@@ -103,7 +103,7 @@ func TestDownloadDeterministicAndIncompressible(t *testing.T) {
 
 	a, b := get(), get()
 	if !bytes.Equal(a, b) {
-		t.Fatal("two downloads differ — stream is not deterministic")
+		t.Fatal("two downloads differ, stream is not deterministic")
 	}
 	// Body must be the block, wrapping at the block boundary.
 	if !bytes.Equal(a[:len(block)], block) {
@@ -160,9 +160,8 @@ func TestDownloadContextCancel(t *testing.T) {
 	dl := NewDownload(block, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// A sink that cancels the context after the first write, then keeps
-	// counting: the loop must observe Done() and return rather than stream all
-	// 10 MiB.
+	// The sink cancels the context after the first write and keeps counting: the
+	// loop must observe Done() and return instead of streaming all 10 MiB.
 	sink := &cancelOnWrite{cancel: cancel}
 	s := &fakeSession{ctx: ctx, query: "bytes=" + strconv.Itoa(10<<20), sink: sink}
 
@@ -170,7 +169,7 @@ func TestDownloadContextCancel(t *testing.T) {
 		t.Fatalf("handle: %v", err)
 	}
 	if sink.n >= int64(10<<20) {
-		t.Errorf("wrote %d bytes — cancellation did not stop the stream", sink.n)
+		t.Errorf("wrote %d bytes, cancellation did not stop the stream", sink.n)
 	}
 }
 
@@ -208,3 +207,32 @@ func (f *fakeSession) OpenDownloadSink() (io.Writer, error) {
 }
 func (f *fakeSession) OpenUploadSource() (io.Reader, error) { return nil, transport.ErrUnsupported }
 func (f *fakeSession) Bus() (transport.MessageBus, bool)    { return nil, false }
+
+// BenchmarkDownloadThroughput streams a multi-megabyte download over a loopback
+// TCP server end to end, so it measures the endpoint's real serving throughput
+// (block wrap-around, HTTP framing, and the loopback stack) rather than a
+// synthetic in-memory copy. b.SetBytes makes the result read as MB/s.
+func BenchmarkDownloadThroughput(b *testing.B) {
+	srv, _ := newDownloadServer(testBlockSize)
+	b.Cleanup(srv.Close)
+	const size = 8 << 20 // 8 MiB per request
+	client := srv.Client()
+	url := srv.URL + "/download?bytes=" + strconv.Itoa(size)
+
+	b.SetBytes(size)
+	b.ReportAllocs()
+	for b.Loop() {
+		res, err := client.Get(url)
+		if err != nil {
+			b.Fatal(err)
+		}
+		n, err := io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if n != size {
+			b.Fatalf("streamed %d bytes, want %d", n, size)
+		}
+	}
+}

@@ -43,7 +43,7 @@ func loadRoutePin(t *testing.T) map[string]string {
 		pinned[strings.TrimSpace(name)] = strings.TrimSpace(path)
 	}
 	if len(pinned) == 0 {
-		t.Fatal("route pin is empty — expected populated routes")
+		t.Fatal("route pin is empty; expected populated routes")
 	}
 	return pinned
 }
@@ -137,7 +137,7 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 	})
 
 	t.Run("validRequestOrigin", func(t *testing.T) {
-		assertEnumerates(t, "trust.go validRequestOrigin", []string{ping}, enumeratedPaths(t, "trust.go", "validRequestOrigin"))
+		assertEnumerates(t, "trust.go wsPingOriginAllowed", []string{ping}, enumeratedPaths(t, "trust.go", "wsPingOriginAllowed"))
 
 		s := testService(t)
 		_, sess, err := s.createSession("subject", "Name", "local", time.Time{})

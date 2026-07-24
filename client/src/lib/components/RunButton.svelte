@@ -5,8 +5,8 @@
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
-  // Once complete, show "Run again" instead of "Engage" to make re-running
-  // obvious. Pairs with R key + the ShortcutHints strip.
+  // A resolved run relabels the button "Run again", pairing with the R key
+  // and the ShortcutHints strip.
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||
@@ -50,9 +50,8 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
-    /* The one pill — Faceplate's single bold element. Prominent but not a
-       full-bleed slab; centered under the gauge with a sensible max. The lit
-       top edge + brand glow are the only place we spend this much elevation. */
+    /* The one pill: the faceplate's single bold element, centered under the
+       gauge. Its lit top edge and brand glow are the only such elevation. */
     width: 100%;
     max-width: 320px;
     align-self: center;

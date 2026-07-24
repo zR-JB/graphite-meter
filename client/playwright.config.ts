@@ -23,10 +23,12 @@ export default defineConfig({
     },
     { name: "firefox", use: { browserName: "firefox" } },
   ],
+  // The `test:e2e` script builds the bundle, so this timeout covers only the
+  // preview server binding.
   webServer: {
-    command:
-      "bun run build:bundle && bun run preview -- --host 127.0.0.1 --port 4173",
+    command: "bun run preview -- --host 127.0.0.1 --port 4173",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
   },
 });

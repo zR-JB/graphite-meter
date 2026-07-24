@@ -9,10 +9,10 @@ import (
 	"github.com/coder/websocket"
 )
 
-// wsBus adapts a *websocket.Conn to MessageBus: one logical wire message per text
-// frame (api/wire.md — WS frames are already message-delimited, no length prefix).
+// wsBus adapts a *websocket.Conn to MessageBus: one wire message per text frame.
+// WS frames are message-delimited, so api/wire.md needs no length prefix here.
 // Reliable() is true: WS rides TCP, which retransmits, so packet loss is hidden.
-// Measurable loss is the WT-datagram bus (Stage 5).
+// This is the only bus transport, so no session exposes measurable loss.
 type wsBus struct {
 	conn *websocket.Conn
 	ctx  context.Context
@@ -33,8 +33,8 @@ func (b *wsBus) Send(msg string) error {
 func (b *wsBus) Reliable() bool { return true }
 
 // websocketSession is a Session over a WebSocket bus (/ws/ping). It exposes a
-// MessageBus and reports ErrUnsupported for the HTTP / byte-stream seams — a bus
-// endpoint never touches those.
+// MessageBus and reports ErrUnsupported for the HTTP and byte-stream seams: a
+// bus endpoint never touches those.
 type websocketSession struct {
 	conn  *websocket.Conn
 	ctx   context.Context

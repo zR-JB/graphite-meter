@@ -54,32 +54,22 @@ fi
 echo "pre-commit: gitleaks (secret scan)"
 gitleaks protect --staged --redact -v
 
+# These call the same justfile recipes ci.yml runs, so the hook, `just ci`, and
+# GitHub CI cannot describe different checks. The hook deliberately runs the
+# fast subset: go-lint (staticcheck + govulncheck) and the Docker smoke job stay
+# CI-only.
 if echo "$staged" | grep -qE '^(go/|client/src/auth/)'; then
-    echo "pre-commit: auth assets (generated match source)"
-    (cd go/internal/auth && go run ./cmd/authassets)
-    if ! git diff --quiet -- go/internal/auth/assets_generated.go; then
-        echo "assets_generated.go is stale — regenerated it; stage the result and commit again"
-        exit 1
-    fi
+    echo "pre-commit: auth assets (just check-generated)"
+    just check-generated
 fi
 
 if echo "$staged" | grep -q '^go/'; then
-    echo "pre-commit: go (gofmt, vet, test)"
-    unformatted=$(cd go && gofmt -l .)
-    if [ -n "$unformatted" ]; then
-        echo "gofmt violations (fix with: gofmt -w go/):"
-        echo "$unformatted"
-        exit 1
-    fi
-    (cd go && go vet ./... && CGO_ENABLED=1 go test -race -shuffle=on ./...)
+    echo "pre-commit: go (just server-check server-test)"
+    just server-check
+    just server-test
 fi
 
 if echo "$staged" | grep -q '^client/'; then
-    echo "pre-commit: client (prettier, type-check, test)"
-    if ! (cd client && bun run format:check >/dev/null 2>&1); then
-        echo "prettier violations (fix with: cd client && bun run format):"
-        (cd client && bun run format:check) || true
-        exit 1
-    fi
-    (cd client && bun run check && bun test)
+    echo "pre-commit: client (just client-ci)"
+    just client-ci
 fi

@@ -1,10 +1,10 @@
-// LocalStorage schema for user settings. Load is defensive so old or partial
-// blobs merge onto the current defaults instead of breaking startup.
+// LocalStorage schema for user settings.
+// Load merges stale or partial blobs onto the current defaults.
 import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/real/streamPolicy";
 import { DEFAULT_CONFIG } from "./store.svelte";
 
-export const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light" | "auto";
@@ -44,13 +44,13 @@ export function defaultPersisted(): PersistedState {
   };
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Persisted blobs may be stale, partial, or hand-edited.
+// Keys absent from the defaults and leaves of the wrong type fall back.
 function deepMergeOverDefaults<T>(base: T, source: unknown): T {
-  // Persisted blobs may be old, partial, or hand-edited. Walk only default keys
-  // and type-check leaves so schema changes fall back instead of crashing load.
   if (!isPlainObject(base)) {
     if (source === undefined) return base;
     if (Array.isArray(base))
@@ -77,7 +77,7 @@ function safeParse(raw: string | null): unknown {
   }
 }
 
-function pingCadence(value: unknown, fallback: PingCadence): PingCadence {
+function coercePingCadence(value: unknown, fallback: PingCadence): PingCadence {
   if (value === "instant") return "reply-driven";
   return value === "reply-driven" ||
     value === "fast" ||
@@ -94,27 +94,28 @@ export function loadPersisted(): PersistedState {
   try {
     raw = window.localStorage.getItem(STORAGE_KEY);
   } catch {
+    // Storage access throws outright when site data is blocked.
     return defaults;
   }
   const parsed = safeParse(raw);
   if (!isPlainObject(parsed)) return defaults;
   const merged = deepMergeOverDefaults(defaults, parsed);
 
-  // Version 1 originally stored a numeric IP family. Preserve that explicit
-  // expert choice now that the setting also supports automatic detection.
+  // deepMergeOverDefaults walks only keys the current schema defines.
+  // Legacy spellings need explicit mapping below.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
-  merged.config.pingCadence = pingCadence(
+  merged.config.pingCadence = coercePingCadence(
     parsedConfig?.pingCadence,
     defaults.config.pingCadence,
   );
-  merged.config.loadedPingCadence = pingCadence(
+  merged.config.loadedPingCadence = coercePingCadence(
     parsedConfig?.loadedPingCadence,
     defaults.config.loadedPingCadence,
   );
-  const legacyPingCadence = parsedConfig?.pingConcurrency;
-  if (legacyPingCadence !== undefined)
-    merged.config.pingCadence = pingCadence(
-      legacyPingCadence,
+  const legacyPingConcurrency = parsedConfig?.pingConcurrency;
+  if (legacyPingConcurrency !== undefined)
+    merged.config.pingCadence = coercePingCadence(
+      legacyPingConcurrency,
       merged.config.pingCadence,
     );
   const legacyTransports = isPlainObject(parsedConfig?.transports)
@@ -132,12 +133,12 @@ export function loadPersisted(): PersistedState {
   const legacyEndpoint = isPlainObject(parsedConfig?.endpoint)
     ? parsedConfig.endpoint
     : null;
-  const legacyTarget = legacyEndpoint?.protocol;
-  switch (legacyTarget) {
+  const legacyProtocol = legacyEndpoint?.protocol;
+  switch (legacyProtocol) {
     case "current":
     case "http2":
     case "http3":
-      merged.config.transports.throughputTarget = legacyTarget;
+      merged.config.transports.throughputTarget = legacyProtocol;
       break;
     case "http1":
       merged.config.transports.throughputTarget = "http1-clear";
@@ -153,6 +154,7 @@ export function loadPersisted(): PersistedState {
   const parsedParams = isPlainObject(parsedCompensation?.params)
     ? parsedCompensation.params
     : null;
+  // A numeric IP family is an explicit expert override and survives hydration.
   const savedIPVersion = parsedParams?.ipVersion;
   if (savedIPVersion === "auto" || savedIPVersion === 4 || savedIPVersion === 6)
     merged.config.compensation.params.ipVersion = savedIPVersion;
@@ -189,5 +191,8 @@ export function savePersisted(snapshot: PersistedState): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-  } catch {}
+  } catch {
+    // Blocked site data or a full quota must not break the session.
+    // Settings then do not survive a reload.
+  }
 }

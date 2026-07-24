@@ -19,8 +19,8 @@ interface PingSample {
   lost: boolean;
 }
 
-/** Ping worker → channel messages. The worker owns reconnection, so it emits
- *  stall/resume around a reconnect window rather than a terminal error. */
+/** Ping worker → channel messages. The worker owns reconnection and brackets a
+ *  reconnect window with stall/resume, keeping the channel alive. */
 type PingOutMsg =
   | { type: "open" }
   | { type: "ready" }
@@ -68,7 +68,7 @@ export interface LatencyChannelDeps {
 export class LatencyChannel {
   #deps: LatencyChannelDeps;
   #worker: Worker | null = null;
-  /** True from prime to teardown — gates late worker messages after teardown. */
+  /** True from prime to teardown. Gates late worker messages. */
   #active = false;
   /** Armed for the idle latency stage only: fires failStage("latency") when no
    *  pong ever arrives. Cleared by the first sample / teardown. */
@@ -81,10 +81,9 @@ export class LatencyChannel {
     this.#deps = deps;
   }
 
-  /** Open the latency (ping) channel over `kind` and warm it. Spawns the
-   *  dedicated ping worker (which owns the WebSocket + the whole ping algorithm),
-   *  hands it the tuning, and lets it send warmup pings — pushing NOTHING into
-   *  the core. measure() flips reporting on over the SAME warmed socket. */
+  /** Open the latency (ping) channel over `kind` and warm it. The ping worker
+   *  owns the WebSocket and the ping algorithm. Its warmup pings stay inside the
+   *  worker; measure() flips reporting on over that same socket. */
   prime(kind: TransportKind, isLatencyStage = false): void {
     if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
 
@@ -105,8 +104,8 @@ export class LatencyChannel {
 
     this.#underLoad = false;
     this.#active = true;
-    // The idle latency stage has no byte lanes to prove the link — bound how
-    // long the channel gets to deliver its first pong before the stage skips.
+    // The idle latency stage has no byte lanes to prove the link. Bound the
+    // wait for its first pong; the stage fails once that bound expires.
     if (isLatencyStage) {
       this.#establishTimer = setTimeout(() => {
         this.#establishTimer = null;
@@ -117,15 +116,15 @@ export class LatencyChannel {
         );
       }, PING_ESTABLISH_TIMEOUT_MS);
     }
-    const w = pingWorker();
-    w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
+    const worker = pingWorker();
+    worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);
-    w.onerror = (e: ErrorEvent): void =>
+    worker.onerror = (e: ErrorEvent): void =>
       this.#onMessage({
         type: "stall",
         detail: e.message || "ping worker error",
       });
-    w.postMessage({
+    worker.postMessage({
       type: "start",
       url,
       intervalMs,
@@ -143,18 +142,14 @@ export class LatencyChannel {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: authEnabled,
     });
-    this.#worker = w;
+    this.#worker = worker;
   }
 
-  /** Begin measuring on the already-open ping channel (opened in prime()).
-   *  RTT = now − sent; an unacked / timed-out ping is `lost`. The channel
-   *  retains the cadence selected when its stage warmup began; measurement only
-   *  enables reporting via host.ingestLatency(rtt, underLoad, lost) —
-   *  `underLoad` is true when the pings run concurrently with a transfer
-   *  (bufferbloat). */
+  /** Enable reporting on the socket prime() opens, at that stage's cadence.
+   *  Samples reach host.ingestLatency(rtt, underLoad, lost). The worker computes
+   *  rtt and flags an unacked or timed-out ping `lost`. `underLoad` marks pings
+   *  running alongside a transfer (bufferbloat). */
   measure(underLoad: boolean): void {
-    // The worker primed in prime() is already pinging on a warm socket; just
-    // flip reporting on (never re-spawn — that would throw away the warmup).
     this.#underLoad = underLoad;
     this.#worker?.postMessage({ type: "measure" });
   }
@@ -170,8 +165,8 @@ export class LatencyChannel {
   }
 
   /** Handle a message from the ping worker. The worker reports already-computed
-   *  RTTs; the channel just tags underLoad and forwards. stall/resume bracket a
-   *  reconnect — the coordinator decides whether that reaches the core. */
+   *  RTTs; the channel tags underLoad and forwards. stall/resume bracket a
+   *  reconnect, and the coordinator decides whether that reaches the core. */
   #onMessage(msg: PingOutMsg): void {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
@@ -180,12 +175,13 @@ export class LatencyChannel {
       return;
     }
     switch (msg.type) {
-      case "samples":
+      case "samples": {
         this.#clearEstablishTimer(); // a pong proves the channel works
-        for (const s of msg.samples) {
-          this.#deps.host().ingestLatency(s.rtt, this.#underLoad, s.lost);
-        }
+        const host = this.#deps.host();
+        for (const sample of msg.samples)
+          host.ingestLatency(sample.rtt, this.#underLoad, sample.lost);
         break;
+      }
       case "stall":
         this.#deps.stall(msg.detail);
         break;
@@ -193,7 +189,6 @@ export class LatencyChannel {
         this.#deps.resume();
         break;
       case "open":
-        break;
       case "ready":
         break;
     }
@@ -225,23 +220,19 @@ export class IdleKeepalive {
    *  resolves the preflight median wait (idempotent). */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
   #probeReady: { finish: (error?: Error) => void } | null = null;
-  /** True after the keepalive reported a stall, so "connected" is emitted only
-   *  on the offline→online edge instead of once per sample. */
+  /** True from a stall until the next sample. "connected" emits once, on the
+   *  offline→online edge. */
   #offline = false;
-  /** Pending respawn of a dead idle worker (script failed to load / crashed);
-   *  see IDLE_RESPAWN_MS. Cleared on stop. */
+  /** Pending respawn of an idle worker that dies at load time. Cleared on stop. */
   #respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: IdleKeepaliveDeps) {
     this.#deps = deps;
   }
 
-  /** Start the persistent idle ping at `intervalMs` (default 1/s). Safe to
-   *  call repeatedly — no-ops if already running or if websocket isn't
-   *  available. Started by probe() (at the brisk preflight cadence) and again
-   *  after every run ends, so the connectivity pill stays live whenever the app
-   *  isn't mid-test. It uses a tiny in-flight window and a fixed internal
-   *  cadence. */
+  /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
+   *  a no-op without a websocket latency target. Each run end restarts it, so
+   *  the connectivity pill stays live outside a test. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     const targetKey = `${throughputTargetKey(this.#deps.throughputTarget())}\n${this.#deps.latencyTarget()?.id ?? ""}`;
     if (this.#active && this.#targetKey === targetKey) return;
@@ -252,45 +243,39 @@ export class IdleKeepalive {
     const url = httpToWs(channel.origin) + latencyRoute;
     this.#active = true;
     this.#targetKey = targetKey;
-    // Treat connectivity as unknown until this (fresh) worker proves the link:
-    // its first samples then emit a "connected" edge. Crucial after a
-    // connection-lost failure — the store latched the pulse offline, and
-    // without this edge a link that recovered before the worker's first stall
-    // would never un-latch it.
+    // The store latches its pulse offline on connection-lost. A fresh worker's
+    // first samples must emit a "connected" edge to un-latch it.
     this.#offline = true;
-    const w = pingWorker();
-    w.onmessage = (e: MessageEvent<PingOutMsg>): void =>
+    const worker = pingWorker();
+    worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);
-    w.onerror = (e: ErrorEvent): void => {
-      // Worker died without ever running its reconnect loop — most commonly the
-      // script fetch itself failed because the (bundle-serving) server is down,
-      // e.g. restarting the keepalive right after a connection-lost run. Report
-      // offline and retry the SPAWN until one sticks (the in-worker reconnect
-      // loop only exists once the script loads).
+    worker.onerror = (e: ErrorEvent): void => {
+      // A worker dying at load time has no in-worker reconnect loop, usually
+      // because the bundle-serving server is down. Report offline and respawn.
       this.#onMessage({
         type: "stall",
         detail: e.message || "idle ping worker error",
       });
       this.#scheduleRespawn(intervalMs);
     };
-    w.postMessage({
+    worker.postMessage({
       type: "start",
       url,
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,
-      reportGapMs: 0, // paced sends are already sparse — report every sample
+      reportGapMs: 0, // paced sends are sparse: report every sample
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: authEnabled,
     });
     // Report immediately (there is no keepalive warmup window).
-    w.postMessage({ type: "measure" });
-    this.#worker = w;
+    worker.postMessage({ type: "measure" });
+    this.#worker = worker;
   }
 
-  /** Stop the idle keepalive — a real run is starting (onRunStart), or the
-   *  app is tearing down. Idempotent. */
+  /** Stop the idle keepalive when a run starts (onRunStart) or the app tears
+   *  down. Idempotent. */
   stop(): void {
     this.#active = false;
     this.#targetKey = "";
@@ -310,10 +295,10 @@ export class IdleKeepalive {
     }
   }
 
-  /** Start the idle keepalive at the brisk probe cadence and resolve with its
-   *  first PROBE_PING_COUNT RTTs (median → preTestPingMs), then settle the
-   *  worker to the sparse liveness cadence. Best-effort: resolves with whatever it
-   *  gathered by the timeout, never rejects. */
+  /** Start the idle keepalive at the probe cadence and resolve with its first
+   *  PROBE_PING_COUNT RTTs (median → preTestPingMs). The worker then settles to
+   *  the sparse liveness cadence. Resolves with whatever arrives by the timeout,
+   *  never rejects. */
   collectRtts(signal?: AbortSignal): Promise<number[]> {
     if (signal?.aborted) return Promise.resolve([]);
     this.start(PROBE_PING_INTERVAL_MS);
@@ -337,6 +322,9 @@ export class IdleKeepalive {
     });
   }
 
+  /** Resolve once the keepalive worker reports its socket ready, so a run can
+   *  refuse to start on a latency transport that never establishes. Rejects with
+   *  TransportUnavailableError on timeout or if the keepalive is stopped. */
   verifyReady(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     this.start(PROBE_PING_INTERVAL_MS);
@@ -345,7 +333,8 @@ export class IdleKeepalive {
         clearTimeout(timer);
         signal?.removeEventListener("abort", aborted);
         this.#probeReady = null;
-        error ? reject(error) : resolve();
+        if (error) reject(error);
+        else resolve();
       };
       const aborted = (): void =>
         finish(new Error("latency WebSocket validation aborted"));
@@ -364,25 +353,23 @@ export class IdleKeepalive {
     });
   }
 
-  /** Re-spawn the idle worker after it died at load time (see the onerror
-   *  handler in start()). One timer at a time; each failed attempt schedules the
-   *  next, so the keepalive keeps knocking every IDLE_RESPAWN_MS until the
-   *  server is back to serve the script. */
+  /** Re-spawn an idle worker that dies at load time. One timer at a time, and
+   *  each dead spawn schedules the next, so the keepalive knocks every
+   *  IDLE_RESPAWN_MS until the server serves the script. */
   #scheduleRespawn(intervalMs?: number): void {
     if (!this.#active || this.#respawnTimer) return;
     this.#respawnTimer = setTimeout(() => {
       this.#respawnTimer = null;
-      if (!this.#active) return; // a run started (or teardown) meanwhile
+      if (!this.#active) return; // a run start or teardown clears #active
       this.stop();
       this.start(intervalMs);
     }, IDLE_RESPAWN_MS);
   }
 
-  /** Handle a message from the idle ping worker. Idle samples never reach
-   *  `host.ingestLatency` (run accumulation) — they are emitted as raw
-   *  `latency` events tagged phase "idle", which the store routes to its
-   *  keepalive-only buffer; the `connectivity` event is the hard override
-   *  effectiveConnectivity respects (stall()/resume() no-op outside a run). */
+  /** Handle a message from the idle ping worker. Idle samples skip
+   *  `host.ingestLatency` (run accumulation) and go out as `latency` events
+   *  tagged phase "idle", which the store buffers separately. Outside a run
+   *  `connectivity` is the only status the store takes. */
   #onMessage(msg: PingOutMsg): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
@@ -393,9 +380,9 @@ export class IdleKeepalive {
     const host = this.#deps.host();
     switch (msg.type) {
       case "samples":
-        for (const s of msg.samples) {
-          if (this.#probeCollect && !s.lost) {
-            this.#probeCollect.rtts.push(s.rtt);
+        for (const sample of msg.samples) {
+          if (this.#probeCollect && !sample.lost) {
+            this.#probeCollect.rtts.push(sample.rtt);
             if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT)
               this.#probeCollect.finish();
           }
@@ -403,9 +390,9 @@ export class IdleKeepalive {
             type: "latency",
             sample: {
               t: 0,
-              rttMs: s.rtt,
+              rttMs: sample.rtt,
               underLoad: false,
-              lost: s.lost,
+              lost: sample.lost,
               phase: "idle",
             },
           });

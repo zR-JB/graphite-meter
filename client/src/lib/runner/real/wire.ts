@@ -1,15 +1,12 @@
 /**
- * Message-bus wire codec — the TS half of the cross-language pin.
- * The Go half is go/internal/wire/{opcodes,frame}.go. Both encoders/decoders
- * assert byte-for-byte identity across versions (wire.test.ts, frame_test.go).
- *
- * Framing is message-delimited ASCII — one logical message per WS frame / WT
- * datagram, parsed by indexOf(',') slicing, never JSON, never regex. This module
- * is imported by the ping worker (workers/ping-worker.ts); the main thread never
- * touches frames.
+ * Message-bus wire codec, the TS half of a cross-language pin with
+ * go/internal/wire/{opcodes,frame}.go. Both sides assert byte-for-byte identity
+ * across versions (wire.test.ts, frame_test.go). Framing is message-delimited
+ * ASCII: one message per WS frame or WT datagram, parsed by indexOf(',')
+ * slicing, never JSON, never regex. Only the ping worker imports this module.
  */
 
-/** Opcode keyword table — uppercase keywords, pinned as the TS mirror of
+/** Opcode keyword table: uppercase keywords, the TS mirror of
  *  go/internal/wire/opcodes.go. */
 export const Op = {
   HI: "HI",
@@ -21,11 +18,9 @@ export const Op = {
   ERR: "ERR",
 } as const;
 
-/**
- * A parsed wire frame. `id` is a uint32 (safe as a JS number); `nanos`, `bytes`,
- * and `n` are uint64 and MUST be `bigint` so the boundary value
- * 18446744073709551615 round-trips byte-exact (it exceeds Number.MAX_SAFE_INTEGER).
- */
+/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` and
+ *  `bytes` are uint64 and MUST be `bigint`: 18446744073709551615 exceeds
+ *  Number.MAX_SAFE_INTEGER and still has to round-trip byte-exact. */
 export type Frame =
   | { op: "READY" }
   | { op: "BYE" }
@@ -55,8 +50,8 @@ const MAX_U32 = 4294967295n;
 const MAX_U64 = 18446744073709551615n;
 
 /** Parse a bare unsigned decimal integer the same way Go's strconv.ParseUint
- *  does: digits only, non-empty, no sign/whitespace. Returns null on reject. No
- *  regex — a plain char-code scan keeps the framing parse allocation-free. */
+ *  does: digits only, non-empty, no sign or whitespace. Returns null on reject.
+ *  A plain char-code scan keeps the framing parse allocation-free. */
 function parseUint(s: string): bigint | null {
   if (s.length === 0) return null;
   for (let i = 0; i < s.length; i++) {
@@ -66,24 +61,24 @@ function parseUint(s: string): bigint | null {
   return BigInt(s);
 }
 
-function u32(s: string, what: string): number {
+function u32(s: string, field: string): number {
   const v = parseUint(s);
-  if (v === null || v > MAX_U32) throw new DecodeError(ErrBadArgs, what);
+  if (v === null || v > MAX_U32) throw new DecodeError(ErrBadArgs, field);
   return Number(v);
 }
 
-function u64(s: string, what: string): bigint {
+function u64(s: string, field: string): bigint {
   const v = parseUint(s);
-  if (v === null || v > MAX_U64) throw new DecodeError(ErrBadArgs, what);
+  if (v === null || v > MAX_U64) throw new DecodeError(ErrBadArgs, field);
   return v;
 }
 
 /** Parse one on-wire message into a Frame. Throws DecodeError(bad_op) on an
  *  unknown opcode and DecodeError(bad_args) on missing/malformed args. */
 export function decode(msg: string): Frame {
-  const c = msg.indexOf(",");
-  const op = c === -1 ? msg : msg.slice(0, c);
-  const rest = c === -1 ? "" : msg.slice(c + 1);
+  const comma = msg.indexOf(",");
+  const op = comma === -1 ? msg : msg.slice(0, comma);
+  const rest = comma === -1 ? "" : msg.slice(comma + 1);
 
   switch (op) {
     case Op.READY:
@@ -96,14 +91,14 @@ export function decode(msg: string): Frame {
 
     case Op.PONG: {
       // rest = "<id>;TIME,<nanos>"
-      const s = rest.indexOf(";");
-      if (s === -1) throw new DecodeError(ErrBadArgs, "PONG TIME");
-      const id = u32(rest.slice(0, s), "PONG id");
-      const tail = rest.slice(s + 1);
-      const tc = tail.indexOf(",");
-      if (tc === -1 || tail.slice(0, tc) !== "TIME")
+      const semi = rest.indexOf(";");
+      if (semi === -1) throw new DecodeError(ErrBadArgs, "PONG TIME");
+      const id = u32(rest.slice(0, semi), "PONG id");
+      const tail = rest.slice(semi + 1);
+      const timeComma = tail.indexOf(",");
+      if (timeComma === -1 || tail.slice(0, timeComma) !== "TIME")
         throw new DecodeError(ErrBadArgs, "PONG TIME");
-      const nanos = u64(tail.slice(tc + 1), "PONG nanos");
+      const nanos = u64(tail.slice(timeComma + 1), "PONG nanos");
       return { op: "PONG", id, nanos };
     }
 
@@ -115,9 +110,9 @@ export function decode(msg: string): Frame {
       return { op: "HI", proto: rest };
 
     case Op.ERR: {
-      const ec = rest.indexOf(",");
-      const code = ec === -1 ? rest : rest.slice(0, ec);
-      const text = ec === -1 ? "" : rest.slice(ec + 1);
+      const codeComma = rest.indexOf(",");
+      const code = codeComma === -1 ? rest : rest.slice(0, codeComma);
+      const text = codeComma === -1 ? "" : rest.slice(codeComma + 1);
       if (code === "") throw new DecodeError(ErrBadArgs, "ERR code");
       return { op: "ERR", code, text };
     }

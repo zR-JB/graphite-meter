@@ -15,9 +15,8 @@ type Download struct {
 	meter *Meter // optional verbose per-second logger; nil unless -verbose
 }
 
-// Download size bounds. bytes is the request's requested length; we default it
-// when absent and clamp it so a single request can't be asked to stream an
-// absurd amount (the client instead opens a fresh request / parallel streams).
+// Download size bounds for ?bytes=. The ceiling keeps one request from streaming
+// an absurd length; the client opens fresh or parallel requests instead.
 const (
 	defaultBytes int64 = 25 * 1024 * 1024        // 25 MiB when ?bytes= is absent
 	maxBytes     int64 = 64 * 1024 * 1024 * 1024 // 64 GiB hard ceiling
@@ -32,10 +31,9 @@ func NewDownload(block []byte, meter *Meter) *Download {
 func (d *Download) ID() string                 { return "download" }
 func (d *Download) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 
-// Handle streams n bytes (from ?bytes=, defaulted+clamped) of the shared block
-// into the session's download sink, wrapping around the block and stopping early
-// on context cancellation or a write error (client disconnect). ?cb= is a
-// cache-buster only; Cache-Control: no-store enforces freshness.
+// Handle streams ?bytes= of the shared block into the session's download sink,
+// wrapping at the block end. Context cancellation or a write error stops early.
+// ?cb= is a cache-buster only; Cache-Control: no-store enforces freshness.
 func (d *Download) Handle(s transport.Session) error {
 	n := parseBytes(s.Query().Get("bytes"))
 
@@ -62,7 +60,7 @@ func (d *Download) Handle(s transport.Session) error {
 	for n > 0 {
 		select {
 		case <-ctx.Done():
-			return nil // client went away / request cancelled — not an error
+			return nil // client went away or request cancelled, not an error
 		default:
 		}
 		chunk := blockLen - off

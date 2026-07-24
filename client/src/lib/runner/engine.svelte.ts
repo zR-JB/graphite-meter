@@ -1,11 +1,11 @@
 /* ============================================================
- * Runner Engine Wiring — integration seam, backend swap
+ * Runner engine wiring: the integration seam for a backend swap
  * The single integration seam. The shared RunnerCore owns the
  * engine logic; only the backend (sample source) is swapped here.
  * Going live touches ONLY this file.
  *
- * Named `.svelte.ts` so the `$state.snapshot` rune (used to pass
- * a frozen, non-reactive config into the engine) is compiled.
+ * Named `.svelte.ts` so the `$state.snapshot` rune compiles; it
+ * passes a frozen, non-reactive config into the engine.
  * ============================================================ */
 
 import type {
@@ -14,14 +14,14 @@ import type {
   LiveRunConfig,
   NetworkRunner,
   RunnerAnomaly,
+  RunnerError,
   RunnerEvent,
 } from "./contract";
 import { RunnerCore } from "./core";
-// NOTE: DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__`-guarded
-// branch in getRunner(). When that token folds to `false` (a prod build with
-// GM_CLIENT_ALLOW_DUMMY=0), Rollup deletes the branch, this import becomes
-// unused, and — because dummy.ts is side-effect-free — the whole module is
-// tree-shaken out. Keep dummy.ts free of top-level side effects or it'll stay.
+// DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__` branch in
+// getRunner(). With that token folded to `false` (GM_CLIENT_ALLOW_DUMMY=0),
+// Rollup deletes the branch and tree-shakes the whole module out, but only
+// while dummy.ts stays free of top-level side effects.
 import { DummyBackend } from "./dummy";
 import { RealBackend, TransportUnavailableError } from "./RealRunner";
 import { store } from "../state/store.svelte";
@@ -30,6 +30,7 @@ import { BUILD } from "../buildenv";
 import {
   CONNECTION_FRESH_MS,
   CONNECTION_ROLES,
+  type ConnectionValidationState,
   connectionDraftKey,
   connectionDraftRoleKey,
   connectionKey,
@@ -40,7 +41,7 @@ import {
 } from "./connectionModel";
 
 let runner: NetworkRunner | null = null;
-let unsub: (() => void) | null = null;
+let unsubscribe: (() => void) | null = null;
 let validationAbort: AbortController | null = null;
 let validationSeq = 0;
 let booted = false;
@@ -54,14 +55,15 @@ let pendingValidation = false;
 let hiddenAt = 0;
 let validating: ConnectionRole[] = [];
 
-// Mirror the persisted dev toggle into the (main-thread) debug logger, live.
-// Workers are separate module graphs — they're told the value in their `start`
-// message (RealRunner reads debugEnabled() at spawn), so this only governs the
-// main-thread core/RealRunner logs.
+// Mirror the persisted dev toggle into the main-thread debug logger, live.
+// Workers are separate module graphs: they get the value in their `start`
+// message, so this governs only the main-thread core/RealRunner logs.
 if (typeof window !== "undefined") {
   $effect.root(() => {
     $effect(() => setDebugLogging(store.debugLogging));
     $effect(() => {
+      // Read every reactive dependency ahead of the `booted` guard: `booted` is
+      // a plain variable, so an early return loses the effect's subscriptions.
       const changed = CONNECTION_ROLES.filter(
         (role) =>
           connectionDraftRoleKey(store.config, role) !==
@@ -87,6 +89,7 @@ if (typeof window !== "undefined") {
       pendingValidation = false;
       queueMicrotask(
         () =>
+          // A rejection is already recorded as a "failed" role by markValidation.
           void validateConnections(
             false,
             changed.length === 1 ? changed[0] : undefined,
@@ -112,7 +115,7 @@ function resolveEngine(): EngineKind {
       try {
         window.localStorage.setItem(ENGINE_STORAGE_KEY, param);
       } catch {
-        /* private mode / storage disabled — fall through to the param value */
+        /* private mode or storage disabled: fall through to the param value */
       }
       return param;
     }
@@ -120,20 +123,15 @@ function resolveEngine(): EngineKind {
       const saved = window.localStorage.getItem(ENGINE_STORAGE_KEY);
       if (saved === "real" || saved === "dummy") return saved;
     } catch {
-      /* storage unavailable — use the default */
+      /* storage unavailable: use the default */
     }
   }
   return BUILD.defaultEngine;
 }
 
 export function getRunner(): NetworkRunner {
-  // The single integration seam. The core/UI/store are engine-agnostic; only
-  // the backend (sample source) is selected here.
-  //
-  // The dummy branch is gated on the raw `__GM_ALLOW_DUMMY__` literal so that a
-  // prod build (GM_CLIENT_ALLOW_DUMMY=0) folds it away and tree-shakes the
-  // DummyBackend out — a real-only bundle then ignores any persisted/`?engine=`
-  // "dummy" and always runs the real backend.
+  // Gated on the raw `__GM_ALLOW_DUMMY__` literal so a prod build folds it away.
+  // A real-only bundle then ignores any persisted or `?engine=` "dummy".
   if (!runner) {
     if (__GM_ALLOW_DUMMY__ && resolveEngine() === "dummy") {
       runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
@@ -151,7 +149,7 @@ function validationMessage(cause: unknown): string {
 
 function markValidation(
   roles: ConnectionRole[],
-  state: "checking" | "verified" | "failed" | "stale",
+  state: ConnectionValidationState,
   message?: string,
   verifiedAt?: number,
   config = store.config,
@@ -276,6 +274,15 @@ export async function validateConnections(
   }
 }
 
+/** Failures that leave the path's reachability unknown. The cached probe is
+ *  untrustworthy once one lands, so it is dropped and both roles re-checked. */
+const PATH_INVALIDATING_REASONS = new Set<RunnerError["reason"]>([
+  "connection-lost",
+  "timeout",
+  "preflight-failed",
+  "transport-unavailable",
+]);
+
 function ingestRunnerEvent(event: RunnerEvent) {
   if (
     event.type === "transportDiscovery" &&
@@ -293,12 +300,7 @@ function ingestRunnerEvent(event: RunnerEvent) {
   }
   if (
     event.type === "error" &&
-    [
-      "connection-lost",
-      "timeout",
-      "preflight-failed",
-      "transport-unavailable",
-    ].includes(event.error.reason)
+    PATH_INVALIDATING_REASONS.has(event.error.reason)
   ) {
     prepared = null;
     markValidation(
@@ -311,15 +313,15 @@ function ingestRunnerEvent(event: RunnerEvent) {
 }
 
 function refreshAfterTransition() {
+  // A rejection is already recorded as a "failed" role by markValidation.
   if (booted && !store.isRunning)
     void validateConnections(true).catch(() => {});
 }
 
-// A hidden tab does no background work: the idle keepalive's ping socket and
-// worker are stopped so the browser can park the page. A run keeps going —
-// hiding the tab mid-measurement must not disturb it. Coming back re-arms the
-// keepalive, and re-checks the connection if the cached probe went stale while
-// away.
+// A hidden tab does no background work: the keepalive's ping socket and worker
+// stop so the browser can park the page. A run keeps going, since hiding the
+// tab mid-measurement must not disturb it. Returning re-arms the keepalive and
+// re-checks a stale cached probe.
 function refreshAfterVisibility() {
   const hidden = document.visibilityState === "hidden";
   // Safe during a run: the keepalive is already stopped for its duration, and
@@ -334,14 +336,15 @@ function refreshAfterVisibility() {
 }
 
 export async function bootRunner() {
-  const r = getRunner();
-  store.engineInfo = r.describe();
-  unsub = r.on(ingestRunnerEvent);
+  const engine = getRunner();
+  store.engineInfo = engine.describe();
+  unsubscribe = engine.on(ingestRunnerEvent);
   booted = true;
   for (const role of CONNECTION_ROLES)
     lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
+  // A rejection is already recorded as a "failed" role by markValidation.
   await validateConnections().catch(() => {});
 }
 
@@ -381,14 +384,15 @@ export function engage() {
 }
 
 /**
- * Return to the fresh, blank idle view — what the logo click offers, matching
- * a page reload's starting state (persisted settings are untouched). Aborts any
- * in-flight run first (synchronous in the dummy engine, so the subsequent reset
- * sticks), then clears samples / result / phase back to idle.
+ * Return to the fresh, blank idle view, matching a page reload's starting state
+ * (persisted settings are untouched). Aborts any in-flight run first, which is
+ * synchronous, so the reset that follows sticks; then clears samples, result,
+ * and phase back to idle.
  */
 export function returnToStart() {
   if (store.isRunning) getRunner().abort();
   store.reset();
+  // A rejection is already recorded as a "failed" role by markValidation.
   void validateConnections(true).catch(() => {});
 }
 
@@ -431,8 +435,8 @@ export function teardownRunner() {
   validationAbort = null;
   window.removeEventListener("online", refreshAfterTransition);
   document.removeEventListener("visibilitychange", refreshAfterVisibility);
-  unsub?.();
-  unsub = null;
+  unsubscribe?.();
+  unsubscribe = null;
   store.reset();
   store.transportDiscovery = null;
 }

@@ -46,6 +46,7 @@ func TestPasswordRejectsLineBreaks(t *testing.T) {
 		}
 	}
 }
+
 func TestPasswordHashRejectsWeakerOrMalformedValues(t *testing.T) {
 	valid, _ := HashPassword("password")
 	for _, h := range []string{"", strings.Replace(valid, "m=19456", "m=4096", 1), strings.Replace(valid, "t=2", "t=1", 1), strings.Replace(valid, "p=1", "p=2", 1)} {

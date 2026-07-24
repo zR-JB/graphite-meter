@@ -4,7 +4,7 @@ export interface SheetDragOptions {
   onDismiss: () => void;
 }
 
-interface SnapInput {
+interface DismissInput {
   distance: number;
   height: number;
   velocity: number;
@@ -13,6 +13,9 @@ interface SnapInput {
 
 export type SheetGestureIntent = "pending" | "drag" | "scroll";
 
+// Stays "pending" inside a 10px slop radius so a tap never nudges the sheet.
+// A pull that is upward, mostly horizontal, or from a scrolled body belongs to
+// the content underneath.
 export function sheetGestureIntent(
   deltaX: number,
   deltaY: number,
@@ -24,20 +27,24 @@ export function sheetGestureIntent(
   return "drag";
 }
 
+// A flick counts only while the finger still moves at release. The
+// releasedAfterMs bound rejects a fast drag that ends in a pause.
 export function shouldDismissSheet({
   distance,
   height,
   velocity,
   releasedAfterMs,
-}: SnapInput): boolean {
+}: DismissInput): boolean {
   const farEnough = distance >= Math.min(160, height * 0.28);
   const recentFlick =
     distance >= 96 && velocity >= 0.85 && releasedAfterMs <= 80;
   return farEnough || recentFlick;
 }
 
+// Reference counted: several sheets can be mounted at once. The first to close
+// must not restore the page while another still holds it.
 let pageLockCount = 0;
-let pageState:
+let pageBeforeLock:
   | {
       scrollY: number;
       bodyCss: string;
@@ -45,11 +52,13 @@ let pageState:
     }
   | undefined;
 
+// iOS keeps scrolling the page behind a sheet under `overflow: hidden`. The
+// body is pinned with `position: fixed` and offset to fake the scroll position.
 function lockPage() {
   pageLockCount++;
   if (pageLockCount !== 1) return;
   const body = document.body;
-  pageState = {
+  pageBeforeLock = {
     scrollY: window.scrollY,
     bodyCss: body.style.cssText,
     rootOverscroll: document.documentElement.style.overscrollBehavior,
@@ -57,7 +66,7 @@ function lockPage() {
   document.documentElement.style.overscrollBehavior = "none";
   Object.assign(body.style, {
     position: "fixed",
-    top: `-${pageState.scrollY}px`,
+    top: `-${pageBeforeLock.scrollY}px`,
     left: "0",
     right: "0",
     width: "100%",
@@ -68,12 +77,12 @@ function lockPage() {
 
 function unlockPage() {
   if (!pageLockCount || --pageLockCount) return;
-  const state = pageState;
-  pageState = undefined;
-  if (!state) return;
-  document.body.style.cssText = state.bodyCss;
-  document.documentElement.style.overscrollBehavior = state.rootOverscroll;
-  window.scrollTo(0, state.scrollY);
+  const saved = pageBeforeLock;
+  pageBeforeLock = undefined;
+  if (!saved) return;
+  document.body.style.cssText = saved.bodyCss;
+  document.documentElement.style.overscrollBehavior = saved.rootOverscroll;
+  window.scrollTo(0, saved.scrollY);
 }
 
 export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
@@ -95,6 +104,10 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
 
   const reducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Wider viewports dock the panel, where a downward drag means nothing.
+  const isBottomSheetLayout = () =>
+    window.matchMedia("(max-width: 759px)").matches;
 
   function setPageLocked(locked: boolean) {
     if (locked === pageLocked) return;
@@ -128,11 +141,7 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   }
 
   function onStart(event: TouchEvent) {
-    if (
-      !opts.enabled ||
-      event.touches.length !== 1 ||
-      !window.matchMedia("(max-width: 759px)").matches
-    )
+    if (!opts.enabled || event.touches.length !== 1 || !isBottomSheetLayout())
       return;
     const touch = event.touches[0];
     const scroller =
@@ -177,6 +186,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     event.preventDefault();
     const elapsed = Math.max(1, event.timeStamp - gesture.lastAt);
     const instantVelocity = (touch.clientY - gesture.lastY) / elapsed;
+    // Smoothed: a single frame's delta is noisy enough to read a steady drag
+    // as a flick.
     gesture.velocity = gesture.velocity * 0.65 + instantVelocity * 0.35;
     gesture.lastY = touch.clientY;
     gesture.lastAt = event.timeStamp;
@@ -206,6 +217,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
         return;
       }
       animate(0, true);
+      // Inline styles come off once the --dur-slide transition finishes. An
+      // earlier reset snaps the sheet instead of gliding it.
       resetTimer = window.setTimeout(reset, 200);
       return;
     }
@@ -216,6 +229,7 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       return;
     }
     animate(node.offsetHeight, true);
+    // Dismiss as the slide-out lands, so the sheet never flashes back on screen.
     resetTimer = window.setTimeout(() => {
       opts.onDismiss();
       reset();
@@ -223,6 +237,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   }
 
   node.addEventListener("touchstart", onStart, { passive: true });
+  // Non-passive: a committed drag calls preventDefault to suppress the browser
+  // scroll and pull-to-refresh.
   node.addEventListener("touchmove", onMove, { passive: false });
   node.addEventListener("touchend", onEnd, { passive: true });
   node.addEventListener("touchcancel", onEnd, { passive: true });

@@ -8,14 +8,14 @@ This page lists every runtime option. Defaults need no configuration.
 
 A non-empty listener address enables that listener. There are no separate enable switches.
 
-| Environment      | Flag           | Default | Meaning                                                     |
-| ---------------- | -------------- | ------- | ----------------------------------------------------------- |
-| `GM_H1_ADDR`     | `-h1-addr`     | `:7246` | Clear HTTP/1.1 UI, API, transfers, and WebSockets.          |
-| `GM_H1_TLS_ADDR` | `-h1-tls-addr` | empty   | Native HTTPS/WSS HTTP/1.1 listener.                         |
-| `GM_H2_ADDR`     | `-h2-addr`     | empty   | Native deterministic HTTP/2 measurement listener.           |
-| `GM_H3_ADDR`     | `-h3-addr`     | empty   | Native deterministic HTTP/3 UDP listener and TCP bootstrap. |
-| `GM_TLS_CERT`    | `-tls-cert`    | empty   | Certificate PEM for all enabled native TLS listeners.       |
-| `GM_TLS_KEY`     | `-tls-key`     | empty   | Private-key PEM for all enabled native TLS listeners.       |
+| Environment      | Flag            | Default | Meaning                                                     |
+| ---------------- | --------------- | ------- | ----------------------------------------------------------- |
+| `GM_H1_ADDR`     | `--h1-addr`     | `:7246` | Clear HTTP/1.1 UI, API, transfers, and WebSockets.          |
+| `GM_H1_TLS_ADDR` | `--h1-tls-addr` | empty   | Native HTTPS/WSS HTTP/1.1 listener.                         |
+| `GM_H2_ADDR`     | `--h2-addr`     | empty   | Native deterministic HTTP/2 measurement listener.           |
+| `GM_H3_ADDR`     | `--h3-addr`     | empty   | Native deterministic HTTP/3 UDP listener and TCP bootstrap. |
+| `GM_TLS_CERT`    | `--tls-cert`    | empty   | Certificate PEM for all enabled native TLS listeners.       |
+| `GM_TLS_KEY`     | `--tls-key`     | empty   | Private-key PEM for all enabled native TLS listeners.       |
 
 Ports 7246–7249 are the convention used by the container image's `EXPOSE` set and every example
 in this repository:
@@ -41,16 +41,16 @@ the whole Let's Encrypt tree rather than one `live/` directory: its entries are 
 
 What `/preflight` offers clients to measure against:
 
-| Environment                       | Flag                           | Default | Meaning                                                                                                        |
-| --------------------------------- | ------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------- |
-| `GM_ADVERTISED_NATIVE_ENDPOINTS`  | `-advertised-native-endpoints` | `all`   | Which enabled native listeners `/preflight` advertises: `all`, `none`, or a comma list of `http1-clear`, `http1-tls`, `http2`, `http3`. |
-| `GM_H1_PUBLIC_ORIGIN`             | `-h1-public-origin`            | empty   | Externally reachable origin of the native clear-H1 listener, for host/port remapping.                           |
-| `GM_H1_TLS_PUBLIC_ORIGIN`         | `-h1-tls-public-origin`        | empty   | Externally reachable origin of the native HTTPS H1 listener.                                                    |
-| `GM_H2_PUBLIC_ORIGIN`             | `-h2-public-origin`            | empty   | Externally reachable origin of the native H2 listener.                                                          |
-| `GM_H3_PUBLIC_ORIGIN`             | `-h3-public-origin`            | empty   | Externally reachable origin of the native H3 listener.                                                          |
-| `GM_PUBLIC_ORIGINS`               | `-public-origins`              | empty   | Comma-separated negotiated (reverse-proxy) origins offering throughput and WebSocket latency.                   |
-| `GM_PUBLIC_THROUGHPUT_ORIGINS`    | `-public-throughput-origins`   | empty   | Negotiated origins offering throughput only.                                                                    |
-| `GM_PUBLIC_LATENCY_ORIGINS`       | `-public-latency-origins`      | empty   | Negotiated origins offering WebSocket latency only.                                                             |
+| Environment                       | Flag                            | Default | Meaning                                                                                                        |
+| --------------------------------- | ------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------- |
+| `GM_ADVERTISED_NATIVE_ENDPOINTS`  | `--advertised-native-endpoints` | `all`   | Which enabled native listeners `/preflight` advertises: `all`, `none`, or a comma list of `http1-clear`, `http1-tls`, `http2`, `http3`. |
+| `GM_H1_PUBLIC_ORIGIN`             | `--h1-public-origin`            | empty   | Externally reachable origin of the native clear-H1 listener, for host/port remapping.                           |
+| `GM_H1_TLS_PUBLIC_ORIGIN`         | `--h1-tls-public-origin`        | empty   | Externally reachable origin of the native HTTPS H1 listener.                                                    |
+| `GM_H2_PUBLIC_ORIGIN`             | `--h2-public-origin`            | empty   | Externally reachable origin of the native H2 listener.                                                          |
+| `GM_H3_PUBLIC_ORIGIN`             | `--h3-public-origin`            | empty   | Externally reachable origin of the native H3 listener.                                                          |
+| `GM_PUBLIC_ORIGINS`               | `--public-origins`              | empty   | Comma-separated negotiated (reverse-proxy) origins offering throughput and WebSocket latency.                   |
+| `GM_PUBLIC_THROUGHPUT_ORIGINS`    | `--public-throughput-origins`   | empty   | Negotiated origins offering throughput only.                                                                    |
+| `GM_PUBLIC_LATENCY_ORIGINS`       | `--public-latency-origins`      | empty   | Negotiated origins offering WebSocket latency only.                                                             |
 
 Native listeners are deterministic: each advertises exactly one protocol, and the `*_PUBLIC_ORIGIN`
 overrides remap host/port only. Negotiated origins are the reverse-proxy path: clients detect the
@@ -85,17 +85,17 @@ GM_PUBLIC_ORIGINS=self
 
 ## Identity, proxy trust, and limits
 
-| Environment                             | Flag                                  | Default          | Meaning                                                                          |
-| --------------------------------------- | ------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
-| `GM_SERVER_NAME`                        | `-name`                               | `graphite-meter` | Server name in `/preflight`.                                                     |
-| `GM_SERVER_LOCATION`                    | `-location`                           | empty            | Optional location label.                                                         |
-| `GM_TRUSTED_PROXIES`                    | none                                  | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. List the proxy's actual CIDR — a default route (`0.0.0.0/0`, `::/0`) is rejected, since trusting every caller's headers lets any client spoof its address and dodge the rate limits. Invalid CIDRs fail startup. |
-| `GM_MAX_ACTIVE_MEASUREMENTS`            | `-max-active-measurements`            | `256`            | Global concurrent measurement handlers.                                          |
-| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `-max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |
-| `GM_MAX_CONNECTIONS`                    | `-max-connections`                    | `512`            | Global TCP/QUIC connections.                                                     |
-| `GM_MAX_CONNECTIONS_PER_CLIENT`         | `-max-connections-per-client`         | `64`             | Per-direct-client connections.                                                   |
-| `GM_MAX_OPERATION_DURATION`             | `-max-operation-duration`             | `5m`             | Maximum operation lifetime.                                                      |
-| `GM_VERBOSE`                            | `-verbose`                            | `false`          | Per-second server measurement logs.                                              |
+| Environment                             | Flag                                   | Default          | Meaning                                                                          |
+| --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Server name in `/preflight`.                                                     |
+| `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Optional location label.                                                         |
+| `GM_TRUSTED_PROXIES`                    | none                                   | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. List the proxy's actual CIDR — a default route (`0.0.0.0/0`, `::/0`) is rejected, since trusting every caller's headers lets any client spoof its address and dodge the rate limits. Invalid CIDRs fail startup. |
+| `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Global concurrent measurement handlers.                                          |
+| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |
+| `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `512`            | Global TCP/QUIC connections.                                                     |
+| `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Per-direct-client connections.                                                   |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Maximum operation lifetime.                                                      |
+| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Per-second server measurement logs.                                              |
 
 The measurement endpoints are meant to move data fast: a single `/download` streams up to
 64 GiB and the server applies no bandwidth cap of its own (throttling would corrupt the
@@ -108,18 +108,18 @@ connections — otherwise an anonymous client can pull sustained traffic at your
 Off by default. When enabled, every UI asset, discovery request, probe, transfer, progress
 stream, and WebSocket requires a browser session or terminal grant.
 
-| Environment                       | Flag                            | Default    | Meaning                                                              |
-| --------------------------------- | ------------------------------- | ---------- | -------------------------------------------------------------------- |
-| `GM_AUTH_MODE`                    | `-auth-mode`                    | `off`      | `off`, `password`, `oidc`, or `hybrid`.                              |
-| `GM_AUTH_PUBLIC_URL`              | `-auth-public-url`              | empty      | Canonical HTTPS UI origin, without a path.                           |
-| `GM_AUTH_PASSWORD_HASH`           | none                            | empty      | Inline Argon2id PHC hash. Prefer the file variant in containers.     |
-| `GM_AUTH_PASSWORD_HASH_FILE`      | `-auth-password-hash-file`      | empty      | File containing the Argon2id PHC hash.                               |
-| `GM_AUTH_OIDC_ISSUER`             | `-auth-oidc-issuer`             | empty      | Exact OIDC issuer URL.                                               |
-| `GM_AUTH_OIDC_CLIENT_ID`          | `-auth-oidc-client-id`          | empty      | Confidential-client ID.                                              |
-| `GM_AUTH_OIDC_CLIENT_SECRET`      | none                            | empty      | Inline client secret. Prefer the file variant in containers.         |
-| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `-auth-oidc-client-secret-file` | empty      | File containing the client secret.                                   |
-| `GM_AUTH_OIDC_ALLOWED_GROUPS`     | `-auth-oidc-allowed-groups`     | empty      | Comma-separated, case-sensitive group allowlist. Required with OIDC. |
-| `GM_AUTH_OIDC_PROVIDER_NAME`      | `-auth-oidc-provider-name`      | `Authelia` | Provider label on the login page.                                    |
+| Environment                       | Flag                             | Default    | Meaning                                                              |
+| --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------------- |
+| `GM_AUTH_MODE`                    | `--auth-mode`                    | `off`      | `off`, `password`, `oidc`, or `hybrid`.                              |
+| `GM_AUTH_PUBLIC_URL`              | `--auth-public-url`              | empty      | Canonical HTTPS UI origin, without a path.                           |
+| `GM_AUTH_PASSWORD_HASH`           | none                             | empty      | Inline Argon2id PHC hash. Prefer the file variant in containers.     |
+| `GM_AUTH_PASSWORD_HASH_FILE`      | `--auth-password-hash-file`      | empty      | File containing the Argon2id PHC hash.                               |
+| `GM_AUTH_OIDC_ISSUER`             | `--auth-oidc-issuer`             | empty      | Exact OIDC issuer URL.                                               |
+| `GM_AUTH_OIDC_CLIENT_ID`          | `--auth-oidc-client-id`          | empty      | Confidential-client ID.                                              |
+| `GM_AUTH_OIDC_CLIENT_SECRET`      | none                             | empty      | Inline client secret. Prefer the file variant in containers.         |
+| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `--auth-oidc-client-secret-file` | empty      | File containing the client secret.                                   |
+| `GM_AUTH_OIDC_ALLOWED_GROUPS`     | `--auth-oidc-allowed-groups`     | empty      | Comma-separated, case-sensitive group allowlist. Required with OIDC. |
+| `GM_AUTH_OIDC_PROVIDER_NAME`      | `--auth-oidc-provider-name`      | `Authelia` | Provider label on the login page.                                    |
 
 Generate the operator hash interactively — the password is never accepted as a command-line
 argument:
@@ -197,7 +197,7 @@ asks a browser to vouch for it, once per launch:
 The grant lives in the client's memory only: bound to the approving browser session and the
 exact HTTPS origin, refused on any redirect, valid for measurement routes only. Signing out of
 the browser session revokes it; closing the client discards it. The client refuses to
-authenticate over anything but HTTPS and refuses `-insecure` entirely.
+authenticate over anything but HTTPS and refuses `--insecure` entirely.
 
 ### Hybrid mode with a private identity provider
 
@@ -237,24 +237,24 @@ network-level rate limit if you expect sustained hostile traffic.
 `graphite-meter-client` is configured by flags only. Every run setting below is also editable
 inside the TUI before a run starts.
 
-| Flag                     | Default                 | Meaning                                                                                        |
-| ------------------------ | ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `-url`                   | `http://127.0.0.1:7246` | Server base URL.                                                                               |
-| `-throughput-origin`     | `auto`                  | Discovered throughput origin.                                                                  |
-| `-throughput-protocol`   | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
-| `-latency-origin`        | `auto`                  | Discovered WebSocket latency origin.                                                           |
-| `-stages`                | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.      |
-| `-warmup`                | `800ms`                 | Per-stage warmup before measurement starts.                                                    |
-| `-latency-duration`      | `4s`                    | Latency stage window.                                                                          |
-| `-download-duration`     | `10s`                   | Download stage window.                                                                         |
-| `-upload-duration`       | `10s`                   | Upload stage window.                                                                           |
-| `-bidirectional-duration`| `10s`                   | Bidirectional stage window.                                                                    |
-| `-auto-streams`          | `6`                     | Maximum automatic HTTP/1 streams per direction. Native H2/H3 use one request per direction.    |
-| `-streams`               | `0`                     | `0` selects automatic; `1–128` forces an exact count per direction for every protocol.         |
-| `-ping`                  | `medium`                | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration.      |
-| `-loaded-latency`        | `true`                  | Measure RTT while a transfer stage is running.                                                 |
-| `-insecure`              | `false`                 | Skip TLS certificate verification. Refused against an authenticated server.                    |
-| `-version`               | `false`                 | Print the client version and exit.                                                             |
+| Flag                       | Default                 | Meaning                                                                                        |
+| -------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| `--url`                    | `http://127.0.0.1:7246` | Server base URL.                                                                               |
+| `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
+| `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
+| `--latency-origin`         | `auto`                  | Discovered WebSocket latency origin.                                                           |
+| `--stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.      |
+| `--warmup`                 | `800ms`                 | Per-stage warmup before measurement starts.                                                    |
+| `--latency-duration`       | `4s`                    | Latency stage window.                                                                          |
+| `--download-duration`      | `10s`                   | Download stage window.                                                                         |
+| `--upload-duration`        | `10s`                   | Upload stage window.                                                                           |
+| `--bidirectional-duration` | `10s`                   | Bidirectional stage window.                                                                    |
+| `--auto-streams`           | `6`                     | Maximum automatic HTTP/1 streams per direction. Native H2/H3 use one request per direction.    |
+| `--streams`                | `0`                     | `0` selects automatic; `1–128` forces an exact count per direction for every protocol.         |
+| `--ping`                   | `medium`                | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration.      |
+| `--loaded-latency`         | `true`                  | Measure RTT while a transfer stage is running.                                                 |
+| `--insecure`               | `false`                 | Skip TLS certificate verification. Refused against an authenticated server.                    |
+| `--version`                | `false`                 | Print the client version and exit.                                                             |
 
 ## Deployment scaffolding
 

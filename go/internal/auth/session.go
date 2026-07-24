@@ -37,9 +37,9 @@ type session struct {
 
 func (s *Service) createSession(subject, name, provider string, expires time.Time) (string, *session, error) {
 	now := s.now()
-	max := now.Add(sessionLifetime)
-	if expires.IsZero() || expires.After(max) {
-		expires = max
+	latest := now.Add(sessionLifetime)
+	if expires.IsZero() || expires.After(latest) {
+		expires = latest
 	}
 	raw, err := randomToken(32)
 	if err != nil {
@@ -90,11 +90,9 @@ func (s *Service) deleteSessionLocked(sess *session) {
 }
 
 // deleteSubjectSessionsLocked revokes every session belonging to subject, each
-// with its grants and pending approvals, and returns how many were revoked.
-// This is "sign out everywhere": it reaches sessions the caller no longer holds
-// a token for — including one a re-login orphaned — which a single-session
-// logout cannot. Victims are collected before deletion so the map is not
-// mutated mid-range.
+// with its grants and pending approvals, and reports how many. This is "sign
+// out everywhere": it reaches sessions the caller holds no token for, which a
+// single-session logout cannot. Victims are collected first, not mid-range.
 func (s *Service) deleteSubjectSessionsLocked(subject string) int {
 	var victims []*session
 	for _, sess := range s.sessions {
@@ -109,9 +107,9 @@ func (s *Service) deleteSubjectSessionsLocked(subject string) int {
 }
 
 // revokeSessionHash deletes the session keyed by h unless it is absent or is
-// keep. A fresh sign-in calls it to rotate out the session it replaces —
-// including that session's grants — so re-authenticating in a browser cannot
-// leave the prior session live and unreachable for the rest of its lifetime.
+// keep. A fresh sign-in calls it to rotate out the session it replaces, grants
+// included, so re-authenticating in a browser cannot leave the prior session
+// live and unreachable for the rest of its lifetime.
 func (s *Service) revokeSessionHash(h [32]byte, keep *session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,20 +143,20 @@ func (s *Service) sweep(ctx context.Context) {
 
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
-	if _, err := randomBytes(b); err != nil {
+	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
-
-var randomBytes = rand.Read
 
 func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 }
 
 // setCSRFCookie is deliberately readable by the client: the SPA mirrors it into
-// the X-CSRF-Token header for the double-submit check.
+// the X-CSRF-Token header for the double-submit check. HttpOnly is therefore
+// omitted. The token is not a bearer secret; the session cookie beside it is
+// HttpOnly.
 func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, SameSite: http.SameSiteStrictMode})
 }

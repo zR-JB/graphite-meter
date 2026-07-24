@@ -143,9 +143,9 @@ func TestClassifyAuthFailureDetectsRevokedGrant(t *testing.T) {
 	}
 }
 
-// An AuthOrigin that does not parse used to be dereferenced blind, taking the
-// client down. It must instead leave the pinned hostname empty — which, with
-// no grant to send, means an ordinary unauthenticated request.
+// An AuthOrigin that does not parse leaves the pinned hostname empty rather
+// than failing the client. With no grant to send, the request goes out
+// unauthenticated.
 func TestAuthenticatedClientSurvivesUnparseableOrigin(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL = "https://meter.example"
@@ -165,8 +165,8 @@ func TestAuthenticatedClientSurvivesUnparseableOrigin(t *testing.T) {
 	}
 }
 
-// Poll retries transport errors, but a deadline must report why the wait
-// failed rather than a bare "context deadline exceeded".
+// Poll retries transport errors. A deadline names the cause rather than
+// reporting a bare "context deadline exceeded".
 func TestPollSurfacesLastTransportErrorOnDeadline(t *testing.T) {
 	p := &PendingAuthorization{
 		verifier: "verifier", tokenURL: "https://meter.example/auth/cli/token", close: func() {},

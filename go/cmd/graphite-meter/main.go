@@ -5,8 +5,10 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -20,19 +22,16 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "hash-password" {
-		if err := hashPassword(); err != nil {
+		if err := hashPassword(os.Stdin, os.Stdout, os.Stderr); err != nil {
 			log.Fatalf("hash-password: %v", err)
 		}
 		return
 	}
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("configuration error: %v", err)
+	cfg, err := parseConfig("graphite-meter", os.Args[1:], os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return // -h printed the usage on stderr.
 	}
-
-	registerFlags(flag.CommandLine, &cfg)
-	flag.Parse()
-	if err := cfg.Validate(); err != nil {
+	if err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
 
@@ -44,26 +43,48 @@ func main() {
 	}
 }
 
-func hashPassword() error {
-	in := bufio.NewReader(os.Stdin)
-	fmt.Fprint(os.Stderr, "Password: ")
-	first, err := auth.ReadPassword(in, os.Stdin)
+// parseConfig loads the base configuration, applies the command-line flags in
+// args, and validates the result. Flag errors and the -h usage go to usage.
+func parseConfig(name string, args []string, usage io.Writer) (config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return config.Config{}, err
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(usage)
+	registerFlags(fs, &cfg)
+	if err := fs.Parse(args); err != nil {
+		return config.Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, err
+	}
+	return cfg, nil
+}
+
+// hashPassword reads a password twice from stdin, without echo when stdin is a
+// terminal, requires the two entries to match, and writes the Argon2id PHC hash
+// to out. Interactive cues go to prompts.
+func hashPassword(stdin *os.File, out, prompts io.Writer) error {
+	in := bufio.NewReader(stdin)
+	fmt.Fprint(prompts, "Password: ")
+	first, err := auth.ReadPassword(in, stdin)
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(os.Stderr, "Confirm password: ")
-	second, err := auth.ReadPassword(in, os.Stdin)
+	fmt.Fprint(prompts, "Confirm password: ")
+	second, err := auth.ReadPassword(in, stdin)
 	if err != nil {
 		return err
 	}
 	if first != second {
-		return fmt.Errorf("passwords do not match")
+		return errors.New("passwords do not match")
 	}
 	encoded, err := auth.HashPassword(first)
 	if err != nil {
 		return err
 	}
-	fmt.Println(encoded)
+	fmt.Fprintln(out, encoded)
 	return nil
 }
 
@@ -80,11 +101,12 @@ func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
 	fs.StringVar(&cfg.NativePublic.H3, "h3-public-origin", cfg.NativePublic.H3, "public origin of the native HTTP/3 listener")
 	fs.Func("advertised-native-endpoints", "all, none, or comma-separated native endpoint names", func(value string) error {
 		set, err := config.ParseAdvertisedNative(value)
-		if err == nil {
-			cfg.AdvertisedNative = set
-			cfg.AdvertiseAllNative = strings.TrimSpace(value) == "all"
+		if err != nil {
+			return err
 		}
-		return err
+		cfg.AdvertisedNative = set
+		cfg.AdvertiseAllNative = strings.TrimSpace(value) == "all"
+		return nil
 	})
 	fs.Func("public-origins", "comma-separated negotiated origins providing throughput and latency", func(value string) error { cfg.Public.Both = splitFlagList(value); return nil })
 	fs.Func("public-throughput-origins", "comma-separated negotiated throughput origins", func(value string) error { cfg.Public.Throughput = splitFlagList(value); return nil })

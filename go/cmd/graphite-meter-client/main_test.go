@@ -211,12 +211,12 @@ func TestTimingLabel(t *testing.T) {
 	}
 }
 
-func TestTargetChoiceLabel(t *testing.T) {
-	if got := targetChoiceLabel("ws-http1-tls"); got != "WebSocket · HTTP/1.1 · TLS" {
-		t.Fatalf("targetChoiceLabel() = %q", got)
+func TestTargetChoiceLabelFallsBackToTheRawTarget(t *testing.T) {
+	if got, want := targetChoiceLabel("ws-http1-tls"), "WebSocket · HTTP/1.1 · TLS"; got != want {
+		t.Fatalf("targetChoiceLabel(%q) = %q, want %q", "ws-http1-tls", got, want)
 	}
-	if got := targetChoiceLabel("custom-target"); got != "custom-target" {
-		t.Fatalf("custom target label = %q", got)
+	if got, want := targetChoiceLabel("custom-target"), "custom-target"; got != want {
+		t.Fatalf("targetChoiceLabel(%q) = %q, want %q", "custom-target", got, want)
 	}
 }
 
@@ -237,8 +237,8 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 	}
 }
 
-// A preparation attempt runs detached from the model, so starting a new one
-// must invalidate whatever the previous attempt is still about to answer.
+// A preparation attempt runs detached from the model. Starting a new one
+// invalidates whatever an older attempt is still about to answer.
 func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	superseded := m.prepareSeq
@@ -536,8 +536,8 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 		t.Errorf("BaseURL changed to %q after a cancelled edit, want unchanged %q", m.cfg.BaseURL, baseline)
 	}
 
-	// Re-entering the edit should reflect the still-unchanged config, not the
-	// cancelled "x" typed in the previous attempt.
+	// Re-entering the edit reflects the committed config, not the discarded
+	// "x" of a canceled attempt.
 	next, _ = m.activate()
 	m = next.(model)
 	if m.edit.input.Value() != baseline {
@@ -562,7 +562,7 @@ func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 		m := newModel(goclient.DefaultConfig())
 		m.cancel = func() { called = true }
 
-		next, cmd := m.handleKey(key)
+		_, cmd := m.handleKey(key)
 		if !called {
 			t.Errorf("key %q did not invoke cancel", key.String())
 		}
@@ -572,7 +572,6 @@ func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 		if _, ok := cmd().(tea.QuitMsg); !ok {
 			t.Errorf("key %q cmd() did not produce tea.QuitMsg", key.String())
 		}
-		_ = next
 	}
 }
 
@@ -976,9 +975,8 @@ func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 	m.section = sectionServers
 	m.row = len(serverPresets)
 
-	// Every printable rune seeds the editor — including r, v, j, k, and q,
-	// which are bindings everywhere else: a hostname may start with any of
-	// them.
+	// Every printable rune seeds the editor, including r, v, j, k, and q,
+	// which bind elsewhere. A hostname may start with any of them.
 	for _, seed := range []string{"h", "r", "v", "j", "k", "q", "?"} {
 		next, _ := m.handleKey(keyRunes(seed))
 		edited := next.(model)
@@ -1212,8 +1210,8 @@ func TestCommitEdit_AutomaticStreams(t *testing.T) {
 	}
 }
 
-// A recheck costs a round trip, so only a commit that moved the configuration
-// starts one.
+// A recheck costs a round trip, so a commit that leaves the configuration
+// identical starts none.
 func TestHandleEditKey_ApplyRechecksOnlyWhatChanged(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	seq := m.prepareSeq
@@ -1692,6 +1690,8 @@ func BenchmarkUpdateEventBatch(b *testing.B) {
 	}
 }
 
+// benchmarkView is a package-level sink, so the compiler cannot drop the View
+// call whose cost the benchmarks measure.
 var benchmarkView string
 
 func BenchmarkViewConfigure(b *testing.B) {
@@ -2304,10 +2304,7 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
 	choices := []string{"auto", "https://meter.example:7248"}
 	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://meter.example:7248", choices, ""), "")
-	for _, want := range []string{"Automatic", "‹2/2›", "enter cycles"} {
-		if want == "Automatic" {
-			continue
-		}
+	for _, want := range []string{"‹2/2›", "enter cycles"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("endpoint row = %q, want %q", got, want)
 		}
@@ -2316,6 +2313,63 @@ func TestEndpointRowShowsChoicePositionAndResolution(t *testing.T) {
 	for _, want := range []string{"Automatic", "‹1/2›", "→ https://meter.example:7248 · http2"} {
 		if !strings.Contains(resolved, want) {
 			t.Errorf("resolved endpoint row = %q, want %q", resolved, want)
+		}
+	}
+}
+
+// populatedRunModel is a run-screen model with live bars, a timeline, latency,
+// and results: the visually densest frame, exercising every fit path.
+func populatedRunModel(width int) model {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.width = width
+	m.stage = "bidirectional"
+	m.status = "measure"
+	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000, TotalBytes: 1 << 30}
+	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000, TotalBytes: 1 << 30}
+	m.peaks[goclient.Down] = 940_000_000
+	m.peaks[goclient.Up] = 80_000_000
+	m.latency = goclient.LatencySample{RTT: 3 * time.Millisecond}
+	m.target = "throughput.example.com — a deliberately long target label to test truncation at narrow widths"
+	m.stages = plannedStages(m.cfg)
+	m.stages[0].state = stageDone
+	m.stages[1].state, m.stages[1].since = stageMeasuring, m.now.Add(-2*time.Second)
+	return m
+}
+
+// frameBound is the widest line View may draw at a terminal width. The
+// innerWidth floor of 40 plus the shell's 4-cell margin deliberately overflows
+// a terminal narrower than 44 cells.
+func frameBound(width int) int { return max(width, 44) }
+
+// TestRenderedFramesNeverExceedWidth is the guarantee behind the
+// fitLine/fitBlock render path: whatever the content, no drawn line is wider
+// than the frame, or the layout wraps and corrupts.
+func TestRenderedFramesNeverExceedWidth(t *testing.T) {
+	for _, width := range []int{40, 60, 80, 100, 140, 200} {
+		bound := frameBound(width)
+		frames := map[string]string{
+			"configure": func() string { m := newModel(goclient.DefaultConfig()); m.width = width; return m.View() }(),
+			"run":       populatedRunModel(width).View(),
+		}
+		for name, frame := range frames {
+			for i, line := range strings.Split(frame, "\n") {
+				if w := lipgloss.Width(line); w > bound {
+					t.Errorf("%s@%d: line %d is %d cells wide (> %d): %q", name, width, i, w, bound, line)
+				}
+			}
+		}
+	}
+}
+
+// TestRenderRunFrame checks the run screen carries its live readouts, and logs
+// the frame (ANSI included) for eyeballing: go test -run TestRenderRunFrame -v.
+func TestRenderRunFrame(t *testing.T) {
+	frame := populatedRunModel(100).View()
+	t.Log("\n" + frame)
+	for _, want := range []string{"Session", "Live Telemetry", "bidirectional / measure", "3.00 ms", "Stages"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("run frame missing %q", want)
 		}
 	}
 }

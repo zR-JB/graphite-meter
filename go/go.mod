@@ -1,6 +1,6 @@
 module github.com/zR-JB/graphite-meter/go
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0
@@ -12,7 +12,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/quic-go/quic-go v0.60.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
-	golang.org/x/crypto v0.52.0
+	golang.org/x/crypto v0.53.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.45.0
 )
@@ -37,7 +37,7 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 )

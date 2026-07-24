@@ -10,13 +10,16 @@ import (
 )
 
 // UploadProgress streams the selected throughput target's authoritative upload
-// counter as NDJSON. The initial ready record is flushed before upload lanes are
-// allowed to start; blank lines are heartbeats and never carry measurement data.
+// counter as NDJSON. The ready record flushes first, then upload lanes may
+// start. Blank lines are heartbeats and never carry measurement data.
 type UploadProgress struct {
 	store   *UploadStore
 	trusted []netip.Prefix
 }
 
+// NewUploadProgress builds the progress endpoint over store. The optional trusted
+// prefixes are the proxies whose forwarded-for headers may be believed when
+// checking that a stream's caller owns the upload it asks about.
 func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadProgress {
 	e := &UploadProgress{store: store}
 	if len(trusted) > 0 {
@@ -24,6 +27,7 @@ func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadPro
 	}
 	return e
 }
+
 func (e *UploadProgress) ID() string                 { return "upload-progress" }
 func (e *UploadProgress) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 
@@ -39,10 +43,14 @@ type uploadProgressEvent struct {
 	Message string `json:"message,omitempty"`
 }
 
-func waitForUploadPosts(ctx <-chan struct{}, agg *uploadAgg) bool {
+// waitForUploadPosts blocks until no POST lane is still draining into agg, so the
+// terminal count includes every in-flight lane rather than racing them. It
+// reports false if done fires first, meaning the client left and there is no one
+// to report the total to.
+func waitForUploadPosts(done <-chan struct{}, agg *uploadAgg) bool {
 	for agg.posts.Load() > 0 {
 		select {
-		case <-ctx:
+		case <-done:
 			return false
 		case <-agg.postsChanged:
 		}
@@ -56,7 +64,7 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return transport.ErrUnsupported
 	}
 	id := r.URL.Query().Get("id")
-	owner := uploadOwner(r, e.trusted)
+	owner := ClientKey(r, e.trusted)
 	if r.Method == http.MethodDelete {
 		if access := e.store.finishFor(id, owner); access != uploadAccessOK {
 			writeUploadAccessError(w, access)
@@ -69,6 +77,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return nil
 	}
+	// no-transform and X-Accel-Buffering tell intermediaries not to buffer or
+	// recode the stream; a proxy holding records back would stall the progress UI.
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -86,6 +96,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return true
 	}
 
+	// Watching is not upload activity: a progress stream must never refresh the
+	// idle clock, or a client that stopped uploading would keep its slot forever.
 	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {
 		writeUploadAccessError(w, access)
@@ -115,8 +127,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			if !waitForUploadPosts(r.Context().Done(), agg) {
 				return nil
 			}
-			n := uint64(agg.bytes.Load())
-			elapsed := uint64(agg.elapsedNanos(monoNanos()))
+			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
+			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
 			return nil
 		case <-heartbeat.C:
@@ -125,8 +137,8 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 			}
 			flusher.Flush()
 		case <-tick.C:
-			n := uint64(agg.bytes.Load())
-			elapsed := uint64(agg.elapsedNanos(monoNanos()))
+			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
+			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {
 				lastBytes = n
 				if !emit(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: elapsed}) {

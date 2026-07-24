@@ -20,7 +20,7 @@ func TestProbeReturnsConnectionEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.ProtocolNegotiated != "http/1.1" || got.ClientIPVersion != 4 || got.ClientIPSource != "socket" {
-		t.Fatalf("probe = %+v", got)
+		t.Fatalf("probe = %+v, want protocol http/1.1, IP version 4, source socket", got)
 	}
 }
 
@@ -28,10 +28,10 @@ func TestBootstrapProbeAdvertisesH3AndCloses(t *testing.T) {
 	cfg := config.Default()
 	rec := httptest.NewRecorder()
 	httpAdapter(NewProbe(&cfg, "7249")).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://meter/probe", nil))
-	if got := rec.Header().Get("Alt-Svc"); got != `h3=":7249"` {
-		t.Fatalf("Alt-Svc = %q", got)
+	if got, want := rec.Header().Get("Alt-Svc"), `h3=":7249"`; got != want {
+		t.Fatalf("Alt-Svc = %q, want %q", got, want)
 	}
 	if got := rec.Header().Get("Connection"); got != "close" {
-		t.Fatalf("Connection = %q", got)
+		t.Fatalf("Connection = %q, want %q", got, "close")
 	}
 }

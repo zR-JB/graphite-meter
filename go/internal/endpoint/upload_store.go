@@ -14,18 +14,9 @@ import (
 )
 
 // UploadStore holds per-test state shared between POST /upload lanes and the
-// /upload/progress stream — separate requests joined by ?id= — so the
-// SERVER's drained byte count, not the browser's onprogress, is authoritative.
-//
-// The map is sharded so a POST's hot-path byte add never contends a lock: the
-// add is a lockless atomic on *uploadAgg; only first-touch create and sweep
-// delete take a shard mutex.
-//
-// An aggregate is created on first touch and retained through explicit
-// finalization so a reconnect can replay completion; the TTL sweeper deletes it.
-//
-// Creation requires a short-lived authenticated id minted at /upload/session.
-// Minting is stateless; only live aggregates consume bounded server memory.
+// /upload/progress stream, separate requests joined by ?id=, so the SERVER's
+// drained byte count is authoritative. Creating an aggregate requires a
+// short-lived authenticated id from /upload/session; minting is stateless.
 type UploadStore struct {
 	shards       [uploadShardCount]uploadShard
 	tokenKey     [sha256.Size]byte
@@ -36,23 +27,20 @@ type UploadStore struct {
 	byOwner      map[string]int
 }
 
+// uploadShard is one lock's worth of the aggregate map. Only first-touch create
+// and sweep delete take the mutex; a POST's byte add is a lockless atomic.
 type uploadShard struct {
 	mu sync.Mutex
 	m  map[string]*uploadAgg
 }
 
-// uploadAgg is one test's cross-connection accumulator; every field is atomic so
-// the POST drain path (recordChunk) and the NDJSON stream (bytes.Load every 100 ms)
-// never share a lock.
-//
-// firstChunkMono anchors the server's elapsed-time rate denominator. Clients
-// baseline TIME when measurement starts, which excludes warmup while retaining
-// every measured pause: congestion, lane turnaround, reconnects and stalls must
-// reduce throughput rather than disappear from its denominator.
+// uploadAgg is one test's cross-connection accumulator. Every field is atomic, so
+// the POST drain path (recordChunk) and the NDJSON stream (bytes.Load every
+// 100 ms) never share a lock.
 type uploadAgg struct {
 	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // mono ns of the last chunk or progress tick — sweeper idle clock
+	lastTouchMono  atomic.Int64 // mono ns of the last chunk or progress tick; the sweeper's idle clock
 	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
 	postsChanged   chan struct{}
 	finished       chan struct{} // explicitly closed by DELETE /upload/progress
@@ -70,6 +58,9 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
 
+// changePosts adjusts the live lane count and nudges any waiter. The notify is a
+// non-blocking send into a buffered channel: a waiter re-reads posts after every
+// wake, so a coalesced or dropped nudge costs nothing.
 func (a *uploadAgg) changePosts(delta int32) {
 	a.posts.Add(delta)
 	select {
@@ -78,8 +69,9 @@ func (a *uploadAgg) changePosts(delta int32) {
 	}
 }
 
-// elapsedNanos returns wall time since the first drained chunk. Sampling this
-// clock even while no bytes arrive is intentional: measured stalls count.
+// elapsedNanos returns the rate denominator: time since the first drained chunk.
+// That anchor excludes warmup and keeps every measured pause. Congestion, lane
+// turnaround, reconnects and stalls must reduce throughput, not vanish.
 func (a *uploadAgg) elapsedNanos(now int64) int64 {
 	start := a.firstChunkMono.Load()
 	if start == 0 || now <= start {
@@ -116,9 +108,9 @@ func NewUploadStore() *UploadStore {
 	return s
 }
 
-// monoNanos is the store's monotonic clock: ns since process start (startMono is
-// declared in ping.go, same package). time.Since reads the monotonic clock, so the
-// value never jumps with wall-clock changes — safe for idle-age comparisons.
+// monoNanos is the store's monotonic clock: ns since process start (startMono
+// lives in ping.go, same package). time.Since reads the monotonic clock, so the
+// value never jumps with wall-clock changes, safe for idle-age comparisons.
 func monoNanos() int64 { return int64(time.Since(startMono)) }
 
 // shard returns the shard owning id (hash computed OUTSIDE any lock).
@@ -151,7 +143,7 @@ func (s *UploadStore) ensureTokenKey() bool {
 
 func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
 	var payload [8 + len(nonce)]byte
-	binary.BigEndian.PutUint64(payload[:8], uint64(issued))
+	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- issued is a positive monotonic-nanos timestamp
 	copy(payload[8:], nonce[:])
 	mac := hmac.New(sha256.New, s.tokenKey[:])
 	_, _ = mac.Write(payload[:])
@@ -172,17 +164,13 @@ func (s *UploadStore) validID(id string) bool {
 	if !hmac.Equal(tag, mac.Sum(nil)) {
 		return false
 	}
-	issued := int64(binary.BigEndian.Uint64(payload[:8]))
+	issued := int64(binary.BigEndian.Uint64(payload[:8])) //nosec G115 -- round-trips the value signID wrote
 	now := monoNanos()
 	return issued > 0 && issued <= now && now-issued <= int64(uploadTokenTTL)
 }
 
-// getOrCreate returns the aggregate for id, creating it on first touch. It returns
-// (nil, false) when id is invalid (and no aggregate exists yet), or
-// the live-aggregate cap is reached. An EXISTING aggregate is always returned —
-// authentication and the cap apply only to the first create, so token expiry or
-// hitting the cap mid-test never strands a running test's later lanes. Every
-// successful call bumps lastTouchMono so upload activity never looks idle to the sweeper.
+// getOrCreate is getOrCreateFor with no owner, collapsing the access reason to a
+// plain ok.
 func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 	agg, access := s.getOrCreateFor(id, "")
 	return agg, access == uploadAccessOK
@@ -198,10 +186,16 @@ const (
 	uploadAccessOwnerMismatch
 )
 
+// getOrCreateFor is getOrCreateForActivity for a caller that is actually moving
+// upload bytes, so the touch refreshes the sweeper's idle clock.
 func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
 	return s.getOrCreateForActivity(id, owner, true)
 }
 
+// getOrCreateForActivity returns id's aggregate, creating it on first touch and
+// attributing it to owner. Id authentication and both caps apply only to that
+// first create, so an expiring token or a filled cap never strands a running
+// test's later lanes. touch refreshes the sweeper's idle clock.
 func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*uploadAgg, uploadAccess) {
 	if id == "" {
 		return nil, uploadAccessInvalid
@@ -263,6 +257,10 @@ func (s *UploadStore) releaseOwner(agg *uploadAgg) {
 	s.ownersMu.Unlock()
 }
 
+// finishFor marks id's upload complete on behalf of owner, releasing the progress
+// stream to emit its terminal record. Idempotent, so a retried DELETE is safe;
+// the aggregate itself lives on until the sweeper reaps it, which is what lets a
+// reconnecting client replay the completion.
 func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	agg, ok := s.get(id)
 	if !ok {
@@ -273,12 +271,6 @@ func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	}
 	agg.finishOnce.Do(func() { close(agg.finished) })
 	return uploadAccessOK
-}
-
-// finish marks the client-owned upload stage lifecycle as closed. Completion is
-// explicit: the progress stream never guesses from a quiet gap between POSTs.
-func (s *UploadStore) finish(id string) bool {
-	return s.finishFor(id, "") == uploadAccessOK
 }
 
 // get returns the existing aggregate for id without creating one.
@@ -293,8 +285,8 @@ func (s *UploadStore) get(id string) (*uploadAgg, bool) {
 	return agg, ok
 }
 
-// delete removes id's aggregate if present. Idempotent — a second delete (or a
-// delete racing the sweeper) is a no-op and never double-decrements `live`.
+// delete removes id's aggregate if present. Idempotent: a second delete, or one
+// racing the sweeper, is a no-op and never double-decrements `live`.
 func (s *UploadStore) delete(id string) {
 	sh := s.shard(id)
 	sh.mu.Lock()
@@ -308,8 +300,8 @@ func (s *UploadStore) delete(id string) {
 }
 
 // sweep reaps every aggregate idle longer than ttl. It is the store's only
-// deleter of aggregate state; bytes are never lost because the authoritative read is
-// the cumulative value at explicit finalization, long before idle reaping.
+// deleter of aggregate state. No bytes are lost: the authoritative read is the
+// cumulative value at explicit finalization, which long precedes idle reaping.
 func (s *UploadStore) sweep(ttl time.Duration) {
 	now := monoNanos()
 	aggCutoff := now - int64(ttl)

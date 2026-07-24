@@ -1,21 +1,9 @@
 package auth
 
-// reasons.go is the single classification of why a sign-in attempt failed.
-// One reason value feeds three outputs — the verbose debug log, the counters,
-// and the message the login page renders — so a reason can never be logged
-// under one name and counted under another.
-//
-// Only the reasons listed in reasonNotices produce a distinct page message.
-// The code is open source, so vague messages hide nothing an attacker cannot
-// read: the operator password and rate limits are the same in the source
-// either way, and the real defenses are the rate limit and the memory-hard
-// hash, not message vagueness. So a wrong operator password says so
-// (noticePassword) and rate limiting says so (noticeThrottled).
-//
-// What stays generic is not obscurity but data: the OIDC identity outcomes
-// (denied group, bad subject, failed signature) would reveal whether a
-// specific person is authorized on this server, which is another user's
-// authorization state, not a mechanism.
+// reasons.go is the single classification of why a sign-in attempt failed. One
+// reason value feeds the verbose debug log, the counters, and the message the
+// login page renders, so a reason cannot be logged under one name and counted
+// under another. Only the reasons in reasonNotices reach the visitor.
 
 type reason string
 
@@ -57,8 +45,8 @@ const (
 )
 
 // notice is the stable, non-secret code carried in the login page's `error`
-// query parameter. The wording lives in the template; only these four codes
-// ever cross the wire.
+// query parameter. The wording lives in the template; only the codes below ever
+// cross the wire.
 type notice string
 
 const (
@@ -70,9 +58,10 @@ const (
 	noticePassword  notice = "password"
 )
 
-// reasonNotices is the safe subset: reasons a visitor may be told apart. Each
-// describes the state of the server or of the visitor's own form — never the
-// outcome of a credential check.
+// reasonNotices is the safe subset: reasons a visitor may tell apart. A wrong
+// operator password and rate limiting say so plainly, because the source is
+// public and the real defenses are the attempt budget and the memory-hard
+// hash, not vague wording.
 var reasonNotices = map[reason]notice{
 	reasonProviderNotReady:    noticeProvider,
 	reasonVerifierBusy:        noticeBusy,
@@ -85,6 +74,9 @@ var reasonNotices = map[reason]notice{
 	reasonTransactionCookie:   noticeStale,
 }
 
+// noticeFor maps a reason to the code the visitor sees, defaulting to the
+// generic one. The OIDC identity outcomes (group, subject, signature) take that
+// default: telling them apart reveals whether a named person is authorized here.
 func noticeFor(why reason) notice {
 	if n, ok := reasonNotices[why]; ok {
 		return n
@@ -92,8 +84,9 @@ func noticeFor(why reason) notice {
 	return noticeGeneric
 }
 
-// parseNotice accepts only the four known codes, so nothing from the query
-// string reaches the template unvalidated.
+// parseNotice accepts only the known codes, collapsing anything else to the
+// generic one, so nothing from the query string reaches the template
+// unvalidated.
 func parseNotice(raw string) notice {
 	switch notice(raw) {
 	case noticeProvider:

@@ -161,7 +161,7 @@ allow only one progress stream per id. Progress heartbeats do not extend aggrega
 
 ### Meter (`internal/endpoint/meter.go`)
 
-Not a scoring or unit-conversion system — a purely optional, `GM_VERBOSE`/`-verbose`-gated,
+Not a scoring or unit-conversion system — a purely optional, `GM_VERBOSE`/`--verbose`-gated,
 nil-safe per-second logger of server-observed throughput and live connection count
 (`[gm:server:download] 9.41 Gbit/s · 4 conns · 1.18 GB this window`). It exists so an operator can
 sanity-check the server's own drained/served rate against kernel counters or the client's
@@ -302,12 +302,17 @@ and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Reserved contract surface
 
-- **Reserved WebTransport contract** is intentionally inactive. It is neither mounted nor
+- **Reserved WebTransport contract** is inactive in this release. It is neither mounted nor
   advertised; H3 throughput and upload progress use fetch over QUIC, while latency independently
-  uses a separately advertised WebSocket endpoint.
+  uses a separately advertised WebSocket endpoint. Activating it for both lanes is on the
+  [roadmap](#roadmap).
 
 ## Roadmap
 
+- **WebTransport for latency and throughput (one of the next releases)** — activate the reserved
+  contract so both lanes run over QUIC. Bidirectional streams give throughput a symmetric path
+  instead of today's fetch-stream down and POST up, and datagrams make packet loss directly
+  measurable, which a TCP-backed WebSocket cannot report because retransmits hide it.
 - **Multi-server testing** — select one configured server or run against several servers in one
   pass. Protocol targets in one discovery document currently remain listeners of one logical
   server, not independent servers.

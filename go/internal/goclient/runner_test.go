@@ -20,6 +20,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// captureWindow is the stage duration in tests that assert traffic landed:
+// wide enough that a contended CI runner still records samples, so the
+// assertions test capture rather than machine speed.
+const captureWindow = 2 * time.Second
+
 /* ---- pure helper functions ---- */
 
 func TestHTTP3ClientStartsAtMinimumPacketSize(t *testing.T) {
@@ -172,10 +177,7 @@ func TestWarmupGate(t *testing.T) {
 		var mu sync.Mutex
 		var events []Event
 		r := &runner{cfg: Config{Warmup: 0}, emit: func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }}
-		start, err := r.warmupGate(context.Background(), "download")
-		if err != nil {
-			t.Fatalf("warmupGate: %v", err)
-		}
+		start := r.warmupGate(context.Background(), "download")
 		select {
 		case <-start:
 		default:
@@ -196,10 +198,7 @@ func TestWarmupGate(t *testing.T) {
 			messages = append(messages, e.Message)
 			mu.Unlock()
 		}}
-		start, err := r.warmupGate(context.Background(), "download")
-		if err != nil {
-			t.Fatalf("warmupGate: %v", err)
-		}
+		start := r.warmupGate(context.Background(), "download")
 		select {
 		case <-start:
 			t.Fatal("start should not be closed before the warmup timer fires")
@@ -226,9 +225,9 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.runLatencyStage(ctx, "latency", false, 200*time.Millisecond); err != nil {
+	if err := r.runLatencyStage(ctx, "latency", false, captureWindow); err != nil {
 		t.Fatalf("runLatencyStage: %v", err)
 	}
 	if r.idleRTT <= 0 {
@@ -275,14 +274,14 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 		BaseURL:                srv.URL,
 		Stages:                 StageSet{Download: true},
 		Warmup:                 0,
-		DownloadDuration:       300 * time.Millisecond,
+		DownloadDuration:       captureWindow,
 		TransferStreams:        TransferStreamPolicy{Forced: 1},
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
 	var mu sync.Mutex
 	var events []Event
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := Run(ctx, cfg, func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -435,14 +434,14 @@ func TestRunLatencyStageEndToEnd(t *testing.T) {
 		BaseURL:         srv.URL,
 		Stages:          StageSet{Latency: true},
 		Warmup:          0,
-		LatencyDuration: 200 * time.Millisecond,
+		LatencyDuration: captureWindow,
 		PingInterval:    20 * time.Millisecond,
 		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}
 
 	var mu sync.Mutex
 	var results []Result
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := Run(ctx, cfg, func(e Event) {
 		if e.Kind == EventResult {
@@ -557,9 +556,8 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 		duration time.Duration
 	}{
 		{"single stream", 1, 500 * time.Millisecond},
-		// Spawning and connecting 128 lanes under the race detector can take
-		// most of a small runner's half second, leaving no window for a byte
-		// to land; the clamp case gets headroom for its startup cost.
+		// Spawning 128 lanes under the race detector eats most of a half
+		// second, so the clamp case gets headroom for its startup cost.
 		{"clamped to the max of 128", 999, 2 * time.Second},
 	}
 	for _, c := range cases {
@@ -618,7 +616,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 }
 
 // TestRunTransferStageFanInErrorCancelsSiblingLane checks that when one lane
-// of a transfer stage fails, its sibling — still actively transferring — is
+// of a transfer stage fails, its sibling, still actively transferring, is
 // cancelled promptly rather than left running until its own duration expires.
 func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	var downloadBytesServed atomic.Int64
@@ -633,9 +631,8 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 		_, _ = w.Write(make([]byte, n))
 	})
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
-		// Give the download lane time to get well into transferring before
-		// the upload side fails, so the failure genuinely lands mid-transfer
-		// for its sibling rather than racing it at start-up.
+		// The delay lets the download lane get well into transferring, so this
+		// failure lands mid-transfer for its sibling rather than racing start-up.
 		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusInternalServerError)
 	})

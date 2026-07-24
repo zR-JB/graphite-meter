@@ -1,9 +1,8 @@
-/* ============================================================
- * RealBackend pure helpers — origin/URL mapping, small math, and stage-
- * activity queries with no fetch/worker/websocket entanglement. Split out
- * of RealRunner.ts so they're unit-testable without pulling in its build-time
- * BUILD defines.
- * ============================================================ */
+/**
+ * RealRunner's pure helpers: origin/URL mapping, small math, and stage-activity
+ * queries with no fetch/worker/websocket entanglement. They live apart from
+ * RealRunner.ts so they are unit-testable without its build-time BUILD defines.
+ */
 
 import type {
   PhaseActivity,
@@ -18,15 +17,10 @@ import type {
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
 
-/**
- * Server route paths — the TS half of the cross-language pin. The Go half is
- * go/internal/server/listeners.go (what the mux mounts) and
- * go/internal/wire/preflight.go (the target defaults). Both halves assert against
- * api/routes.txt (routes.test.ts, routes_test.go).
- *
- * Preflight advertises origins only — the paths are not on the wire — so every
- * language keeps its own table and the pin is what makes the tables agree.
- */
+/** Server route paths, the TS half of a cross-language pin. Preflight advertises
+ *  origins only, so Go keeps its own table (go/internal/server/listeners.go,
+ *  go/internal/wire/preflight.go). Both halves assert against api/routes.txt
+ *  (routes.test.ts, routes_test.go). */
 export const ROUTES = {
   probe: "/probe",
   download: "/download",
@@ -57,7 +51,11 @@ export function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-function usableFromPage(origin: string, tls: boolean, pageSecure: boolean) {
+function usableFromPage(
+  origin: string,
+  tls: boolean,
+  pageSecure: boolean,
+): boolean {
   if (!pageSecure || tls) return true;
   try {
     return isLoopbackHostname(new URL(origin).hostname);
@@ -111,6 +109,8 @@ export function classifyTransportDiscovery(
   });
   const throughput: TransportDiscovery["throughput"] = {};
   for (const target of throughputTargets) {
+    // One entry per origin. A target naming its protocol outranks a negotiated
+    // one: selection can only act on a named protocol.
     const current = throughput[target.origin]?.target;
     if (current && current.protocol !== "negotiated") continue;
     throughput[target.origin] = {
@@ -212,8 +212,8 @@ export function httpToWs(origin: string): string {
 }
 
 /** Median of a non-empty number list (used for the pre-test ping). */
-export function median(xs: number[]): number {
-  const sorted = [...xs].sort((a, b) => a - b);
+export function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
@@ -227,10 +227,9 @@ export function needsPings(activity: PhaseActivity): boolean {
   );
 }
 
-/** Per-lane spawn delay for `streams` parallel lanes over a `warmupMs`
- *  warmup window, capped at `baseMs` (RealRunner's LANE_STAGGER_MS) but
- *  shrunk so even the last lane (index streams-1) still starts within half
- *  the warmup. Zero (spawn together) for a single lane or no warmup. */
+/** Per-lane spawn delay for `streams` parallel lanes over a `warmupMs` window.
+ *  Caps at `baseMs`, and shrinks so the last lane still starts within half the
+ *  warmup. Zero (spawn together) for a single lane or no warmup. */
 export function laneStaggerMs(
   streams: number,
   warmupMs: number,

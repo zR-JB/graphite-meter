@@ -12,7 +12,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// TestPingEcho drives the full bus path (wsAdapter → websocketSession → Ping) over
+// TestPingEcho drives the full bus path (WS adapter → websocketSession → Ping) over
 // a real WebSocket upgrade: PING echoes the id verbatim, HI is acknowledged with
 // READY, and a malformed frame is answered with ERR without dropping the bus.
 func TestPingEcho(t *testing.T) {

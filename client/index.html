@@ -25,7 +25,7 @@
     <!-- Pre-paint canvas + theme. This MUST live inline in <head>:
          the real colors live in app.css, which is imported from the JS
          bundle and so only applies AFTER the module graph loads. The browser
-         paints the empty <body> before then — without this it paints white.
+         paints the empty <body> before then, white without this.
          Keep the hexes in sync with --canvas in src/app.css (dark/light). -->
     <style>
       :root {
@@ -120,7 +120,7 @@
       }
     </style>
     <script>
-      /* Pick the saved theme before first paint — mirrors applyThemePrePaint()
+      /* Pick the saved theme before first paint: mirrors applyThemePrePaint()
          in src/main.ts, but runs ahead of the bundle so the very first frame
          is correct. Storage key: graphite-meter:v1 (see persistence.ts). */
       try {

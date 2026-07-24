@@ -15,11 +15,17 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// Preflight advertises the measurement targets a client should use. generation
+// is a per-process random tag: a client that sees it change knows the server
+// restarted and its cached target list may be stale.
 type Preflight struct {
 	cfg        *config.Config
 	generation string
 }
 
+// NewPreflight builds the preflight endpoint for cfg with a fresh generation
+// tag. It panics if the system CSPRNG is unavailable, since every later answer
+// would otherwise share an indistinguishable generation.
 func NewPreflight(cfg *config.Config) *Preflight {
 	var id [16]byte
 	if _, err := rand.Read(id[:]); err != nil {
@@ -27,6 +33,7 @@ func NewPreflight(cfg *config.Config) *Preflight {
 	}
 	return &Preflight{cfg: cfg, generation: hex.EncodeToString(id[:])}
 }
+
 func (p *Preflight) ID() string                 { return "preflight" }
 func (p *Preflight) Capabilities() Capabilities { return Capabilities{HTTP: true} }
 func (p *Preflight) Handle(s transport.Session) error {
@@ -39,13 +46,61 @@ func (p *Preflight) Handle(s transport.Session) error {
 	return json.NewEncoder(w).Encode(p.build(r))
 }
 
+// build derives the bare hostname the client reached us on so native targets can
+// be advertised on that same name rather than a configured guess.
 func (p *Preflight) build(r *http.Request) wire.Preflight {
+	// SplitHostPort fails on a port-less Host; the fallback also unwraps the
+	// brackets of a literal IPv6 authority.
 	host, _, _ := net.SplitHostPort(r.Host)
 	if host == "" {
 		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
 	}
+	return p.buildForHost(host)
+}
+
+// ConnectOrigins lists the distinct cross-origin measurement targets advertised
+// to a browser on host, for the authenticated CSP's connect-src. It reads the
+// same targets /preflight returns, so the policy can never omit an origin the
+// client is told to use. The UI's own origin (".") is covered by 'self'.
+func (p *Preflight) ConnectOrigins(host string) []string {
+	pf := p.buildForHost(host)
+	seen := map[string]bool{"": true, ".": true}
+	out := make([]string, 0)
+	add := func(o string) {
+		if !seen[o] {
+			seen[o] = true
+			out = append(out, o)
+		}
+	}
+	for _, t := range pf.Capabilities.ThroughputTargets {
+		add(t.Origin)
+	}
+	for _, t := range pf.Capabilities.LatencyTargets {
+		add(t.Origin)
+		// Not every engine matches a wss:// URL against an https:// source.
+		add(websocketOrigin(t.Origin))
+	}
+	return out
+}
+
+// websocketOrigin maps an http(s) origin to its ws(s) form, "" for anything else.
+func websocketOrigin(target string) string {
+	switch {
+	case strings.HasPrefix(target, "https://"):
+		return "wss://" + strings.TrimPrefix(target, "https://")
+	case strings.HasPrefix(target, "http://"):
+		return "ws://" + strings.TrimPrefix(target, "http://")
+	}
+	return ""
+}
+
+// buildForHost assembles the advertised targets for host: native listeners
+// first, then the configured public origins.
+func (p *Preflight) buildForHost(host string) wire.Preflight {
 	throughput := make([]wire.ThroughputTarget, 0)
 	latency := make([]wire.LatencyTarget, 0)
+	// Dedupe by origin, so one endpoint reached two ways is advertised once. Two
+	// protocols on one origin become "negotiated": a proxy in front picks one.
 	addThroughput := func(base, protocol string) {
 		base = strings.TrimRight(base, "/")
 		for i := range throughput {
@@ -98,13 +153,17 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	return wire.Preflight{Server: wire.ServerInfo{Name: p.cfg.ServerName, Location: p.cfg.ServerLocation}, EngineVersion: p.cfg.EngineVersion, Generation: p.generation, Capabilities: wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency}}
 }
 
-func publicBase(origin string) string {
-	if origin == "self" {
+// publicBase maps the config's "self" keyword to the wire's "." placeholder,
+// which the client resolves against the origin it loaded the UI from.
+func publicBase(configured string) string {
+	if configured == "self" {
 		return "."
 	}
-	return origin
+	return configured
 }
 
+// nativeOrigin returns the explicitly configured public origin, or synthesises
+// one from the request's host and the listener's own port.
 func nativeOrigin(public, scheme, host, addr string) string {
 	if public != "" {
 		return public

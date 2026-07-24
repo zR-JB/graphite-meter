@@ -1,13 +1,20 @@
 <script lang="ts">
   // Latency profile view: renders idle and loaded latency lanes with distribution
   // bands, current values, jitter, and loss.
-  import {
-    store,
-    type LatencyLane,
-    type StageKey,
-  } from "../state/store.svelte";
+  import { store, type StageKey } from "../state/store.svelte";
   import { fmtMs, niceDomain } from "../format";
   import { tooltip, JARGON } from "../actions/tooltip";
+  import {
+    type MetricKey,
+    METRIC_LABELS,
+    pos as domainPos,
+    rangeWidth as domainRangeWidth,
+    tickLabel,
+    lossLabel,
+    metricValue,
+    nearestMetric,
+    hoverContext,
+  } from "./latencyProfile";
 
   interface Props {
     bare?: boolean;
@@ -17,20 +24,10 @@
   const PROFILE_HELP =
     "Latency profile: how steady your ping is, idle and under load. Each bar's shaded band is the P10–P90 range (your typical pings); the dot is the latest reading. Tighter is steadier.";
 
-  type MetricKey = "min" | "p10" | "average" | "p90" | "max" | "current";
-
   const LANE_META: Record<StageKey, { label: string; tone: string }> = {
     latency: { label: "Idle", tone: "idle" },
     download: { label: "Loaded Down", tone: "download" },
     upload: { label: "Loaded Up", tone: "upload" },
-  };
-  const METRIC_LABELS: Record<MetricKey, string> = {
-    min: "Min",
-    p10: "P10",
-    average: "Avg",
-    p90: "P90",
-    max: "Max",
-    current: "Latest",
   };
 
   const lanes = $derived(store.latencyLanes);
@@ -58,9 +55,9 @@
     key: StageKey;
     metric: MetricKey;
     anchorPct: number;
-    trackW: number;
+    trackWidth: number;
   } | null>(null);
-  let cardW = $state(0);
+  let cardWidth = $state(0);
 
   const hoverLane = $derived(
     hover ? (lanes.find((l) => l.key === hover!.key) ?? null) : null,
@@ -73,66 +70,20 @@
   const CARD_PAD = 6;
   const cardLeft = $derived.by(() => {
     if (!hover) return 0;
-    const anchorPx = (hover.anchorPct / 100) * hover.trackW;
+    const anchorPx = (hover.anchorPct / 100) * hover.trackWidth;
     const preferRight = hover.anchorPct <= 50;
     const desired = preferRight
       ? anchorPx + CARD_GAP
-      : anchorPx - cardW - CARD_GAP;
-    const maxLeft = Math.max(CARD_PAD, hover.trackW - cardW - CARD_PAD);
+      : anchorPx - cardWidth - CARD_GAP;
+    const maxLeft = Math.max(CARD_PAD, hover.trackWidth - cardWidth - CARD_PAD);
     return Math.min(Math.max(CARD_PAD, desired), maxLeft);
   });
 
-  function pos(value: number | null): number {
-    if (value == null) return 0;
-    return Math.min(
-      100,
-      Math.max(0, ((value - domain.min) / domain.span) * 100),
-    );
-  }
-  function rangeWidth(min: number | null, max: number | null): number {
-    if (min == null || max == null) return 0;
-    return Math.max(1.5, pos(max) - pos(min));
-  }
-  function tickLabel(v: number): string {
-    return v <= 0 ? "0" : fmtMs(v);
-  }
-  function lossLabel(ratio: number): string {
-    if (ratio <= 0) return "";
-    return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% loss`;
-  }
-  function metricValue(lane: LatencyLane, metric: MetricKey): number | null {
-    return lane[metric];
-  }
-
-  function entries(lane: LatencyLane): { metric: MetricKey; value: number }[] {
-    return (Object.keys(METRIC_LABELS) as MetricKey[]).flatMap((metric) => {
-      const value = metricValue(lane, metric);
-      return value == null ? [] : [{ metric, value }];
-    });
-  }
-  function nearestMetric(lane: LatencyLane, target: number): MetricKey | null {
-    return entries(lane).reduce<MetricKey | null>((best, e) => {
-      if (!best) return e.metric;
-      const bv = metricValue(lane, best)!;
-      return Math.abs(e.value - target) < Math.abs(bv - target)
-        ? e.metric
-        : best;
-    }, null);
-  }
-  function hoverContext(lane: LatencyLane, metric: MetricKey): string {
-    if (metric === "p10" || metric === "p90") {
-      if (lane.p10 == null || lane.p90 == null) return "";
-      return `P10–P90 ${fmtMs(lane.p10)} – ${fmtMs(lane.p90)}`;
-    }
-    if (metric === "current") {
-      return lane.average == null ? "" : `Avg ${fmtMs(lane.average)}`;
-    }
-    if (metric === "average") {
-      if (lane.min == null || lane.max == null) return "";
-      return `Range ${fmtMs(lane.min)} – ${fmtMs(lane.max)}`;
-    }
-    return lane.average == null ? "" : `Avg ${fmtMs(lane.average)}`;
-  }
+  // ./latencyProfile holds the domain-free helpers. These wrappers bind the
+  // reactive chart domain, keeping the template call sites terse.
+  const pos = (value: number | null) => domainPos(value, domain);
+  const rangeWidth = (min: number | null, max: number | null) =>
+    domainRangeWidth(min, max, domain);
 
   function onStripMove(e: PointerEvent, key: StageKey) {
     const lane = lanes.find((l) => l.key === key);
@@ -152,7 +103,7 @@
       hover = null;
       return;
     }
-    hover = { key, metric, anchorPct: pos(value), trackW: rect.width };
+    hover = { key, metric, anchorPct: pos(value), trackWidth: rect.width };
   }
   function clearHover() {
     hover = null;
@@ -261,7 +212,7 @@
               ></span>
               <div
                 class="hover-card"
-                bind:clientWidth={cardW}
+                bind:clientWidth={cardWidth}
                 style="left:{cardLeft}px"
               >
                 <div class="hc-head">
@@ -654,11 +605,9 @@
     }
   }
 
-  /* ===== Bare variant — sits inside a host panel as a peer of the gauge =====
-     Drops the card frame (border/background/shadow) and the header so the host
-     panel (an inset surface matching the gauge) provides the chrome. Lanes get
-     a subtle raised backdrop so each reads as its own row. Lane INTERNALS keep
-     their full sizing. Default/full styles above are untouched (safe fallback). */
+  /* Bare variant: a peer of the gauge inside a host panel. The host's inset
+     surface provides the chrome, so the card frame and header drop out. Lanes
+     take a raised backdrop, each reading as its own row. */
   .bare {
     border: 0;
     border-radius: 0;

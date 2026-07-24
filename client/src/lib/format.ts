@@ -1,5 +1,4 @@
-// Formatting and scale helpers for speeds, bytes, latency, chart domains, and
-// animated numeric transitions.
+// Formatting and scale helpers for speeds, bytes, latency, and chart domains.
 import type { TerminationReason } from "./runner/contract";
 
 export function reasonLabel(reason: TerminationReason): string {
@@ -21,29 +20,29 @@ export function reasonLabel(reason: TerminationReason): string {
   }
 }
 
-export function fmtSpeed(v: number): string {
-  if (v >= 1000) return v.toFixed(0);
-  if (v >= 100) return v.toFixed(1);
-  return v.toFixed(2);
+export function fmtSpeed(value: number): string {
+  if (value >= 1000) return value.toFixed(0);
+  if (value >= 100) return value.toFixed(1);
+  return value.toFixed(2);
 }
 
 export function fmtMs(ms: number): string {
   return ms < 100 ? ms.toFixed(1) : ms.toFixed(0);
 }
 
-export function fmtBytes(b: number, base: "base10" | "base2"): string {
-  const k = base === "base10" ? 1000 : 1024;
-  const u =
+export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
+  const step = base === "base10" ? 1000 : 1024;
+  const units =
     base === "base10"
       ? ["B", "kB", "MB", "GB", "TB"]
       : ["B", "KiB", "MiB", "GiB", "TiB"];
-  let i = 0;
-  let n = b;
-  while (n >= k && i < u.length - 1) {
-    n /= k;
-    i++;
+  let tier = 0;
+  let value = bytes;
+  while (value >= step && tier < units.length - 1) {
+    value /= step;
+    tier++;
   }
-  return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+  return `${value.toFixed(tier ? 1 : 0)} ${units[tier]}`;
 }
 
 export type UnitBase = "base10" | "base2";
@@ -54,8 +53,8 @@ const IEC_PREFIX = ["", "Ki", "Mi", "Gi", "Ti"];
 
 export function rateUnit(base: UnitBase, kind: UnitKind, idx: number): string {
   const prefixes = base === "base10" ? SI_PREFIX : IEC_PREFIX;
-  const p = prefixes[Math.max(0, Math.min(prefixes.length - 1, idx))];
-  return kind === "bits" ? `${p}bit/s` : `${p}B/s`;
+  const prefix = prefixes[Math.max(0, Math.min(prefixes.length - 1, idx))];
+  return kind === "bits" ? `${prefix}bit/s` : `${prefix}B/s`;
 }
 
 function unitDivisor(base: UnitBase, idx: number): number {
@@ -68,8 +67,8 @@ export function rateScaleIndex(
   base: UnitBase,
   headroom = 1,
 ): number {
-  // `headroom` delays prefix promotion so values near 1000 do not flip between
-  // e.g. 999 Mbit/s and 1.00 Gbit/s as samples jitter around the boundary.
+  // `headroom` delays prefix promotion. Values near the boundary stop flipping
+  // between 999 Mbit/s and 1.00 Gbit/s as samples jitter.
   const k = base === "base10" ? 1000 : 1024;
   if (baseUnits < headroom) return 0;
   return Math.max(
@@ -99,15 +98,15 @@ export function rawRateFrom(
 }
 
 export function sharedThroughputScale(peakBytesPerSec: number): number {
-  // Throughput scale is always chosen in bit/s, then converted back to bytes/s,
-  // so bits and bytes displays share the same visual ceiling.
+  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and
+  // bytes displays share one visual ceiling.
   if (peakBytesPerSec <= 0) return 1.25e7;
   return ceil125(peakBytesPerSec * 8) / 8;
 }
 
-export function niceCeil(v: number): number {
-  if (v <= 0) return 1;
-  return ceil125(v);
+export function niceCeil(value: number): number {
+  if (value <= 0) return 1;
+  return ceil125(value);
 }
 
 export function quantile(sorted: number[], q: number): number | null {
@@ -116,17 +115,15 @@ export function quantile(sorted: number[], q: number): number | null {
   const pos = (sorted.length - 1) * Math.min(1, Math.max(0, q));
   const lo = Math.floor(pos);
   const hi = Math.ceil(pos);
-  const w = pos - lo;
-  return sorted[lo] * (1 - w) + sorted[hi] * w;
+  const weight = pos - lo;
+  return sorted[lo] * (1 - weight) + sorted[hi] * weight;
 }
 
 export function niceStep(span: number): number {
   if (span <= 0) return 1;
-  const exp = Math.floor(Math.log10(span));
-  const base = 10 ** exp;
-  const f = span / base; // 1–10
-  const nf = f >= 5 ? 5 : f >= 2 ? 2 : 1;
-  return nf * base;
+  const base = 10 ** Math.floor(Math.log10(span));
+  const mantissa = span / base; // [1, 10)
+  return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
 }
 
 export interface NiceDomain {
@@ -144,8 +141,8 @@ export function niceDomain(
     clampMinZero?: boolean;
   } = {},
 ): NiceDomain {
-  // Widen around the observed range but enforce a minimum span so flat series
-  // still render as readable charts instead of a line glued to an edge.
+  // Widens around the observed range. The minimum span keeps a flat series
+  // off the chart edge.
   const {
     widen = 1.35,
     minSpanRatio = 0.16,
@@ -166,9 +163,10 @@ export function niceDomain(
   return { min, max: min + span, span };
 }
 
-function ceil125(v: number): number {
-  const exp = Math.floor(Math.log10(v));
-  const base = 10 ** exp;
-  const f = v / base;
-  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * base;
+function ceil125(value: number): number {
+  const base = 10 ** Math.floor(Math.log10(value));
+  const mantissa = value / base;
+  return (
+    (mantissa <= 1 ? 1 : mantissa <= 2 ? 2 : mantissa <= 5 ? 5 : 10) * base
+  );
 }

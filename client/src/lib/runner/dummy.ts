@@ -10,7 +10,7 @@ import type {
   PhaseActivity,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import { ROUTES } from "./real/backendPure";
+import { needsPings, ROUTES } from "./real/backendPure";
 import { BUILD } from "../buildenv";
 
 export interface DummyOptions {
@@ -30,14 +30,13 @@ interface ProfileSpec {
   downBytesPerSec: number;
   upBytesPerSec: number;
   idleRttMs: number;
-  /** RTT increase under load — drives the bufferbloat grade. */
+  /** RTT increase under load: drives the bufferbloat grade. */
   loadedDeltaMs: number;
   /** Baseline loss probability per ping. */
   lossBase: number;
-  /** Relative std of the plateau (throughput and idle RTT) — how *steady* the
-   *  link is. This is what the adaptive stability score reads: steady links
-   *  (fiber/cable) settle to a high band and finish early; jittery ones
-   *  (lte/satellite) use the full configured window. */
+  /** Relative std of the plateau (throughput and idle RTT): how steady the link
+   *  is. The adaptive stability score reads it, so steady links (fiber/cable)
+   *  finish early while jittery ones (lte/satellite) use the full window. */
   jitter: number;
 }
 
@@ -107,10 +106,10 @@ export interface DummySampleContext {
 }
 
 /* ---------- Live anomaly defaults ----------
- * Construction-time anomalies (DummyOptions.anomalies) fire at phase fractions.
- * These are the defaults for RUNTIME anomalies injected mid-run via
- * `injectAnomaly` — each occupies an absolute [start,end) window measured in
- * ms since run start, computed from "now" when the Developer button is hit. */
+ * Defaults for RUNTIME anomalies injected mid-run via `injectAnomaly`. Each
+ * occupies an absolute [start,end) window in ms since run start, anchored at
+ * the instant the Developer button fires. Construction-time
+ * `DummyOptions.anomalies` fire at phase fractions instead. */
 const LIVE_ANOMALY_DEFAULTS = {
   latencySpike: { magnitude: 3, durationMs: 600 }, // rtt ×3 for 600ms
   packetLoss: { magnitude: 0.6, durationMs: 900 }, // 60% loss probability
@@ -126,7 +125,7 @@ interface LiveAnomaly {
   magnitude: number;
 }
 
-/* ---------- Deterministic RNG (mulberry32 + Box–Muller) ---------- */
+/* ---------- Deterministic RNG (mulberry32 + Box-Muller) ---------- */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -157,7 +156,7 @@ export class DummyBackend implements RunnerBackend {
 
   // A live connection-drop window in wall time. It contributes zero-byte
   // duration samples without proving delivery, then resumes at the window end.
-  #dropEndReal = 0; // performance.now() the drop lifts at, or 0 when not dropped
+  #dropEndReal = 0; // monotonic time the drop lifts at, or 0 when not dropped
   #dropLastReal = 0;
 
   constructor(opts: DummyOptions = {}) {
@@ -170,7 +169,7 @@ export class DummyBackend implements RunnerBackend {
     this.#host = host;
   }
 
-  /* ---------- Gaussian noise via Box–Muller ---------- */
+  /* ---------- Gaussian noise via Box-Muller ---------- */
   #gauss(): number {
     const u = Math.max(1e-9, this.#rand());
     const v = this.#rand();
@@ -278,8 +277,8 @@ export class DummyBackend implements RunnerBackend {
 
   /** Synthetic capabilities: the dummy "supports" every per-role transport,
    *  exercising the full capability surface the UI renders. Everything here is
-   *  simulated. WebSocket appears only under latency — it is the ping bus,
-   *  never a byte-transfer lane. */
+   *  simulated. WebSocket appears only under latency: it is the ping bus, never
+   *  a byte-transfer lane. */
   describe(): EngineInfo {
     return {
       name: "dummy",
@@ -324,7 +323,7 @@ export class DummyBackend implements RunnerBackend {
     this.#stopSamples();
   }
 
-  /** Fallback idle RTT for an empty-sample run — the profile's idle ping. */
+  /** Fallback idle RTT for an empty-sample run: the profile's idle ping. */
   idleHintMs(): number {
     return this.#spec.idleRttMs;
   }
@@ -344,20 +343,17 @@ export class DummyBackend implements RunnerBackend {
       this.#dropEndReal = 0;
       this.#dropLastReal = 0;
       this.#host!.resume();
-      // Snap the sample cadence gates to "now" so resume doesn't dump a backlog.
+      // Snap the sample cadence gates to realNow so resume dumps no backlog.
       this.#lastThroughputAt = realNow;
       this.#lastPingAt = realNow;
     }
 
     // The warmup window primes real connections; the dummy has none, so it emits
-    // nothing until measurement begins — mirroring a real backend, which only
-    // starts pushing samples at onStageMeasure.
+    // nothing until measurement begins, like a real backend at onStageMeasure.
     if (!measuring) return;
 
-    // Throughput on the stage's transfer lanes (none for the latency stage; both
-    // lanes for bidirectional). Cadence gated on REAL time so the early-finish
-    // glide stays smooth — measured-time races ahead, and gating on it would
-    // dump the tail's samples into the canvas at once.
+    // Throughput on the stage's transfer lanes. The cadence gates on REAL time:
+    // measured time races ahead during an early-finish glide.
     if (
       activity.transfer.length > 0 &&
       realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
@@ -368,18 +364,13 @@ export class DummyBackend implements RunnerBackend {
       }
     }
 
-    // Pings: the idle latency stage, or loaded (bufferbloat) pings during a
-    // transfer stage. `activity.loadedLatency` already folds in the "skip loaded
-    // latency when the latency stage is off" rule — resolved once by the
-    // scheduler, never re-derived from config here.
-    const pingActive =
-      activity.stage === "latency" ||
-      (activity.transfer.length > 0 && activity.loadedLatency);
+    // Idle-stage pings, or loaded (bufferbloat) pings during a transfer stage.
+    // `activity.loadedLatency` folds in the skip rule, resolved by the scheduler.
     const pingInterval =
       PING_INTERVAL[
         activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence
       ];
-    if (pingActive && realNow - this.#lastPingAt >= pingInterval) {
+    if (needsPings(activity) && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
       this.#synthLatency(activity, elapsed, segStart, segEnd);
     }
@@ -401,9 +392,7 @@ export class DummyBackend implements RunnerBackend {
         segEnd: this.#segmentStart + cfg.duration[`${activity.stage}Ms`],
         realNow: now,
       });
-      const pingActive =
-        activity.stage === "latency" ||
-        (activity.transfer.length > 0 && activity.loadedLatency);
+      const pingActive = needsPings(activity);
       const pingInterval = pingActive
         ? PING_INTERVAL[
             activity.stage === "latency"
@@ -456,16 +445,14 @@ export class DummyBackend implements RunnerBackend {
       if (tp >= center && tp < center + 400) bytesPerSec *= 0.6;
     }
 
-    // Live throughput-drop anomaly: reduce bytesPerSec by `magnitude`
-    // over its window. Fired relative to the current moment, not a fraction.
+    // Live throughput-drop anomaly: cut bytesPerSec by `magnitude` in-window.
     const drop = this.#activeAnomaly("throughput-drop", elapsed);
     if (drop) bytesPerSec *= Math.max(0, 1 - drop.magnitude);
 
     bytesPerSec = Math.max(0, bytesPerSec);
 
-    // Bytes transferred over the cadence window (rate is bytes/sec). The core
-    // accumulates this and tracks the cumulative total. Direction travels with
-    // the sample (the core never infers it from the phase).
+    // Bytes over the cadence window (rate is bytes/sec). The core accumulates
+    // them and tracks the total; direction travels with the sample.
     const bytes = bytesPerSec * (THROUGHPUT_CADENCE_MS / 1000);
     this.#host!.ingestThroughput(
       dir,
@@ -512,8 +499,8 @@ export class DummyBackend implements RunnerBackend {
       if (Math.abs(frac - f) < 0.03) lossProb = 0.6;
     }
     // Live packet-loss anomaly: raise loss probability in-window.
-    const drop = this.#activeAnomaly("packet-loss", elapsed);
-    if (drop) lossProb = Math.max(lossProb, drop.magnitude);
+    const loss = this.#activeAnomaly("packet-loss", elapsed);
+    if (loss) lossProb = Math.max(lossProb, loss.magnitude);
     const lost = this.#rand() < lossProb;
 
     this.#host!.ingestLatency(rtt, underLoad, lost);
@@ -540,21 +527,21 @@ export class DummyBackend implements RunnerBackend {
       return;
     }
 
-    // Anchor the window at the core's current run clock — the same absolute
+    // Anchor the window at the core's current run clock: the same absolute
     // elapsed the synthesis hooks match anomalies against.
     const elapsed = host.elapsed;
-    const d =
+    const defaults =
       a.kind === "latency-spike"
         ? LIVE_ANOMALY_DEFAULTS.latencySpike
         : a.kind === "packet-loss"
           ? LIVE_ANOMALY_DEFAULTS.packetLoss
           : LIVE_ANOMALY_DEFAULTS.throughputDrop;
-    const durationMs = a.durationMs ?? d.durationMs;
+    const durationMs = a.durationMs ?? defaults.durationMs;
     this.#liveAnomalies.push({
       kind: a.kind,
       start: elapsed,
       end: elapsed + durationMs,
-      magnitude: a.magnitude ?? d.magnitude,
+      magnitude: a.magnitude ?? defaults.magnitude,
     });
   }
 

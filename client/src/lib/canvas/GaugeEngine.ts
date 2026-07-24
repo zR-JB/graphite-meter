@@ -56,7 +56,6 @@ export class GaugeEngine implements CanvasEngine {
   #lastPhase: Phase | null = null;
   #sweep = 0;
   #lastFrame = 0;
-  #scale = 1; // absolute throughput scale (bytes/s) for normalization
   #ticks: string[] = []; // quarter labels in the active unit
 
   // Static geometry and the marker are cached at device resolution.
@@ -139,8 +138,6 @@ export class GaugeEngine implements CanvasEngine {
 
   #step(now: number): boolean {
     const s = this.#get();
-
-    this.#scale = s.scaleBytesPerSec > 0 ? s.scaleBytesPerSec : 1;
     this.#ticks = s.ticks;
 
     if (s.phase !== this.#lastPhase) {
@@ -151,7 +148,7 @@ export class GaugeEngine implements CanvasEngine {
     const target = sweepTarget({
       phase: s.phase,
       valueBytesPerSec: s.valueBytesPerSec,
-      scaleBytesPerSec: this.#scale,
+      scaleBytesPerSec: s.scaleBytesPerSec,
       latencyScaleMs: s.latencyScaleMs,
       rtt: s.rtt,
       completedKind: s.completedKind,
@@ -225,77 +222,77 @@ export class GaugeEngine implements CanvasEngine {
       this.#base = document.createElement("canvas");
       this.#baseCtx = this.#base.getContext("2d");
     }
-    const c = this.#base;
-    const bx = this.#baseCtx;
-    if (!bx) return;
-    c.width = Math.round(this.#w * this.#dpr);
-    c.height = Math.round(this.#h * this.#dpr);
-    bx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
-    bx.clearRect(0, 0, this.#w, this.#h);
-    bx.lineCap = "round";
+    const sprite = this.#base;
+    const ctx = this.#baseCtx;
+    if (!ctx) return;
+    sprite.width = Math.round(this.#w * this.#dpr);
+    sprite.height = Math.round(this.#h * this.#dpr);
+    ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
+    ctx.clearRect(0, 0, this.#w, this.#h);
+    ctx.lineCap = "round";
 
-    bx.strokeStyle = this.#track;
-    bx.lineWidth = 1.5;
-    bx.setLineDash([2, 5]);
-    bx.beginPath();
-    bx.arc(cx, cy, r, ARC_START, ARC_START + ARC_SWEEP);
-    bx.stroke();
-    bx.setLineDash([]);
+    ctx.strokeStyle = this.#track;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2, 5]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, ARC_START, ARC_START + ARC_SWEEP);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     const hubGap = 2; // px gap from centre before each tick starts
     const hubTick = 4; // px length of each tick
     const hubRing = 6; // px radius of the faint outer ring
-    bx.lineCap = "butt";
-    bx.strokeStyle = this.#tick;
-    bx.lineWidth = 1;
-    bx.globalAlpha = 0.5;
-    bx.beginPath();
-    bx.moveTo(cx, cy - hubGap);
-    bx.lineTo(cx, cy - hubGap - hubTick);
-    bx.moveTo(cx, cy + hubGap);
-    bx.lineTo(cx, cy + hubGap + hubTick);
-    bx.moveTo(cx - hubGap, cy);
-    bx.lineTo(cx - hubGap - hubTick, cy);
-    bx.moveTo(cx + hubGap, cy);
-    bx.lineTo(cx + hubGap + hubTick, cy);
-    bx.stroke();
-    bx.globalAlpha = 0.25;
-    bx.beginPath();
-    bx.arc(cx, cy, hubRing, 0, Math.PI * 2);
-    bx.stroke();
-    bx.globalAlpha = 1;
-    bx.lineCap = "round"; // the major-tick loop below depends on the round cap
+    ctx.lineCap = "butt";
+    ctx.strokeStyle = this.#tick;
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - hubGap);
+    ctx.lineTo(cx, cy - hubGap - hubTick);
+    ctx.moveTo(cx, cy + hubGap);
+    ctx.lineTo(cx, cy + hubGap + hubTick);
+    ctx.moveTo(cx - hubGap, cy);
+    ctx.lineTo(cx - hubGap - hubTick, cy);
+    ctx.moveTo(cx + hubGap, cy);
+    ctx.lineTo(cx + hubGap + hubTick, cy);
+    ctx.stroke();
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.arc(cx, cy, hubRing, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineCap = "round"; // the major-tick loop below depends on the round cap
 
-    bx.strokeStyle = this.#tick;
-    bx.lineWidth = 1.5;
+    ctx.strokeStyle = this.#tick;
+    ctx.lineWidth = 1.5;
     const tIn = r + arcW * 0.5 + 3;
     const tOut = tIn + r * 0.08;
     for (let i = 0; i < MAJOR_TICKS; i++) {
       const a = ARC_START + (i / (MAJOR_TICKS - 1)) * ARC_SWEEP;
       const ca = Math.cos(a);
       const sa = Math.sin(a);
-      bx.globalAlpha = 0.7;
-      bx.beginPath();
-      bx.moveTo(cx + ca * tIn, cy + sa * tIn);
-      bx.lineTo(cx + ca * tOut, cy + sa * tOut);
-      bx.stroke();
+      ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(cx + ca * tIn, cy + sa * tIn);
+      ctx.lineTo(cx + ca * tOut, cy + sa * tOut);
+      ctx.stroke();
     }
-    bx.globalAlpha = 1;
+    ctx.globalAlpha = 1;
 
     if (showLabels) {
-      bx.font = '600 8.5px "JetBrains Mono", monospace';
-      bx.fillStyle = this.#label;
-      bx.globalAlpha = 0.5;
+      ctx.font = '600 8.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = this.#label;
+      ctx.globalAlpha = 0.5;
       const lr = tOut + 7;
       for (let j = 0; j < this.#ticks.length; j++) {
         const a = ARC_START + (j / (this.#ticks.length - 1)) * ARC_SWEEP;
         const ca = Math.cos(a);
         const sa = Math.sin(a);
-        bx.textAlign = ca < -0.25 ? "right" : ca > 0.25 ? "left" : "center";
-        bx.textBaseline = sa < -0.25 ? "bottom" : sa > 0.25 ? "top" : "middle";
-        bx.fillText(this.#ticks[j], cx + ca * lr, cy + sa * lr);
+        ctx.textAlign = ca < -0.25 ? "right" : ca > 0.25 ? "left" : "center";
+        ctx.textBaseline = sa < -0.25 ? "bottom" : sa > 0.25 ? "top" : "middle";
+        ctx.fillText(this.#ticks[j], cx + ca * lr, cy + sa * lr);
       }
-      bx.globalAlpha = 1;
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -312,22 +309,22 @@ export class GaugeEngine implements CanvasEngine {
       this.#head = document.createElement("canvas");
       this.#headCtx = this.#head.getContext("2d");
     }
-    const c = this.#head;
-    const hx = this.#headCtx;
-    if (!hx) return;
+    const sprite = this.#head;
+    const ctx = this.#headCtx;
+    if (!ctx) return;
     const side = Math.ceil(2 * half * this.#dpr);
-    c.width = side;
-    c.height = side;
-    hx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
-    hx.clearRect(0, 0, side / this.#dpr, side / this.#dpr);
-    hx.fillStyle = this.#accent;
-    hx.beginPath();
-    hx.arc(half, half, headR, 0, Math.PI * 2);
-    hx.fill();
-    hx.strokeStyle = this.#track;
-    hx.lineWidth = ringW;
-    hx.beginPath();
-    hx.arc(half, half, headR + ringW * 0.5, 0, Math.PI * 2);
-    hx.stroke();
+    sprite.width = side;
+    sprite.height = side;
+    ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
+    ctx.clearRect(0, 0, side / this.#dpr, side / this.#dpr);
+    ctx.fillStyle = this.#accent;
+    ctx.beginPath();
+    ctx.arc(half, half, headR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = this.#track;
+    ctx.lineWidth = ringW;
+    ctx.beginPath();
+    ctx.arc(half, half, headR + ringW * 0.5, 0, Math.PI * 2);
+    ctx.stroke();
   }
 }

@@ -47,7 +47,7 @@
 </SidePanel>
 
 <style>
-  /* Footer license line — quiet, label + linked SPDX id. */
+  /* Footer license line: label plus linked SPDX id. */
   .license {
     display: flex;
     justify-content: space-between;

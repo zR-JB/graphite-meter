@@ -1,5 +1,5 @@
 // The four measurement worker scripts and their shared shutdown handshake.
-// Each `new URL(..., import.meta.url)` is a build-time bundling anchor — the
+// Each `new URL(..., import.meta.url)` is a build-time bundling anchor: the
 // specifier must stay a literal.
 
 /** Every worker reports this when the server rejects it as unauthenticated. */
@@ -31,7 +31,7 @@ export function pingWorker(): Worker {
 }
 
 /** Ask a worker to close its transport, then terminate it. */
-export function stopWorker(w: Worker): void {
-  w.postMessage({ type: "stop" });
-  w.terminate();
+export function stopWorker(worker: Worker): void {
+  worker.postMessage({ type: "stop" });
+  worker.terminate();
 }

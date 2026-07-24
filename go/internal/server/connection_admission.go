@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
@@ -26,6 +26,13 @@ func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *c
 	return &connectionAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, trusted: trusted}
 }
 
+// exemptKey opts an address out of the per-client connection limit.
+const exemptKey = ""
+
+// socketKey buckets a socket address per client. IPv6 groups by /64 because a
+// single subscriber routinely holds a whole prefix. A trusted proxy address
+// maps to exemptKey: every proxied connection shares that one address, so a
+// per-client count caps the whole deployment.
 func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 	addrPort, err := netip.ParseAddrPort(addr.String())
 	if err != nil {
@@ -34,7 +41,7 @@ func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 	ip := addrPort.Addr().Unmap()
 	for _, prefix := range trusted {
 		if prefix.Contains(ip) {
-			return ""
+			return exemptKey
 		}
 	}
 	if ip.Is6() {
@@ -51,7 +58,7 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 		a.rejectedGlobal++
 		return nil, false
 	}
-	if key != "" && a.byClient[key] >= a.clientMax {
+	if key != exemptKey && a.byClient[key] >= a.clientMax {
 		a.rejectedClient++
 		return nil, false
 	}
@@ -59,7 +66,7 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 	if a.active > a.peak {
 		a.peak = a.active
 	}
-	if key != "" {
+	if key != exemptKey {
 		a.byClient[key]++
 	}
 	var once sync.Once
@@ -67,7 +74,7 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 		once.Do(func() {
 			a.mu.Lock()
 			a.active--
-			if key != "" {
+			if key != exemptKey {
 				a.byClient[key]--
 				if a.byClient[key] == 0 {
 					delete(a.byClient, key)
@@ -87,7 +94,7 @@ func (a *connectionAdmission) stats() admissionStats {
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
 	release, ok := a.acquire(info.RemoteAddr)
 	if !ok {
-		return nil, fmt.Errorf("connection capacity exhausted")
+		return nil, errors.New("connection capacity exhausted")
 	}
 	context.AfterFunc(ctx, release)
 	return ctx, nil
@@ -106,6 +113,8 @@ func (l admittedListener) Accept() (net.Conn, error) {
 		}
 		release, ok := l.admission.acquire(conn.RemoteAddr())
 		if !ok {
+			// A refused connection is dropped without a reply. A close failure
+			// on an abandoned socket has no recovery.
 			_ = conn.Close()
 			continue
 		}

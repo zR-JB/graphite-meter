@@ -27,7 +27,7 @@ const (
 	// is the only lever bounding attacker-driven traffic toward the IdP.
 	maxAddressExchanges = 10
 	// ceilingLogInterval throttles the operator notice, so holding a ceiling
-	// engaged cannot also be used to flood the log.
+	// engaged cannot also flood the log.
 	ceilingLogInterval = time.Minute
 )
 
@@ -102,10 +102,9 @@ func (s *Service) allowAttempt(r *http.Request) bool {
 }
 
 // allowExchange charges one OIDC token exchange to the request's client
-// address. An attacker can mint their own transaction and reach the exchange
-// with an arbitrary code, which makes the exchange the one path that turns an
-// anonymous request into an outbound request to the identity provider — often
-// on a private network the deployment is otherwise keeping traffic out of.
+// address. An attacker can mint a transaction and reach the exchange with an
+// arbitrary code, so this is the one path turning an anonymous request into an
+// outbound request to the identity provider, often on a private network.
 func (s *Service) allowExchange(r *http.Request) bool {
 	addr, ok := s.authClientAddress(r)
 	if !ok {
@@ -145,9 +144,9 @@ func (s *Service) noteCeiling(what string, now time.Time) {
 // recentAttempts drops everything older than the attempt window.
 func recentAttempts(attempts []time.Time, now time.Time) []time.Time {
 	cutoff := now.Add(-attemptWindow)
-	first := 0
-	for first < len(attempts) && !attempts[first].After(cutoff) {
-		first++
+	start := 0
+	for start < len(attempts) && !attempts[start].After(cutoff) {
+		start++
 	}
-	return attempts[first:]
+	return attempts[start:]
 }

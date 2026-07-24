@@ -67,7 +67,7 @@ func TestOffWrapperIsTransparent(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "http://example/anything", nil))
 	if !called || rr.Code != 299 {
-		t.Fatalf("called=%v code=%d", called, rr.Code)
+		t.Fatalf("called=%v code=%d, want true and 299", called, rr.Code)
 	}
 }
 func TestUnauthenticatedRequestRejectedBeforeBodyRead(t *testing.T) {
@@ -78,7 +78,7 @@ func TestUnauthenticatedRequestRejectedBeforeBodyRead(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, secureRequest("POST", "/upload", body))
 	if rr.Code != 403 || called || body.n != 0 {
-		t.Fatalf("code=%d called=%v bytes=%d", rr.Code, called, body.n)
+		t.Fatalf("code=%d called=%v bytes=%d, want 403, false and 0", rr.Code, called, body.n)
 	}
 	if rr.Header().Get("Connection") != "close" {
 		t.Fatal("H1 rejection did not close connection")
@@ -102,10 +102,10 @@ func TestUnauthenticatedUIRootRedirectsButAPIsDoNot(t *testing.T) {
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, secureRequest(http.MethodGet, tc.path, nil))
 			if rr.Code != tc.want {
-				t.Fatalf("code=%d", rr.Code)
+				t.Fatalf("code=%d, want %d", rr.Code, tc.want)
 			}
-			if tc.want == http.StatusTemporaryRedirect && rr.Header().Get("Location") != s.public.String()+"/login" {
-				t.Fatalf("location=%q", rr.Header().Get("Location"))
+			if want := s.public.String() + "/login"; tc.want == http.StatusTemporaryRedirect && rr.Header().Get("Location") != want {
+				t.Fatalf("location=%q, want %q", rr.Header().Get("Location"), want)
 			}
 		})
 	}
@@ -184,7 +184,7 @@ func TestCookieMutationRequiresOriginAndCSRF(t *testing.T) {
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, r)
 			if rr.Code != tc.want || called != (tc.want == 200) {
-				t.Fatalf("code=%d called=%v", rr.Code, called)
+				t.Fatalf("code=%d called=%v, want code %d and called=%v", rr.Code, called, tc.want, tc.want == 200)
 			}
 		})
 	}
@@ -198,9 +198,35 @@ func TestAuthPagesPreserveSameOriginFormOrigin(t *testing.T) {
 	}
 
 	h = http.Header{}
-	authenticatedSecurityHeaders(h)
+	testService(t).authenticatedSecurityHeaders(h)
 	if got := h.Get("Referrer-Policy"); got != "same-origin" {
 		t.Fatalf("authenticated Referrer-Policy = %q, want same-origin", got)
+	}
+}
+
+func TestAppCSPPinsScriptsAndConnectSrc(t *testing.T) {
+	// The baseline directives and connect-src 'self' are always present;
+	// script-src appears only when a real client build supplies a hash.
+	base := appCSP("", "")
+	for _, want := range []string{
+		"frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'",
+		"form-action 'self'", "connect-src 'self'",
+	} {
+		if !strings.Contains(base, want) {
+			t.Fatalf("appCSP missing %q: %s", want, base)
+		}
+	}
+	if strings.Contains(base, "script-src") {
+		t.Fatalf("appCSP pinned script-src without a build: %s", base)
+	}
+
+	pinned := appCSP("ABC123", "https://probe.example https://ping.example")
+	if !strings.Contains(pinned, "script-src 'self' 'sha256-ABC123'") {
+		t.Fatalf("appCSP with a hash did not pin script-src: %s", pinned)
+	}
+	// The advertised cross-origin targets extend connect-src; nothing else may.
+	if !strings.Contains(pinned, "connect-src 'self' https://probe.example https://ping.example") {
+		t.Fatalf("appCSP did not admit the advertised measurement origins: %s", pinned)
 	}
 }
 
@@ -236,6 +262,11 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	if policy := authPageCSP(""); !strings.Contains(policy, pin) {
 		t.Fatalf("CSP %q does not pin both embedded scripts", policy)
 	}
+	// pending.js posts the sign-in forms with fetch; without connect-src 'self'
+	// the login CSP's default-src 'none' blocks it and sign-in silently fails.
+	if policy := authPageCSP(""); !strings.Contains(policy, "connect-src 'self'") {
+		t.Fatalf("login CSP %q does not allow the same-origin sign-in fetch", policy)
+	}
 
 	pages := map[string]struct {
 		tmpl *template.Template
@@ -251,9 +282,8 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		// Every rendered script must be byte-identical to a hashed asset, or
-		// the CSP blocks it: html/template's JS lexer would otherwise strip
-		// the comments the digests cover.
+		// A rendered script must match a hashed asset byte for byte or the CSP
+		// blocks it; html/template's JS lexer strips comments from literal text.
 		rest := rendered.String()
 		scripts := 0
 		for {
@@ -367,7 +397,7 @@ func TestCookieMeasurementAllowsExactOriginFromAlternatePort(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
 	if rr.Code != 204 {
-		t.Fatalf("code=%d", rr.Code)
+		t.Fatalf("code=%d, want 204", rr.Code)
 	}
 }
 func TestCookieMeasurementRejectsSiblingSiteWithoutExactOrigin(t *testing.T) {
@@ -384,7 +414,7 @@ func TestCookieMeasurementRejectsSiblingSiteWithoutExactOrigin(t *testing.T) {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		if rr.Code != http.StatusForbidden {
-			t.Fatalf("origin=%q code=%d", origin, rr.Code)
+			t.Fatalf("origin=%q code=%d, want 403", origin, rr.Code)
 		}
 	}
 }
@@ -402,7 +432,7 @@ func TestCookieMeasurementRequiresPositiveSameOriginEvidence(t *testing.T) {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		if rr.Code != http.StatusForbidden {
-			t.Fatalf("site=%q code=%d", site, rr.Code)
+			t.Fatalf("site=%q code=%d, want 403", site, rr.Code)
 		}
 	}
 	r := secureRequest(http.MethodGet, "/probe", nil)
@@ -411,7 +441,7 @@ func TestCookieMeasurementRequiresPositiveSameOriginEvidence(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
 	if rr.Code != http.StatusNoContent {
-		t.Fatalf("same-origin code=%d", rr.Code)
+		t.Fatalf("same-origin code=%d, want 204", rr.Code)
 	}
 }
 
@@ -437,23 +467,23 @@ func TestBrowserAuthRoutesRequireCanonicalPort(t *testing.T) {
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("code=%d", rr.Code)
+		t.Fatalf("code=%d, want 403", rr.Code)
 	}
 }
 func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 	s := testService(t)
 	_, sess, _ := s.createSession("subject", "Name", "local", time.Time{})
 	grant, _ := randomToken(32)
-	hsh := sha256.Sum256([]byte(grant))
-	sess.grants[hsh] = struct{}{}
-	s.grants[hsh] = sess
+	grantHash := sha256.Sum256([]byte(grant))
+	sess.grants[grantHash] = struct{}{}
+	s.grants[grantHash] = sess
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
 	r := secureRequest("GET", "/auth/session", nil)
 	r.Header.Set("Authorization", "Bearer "+grant)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
 	if rr.Code != 403 {
-		t.Fatalf("code=%d", rr.Code)
+		t.Fatalf("code=%d, want 403", rr.Code)
 	}
 }
 func TestAuthRequiredExposesHeadersCrossOrigin(t *testing.T) {
@@ -476,7 +506,7 @@ func TestOffModeReservesAuthRoutes(t *testing.T) {
 		rr := httptest.NewRecorder()
 		mux.ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
 		if rr.Code != 404 {
-			t.Errorf("%s code=%d", path, rr.Code)
+			t.Errorf("%s code=%d, want 404", path, rr.Code)
 		}
 	}
 }
@@ -485,7 +515,7 @@ func TestOIDCTransactionCookieAllowsTopLevelCallback(t *testing.T) {
 	setTransactionCookie(rr, "value", time.Now().Add(time.Minute))
 	cookies := rr.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].SameSite != http.SameSiteLaxMode {
-		t.Fatalf("cookie=%+v", cookies)
+		t.Fatalf("cookies=%+v, want exactly one with SameSite=Lax", cookies)
 	}
 }
 func TestAttemptLimiterStaysBounded(t *testing.T) {
@@ -500,7 +530,7 @@ func TestAttemptLimiterStaysBounded(t *testing.T) {
 		t.Fatal("new entry admitted at capacity")
 	}
 	if len(s.attempts) != 2048 {
-		t.Fatalf("attempts=%d", len(s.attempts))
+		t.Fatalf("attempts=%d, want 2048", len(s.attempts))
 	}
 }
 func TestPerAddressRejectionsDoNotConsumeGlobalPasswordLimit(t *testing.T) {
@@ -514,7 +544,7 @@ func TestPerAddressRejectionsDoNotConsumeGlobalPasswordLimit(t *testing.T) {
 		}
 	}
 	if len(s.globalAttempts) != 5 {
-		t.Fatalf("global attempts=%d", len(s.globalAttempts))
+		t.Fatalf("global attempts=%d, want 5", len(s.globalAttempts))
 	}
 	r := secureRequest(http.MethodPost, "/auth/password", nil)
 	r.RemoteAddr = "198.51.100.1:1234"
@@ -579,7 +609,7 @@ func TestAuthClientAddressUsesOnlyAuthoritativeProxyHeader(t *testing.T) {
 			r.Header.Set("X-Forwarded-For", tc.xff)
 			addr, ok := s.authClientAddress(r)
 			if ok != tc.ok || ok && addr.String() != tc.want {
-				t.Fatalf("addr=%v ok=%v", addr, ok)
+				t.Fatalf("authClientAddress = (%v, %v), want (%q, %v)", addr, ok, tc.want, tc.ok)
 			}
 		})
 	}
@@ -707,7 +737,7 @@ func TestPerSubjectSessionLimitRevokesOldest(t *testing.T) {
 		t.Fatal("oldest session was not revoked")
 	}
 	if len(s.sessions) != maxSubjectSessions {
-		t.Fatalf("sessions=%d", len(s.sessions))
+		t.Fatalf("sessions=%d, want %d", len(s.sessions), maxSubjectSessions)
 	}
 }
 func TestUnknownCLIChallengeAllocatesNothing(t *testing.T) {
@@ -716,11 +746,10 @@ func TestUnknownCLIChallengeAllocatesNothing(t *testing.T) {
 	body := `{"verifier":"` + verifier + `"}`
 	rr := httptest.NewRecorder()
 	r := secureRequest("POST", "/auth/cli/token", nil)
-	r.Body = http.NoBody
 	r.Body = io.NopCloser(strings.NewReader(body))
 	s.cliToken(rr, r)
 	if rr.Code != http.StatusAccepted || len(s.approvals) != 0 {
-		t.Fatalf("code=%d approvals=%d", rr.Code, len(s.approvals))
+		t.Fatalf("code=%d approvals=%d, want %d and 0", rr.Code, len(s.approvals), http.StatusAccepted)
 	}
 	sum := sha256.Sum256([]byte(verifier))
 	if _, ok := s.approvals[base64.RawURLEncoding.EncodeToString(sum[:])]; ok {
@@ -766,7 +795,7 @@ func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 	verifier := "terminal-verifier"
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	s.approvals[challenge] = &cliApproval{challenge: challenge, session: sess, expires: time.Now().Add(time.Minute), approved: true}
+	s.approvals[challenge] = &cliApproval{session: sess, expires: time.Now().Add(time.Minute), approved: true}
 	exchange := func() *httptest.ResponseRecorder {
 		rr := httptest.NewRecorder()
 		r := secureRequest("POST", "/auth/cli/token", nil)
@@ -776,7 +805,7 @@ func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 	}
 	first := exchange()
 	if first.Code != 200 {
-		t.Fatalf("first code=%d body=%s", first.Code, first.Body.String())
+		t.Fatalf("first code=%d, want 200; body=%s", first.Code, first.Body.String())
 	}
 	var out struct {
 		Token string `json:"token"`
@@ -788,7 +817,7 @@ func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 		t.Fatal("grant not accepted")
 	}
 	if second := exchange(); second.Code != http.StatusAccepted {
-		t.Fatalf("replay code=%d", second.Code)
+		t.Fatalf("replay code=%d, want 202", second.Code)
 	}
 	s.mu.Lock()
 	s.deleteSessionLocked(sess)
@@ -804,17 +833,17 @@ func TestCLIGrantSetIsBounded(t *testing.T) {
 		verifier := fmt.Sprintf("verifier-%d", i)
 		sum := sha256.Sum256([]byte(verifier))
 		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-		s.approvals[challenge] = &cliApproval{challenge: challenge, session: sess, expires: time.Now().Add(time.Minute), approved: true}
+		s.approvals[challenge] = &cliApproval{session: sess, expires: time.Now().Add(time.Minute), approved: true}
 		rr := httptest.NewRecorder()
 		r := secureRequest("POST", "/auth/cli/token", nil)
 		r.Body = io.NopCloser(strings.NewReader(`{"verifier":"` + verifier + `"}`))
 		s.cliToken(rr, r)
 		if rr.Code != 200 {
-			t.Fatalf("exchange %d code=%d", i, rr.Code)
+			t.Fatalf("exchange %d code=%d, want 200", i, rr.Code)
 		}
 	}
 	if len(sess.grants) > 8 {
-		t.Fatalf("grants=%d", len(sess.grants))
+		t.Fatalf("grants=%d, want at most 8", len(sess.grants))
 	}
 }
 func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
@@ -831,9 +860,8 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 		return out
 	}
-	// auth.css states the light palette twice, once per data-theme and once as
-	// the OS-preference fallback, so consecutive repeats collapse. The two
-	// blocks drifting apart survives the collapse and fails the comparison.
+	// auth.css states the light palette twice, per data-theme and as the OS
+	// fallback, so consecutive repeats collapse. Drift between them survives.
 	collapse := func(in []string) []string {
 		out := in[:0:0]
 		for _, value := range in {

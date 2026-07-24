@@ -6,13 +6,13 @@ import pkg from "./package.json";
 // --- Build-time client configuration (see src/lib/buildenv.ts) -------------
 // Driven by GM_CLIENT_* env vars (the justfile `prod` recipe / `docker build
 // --build-arg` set them). Read from process.env here and injected via Vite
-// `define` as RAW literal tokens — that literal substitution is what lets
+// `define` as RAW literal tokens: that literal substitution is what lets
 // Rollup constant-fold + tree-shake the dummy runner and Developer tooling out
-// of a production bundle. (`.env` / import.meta.env would yield the *string*
-// "false", which is truthy and would defeat the tree-shaking.)
+// of a production bundle. (`.env` / import.meta.env yields the *string*
+// "false", which is truthy and defeats the tree-shaking.)
 //
 // Dev defaults (no env set): real engine, dummy + dev tools included, "dev"
-// label — so `just dev` / `just build-client` behave as before, no changes.
+// label.
 const env = process.env;
 
 const defaultEngine: "real" | "dummy" =
@@ -26,10 +26,10 @@ const devTools = !off(env.GM_CLIENT_DEV_TOOLS);
 const buildLabel = env.GM_CLIENT_BUILD_LABEL ?? "dev";
 
 // Canonical client version: the VERSION build-arg/env (same value the server
-// stamps into EngineVersion — see container/Dockerfile and justfile) plus the
-// build label (git short hash in prod, "dev" otherwise) — e.g. "0.1.0+abc1234".
+// stamps into EngineVersion; see container/Dockerfile and justfile) plus the
+// build label (git short hash in prod, "dev" otherwise), e.g. "0.1.0+abc1234".
 // Falls back to package.json's "version" only when VERSION isn't set (plain
-// `bun run build` outside just/Docker) — that field is a frozen "0.0.0"
+// `bun run build` outside just/Docker). That field is a frozen "0.0.0"
 // sentinel, matching go/internal/config.EngineVersion's "0.0.0-dev" fallback.
 // Never bump it by hand: every real version comes from the git tag via
 // release.yml, so an untagged build has no version to reflect anyway.

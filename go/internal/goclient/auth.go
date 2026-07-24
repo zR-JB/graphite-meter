@@ -18,9 +18,12 @@ import (
 	"time"
 )
 
+// AuthRequiredError reports a server that refuses the request until the
+// operator approves a grant at URL.
 type AuthRequiredError struct{ URL string }
 
 func (e *AuthRequiredError) Error() string { return "authentication required at " + e.URL }
+
 func authResponseError(res *http.Response) error {
 	if res == nil {
 		return nil
@@ -31,6 +34,9 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
+// ClassifyAuthFailure re-checks the server when a run fails, turning runErr
+// into an AuthRequiredError if the grant is revoked. Revocation cuts a transfer
+// short as a bare stream error, so the cause needs a fresh request.
 func ClassifyAuthFailure(ctx context.Context, cfg Config, runErr error) error {
 	if runErr == nil || ctx.Err() != nil || cfg.authToken() == "" {
 		return runErr
@@ -70,6 +76,9 @@ type PendingAuthorization struct {
 	close              func()
 }
 
+// BeginAuthorization starts a PKCE exchange against authURL and opens the
+// operator's browser at it. The grant only ever travels over verified HTTPS, so
+// an unparseable, plaintext or -insecure server URL is refused outright.
 func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
 	if cfg.InsecureSkipTLSVerify {
 		return nil, errors.New("authenticated operation refuses -insecure")
@@ -120,15 +129,13 @@ func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 }
 
 // Poll waits for the browser approval, returning the grant. Transport errors
-// are retried rather than surfaced immediately — the server may be restarting
-// while the operator is still in the browser — but the last one is retained so
-// a deadline reports why the wait failed instead of a bare
-// "context deadline exceeded".
+// retry: the server may restart while the operator is still in the browser.
+// lastTransportErr names the cause when the deadline arrives.
 func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	defer p.close()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var lastErr error
+	var lastTransportErr error
 	for {
 		body, _ := json.Marshal(map[string]string{"verifier": p.verifier})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.tokenURL, bytes.NewReader(body))
@@ -137,11 +144,13 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		res, err := p.client.Do(req)
-		lastErr = err
+		lastTransportErr = err
 		if err == nil {
 			var out struct {
 				Token string `json:"token"`
 			}
+			// A body that fails to decode leaves Token empty, which the checks
+			// below already treat as "not approved yet".
 			_ = json.NewDecoder(res.Body).Decode(&out)
 			_ = res.Body.Close()
 			if res.StatusCode == http.StatusOK && out.Token != "" {
@@ -156,8 +165,8 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return "", ctx.Err()
 			}
-			if lastErr != nil {
-				return "", fmt.Errorf("server unreachable while waiting for browser approval: %w", lastErr)
+			if lastTransportErr != nil {
+				return "", fmt.Errorf("server unreachable while waiting for browser approval: %w", lastTransportErr)
 			}
 			return "", errors.New("browser approval timed out")
 		case <-ticker.C:
@@ -165,6 +174,8 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	}
 }
 
+// openBrowser is best-effort: the caller also surfaces BrowserURL and Code, so
+// a headless or misconfigured desktop costs the operator nothing.
 func openBrowser(target string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

@@ -13,7 +13,6 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go/http3"
-	// webtransport "github.com/quic-go/webtransport-go" // Stage 5 coverage.
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -79,7 +78,7 @@ func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
 			}
 			res.Body.Close()
 			if res.StatusCode != http.StatusForbidden || dispatched.Load() != 0 {
-				t.Fatalf("status=%d dispatched=%d", res.StatusCode, dispatched.Load())
+				t.Fatalf("status=%d dispatched=%d, want 403 and 0 dispatches", res.StatusCode, dispatched.Load())
 			}
 		})
 	}
@@ -135,7 +134,7 @@ func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
 		t.Fatal("unauthenticated WebSocket handshake succeeded")
 	}
 	if res == nil || res.StatusCode != http.StatusForbidden || dispatched.Load() != 0 {
-		t.Fatalf("response=%v dispatched=%d", res, dispatched.Load())
+		t.Fatalf("response=%v dispatched=%d, want 403 and 0 dispatches", res, dispatched.Load())
 	}
 	res.Body.Close()
 }
@@ -167,15 +166,13 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	hc := &http.Client{Transport: tr}
 	base := "https://" + ln.Addr().String()
-	for _, path := range []string{"/preflight"} {
-		res, err := hc.Get(base + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		res.Body.Close()
-		if res.StatusCode != http.StatusOK {
-			t.Fatalf("%s status = %d", path, res.StatusCode)
-		}
+	preflight, err := hc.Get(base + "/preflight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight.Body.Close()
+	if preflight.StatusCode != http.StatusOK {
+		t.Fatalf("/preflight status = %d, want %d", preflight.StatusCode, http.StatusOK)
 	}
 	res, err := hc.Get(base + "/probe")
 	if err != nil {
@@ -187,7 +184,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	}
 	res.Body.Close()
 	if probe.ProtocolNegotiated != "http/1.1" {
-		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+		t.Fatalf("protocol = %q, want %q", probe.ProtocolNegotiated, "http/1.1")
 	}
 	res, err = hc.Get(base + "/download?bytes=1")
 	if err != nil {
@@ -196,7 +193,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	if len(body) != 1 {
-		t.Fatalf("download bytes = %d", len(body))
+		t.Fatalf("download bytes = %d, want 1", len(body))
 	}
 }
 
@@ -243,7 +240,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	}
 	res.Body.Close()
 	if probe.ProtocolNegotiated != "h2" {
-		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+		t.Fatalf("protocol = %q, want %q", probe.ProtocolNegotiated, "h2")
 	}
 	res, err = hc.Get(base + "/download?bytes=1")
 	if err != nil {
@@ -252,7 +249,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	if len(body) != 1 {
-		t.Fatalf("download bytes = %d", len(body))
+		t.Fatalf("download bytes = %d, want 1", len(body))
 	}
 }
 
@@ -269,7 +266,6 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
-	// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with WebTransport routes.
 	go h3.Serve(pc)
 	defer func() { _ = h3.Close(); _ = pc.Close() }()
 	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
@@ -286,7 +282,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	}
 	res.Body.Close()
 	if probe.ProtocolNegotiated != "h3" {
-		t.Fatalf("protocol = %q", probe.ProtocolNegotiated)
+		t.Fatalf("protocol = %q, want %q", probe.ProtocolNegotiated, "h3")
 	}
 	res, err = hc.Get(base + "/download?bytes=1")
 	if err != nil {
@@ -295,7 +291,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	if len(body) != 1 {
-		t.Fatalf("download bytes = %d", len(body))
+		t.Fatalf("download bytes = %d, want 1", len(body))
 	}
 }
 

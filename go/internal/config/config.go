@@ -14,8 +14,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
 )
 
+// EngineVersion is the server build version, stamped at link time.
 var EngineVersion = "0.0.0-dev"
 
+// Native endpoint names, as accepted by GM_ADVERTISED_NATIVE_ENDPOINTS and
+// reported in preflight.
 const (
 	NativeH1Clear = "http1-clear"
 	NativeH1TLS   = "http1-tls"
@@ -23,19 +26,28 @@ const (
 	NativeH3      = "http3"
 )
 
+// NativeListeners holds the listen address of each native endpoint; an empty
+// address disables that endpoint.
 type NativeListeners struct {
 	H1, H1TLS, H2, H3 string
 }
 
+// NativeOrigins holds the externally reachable origin advertised for each
+// native listener.
 type NativeOrigins struct {
 	H1, H1TLS, H2, H3 string
 }
 
+// PublicOrigins holds proxied origins advertised for both measurement kinds,
+// for throughput only, or for latency only.
 type PublicOrigins struct {
 	Both, Throughput, Latency []string
 }
 
+// AuthConfig holds the authentication settings read from GM_AUTH_*.
 type AuthConfig struct {
+	// Explicit is true when the operator sets any GM_AUTH_* variable other than
+	// the mode, even to its default value.
 	Explicit          bool
 	Mode              string
 	PublicURL         string
@@ -49,6 +61,7 @@ type AuthConfig struct {
 	OIDCProviderName  string
 }
 
+// Config is the resolved server configuration.
 type Config struct {
 	Native                                    NativeListeners
 	NativePublic                              NativeOrigins
@@ -67,6 +80,9 @@ type Config struct {
 	Auth                                      AuthConfig
 }
 
+// Default returns the configuration used when nothing is set in the
+// environment: one cleartext HTTP/1.1 listener, with every enabled native
+// endpoint advertised.
 func Default() Config {
 	return Config{
 		Native:           NativeListeners{H1: ":7246"},
@@ -79,9 +95,11 @@ func Default() Config {
 	}
 }
 
+// Load returns the default configuration with every GM_* environment override
+// applied. It does not validate the result; call [Config.Validate] for that.
 func Load() (Config, error) {
 	c := Default()
-	for _, e := range []struct {
+	for _, env := range []struct {
 		name string
 		dst  *string
 	}{
@@ -95,9 +113,9 @@ func Load() (Config, error) {
 		{"GM_AUTH_OIDC_CLIENT_SECRET", &c.Auth.OIDCClientSecret}, {"GM_AUTH_OIDC_CLIENT_SECRET_FILE", &c.Auth.OIDCSecretFile},
 		{"GM_AUTH_OIDC_PROVIDER_NAME", &c.Auth.OIDCProviderName},
 	} {
-		if v, ok := os.LookupEnv(e.name); ok {
-			*e.dst = strings.TrimSpace(v)
-			if strings.HasPrefix(e.name, "GM_AUTH_") && e.name != "GM_AUTH_MODE" {
+		if v, ok := os.LookupEnv(env.name); ok {
+			*env.dst = strings.TrimSpace(v)
+			if marksAuthExplicit(env.name) {
 				c.Auth.Explicit = true
 			}
 		}
@@ -114,28 +132,28 @@ func Load() (Config, error) {
 		c.AdvertisedNative = set
 		c.AdvertiseAllNative = strings.TrimSpace(v) == "all"
 	}
-	for _, e := range []struct {
+	for _, env := range []struct {
 		name string
 		dst  *[]string
 	}{
 		{"GM_PUBLIC_ORIGINS", &c.Public.Both}, {"GM_PUBLIC_THROUGHPUT_ORIGINS", &c.Public.Throughput}, {"GM_PUBLIC_LATENCY_ORIGINS", &c.Public.Latency},
 	} {
-		if v, ok := os.LookupEnv(e.name); ok {
-			*e.dst = splitList(v)
+		if v, ok := os.LookupEnv(env.name); ok {
+			*env.dst = splitList(v)
 		}
 	}
 	var err error
 	if c.Verbose, err = envBool("GM_VERBOSE", false); err != nil {
 		return Config{}, err
 	}
-	for _, e := range []struct {
+	for _, env := range []struct {
 		name string
 		dst  *int
 	}{
 		{"GM_MAX_ACTIVE_MEASUREMENTS", &c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", &c.MaxActiveMeasurementsPerClient},
 		{"GM_MAX_CONNECTIONS", &c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", &c.MaxConnectionsPerClient},
 	} {
-		if *e.dst, err = envInt(e.name, *e.dst); err != nil {
+		if *env.dst, err = envInt(env.name, *env.dst); err != nil {
 			return Config{}, err
 		}
 	}
@@ -150,18 +168,27 @@ func Load() (Config, error) {
 			if err != nil {
 				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q: %w", raw, err)
 			}
-			// A default route trusts every client's forwarding headers, so any
-			// caller could spoof X-Real-IP to mint a fresh rate-limit budget per
-			// request or assert X-Forwarded-Proto=https on cleartext. There is no
-			// legitimate reason to trust the whole internet as a proxy; require the
-			// operator to name the proxy's actual CIDR.
-			if prefix.Bits() == 0 {
+			if isDefaultRoute(prefix) {
 				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q trusts every address; list the proxy's actual CIDR instead", raw)
 			}
 			c.TrustedProxies = append(c.TrustedProxies, prefix.Masked())
 		}
 	}
 	return c, nil
+}
+
+// marksAuthExplicit reports whether the named variable counts as configuring
+// authentication. GM_AUTH_MODE is excluded: setting it is how one asks for a
+// mode, including "off".
+func marksAuthExplicit(name string) bool {
+	return strings.HasPrefix(name, "GM_AUTH_") && name != "GM_AUTH_MODE"
+}
+
+// isDefaultRoute reports whether prefix covers every address. Trusting one lets
+// any caller spoof X-Real-IP for a fresh rate-limit budget, or assert
+// X-Forwarded-Proto=https over cleartext.
+func isDefaultRoute(prefix netip.Prefix) bool {
+	return prefix.Bits() == 0
 }
 
 func splitList(raw string) []string {
@@ -174,29 +201,32 @@ func splitList(raw string) []string {
 	return out
 }
 
+// ParseAdvertisedNative parses a GM_ADVERTISED_NATIVE_ENDPOINTS value into the
+// set of native endpoint names it selects. The aliases "all" and "none" (and an
+// empty value) stand for every endpoint and no endpoint.
 func ParseAdvertisedNative(raw string) (map[string]bool, error) {
 	set := map[string]bool{}
 	switch strings.TrimSpace(raw) {
 	case "", "none":
 		return set, nil
 	case "all":
-		for _, v := range []string{NativeH1Clear, NativeH1TLS, NativeH2, NativeH3} {
-			set[v] = true
+		for _, name := range []string{NativeH1Clear, NativeH1TLS, NativeH2, NativeH3} {
+			set[name] = true
 		}
 		return set, nil
 	}
-	for _, value := range splitList(raw) {
-		switch value {
+	for _, name := range splitList(raw) {
+		switch name {
 		case NativeH1Clear, NativeH1TLS, NativeH2, NativeH3:
-			set[value] = true
+			set[name] = true
 		default:
-			return nil, fmt.Errorf("unknown endpoint %q", value)
+			return nil, fmt.Errorf("unknown endpoint %q", name)
 		}
 	}
 	return set, nil
 }
 
-func (c Config) NativeEnabled(name string) bool {
+func (c Config) nativeEnabled(name string) bool {
 	switch name {
 	case NativeH1Clear:
 		return c.Native.H1 != ""
@@ -210,8 +240,10 @@ func (c Config) NativeEnabled(name string) bool {
 	return false
 }
 
+// NativeAdvertised reports whether the named native endpoint is both enabled
+// and selected for advertisement.
 func (c Config) NativeAdvertised(name string) bool {
-	return c.NativeEnabled(name) && (c.AdvertiseAllNative || c.AdvertisedNative[name])
+	return c.nativeEnabled(name) && (c.AdvertiseAllNative || c.AdvertisedNative[name])
 }
 
 func envBool(name string, fallback bool) (bool, error) {
@@ -241,24 +273,38 @@ func envInt(name string, fallback int) (int, error) {
 	return n, nil
 }
 
-func validOrigin(value, scheme string, self bool) bool {
-	if self && value == "self" {
+// validOrigin reports whether value is a bare origin: scheme and host only,
+// with no path, credentials, query, or fragment. An empty scheme accepts either
+// http or https; allowSelf additionally permits the literal "self".
+func validOrigin(value, scheme string, allowSelf bool) bool {
+	if allowSelf && value == "self" {
 		return true
 	}
 	u, err := url.Parse(value)
 	return err == nil && (scheme == "" || u.Scheme == scheme) && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.Path == "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == ""
 }
 
+// Validate returns the first inconsistency in the configuration, or nil.
 func (c Config) Validate() error {
 	if err := c.validateAuth(); err != nil {
 		return err
 	}
-	for _, v := range []struct {
+	if err := c.validateLimits(); err != nil {
+		return err
+	}
+	if err := c.validateListeners(); err != nil {
+		return err
+	}
+	return c.validatePublicOrigins()
+}
+
+func (c Config) validateLimits() error {
+	for _, limit := range []struct {
 		name  string
 		value int
 	}{{"GM_MAX_ACTIVE_MEASUREMENTS", c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", c.MaxActiveMeasurementsPerClient}, {"GM_MAX_CONNECTIONS", c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", c.MaxConnectionsPerClient}} {
-		if v.value <= 0 {
-			return fmt.Errorf("%s must be greater than zero", v.name)
+		if limit.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", limit.name)
 		}
 	}
 	if c.MaxActiveMeasurementsPerClient > c.MaxActiveMeasurements {
@@ -270,6 +316,10 @@ func (c Config) Validate() error {
 	if c.MaxOperationDuration <= 0 {
 		return fmt.Errorf("GM_MAX_OPERATION_DURATION must be greater than zero")
 	}
+	return nil
+}
+
+func (c Config) validateListeners() error {
 	if c.Native.H1 == "" {
 		return fmt.Errorf("GM_H1_ADDR must not be empty")
 	}
@@ -288,46 +338,60 @@ func (c Config) Validate() error {
 	}
 	if !c.AdvertiseAllNative {
 		for name := range c.AdvertisedNative {
-			if !c.NativeEnabled(name) {
+			if !c.nativeEnabled(name) {
 				return fmt.Errorf("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint %q", name)
 			}
 		}
 	}
-	for _, v := range []struct{ name, value, scheme string }{{"GM_H1_PUBLIC_ORIGIN", c.NativePublic.H1, "http"}, {"GM_H1_TLS_PUBLIC_ORIGIN", c.NativePublic.H1TLS, "https"}, {"GM_H2_PUBLIC_ORIGIN", c.NativePublic.H2, "https"}, {"GM_H3_PUBLIC_ORIGIN", c.NativePublic.H3, "https"}} {
-		if v.value != "" && !validOrigin(v.value, v.scheme, false) {
-			return fmt.Errorf("%s must be an origin with %s scheme", v.name, v.scheme)
+	return nil
+}
+
+func (c Config) validatePublicOrigins() error {
+	for _, native := range []struct{ name, value, scheme string }{{"GM_H1_PUBLIC_ORIGIN", c.NativePublic.H1, "http"}, {"GM_H1_TLS_PUBLIC_ORIGIN", c.NativePublic.H1TLS, "https"}, {"GM_H2_PUBLIC_ORIGIN", c.NativePublic.H2, "https"}, {"GM_H3_PUBLIC_ORIGIN", c.NativePublic.H3, "https"}} {
+		if native.value != "" && !validOrigin(native.value, native.scheme, false) {
+			return fmt.Errorf("%s must be an origin with %s scheme", native.name, native.scheme)
 		}
 	}
-	for _, v := range []struct {
+	for _, list := range []struct {
 		name   string
 		values []string
 	}{{"GM_PUBLIC_ORIGINS", c.Public.Both}, {"GM_PUBLIC_THROUGHPUT_ORIGINS", c.Public.Throughput}, {"GM_PUBLIC_LATENCY_ORIGINS", c.Public.Latency}} {
-		for _, value := range v.values {
+		for _, value := range list.values {
 			if !validOrigin(value, "", true) {
-				return fmt.Errorf("%s contains invalid origin %q", v.name, value)
+				return fmt.Errorf("%s contains invalid origin %q", list.name, value)
 			}
 		}
 	}
-	fixed := map[string]string{}
+	if err := c.validateNoNativePublicOriginClash(); err != nil {
+		return err
+	}
+	if !c.NativeAdvertised(NativeH1Clear) && !c.NativeAdvertised(NativeH1TLS) && !c.NativeAdvertised(NativeH2) && !c.NativeAdvertised(NativeH3) && len(c.Public.Both) == 0 && len(c.Public.Throughput) == 0 {
+		return fmt.Errorf("configuration advertises no throughput endpoint")
+	}
+	return nil
+}
+
+// validateNoNativePublicOriginClash rejects an origin advertised both as a
+// deterministic native endpoint and as a negotiated public one, and a native
+// origin advertised under two protocols.
+func (c Config) validateNoNativePublicOriginClash() error {
+	deterministic := map[string]string{}
 	for _, endpoint := range []struct{ name, origin, protocol string }{{NativeH1Clear, c.NativePublic.H1, "http1"}, {NativeH1TLS, c.NativePublic.H1TLS, "http1"}, {NativeH2, c.NativePublic.H2, "http2"}, {NativeH3, c.NativePublic.H3, "http3"}} {
 		if endpoint.origin == "" || !c.NativeAdvertised(endpoint.name) {
 			continue
 		}
 		key := origin.Key(endpoint.origin)
-		if protocol, ok := fixed[key]; ok && protocol != endpoint.protocol {
+		if protocol, ok := deterministic[key]; ok && protocol != endpoint.protocol {
 			return fmt.Errorf("native origin %q is advertised with multiple deterministic protocols", endpoint.origin)
 		}
-		fixed[key] = endpoint.protocol
+		deterministic[key] = endpoint.protocol
 	}
 	for _, origins := range [][]string{c.Public.Both, c.Public.Throughput} {
 		for _, publicOrigin := range origins {
-			if _, ok := fixed[origin.Key(publicOrigin)]; ok {
+			if _, ok := deterministic[origin.Key(publicOrigin)]; ok {
 				return fmt.Errorf("origin %q cannot be both native deterministic and public negotiated", publicOrigin)
 			}
 		}
-	}
-	if !c.NativeAdvertised(NativeH1Clear) && !c.NativeAdvertised(NativeH1TLS) && !c.NativeAdvertised(NativeH2) && !c.NativeAdvertised(NativeH3) && len(c.Public.Both) == 0 && len(c.Public.Throughput) == 0 {
-		return fmt.Errorf("configuration advertises no throughput endpoint")
 	}
 	return nil
 }
@@ -339,46 +403,97 @@ func (c Config) validateAuth() error {
 	default:
 		return fmt.Errorf("GM_AUTH_MODE must be off, password, oidc, or hybrid")
 	}
-	configured := a.Explicit || a.PublicURL != "" || a.PasswordHash != "" || a.PasswordHashFile != "" || a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0 || a.OIDCProviderName != "Authelia"
 	if a.Mode == "off" {
-		if configured {
+		if a.configured() {
 			return fmt.Errorf("authentication settings require GM_AUTH_MODE to be enabled")
 		}
 		return nil
 	}
-	if !validOrigin(a.PublicURL, "https", false) {
-		return fmt.Errorf("GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment")
+	publicURL, err := a.validatePublicURL()
+	if err != nil {
+		return err
 	}
+	if err := a.validatePassword(); err != nil {
+		return err
+	}
+	if err := a.validateOIDC(); err != nil {
+		return err
+	}
+	return c.validateAdvertisedAuthOrigins(publicURL)
+}
+
+// configured reports whether any auth setting is present, so mode=off can
+// reject a half-configured deployment rather than ignore it.
+func (a AuthConfig) configured() bool {
+	return a.Explicit || a.PublicURL != "" || a.PasswordHash != "" || a.PasswordHashFile != "" ||
+		a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" ||
+		len(a.OIDCAllowedGroups) != 0 || a.OIDCProviderName != "Authelia"
+}
+
+func (a AuthConfig) validatePublicURL() (*url.URL, error) {
+	if !validOrigin(a.PublicURL, "https", false) {
+		return nil, fmt.Errorf("GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment")
+	}
+	// validOrigin already parsed this value, so the error cannot recur.
 	publicURL, _ := url.Parse(a.PublicURL)
 	if publicURL.Port() == "443" {
-		return fmt.Errorf("GM_AUTH_PUBLIC_URL must omit the default HTTPS port")
+		return nil, fmt.Errorf("GM_AUTH_PUBLIC_URL must omit the default HTTPS port")
 	}
+	return publicURL, nil
+}
+
+func (a AuthConfig) validatePassword() error {
 	if a.PasswordHash != "" && a.PasswordHashFile != "" {
 		return fmt.Errorf("GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive")
 	}
+	wantsPassword := a.Mode == "password" || a.Mode == "hybrid"
+	if wantsPassword == (a.PasswordHash != "" || a.PasswordHashFile != "") {
+		return nil
+	}
+	if wantsPassword {
+		return fmt.Errorf("password authentication requires exactly one password hash source")
+	}
+	return fmt.Errorf("password hash configured while password authentication is disabled")
+}
+
+func (a AuthConfig) validateOIDC() error {
 	if a.OIDCClientSecret != "" && a.OIDCSecretFile != "" {
 		return fmt.Errorf("GM_AUTH_OIDC_CLIENT_SECRET and GM_AUTH_OIDC_CLIENT_SECRET_FILE are mutually exclusive")
 	}
-	wantsPassword := a.Mode == "password" || a.Mode == "hybrid"
-	if wantsPassword != (a.PasswordHash != "" || a.PasswordHashFile != "") {
-		if wantsPassword {
-			return fmt.Errorf("password authentication requires exactly one password hash source")
-		}
-		return fmt.Errorf("password hash configured while password authentication is disabled")
-	}
 	wantsOIDC := a.Mode == "oidc" || a.Mode == "hybrid"
-	hasOIDC := a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0
-	oidcComplete := a.OIDCIssuer != "" && a.OIDCClientID != "" && (a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
-	if wantsOIDC && !oidcComplete {
+	if wantsOIDC && !a.oidcComplete() {
 		return fmt.Errorf("OIDC authentication requires issuer, client ID, one client secret source, and allowed groups")
 	}
-	if !wantsOIDC && hasOIDC {
+	if !wantsOIDC && a.oidcConfigured() {
 		return fmt.Errorf("OIDC settings configured while OIDC authentication is disabled")
 	}
-	issuer, issuerErr := url.Parse(a.OIDCIssuer)
-	if wantsOIDC && (issuerErr != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "") {
+	if wantsOIDC && !validOIDCIssuer(a.OIDCIssuer) {
 		return fmt.Errorf("GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment")
 	}
+	return a.validateProviderName(wantsOIDC)
+}
+
+// oidcConfigured reports whether any OIDC setting is present at all.
+func (a AuthConfig) oidcConfigured() bool {
+	return a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" ||
+		a.OIDCSecretFile != "" || len(a.OIDCAllowedGroups) != 0
+}
+
+// oidcComplete reports whether every setting an OIDC login needs is present.
+func (a AuthConfig) oidcComplete() bool {
+	return a.OIDCIssuer != "" && a.OIDCClientID != "" &&
+		(a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
+}
+
+// validOIDCIssuer accepts as the issuer only a bare HTTPS origin or path, with
+// no credentials, query, or fragment.
+func validOIDCIssuer(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Hostname() != "" &&
+		u.User == nil && u.RawQuery == "" && u.Fragment == ""
+}
+
+func (a AuthConfig) validateProviderName(wantsOIDC bool) error {
 	if wantsOIDC && strings.TrimSpace(a.OIDCProviderName) == "" {
 		return fmt.Errorf("GM_AUTH_OIDC_PROVIDER_NAME must not be empty")
 	}
@@ -390,35 +505,40 @@ func (c Config) validateAuth() error {
 			return fmt.Errorf("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters")
 		}
 	}
-	public := publicURL
+	return nil
+}
+
+// validateAdvertisedAuthOrigins enforces that, with auth on, no clear HTTP/1.1
+// is advertised and every advertised origin is HTTPS on the canonical hostname.
+func (c Config) validateAdvertisedAuthOrigins(publicURL *url.URL) error {
+	if c.NativeAdvertised(NativeH1Clear) {
+		return fmt.Errorf("clear HTTP/1.1 cannot be advertised when authentication is enabled")
+	}
 	check := func(name, value string) error {
 		if value == "" || value == "self" {
 			return nil
 		}
 		u, err := url.Parse(value)
-		if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), public.Hostname()) {
+		if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), publicURL.Hostname()) {
 			return fmt.Errorf("%s must use HTTPS and the canonical authentication hostname", name)
 		}
 		return nil
 	}
-	if c.NativeAdvertised(NativeH1Clear) {
-		return fmt.Errorf("clear HTTP/1.1 cannot be advertised when authentication is enabled")
-	}
-	for _, v := range []struct{ name, value string }{
+	for _, native := range []struct{ name, value string }{
 		{"GM_H1_TLS_PUBLIC_ORIGIN", c.NativePublic.H1TLS}, {"GM_H2_PUBLIC_ORIGIN", c.NativePublic.H2}, {"GM_H3_PUBLIC_ORIGIN", c.NativePublic.H3},
 	} {
-		if err := check(v.name, v.value); err != nil {
+		if err := check(native.name, native.value); err != nil {
 			return err
 		}
 	}
-	for _, v := range []struct {
+	for _, list := range []struct {
 		name   string
 		values []string
 	}{
 		{"GM_PUBLIC_ORIGINS", c.Public.Both}, {"GM_PUBLIC_THROUGHPUT_ORIGINS", c.Public.Throughput}, {"GM_PUBLIC_LATENCY_ORIGINS", c.Public.Latency},
 	} {
-		for _, value := range v.values {
-			if err := check(v.name, value); err != nil {
+		for _, value := range list.values {
+			if err := check(list.name, value); err != nil {
 				return err
 			}
 		}

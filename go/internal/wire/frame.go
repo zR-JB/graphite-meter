@@ -7,23 +7,23 @@ import (
 
 // Frame is a parsed message-bus frame (api/wire.md). It is a flat union: only
 // the fields relevant to Op are meaningful. Decode/Encode are byte-exact against
-// the shared corpus api/wire.testvectors.txt — the cross-language contract.
+// the cross-language corpus api/wire.testvectors.txt.
 type Frame struct {
 	Op string // one of the Op* keyword constants (opcodes.go)
-	ID uint32 // PING / PONG — client-owned monotonic id, echoed verbatim
+	ID uint32 // PING / PONG: client-owned monotonic id, echoed verbatim
 	// Nanos is PONG's server monotonic timestamp for diagnostics/skew only.
 	Nanos uint64
-	Bytes uint64 // SIZE — requested byte count
-	Proto string // HI — "ws" | "wt"
-	Code  string // ERR — short error token
-	Text  string // ERR — human detail
+	Bytes uint64 // SIZE: requested byte count
+	Proto string // HI: "ws" | "wt"
+	Code  string // ERR: short error token
+	Text  string // ERR: human detail
 }
 
 // timeField is the keyword that prefixes the nanos arg inside a PONG frame:
 // PONG,<id>;TIME,<nanos>. It is a sub-field of PONG, not a standalone opcode.
 const timeField = "TIME"
 
-// Decode error codes — the <code> token a receiver echoes back as ERR,<code>,…
+// Decode error codes: the <code> token a receiver echoes back as ERR,<code>,…
 // when it rejects a frame. Stable, cross-language.
 const (
 	ErrBadOp   = "bad_op"   // unknown opcode keyword
@@ -43,9 +43,9 @@ func (e *DecodeError) Error() string { return e.Code + ": " + e.Text }
 func badOp(text string) error   { return &DecodeError{Code: ErrBadOp, Text: text} }
 func badArgs(text string) error { return &DecodeError{Code: ErrBadArgs, Text: text} }
 
-// Decode parses one on-wire message into a Frame. Parsing is indexOf(',') slicing
-// — never JSON, never regex. An unknown opcode yields ErrBadOp; a known opcode
-// with missing/malformed args yields ErrBadArgs (both as *DecodeError).
+// Decode parses one on-wire message into a Frame by slicing on ','. An unknown
+// opcode yields ErrBadOp; a known opcode with missing or malformed args yields
+// ErrBadArgs. Both are *DecodeError.
 func Decode(msg string) (Frame, error) {
 	op, rest := cut(msg, ',')
 

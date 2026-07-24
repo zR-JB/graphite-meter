@@ -1,13 +1,10 @@
 /* ============================================================
- * The Graphite Meter — Evaluation core (RunAccumulator)
- * Engine-agnostic accumulation + reduction of raw samples.
- *
- * Owns everything that turns a stream of raw throughput/latency
- * samples into headline results: per-phase accumulation, the
- * adaptive confidence windows, the hysteretic stable-run tracker,
- * and the final result reducers. It contains NO simulation and NO
- * network I/O — both the dummy and a real runner push their raw
- * samples in here so identical samples yield identical results.
+ * The Graphite Meter: evaluation core (RunAccumulator)
+ * Engine-agnostic accumulation and reduction of raw samples:
+ * per-phase accumulation, the adaptive confidence windows, the
+ * hysteretic stable-run tracker, and the final result reducers.
+ * No simulation and no network I/O, so identical samples from the
+ * dummy or from a real runner yield identical results.
  * ============================================================ */
 
 import type {
@@ -43,8 +40,8 @@ export class RunAccumulator {
   // the same throughput reducer as a normal transfer phase.
   #biDown: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
   #biUp: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
-  // Latest per-lane rate, so each bidi push can record the COMBINED (down+up)
-  // rate into the confidence window — the single stability signal for the phase.
+  // Latest per-lane rate, so each bidi push records the COMBINED (down+up) rate
+  // into the confidence window: the single stability signal for the phase.
   #biLastDown = 0;
   #biLastUp = 0;
   #idleRtts: number[] = [];
@@ -61,13 +58,12 @@ export class RunAccumulator {
   #phaseLatency: (number | null)[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
-  // Each holds the index into its phase's sample array where the *current*
-  // stable run began (or -1 when not currently stable), plus the last stability
-  // score seen.
+  // Each holds the index into its phase's sample array where the current stable
+  // run starts, or -1 while it is not stable, plus the latest stability score.
   #dlStableStart = -1;
   #ulStableStart = -1;
   #latStableStart = -1;
-  // Bidi tracks ONE stable run, over the combined-rate confidence window — the
+  // Bidi tracks ONE stable run over the combined-rate confidence window: the
   // phase has a single early-stop signal even though it reports two lanes.
   #biStableStart = -1;
   #dlFinalScore = 0;
@@ -85,7 +81,7 @@ export class RunAccumulator {
   #biEarlyStopBroken = false;
   #latEarlyStopStart = -1;
 
-  /** Reset all run state — call at the start of each run. */
+  /** Reset all run state. Call at the start of each run. */
   reset(): void {
     this.#dl = { samples: [], bytes: 0, serverAuthoritative: false };
     this.#ul = { samples: [], bytes: 0, serverAuthoritative: false };
@@ -133,9 +129,8 @@ export class RunAccumulator {
   /* ================= SAMPLE INGEST ================= */
 
   /** Record a transfer sample: instantaneous bytes/sec plus exact bytes and
-   *  duration for time-weighted final reduction, tagged with direction.
-   *  In download/upload `dir` matches the phase; in bidirectional it routes the
-   *  sample to the down or up lane and feeds the COMBINED rate (this lane +
+   *  duration for time-weighted reduction, tagged with direction. Bidirectional
+   *  routes the sample to its lane and feeds the COMBINED rate (this lane plus
    *  the other lane's latest) into the single confidence window. */
   pushThroughput(
     phase: "download" | "upload" | "bidirectional",
@@ -188,7 +183,7 @@ export class RunAccumulator {
   /* ================= STABILITY ================= */
 
   /** Stability for the active measured phase over its current confidence
-   *  window — the single signal the pip, the early-finish decision, and the
+   *  window: the single signal the pip, the early-finish decision, and the
    *  result selection all read. */
   confidence(phase: StagePhase): ConfidenceScore | LatencyConfidenceScore {
     return phase === "latency"
@@ -196,12 +191,10 @@ export class RunAccumulator {
       : transferConfidence(this.#phaseBytesPerSec);
   }
 
-  /** Update the per-phase trailing-stable-run index from this tick's score,
-   *  with hysteresis: the run opens (records the latest sample index) once the
-   *  score crosses `stabilityThreshold` and closes (-1) only after it drops
-   *  below `stabilityThreshold − STABILITY_HYSTERESIS` — so a score hovering at
-   *  the boundary doesn't toggle the stable state. Returns the latched state;
-   *  at finish a ≥0 index means "still on a stable plateau". */
+  /** Update the per-phase trailing-stable-run index from this tick's score. The
+   *  run opens at the latest sample index and closes to -1; `isStillStable`
+   *  supplies the hysteresis. Returns the latched state, where at finish a ≥0
+   *  index means the phase is still on a stable plateau. */
   trackStableRun(
     phase: StagePhase,
     score: number,
@@ -221,7 +214,7 @@ export class RunAccumulator {
       this.#latFinalScore = score;
       start = this.#latStableStart;
     }
-    const arrLen = this.#sampleArrLen(phase);
+    const sampleCount = this.#confidenceSampleCount(phase);
 
     const wasStable = start >= 0;
     const nowStable = isStillStable(wasStable, score, cfg);
@@ -233,7 +226,7 @@ export class RunAccumulator {
       else if (phase === "bidirectional" && this.#biEarlyStopStart >= 0)
         this.#biEarlyStopBroken = true;
     }
-    if (nowStable && !wasStable) start = Math.max(0, arrLen - 1);
+    if (nowStable && !wasStable) start = Math.max(0, sampleCount - 1);
     else if (!nowStable && wasStable) start = -1;
 
     if (phase === "download") this.#dlStableStart = start;
@@ -246,8 +239,7 @@ export class RunAccumulator {
 
   /** Latch where an uninterrupted early-finish glide armed. */
   noteEarlyStop(phase: StagePhase): void {
-    const arrLen = this.#sampleArrLen(phase);
-    const start = Math.max(0, arrLen - 1);
+    const start = Math.max(0, this.#confidenceSampleCount(phase) - 1);
     if (phase === "download" && this.#dlEarlyStopStart < 0)
       this.#dlEarlyStopStart = start;
     else if (phase === "upload" && this.#ulEarlyStopStart < 0)
@@ -261,7 +253,7 @@ export class RunAccumulator {
   }
 
   /** The sample count so far for a phase's confidence-window array. */
-  #sampleArrLen(phase: StagePhase): number {
+  #confidenceSampleCount(phase: StagePhase): number {
     if (phase === "download") return this.#dl.samples.length;
     if (phase === "upload") return this.#ul.samples.length;
     if (phase === "bidirectional") return this.#phaseBytesPerSec.length;
@@ -272,18 +264,19 @@ export class RunAccumulator {
 
   /** Reduce a transfer phase to effective bytes over represented time. */
   throughputResult(phase: "download" | "upload"): ThroughputResult {
-    const a = phase === "download" ? this.#dl : this.#ul;
-    const stableStart =
-      phase === "download" ? this.#dlStableStart : this.#ulStableStart;
-    const finalScore =
-      phase === "download" ? this.#dlFinalScore : this.#ulFinalScore;
+    const download = phase === "download";
+    // A single-direction stage arms its glide on the same sample array it
+    // reduces, so the stop index and the stability index are one and the same.
+    const earlyStopStart = download
+      ? this.#dlEarlyStopStart
+      : this.#ulEarlyStopStart;
     return this.#reduceTransfer(
-      a,
-      stableStart,
-      phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart,
-      phase === "download" ? this.#dlEarlyStopStart : this.#ulEarlyStopStart,
-      phase === "download" ? this.#dlEarlyStopBroken : this.#ulEarlyStopBroken,
-      finalScore,
+      download ? this.#dl : this.#ul,
+      download ? this.#dlStableStart : this.#ulStableStart,
+      earlyStopStart,
+      earlyStopStart,
+      download ? this.#dlEarlyStopBroken : this.#ulEarlyStopBroken,
+      download ? this.#dlFinalScore : this.#ulFinalScore,
       this.#loadedLossPct(),
     );
   }
@@ -341,7 +334,7 @@ export class RunAccumulator {
 
   /** Shared effective-throughput reducer for every transfer direction. */
   #reduceTransfer(
-    a: PhaseAccum,
+    accum: PhaseAccum,
     stableStart: number,
     earlyStopStart: number,
     earlyStabilityStart: number,
@@ -349,21 +342,21 @@ export class RunAccumulator {
     finalScore: number,
     packetLossPct: number,
   ): ThroughputResult {
-    const v = a.samples.map((s) => s.rate);
+    const rates = accum.samples.map((s) => s.rate);
     const band = bandForState(stableStart >= 0, finalScore);
-    if (!v.length) {
+    if (!rates.length) {
       return {
         meanBytesPerSec: 0,
         peakBytesPerSec: 0,
         stabilityPct: 0,
-        totalBytes: a.bytes,
+        totalBytes: accum.bytes,
         reportedBytesPerSec: 0,
         fullAverageBytesPerSec: 0,
         method: "full-average",
         stabilityScore: finalScore,
         band,
         packetLossPct,
-        serverAuthoritative: a.serverAuthoritative || undefined,
+        serverAuthoritative: accum.serverAuthoritative || undefined,
       };
     }
     const ratio = (samples: PhaseAccum["samples"]): number => {
@@ -372,33 +365,32 @@ export class RunAccumulator {
         ? samples.reduce((sum, s) => sum + s.bytes, 0) / seconds
         : 0;
     };
-    const full = ratio(a.samples);
+    const full = ratio(accum.samples);
     const earlyCompleted =
       earlyStopStart >= 0 &&
-      earlyStopStart < a.samples.length &&
+      earlyStopStart < accum.samples.length &&
       !earlyStopBroken &&
       stableStart >= 0 &&
       stableStart <= earlyStabilityStart;
     const reported = earlyCompleted
-      ? ratio(a.samples.slice(earlyStopStart))
+      ? ratio(accum.samples.slice(earlyStopStart))
       : full;
-    const peak = Math.max(...v);
-    const variance = v.reduce((s, x) => s + (x - full) ** 2, 0) / v.length;
+    const variance =
+      rates.reduce((sum, rate) => sum + (rate - full) ** 2, 0) / rates.length;
     const cv = full > 0 ? Math.sqrt(variance) / full : 0;
-    const stabilityPct = Math.max(0, Math.min(100, 100 - cv * 100));
 
     return {
       meanBytesPerSec: reported,
-      peakBytesPerSec: peak,
-      stabilityPct,
-      totalBytes: a.bytes,
+      peakBytesPerSec: Math.max(...rates),
+      stabilityPct: Math.max(0, Math.min(100, 100 - cv * 100)),
+      totalBytes: accum.bytes,
       reportedBytesPerSec: reported,
       fullAverageBytesPerSec: full,
       method: earlyCompleted ? "stable-window" : "full-average",
       stabilityScore: finalScore,
       band,
       packetLossPct,
-      serverAuthoritative: a.serverAuthoritative || undefined,
+      serverAuthoritative: accum.serverAuthoritative || undefined,
     };
   }
 

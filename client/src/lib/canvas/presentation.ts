@@ -1,5 +1,9 @@
+// Instruments are capped at 30fps: the sample feed is far slower than the
+// display refresh, so a higher rate only costs raster work.
 const FRAME_MS = 1000 / 30;
 
+/** Draws one frame; returns true while still animating, which keeps the clock
+ *  running without a further invalidation. */
 type Render = (now: number) => boolean;
 
 interface Task {
@@ -36,6 +40,7 @@ export class PresentationScheduler {
 
   constructor(environment = browserEnvironment()) {
     this.#environment = environment;
+    // The scheduler outlives every task, so the unsubscribe is never needed.
     environment.onVisibilityChange(this.#onVisibility);
   }
 
@@ -88,6 +93,7 @@ export class PresentationScheduler {
     if (!pending) return;
     const delay = FRAME_MS - (this.#environment.now() - this.#lastFrame);
     if (delay > 1) {
+      // Wake half a frame early so the requested frame lands on the budgeted slot.
       this.#timer = this.#environment.setTimer(
         () => {
           this.#timer = 0;

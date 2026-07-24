@@ -1,45 +1,11 @@
-// Package auth implements Graphite Meter's optional authentication boundary.
-//
-// The package is split by security responsibility, one auditable claim per
-// file: wrap.go (nothing gets through without a principal), trust.go (what we
-// believe about a request and why), session.go (sessions bounded, hashed,
-// revocable), headers.go (response-header policy), ratelimit.go (attempt
-// budgets), reasons.go (why an attempt failed), handlers.go (the login
-// surface), oidc.go, password.go, cli.go. This file is wiring only.
-//
-// # Why authentication lives in the process
-//
-// The obvious alternative is forward-auth: put Authelia or oauth2-proxy in
-// front of the server behind nginx or Traefik and keep zero authentication
-// code here. For most web applications that is the better answer. It is the
-// wrong answer for this one, for three reasons specific to what the product
-// is.
-//
-//   - A proxy in the data path perturbs the measurement. This is an
-//     instrument: its output is a claim about a network path, and every extra
-//     hop that terminates, buffers, and re-originates the transfer becomes
-//     part of what is being measured. An authentication decision must not
-//     appear in the numbers.
-//   - Forward-auth does not compose with the HTTP/3 listener. QUIC is UDP;
-//     the subrequest-authentication mechanisms of the common proxies are
-//     HTTP-over-TCP constructs, and there is no equivalent in front of a QUIC
-//     listener that leaves the transport characteristics intact.
-//   - Measurement runs across several origins and ports at once — cleartext
-//     H1, H1-TLS, H2, H3 bootstrap, H3/QUIC, and a WebSocket — and the
-//     credential has to be coherent across all of them, including for the
-//     native client, which holds a bearer grant rather than a cookie. A
-//     cookie-issuing proxy in front of one origin cannot express that.
-//
-// So the boundary is in-process, applied outermost on every listener
-// (listeners.go), and the five explicit Enforce call sites are deliberately
-// not collapsed into a loop: they are the enforcement audit.
-//
-// What is still delegated is everything a library does better: OIDC discovery
-// and token verification (coreos/go-oidc), the OAuth2 exchange (x/oauth2),
-// and password hashing (x/crypto/argon2). What is written here is what no
-// library provides safely for this shape: the session store, the CSRF and
-// origin policy, the enforcement boundary itself, and the native-client
-// grant flow.
+// Package auth implements Graphite Meter's optional authentication boundary,
+// split one auditable claim per file: wrap.go (no principal, no entry),
+// trust.go (what a request proves), session.go (bounded, hashed, revocable),
+// headers.go, ratelimit.go, reasons.go, handlers.go, oidc.go, password.go,
+// cli.go. This file is wiring. The boundary is in-process because a
+// forward-auth proxy sits in the measured data path, has no equivalent in
+// front of a QUIC listener, and cannot issue one credential coherent across
+// the six measurement origins and the native client's bearer grant.
 package auth
 
 import (
@@ -63,27 +29,10 @@ import (
 
 type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial, replayExpiry, throttled, logout, cliApproval, capacity atomic.Uint64 }
 
-// Service owns every piece of authentication state. All of it lives in memory
-// only, and every store is bounded and swept:
-//
-//	sessions       ≤ maxSessions (1024) total, ≤ maxSubjectSessions (8) per
-//	               subject, each ≤ sessionLifetime (8h); swept every minute.
-//	grants         ≤ 8 per session; deleted with their session.
-//	approvals      ≤ 256 total, ≤ 8 per session, each ≤ 2 minutes; swept on
-//	               every /auth/cli page load and with their session.
-//	attempts       ≤ maxBudgetKeys (2048) keys, ≤ maxAddressAttempts (5) per
-//	               key per minute; keyed per IPv4 address and per IPv6 /64.
-//	globalAttempts ≤ maxGlobalAttempts (60) password attempts per minute
-//	               across all addresses.
-//	exchanges      ≤ maxBudgetKeys keys, ≤ maxAddressExchanges (10) OIDC token
-//	               exchanges per key per minute, keyed the same way.
-//	ceilingLogged  one timestamp per global ceiling; fixed size.
-//	oidc.tx        ≤ 256 transactions total, ≤ 8 per client address, each
-//	               ≤ 10 minutes; swept on every /auth/oidc/start.
-//
-// Every bound trades availability for a store an anonymous caller cannot grow.
+// Service owns every piece of authentication state, in memory only. Every store
+// below is bounded and swept, each cap named where it is enforced. Every bound
+// trades availability for a store an anonymous caller cannot grow.
 type Service struct {
-	ctx            context.Context
 	cfg            config.AuthConfig
 	public         *url.URL
 	trusted        []netip.Prefix
@@ -102,10 +51,26 @@ type Service struct {
 	now            func() time.Time
 	verbose        bool
 	counters       authCounters
+	// connectSrc is the space-joined cross-origin measurement targets appended
+	// to the application CSP's connect-src (which always allows 'self'). Empty
+	// when every target is same-origin. Set once at startup.
+	connectSrc string
 }
 
+// SetConnectOrigins records the distinct cross-origin measurement targets the
+// server advertises, so the authenticated CSP's connect-src admits exactly
+// them. The set comes from /preflight, so the policy cannot omit an origin the
+// client is told to use. Same-origin ('self') is always allowed and unlisted.
+func (s *Service) SetConnectOrigins(origins []string) {
+	s.connectSrc = strings.Join(origins, " ")
+}
+
+// New builds the authentication service for cfg. In "off" mode it returns a
+// service that wires nothing; otherwise it loads and validates the configured
+// credentials, performs OIDC discovery, and starts the sweeper and the security
+// log, all bound to ctx.
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
-	s := &Service{ctx: ctx, cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
+	s := &Service{cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
 	if cfg.Mode == "off" {
 		return s, nil
 	}
@@ -177,8 +142,11 @@ func readSecret(inline, file string, limit int64) (string, error) {
 	return v, nil
 }
 
+// Enabled reports whether the authentication boundary is in force.
 func (s *Service) Enabled() bool { return s.cfg.Mode != "off" }
 
+// PublicOrigin is the canonical origin the boundary accepts, or "" when
+// authentication is off.
 func (s *Service) PublicOrigin() string {
 	if s.public == nil {
 		return ""
@@ -212,7 +180,7 @@ func (s *Service) Mount(mux *http.ServeMux) {
 }
 
 // runSecurityLog emits a one-line delta of the auth counters each minute, and
-// stays silent when nothing changed.
+// stays silent while every counter holds still.
 func (s *Service) runSecurityLog(ctx context.Context) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()

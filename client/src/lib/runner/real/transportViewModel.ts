@@ -15,6 +15,9 @@ export interface TransportOptionView {
   detail: string;
 }
 
+const NOT_ADVERTISED = "Not offered in /preflight.";
+const DISCOVERY_PENDING = "Checking server transports…";
+
 function automaticDetail(
   target: FetchThroughputTarget | WebSocketLatencyTarget,
   discovery: TransportDiscovery,
@@ -31,7 +34,7 @@ function advertisedDetail(
   entry: DiscoveredTarget<FetchThroughputTarget | WebSocketLatencyTarget>,
   discovery: TransportDiscovery,
 ): string {
-  if (entry.state === "not-advertised") return "Not offered in /preflight.";
+  if (entry.state === "not-advertised") return NOT_ADVERTISED;
   if (entry.state === "browser-blocked")
     return `Blocked by the browser: a secure page cannot open this clear endpoint · ${entry.target?.origin ?? "unknown origin"}`;
   if (
@@ -43,15 +46,14 @@ function advertisedDetail(
     return `Browser-trusted clear loopback endpoint · ${entry.target.origin}`;
   return entry.target
     ? describeTarget(discovery, entry.target).advertisedDetail
-    : "Not offered in /preflight.";
+    : NOT_ADVERTISED;
 }
 
 export function throughputOptionView(
   discovery: TransportDiscovery | null,
   selection: string,
 ): TransportOptionView {
-  if (!discovery)
-    return { disabled: true, detail: "Checking server transports…" };
+  if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
   if (selection === "current" || selection === "auto") {
     const target = selectThroughputTarget(discovery, selection);
     return target
@@ -67,9 +69,7 @@ export function throughputOptionView(
   const entry = discovery.throughput[selection];
   return {
     disabled: entry?.state !== "advertised",
-    detail: entry
-      ? advertisedDetail(entry, discovery)
-      : "Not offered in /preflight.",
+    detail: entry ? advertisedDetail(entry, discovery) : NOT_ADVERTISED,
   };
 }
 
@@ -77,8 +77,7 @@ export function latencyOptionView(
   discovery: TransportDiscovery | null,
   selection: string,
 ): TransportOptionView {
-  if (!discovery)
-    return { disabled: true, detail: "Checking server transports…" };
+  if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
   if (selection === "auto") {
     const target = selectLatencyTarget(discovery, selection);
     return target
@@ -94,8 +93,6 @@ export function latencyOptionView(
   const entry = discovery.latency[selection];
   return {
     disabled: entry?.state !== "advertised",
-    detail: entry
-      ? advertisedDetail(entry, discovery)
-      : "Not offered in /preflight.",
+    detail: entry ? advertisedDetail(entry, discovery) : NOT_ADVERTISED,
   };
 }

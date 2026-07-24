@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time.Duration, start <-chan struct{}) (Result, error) {
+func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
 	path := r.routes().Download
 	base, err := r.endpoint(path)
 	if err != nil {
@@ -26,7 +26,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, elapsed time
 	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
 	}
-	measureCtx, cancel := context.WithTimeout(ctx, elapsed)
+	measureCtx, cancel := context.WithTimeout(ctx, duration)
 	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams, lanes.errs)
 	cancel()
 	lanes.stop()

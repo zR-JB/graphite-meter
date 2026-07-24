@@ -36,19 +36,19 @@ func TestSelectTarget(t *testing.T) {
 	h2 := testTransfer("http2", "https://meter:7248", "http2", true)
 	custom := testTransfer("edge-h2", "https://edge.example", "http2", true)
 	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{webTransport, h1, h2, custom}}}
-	for _, tc := range []struct{ protocol, base, want string }{
+	for _, tc := range []struct{ selection, base, want string }{
 		{"auto", "https://meter:7248", "http2"},
 		{"auto", "http://meter:7246", "http1-clear"},
 		{"https://meter:7248", "http://discovery", "http2"},
 		{"https://edge.example", "http://discovery", "edge-h2"},
 	} {
-		got, err := selectTarget(Config{ThroughputTarget: tc.protocol, BaseURL: tc.base}, pf)
+		got, err := selectTarget(Config{ThroughputTarget: tc.selection, BaseURL: tc.base}, pf)
 		if err != nil || got.ID != tc.want {
-			t.Errorf("select %s = %+v, %v", tc.protocol, got, err)
+			t.Errorf("select %s = %+v, %v", tc.selection, got, err)
 		}
 	}
 	if _, err := selectTarget(Config{ThroughputTarget: "https://missing.example"}, pf); err == nil {
-		t.Fatal("unavailable H3 selected")
+		t.Fatal("target absent from the catalog was selected")
 	}
 }
 
@@ -162,7 +162,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","capabilities":{"transfers":[],"channels":[]}}`))
+			_, _ = w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","capabilities":{"transfers":[],"channels":[]}}`))
 		}))
 		defer srv.Close()
 
@@ -181,7 +181,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("non-200 status returns formatted error", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("boom"))
+			_, _ = w.Write([]byte("boom"))
 		}))
 		defer srv.Close()
 
@@ -197,7 +197,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("malformed JSON body propagates decode error", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("{not valid json"))
+			_, _ = w.Write([]byte("{not valid json"))
 		}))
 		defer srv.Close()
 

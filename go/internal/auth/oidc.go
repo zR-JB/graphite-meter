@@ -24,6 +24,8 @@ const (
 	maxOIDCTransactions = 256
 	// maxClientOIDCTransactions bounds them per client address budget.
 	maxClientOIDCTransactions = 8
+	// oidcTransactionLifetime bounds how long one authorization request stands.
+	oidcTransactionLifetime = 10 * time.Minute
 )
 
 type oidcTransaction struct {
@@ -112,6 +114,8 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 		UserInfo       string `json:"userinfo_endpoint"`
 		JWKS           string `json:"jwks_uri"`
 	}
+	// Optional metadata: one mistyped field must not cost the whole document.
+	// The endpoints it carries are validated below either way.
 	_ = p.Claims(&meta)
 	ep := p.Endpoint()
 	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) || !validProviderURL(meta.JWKS) {
@@ -253,14 +257,14 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := sha256.Sum256([]byte(state))
-	bh := sha256.Sum256([]byte(browser))
+	browserHash := sha256.Sum256([]byte(browser))
 	addr, ok := s.authClientAddress(r)
 	if !ok {
 		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
 	}
 	client := budgetKey(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: bh, expires: s.now().Add(10 * time.Minute), client: client, cliChallenge: r.FormValue("challenge")}
+	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: r.FormValue("challenge")}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
@@ -317,22 +321,65 @@ func first(v []string) string {
 	return v[0]
 }
 
+// oidcIDClaims are the ID-token claims the callback reads directly.
+type oidcIDClaims struct {
+	Nonce    string `json:"nonce"`
+	Name     string `json:"name"`
+	Username string `json:"preferred_username"`
+	AtHash   string `json:"at_hash"`
+}
+
 func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
+	tx, code, ok := s.resolveOIDCTransaction(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	ctx = oidc.ClientContext(ctx, providerHTTPClient())
+	token, idToken, idClaims, why := s.exchangeAndVerifyToken(ctx, tx, code)
+	if why != "" {
+		s.oidcLoginFailure(w, r, why)
+		return
+	}
+	name, why := s.authorizeOIDCUser(ctx, tx, token, idToken, idClaims)
+	if why != "" {
+		s.oidcLoginFailure(w, r, why)
+		return
+	}
+	s.completeOIDCSignIn(w, r, tx, idToken, name)
+}
+
+// carryCLIChallenge forwards a well-formed CLI challenge onto r.URL. It runs
+// ahead of the fallible checks, so a later failure's /login redirect carries it.
+func carryCLIChallenge(r *http.Request, challenge string) {
+	if !validChallenge(challenge) {
+		return
+	}
+	values := r.URL.Query()
+	values.Set("challenge", challenge)
+	r.URL.RawQuery = values.Encode()
+}
+
+// resolveOIDCTransaction validates the callback parameters and consumes the
+// one-time transaction, returning it plus the authorization code. It writes the
+// failure response and returns ok=false on any mismatch.
+func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request) (oidcTransaction, string, bool) {
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
 	if !cok || !sok || len(q["error"]) > 0 || len(q["iss"]) > 1 {
 		s.oidcLoginFailure(w, r, reasonCallbackParameters)
-		return
+		return oidcTransaction{}, "", false
 	}
-	key := sha256.Sum256([]byte(state))
 	cookie, err := r.Cookie(transactionCookie)
 	if err != nil {
 		s.oidcLoginFailure(w, r, reasonTransactionCookie)
-		return
+		return oidcTransaction{}, "", false
 	}
-	bh := sha256.Sum256([]byte(cookie.Value))
+	browserHash := sha256.Sum256([]byte(cookie.Value))
+	key := sha256.Sum256([]byte(state))
 	o := s.oidc
 	o.mu.Lock()
 	tx, ok := o.tx[key]
@@ -341,98 +388,83 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	o.mu.Unlock()
 	clearTransactionCookie(w)
-	if ok && validChallenge(tx.cliChallenge) {
-		values := r.URL.Query()
-		values.Set("challenge", tx.cliChallenge)
-		r.URL.RawQuery = values.Encode()
+	if ok {
+		carryCLIChallenge(r, tx.cliChallenge)
 	}
-	if !ok || !s.now().Before(tx.expires) || tx.browser != bh || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
+	if !ok || !s.now().Before(tx.expires) || tx.browser != browserHash || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
 		s.counters.replayExpiry.Add(1)
 		s.oidcLoginFailure(w, r, reasonTransactionReplay)
-		return
+		return oidcTransaction{}, "", false
 	}
 	iss := first(q["iss"])
 	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
 		s.oidcLoginFailure(w, r, reasonResponseIssuer)
-		return
+		return oidcTransaction{}, "", false
 	}
-	// The exchange is the one anonymous path that produces an outbound request
-	// to the identity provider, which commonly sits on a private network. The
-	// transaction caps above free on use and so bound concurrency, not volume;
-	// this bounds volume.
+	// The transaction caps above free on use, so they bound concurrency. This
+	// bounds the volume of outbound requests to the identity provider.
 	if !s.allowExchange(r) {
 		s.oidcLoginFailure(w, r, reasonExchangeRateLimited)
-		return
+		return oidcTransaction{}, "", false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	ctx = oidc.ClientContext(ctx, providerHTTPClient())
+	return tx, code, true
+}
+
+// exchangeAndVerifyToken swaps the code for tokens and verifies the ID token
+// signature, nonce, and access-token hash. why is "" on success.
+func (s *Service) exchangeAndVerifyToken(ctx context.Context, tx oidcTransaction, code string) (*oauth2.Token, *oidc.IDToken, oidcIDClaims, reason) {
 	token, err := tx.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
 	if err != nil {
-		s.oidcLoginFailure(w, r, reasonTokenExchange)
-		return
+		return nil, nil, oidcIDClaims{}, reasonTokenExchange
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		s.oidcLoginFailure(w, r, reasonMissingIDToken)
-		return
+		return nil, nil, oidcIDClaims{}, reasonMissingIDToken
 	}
 	idToken, err := tx.idVerifier.Verify(ctx, rawID)
 	if err != nil {
-		s.oidcLoginFailure(w, r, reasonIDTokenVerification)
-		return
+		return nil, nil, oidcIDClaims{}, reasonIDTokenVerification
 	}
-	var idClaims struct {
-		Nonce    string `json:"nonce"`
-		Name     string `json:"name"`
-		Username string `json:"preferred_username"`
-		AtHash   string `json:"at_hash"`
-	}
+	var idClaims oidcIDClaims
 	if err := idToken.Claims(&idClaims); err != nil || idClaims.Nonce != tx.nonce {
-		s.oidcLoginFailure(w, r, reasonIDTokenClaimsOrNonce)
-		return
+		return nil, nil, oidcIDClaims{}, reasonIDTokenClaimsOrNonce
 	}
 	if idClaims.AtHash != "" {
 		if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-			s.oidcLoginFailure(w, r, reasonAccessTokenHash)
-			return
+			return nil, nil, oidcIDClaims{}, reasonAccessTokenHash
 		}
 	}
-	ui, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
-	if err != nil || ui.Subject != idToken.Subject {
-		s.oidcLoginFailure(w, r, reasonUserInfoOrSubject)
-		return
+	return token, idToken, idClaims, ""
+}
+
+// authorizeOIDCUser fetches UserInfo, confirms the subject matches, enforces the
+// group allowlist, and derives the display name. why is "" on success.
+func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, token *oauth2.Token, idToken *oidc.IDToken, idClaims oidcIDClaims) (string, reason) {
+	userInfo, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+	if err != nil || userInfo.Subject != idToken.Subject {
+		return "", reasonUserInfoOrSubject
 	}
 	var claims struct {
 		Name     string   `json:"name"`
 		Username string   `json:"preferred_username"`
 		Groups   []string `json:"groups"`
 	}
-	if err := ui.Claims(&claims); err != nil || !allowedGroup(claims.Groups, s.cfg.OIDCAllowedGroups) {
+	if err := userInfo.Claims(&claims); err != nil || !allowedGroup(claims.Groups, s.cfg.OIDCAllowedGroups) {
 		if err == nil {
 			s.counters.groupDenial.Add(1)
 		}
-		s.oidcLoginFailure(w, r, reasonUserInfoClaimsOrGroup)
-		return
+		return "", reasonUserInfoClaimsOrGroup
 	}
 	if !validSubject(idToken.Subject) {
-		s.oidcLoginFailure(w, r, reasonInvalidSubject)
-		return
+		return "", reasonInvalidSubject
 	}
-	name := claims.Name
-	if name == "" {
-		name = claims.Username
-	}
-	if name == "" {
-		name = idClaims.Name
-	}
-	if name == "" {
-		name = idClaims.Username
-	}
-	if name == "" {
-		name = idToken.Subject
-	}
-	name = safeDisplayName(name)
+	name := firstNonEmpty(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
+	return safeDisplayName(name), ""
+}
+
+// completeOIDCSignIn mints the session, rotates any prior one, and hands off to
+// the same-site interstitial.
+func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx oidcTransaction, idToken *oidc.IDToken, name string) {
 	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName, idToken.Expiry)
 	if err != nil {
 		s.oidcLoginFailure(w, r, reasonSessionCapacity)
@@ -448,12 +480,19 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.writeSignedInInterstitial(w, tx.cliChallenge)
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
-// callback is the tail of a navigation the identity provider started, so it is
-// cross-site: a redirect from here would be followed without the SameSite=Strict
-// session cookie just set, and the visitor would land back on /login. Rendering
-// a page instead makes the next hop same-site, because this document initiates
-// it, and the cookie rides along.
+// callback is the tail of a provider-initiated navigation, so it is cross-site:
+// a redirect from here travels without the SameSite=Strict session cookie just
+// set. A rendered page makes the next hop same-site, and the cookie rides along.
 func (s *Service) writeSignedInInterstitial(w http.ResponseWriter, challenge string) {
 	if !validChallenge(challenge) {
 		challenge = ""

@@ -1,6 +1,6 @@
 /* ============================================================
- * Ping worker — adaptive RTT/loss-timeout estimator (RFC 6298-style).
- * Pure so it's unit-testable without a WebSocket.
+ * Adaptive RTT/loss-timeout estimator for the ping worker (RFC 6298-style).
+ * Pure so it is unit-testable without a WebSocket.
  * ============================================================ */
 
 export interface RttEstimate {
@@ -17,19 +17,19 @@ export const INITIAL_RTT_ESTIMATE: RttEstimate = {
 
 /** Fold an RTT sample into the SRTT/RTTVAR estimator (RFC 6298, α=1/8, β=1/4).
  *  The first sample seeds srtt directly and rttvar to half of it. */
-export function observeRtt(prev: RttEstimate, r: number): RttEstimate {
-  if (!prev.haveRtt) return { srtt: r, rttvar: r / 2, haveRtt: true };
+export function observeRtt(prev: RttEstimate, rttMs: number): RttEstimate {
+  if (!prev.haveRtt) return { srtt: rttMs, rttvar: rttMs / 2, haveRtt: true };
   return {
-    srtt: 0.875 * prev.srtt + 0.125 * r,
-    rttvar: 0.75 * prev.rttvar + 0.25 * Math.abs(prev.srtt - r),
+    srtt: 0.875 * prev.srtt + 0.125 * rttMs,
+    rttvar: 0.75 * prev.rttvar + 0.25 * Math.abs(prev.srtt - rttMs),
     haveRtt: true,
   };
 }
 
-/** The adaptive loss timeout: RTO = SRTT + K·RTTVAR, clamped to
- *  [lossFloorMs, lossCeilMs]. Before the first sample the floor governs
- *  (cold start). The RTTVAR term spikes on a sudden RTT jump, so the timeout
- *  grows within ~1 RTT instead of false-flagging loss. */
+/** Adaptive loss timeout: RTO = SRTT + K·RTTVAR, clamped to
+ *  [lossFloorMs, lossCeilMs]. Without a sample the floor governs (cold start).
+ *  RTTVAR spikes on a sudden RTT jump, so the timeout grows within ~1 RTT
+ *  instead of false-flagging loss. */
 export function lossTimeout(
   est: RttEstimate,
   lossK: number,

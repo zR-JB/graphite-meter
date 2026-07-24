@@ -23,25 +23,25 @@ func loadRoutePin(t *testing.T) map[string]string {
 	defer f.Close()
 
 	pinned := make(map[string]string)
-	sc := bufio.NewScanner(f)
-	ln := 0
-	for sc.Scan() {
-		ln++
-		line := strings.TrimSpace(sc.Text())
+	scanner := bufio.NewScanner(f)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		name, path, ok := strings.Cut(line, "|")
 		if !ok {
-			t.Fatalf("line %d: want 2 fields: %q", ln, line)
+			t.Fatalf("line %d: want 2 fields: %q", lineNumber, line)
 		}
 		pinned[strings.TrimSpace(name)] = strings.TrimSpace(path)
 	}
-	if err := sc.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan route pin: %v", err)
 	}
 	if len(pinned) == 0 {
-		t.Fatal("route pin is empty — expected populated routes")
+		t.Fatal("route pin is empty: expected populated routes")
 	}
 	return pinned
 }

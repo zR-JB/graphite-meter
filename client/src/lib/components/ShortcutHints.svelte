@@ -1,12 +1,8 @@
 <script lang="ts">
-  /* ============================================================
-   * <ShortcutHints> — contextual keyboard-shortcut strip
-   * A subtle, tokenized row of keycaps that mirrors the global
-   * keyboard map in <Console>. The primary hint flips with run
-   * state (Space = Engage / Abort), and an "R · Run again" cap
-   * appears only once a run has resolved. Decorative + advisory:
-   * the real handler lives in Console.
-   * ============================================================ */
+  /* Contextual keyboard-shortcut strip: a tokenized row of keycaps mirroring
+     the global keyboard map in <Console>, which owns the real handler. The
+     primary hint flips with run state (Space = Engage or Abort), and the
+     "R · Run again" cap appears once a run resolves. */
   import { store } from "../state/store.svelte";
 
   // Mirror RunButton's label exactly (Engage → Abort → Run again) so the hint
@@ -31,9 +27,8 @@
 </div>
 
 <style>
-  /* A quiet row of keycap + label pairs. No pill container (that read cheap and
-     cramped) — just a single clean keycap in the Faceplate tile language and a
-     muted label, with generous spacing between groups. */
+  /* A quiet row of keycap and label pairs: one keycap in the faceplate tile
+     language, a muted label, generous spacing between groups. */
   .command-hints {
     display: flex;
     flex-wrap: wrap;

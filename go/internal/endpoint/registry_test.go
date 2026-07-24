@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,7 @@ func (e *echoEndpoint) ID() string                 { return e.id }
 func (e *echoEndpoint) Capabilities() Capabilities { return Capabilities{} }
 func (e *echoEndpoint) Handle(s transport.Session) error {
 	if w, _, ok := s.HTTP(); ok {
-		w.Write([]byte(e.id))
+		_, _ = w.Write([]byte(e.id)) // test double: a failed write shows up as a body mismatch
 		return nil
 	}
 	if bus, ok := s.Bus(); ok {
@@ -252,11 +253,10 @@ func TestWSAdapterHandleErrorClosesWithInternalError(t *testing.T) {
 	}
 }
 
-// TestHTTPAdapterOptionsIgnoresRequestHeaders checks the permissive-CORS
-// design point: a preflight OPTIONS carrying Origin, Access-Control-Request-
-// Method, and Access-Control-Request-Headers still gets the same wildcard
-// response regardless of what was requested — this is a public, cookie-less
-// measurement API, so nothing is reflected or validated per-request.
+// TestHTTPAdapterOptionsIgnoresRequestHeaders checks the permissive-CORS design
+// point: a preflight OPTIONS carrying Origin and both Access-Control-Request
+// headers still gets the same wildcard response. Public mode is cookie-less, so
+// nothing is reflected or validated per-request.
 func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
 	e := &countingEndpoint{}
 	srv := httptest.NewServer(httpAdapter(e))
@@ -290,11 +290,10 @@ func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
 	}
 }
 
-// TestMountLongestPathWins checks that registering a subtree ("/api/") and a
-// more specific literal path ("/api/specific") on the same registry resolves
-// through Go's ServeMux longest-match rule regardless of map iteration order
-// — Registry.Mount is a thin, order-independent wrapper and must not break
-// that precedence when paths overlap.
+// TestMountLongestPathWins checks a subtree ("/api/") and a more specific
+// literal ("/api/specific") on one registry resolve by ServeMux's longest-match
+// rule whatever the map iteration order. Mount is a thin, order-independent
+// wrapper and must not break that precedence when paths overlap.
 func TestMountLongestPathWins(t *testing.T) {
 	reg := NewRegistry()
 	reg.RegisterHTTP("/api/", &echoEndpoint{id: "subtree"})
@@ -356,8 +355,4 @@ func TestMountShutdownCancelUnblocksWSHandler(t *testing.T) {
 	}
 }
 
-var errBoom = boomError{}
-
-type boomError struct{}
-
-func (boomError) Error() string { return "boom" }
+var errBoom = errors.New("boom")

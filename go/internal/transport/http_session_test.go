@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// TestHTTPSessionProto covers the ProtoMajor → Proto mapping, including the
-// default case for anything other than 2 or 3.
 func TestHTTPSessionProto(t *testing.T) {
 	tests := []struct {
 		protoMajor int
@@ -30,8 +28,6 @@ func TestHTTPSessionProto(t *testing.T) {
 	}
 }
 
-// TestHTTPSessionHTTP checks HTTP() reports ok and returns the exact
-// writer/request the session was built with.
 func TestHTTPSessionHTTP(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -49,8 +45,6 @@ func TestHTTPSessionHTTP(t *testing.T) {
 	}
 }
 
-// TestHTTPSessionOpenUploadSourceNilBody checks the documented ErrUnsupported
-// when the request has no body.
 func TestHTTPSessionOpenUploadSourceNilBody(t *testing.T) {
 	r := httptest.NewRequest("POST", "/", nil)
 	r.Body = nil
@@ -65,8 +59,6 @@ func TestHTTPSessionOpenUploadSourceNilBody(t *testing.T) {
 	}
 }
 
-// TestHTTPSessionOpenUploadSourceBody checks a real body is passed through
-// verbatim as the byte source.
 func TestHTTPSessionOpenUploadSourceBody(t *testing.T) {
 	want := []byte("payload bytes")
 	r := httptest.NewRequest("POST", "/", bytes.NewReader(want))
@@ -85,7 +77,6 @@ func TestHTTPSessionOpenUploadSourceBody(t *testing.T) {
 	}
 }
 
-// TestHTTPSessionBus checks a request/response session has no bus.
 func TestHTTPSessionBus(t *testing.T) {
 	s := NewHTTPSession(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 	bus, ok := s.Bus()

@@ -42,8 +42,14 @@ func (e *PreparationError) Unwrap() error { return e.Err }
 const preparationFreshness = 30 * time.Second
 
 func preparationKey(cfg Config) string {
-	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, needsLatency, cfg.authToken() != "")
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.LatencyTarget, cfg.InsecureSkipTLSVerify, cfg.needsLatency(), cfg.authToken() != "")
+}
+
+// needsLatency reports whether a latency target has to be discovered and
+// verified: either the latency stage runs on its own, or a transfer stage
+// carries a loaded-latency probe alongside it.
+func (c Config) needsLatency() bool {
+	return c.Stages.Latency || (c.LoadedLatency && (c.Stages.Download || c.Stages.Upload || c.Stages.Bidirectional))
 }
 
 func canonicalOrigin(raw string) (string, error) {
@@ -56,12 +62,12 @@ func canonicalOrigin(raw string) (string, error) {
 
 func CanonicalServerOrigin(raw string) (string, error) { return canonicalOrigin(raw) }
 
-func (cfg Config) authToken() string {
-	origin, err := canonicalOrigin(cfg.BaseURL)
-	if err != nil || !strings.EqualFold(origin, cfg.AuthOrigin) {
+func (c Config) authToken() string {
+	serverOrigin, err := canonicalOrigin(c.BaseURL)
+	if err != nil || !strings.EqualFold(serverOrigin, c.AuthOrigin) {
 		return ""
 	}
-	return cfg.AuthToken
+	return c.AuthToken
 }
 
 type authTransport struct {
@@ -81,16 +87,21 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	clone.Header.Set("Authorization", "Bearer "+t.token)
 	return t.base.RoundTrip(clone)
 }
+
+// pinnedHostname is empty for an origin that does not parse, which makes
+// authTransport refuse every request rather than send the grant to a host it
+// cannot name.
+func pinnedHostname(origin string) string {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
 	token := cfg.authToken()
-	// An unparseable origin leaves the pinned hostname empty, which makes
-	// authTransport refuse every request rather than send the grant to a host
-	// it cannot name.
-	var hostname string
-	if u, err := url.Parse(cfg.AuthOrigin); err == nil {
-		hostname = u.Hostname()
-	}
-	client := &http.Client{Transport: authTransport{token: token, hostname: hostname, base: base}}
+	client := &http.Client{Transport: authTransport{token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
 	if token != "" {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")
@@ -152,6 +163,16 @@ func baseTransport(cfg Config) *http.Transport {
 	}
 }
 
+// websocketClient pins HTTP/1.1: the latency channel is an HTTP/1 Upgrade
+// handshake, which an HTTP/2 or HTTP/3 connection cannot carry.
+func websocketClient(cfg Config) (*http.Client, func()) {
+	tr := baseTransport(cfg)
+	protocols := &http.Protocols{}
+	protocols.SetHTTP1(true)
+	tr.Protocols = protocols
+	return authenticatedClient(cfg, tr), tr.CloseIdleConnections
+}
+
 func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
 	if cfg.authToken() != "" {
@@ -196,14 +217,10 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if target.Protocol == "negotiated" {
 		target.Protocol = protocolFromEvidence(clientProtocol)
 	}
-	wsTransport := baseTransport(cfg)
-	wsp := &http.Protocols{}
-	wsp.SetHTTP1(true)
-	wsTransport.Protocols = wsp
-	defer wsTransport.CloseIdleConnections()
-	wsClient := authenticatedClient(cfg, wsTransport)
+	wsClient, closeWebSocket := websocketClient(cfg)
+	defer closeWebSocket()
 	latencyTarget, latencyErr := selectLatencyTarget(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets)
-	needsLatency := cfg.Stages.Latency || (cfg.LoadedLatency && (cfg.Stages.Download || cfg.Stages.Upload || cfg.Stages.Bidirectional))
+	needsLatency := cfg.needsLatency()
 	if latencyErr != nil && needsLatency {
 		return fail(latencyErr)
 	}
@@ -214,9 +231,8 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)
 		if err != nil {
 			return fail(err)
-		} else {
-			latencyProbe = &p
 		}
+		latencyProbe = &p
 		if err := verifyLatencyWebSocket(ctx, wsClient, latencyTarget); err != nil {
 			return fail(err)
 		}
@@ -241,12 +257,8 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	target := &prepared.ThroughputTarget
 	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
 	defer closeTransfer()
-	wsTransport := baseTransport(cfg)
-	wsp := &http.Protocols{}
-	wsp.SetHTTP1(true)
-	wsTransport.Protocols = wsp
-	defer wsTransport.CloseIdleConnections()
-	wsClient := authenticatedClient(cfg, wsTransport)
+	wsClient, closeWebSocket := websocketClient(cfg)
+	defer closeWebSocket()
 	pf := prepared.Preflight
 	probe := prepared.Probe
 	latencyTarget := prepared.LatencyTarget
@@ -268,7 +280,7 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 		cfg: cfg, streams: cfg.TransferStreams.Resolve(target.Protocol),
 		http: transfer, websocketHTTP: wsClient,
 		target: target, latencyTarget: latencyTarget,
-		preflight: pf, probe: probe, emit: emit,
+		emit: emit,
 	}
 	if cfg.Stages.Latency {
 		if err := r.runLatencyStage(ctx, "latency", false, cfg.LatencyDuration); err != nil {
@@ -301,21 +313,19 @@ type runner struct {
 	websocketHTTP *http.Client
 	target        *wire.ThroughputTarget
 	latencyTarget *wire.LatencyTarget
-	preflight     wire.Preflight
-	probe         wire.Probe
 	emit          func(Event)
-	// Idle RTT captured from the latency stage; used to stretch later stages'
-	// warmup so TCP slow-start fills the BDP before measuring (0 until measured).
+	// Idle RTT from the latency stage, stretching later stages' warmup so TCP
+	// slow-start fills the BDP (0 until measured).
 	idleRTT time.Duration
 }
 
 // laneStagger spreads lane starts so their congestion windows don't ramp in
-// lockstep (synchronised overshoot → synchronised loss/backoff).
+// lockstep: synchronised overshoot means synchronised loss and backoff.
 const laneStagger = 75 * time.Millisecond
 
-// adaptiveWarmup stretches a stage's warmup to ~10 RTTs (the configured value as
-// floor, capped) so slow-start finishes before the measured window opens. rtt <= 0
-// (latency stage not yet run / disabled) ⇒ the configured value.
+// adaptiveWarmup stretches a stage's warmup to ~10 RTTs so slow-start finishes
+// while the measured window is still closed. The configured value is the floor
+// and ceil the cap; rtt <= 0 (latency stage disabled or unrun) takes the floor.
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	const slowStartRTTs = 10
 	const ceil = 4 * time.Second
@@ -329,9 +339,9 @@ func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	return w
 }
 
-// laneStaggerStep is the per-lane spawn delay, shrunk so even the last lane (of
-// up to 128) spawns within half the warmup window — laneStagger is only the cap.
-// 0 ⇒ one lane or no warmup ⇒ spawn together.
+// laneStaggerStep is the per-lane spawn delay. Even the last lane (of up to
+// 128) spawns within half the warmup window; laneStagger is only the cap.
+// One lane or no warmup gives 0, so every lane spawns together.
 func (r *runner) laneStaggerStep() time.Duration {
 	if r.streams <= 1 {
 		return 0
@@ -369,10 +379,7 @@ func (r *runner) fail(err error) error {
 }
 
 func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bool, duration time.Duration) error {
-	start, err := r.warmupGate(ctx, stage)
-	if err != nil {
-		return err
-	}
+	start := r.warmupGate(ctx, stage)
 	stats, err := r.measureLatency(ctx, stage, underLoad, duration, start)
 	if err != nil {
 		return err
@@ -387,10 +394,7 @@ func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bo
 }
 
 func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Direction, duration time.Duration) error {
-	start, err := r.warmupGate(ctx, stage)
-	if err != nil {
-		return err
-	}
+	start := r.warmupGate(ctx, stage)
 
 	stageCtx, cancelStage := context.WithCancel(ctx)
 	defer cancelStage()
@@ -399,7 +403,6 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	errs := make(chan error, len(dirs)+1)
 	results := make(chan Result, len(dirs))
 	for _, dir := range dirs {
-		dir := dir
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -463,13 +466,13 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	return nil
 }
 
-func (r *runner) warmupGate(ctx context.Context, stage string) (<-chan struct{}, error) {
+func (r *runner) warmupGate(ctx context.Context, stage string) <-chan struct{} {
 	start := make(chan struct{})
 	warmup := adaptiveWarmup(r.cfg.Warmup, r.idleRTT)
 	if warmup <= 0 {
 		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "measure"})
 		close(start)
-		return start, nil
+		return start
 	}
 	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "warmup"})
 	go func() {
@@ -482,7 +485,7 @@ func (r *runner) warmupGate(ctx context.Context, stage string) (<-chan struct{},
 			close(start)
 		}
 	}()
-	return start, nil
+	return start
 }
 
 func (r *runner) endpoint(path string) (string, error) {

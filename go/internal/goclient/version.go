@@ -1,11 +1,7 @@
 package goclient
 
-// Version is overridable at build time via
-//
-//	-ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=1.2.3"
-//
-// Frozen "0.0.0-dev" sentinel for unstamped builds (raw `go build`, bypassing
-// just/CI) — never bumped by hand. Real versions come from the git tag via
-// release.yml; see go/internal/config.EngineVersion (server) and
-// client/package.json's "version" (web client) for the equivalent sentinels.
+// Version carries the git tag, stamped by release.yml alongside the sentinels
+// in config.EngineVersion and client/package.json. "0.0.0-dev" marks a build
+// that bypasses just/CI. Stamp it with
+// -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=1.2.3".
 var Version = "0.0.0-dev"

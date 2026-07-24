@@ -66,9 +66,9 @@ func valueLine(label, value, note string) string {
 	return fmt.Sprintf("%-24s %s  %s", label, valueStyle.Render(value), mutedStyle.Render(note))
 }
 
-// endpointRow is an endpoint selector line: the configured choice stays on
-// show with its position in the cycle enter walks, and the concrete target a
-// preparation resolved it to is the note beside it.
+// endpointRow is an endpoint selector line: the configured choice with its
+// position in the cycle enter walks. The note beside it is the concrete target
+// a preparation resolves it to.
 func endpointRow(label, configured string, choices []string, resolved string) string {
 	pos := ""
 	for i, c := range choices {
@@ -110,15 +110,14 @@ func timingLabel(row int) string {
 	}
 }
 
-// eighths are the partial-cell fills between an empty and a full block, so a
-// bar's tip moves in sub-cell steps instead of jumping a whole cell at a time.
+// eighths are the partial-cell fills between an empty and a full block. A
+// bar's tip moves in sub-cell steps.
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
-// renderBar fills width cells with value/scale. Every bar on a screen shares one
-// scale — the largest value in view — so the fills compare against each other at
-// a glance instead of each bar being full against its own maximum. The tip
-// renders at eighth-cell resolution; lead brightens the last filled cell, which
-// makes a live bar's motion legible.
+// renderBar fills width cells with value/scale. Callers pass the largest value
+// in view as scale, so every bar on a screen compares against one denominator.
+// The tip renders at eighth-cell resolution. lead brightens the last filled
+// cell, which makes a live bar's motion legible.
 func renderBar(value, scale float64, width int, lead bool) string {
 	cells := 0.0
 	if scale > 0 {
@@ -152,10 +151,8 @@ func rateLine(name string, rate, scale float64, w int) string {
 	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
 }
 
-// latencyLine holds the last round trip on screen instead of blinking away on
-// every lost ping: a loss streak is annotated beside the value and only a
-// sustained streak reads as a timeout. Before the first pong there is only
-// "waiting", or "timeout" once losses are all there ever was.
+// latencyLine holds the last round trip on screen across lost pings. A streak
+// annotates the value beside it, and three in a row reads as a timeout.
 func latencyLine(s goclient.LatencySample, lostStreak int) string {
 	if s.RTT <= 0 {
 		if lostStreak > 0 {
@@ -212,8 +209,8 @@ func fmtBytes(n uint64) string {
 	return fmt.Sprintf("%.2f %s", v, units[i])
 }
 
-// fmtClock renders a running clock: tenths while the eye can follow them,
-// whole seconds once the number is long enough that they only flicker.
+// fmtClock renders a running clock: tenths under a minute, whole seconds
+// above, where tenths only flicker.
 func fmtClock(d time.Duration) string {
 	if d < 0 {
 		d = 0
@@ -231,22 +228,15 @@ func fmtMs(d time.Duration) string {
 	return fmt.Sprintf("%.2f ms", float64(d.Microseconds())/1000)
 }
 
-func clamp(v, min, max int) int {
-	if max < min {
-		return min
+func clamp(v, lo, hi int) int {
+	if hi < lo {
+		return lo
 	}
-	if v < min {
-		return min
+	if v < lo {
+		return lo
 	}
-	if v > max {
-		return max
+	if v > hi {
+		return hi
 	}
 	return v
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

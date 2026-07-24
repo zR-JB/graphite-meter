@@ -13,7 +13,7 @@ func TestResolveClientAddress(t *testing.T) {
 		netip.MustParsePrefix("::1/128"),
 	}
 	tests := []struct {
-		name, remote, header, value, want, source string
+		name, remote, header, headerValue, wantAddr, wantSource string
 	}{
 		{"direct IPv4", "198.51.100.9:1234", "", "", "198.51.100.9", "socket"},
 		{"direct IPv6", "[2001:db8::9]:1234", "", "", "2001:db8::9", "socket"},
@@ -34,11 +34,11 @@ func TestResolveClientAddress(t *testing.T) {
 			r := httptest.NewRequest("GET", "/", nil)
 			r.RemoteAddr = tt.remote
 			if tt.header != "" {
-				r.Header.Set(tt.header, tt.value)
+				r.Header.Set(tt.header, tt.headerValue)
 			}
 			got := ResolveClientAddress(r, trusted)
-			if got.Addr.String() != tt.want || string(got.Source) != tt.source {
-				t.Fatalf("ResolveClientAddress() = %s/%s, want %s/%s", got.Addr, got.Source, tt.want, tt.source)
+			if got.Addr.String() != tt.wantAddr || string(got.Source) != tt.wantSource {
+				t.Fatalf("ResolveClientAddress() = %s/%s, want %s/%s", got.Addr, got.Source, tt.wantAddr, tt.wantSource)
 			}
 		})
 	}
@@ -52,7 +52,7 @@ func TestForwardedHeaderPrecedence(t *testing.T) {
 	r.Header.Set("X-Real-IP", "198.51.100.9")
 	got := ResolveClientAddress(r, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	if got.Addr.String() != "203.0.113.4" || got.Source != ClientIPForwarded {
-		t.Fatalf("ResolveClientAddress() = %s/%s, want Forwarded value", got.Addr, got.Source)
+		t.Fatalf("ResolveClientAddress() = %s/%s, want 203.0.113.4/%s", got.Addr, got.Source, ClientIPForwarded)
 	}
 }
 
@@ -63,6 +63,6 @@ func TestForwardedPrecedenceDoesNotMixMalformedHeaders(t *testing.T) {
 	r.Header.Set("X-Forwarded-For", "203.0.113.4")
 	got := ResolveClientAddress(r, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
 	if got.Addr.String() != "10.0.0.2" || got.Source != ClientIPSocket {
-		t.Fatalf("ResolveClientAddress() = %s/%s, want socket fallback", got.Addr, got.Source)
+		t.Fatalf("ResolveClientAddress() = %s/%s, want 10.0.0.2/%s", got.Addr, got.Source, ClientIPSocket)
 	}
 }

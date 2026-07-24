@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 )
 
 type requestAdmission struct {
@@ -25,20 +25,6 @@ type requestAdmission struct {
 
 func newRequestAdmission(globalMax, clientMax int, maxLifetime time.Duration) *requestAdmission {
 	return &requestAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, maxLifetime: maxLifetime}
-}
-
-func clientKey(r *http.Request, trusted []netip.Prefix) string {
-	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
-		return "principal:" + p.Subject
-	}
-	addr := transport.ResolveClientAddress(r, trusted).Addr.Unmap()
-	if !addr.IsValid() {
-		return "unknown"
-	}
-	if addr.Is6() {
-		return netip.PrefixFrom(addr, 64).Masked().String()
-	}
-	return addr.String()
 }
 
 func (a *requestAdmission) acquire(key string) (release func(), status int) {
@@ -80,16 +66,15 @@ func (a *requestAdmission) stats() admissionStats {
 }
 
 // wrap accounts one in-flight measurement request. publicOrigin is the
-// operator-configured origin when authentication is enabled, and "" when it is
-// off; it is echoed instead of the request's own Origin on credentialed
-// responses.
+// operator-configured origin, empty when authentication is off. A credentialed
+// rejection echoes it instead of the request's own Origin.
 func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publicOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			next.ServeHTTP(w, r)
 			return
 		}
-		release, status := a.acquire(clientKey(r, trusted))
+		release, status := a.acquire(endpoint.ClientKey(r, trusted))
 		if status != 0 {
 			setAdmissionHeaders(w, r, publicOrigin)
 			w.Header().Set("Retry-After", "1")
@@ -99,23 +84,31 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 		defer release()
 		ctx, cancel := context.WithTimeout(r.Context(), a.maxLifetime)
 		defer cancel()
-		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != "/ws/ping" {
-			controller := http.NewResponseController(w)
-			_ = controller.SetReadDeadline(deadline)
-			_ = controller.SetWriteDeadline(deadline)
-			defer controller.SetReadDeadline(time.Time{})
-			defer controller.SetWriteDeadline(time.Time{})
+		// A socket deadline tears the ping WebSocket down mid-stream. Its
+		// context bounds that route alone.
+		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != routePing {
+			defer setSocketDeadlines(w, deadline)()
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
+// setSocketDeadlines bounds a transfer that stops reading its context and
+// returns the clear. HTTP/3 carries no deadlines and is served without.
+func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(deadline)
+	_ = controller.SetWriteDeadline(deadline)
+	return func() {
+		_ = controller.SetReadDeadline(time.Time{})
+		_ = controller.SetWriteDeadline(time.Time{})
+	}
+}
+
 // setAdmissionHeaders writes the CORS headers for a rejected measurement
-// request. When a principal is present the response is credentialed, so it
-// echoes the validated public origin rather than whatever the request asked
-// for — reflecting a request-supplied Origin alongside
-// Access-Control-Allow-Credentials would be a cross-origin read primitive if
-// this function were ever reachable with a foreign origin.
+// request. A credentialed response echoes only the validated public origin:
+// reflecting a request-supplied Origin alongside
+// Access-Control-Allow-Credentials is a cross-origin read primitive.
 func setAdmissionHeaders(w http.ResponseWriter, r *http.Request, publicOrigin string) {
 	h := w.Header()
 	if _, ok := auth.PrincipalFromContext(r.Context()); ok {

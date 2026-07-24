@@ -1,29 +1,33 @@
 <script lang="ts">
-  /* ============================================================
-   * <PhaseToast> — transient phase-change announcer
-   * A fixed, bottom-right toast that surfaces a contextual message
-   * each time `store.phase` changes, then auto-dismisses (~1.35s,
-   * ~2.2s on complete). role="status" + aria-live="polite" gives
-   * screen readers a calm, per-transition announcement (the gauge
-   * a11y mirror in GaugePanel handles the per-value detail).
-   *
-   * Reactivity: a single `$effect` watches `store.phase`; the kicker
-   * (eyebrow) and message are pure functions of the current phase.
-   * Tokens only. Reduced-motion: the slide/scale is dropped and
-   * it just fades / appears.
-   * ============================================================ */
+  /* Transient phase-change announcer, pinned bottom-right: one message per
+     `store.phase` change, then auto-dismiss. role="status" with
+     aria-live="polite" gives screen readers one calm announcement per
+     transition. GaugePanel's mirror carries the per-value detail. */
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
+  import { phaseKicker, phaseMessage } from "./phasePresentation";
+
+  // A terminal or skipped-stage notice earns a longer read than a routine
+  // phase blink.
+  const LINGER_ALERT_MS = 3200;
+  const LINGER_COMPLETE_MS = 2200;
+  const LINGER_PHASE_MS = 1350;
+
+  function lingerMs(phase: typeof store.phase, skipped: boolean): number {
+    if (skipped || phase === "aborted" || phase === "error")
+      return LINGER_ALERT_MS;
+    return phase === "complete" ? LINGER_COMPLETE_MS : LINGER_PHASE_MS;
+  }
 
   let visible = $state(false);
   let prevPhase = store.phase;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  // A skipped stage takes over the toast briefly (err-tinted): it usually
-  // coincides with the next stage's phase transition, so it gets priority
-  // over the routine phase message until its timer clears it.
-  let skipMsg = $state<string | null>(null);
+  // A skipped stage takes over the toast briefly, err-tinted. It coincides
+  // with the next stage's transition, so it outranks the routine phase
+  // message until its timer clears.
+  let skipMessage = $state<string | null>(null);
   let prevFailCount = 0;
   const STAGE_LABEL: Record<string, string> = {
     latency: "Latency",
@@ -32,10 +36,9 @@
     bidirectional: "Bi-dir",
   };
 
-  // A stall (connection lost) takes over the toast for as long as it lasts —
-  // it is not a phase transition, so it has its own sticky visibility. The
-  // moment the link resumes (`measuring` true) it clears and the normal
-  // phase-change toast resumes. Reads store.stallInfo for the reason copy.
+  // A stall (connection lost) holds the toast for its whole duration. It is
+  // not a phase transition, so it owns its own visibility and clears the
+  // moment `measuring` goes true. store.stallInfo carries the reason copy.
   const stalled = $derived(store.isRunning && !store.measuring);
   const stallMessage = $derived.by(() => {
     const info = store.stallInfo;
@@ -45,59 +48,8 @@
     return `Connection lost — ${tail}`;
   });
 
-  /** Short uppercase eyebrow naming the lifecycle stage. */
-  function kicker(p: typeof store.phase): string {
-    switch (p) {
-      case "connecting":
-        return "Connecting";
-      case "warmup":
-        return "Warmup";
-      case "latency":
-        return "Latency";
-      case "download":
-        return "Download";
-      case "upload":
-        return "Upload";
-      case "bidirectional":
-        return "Bidirectional";
-      case "complete":
-        return "Complete";
-      case "aborted":
-        return "Aborted";
-      case "error":
-        return "Error";
-      default:
-        return "Standby";
-    }
-  }
-
-  /** Plain-language message for the active phase. */
-  function message(p: typeof store.phase): string {
-    switch (p) {
-      case "connecting":
-        return "Verifying selected transport";
-      case "warmup":
-        return "Calibrating transport";
-      case "latency":
-        return "Measuring path latency";
-      case "download":
-        return "Receiving stream";
-      case "upload":
-        return "Sending stream";
-      case "bidirectional":
-        return "Sending + receiving";
-      case "complete":
-        return "Complete";
-      case "aborted":
-        return "Sequence stopped";
-      case "error":
-        return store.error
-          ? reasonLabel(store.error.reason)
-          : "Runner needs attention";
-      default:
-        return "Ready";
-    }
-  }
+  const message = (p: typeof store.phase): string =>
+    phaseMessage(p, store.error ? reasonLabel(store.error.reason) : null);
 
   $effect(() => {
     const phase = store.phase;
@@ -106,19 +58,10 @@
 
     visible = true;
     if (timer) clearTimeout(timer);
-    // Linger longer on terminal states — complete, and especially aborted/error
-    // (the run just ended unexpectedly; a 1.35s blink undersells that) — or
-    // while a skip notice holds the toast; otherwise a brisk peek.
-    const linger = untrack(() => skipMsg)
-      ? 3200
-      : phase === "aborted" || phase === "error"
-        ? 3200
-        : phase === "complete"
-          ? 2200
-          : 1350;
+    const linger = lingerMs(phase, untrack(() => skipMessage) != null);
     timer = setTimeout(() => {
       visible = false;
-      skipMsg = null;
+      skipMessage = null;
     }, linger);
 
     return () => {
@@ -127,23 +70,22 @@
   });
 
   $effect(() => {
-    const fails = Object.values(store.stageFailures);
-    if (fails.length > prevFailCount) {
-      const f = fails[fails.length - 1];
-      skipMsg = `${STAGE_LABEL[f.stage]} skipped — ${f.message}`;
+    const failures = Object.values(store.stageFailures);
+    if (failures.length > prevFailCount) {
+      const latest = failures[failures.length - 1];
+      skipMessage = `${STAGE_LABEL[latest.stage]} skipped — ${latest.message}`;
       visible = true;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         visible = false;
-        skipMsg = null;
-      }, 3200);
+        skipMessage = null;
+      }, LINGER_ALERT_MS);
     }
-    prevFailCount = fails.length;
+    prevFailCount = failures.length;
   });
 
-  // While stalled the toast is sticky (no auto-dismiss): it stays up for the
-  // whole dead-air window and clears the instant the link resumes. Cancel any
-  // pending auto-dismiss timer so a phase toast doesn't hide the stall notice.
+  // Dropping the auto-dismiss timer holds the stall notice for the whole
+  // dead-air window, past any phase toast underneath it.
   $effect(() => {
     if (stalled && timer) {
       clearTimeout(timer);
@@ -157,16 +99,22 @@
   class:visible={visible || stalled}
   class:alert={stalled ||
     (visible &&
-      (skipMsg != null ||
+      (skipMessage != null ||
         store.phase === "error" ||
         store.phase === "aborted"))}
   role="status"
   aria-live="polite"
 >
   <span class="kicker"
-    >{stalled ? "Link" : skipMsg ? "Skipped" : kicker(store.phase)}</span
+    >{stalled
+      ? "Link"
+      : skipMessage
+        ? "Skipped"
+        : phaseKicker(store.phase)}</span
   >
-  <strong>{stalled ? stallMessage : (skipMsg ?? message(store.phase))}</strong>
+  <strong
+    >{stalled ? stallMessage : (skipMessage ?? message(store.phase))}</strong
+  >
 </div>
 
 <style>
@@ -218,8 +166,8 @@
     font-weight: 700;
   }
 
-  /* Reduced motion: no slide/scale; pin the resting transform so it
-     never animates in. */
+  /* Reduced motion: the resting transform is pinned, so the toast fades in
+     without a slide or scale. */
   @media (prefers-reduced-motion: reduce) {
     .phase-toast {
       transform: none;
@@ -237,11 +185,9 @@
       bottom: 40px;
       min-width: 0;
     }
-    /* Routine per-phase-transition toasts duplicate what StatusBar already
-       shows textually in the footer, and fire ~5-6 times per run — on a
-       phone that reads as the notification obstructing the experience.
-       The stall/error/aborted (.alert) toast is the one case nothing else
-       on screen surfaces, so it stays visible here. */
+    /* Routine phase toasts duplicate the StatusBar footer and fire 5 to 6
+       times per run, which on a phone reads as an obstruction. The .alert
+       toast (stall, error, aborted) is the one state nothing else surfaces. */
     .phase-toast:not(.alert) {
       display: none;
     }

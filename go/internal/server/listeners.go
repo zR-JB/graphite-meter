@@ -18,7 +18,6 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	// webtransport "github.com/quic-go/webtransport-go" // Enable with the Stage 5 routes below.
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
@@ -27,13 +26,10 @@ import (
 
 const downloadBlockSize = 256 * 1024
 
-// Measurement route paths — the mounting half of the cross-language pin. The
-// client table is client/src/lib/runner/real/backendPure.ts (ROUTES) and the
-// per-target defaults are wire.Default{Throughput,Latency}Routes; all three
-// assert against api/routes.txt (routes_test.go, routes.test.ts).
-//
-// Preflight advertises origins only — the paths are not on the wire — so every
-// language keeps its own table and the pin is what makes the tables agree.
+// Measurement route paths, the mounting half of the cross-language pin.
+// /preflight advertises origins only, so every language keeps its own table.
+// The other two are client/src/lib/runner/real/backendPure.ts (ROUTES) and
+// wire.Default{Throughput,Latency}Routes. api/routes.txt pins all three.
 const (
 	routeProbe          = "/probe"
 	routeDownload       = "/download"
@@ -62,18 +58,18 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 	if _, err := rand.Read(block); err != nil {
 		return nil, err
 	}
-	var dlMeter, ulMeter *endpoint.Meter
+	var downloadMeter, uploadMeter *endpoint.Meter
 	if cfg.Verbose {
-		dlMeter, ulMeter = endpoint.NewMeter("server:download"), endpoint.NewMeter("server:upload")
-		go dlMeter.Run(ctx)
-		go ulMeter.Run(ctx)
+		downloadMeter, uploadMeter = endpoint.NewMeter("server:download"), endpoint.NewMeter("server:upload")
+		go downloadMeter.Run(ctx)
+		go uploadMeter.Run(ctx)
 	}
 	store := endpoint.NewUploadStore()
 	go store.RunSweeper(ctx)
 	h3Port := publicH3Port(cfg)
 	return &endpoints{
 		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
-		download: endpoint.NewDownload(block, dlMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(ulMeter, store, cfg.TrustedProxies),
+		download: endpoint.NewDownload(block, downloadMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(uploadMeter, store, cfg.TrustedProxies),
 		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
 		admission:      newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration),
 		trustedProxies: cfg.TrustedProxies,
@@ -90,6 +86,7 @@ func publicH3Port(cfg *config.Config) string {
 			return "443"
 		}
 	}
+	// Without a public origin the advertised port is the one H3 binds.
 	_, port, _ := net.SplitHostPort(cfg.Native.H3)
 	return port
 }
@@ -176,11 +173,17 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	return m
 }
 
+// disableNagle stops Nagle batching a small latency probe into the following
+// write and inflating every sample. A connection that refuses it still measures.
+func disableNagle(c net.Conn) {
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.SetNoDelay(true)
+	}
+}
+
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-		if tc, ok := c.(*net.TCPConn); ok {
-			_ = tc.SetNoDelay(true)
-		}
+		disableNagle(c)
 		return ctx
 	}}
 }
@@ -192,8 +195,20 @@ func hardenAuthenticatedServer(s *http.Server, enabled bool) {
 	}
 }
 
-// Run binds every configured listener only after certificate validation and
-// shuts the logical server down as one unit.
+// pinConnectOrigins restricts the authenticated CSP's connect-src to the
+// measurement origins /preflight advertises for the canonical UI host, the only
+// host auth accepts. It derives them from the targets the client is handed, so
+// it cannot omit one.
+func pinConnectOrigins(cfg *config.Config, authn *auth.Service) {
+	u, err := url.Parse(cfg.Auth.PublicURL)
+	if err != nil {
+		return
+	}
+	authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
+}
+
+// Run validates the config and certificate, binds every configured listener,
+// and shuts the logical server down as one unit.
 func Run(ctx context.Context, cfg *config.Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -217,153 +232,173 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	spa := static.Handler()
 	if authn.Enabled() {
 		spa = static.AuthenticatedHandler()
+		pinConnectOrigins(cfg, authn)
 	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}
-	h1p := &http.Protocols{}
-	h1p.SetHTTP1(true)
-	h1mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, authn)
-	h1 := baseServer(authn.Enforce(h1mux, auth.Listener{UI: true}), h1p)
-	hardenAuthenticatedServer(h1, authn.Enabled())
-	h1ln, err := net.Listen("tcp", cfg.Native.H1)
+	b := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections}
+	if err := b.assemble(spa); err != nil {
+		return err
+	}
+	return runServices(ctx, cfg, b.services)
+}
+
+// listenerBuild accumulates the listeners Run assembles: the shared
+// dependencies, the services to start, and the sockets to close if a later
+// listener fails to bind.
+type listenerBuild struct {
+	ctx         context.Context
+	cfg         *config.Config
+	e           *endpoints
+	authn       *auth.Service
+	cm          *certificateManager
+	connections *connectionAdmission
+	services    []service
+	opened      []io.Closer
+}
+
+// closeOpened releases every socket bound so far, so a failed bind does not
+// leave the earlier listeners holding their ports.
+func (b *listenerBuild) closeOpened() {
+	for _, c := range b.opened {
+		// Nothing to recover from: the process is already unwinding a bind failure.
+		_ = c.Close()
+	}
+}
+
+// tcpTLS binds a TLS-over-TCP listener and appends it as a service. The HTTPS
+// H1, H2, and H3-bootstrap listeners share it.
+func (b *listenerBuild) tcpTLS(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
+	mux := listenerMuxConfigured(b.ctx, b.e, topo, handler, b.authn)
+	s := baseServer(b.authn.Enforce(mux, l), proto)
+	hardenAuthenticatedServer(s, b.authn.Enabled())
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		b.closeOpened()
+		return err
+	}
+	b.opened = append(b.opened, ln)
+	tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: b.connections}, b.cm.tlsConfig(alpn))
+	b.services = append(b.services, service{
+		name: name, addr: addr, network: "tcp",
+		run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+	})
+	return nil
+}
+
+func h1Protocols() *http.Protocols {
+	p := &http.Protocols{}
+	p.SetHTTP1(true)
+	return p
+}
+
+// assemble builds every configured listener into b.services.
+func (b *listenerBuild) assemble(spa http.Handler) error {
+	// Clear HTTP/1.1 is the one listener bound unconditionally.
+	h1 := baseServer(b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, b.authn), auth.Listener{UI: true}), h1Protocols())
+	hardenAuthenticatedServer(h1, b.authn.Enabled())
+	h1ln, err := net.Listen("tcp", b.cfg.Native.H1)
 	if err != nil {
 		return err
 	}
-	opened := []io.Closer{h1ln}
-	closeOpened := func() {
-		for _, c := range opened {
-			_ = c.Close()
-		}
+	b.opened = append(b.opened, h1ln)
+	h1Name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
+	if b.authn.Enabled() {
+		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
-	services := []service{{
-		name: "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets", addr: cfg.Native.H1, network: "tcp",
-		run: func() error { return serve(admittedListener{Listener: h1ln, admission: connections}, h1) }, stop: h1.Shutdown,
-	}}
-	if authn.Enabled() {
-		services[0].name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
-	}
+	b.services = append(b.services, service{
+		name: h1Name, addr: b.cfg.Native.H1, network: "tcp",
+		run: func() error { return serve(admittedListener{Listener: h1ln, admission: b.connections}, h1) }, stop: h1.Shutdown,
+	})
 
-	if cfg.Native.H1TLS != "" {
-		p := &http.Protocols{}
-		p.SetHTTP1(true)
-		mux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, authn)
-		s := baseServer(authn.Enforce(mux, auth.Listener{UI: true}), p)
-		hardenAuthenticatedServer(s, authn.Enabled())
-		ln, err := net.Listen("tcp", cfg.Native.H1TLS)
-		if err != nil {
-			closeOpened()
+	if b.cfg.Native.H1TLS != "" {
+		if err := b.tcpTLS("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, "http/1.1"); err != nil {
 			return err
 		}
-		opened = append(opened, ln)
-		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
-		services = append(services, service{
-			name: "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
-			addr: cfg.Native.H1TLS, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
-		})
 	}
-
-	if cfg.Native.H2 != "" {
+	if b.cfg.Native.H2 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
-		mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), authn)
-		s := baseServer(authn.Enforce(mux, auth.Listener{}), p)
-		hardenAuthenticatedServer(s, authn.Enabled())
-		ln, err := net.Listen("tcp", cfg.Native.H2)
-		if err != nil {
-			closeOpened()
+		if err := b.tcpTLS("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p, auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), "h2"); err != nil {
 			return err
 		}
-		opened = append(opened, ln)
-		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("h2"))
-		services = append(services, service{
-			name: "HTTPS HTTP/2: measurement probe, transfers, progress only",
-			addr: cfg.Native.H2, network: "tcp", run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
-		})
 	}
-	if cfg.Native.H3 != "" {
-		p := &http.Protocols{}
-		p.SetHTTP1(true)
-		bootstrapMux := listenerMuxConfigured(ctx, e, muxTopology{bootstrap: true}, static.Handler(), authn)
-		bootstrap := baseServer(authn.Enforce(bootstrapMux, auth.Listener{}), p)
-		hardenAuthenticatedServer(bootstrap, authn.Enabled())
-		ln, err := net.Listen("tcp", cfg.Native.H3)
-		if err != nil {
-			closeOpened()
-			return err
-		}
-		opened = append(opened, ln)
-		tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: connections}, cm.tlsConfig("http/1.1"))
-		h3mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, static.Handler(), authn)
-		quicConfig := transport.NewQUICConfig()
-		if authn.Enabled() {
-			quicConfig.HandshakeIdleTimeout = 10 * time.Second
-			quicConfig.MaxIdleTimeout = 60 * time.Second
-			quicConfig.MaxIncomingStreams = 256
-			quicConfig.MaxIncomingUniStreams = 32
-		}
-		h3 := &http3.Server{Addr: cfg.Native.H3, TLSConfig: cm.tlsConfig(), QUICConfig: quicConfig, Handler: authn.Enforce(h3mux, auth.Listener{})}
-		if authn.Enabled() {
-			h3.MaxHeaderBytes = 32 << 10
-		}
-		// webtransport.ConfigureHTTP3Server(h3) // Stage 5: enable with advertised WebTransport endpoints.
-		pc, err := net.ListenPacket("udp", cfg.Native.H3)
-		if err != nil {
-			closeOpened()
-			return err
-		}
-		opened = append(opened, pc)
-		quicTransport := &quic.Transport{Conn: pc, ConnContext: connections.connContext}
-		quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
-		if err != nil {
-			closeOpened()
-			return err
-		}
-		services = append(services,
-			service{
-				name: "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only",
-				addr: cfg.Native.H3, network: "tcp", run: func() error { return serve(tlsLn, bootstrap) }, stop: bootstrap.Shutdown,
-			},
-			service{name: "HTTP/3: probe, transfers, progress", addr: cfg.Native.H3, network: "udp", run: func() error {
-				err := h3.ServeListener(quicListener)
-				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
-					return nil
-				}
-				return err
-			}, stop: func(ctx context.Context) error {
-				err := h3.Shutdown(ctx)
-				_ = quicListener.Close()
-				_ = quicTransport.Close()
-				return err
-			}})
+	if b.cfg.Native.H3 != "" {
+		return b.assembleH3()
 	}
+	return nil
+}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+// assembleH3 binds the HTTP/3 UDP listener plus its TCP Alt-Svc bootstrap
+// companion.
+func (b *listenerBuild) assembleH3() error {
+	if err := b.tcpTLS("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, static.Handler(), "http/1.1"); err != nil {
+		return err
+	}
+	h3mux := listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true}, static.Handler(), b.authn)
+	quicConfig := transport.NewQUICConfig()
+	if b.authn.Enabled() {
+		quicConfig.HandshakeIdleTimeout = 10 * time.Second
+		quicConfig.MaxIdleTimeout = 60 * time.Second
+		quicConfig.MaxIncomingStreams = 256
+		quicConfig.MaxIncomingUniStreams = 32
+	}
+	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig, Handler: b.authn.Enforce(h3mux, auth.Listener{})}
+	if b.authn.Enabled() {
+		h3.MaxHeaderBytes = 32 << 10
+	}
+	pc, err := net.ListenPacket("udp", b.cfg.Native.H3)
+	if err != nil {
+		b.closeOpened()
+		return err
+	}
+	b.opened = append(b.opened, pc)
+	quicTransport := &quic.Transport{Conn: pc, ConnContext: b.connections.connContext}
+	quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
+	if err != nil {
+		b.closeOpened()
+		return err
+	}
+	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress", addr: b.cfg.Native.H3, network: "udp",
+		run: func() error {
+			err := h3.ServeListener(quicListener)
+			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return err
+		}, stop: func(ctx context.Context) error {
+			err := h3.Shutdown(ctx)
+			// The listener and transport close unconditionally to free the UDP
+			// socket. The graceful shutdown result is the one worth reporting.
+			_ = quicListener.Close()
+			_ = quicTransport.Close()
+			return err
+		}})
+	return nil
+}
+
+// runServices starts every listener, then blocks until the context ends or a
+// listener fails, shutting the rest down on the way out.
+func runServices(ctx context.Context, cfg *config.Config, services []service) error {
 	errs := make(chan error, len(services))
 	for _, svc := range services {
-		svc := svc
 		log.Printf("graphite-meter %s listening on %s/%s (%s)", cfg.EngineVersion, svc.addr, svc.network, svc.name)
 		go func() {
-			if err := svc.run(); err != nil {
-				errs <- fmt.Errorf("%s: %w", svc.name, err)
-				cancel()
-			} else {
-				errs <- nil
+			err := svc.run()
+			if err != nil {
+				err = fmt.Errorf("%s: %w", svc.name, err)
 			}
+			errs <- err
 		}()
 	}
+	defer shutdown(services)
 	select {
-	case <-runCtx.Done():
+	case <-ctx.Done():
+		return nil
 	case err := <-errs:
-		if err != nil {
-			cancel()
-			shutdown(services)
-			return err
-		}
+		return err
 	}
-	shutdown(services)
-	return nil
 }
 
 func runAdmissionLog(ctx context.Context, requests *requestAdmission, connections *connectionAdmission) {
@@ -382,6 +417,9 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 	}
 }
 
+// shutdown gives every listener the same bounded budget to drain. Failures are
+// discarded: the caller is already returning, and one listener refusing to stop
+// must not keep the others running.
 func shutdown(services []service) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

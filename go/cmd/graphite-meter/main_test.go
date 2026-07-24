@@ -1,36 +1,31 @@
 package main
 
 import (
+	"errors"
 	"flag"
+	"io"
+	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
-func TestH1AddressFlag(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-		want string
-	}{
-		{"h1 addr", []string{"-h1-addr", ":9001"}, ":9001"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.Default()
-			fs := flag.NewFlagSet("test", flag.ContinueOnError)
-			registerFlags(fs, &cfg)
-			if err := fs.Parse(tc.args); err != nil {
-				t.Fatal(err)
-			}
-			if cfg.Native.H1 != tc.want {
-				t.Fatalf("H1Addr = %q, want %q", cfg.Native.H1, tc.want)
-			}
-		})
+func TestH1AddressFlagOverridesDefault(t *testing.T) {
+	cfg := config.Default()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	if err := fs.Parse([]string{"-h1-addr", ":9001"}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Native.H1 != ":9001" {
+		t.Fatalf("Native.H1 = %q, want %q", cfg.Native.H1, ":9001")
 	}
 }
 
-func TestAdmissionFlags(t *testing.T) {
+func TestAdmissionFlagsOverrideDefaults(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	registerFlags(fs, &cfg)
@@ -38,8 +33,20 @@ func TestAdmissionFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.MaxActiveMeasurements != 80 || cfg.MaxActiveMeasurementsPerClient != 20 || cfg.MaxConnections != 160 || cfg.MaxConnectionsPerClient != 40 || cfg.MaxOperationDuration != 2*time.Minute {
-		t.Fatalf("admission flags = %+v", cfg)
+	if cfg.MaxActiveMeasurements != 80 {
+		t.Fatalf("MaxActiveMeasurements = %d, want 80", cfg.MaxActiveMeasurements)
+	}
+	if cfg.MaxActiveMeasurementsPerClient != 20 {
+		t.Fatalf("MaxActiveMeasurementsPerClient = %d, want 20", cfg.MaxActiveMeasurementsPerClient)
+	}
+	if cfg.MaxConnections != 160 {
+		t.Fatalf("MaxConnections = %d, want 160", cfg.MaxConnections)
+	}
+	if cfg.MaxConnectionsPerClient != 40 {
+		t.Fatalf("MaxConnectionsPerClient = %d, want 40", cfg.MaxConnectionsPerClient)
+	}
+	if cfg.MaxOperationDuration != 2*time.Minute {
+		t.Fatalf("MaxOperationDuration = %v, want %v", cfg.MaxOperationDuration, 2*time.Minute)
 	}
 }
 
@@ -74,5 +81,127 @@ func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("flags did not complete environment config: %v", err)
+	}
+}
+
+func TestParseConfigAppliesFlagsAndValidates(t *testing.T) {
+	cfg, err := parseConfig("test", []string{"-name", "edge-1", "-max-connections", "128", "-h1-addr", "127.0.0.1:9100"}, io.Discard)
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	if cfg.ServerName != "edge-1" {
+		t.Fatalf("ServerName = %q, want %q", cfg.ServerName, "edge-1")
+	}
+	if cfg.MaxConnections != 128 {
+		t.Fatalf("MaxConnections = %d, want 128", cfg.MaxConnections)
+	}
+	if cfg.Native.H1 != "127.0.0.1:9100" {
+		t.Fatalf("Native.H1 = %q, want %q", cfg.Native.H1, "127.0.0.1:9100")
+	}
+}
+
+func TestParseConfigRejectsInvalidFlagAndConfig(t *testing.T) {
+	if _, err := parseConfig("test", []string{"-not-a-flag"}, io.Discard); err == nil {
+		t.Fatal("parseConfig accepted an unknown flag")
+	}
+	if _, err := parseConfig("test", []string{"-max-connections", "-5"}, io.Discard); err == nil {
+		t.Fatal("parseConfig accepted a configuration that fails validation")
+	}
+}
+
+func TestParseConfigReportsHelpRequest(t *testing.T) {
+	if _, err := parseConfig("test", []string{"-h"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("parseConfig(-h) = %v, want flag.ErrHelp", err)
+	}
+}
+
+func TestHashPasswordEmitsAPHCHashOverPipes(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "correct horse\ncorrect horse\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, prompts strings.Builder
+	if err := hashPassword(r, &out, &prompts); err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); !strings.HasPrefix(got, "$argon2id$") {
+		t.Fatalf("hashPassword out = %q, want an argon2id PHC hash", got)
+	}
+	if !strings.Contains(prompts.String(), "Password:") {
+		t.Fatalf("hashPassword did not prompt: %q", prompts.String())
+	}
+}
+
+func TestHashPasswordRejectsMismatch(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "one\ntwo\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := hashPassword(r, io.Discard, io.Discard); err == nil {
+		t.Fatal("hashPassword accepted mismatched entries")
+	}
+}
+
+func TestListAndOriginFlagsPopulateConfig(t *testing.T) {
+	cfg := config.Default()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	err := fs.Parse([]string{
+		"-advertised-native-endpoints", "none",
+		"-public-origins", "https://a.example, https://b.example",
+		"-public-throughput-origins", "https://dl.example",
+		"-public-latency-origins", "https://ping.example",
+		"-auth-oidc-allowed-groups", "admins, ops",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBoth := []string{"https://a.example", "https://b.example"}
+	if !slices.Equal(cfg.Public.Both, wantBoth) {
+		t.Fatalf("Public.Both = %v, want %v", cfg.Public.Both, wantBoth)
+	}
+	if !slices.Equal(cfg.Public.Throughput, []string{"https://dl.example"}) {
+		t.Fatalf("Public.Throughput = %v, want %v", cfg.Public.Throughput, []string{"https://dl.example"})
+	}
+	if !slices.Equal(cfg.Public.Latency, []string{"https://ping.example"}) {
+		t.Fatalf("Public.Latency = %v, want %v", cfg.Public.Latency, []string{"https://ping.example"})
+	}
+	if !slices.Equal(cfg.Auth.OIDCAllowedGroups, []string{"admins", "ops"}) {
+		t.Fatalf("Auth.OIDCAllowedGroups = %v, want %v", cfg.Auth.OIDCAllowedGroups, []string{"admins", "ops"})
+	}
+	if cfg.AdvertiseAllNative {
+		t.Fatalf("AdvertiseAllNative = true, want false for %q", "none")
+	}
+}
+
+func TestAdvertisedNativeEndpointsRejectsGarbage(t *testing.T) {
+	cfg := config.Default()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	if err := fs.Parse([]string{"-advertised-native-endpoints", "nonsense"}); err == nil {
+		t.Fatal("accepted an invalid advertised-native-endpoints value")
+	}
+}
+
+func TestSplitFlagListTrimsAndDropsEmpties(t *testing.T) {
+	want := []string{"a", "b", "c"}
+	if got := splitFlagList(" a , ,b,  ,c "); !slices.Equal(got, want) {
+		t.Fatalf("splitFlagList = %v, want %v", got, want)
+	}
+	if got := splitFlagList(""); got != nil {
+		t.Fatalf("splitFlagList(\"\") = %v, want nil", got)
 	}
 }

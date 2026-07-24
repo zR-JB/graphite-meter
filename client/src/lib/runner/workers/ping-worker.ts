@@ -1,42 +1,10 @@
 /* ============================================================
- * The Graphite Meter — Latency ping worker (Stage 4)
+ * The Graphite Meter: latency ping worker
  * ============================================================
- *
- * Owns the WebSocket latency bus (/ws/ping) and the entire ping algorithm. It
- * runs OFF the main thread on purpose: it timestamps each ping in-worker
- * (performance.now() right before send / right after receive) so the reported
- * RTT is immune to main-thread jank — GC, the 16 Hz throughput aggregation, UI
- * layout. That matters most for LOADED latency, where the main thread is busy
- * with exactly the transfer we're measuring against. The worker reports only
- * computed { rtt, lost } samples; raw frames never cross the thread boundary.
- *
- * ── Send policy (accurate from sub-1 ms to seconds of RTT) ──
- *   • Fixed modes enforce their configured start-to-start interval.
- *   • Reply-driven mode sends on each PONG. A conservative RTT-derived backup
- *     pacer keeps the chain alive when a reply disappears.
- *   • Multiple pings may remain in flight on high-RTT links. Each carries its
- *     own id, so out-of-order pongs match.
- *   • maxInFlight cap: bounds wire spam AND memory.
- *
- * ── Robustness to abrupt change (AP / WiFi→mobile handoff) ──
- *   • Adaptive loss timeout: RFC 6298-style RTO = SRTT + K·RTTVAR (in ms). The
- *     RTTVAR term spikes on a sudden RTT jump, so the timeout grows within ~1 RTT
- *     instead of mass-evicting legitimately-in-flight pings.
- *   • Late-pong learning (the key to surviving a fast→slow jump): a pong that
- *     arrives AFTER we already declared its ping lost is matched against a small
- *     graveyard of recently-evicted ids; we feed its RTT into the estimator (so
- *     the timeout catches up) without double-counting it. Without this, the
- *     estimator could never learn the link slowed — lost pings carry no RTT — and
- *     would false-flag loss forever.
- *   • Loss = timeout-only: over TCP/WS this is a stalled socket/queue, NOT real
- *     packet loss (TCP retransmits). Real measurable loss is WT datagrams (Stage 5).
- *   • Auto-reconnect: a handoff often drops the TCP socket outright. On an
- *     unexpected close the worker clears in-flight pings (a connection gap, not
- *     per-packet loss), emits `stall`, and reconnects with capped backoff; on
- *     reopen it re-warms (HI) and emits `resume`. The run self-heals.
- *
- * Its only dependency is the shared wire codec, so it bundles cleanly as a Vite
- * module worker.
+ * Owns the /ws/ping WebSocket and the ping algorithm. It runs off the main
+ * thread so its in-worker timestamps keep RTT immune to main-thread jank,
+ * which matters most for loaded latency, where the main thread is busiest.
+ * Only computed { rtt, lost } samples cross the thread boundary.
  * ============================================================ */
 
 import { encode, decode } from "../real/wire";
@@ -67,11 +35,10 @@ type InMsg =
   | { type: "measure"; intervalMs?: number }
   | { type: "stop" };
 
-/** Worker → main. Samples are DOWNSAMPLED to reportGapMs (so a ~1 kHz chain on a
- *  fast link doesn't flood host.ingestLatency) and then batched (~50 ms) to cut
- *  postMessage overhead. The rtt is timestamped in-worker, so neither downsample
- *  nor batch affects the measured value — only how many cross the thread boundary.
- *  stall/resume bracket a reconnect window. */
+/** Worker → main. Samples downsample to reportGapMs, so a ~1 kHz chain cannot
+ *  flood host.ingestLatency, then batch every ~50 ms to cut postMessage
+ *  overhead. Both affect only how many samples cross the boundary: the rtt is
+ *  timestamped in-worker. stall/resume bracket a reconnect window. */
 type OutMsg =
   | { type: "open" }
   | { type: "ready" }
@@ -85,8 +52,8 @@ const post = (m: OutMsg): void => ctx.postMessage(m);
 
 /** Batch flush cadence (ms). */
 const FLUSH_MS = 50;
-/** Upper bound on the loss timeout (ms) — caps how long a ping can stay pending
- *  even on a pathologically slow link, so memory/latency stay bounded. */
+/** Upper bound on the loss timeout (ms). Caps how long a ping stays pending on
+ *  a pathologically slow link, keeping memory and latency bounded. */
 const LOSS_CEIL_MS = 10_000;
 /** Reconnect backoff bounds (ms). */
 const RECONNECT_MIN_MS = 100;
@@ -103,11 +70,11 @@ let measuring = false;
 let stopped = false;
 let checkAuthentication = false;
 
-// Tuning — stage workers keep this fixed; the idle worker settles from probe
+// Tuning: stage workers keep this fixed; the idle worker settles from probe
 // pacing to its one-second keepalive interval.
 let intervalMs = 250;
 let replyDriven = false;
-let maxInFlight = 16;
+let maxInFlight = 16; // caps concurrent pings, bounding wire spam and memory
 let reportGapMs = 20;
 let lossK = 4;
 let lossFloorMs = 250;
@@ -120,17 +87,17 @@ let replyHeadId: number | null = null;
 let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
 let outbox: { rtt: number; lost: boolean }[] = [];
 
-// Adaptive RTT estimator (RFC 6298, ms) — see rttEstimator.ts.
+// Adaptive RTT estimator (RFC 6298, ms). See rttEstimator.ts.
 let rttEstimate: RttEstimate = INITIAL_RTT_ESTIMATE;
 
 // Connection state.
 let backoff = 0;
-let stalledOut = false; // a `stall` emitted, not yet matched by `resume`
+let stalledOut = false; // true between a `stall` and its matching `resume`
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 let scheduler: PingScheduler | null = null;
 
-// Long-lived timers (started once, survive reconnects).
+// Long-lived timers, one each, surviving reconnects.
 let sweeper: ReturnType<typeof setInterval> | null = null;
 let flusher: ReturnType<typeof setInterval> | null = null;
 
@@ -189,15 +156,15 @@ function connect(): void {
       stalledOut = false;
     }
     post({ type: "open" });
-    // Optional warmup hello — the server replies READY (ignored). Start pinging
-    // immediately so the wire is warm before `measure` flips reporting on.
+    // Warmup hello: the server replies READY. Pinging starts immediately so the
+    // wire is already warm when `measure` flips reporting on.
     trySend(encode({ op: "HI", proto: "ws" }));
     scheduler?.reset();
     scheduler?.start();
   };
   ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
-  // onerror is always followed by onclose for WebSocket — handle reconnect once,
-  // in onclose, to avoid a double schedule.
+  // A WebSocket always follows onerror with onclose. Reconnect from onclose
+  // only, to avoid a double schedule.
   ws.onclose = (event: CloseEvent): void => {
     if (event.code === 1008 && event.reason === "authentication required") {
       post({ type: "auth-required" });
@@ -225,12 +192,14 @@ function onDisconnect(detail: string): void {
   if (stopped) return;
   ws = null;
   scheduler?.stop();
-  // The socket is gone — its in-flight pings died with it. Drop them silently:
-  // a connection gap is not per-packet loss (the `stall` represents the gap).
+  // In-flight pings die with the socket. Dropping them silently is correct: a
+  // connection gap is not per-packet loss, and the `stall` reports the gap.
   pending.clear();
   scheduleReconnect(detail);
 }
 
+/** Brackets the connection gap: `stall` on the way out, `resume` on reopen,
+ *  with capped backoff between attempts, so a dropped socket self-heals. */
 function scheduleReconnect(detail: string): void {
   if (stopped) return;
   if (!stalledOut) {
@@ -244,55 +213,56 @@ function scheduleReconnect(detail: string): void {
 function ensureTimers(): void {
   // Eviction sweep: drop pings stalled past the adaptive timeout.
   sweeper ??= setInterval(sweep, Math.max(lossFloorMs, intervalMs));
-  // Batch flush.
   flusher ??= setInterval(flush, FLUSH_MS);
 }
 
 function onFrame(data: unknown): void {
   const recv = performance.now();
   if (typeof data !== "string") return; // the ping bus is text-only
-  let f;
+  let frame;
   try {
-    f = decode(data);
+    frame = decode(data);
   } catch {
-    return; // ignore malformed / ERR frames — never tear the bus down
+    return; // malformed and ERR frames never tear the bus down
   }
-  if (f.op === "READY") {
+  if (frame.op === "READY") {
     post({ type: "ready" });
     return;
   }
-  if (f.op !== "PONG") return;
+  if (frame.op !== "PONG") return;
 
-  const sent = pending.get(f.id);
+  const sent = pending.get(frame.id);
   if (sent !== undefined) {
-    pending.delete(f.id);
+    pending.delete(frame.id);
     const rtt = recv - sent;
-    rttEstimate = observeRtt(rttEstimate, rtt); // ALWAYS — keeps the loss-timeout estimator accurate
+    rttEstimate = observeRtt(rttEstimate, rtt); // always: keeps the loss timeout accurate
     // Reply-driven localhost sampling can outrun the UI. Only downsample what
     // crosses the worker boundary; wire pacing and RTT timestamps stay intact.
     if (measuring && recv - lastReportAt >= reportGapMs) {
       lastReportAt = recv;
       outbox.push({ rtt, lost: false });
     }
-    if (!replyDriven || f.id === replyHeadId) scheduler?.complete();
+    if (!replyDriven || frame.id === replyHeadId) scheduler?.complete();
     return;
   }
 
-  // Late pong: we already declared this ping lost (timeout too tight — typically
-  // an abrupt RTT jump). LEARN from it so the timeout grows and we stop
-  // false-flagging; don't emit (already counted lost).
-  const late = graveyard.get(f.id);
+  // A pong for an evicted ping still teaches the estimator, which is the only
+  // way it learns a fast to slow jump: lost pings carry no RTT of their own.
+  const late = graveyard.get(frame.id);
   if (late !== undefined) {
-    graveyard.delete(f.id);
-    rttEstimate = observeRtt(rttEstimate, recv - late);
+    graveyard.delete(frame.id);
+    rttEstimate = observeRtt(rttEstimate, recv - late); // already counted lost, so no sample
   }
-  // else: unknown / duplicate id — ignore.
+  // Unknown and duplicate ids fall through, ignored.
 }
 
+/** Sends one PING under a client-owned id. Several stay in flight on a high-RTT
+ *  link, and the id is what matches an out-of-order pong to its send time. */
 function sendPing(now: number): void {
   const id = nextId;
-  nextId = (nextId + 1) >>> 0; // uint32 wrap — the in-flight window is tiny, so a
-  // wrapped id can never collide with a still-pending one.
+  // The in-flight window is tiny next to 2^32, so a wrapped id cannot collide
+  // with a still-pending one.
+  nextId = (nextId + 1) >>> 0;
   pending.set(id, now);
   if (replyDriven) replyHeadId = id;
   trySend(encode({ op: "PING", id }));
@@ -312,10 +282,13 @@ function trySend(msg: string): void {
   try {
     ws?.send(msg);
   } catch {
-    /* closed mid-send — onclose drives the reconnect */
+    /* closed mid-send: onclose drives the reconnect */
   }
 }
 
+/** Evicts pings past the adaptive timeout and counts them lost. Over TCP/WS that
+ *  means a stalled socket or queue, not packet loss: TCP retransmits. Real loss
+ *  needs WebTransport datagrams (docs/ARCHITECTURE.md#roadmap). */
 function sweep(): void {
   const now = performance.now();
   const timeout = lossTimeout(rttEstimate, lossK, lossFloorMs, LOSS_CEIL_MS);
@@ -335,8 +308,8 @@ function sweep(): void {
   if (evicted && (!replyDriven || replyHeadEvicted)) scheduler?.complete();
 }
 
-/** Stash an evicted id so a late pong can still teach the estimator. Bounded
- *  FIFO — genuinely-lost ids just age out. */
+/** Stashes an evicted id so a late pong can still teach the estimator. The FIFO
+ *  is bounded: genuinely lost ids age out. */
 function rememberEvicted(id: number, sent: number): void {
   graveyard.set(id, sent);
   if (graveyard.size > GRAVEYARD_MAX) {

@@ -19,7 +19,7 @@ type uploadSessionResponse struct {
 	UploadID string `json:"uploadId"`
 }
 
-func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.Duration, start <-chan struct{}) (Result, error) {
+func (r *runner) measureUpload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
 	id, err := r.mintUploadID(ctx)
 	if err != nil {
 		return Result{}, err
@@ -47,7 +47,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, elapsed time.D
 	}
 	baselineN := progress.n.Load()
 	baselineT := progress.t.Load()
-	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, elapsed, baselineN, baselineT, lanes.errs)
+	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, duration, baselineN, baselineT, lanes.errs)
 	lanes.stop()
 	progress.bye()
 	return stats.result(stage, Up, true), sampleErr
@@ -97,18 +97,10 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		q.Set("lane", strconv.Itoa(lane))
 		q.Set("cb", strconv.FormatInt(time.Now().UnixNano(), 10))
 		u.RawQuery = q.Encode()
-		// A fixed Content-Length body (mirroring the download's fixed-size GET),
-		// NOT a chunked stream: a chunked request forces the server to drain the
-		// body through its chunk-framing reader in small pieces, roughly halving
-		// upload throughput on a fast link. A known length lets the server read
-		// large slices straight from the socket, so up matches down.
-		body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), body)
+		req, err := r.newKnownLengthUpload(ctx, u.String(), block)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.ContentLength = r.cfg.UploadBytesPerStream
 		res, err := r.http.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -125,14 +117,28 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 	return nil
 }
 
+// newKnownLengthUpload declares an exact Content-Length so the server reads
+// large slices straight from the socket, matching the download's sized GET.
+// Chunked framing drains the body in small pieces, roughly halving upload
+// throughput on a fast link.
+func (r *runner) newKnownLengthUpload(ctx context.Context, target string, block []byte) (*http.Request, error) {
+	body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.ContentLength = r.cfg.UploadBytesPerStream
+	return req, nil
+}
+
 // cyclingBody is a request body that repeats block until it has emitted limit
-// bytes, then returns io.EOF — so the POST carries an exact Content-Length. A
-// limit <= 0 cycles without end.
+// bytes, then returns io.EOF. A limit <= 0 cycles without end.
 type cyclingBody struct {
 	ctx   context.Context
 	block []byte
 	off   int
-	limit int64 // total bytes to emit before EOF; <= 0 means unbounded
+	limit int64 // total bytes to emit, <= 0 means unbounded
 	sent  int64
 }
 
@@ -162,6 +168,10 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 }
 
 func (b *cyclingBody) Close() error { return nil }
+
+// http.NewRequest passes an io.ReadCloser body to the transport as-is instead
+// of wrapping it in io.NopCloser.
+var _ io.ReadCloser = (*cyclingBody)(nil)
 
 type uploadProgress struct {
 	cancel  context.CancelFunc
@@ -242,14 +252,17 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 				}
 			case "error":
 				if !ready {
-					ready = true
 					p.ready <- fmt.Errorf("upload progress: %s", event.Message)
 				}
 				return
 			}
 		}
 		if !ready {
-			p.ready <- fmt.Errorf("upload progress closed before ready")
+			if err := scanner.Err(); err != nil {
+				p.ready <- fmt.Errorf("upload progress read: %w", err)
+			} else {
+				p.ready <- fmt.Errorf("upload progress closed before ready")
+			}
 		}
 	}()
 	select {
@@ -312,7 +325,7 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 		window: func(stats *rateStats) {
 			n, elapsed := p.n.Load(), p.t.Load()
 			if n >= baselineN && elapsed >= baselineT {
-				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT))
+				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT)) //nosec G115 -- guarded elapsed >= baselineT; diff fits int64
 			}
 		},
 		sample: func(now time.Time, stats *rateStats) {
@@ -334,17 +347,14 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 				Stage:     stage,
 				Direction: Up,
 				Throughput: ThroughputSample{
-					Stage:         stage,
-					Direction:     Up,
-					BytesPerSec:   bps,
-					TotalBytes:    measuredTotal,
-					StreamCount:   streams,
-					ServerAuth:    true,
-					MeasurementAt: time.Duration(active - baselineT),
+					Stage:       stage,
+					Direction:   Up,
+					BytesPerSec: bps,
+					TotalBytes:  measuredTotal,
+					StreamCount: streams,
+					ServerAuth:  true,
 				},
 			})
 		},
 	}.run(ctx)
 }
-
-var _ io.ReadCloser = (*cyclingBody)(nil)

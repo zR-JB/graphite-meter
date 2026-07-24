@@ -30,10 +30,10 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, 300*time.Millisecond, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -81,12 +81,11 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// lossAfter is max(4*PingInterval, 250ms) = 250ms here, so a 400ms window
-	// gives ample margin for at least one ping to be declared lost.
-	stats, err := r.measureLatency(ctx, "latency", false, 400*time.Millisecond, start)
+	// lossAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -99,8 +98,8 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 }
 
 // newIntermittentLossPingServer answers every PING except every dropEvery'th
-// one (by ID), which it silently swallows — a mixed pattern of hits and
-// misses rather than an all-respond or a never-respond peer.
+// one (by ID), which it silently swallows. The pattern mixes hits and misses
+// rather than an all-respond or a never-respond peer.
 func newIntermittentLossPingServer(t *testing.T, dropEvery uint32) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -146,10 +145,10 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, 700*time.Millisecond, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -167,9 +166,9 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 	}
 }
 
-// TestMeasureLatencyClosedConnectionDoesNotHang checks that a peer dropping the
-// connection before measurement even starts (start never fires, simulating a
-// still-in-progress warmup) surfaces an error promptly instead of hanging.
+// TestMeasureLatencyClosedConnectionDoesNotHang checks that a peer dropping
+// the connection while measurement is still gated (start never fires, a warmup
+// in progress) surfaces an error promptly instead of hanging.
 func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
@@ -190,20 +189,17 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	type outcome struct {
-		err error
-	}
-	done := make(chan outcome, 1)
+	done := make(chan error, 1)
 	begin := time.Now()
 	go func() {
 		_, err := r.measureLatency(ctx, "latency", false, 5*time.Second, start)
-		done <- outcome{err: err}
+		done <- err
 	}()
 
 	select {
-	case o := <-done:
-		if o.err == nil {
-			t.Error("want an error when the websocket closes before measurement starts")
+	case err := <-done:
+		if err == nil {
+			t.Error("want an error when the WebSocket closes before measurement starts")
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("measureLatency hung after the peer closed the connection")

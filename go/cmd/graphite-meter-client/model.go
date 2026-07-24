@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -20,9 +19,9 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// eventsMsg and doneMsg carry the sequence of the run that produced them, so
-// a batch read from a finished run's channel cannot land in a later run's
-// model — the same guard preparationMsg carries as prepareSeq.
+// eventsMsg and doneMsg carry the sequence of the run that produced them. A
+// batch read from a finished run's channel cannot land in a later run's model.
+// preparationMsg carries the same guard as prepareSeq.
 type eventsMsg struct {
 	seq    int
 	events []goclient.Event
@@ -37,10 +36,10 @@ type preparationMsg struct {
 	err        error
 }
 
-// Both auth messages carry the prepareSeq of the preparation that started the
-// authorization. A browser approval can stay outstanding for two minutes, so
-// without the sequence a poll detached by a server switch can still land and
-// overwrite the newer preparation's state.
+// Both auth messages carry the prepareSeq of the preparation that starts the
+// authorization. A browser approval stays outstanding for up to two minutes.
+// The sequence stops a poll detached by a server switch from overwriting a
+// newer preparation.
 type authChallengeMsg struct {
 	seq     int
 	pending *goclient.PendingAuthorization
@@ -103,17 +102,15 @@ func beginEdit(kind editKind, field, value string) editState {
 
 // prepareStep is the first step of the connection handshake the current
 // preparation attempt has not proven. Prepare answers the whole handshake with
-// a single result, so the model only advances this where a message carries the
-// evidence: a challenge proves the server answered, a PreparationError proves
-// the preflight body decoded, and only a finished preparation proves the
-// target origins resolved.
+// a single result, so the model advances this only where a message carries the
+// evidence named beside each step.
 type prepareStep int
 
 const (
-	stepReach prepareStep = iota
-	stepPreflight
-	stepOrigins
-	stepReady
+	stepReach     prepareStep = iota
+	stepPreflight             // an auth challenge proves the server answered
+	stepOrigins               // a PreparationError proves the preflight body decoded
+	stepReady                 // a finished preparation proves the origins resolved
 )
 
 type checkState int
@@ -167,42 +164,6 @@ func (m model) connectionChecks() []check {
 	}
 }
 
-type stageState int
-
-const (
-	stagePending stageState = iota
-	stageWarmup
-	stageMeasuring
-	stageDone
-	stageStopped
-)
-
-// stageProgress is one row of the run screen's timeline. duration is the
-// configured measurement window, which the engine holds to exactly. The warmup
-// window is stretched to the measured RTT inside the engine and is not
-// reported, so a warming stage can only be timed by elapsed.
-type stageProgress struct {
-	name     string
-	duration time.Duration
-	state    stageState
-	since    time.Time
-}
-
-// plannedStages is the enabled stages in the order the engine runs them.
-func plannedStages(cfg goclient.Config) []stageProgress {
-	var stages []stageProgress
-	add := func(on bool, name string, d time.Duration) {
-		if on {
-			stages = append(stages, stageProgress{name: name, duration: d})
-		}
-	}
-	add(cfg.Stages.Latency, "latency", cfg.LatencyDuration)
-	add(cfg.Stages.Download, "download", cfg.DownloadDuration)
-	add(cfg.Stages.Upload, "upload", cfg.UploadDuration)
-	add(cfg.Stages.Bidirectional, "bidirectional", cfg.BidirectionalDuration)
-	return stages
-}
-
 type serverPreset struct {
 	name string
 	url  string
@@ -241,10 +202,10 @@ type model struct {
 	done   <-chan error
 	cancel context.CancelFunc
 
-	// disp trails rates toward each authoritative sample on the animation
-	// tick, so the live bars and figures glide instead of jumping with every
-	// 100ms sample.
-	disp map[goclient.Direction]float64
+	// displayRates trail rates toward each authoritative sample on the
+	// animation tick, so the live bars and figures glide instead of jumping
+	// with every 100ms sample.
+	displayRates map[goclient.Direction]float64
 	// lostStreak counts consecutive lost pings; a good pong resets it. The
 	// latency line keeps its last value against a short streak instead of
 	// blinking between figure and timeout.
@@ -273,12 +234,13 @@ type model struct {
 	stages  []stageProgress
 }
 
+// animationFPS paces the spinner frames, the elapsed clocks, and the rate
+// glide, all of which advance on the spinner's frame tick.
+const animationFPS = 20
+
 func newModel(cfg goclient.Config) model {
-	// The spinner's frame tick is the animation clock: clocks, the rate glide,
-	// and the frames all advance on it, so it runs faster than MiniDot's
-	// default to keep the motion fluid.
 	dial := spinner.MiniDot
-	dial.FPS = time.Second / 20
+	dial.FPS = time.Second / animationFPS
 	spin := spinner.New(spinner.WithSpinner(dial))
 	spin.Style = accentStyle
 	return model{
@@ -293,7 +255,7 @@ func newModel(cfg goclient.Config) model {
 		now:           time.Now(),
 		rates:         map[goclient.Direction]goclient.ThroughputSample{},
 		peaks:         map[goclient.Direction]float64{},
-		disp:          map[goclient.Direction]float64{},
+		displayRates:  map[goclient.Direction]float64{},
 	}
 }
 
@@ -312,72 +274,6 @@ func (m model) animating() bool {
 	return m.prepareStatus == "checking" || m.prepareStatus == "authorizing"
 }
 
-func prepareConnection(seq int, cfg goclient.Config) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-		defer cancel()
-		connection, err := goclient.Prepare(ctx, cfg)
-		return preparationMsg{seq: seq, connection: connection, err: err}
-	}
-}
-
-func beginAuthorization(seq int, cfg goclient.Config, authURL string) tea.Cmd {
-	return func() tea.Msg {
-		p, err := goclient.BeginAuthorization(cfg, authURL)
-		return authChallengeMsg{seq: seq, pending: p, err: err}
-	}
-}
-
-// authWait is how long a browser approval may stay outstanding, and the
-// deadline the configure screen counts down against.
-const authWait = 2 * time.Minute
-
-func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), authWait)
-		defer cancel()
-		token, err := p.Poll(ctx)
-		return authTokenMsg{seq: seq, token: token, origin: p.Origin, err: err}
-	}
-}
-
-func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
-	m.prepareSeq++
-	m.prepareStatus = "checking"
-	m.prepareStep = stepReach
-	m.prepareError = ""
-	m.prepared = nil
-	m.auth = nil
-	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
-}
-
-func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
-	return func() tea.Msg {
-		e, ok := <-events
-		if !ok {
-			return nil
-		}
-		batch := []goclient.Event{e}
-		for {
-			select {
-			case e, ok := <-events:
-				if !ok {
-					return eventsMsg{seq: seq, events: batch}
-				}
-				batch = append(batch, e)
-			default:
-				return eventsMsg{seq: seq, events: batch}
-			}
-		}
-	}
-}
-
-func waitDone(seq int, done <-chan error) tea.Cmd {
-	return func() tea.Msg {
-		return doneMsg{seq: seq, err: <-done}
-	}
-}
-
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -388,130 +284,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	case spinner.TickMsg:
-		if !m.animating() {
-			return m, nil
-		}
-		m.now = msg.Time
-		for dir, sample := range m.rates {
-			m.disp[dir] += (sample.BytesPerSec - m.disp[dir]) * 0.35
-		}
-		var cmd tea.Cmd
-		m.spin, cmd = m.spin.Update(msg)
-		return m, cmd
+		return m.handleTick(msg)
 	case preparationMsg:
-		if msg.seq != m.prepareSeq {
-			return m, nil
-		}
-		var preparationErr *goclient.PreparationError
-		preflightDecoded := errors.As(msg.err, &preparationErr)
-		if preflightDecoded {
-			pf := preparationErr.Preflight
-			m.discovery = &pf
-		}
-		if msg.err != nil {
-			var authErr *goclient.AuthRequiredError
-			if errors.As(msg.err, &authErr) {
-				m.prepareStatus = "authorizing"
-				m.prepareStep = stepPreflight
-				if preflightDecoded {
-					m.prepareStep = stepOrigins
-				}
-				m.prepareError = ""
-				m.notice = "Authentication is required. Preparing browser approval…"
-				return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
-			}
-			m.prepareStatus = "failed"
-			m.prepareStep = stepReach
-			if preflightDecoded {
-				m.prepareStep = stepOrigins
-			} else {
-				m.discovery = nil
-			}
-			m.prepareError = msg.err.Error()
-			m.prepared = nil
-		} else {
-			m.prepareStatus = "ready"
-			m.prepareStep = stepReady
-			m.prepareError = ""
-			m.prepared = msg.connection
-			pf := msg.connection.Preflight
-			m.discovery = &pf
-		}
-		return m, nil
+		return m.handlePreparation(msg)
 	case authChallengeMsg:
-		if msg.seq != m.prepareSeq {
-			return m, nil
-		}
-		if msg.err != nil {
-			m.prepareStatus = "failed"
-			m.prepareError = msg.err.Error()
-			return m, nil
-		}
-		m.auth = msg.pending
-		m.authSince = time.Now()
-		m.now = m.authSince
-		m.notice = "Waiting for the browser approval."
-		return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
+		return m.handleAuthChallenge(msg)
 	case authTokenMsg:
-		if msg.seq != m.prepareSeq {
-			return m, nil
-		}
-		m.auth = nil
-		if msg.err != nil {
-			m.prepareStatus = "failed"
-			m.prepareError = msg.err.Error()
-			return m, nil
-		}
-		currentOrigin, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL)
-		if err != nil || !strings.EqualFold(currentOrigin, msg.origin) {
-			m.notice = "Server changed while approval was pending. Authorization was discarded."
-			return m.reprepare(nil)
-		}
-		m.cfg.AuthToken = msg.token
-		m.cfg.AuthOrigin = msg.origin
-		m.notice = "Client approved. Verifying authenticated transports…"
-		return m.reprepare(nil)
+		return m.handleAuthToken(msg)
 	case eventsMsg:
-		if msg.seq != m.runSeq {
-			return m, nil
-		}
-		m.now = time.Now()
-		for _, event := range msg.events {
-			m.apply(event)
-		}
-		if m.mode == modeRun && m.err == nil {
-			return m, waitEvents(m.runSeq, m.events)
-		}
+		return m.handleEvents(msg)
 	case doneMsg:
-		if msg.seq != m.runSeq {
-			return m, nil
-		}
-		var authErr *goclient.AuthRequiredError
-		if errors.As(msg.err, &authErr) {
-			if m.cancel != nil {
-				m.cancel()
-			}
-			m.complete = true
-			m.mode = modeConfigure
-			m.prepared = nil
-			m.prepareStatus = "authorizing"
-			if m.prepareStep < stepPreflight {
-				m.prepareStep = stepPreflight
-			}
-			m.notice = "Authentication expired. Preparing browser approval…"
-			return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
-		}
-		if msg.err != nil && !strings.Contains(msg.err.Error(), "context canceled") {
-			m.err = msg.err
-			m.status = "error"
-		}
-		if msg.err != nil && strings.Contains(msg.err.Error(), "context canceled") {
-			m.status = "canceled"
-		}
-		m.stopStages()
-		m.complete = true
-		m.cancelPrompt = false
-		return m, nil
+		return m.handleDone(msg)
 	default:
 		// The clipboard read behind ctrl+v answers with a message only the text
 		// input understands.
@@ -529,10 +312,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
 	case m.urlRowRune(msg):
-		// On the Custom URL row every printable rune is text, not a binding:
-		// a hostname may start with r, q, or j. The row opens its editor
-		// carrying the rune, and a bracketed paste lands whole the same way.
-		// ctrl+c still quits and the arrow/tab/enter keys still navigate.
+		// A bracketed paste arrives as one rune message and lands whole.
 		m.edit = beginEdit(editURL, "url", string(msg.Runes))
 		m.notice = "Editing server URL. Enter applies, esc cancels."
 		return m, nil
@@ -574,7 +354,9 @@ func (m model) handleConfigureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // urlRowRune reports whether msg is printable text typed or pasted on the
-// selected Custom URL row of the configure screen.
+// selected Custom URL row. There every rune is text, not a binding: a hostname
+// may start with r, q, or j. ctrl+c is not a rune, so quit and the navigation
+// keys still reach their handlers.
 func (m model) urlRowRune(msg tea.KeyMsg) bool {
 	return m.mode == modeConfigure && !m.cancelPrompt &&
 		m.section == sectionServers && m.row == len(serverPresets) &&
@@ -614,9 +396,9 @@ func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse resolves a click against the positions View recorded. A click on
-// an unselected row only selects it; clicking the selected row activates it,
-// which is what enter does and what opens a text field.
+// handleMouse resolves a click against the positions View records. A click on
+// an unselected row selects it. A click on the selected row activates it, as
+// enter does.
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m, nil
@@ -650,8 +432,8 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// confirm activates the selected row and re-checks the connection when that
-// changed the configuration the current preparation was made for.
+// confirm activates the selected row. A configuration edit invalidates the
+// current preparation, so it starts a fresh connection check.
 func (m model) confirm() (tea.Model, tea.Cmd) {
 	before := m.cfg
 	updated, cmd := m.activate()
@@ -700,95 +482,92 @@ func (m *model) editAccepted(notice string) {
 
 func (m *model) commitEdit() {
 	raw := strings.TrimSpace(m.edit.input.Value())
-	field := m.edit.field
-
 	switch m.edit.kind {
 	case editURL:
-		if raw == "" {
-			m.editRejected("Server URL cannot be empty.")
-			return
-		}
-		// A bare host means HTTPS: the presets carry their schemes, so what is
-		// typed without one is a remote host, and remote servers answer TLS.
-		if !strings.Contains(raw, "://") {
-			raw = "https://" + raw
-		}
-		if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
-			return
-		}
-		if raw != m.cfg.BaseURL {
-			m.cfg.AuthToken = ""
-			m.cfg.AuthOrigin = ""
-		}
-		m.cfg.BaseURL = raw
-		m.editAccepted("Custom server URL set.")
+		m.commitURL(raw)
 	case editDuration:
-		// A bare number is seconds, so "10" works as well as "10s".
-		if n, err := strconv.ParseFloat(raw, 64); err == nil {
-			raw = fmt.Sprintf("%gs", n)
-		}
-		d, err := time.ParseDuration(raw)
-		if err != nil || d < 0 {
-			m.editRejected("Use a duration like 800ms, 4s, or 1m — a bare number is seconds.")
-			return
-		}
-		switch field {
-		case "warmup":
-			m.cfg.Warmup = d
-		case "latency":
-			if d == 0 {
-				m.editRejected("Latency duration must be greater than zero.")
-				return
-			}
-			m.cfg.LatencyDuration = d
-		case "download":
-			if d == 0 {
-				m.editRejected("Download duration must be greater than zero.")
-				return
-			}
-			m.cfg.DownloadDuration = d
-		case "upload":
-			if d == 0 {
-				m.editRejected("Upload duration must be greater than zero.")
-				return
-			}
-			m.cfg.UploadDuration = d
-		case "bidirectional":
-			if d == 0 {
-				m.editRejected("Bidirectional duration must be greater than zero.")
-				return
-			}
-			m.cfg.BidirectionalDuration = d
-		case "ping":
-			if d == 0 {
-				m.editRejected("Ping interval must be greater than zero.")
-				return
-			}
-			m.cfg.PingInterval = d
-		}
-		m.editAccepted("Timing updated.")
+		m.commitDuration(raw, m.edit.field)
 	case editInt:
-		n, err := strconv.Atoi(raw)
-		min := 0
-		if field == "auto-streams" {
-			min = 1
-		}
-		if err != nil || n < min || n > 128 {
-			if field == "auto-streams" {
-				m.editRejected("Automatic H1 max must be an integer from 1 to 128.")
-				return
-			}
-			m.editRejected("Streams must be 0 (automatic) or an integer from 1 to 128.")
+		m.commitInt(raw, m.edit.field)
+	}
+}
+
+func (m *model) commitURL(raw string) {
+	if raw == "" {
+		m.editRejected("Server URL cannot be empty.")
+		return
+	}
+	// A bare host means HTTPS. Presets carry their own schemes, so a
+	// scheme-less entry is a remote host, and remote servers answer TLS.
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	if u, err := url.Parse(raw); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		m.editRejected("Use an http:// or https:// URL with a host, for example https://host:7247.")
+		return
+	}
+	if raw != m.cfg.BaseURL {
+		m.cfg.AuthToken = ""
+		m.cfg.AuthOrigin = ""
+	}
+	m.cfg.BaseURL = raw
+	m.editAccepted("Custom server URL set.")
+}
+
+func (m *model) commitDuration(raw, field string) {
+	// A bare number is seconds, so "10" works as well as "10s".
+	if n, err := strconv.ParseFloat(raw, 64); err == nil {
+		raw = fmt.Sprintf("%gs", n)
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		m.editRejected("Use a duration like 800ms, 4s, or 1m — a bare number is seconds.")
+		return
+	}
+	// warmup may be zero; every stage window and the ping interval must be
+	// positive. An empty zeroError marks the fields that accept zero.
+	type slot struct {
+		ptr       *time.Duration
+		zeroError string
+	}
+	slots := map[string]slot{
+		"warmup":        {&m.cfg.Warmup, ""},
+		"latency":       {&m.cfg.LatencyDuration, "Latency duration must be greater than zero."},
+		"download":      {&m.cfg.DownloadDuration, "Download duration must be greater than zero."},
+		"upload":        {&m.cfg.UploadDuration, "Upload duration must be greater than zero."},
+		"bidirectional": {&m.cfg.BidirectionalDuration, "Bidirectional duration must be greater than zero."},
+		"ping":          {&m.cfg.PingInterval, "Ping interval must be greater than zero."},
+	}
+	if s, ok := slots[field]; ok {
+		if d == 0 && s.zeroError != "" {
+			m.editRejected(s.zeroError)
 			return
 		}
-		if field == "auto-streams" {
-			m.cfg.TransferStreams.AutomaticMax = n
-		} else {
-			m.cfg.TransferStreams.Forced = n
-		}
-		m.editAccepted("Transfer stream policy updated.")
+		*s.ptr = d
 	}
+	m.editAccepted("Timing updated.")
+}
+
+func (m *model) commitInt(raw, field string) {
+	n, err := strconv.Atoi(raw)
+	lowest := 0
+	if field == "auto-streams" {
+		lowest = 1
+	}
+	if err != nil || n < lowest || n > 128 {
+		if field == "auto-streams" {
+			m.editRejected("Automatic H1 max must be an integer from 1 to 128.")
+			return
+		}
+		m.editRejected("Streams must be 0 (automatic) or an integer from 1 to 128.")
+		return
+	}
+	if field == "auto-streams" {
+		m.cfg.TransferStreams.AutomaticMax = n
+	} else {
+		m.cfg.TransferStreams.Forced = n
+	}
+	m.editAccepted("Transfer stream policy updated.")
 }
 
 func (m model) activate() (tea.Model, tea.Cmd) {
@@ -853,151 +632,6 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		return m.startRun()
 	}
 	return m, nil
-}
-
-func (m model) startRun() (model, tea.Cmd) {
-	if !m.cfg.Stages.Latency && !m.cfg.Stages.Download && !m.cfg.Stages.Upload && !m.cfg.Stages.Bidirectional {
-		m.notice = "Enable at least one stage before running."
-		m.mode = modeConfigure
-		m.section = sectionRunSetup
-		m.row = 0
-		return m, nil
-	}
-
-	events := make(chan goclient.Event, 256)
-	done := make(chan error, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	cfg := m.cfg
-	prepared := m.prepared
-	go func() {
-		run := goclient.Run
-		if prepared.FreshFor(cfg) {
-			run = func(ctx context.Context, cfg goclient.Config, emit func(goclient.Event)) error {
-				return goclient.RunPrepared(ctx, cfg, prepared, emit)
-			}
-		}
-		runErr := run(ctx, cfg, func(e goclient.Event) {
-			select {
-			case events <- e:
-			case <-ctx.Done():
-			}
-		})
-		done <- goclient.ClassifyAuthFailure(ctx, cfg, runErr)
-		close(events)
-	}()
-
-	m.mode = modeRun
-	m.runSeq++
-	m.events = events
-	m.done = done
-	m.cancel = cancel
-	m.stage = ""
-	m.status = "connecting"
-	m.server = ""
-	m.target, m.latencyTarget = "", ""
-	m.throughputProtocol, m.latencyProtocol = "", ""
-	m.err = nil
-	m.complete = false
-	m.cancelPrompt = false
-	m.now = time.Now()
-	m.rates = map[goclient.Direction]goclient.ThroughputSample{}
-	m.peaks = map[goclient.Direction]float64{}
-	m.disp = map[goclient.Direction]float64{}
-	m.lostStreak = 0
-	m.results = nil
-	m.latency = goclient.LatencySample{}
-	m.stages = plannedStages(cfg)
-	m.notice = "Run started. Press esc to cancel."
-	return m, tea.Batch(waitEvents(m.runSeq, events), waitDone(m.runSeq, done), m.spin.Tick)
-}
-
-func (m *model) apply(e goclient.Event) {
-	switch e.Kind {
-	case goclient.EventPreflight:
-		if e.Preflight != nil {
-			m.target = e.ThroughputTarget
-			if m.target == "" {
-				m.target = e.Message
-			}
-			m.latencyTarget = e.LatencyTarget
-			m.throughputProtocol = e.ThroughputProtocol
-			m.latencyProtocol = e.LatencyProtocol
-			observed := ""
-			if e.Probe != nil {
-				observed = "/" + e.Probe.ProtocolNegotiated
-			}
-			m.server = fmt.Sprintf("%s %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message, observed)
-			m.status = "connected"
-		}
-	case goclient.EventStage:
-		m.stage = e.Stage
-		m.status = e.Message
-		m.enterStage(e)
-	case goclient.EventThroughput:
-		m.rates[e.Direction] = e.Throughput
-		if e.Throughput.BytesPerSec > m.peaks[e.Direction] {
-			m.peaks[e.Direction] = e.Throughput.BytesPerSec
-		}
-	case goclient.EventLatency:
-		if e.Latency.Lost {
-			m.lostStreak++
-		} else {
-			m.lostStreak = 0
-			m.latency = e.Latency
-		}
-	case goclient.EventResult:
-		if e.Result != nil {
-			m.results = append(m.results, *e.Result)
-			m.finishStage(e.Result.Stage)
-		}
-	case goclient.EventComplete:
-		m.status = "complete"
-		m.complete = true
-	case goclient.EventError:
-		m.err = e.Err
-		m.status = "error"
-		m.stopStages()
-	}
-}
-
-// enterStage moves a timeline row into the phase the engine just announced.
-// The engine names exactly two, so anything else leaves the row where it is.
-func (m *model) enterStage(e goclient.Event) {
-	var state stageState
-	switch e.Message {
-	case "warmup":
-		state = stageWarmup
-	case "measure":
-		state = stageMeasuring
-	default:
-		return
-	}
-	for i := range m.stages {
-		if m.stages[i].name == e.Stage {
-			m.stages[i].state, m.stages[i].since = state, e.At
-		}
-	}
-}
-
-// finishStage closes a timeline row. A stage emits its results only once every
-// lane has stopped, so the first one proves the measurement window closed; the
-// rest of the stage's results land on a row that is already done.
-func (m *model) finishStage(stage string) {
-	for i := range m.stages {
-		if m.stages[i].name == stage && m.stages[i].state != stagePending {
-			m.stages[i].state = stageDone
-		}
-	}
-}
-
-// stopStages marks whichever stage was running when the run ended early, so a
-// canceled or failed run does not leave a row spinning forever.
-func (m *model) stopStages() {
-	for i := range m.stages {
-		if s := m.stages[i].state; s == stageWarmup || s == stageMeasuring {
-			m.stages[i].state = stageStopped
-		}
-	}
 }
 
 func (m model) rowCount() int {

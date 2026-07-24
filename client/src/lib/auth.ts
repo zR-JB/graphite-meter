@@ -5,7 +5,7 @@ import {
 } from "./request-auth";
 
 let redirecting = false;
-let classifying: Promise<boolean> | null = null;
+let pendingClassification: Promise<boolean> | null = null;
 
 export const authEnabled =
   typeof document !== "undefined" &&
@@ -13,16 +13,13 @@ export const authEnabled =
     .querySelector('meta[name="graphite-meter-auth"]')
     ?.getAttribute("content") === "enabled";
 
-/** Reasons the server-rendered login page knows how to phrase. */
-export type LoginReason = "expired";
-
-/** Navigate to the login page. Named for the side effect: this replaces the
- *  current document, so nothing after the call in the same task runs. */
-export function redirectToLogin(reason: LoginReason = "expired"): void {
+/** Replaces the current document, so the calling task stops executing here.
+ *  `expired` is the phrasing key the server-rendered login page reads. */
+export function redirectToLogin(): void {
   if (!authEnabled || redirecting) return;
   redirecting = true;
   window.dispatchEvent(new Event("graphite-meter-auth-required"));
-  location.replace(`/login?reason=${encodeURIComponent(reason)}`);
+  location.replace("/login?reason=expired");
 }
 
 export function csrfHeader(): Record<string, string> {
@@ -39,7 +36,9 @@ export async function classifyAuthenticationFailure(
   localSignal?: AbortSignal,
 ): Promise<boolean> {
   if (!authEnabled || localSignal?.aborted) return false;
-  const pending = (classifying ??= sessionAuthenticationRequired(
+  // Parallel transfer workers share one probe: a single expiry must not fan
+  // out into a burst of /auth/session requests.
+  const pending = (pendingClassification ??= sessionAuthenticationRequired(
     location.origin,
   ));
   try {
@@ -47,7 +46,7 @@ export async function classifyAuthenticationFailure(
     if (required) redirectToLogin();
     return required;
   } finally {
-    if (classifying === pending) classifying = null;
+    if (pendingClassification === pending) pendingClassification = null;
   }
 }
 

@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Phase timeline (schedule)
+ * The Graphite Meter: phase timeline (schedule)
  * Pure, engine-agnostic construction of the run's phase segments.
  * Each enabled stage is preceded by its own self-contained warmup
  * (see the warmup contract in contract.ts). Shared by every engine
@@ -38,10 +38,10 @@ export interface Timeline {
   totalMs: number;
 }
 
-/** Resolve a stage's {@link PhaseActivity} from config — the SINGLE place the
- *  "is loaded latency active?" rule lives (the latency stage is on, or loaded
- *  pings are not suppressed when it is off). The backend never re-derives any of
- *  this; it reads only the activity handed to it. */
+/** Resolve a stage's {@link PhaseActivity} from config. The SINGLE place the
+ *  "is loaded latency active?" rule lives: the latency stage is on, or loaded
+ *  pings are not suppressed while it is off. The backend re-derives none of it,
+ *  reading only the activity handed to it. */
 function activityFor(stage: StagePhase, config: RunnerConfig): PhaseActivity {
   const loadedLatency =
     config.stages.latency || !config.skipLoadedLatencyWhenStageOff;
@@ -56,30 +56,33 @@ function activityFor(stage: StagePhase, config: RunnerConfig): PhaseActivity {
   return {
     stage,
     transfer,
-    // The latency stage measures IDLE latency — never "loaded"; only transfer
-    // stages carry concurrent (bufferbloat) pings.
+    // The latency stage measures IDLE latency; only transfer stages carry
+    // concurrent (bufferbloat) pings.
     loadedLatency: stage === "latency" ? false : loadedLatency,
   };
 }
 
-/** Extend a stage's warmup so TCP slow-start can fill the BDP before the measured
- *  window opens. A fixed warmup is too short on a high-RTT/far path — the window
- *  opens mid-ramp, so the measured rate sits below the true line speed. ~10 RTTs
- *  covers slow-start for typical BDPs (parallel lanes fill faster still); the
- *  configured warmup is the floor (a LAN keeps it), capped so a satellite-grade RTT
- *  can't blow the run length. rttMs ≤ 0 (no probe) ⇒ the configured value. */
+/** Slow-start covers a typical BDP within this many RTTs; parallel lanes fill
+ *  it faster still. */
+const SLOW_START_RTTS = 10;
+/** Ceiling, so a satellite-grade RTT cannot blow up the run length. */
+const WARMUP_CEIL_MS = 4000;
+
+/** A warmup long enough for TCP slow-start to fill the BDP, so the measured
+ *  window opens at line speed instead of mid-ramp. The configured `baseMs` is
+ *  the floor, which a LAN keeps. rttMs ≤ 0 or non-finite yields that floor. */
 export function adaptiveWarmupMs(baseMs: number, rttMs: number): number {
-  const SLOW_START_RTTS = 10;
-  const CEIL_MS = 4000;
-  const rtt = Number.isFinite(rttMs) && rttMs > 0 ? rttMs : 0; // NaN/garbage ⇒ floor
-  return Math.min(CEIL_MS, Math.max(baseMs, Math.round(rtt * SLOW_START_RTTS)));
+  const rtt = Number.isFinite(rttMs) && rttMs > 0 ? rttMs : 0;
+  return Math.min(
+    WARMUP_CEIL_MS,
+    Math.max(baseMs, Math.round(rtt * SLOW_START_RTTS)),
+  );
 }
 
-/** Build the full phase timeline for a run, skipping disabled stages. Each
- *  enabled stage owns a self-contained warmup that primes its own connection —
- *  no global initial warmup, so stages carry no cross-deps. Because every
- *  warmup is immediately followed by its stage's measurement, two warmups can
- *  never sit adjacent. */
+/** Build the run's phase timeline, skipping disabled stages. Each enabled stage
+ *  owns a self-contained warmup that primes its own connection, so stages carry
+ *  no cross-deps. Every warmup is immediately followed by its stage's
+ *  measurement, so two warmups never sit adjacent. */
 export function buildSegments(config: RunnerConfig): Timeline {
   const segs: Segment[] = [];
   let cursor = 0;
@@ -111,10 +114,6 @@ export function buildSegments(config: RunnerConfig): Timeline {
   return { segments: segs, totalMs: cursor };
 }
 
-function durationFor(phase: StagePhase, config: RunnerConfig): number {
-  return config.duration[`${phase}Ms`];
-}
-
 /** Rebuild the unfinished timeline after a safe live config change. Past
  * segments keep their actual boundaries, the active segment adopts its new
  * duration from its original start, and future stages are rebuilt normally. */
@@ -132,7 +131,7 @@ export function reconfigureTimeline(
     const duration =
       active.phase === "warmup"
         ? config.duration.warmupMs
-        : durationFor(active.phase, config);
+        : config.duration[`${active.phase}Ms`];
     kept.push({
       ...active,
       end: Math.max(elapsed, active.start + duration),
@@ -147,18 +146,15 @@ export function reconfigureTimeline(
     // Skip disabled phases and ones whose measurement already started.
     if (!on || ms <= 0) return;
     if (kept.some((k) => k.phase === phase)) return;
-    // If this stage's warmup is already running, REUSE its activity object so
-    // the warmup→measure seam still shares one connection set (and one loaded-
-    // latency decision) even though we rebuilt the tail under it; otherwise
-    // resolve a fresh activity from the updated config.
+    // A running warmup keeps its activity object, so the warmup→measure seam
+    // still shares one connection set and one loaded-latency decision.
     const keptWarmup = kept.find(
       (k) => k.phase === "warmup" && k.activity.stage === phase,
     );
     const activity = keptWarmup
       ? keptWarmup.activity
       : activityFor(phase, config);
-    // Prepend this stage's own warmup — unless it is already running (kept),
-    // in which case the measurement just follows it.
+    // Prepend this stage's own warmup unless it is already running.
     if (w > 0 && !keptWarmup) {
       tail.push({ phase: "warmup", start: cursor, end: cursor + w, activity });
       cursor += w;

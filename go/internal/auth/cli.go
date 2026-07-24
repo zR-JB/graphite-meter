@@ -10,15 +10,21 @@ import (
 	"time"
 )
 
+const (
+	maxApprovals        = 256
+	maxSessionApprovals = 8
+	maxSessionGrants    = 8
+	approvalLifetime    = 2 * time.Minute
+)
+
 // cliApproval is one pending browser approval of a native-client grant: a
 // verification code shown on both sides, bound to the approving session, valid
-// for two minutes and never persisted.
+// for approvalLifetime and never persisted.
 type cliApproval struct {
-	challenge string
-	code      string
-	session   *session
-	expires   time.Time
-	approved  bool
+	code     string
+	session  *session
+	expires  time.Time
+	approved bool
 }
 
 func validChallenge(v string) bool {
@@ -47,32 +53,32 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.now()
 	s.mu.Lock()
-	for k, a := range s.approvals {
-		if !now.Before(a.expires) {
-			delete(s.approvals, k)
+	for key, pending := range s.approvals {
+		if !now.Before(pending.expires) {
+			delete(s.approvals, key)
 		}
 	}
-	a := s.approvals[challenge]
-	if a == nil {
+	approval := s.approvals[challenge]
+	if approval == nil {
 		count := 0
-		for _, x := range s.approvals {
-			if x.session == p.session {
+		for _, pending := range s.approvals {
+			if pending.session == p.session {
 				count++
 			}
 		}
-		if len(s.approvals) >= 256 || count >= 8 {
+		if len(s.approvals) >= maxApprovals || count >= maxSessionApprovals {
 			s.mu.Unlock()
 			s.counters.capacity.Add(1)
 			forbidden(w)
 			return
 		}
-		a = &cliApproval{challenge: challenge, code: verificationCode(challenge), session: p.session, expires: now.Add(2 * time.Minute)}
-		s.approvals[challenge] = a
+		approval = &cliApproval{code: verificationCode(challenge), session: p.session, expires: now.Add(approvalLifetime)}
+		s.approvals[challenge] = approval
 	}
 	s.mu.Unlock()
 	csrf := p.session.csrf
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = cliTemplate.Execute(w, map[string]any{"Styles": authStyles, "Code": a.code, "Challenge": challenge, "CSRF": csrf})
+	_ = cliTemplate.Execute(w, map[string]any{"Styles": authStyles, "Code": approval.code, "Challenge": challenge, "CSRF": csrf})
 }
 
 func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
@@ -89,13 +95,13 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	challenge := r.FormValue("challenge")
 	s.mu.Lock()
-	a := s.approvals[challenge]
-	if a == nil || a.session != p.session || !s.now().Before(a.expires) {
+	approval := s.approvals[challenge]
+	if approval == nil || approval.session != p.session || !s.now().Before(approval.expires) {
 		s.mu.Unlock()
 		forbidden(w)
 		return
 	}
-	a.approved = true
+	approval.approved = true
 	s.counters.cliApproval.Add(1)
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -116,8 +122,8 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
 	now := s.now()
 	s.mu.Lock()
-	a := s.approvals[challenge]
-	if a == nil || !a.approved || !now.Before(a.expires) || !now.Before(a.session.expires) || a.session.ctx.Err() != nil {
+	approval := s.approvals[challenge]
+	if approval == nil || !approval.approved || !now.Before(approval.expires) || !now.Before(approval.session.expires) || approval.session.ctx.Err() != nil {
 		s.mu.Unlock()
 		s.writeGrantPending(w)
 		return
@@ -128,25 +134,26 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		s.writeGrantPending(w)
 		return
 	}
-	// Consumed only once a grant actually exists: deleting before the RNG can
-	// fail would burn the approval and force the operator through a second
-	// browser confirmation for a server-side error.
+	// The approval is consumed only once a grant exists: an RNG failure must not
+	// cost the operator a second browser confirmation.
 	delete(s.approvals, challenge)
 	h := sha256.Sum256([]byte(grant))
-	if len(a.session.grants) >= 8 {
-		for old := range a.session.grants {
-			delete(a.session.grants, old)
+	sess := approval.session
+	if len(sess.grants) >= maxSessionGrants {
+		for old := range sess.grants {
+			delete(sess.grants, old)
 			delete(s.grants, old)
 			break
 		}
 	}
-	a.session.grants[h] = struct{}{}
-	s.grants[h] = a.session
-	expires := a.session.expires
+	sess.grants[h] = struct{}{}
+	s.grants[h] = sess
+	expires := sess.expires
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"token": grant, "expires": expires})
 }
+
 func (s *Service) writeGrantPending(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

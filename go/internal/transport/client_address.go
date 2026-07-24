@@ -7,43 +7,53 @@ import (
 	"strings"
 )
 
+// ClientIPSource names the origin of a resolved client address.
 type ClientIPSource string
 
 const (
-	ClientIPSocket    ClientIPSource = "socket"
+	// ClientIPSocket is the peer address of the connection itself.
+	ClientIPSocket ClientIPSource = "socket"
+	// ClientIPForwarded is an address taken from a proxy header.
 	ClientIPForwarded ClientIPSource = "forwarded"
 )
 
+// ClientAddress is the address a request is attributed to, with its provenance.
 type ClientAddress struct {
 	Addr    netip.Addr
 	Version int
 	Source  ClientIPSource
 }
 
+// ResolveClientAddress attributes a request to a client IP. Proxy headers count
+// only when the socket peer is itself trusted, so a client-supplied prefix
+// cannot spoof its own address. A malformed or obfuscated chain falls back to
+// the socket peer rather than guessing.
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress {
 	peer, ok := parseAddress(r.RemoteAddr)
 	if !ok {
 		return ClientAddress{Source: ClientIPSocket}
 	}
-	result := clientAddress(peer, ClientIPSocket)
+	fromSocket := clientAddress(peer, ClientIPSocket)
 	if !contains(trusted, peer) {
-		return result
+		return fromSocket
 	}
 
-	chain, present, valid := forwardedChain(r.Header)
-	if !present || !valid {
-		return result
+	chain, ok := forwardedChain(r.Header)
+	if !ok {
+		return fromSocket
 	}
+	return clientAddress(firstUntrustedHop(peer, chain, trusted), ClientIPForwarded)
+}
+
+// firstUntrustedHop walks the chain right to left starting at peer and returns
+// the first entry outside trusted. An all-trusted chain yields its leftmost
+// entry.
+func firstUntrustedHop(peer netip.Addr, chain []netip.Addr, trusted []netip.Prefix) netip.Addr {
 	current := peer
 	for i := len(chain) - 1; i >= 0 && contains(trusted, current); i-- {
 		current = chain[i]
 	}
-	return clientAddress(current, ClientIPForwarded)
-}
-
-func PeerIsTrusted(r *http.Request, trusted []netip.Prefix) bool {
-	peer, ok := parseAddress(r.RemoteAddr)
-	return ok && contains(trusted, peer)
+	return current
 }
 
 func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
@@ -54,33 +64,36 @@ func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
 	return ClientAddress{Addr: addr, Version: version, Source: source}
 }
 
-func forwardedChain(h http.Header) ([]netip.Addr, bool, bool) {
+// forwardedChain returns the proxy chain in client-to-proxy order. The
+// highest-fidelity header present wins outright: a malformed Forwarded is never
+// rescued by an X-Forwarded-For that a nearer hop may write.
+func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 	if raw := h.Get("Forwarded"); raw != "" {
-		values, ok := splitQuoted(raw, ',')
+		elements, ok := splitQuoted(raw, ',')
 		if !ok {
-			return nil, true, false
+			return nil, false
 		}
-		chain := make([]netip.Addr, 0, len(values))
-		for _, element := range values {
+		chain := make([]netip.Addr, 0, len(elements))
+		for _, element := range elements {
 			params, ok := splitQuoted(element, ';')
 			if !ok {
-				return nil, true, false
+				return nil, false
 			}
-			var value string
+			var forwardedFor string
 			for _, param := range params {
-				key, v, found := strings.Cut(param, "=")
+				key, value, found := strings.Cut(param, "=")
 				if found && strings.EqualFold(strings.TrimSpace(key), "for") {
-					value = strings.TrimSpace(v)
+					forwardedFor = strings.TrimSpace(value)
 					break
 				}
 			}
-			addr, ok := parseAddress(value)
+			addr, ok := parseAddress(forwardedFor)
 			if !ok {
-				return nil, true, false
+				return nil, false
 			}
 			chain = append(chain, addr)
 		}
-		return chain, true, len(chain) > 0
+		return chain, len(chain) > 0
 	}
 	if raw := h.Get("X-Forwarded-For"); raw != "" {
 		parts := strings.Split(raw, ",")
@@ -88,22 +101,26 @@ func forwardedChain(h http.Header) ([]netip.Addr, bool, bool) {
 		for _, part := range parts {
 			addr, ok := parseAddress(part)
 			if !ok {
-				return nil, true, false
+				return nil, false
 			}
 			chain = append(chain, addr)
 		}
-		return chain, true, len(chain) > 0
+		return chain, len(chain) > 0
 	}
 	if raw := h.Get("X-Real-IP"); raw != "" {
 		addr, ok := parseAddress(raw)
 		if !ok {
-			return nil, true, false
+			return nil, false
 		}
-		return []netip.Addr{addr}, true, true
+		return []netip.Addr{addr}, true
 	}
-	return nil, false, false
+	return nil, false
 }
 
+// parseAddress accepts the address forms proxies emit: bare, RFC 7239 quoted,
+// bracketed IPv6, and host:port. RFC 7239 obfuscated identifiers ("_secret")
+// and "unknown" name no host, so they are rejected and the caller falls back
+// rather than treating them as a client.
 func parseAddress(raw string) (netip.Addr, bool) {
 	raw = strings.TrimSpace(raw)
 	if len(raw) >= 2 && raw[0] == '"' {
@@ -139,6 +156,9 @@ func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
 	return false
 }
 
+// splitQuoted splits on separator outside RFC 7239 quoted-strings, reporting
+// false for an unterminated quote or trailing escape so a truncated header is
+// rejected instead of parsed as something shorter.
 func splitQuoted(raw string, separator byte) ([]string, bool) {
 	var parts []string
 	start, quoted, escaped := 0, false, false

@@ -1,28 +1,23 @@
 /* ============================================================
- * The Graphite Meter — Adaptive Duration helper
+ * The Graphite Meter: adaptive duration helper
  * Runner-agnostic confidence math for confidence-based early
- * phase exit. Pure TypeScript, zero Svelte / DOM deps so a real
- * engine can reuse it verbatim. Every coefficient below is named
- * and explained rather than left as a magic number.
+ * phase exit. Pure TypeScript, zero Svelte or DOM deps, so any
+ * engine reuses it verbatim.
  * ============================================================ */
 
 import type { AdaptiveDurationConfig, StabilityBand } from "./contract";
 import { median } from "./stats";
 
 /* ---------- Stability-score coefficients ----------
- * The stability score is  1 − (varianceRatio·K1 + slopeRatio·K2),
- * clamped to 0–1. Higher coefficients make the gate stricter
- * (a small amount of jitter/drift pulls the score down faster).
- * Transfer weighs variance (×2.2) over slope (×1.4): once a transfer
- * has ramped up, a plateau that's merely noisy is common and mostly
- * harmless, while a sustained drift up or down means it hasn't
- * actually settled yet and is the stronger signal to withhold an
- * early exit on. Latency uses median absolute deviation so an isolated
- * right-tail RTT spike does not poison an otherwise steady path. */
+ * score = clamp(1 − (varianceRatio·K1 + slopeRatio·K2), 0, 1).
+ * Higher coefficients make the gate stricter: a small amount of
+ * jitter or drift pulls the score down faster. */
 
-/** Transfer stability: how hard sample-to-mean variance is penalized. */
+/** Transfer stability: penalty on sample-to-mean variance (coefficient of
+ *  variation), which stays small on a settled plateau. */
 const TRANSFER_VARIANCE_K = 2.2;
-/** Transfer stability: how hard a first-vs-last segment drift is penalized. */
+/** Transfer stability: penalty on first-vs-last segment drift. Sustained drift
+ *  means the transfer has not settled, so it withholds an early exit. */
 const TRANSFER_SLOPE_K = 1.4;
 
 /** Latency stability: how hard sustained RTT jitter is penalized. */
@@ -33,8 +28,8 @@ const LATENCY_LOSS_K = 3.6;
  * rather than magnified by division through a tiny loopback/LAN RTT. */
 const LATENCY_JITTER_FLOOR_MS = 20;
 
-/** Only the most recent N samples feed the confidence window — older
- *  samples from a phase's ramp-up would otherwise depress stability. */
+/** Only the most recent N samples feed the confidence window. Older ramp-up
+ *  samples otherwise depress stability. */
 const CONFIDENCE_WINDOW = 48;
 
 /** Slope is measured as |mean(firstSegment) − mean(lastSegment)| / mean.
@@ -43,21 +38,19 @@ const SLOPE_SEGMENTS = 3;
 /** Minimum samples per slope segment so a 2-sample window still works. */
 const MIN_SLOPE_SEGMENT = 2;
 
-/** Score at/above this (but below stabilityThreshold) reads as the "medium"
- *  pip band; below it reads "low". The "high" band starts at the early-exit
- *  gate (stabilityThreshold), so "green pip" and "ready to finish early"
- *  coincide — one signal, no second meaning to reconcile. */
-export const STABILITY_MED_BAND = 0.6;
+/** Score at or above this, and below stabilityThreshold, reads as the "medium"
+ *  pip band; below it reads "low". "high" starts at stabilityThreshold, so the
+ *  green pip and "ready to finish early" are one signal. */
+const STABILITY_MED_BAND = 0.6;
 
-/** Hysteresis margin below `stabilityThreshold` for *leaving* the stable state.
- *  A connection becomes "stable" only at the full threshold, but stays stable
- *  until it drops this far below it — so the pip and the stable window don't
- *  flicker on and off around the boundary. Confidence shouldn't toggle. */
-export const STABILITY_HYSTERESIS = 0.08;
+/** Hysteresis margin below `stabilityThreshold` for leaving the stable state.
+ *  Entry needs the full threshold; exit needs a drop this far below it, so the
+ *  pip and the stable window do not flicker at the boundary. */
+const STABILITY_HYSTERESIS = 0.08;
 
 /** Schmitt trigger for the "stable" state: enter at `stabilityThreshold`, leave
- *  only once the score falls below `stabilityThreshold − STABILITY_HYSTERESIS`.
- *  In the dead band between the two it holds whatever it already was. */
+ *  below `stabilityThreshold − STABILITY_HYSTERESIS`. In the dead band it keeps
+ *  the state it carries in. */
 export function isStillStable(
   wasStable: boolean,
   score: number,
@@ -76,13 +69,13 @@ export function bandForState(stable: boolean, score: number): StabilityBand {
   return "low";
 }
 
-/* ---------- Pure stats (mirrors measurement-style helpers) ---------- */
+/* ---------- Pure stats ---------- */
 
-export function clamp(value: number, min: number, max: number): number {
+function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export function mean(values: number[]): number {
+function mean(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
@@ -98,13 +91,13 @@ export function standardDeviation(values: number[]): number {
 /* ---------- Confidence shapes ---------- */
 
 export interface ConfidenceScore {
-  /** 0–1 stability score: 1 = rock-steady, 0 = noisy/drifting. */
+  /** Stability score in 0..1: 1 = rock-steady, 0 = noisy/drifting. */
   score: number;
   /** stddev / mean of the windowed values (coefficient of variation). */
   varianceRatio: number;
-  /** |first-third mean − last-third mean| / mean — a drift indicator. */
+  /** |first-third mean − last-third mean| / mean, a drift indicator. */
   slopeRatio: number;
-  /** how many usable samples were in the window. */
+  /** usable samples in the window. */
   sampleCount: number;
 }
 
@@ -114,7 +107,7 @@ export interface LatencyConfidenceScore extends Omit<
 > {
   /** median absolute RTT deviation / max(median RTT, jitter floor). */
   jitterRatio: number;
-  /** fraction of the windowed pings that were lost. */
+  /** fraction of the windowed pings lost. */
   lossRatio: number;
 }
 
@@ -206,29 +199,23 @@ export interface ExitDecisionInput {
   cfg: AdaptiveDurationConfig;
 }
 
+/** The fraction of a phase's nominal duration that must elapse for an early
+ *  exit: `minCoverageRatio`, and never below what `maxPhaseReductionRatio`
+ *  permits, so the rail and the progress bar stay honest. */
+function requiredCoverageRatio(cfg: AdaptiveDurationConfig): number {
+  return Math.max(cfg.minCoverageRatio, 1 - cfg.maxPhaseReductionRatio);
+}
+
 /**
- * True once it is safe to end the current phase early. A phase may only exit
- * when ALL hold:
- *   1. coverage ≥ minCoverageRatio  — enough of the nominal duration is done;
- *      and never less than (1 − maxPhaseReductionRatio), so we never cut a
- *      phase by more than the configured max (the rail/progress stays honest);
- *   2. stability score ≥ stabilityThreshold;
- *   3. the relevant min-sample floor is met.
- * Returns false whenever adaptive is disabled or the phase is degenerate.
+ * True once the current phase may end early: the coverage floor is reached, the
+ * stability score is at `stabilityThreshold`, and the kind's min-sample floor is
+ * met. False while adaptive is disabled or the phase has no duration.
  */
 export function shouldExitPhase(input: ExitDecisionInput): boolean {
   const { kind, elapsedMs, durationMs, confidence, cfg } = input;
   if (!cfg.enabled) return false;
   if (durationMs <= 0) return false;
-
-  // Coverage floor: honour BOTH minCoverageRatio and the max-reduction cap,
-  // so a phase is never shortened past (1 − maxPhaseReductionRatio).
-  const requiredCoverage = Math.max(
-    cfg.minCoverageRatio,
-    1 - cfg.maxPhaseReductionRatio,
-  );
-  if (elapsedMs / durationMs < requiredCoverage) return false;
-
+  if (elapsedMs / durationMs < requiredCoverageRatio(cfg)) return false;
   if (confidence.score < cfg.stabilityThreshold) return false;
 
   const floor =

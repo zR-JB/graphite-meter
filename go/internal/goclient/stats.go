@@ -62,7 +62,7 @@ func (g *laneGroup) stop() {
 
 const rateSampleInterval = 100 * time.Millisecond
 
-// rateLoop folds a rate source into rateStats on a fixed cadence until the
+// rateLoop folds a rate source into rateStats on a steady cadence until the
 // measurement window closes, a lane fails, or ctx ends.
 type rateLoop struct {
 	// duration bounds the window with its own timer; zero leaves ctx as the
@@ -74,7 +74,7 @@ type rateLoop struct {
 	laneErr          <-chan error
 	// sample folds one tick of the rate source into stats and emits it.
 	sample func(now time.Time, stats *rateStats)
-	// window records the measured byte and time totals before returning.
+	// window records the measured byte and time totals at the end of the run.
 	window func(stats *rateStats)
 }
 

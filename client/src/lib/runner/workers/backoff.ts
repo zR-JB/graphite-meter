@@ -1,6 +1,6 @@
 /* ============================================================
- * Reconnect backoff — shared by ping-worker.ts and
- * upload-progress-worker.ts. Pure so it's unit-testable.
+ * Reconnect backoff for ping-worker.ts and upload-progress-worker.ts.
+ * Pure so it is unit-testable.
  * ============================================================ */
 
 /** Next reconnect backoff (ms): starts at `minMs` on the first failure (prev

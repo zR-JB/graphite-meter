@@ -238,7 +238,10 @@ test("laneStaggerMs: caps at the base stagger even on a long warmup", () => {
   expect(laneStaggerMs(2, 100_000, 75)).toBe(75);
 });
 
-test("probe refresh preserves negotiated protocol across roles and opens upload progress first", async () => {
+// One test, because every assertion below depends on backend state the previous
+// probes leave behind: frozen role targets, remembered protocol, discovery
+// generation. Replaying that setup per case does not reproduce it.
+test("real backend: probe refresh keeps the negotiated protocol per role, and the upload stage opens its progress channel before any POST lane", async () => {
   const buildGlobals = globalThis as typeof globalThis &
     Record<string, unknown>;
   Object.assign(buildGlobals, {

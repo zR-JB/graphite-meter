@@ -13,7 +13,7 @@
     "check:client": "svelte-check --tsconfig ./tsconfig.check.json",
     "check:node": "tsc --noEmit -p ./tsconfig.node.json",
     "test": "bun test",
-    "test:e2e": "playwright test",
+    "test:e2e": "bun run build:bundle && playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

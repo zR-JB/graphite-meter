@@ -40,10 +40,6 @@
       cta: "Drop Connection",
     },
   ];
-
-  function fire(kind: RunnerAnomaly["kind"]) {
-    injectAnomaly({ kind } as RunnerAnomaly);
-  }
 </script>
 
 <div class="head">
@@ -62,14 +58,15 @@
 {/if}
 
 <div class="grid">
-  {#each CARDS as c (c.kind)}
+  {#each CARDS as card (card.kind)}
     <article class="card">
-      <h4>{c.title}</h4>
-      <p>{c.desc}</p>
+      <h4>{card.title}</h4>
+      <p>{card.desc}</p>
       <button
         disabled={!running}
-        use:tooltip={`${c.title}: inject this anomaly live into the running test`}
-        onclick={() => fire(c.kind)}>{c.cta}</button
+        use:tooltip={`${card.title}: inject this anomaly live into the running test`}
+        onclick={() => injectAnomaly({ kind: card.kind } as RunnerAnomaly)}
+        >{card.cta}</button
       >
     </article>
   {/each}
