@@ -605,11 +605,10 @@
     }
   }
 
-  /* ===== Bare variant — sits inside a host panel as a peer of the gauge =====
-     Drops the card frame (border/background/shadow) and the header so the host
-     panel (an inset surface matching the gauge) provides the chrome. Lanes get
-     a subtle raised backdrop so each reads as its own row. Lane INTERNALS keep
-     their full sizing. Default/full styles above are untouched (safe fallback). */
+  /* Bare variant: sits inside a host panel as a peer of the gauge. It drops the
+     card frame and the header so the host panel (an inset surface matching the
+     gauge) provides the chrome. Lanes get a raised backdrop so each reads as
+     its own row, and lane internals keep their full sizing. */
   .bare {
     border: 0;
     border-radius: 0;

@@ -254,11 +254,9 @@
     >
   </header>
 
-  <!-- CENTER STAGE — height-bounded flex column. The gauge hero is the
-       focal point and takes the lion's share; the chart is secondary and
-       compact so the simple default fits the viewport without vertical scroll.
-       The instrument cluster morphs between live/partial-results/final-grid
-       states; advancing a phase never resizes this section. -->
+  <!-- Center stage: a height-bounded flex column. The gauge hero takes most of
+       it, the chart stays compact so the default fits the viewport without
+       vertical scroll. Advancing a phase never resizes this section. -->
   <section class="zone stage flex min-w-0 flex-col overflow-y-auto">
     <GaugePanel />
     <ThroughputChart />
@@ -272,9 +270,9 @@
     <ShortcutHints />
   </footer>
 
-  <!-- Auxiliary panels — identical shared base, opposite sides; dock on wide
-       screens (pushing the stage), flyout overlay below that. Docked panels are
-       resizable from their inner edge (persisted via store.dockWidth). -->
+  <!-- Auxiliary panels: one shared base, opposite sides. They dock on wide
+       screens (pushing the stage) and overlay as flyouts below that. Docked
+       panels resize from their inner edge, persisted via store.dockWidth. -->
   <SettingsPanel
     bind:open={settingsOpen}
     docked={dockQuery.matches}
@@ -292,7 +290,7 @@
     onResetWidth={() => resetDockWidth("right")}
   />
 
-  <!-- Transient phase-change toast — fixed, bottom-right -->
+  <!-- Transient phase-change toast: fixed, bottom-right. -->
   <PhaseToast />
 
   {#if resetConfirmOpen}
@@ -338,17 +336,14 @@
 </main>
 
 <style>
-  /* ===== Console grid =====
-     The stage owns the middle; the left/right dock columns are 0-width until a
-     panel docks (wide screens), at which point the matching .dock-* class
-     reserves space and the panel (a <SidePanel> grid child via display:contents)
-     slots into leftdock / rightdock, pushing the stage. Below the dock
-     breakpoint the panels are flyout overlays and these columns stay collapsed. */
+  /* Console grid: the stage owns the middle. The dock columns are 0-width until
+     a panel docks on a wide screen, where the panel (a <SidePanel> grid child
+     via display:contents) slots into leftdock/rightdock and pushes the stage.
+     Below the dock breakpoint the panels are flyout overlays. */
   #console {
     display: grid;
-    /* Dock columns are driven by inline --dock-left/right (0 when not
-       docked-open) and CSS-clamped to 46vw so a stale/large saved width can
-       never starve the stage. */
+    /* Inline --dock-left/right drive these, 0 when not docked-open. The 46vw
+       clamp stops a stale saved width from starving the stage. */
     grid-template-columns:
       min(var(--dock-left, 0px), 46vw)
       minmax(0, 1fr)
@@ -367,22 +362,17 @@
   }
   .stage {
     grid-area: stage;
-    /* Height-bounded flex column: the hero gauge flexes to fill, chart + chips
-       stay at their compact intrinsic height. The faceplate surface; the wells
-       inside it carry the depth. Token-driven spacing (density knob). */
+    /* The hero gauge flexes to fill, chart and chips keep their compact
+       intrinsic height. This is the flat faceplate, the wells carry the depth. */
     padding: var(--space-3);
     gap: var(--space-3);
     /* Keep stage scrolling from chaining out to the document (anchored bars). */
     overscroll-behavior: contain;
   }
-  /* Spare height splits gauge-first: the hero gauge takes 3 shares, the chart
-     1 share (capped below), so the faceplate is always intentionally filled —
-     no dead band between the controls and the chart. Crucially neither may
-     shrink below its own content: with min-height:0 the gauge panel would
-     under-shrink and its gauge/controls would overflow and overlap the
-     chart/chips. Keeping the content floor means the stage column overflows
-     and the stage (overflow-y:auto) scrolls instead — correct when space is
-     tight (e.g. both panels docked on a narrow stage). */
+  /* Spare height splits gauge-first: 3 shares to the gauge, 1 to the chart.
+     Neither may shrink below its own content. Under min-height:0 the gauge
+     panel under-shrinks until its controls overlap the chart; with the content
+     floor the stage column overflows and the stage scrolls instead. */
   .stage > :global(.gauge-panel) {
     flex: 3 1 auto;
   }
@@ -403,8 +393,8 @@
     overflow: hidden;
   }
 
-  /* The logo doubles as a "home" action — reads as the wordmark, with just a
-     hover/focus affordance to signal it's clickable. */
+  /* The logo doubles as a "home" action: it reads as the wordmark, with a
+     hover/focus affordance to signal it is clickable. */
   .brand-btn {
     display: inline-flex;
     align-items: center;
@@ -513,12 +503,10 @@
     border-color: var(--err);
   }
 
-  /* < 760: the whole document scrolls instead of the stage. The stage must
-     stop being an overscroll-containing scroll container here — otherwise it
-     captures wheel/touch gestures over the middle and, having nothing to
-     scroll internally, refuses to chain them out to the document (the page
-     becomes unscrollable from the center, breaking phone usability). Letting
-     it overflow visibly returns scroll control to the document. */
+  /* Under 760px the document scrolls, not the stage. An overscroll-containing
+     stage captures wheel and touch gestures over the middle, has nothing to
+     scroll internally, and refuses to chain them out, so the page cannot be
+     scrolled from its center. Overflowing visibly returns scroll to the page. */
   @media (max-width: 759px) {
     /* bp: stacked */
     #console {

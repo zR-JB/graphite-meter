@@ -1,15 +1,12 @@
 /**
- * Message-bus wire codec — the TS half of the cross-language pin.
- * The Go half is go/internal/wire/{opcodes,frame}.go. Both encoders/decoders
- * assert byte-for-byte identity across versions (wire.test.ts, frame_test.go).
- *
- * Framing is message-delimited ASCII — one logical message per WS frame / WT
- * datagram, parsed by indexOf(',') slicing, never JSON, never regex. This module
- * is imported by the ping worker (workers/ping-worker.ts); the main thread never
- * touches frames.
+ * Message-bus wire codec, the TS half of a cross-language pin with
+ * go/internal/wire/{opcodes,frame}.go. Both sides assert byte-for-byte identity
+ * across versions (wire.test.ts, frame_test.go). Framing is message-delimited
+ * ASCII: one message per WS frame or WT datagram, parsed by indexOf(',')
+ * slicing, never JSON, never regex. Only the ping worker imports this module.
  */
 
-/** Opcode keyword table — uppercase keywords, pinned as the TS mirror of
+/** Opcode keyword table: uppercase keywords, the TS mirror of
  *  go/internal/wire/opcodes.go. */
 export const Op = {
   HI: "HI",
@@ -21,11 +18,9 @@ export const Op = {
   ERR: "ERR",
 } as const;
 
-/**
- * A parsed wire frame. `id` is a uint32 (safe as a JS number); `nanos`, `bytes`,
- * and `n` are uint64 and MUST be `bigint` so the boundary value
- * 18446744073709551615 round-trips byte-exact (it exceeds Number.MAX_SAFE_INTEGER).
- */
+/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` and
+ *  `bytes` are uint64 and MUST be `bigint`: 18446744073709551615 exceeds
+ *  Number.MAX_SAFE_INTEGER and still has to round-trip byte-exact. */
 export type Frame =
   | { op: "READY" }
   | { op: "BYE" }
@@ -55,8 +50,8 @@ const MAX_U32 = 4294967295n;
 const MAX_U64 = 18446744073709551615n;
 
 /** Parse a bare unsigned decimal integer the same way Go's strconv.ParseUint
- *  does: digits only, non-empty, no sign/whitespace. Returns null on reject. No
- *  regex — a plain char-code scan keeps the framing parse allocation-free. */
+ *  does: digits only, non-empty, no sign or whitespace. Returns null on reject.
+ *  A plain char-code scan keeps the framing parse allocation-free. */
 function parseUint(s: string): bigint | null {
   if (s.length === 0) return null;
   for (let i = 0; i < s.length; i++) {

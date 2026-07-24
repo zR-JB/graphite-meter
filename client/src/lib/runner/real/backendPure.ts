@@ -1,5 +1,5 @@
 /**
- * RealRunner's pure helpers — origin/URL mapping, small math, and stage-activity
+ * RealRunner's pure helpers: origin/URL mapping, small math, and stage-activity
  * queries with no fetch/worker/websocket entanglement. They live apart from
  * RealRunner.ts so they are unit-testable without its build-time BUILD defines.
  */
@@ -17,15 +17,10 @@ import type {
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
 
-/**
- * Server route paths — the TS half of the cross-language pin. The Go half is
- * go/internal/server/listeners.go (what the mux mounts) and
- * go/internal/wire/preflight.go (the target defaults). Both halves assert against
- * api/routes.txt (routes.test.ts, routes_test.go).
- *
- * Preflight advertises origins only — the paths are not on the wire — so every
- * language keeps its own table and the pin is what makes the tables agree.
- */
+/** Server route paths, the TS half of a cross-language pin. Preflight advertises
+ *  origins only, so Go keeps its own table (go/internal/server/listeners.go,
+ *  go/internal/wire/preflight.go) and both halves assert against api/routes.txt
+ *  (routes.test.ts, routes_test.go). */
 export const ROUTES = {
   probe: "/probe",
   download: "/download",
@@ -114,8 +109,8 @@ export function classifyTransportDiscovery(
   });
   const throughput: TransportDiscovery["throughput"] = {};
   for (const target of throughputTargets) {
-    // One entry per origin, and a target that names its protocol outranks a
-    // negotiated one — the named protocol is what selection can act on.
+    // One entry per origin. A target naming its protocol outranks a negotiated
+    // one: selection can only act on a named protocol.
     const current = throughput[target.origin]?.target;
     if (current && current.protocol !== "negotiated") continue;
     throughput[target.origin] = {
@@ -232,10 +227,9 @@ export function needsPings(activity: PhaseActivity): boolean {
   );
 }
 
-/** Per-lane spawn delay for `streams` parallel lanes over a `warmupMs`
- *  warmup window, capped at `baseMs` (RealRunner's LANE_STAGGER_MS) but
- *  shrunk so even the last lane (index streams-1) still starts within half
- *  the warmup. Zero (spawn together) for a single lane or no warmup. */
+/** Per-lane spawn delay for `streams` parallel lanes over a `warmupMs` window.
+ *  Caps at `baseMs`, and shrinks so the last lane still starts within half the
+ *  warmup. Zero (spawn together) for a single lane or no warmup. */
 export function laneStaggerMs(
   streams: number,
   warmupMs: number,

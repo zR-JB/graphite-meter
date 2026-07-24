@@ -12,13 +12,13 @@ const CFG: SizerCfg = {
 
 test("elapsed well under target: size grows, clamped by stepUp", () => {
   const { bytes, ewma } = nextTransferBytes(10_000, 200, 0, CFG);
-  expect(bytes).toBe(20_000); // 10_000 * stepUp — wanted size (5x) is clamped
+  expect(bytes).toBe(20_000); // 10_000 * stepUp: the wanted 5x is clamped
   expect(ewma).toBe(50_000); // seeded straight from the observed rate
 });
 
 test("elapsed well over target: size shrinks, clamped by stepDown", () => {
   const { bytes, ewma } = nextTransferBytes(10_000, 5_000, 0, CFG);
-  expect(bytes).toBe(5_000); // 10_000 * stepDown — wanted size (0.2x) is clamped
+  expect(bytes).toBe(5_000); // 10_000 * stepDown: the wanted 0.2x is clamped
   expect(ewma).toBe(2_000);
 });
 

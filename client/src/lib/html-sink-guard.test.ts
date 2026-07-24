@@ -2,14 +2,13 @@ import { test, expect } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Svelte's {@html expr} bypasses auto-escaping, so any server- or user-derived
-// string reaching one is stored/reflected XSS. The application ships with only
-// a permissive script-src on its own pages (the login surface is hash-pinned),
-// so an XSS there reads the CSRF token, mints a measurement grant, and forges
-// same-origin requests — a full account-scope compromise. This test is the
-// guard: every {@html} must render a vetted static-icon expression and nothing
-// else. Adding an entry certifies you checked the expression can only ever hold
-// trusted, build-time SVG markup — never a value that crossed the network.
+// Svelte's {@html expr} bypasses auto-escaping, so a server- or user-derived
+// string reaching one is XSS. App pages carry a permissive script-src (only the
+// login surface is hash-pinned), so such an XSS reads the CSRF token, mints a
+// measurement grant, and forges same-origin requests: full account compromise.
+
+// Expressions vetted as build-time SVG markup. An entry asserts the value never
+// carries anything from the network.
 const ALLOWED = new Set([
   "ICON.bidirectional",
   "ICON.bolt",
@@ -18,9 +17,8 @@ const ALLOWED = new Set([
   "ICON.info",
   "ICON.settings",
   "THEME_ICON[store.theme]",
-  // Local loop variables that only ever hold ICON.* values:
-  //   StageTrack: s.icon from a static STAGES table
-  //   ResultCards: c.icon assigned ICON.download/upload/bidirectional/ping
+  // Loop variables holding ICON.* only: StageTrack s.icon from the static
+  // STAGES table, ResultCards c.icon from its static card table.
   "s.icon",
   "c.icon",
 ]);

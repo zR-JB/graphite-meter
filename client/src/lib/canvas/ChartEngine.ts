@@ -14,18 +14,18 @@ import { presentation, type PresentationHandle } from "./presentation";
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencySample[];
-  /** False when latency is fully disabled — suppresses the latency line and
-   *  the right (latency) axis so the chart reads as throughput-only. */
+  /** False when latency is fully disabled: the latency line and the right
+   *  axis are suppressed so the chart reads as throughput-only. */
   latencyEnabled: boolean;
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
   phaseStartedAtMs: number;
-  /** Monotonic run counter from the store; a change means a new run started
-   *  and the engine must drop all accumulated per-run state. */
+  /** Monotonic run counter from the store. A change marks a new run, and the
+   *  engine drops all accumulated per-run state. */
   runSeq: number;
-  /** Absolute throughput Y-axis ceiling (bytes/s), shared verbatim with the gauge
-   *  dial (store.displayScaleBytesPerSec) so the two instruments are identically
-   *  scaled. Already dwell-filtered + tiered upstream; the chart just follows it. */
+  /** Absolute throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered
+   *  upstream. Shared verbatim with the gauge dial
+   *  (store.displayScaleBytesPerSec) so both instruments scale identically. */
   scaleBytesPerSec: number;
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
@@ -41,9 +41,9 @@ export interface ChartFormatters {
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
-  /** The single lane's rate during download/upload; null during bidirectional
-   *  (which reports its two lanes separately below) or where there's no
-   *  throughput data under the cursor at all. */
+  /** The single lane's rate during download/upload. Null during bidirectional,
+   *  which reports its two lanes separately below, and null where the cursor
+   *  sits outside the throughput data. */
   bytesPerSec: number | null;
   /** Bidirectional's two concurrent lanes; null outside that phase. */
   downBytesPerSec: number | null;
@@ -215,7 +215,7 @@ export class ChartEngine implements CanvasEngine {
 
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
-    // Cap at 2 — same rationale as the gauge: raster cost, not fidelity.
+    // Cap at 2: beyond that the raster cost grows without visible fidelity.
     this.#dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rect = this.#canvas.getBoundingClientRect();
     this.#w = Math.max(1, rect.width);
@@ -300,7 +300,11 @@ export class ChartEngine implements CanvasEngine {
       panel: g("--surface-1", "#1c1f23"),
       brand: g("--brand", "#6db0b8"),
     };
-    this.#gradH = -1; // colors changed → rebuild cached gradients on next draw
+    this.#invalidateGradients();
+  }
+
+  #invalidateGradients(): void {
+    this.#gradH = -1;
   }
 
   #areaGrad(

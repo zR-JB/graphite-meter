@@ -1,14 +1,10 @@
 /* ============================================================
- * The Graphite Meter — closed-loop transfer sizer (shared)
+ * The Graphite Meter: closed-loop transfer sizer (shared)
  * ============================================================
- *
- * One pure function, used by the upload worker (POST size) and the experimental
- * chunked-download worker (request size). It sizes the NEXT transfer to a target
- * wall-duration from the LAST one's observed rate, so a single tool spans dial-up
- * to multi-Gbit: big transfers on a fast link, small responsive ones on a slow or
- * dropping link. The rate is EWMA-smoothed (per-lane, so lanes can't synchronise
- * into oscillation) and the size is step-clamped (the hysteresis) and bounded.
- * There are NO preemptive kills — the resize only governs the next transfer.
+ * Sizes the NEXT transfer to a target wall-duration from the last one's observed
+ * rate, so one tool spans dial-up to multi-Gbit. The rate is EWMA-smoothed
+ * per-lane, so lanes cannot synchronise into oscillation. The size is
+ * step-clamped and bounded. The current transfer always runs to completion.
  * ============================================================ */
 
 export interface SizerCfg {
@@ -19,7 +15,7 @@ export interface SizerCfg {
   maxBytes: number;
   /** Observed-rate EWMA weight (0..1); higher tracks faster, noisier. */
   alpha: number;
-  /** Per-step growth / shrink clamp — the hysteresis (e.g. 2 and 0.5). */
+  /** Per-step growth / shrink clamp, the hysteresis (e.g. 2 and 0.5). */
   stepUp: number;
   stepDown: number;
 }

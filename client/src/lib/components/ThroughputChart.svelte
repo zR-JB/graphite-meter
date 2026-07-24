@@ -26,15 +26,10 @@
     void store.stageResults.download;
     void store.stageResults.upload;
     void store.result?.bidirectional;
-    // Unit/base toggles only change the axis tick FORMAT, not the data — but the
-    // loop parks once a finished run settles, so without tracking them here a
-    // post-run toggle would never re-wake the loop and the ticks would freeze.
+    // Tick format only, but the loop parks after a run: tracking these re-arms
+    // it. unitLabel also moves with the raw peak's k/M/G/T prefix on its own.
     void store.unitBase;
     void store.unitKind;
-    // unitLabel changes whenever the shared prefix index (k/M/G/T) moves —
-    // that can happen from the raw peak alone, independent of
-    // displayScaleBytesPerSec (the DWELL-FILTERED sustained peak, a
-    // different signal) — so track it directly too.
     void store.unitLabel;
     engine?.wake();
   });
@@ -67,7 +62,7 @@
     engine = new ChartEngine(
       () => ({
         throughput: store.throughput,
-        latency: store.latency, // raw — the engine buckets the LINE itself; axis/hover use raw
+        latency: store.latency, // raw: the engine buckets the line, axis and hover use raw
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
         phaseStartedAtMs: store.phaseStartedAtMs,

@@ -50,8 +50,8 @@ export class PingScheduler {
     if (this.#running) this.#trySend();
   }
 
-  /** A PING completed. Reply-driven mode continues immediately; fixed mode
-   * sends only when its start-to-start boundary is already due. */
+  /** Marks the in-flight PING complete. Reply-driven mode continues
+   * immediately; fixed mode sends only when its boundary is already due. */
   complete(): void {
     if (!this.#running) return;
     if (this.pacing.kind === "reply-driven") {

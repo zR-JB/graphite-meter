@@ -20,11 +20,12 @@ export interface SweepTargetInput {
   completedKind: "speed" | "latency";
 }
 
-/** The 0-1 sweep fraction the dial eases toward for the given frame's state.
- *  Mirrors GaugeEngine's per-phase target: a transfer phase reads the
- *  absolute value/scale ratio, latency reads RTT/latencyScale, warmup/idle/
- *  aborted/error hold fixed indeterminate positions, and complete normalizes
- *  the authoritative final metric against the current display scale. */
+/** Fixed positions for the phases that carry no measurable value. */
+const PROBE_SWEEP = 0.3;
+const IDLE_SWEEP = 0.1;
+const FAULT_SWEEP = 0.05;
+
+/** The 0-1 sweep fraction the dial eases toward for the given frame's state. */
 export function sweepTarget(s: SweepTargetInput): number {
   const throughput = () => {
     const scale = s.scaleBytesPerSec > 0 ? s.scaleBytesPerSec : 1;
@@ -41,15 +42,17 @@ export function sweepTarget(s: SweepTargetInput): number {
       return throughput();
     case "connecting":
     case "warmup":
-      return 0.3; // indeterminate — connection probe, no meaningful rate yet
+      return PROBE_SWEEP;
     case "latency":
       return latency();
     case "idle":
-      return 0.1;
+      return IDLE_SWEEP;
     case "complete":
       return s.completedKind === "latency" ? latency() : throughput();
+    case "aborted":
+    case "error":
     default:
-      return 0.05; // aborted / error
+      return FAULT_SWEEP;
   }
 }
 

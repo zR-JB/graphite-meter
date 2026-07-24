@@ -1,6 +1,6 @@
 /* ============================================================
- * Ping worker — adaptive RTT/loss-timeout estimator (RFC 6298-style).
- * Pure so it's unit-testable without a WebSocket.
+ * Adaptive RTT/loss-timeout estimator for the ping worker (RFC 6298-style).
+ * Pure so it is unit-testable without a WebSocket.
  * ============================================================ */
 
 export interface RttEstimate {
@@ -26,10 +26,10 @@ export function observeRtt(prev: RttEstimate, rttMs: number): RttEstimate {
   };
 }
 
-/** The adaptive loss timeout: RTO = SRTT + K·RTTVAR, clamped to
- *  [lossFloorMs, lossCeilMs]. Before the first sample the floor governs
- *  (cold start). The RTTVAR term spikes on a sudden RTT jump, so the timeout
- *  grows within ~1 RTT instead of false-flagging loss. */
+/** Adaptive loss timeout: RTO = SRTT + K·RTTVAR, clamped to
+ *  [lossFloorMs, lossCeilMs]. Without a sample the floor governs (cold start).
+ *  RTTVAR spikes on a sudden RTT jump, so the timeout grows within ~1 RTT
+ *  instead of false-flagging loss. */
 export function lossTimeout(
   est: RttEstimate,
   lossK: number,

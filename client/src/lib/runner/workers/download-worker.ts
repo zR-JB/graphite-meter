@@ -1,56 +1,11 @@
 /* ============================================================
- * The Graphite Meter — Download read-and-count worker
+ * The Graphite Meter: download read-and-count worker
  * ============================================================
- *
- * One worker per parallel download stream. It opens a streaming fetch
- * against GET /download, reads the body chunk-by-chunk, and **counts
- * byteLength then discards the chunk** — the random payload is never kept
- * and never crosses the thread boundary. Only tiny `{ bytes }` deltas are
- * posted back (batched to ~50 ms), so the main thread aggregates many
- * streams without the read loop ever competing with gauge rendering.
- *
- * The lane stays saturated for the whole stage: if the server stream ends
- * naturally (Content-Length reached) the worker re-fetches until stopped.
- * `stop` aborts the in-flight fetch. A recoverable failure is reported so
- * the main thread can stall + restart this single lane.
- *
- * ── fetch both ways; the asymmetry is the body, not the API ──
- * Both directions use `fetch` (see upload-worker.ts) — the upload needs no
- * progress events; the server's /upload/progress count is authoritative there.
- * What still differs is which side streams:
- *   • Download = fetch + body.getReader(): the only way to read-and-DISCARD a
- *     streamed RESPONSE at O(1) memory. XHR buffers the whole response
- *     internally (responseText/response), so a multi-GiB download test would
- *     OOM — XHR-for-download is a non-starter. We use a BYOB reader reusing ONE
- *     buffer (see readBody): at multi-Gbit/s the default reader's per-chunk
- *     Uint8Array allocation + GC is the read-side ceiling — and the reason the
- *     JS reader couldn't keep up with the wire (so the link buffered ahead and
- *     the kernel/btop counter ran higher than what the app actually consumed,
- *     most visibly in Firefox). Reusing the buffer removes that ceiling.
- *   • Upload = fetch + a fixed Blob REQUEST body (NOT a ReadableStream — that
- *     `duplex:'half'` streaming form requires HTTP/2, a dead end on our cleartext
- *     h1.1 origin). The Blob is referenced, not copied, so the footprint stays flat.
- * The worker message protocol is the same shape both ways (download posts
- * `progress` byte deltas; upload posts `alive` per completed POST), so RealBackend's
- * pool treats them uniformly. A truly symmetric path needs WebTransport, whose
- * contract is reserved and inactive in this release and slated to be activated
- * (docs/ARCHITECTURE.md#roadmap).
- *
- * ── Firefox download RAM caveat (known, documented, not a bug we can fix) ──
- * When the LINK is faster than this read loop (loopback / fast LAN), Firefox
- * pulls bytes off the socket into its own internal stream buffers far ahead of
- * what getReader() has drained, before its high-water mark engages backpressure.
- * On a ~40 Gbit/s loopback that lookahead buffer is huge and slow to saturate,
- * so the Firefox PROCESS RAM balloons (10+ GB) and the app's counted rate runs
- * BELOW what btop/the server see — the missing bytes are sitting in Firefox's
- * buffer, not lost. We already do everything fetch exposes for backpressure
- * (one reused BYOB buffer; we only read as fast as we count), so there is no JS
- * lever left. It only manifests when the BROWSER is the bottleneck; on any real
- * internet path the LINE is the bottleneck, the reader keeps up, and the gap
- * never appears. Chrome buffers far less and does not show it.
- *
- * Only dependency is the shared debug logger (gated; silent unless the dev
- * flag is on), so it still bundles cleanly as a Vite module worker.
+ * One worker per parallel download stream. It streams GET /download, counts
+ * each chunk's byteLength and discards the chunk, so the payload never crosses
+ * the thread boundary and memory stays O(1). Only `{ bytes }` deltas go back,
+ * batched to ~50 ms. The lane re-fetches until stopped; `stop` aborts the fetch
+ * and a recoverable failure lets the main thread restart this lane alone.
  * ============================================================ */
 
 import {
@@ -69,10 +24,9 @@ import {
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 
 /** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
- *  switches the EXPERIMENTAL mode: instead of one long stream (the 64 GiB request),
- *  request adaptively-sized `&bytes=N` chunks closed-loop to a wall-target (see
- *  autosize.ts), re-fetching on the SAME keep-alive connection so cwnd is preserved
- *  (no per-chunk slow-start). Default off; for A/B-ing ramp responsiveness. */
+ *  selects the experimental mode: adaptively-sized `&bytes=N` requests (see
+ *  autosize.ts) on one keep-alive connection, preserving cwnd, instead of a
+ *  single 64 GiB stream. Default off, for A/B-ing ramp responsiveness. */
 type InMsg =
   | {
       type: "start";
@@ -118,15 +72,15 @@ let headers: HeadersInit | undefined;
 /** Post a delta no more often than this (ms); flushed on stream end / stop. */
 const POST_INTERVAL_MS = 50;
 
-/** Size of the single reused BYOB read buffer. Large enough that one read can
- *  return a big slice (fewer read() turns per second), small enough to stay
- *  lean — it's one buffer per worker, reused for the whole stage. */
+/** Size of the single reused BYOB read buffer, one per worker for the whole
+ *  stage. Firefox pulls far ahead of the reader into its own buffers when the
+ *  link outruns this loop (loopback), inflating process RAM and undercounting.
+ *  Reusing one buffer is the only backpressure lever fetch exposes. */
 const READ_BUF_BYTES = 1024 * 1024; // 1 MiB
 
-/** Experimental chunked-request sizer (see autosize.ts). MAX is generous — the
- *  reader discards as it counts (O(1) memory), so a big chunk costs no RAM; on a
- *  fast stable link the size simply climbs toward it (≈ the long-stream behaviour),
- *  and only a slow or dropping link shrinks it for responsiveness. */
+/** Experimental chunked-request sizer (see autosize.ts). The generous max costs
+ *  no RAM because the reader discards as it counts, so a fast stable link climbs
+ *  toward it and only a slow or dropping link shrinks for responsiveness. */
 const CHUNK_SIZER: SizerCfg = {
   targetMs: 350,
   minBytes: 128 * 1024,
@@ -149,9 +103,9 @@ let windowStart = 0;
 
 /** Stream index, only used to tag debug lines (`dl-worker#<id>`). */
 let streamId = 0;
-/** Raw-receive debug window: bytes since the last 1 Hz log + its start time +
+/** Raw-receive debug window: bytes since the last 1 Hz log, its start time, and
  *  the running per-stream total. Independent of the 50 ms progress batching, so
- *  it reflects exactly what THIS reader pulls off the socket — the figure to
+ *  it reflects exactly what this reader pulls off the socket, the figure to
  *  compare against btop and the server `-verbose` log. */
 let dbgWinBytes = 0;
 let dbgWinStart = 0;
@@ -208,9 +162,8 @@ async function run(url: string): Promise<void> {
   while (!stopped) {
     abort = new AbortController();
     let lastPost = performance.now();
-    // Count a chunk's bytes (the chunk itself is dropped): batch deltas to the
-    // main thread (~50 ms) and, when verbose, log the raw 1 Hz receive rate —
-    // BEFORE any aggregation/EMA, the ground truth for "did the data reach JS?".
+    // Count the chunk and drop it. Deltas batch to the main thread; verbose mode
+    // logs the pre-aggregation 1 Hz receive rate, ground truth for the reader.
     const count = (n: number): void => {
       windowBytes += n;
       const now = performance.now();
@@ -267,7 +220,7 @@ async function run(url: string): Promise<void> {
         ));
       }
     } catch (err) {
-      if (stopped) return; // aborted by stop() — a clean teardown, not an error
+      if (stopped) return; // stop() aborted it: a clean teardown, not an error
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(
@@ -286,28 +239,36 @@ async function run(url: string): Promise<void> {
   }
 }
 
+/** A BYOB reader over the body, or null when the body is not a byte stream.
+ *  Reusing one buffer avoids the default reader's per-chunk allocation and GC,
+ *  which is the read-side throughput ceiling at multi-Gbit/s. */
+function byobReader(
+  body: ReadableStream<Uint8Array>,
+): ReadableStreamBYOBReader | null {
+  try {
+    return body.getReader({ mode: "byob" });
+  } catch {
+    return null;
+  }
+}
+
 /** Read a response body to completion, feeding each chunk's byte count to
- *  `count`. Prefers a BYOB reader reusing ONE ArrayBuffer so the hot loop does
- *  no per-chunk allocation/GC (the read-side throughput ceiling); falls back to
- *  the default reader if the body isn't a byte stream. */
+ *  `count`. fetch plus a reader is the only way to read and discard a streamed
+ *  response at O(1) memory: XHR buffers the whole response internally, so a
+ *  multi-GiB download would exhaust memory. */
 async function readBody(
   body: ReadableStream<Uint8Array>,
   count: (n: number) => void,
 ): Promise<void> {
-  let byob: ReadableStreamBYOBReader | null = null;
-  try {
-    byob = body.getReader({ mode: "byob" });
-  } catch {
-    byob = null; // not a byte stream (shouldn't happen for fetch) — fall back
-  }
+  const byob = byobReader(body);
   if (byob) {
     let buf = new ArrayBuffer(READ_BUF_BYTES);
     for (;;) {
       const chunk = await byob.read(new Uint8Array(buf));
       if (chunk.done) break;
       if (chunk.value.byteLength) count(chunk.value.byteLength);
-      // read() DETACHED our buffer and handed the same backing store back
-      // inside `value`; reuse it for the next read so nothing is allocated.
+      // read() detaches the buffer and returns the same backing store in
+      // `value`; reusing it keeps the loop allocation-free.
       buf = chunk.value.buffer as ArrayBuffer;
     }
     return;

@@ -1,5 +1,5 @@
 // Converts application goodput into forward-direction physical link occupancy.
-// Only protocol bytes are added; runtime behavior and reverse traffic are not.
+// Counts protocol bytes only, excluding runtime behavior and reverse traffic.
 import type {
   CompensationTransport,
   ConnectionProfile,

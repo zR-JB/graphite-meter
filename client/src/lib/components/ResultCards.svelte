@@ -513,7 +513,7 @@
     font-size: 11px;
   }
 
-  /* Guided empty-state line — quiet invitation while there's no data. */
+  /* Guided empty-state line: a quiet invitation while there is no data. */
   .metric-guidance {
     margin: var(--space-2) 0 0;
     text-align: center;
@@ -522,10 +522,9 @@
     color: var(--text-soft);
   }
 
-  /* ---- Compact strip (mobile-first "see earlier stages while the next one
-     runs") ---- One slim row per finished/active stage: icon + label + number,
-     no card chrome, no pip, no wire-estimate line. Deliberately smaller by
-     construction rather than a breakpoint-shrunk full card. */
+  /* Compact strip: one slim row per finished or active stage, showing icon,
+     label, and number. It shows earlier stages while the next one runs, and is
+     small by construction, with no card chrome, pip, or wire-estimate line. */
   .result-chips {
     display: flex;
     flex-direction: column;

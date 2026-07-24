@@ -1,9 +1,6 @@
 <script lang="ts">
-  /* ============================================================
-   * <Switch> — toggle control
-   * Track + knob, brand accent when on. Native checkbox kept
-   * for accessibility (visually hidden, focusable).
-   * ============================================================ */
+  /* Toggle control: track and knob, brand accent when on. A native checkbox
+     sits behind it for accessibility, visually hidden and focusable. */
   import { tooltip } from "../actions/tooltip";
 
   interface Props {
@@ -44,9 +41,8 @@
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
   {#if label}
     {#if tooltipText}
-      <!-- Only wired with the tooltip action when there's actually text to
-           show — the action makes its node focusable, which would add a
-           pointless extra tab stop to every plain (no-tooltip) switch. -->
+      <!-- The tooltip action is wired only when there is text: it makes its
+           node focusable, and a plain switch needs no extra tab stop. -->
       <span class="label" use:tooltip={tooltipText}>{label}</span>
     {:else}
       <span class="label">{label}</span>
@@ -56,11 +52,8 @@
 
 <style>
   .switch {
-    /* Containing block for the visually-hidden absolute checkbox below. Without
-       this the input resolves against the next positioned ancestor (e.g. a
-       docked side panel), escapes the panel body's scroll clipping, and its
-       stray off-screen box makes the document scrollable — clicking the switch
-       then focus-scrolls the whole page out of view. */
+    /* Containing block for the hidden absolute checkbox. Without it the box
+       escapes the panel's scroll clipping and focus scrolls the page away. */
     position: relative;
     display: inline-flex;
     align-items: center;

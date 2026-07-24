@@ -2,7 +2,7 @@
 // assume the array is sorted ascending by `t`, which the runner guarantees.
 
 /** Linearly interpolated value at time `t`, or null when `t` falls outside the
- *  sample range — the caller renders nothing rather than extrapolating. */
+ *  sample range: callers render nothing rather than extrapolating. */
 export function interpolateAt<T extends { t: number }>(
   samples: T[],
   t: number,

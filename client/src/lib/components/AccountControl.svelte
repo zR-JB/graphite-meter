@@ -20,10 +20,9 @@
       : (session?.provider ?? ""),
   );
 
-  // authenticatedFetch already redirects on a 403 that carries the
-  // Graphite-Meter-Auth marker. An unqualified 403 — a proxy or WAF refusing
-  // the request — must not be read as an expired session, or a misconfigured
-  // hop in front of the server turns into a /login redirect loop.
+  // authenticatedFetch redirects on a 403 carrying the Graphite-Meter-Auth
+  // marker. A bare 403 (a proxy or WAF refusing the request) is not an expired
+  // session: reading it as one turns a bad hop into a /login redirect loop.
   onMount(async () => {
     try {
       const response = await authenticatedFetch("/auth/session", {

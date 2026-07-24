@@ -123,7 +123,7 @@
     opacity: 0.85;
   }
 
-  /* State tones + pulse cadence. */
+  /* State tones. */
   .dot[data-state="connected"] {
     background: var(--ok);
     box-shadow: 0 0 0 4px var(--ok-soft);

@@ -22,13 +22,14 @@ export interface Domain {
   span: number;
 }
 
-// Position of a value as a 0–100% offset along the track, clamped to the ends.
+// Position of a value as a 0 to 100% offset along the track, clamped at both
+// ends.
 export function pos(value: number | null, domain: Domain): number {
   if (value == null) return 0;
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }
 
-// Width of a min–max band as a percentage, never thinner than a hairline so a
+// Width of a min/max band as a percentage, never thinner than a hairline so a
 // flat distribution still shows.
 export function rangeWidth(
   min: number | null,

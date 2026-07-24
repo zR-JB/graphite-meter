@@ -122,7 +122,7 @@ export function quantile(sorted: number[], q: number): number | null {
 export function niceStep(span: number): number {
   if (span <= 0) return 1;
   const base = 10 ** Math.floor(Math.log10(span));
-  const mantissa = span / base; // 1–10
+  const mantissa = span / base; // 1 to 10
   return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
 }
 
@@ -141,8 +141,8 @@ export function niceDomain(
     clampMinZero?: boolean;
   } = {},
 ): NiceDomain {
-  // Widen around the observed range but enforce a minimum span so flat series
-  // still render as readable charts instead of a line glued to an edge.
+  // Widens around the observed range. The minimum span keeps a flat series
+  // off the chart edge.
   const {
     widen = 1.35,
     minSpanRatio = 0.16,

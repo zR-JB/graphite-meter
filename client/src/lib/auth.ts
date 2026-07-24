@@ -13,9 +13,8 @@ export const authEnabled =
     .querySelector('meta[name="graphite-meter-auth"]')
     ?.getAttribute("content") === "enabled";
 
-/** Navigate to the login page. Named for the side effect: this replaces the
- *  current document, so nothing after the call in the same task runs. The
- *  `expired` reason is the phrasing key the server-rendered login page uses. */
+/** Replaces the current document, so the calling task stops executing here.
+ *  `expired` is the phrasing key the server-rendered login page reads. */
 export function redirectToLogin(): void {
   if (!authEnabled || redirecting) return;
   redirecting = true;

@@ -36,7 +36,7 @@ function parseCorpus(text: string): Row[] {
   return rows;
 }
 
-// Canonical "op=…;k=v;…" render the decode rows pin — the TS mirror of the corpus
+// Canonical "op=…;k=v;…" render the decode rows pin: the TS mirror of the corpus
 // expected column (test artifact; the codec only emits on-wire frames).
 function render(frame: Frame): string {
   switch (frame.op) {

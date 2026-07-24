@@ -1,13 +1,9 @@
 <script lang="ts">
-  /* ============================================================
-   * <PhaseToast> — transient phase-change announcer
-   * A fixed, bottom-right toast that surfaces a contextual message
-   * each time `store.phase` changes, then auto-dismisses.
-   * role="status" + aria-live="polite" gives screen readers a calm,
-   * per-transition announcement (the gauge a11y mirror in GaugePanel
-   * handles the per-value detail). Reduced-motion: the slide/scale is
-   * dropped and it just fades / appears.
-   * ============================================================ */
+  /* Transient phase-change announcer: a fixed, bottom-right toast that
+     surfaces a message each time `store.phase` changes, then auto-dismisses.
+     role="status" plus aria-live="polite" gives screen readers one calm
+     announcement per transition; GaugePanel's mirror carries the per-value
+     detail. Under reduced motion it fades instead of sliding. */
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
@@ -36,10 +32,9 @@
     bidirectional: "Bi-dir",
   };
 
-  // A stall (connection lost) takes over the toast for as long as it lasts —
-  // it is not a phase transition, so it has its own sticky visibility. The
-  // moment the link resumes (`measuring` true) it clears and the normal
-  // phase-change toast resumes. Reads store.stallInfo for the reason copy.
+  // A stall (connection lost) holds the toast for as long as it lasts. It is
+  // not a phase transition, so it gets its own sticky visibility and clears the
+  // moment `measuring` goes true. store.stallInfo carries the reason copy.
   const stalled = $derived(store.isRunning && !store.measuring);
   const stallMessage = $derived.by(() => {
     const info = store.stallInfo;
@@ -193,11 +188,9 @@
       bottom: 40px;
       min-width: 0;
     }
-    /* Routine per-phase-transition toasts duplicate what StatusBar already
-       shows textually in the footer, and fire ~5-6 times per run — on a
-       phone that reads as the notification obstructing the experience.
-       The stall/error/aborted (.alert) toast is the one case nothing else
-       on screen surfaces, so it stays visible here. */
+    /* Routine phase toasts duplicate the StatusBar footer and fire 5 to 6
+       times per run, which on a phone reads as an obstruction. The .alert
+       toast (stall, error, aborted) is the one state nothing else surfaces. */
     .phase-toast:not(.alert) {
       display: none;
     }

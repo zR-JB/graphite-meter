@@ -4,10 +4,8 @@ export function redirectForCredentials(
   return credentials === "include" ? "error" : undefined;
 }
 
-/** Whether a response is the boundary saying "authenticate", as opposed to
- *  anything else that answers 403. Only the marker means an expired session;
- *  a bare 403 from a proxy or WAF in front of the server must not be read as
- *  one, or a misconfigured hop turns into a login redirect loop. */
+/** Only the explicit marker means an expired session. A bare 403 from a proxy
+ *  or WAF must not count, or a misconfigured hop becomes a redirect loop. */
 export function authenticationRequired(response: {
   status: number;
   headers: Pick<Headers, "get">;
@@ -40,9 +38,8 @@ export async function sessionAuthenticationRequired(
     });
     return authenticationRequired(response);
   } catch {
-    // A transport failure, a refused redirect, or the timeout above is not
-    // evidence of expiry — only an explicit marker response is. Reporting one
-    // as expiry would bounce a user off a working page during a network blip.
+    // Transport failure, refused redirect, and timeout are not expiry
+    // evidence: a network blip must not bounce a user off a working page.
     return false;
   } finally {
     clearTimeout(timeout);

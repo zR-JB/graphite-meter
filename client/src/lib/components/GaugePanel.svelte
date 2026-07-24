@@ -166,8 +166,8 @@
     status ? `${status.headline} — ${status.action}` : hint,
   );
 
-  // Wake the gauge loop for exactly the state GaugeEngine reads: it parks once a
-  // run settles, so anything untracked here would leave the dial frozen.
+  // Wake the gauge loop for exactly the state GaugeEngine reads. The loop parks
+  // once a run settles, so untracked state leaves the dial frozen.
   $effect(() => {
     void store.phase;
     void store.throughput.length;
@@ -187,19 +187,17 @@
     decayPresentation?.invalidate();
   });
 
-  // Returns whether the scheduler should keep animating, i.e. whether the
-  // stall ramp still has frames left to play.
   function advanceDecay(now: number) {
     if (store.measuring || !store.stalledSince) return false;
     nowWall = now;
     engine?.wake();
-    return now - store.stalledSince < STALL_DECAY_MS;
+    const rampHasFramesLeft = now - store.stalledSince < STALL_DECAY_MS;
+    return rampHasFramesLeft;
   }
 
-  // The live region mirrors a value that updates every frame, so mid-phase
-  // announcements are rate-limited to one per second — a screen reader would
-  // otherwise never finish a sentence. Phase changes and any non-running update
-  // jump the queue so the state is announced the instant it changes.
+  // The live region mirrors a per-frame value, so mid-phase announcements are
+  // rate-limited to one per second: a screen reader needs that long to finish a
+  // sentence. Phase changes and non-running updates jump the queue.
   const ANNOUNCE_INTERVAL_MS = 1000;
   let announcement = $state("");
   let pendingAnnouncement = "";
@@ -328,29 +326,24 @@
 </section>
 
 <style>
-  /* Faceplate: the gauge panel is part of the instrument surface, not a floating
-     card. It's flat and transparent; the gauge + latency panels are the
-     engraved wells milled into it (--elev-inset), and the controls sit on the
-     faceplate below them. */
+  /* Faceplate: the gauge panel is flat and transparent, part of the instrument
+     surface. The gauge and latency panels are the wells milled into it
+     (--elev-inset), and the controls sit on the faceplate below them. */
   .gauge-panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
     padding: 0;
     background: transparent;
-    /* Container for .instrument's @container rule below — docked side panels
-       can shrink this column independent of viewport width. Must live here,
-       not on .instrument: a container query can only restyle descendants of
-       the containment context, never the element itself. */
+    /* Query context for .instrument, so a docked panel shrinking this column
+       restyles it. It sits here: a container query only styles descendants. */
     container-type: inline-size;
     container-name: viz;
   }
-  /* ---- The instrument grid ----
-     One named-area grid places stage-head, gauge, Engage, and the optional
-     latency panel, so the arrangement flips at a single breakpoint. The
-     gauge+latency row is `minmax(220px, 1fr)` — a content-independent track,
-     so the latency panel's content (which scrolls via its own overflow:auto)
-     can never stretch the gauge's height. */
+  /* The instrument grid: one named-area grid places stage-head, gauge, Engage,
+     and the optional latency panel, so the arrangement flips at a single
+     breakpoint. The gauge+latency row is a content-independent track, so the
+     latency panel's own scrolling never stretches the gauge's height. */
   .instrument {
     display: grid;
     gap: var(--space-3);
@@ -391,7 +384,7 @@
         / 1fr;
     }
   }
-  /* The gauge well — the deepest recess on the faceplate, the signature. */
+  /* The gauge well: the deepest recess on the faceplate. */
   .stage {
     grid-area: gauge;
     position: relative;
@@ -402,23 +395,20 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
     overflow: hidden;
-    /* Size query container so the hero number scales to the gauge's SMALLER
-       dimension (cqmin) — the same dimension that sizes the ring. cqw alone
-       overflowed in a wide-but-short well (ring sized by height, text by
-       width); cqmin keeps the number proportional to the ring at any aspect. */
+    /* Size container so the hero number scales with cqmin, the same smaller
+       dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
   }
-  /* Engage's slot — RunButton centers itself (width:100%/max-width:320px/
-     align-self:center); this slot only needs to be a flex row so that
-     self-centering applies. */
+  /* Engage's slot: RunButton centers itself (width:100%, max-width:320px,
+     align-self:center), so this slot only has to be a flex row. */
   .engage-slot {
     grid-area: engage;
     display: flex;
     justify-content: center;
   }
-  /* Latency profile — a matching engraved well; identical sizing to the gauge
-     so the pair always reads as one balanced instrument. Its content scrolls
-     within the shared height rather than forcing the row taller. */
+  /* Latency profile: a matching engraved well, sized identically to the gauge
+     so the pair reads as one balanced instrument. Its content scrolls within
+     the shared height rather than forcing the row taller. */
   .latency-panel {
     grid-area: latency;
     min-width: 240px;
@@ -444,15 +434,14 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    /* Keep the number clear of the gauge ring's sides; the inline padding also
-       bounds how wide the value can get before the cqw sizing reins it in. */
+    /* Keep the number clear of the gauge ring's sides. The inline padding also
+       bounds how wide the value grows before the cqmin sizing reins it in. */
     padding-inline: 9%;
     pointer-events: none;
   }
-  /* The hero number — the one typographic moment. Space Grotesk (display),
-     tabular figures so the live-updating value never shifts layout. Sized in
-     cqw (relative to the gauge well) so large numbers shrink to fit a narrow
-     gauge instead of overflowing; clamped so it stays legible and never huge. */
+  /* The hero number: the display face with tabular figures, so a live value
+     never shifts layout. Sized in cqmin against the gauge well so large numbers
+     shrink to fit a narrow gauge, clamped so it stays legible. */
   .gauge-value {
     font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
@@ -472,7 +461,7 @@
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text-soft);
-    /* No uppercase — unit symbols are case-significant (Mbit/s, kB/s, MiB/s). */
+    /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
   }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect
@@ -515,11 +504,9 @@
     color: var(--err);
   }
 
-  /* Stage-head block — Test Stages header + track. Placed by the instrument
-     grid above (top on mobile, bottom on desktop — see .instrument). Capped
-     to a comfortable measure and centered within its (possibly full-width,
-     two-column-spanning) grid area so it never stretches absurdly wide on
-     desktop. */
+  /* Stage-head block: Test Stages header plus track, placed by the instrument
+     grid (top on mobile, bottom on desktop). Capped to a comfortable measure
+     and centered so it never stretches across a full two-column span. */
   .stage-head {
     grid-area: stagehead;
     display: flex;
@@ -549,24 +536,19 @@
     letter-spacing: 0;
   }
 
-  /* Results slot — empty at idle, compact strip while a run is in progress,
-     the full card grid once complete. The min-height reserve applies in EVERY
-     state so the gauge above is the same size at page load, mid-run, at
-     results, and back home. Wider than .stage-head/.controls-head above it
-     (deliberately — this is the one element in the instrument allowed to
-     outgrow that 600px measure): at up to 4 visible cards (download, upload,
-     bidirectional, ping), a 600px cap forces an uneven 3-then-1 wrap; 760px
-     comfortably fits all 4 in one row (4×~181px + 3×12px gap) while still
-     reading fine at 1-3 cards, where the grid just stretches wider. */
+  /* Results slot: empty at idle, a compact strip mid-run, the full card grid
+     once complete. The min-height reserve holds in every state so the gauge
+     above keeps one size. 760px fits all 4 cards in one row (4x181px + 3x12px
+     gap); the 600px measure used above wraps them 3-then-1. */
   .results-slot {
     width: 100%;
     max-width: 760px;
     align-self: center;
     min-height: 108px;
   }
-  /* Stacked/mobile: the document scrolls, so the anti-layout-shift reserve
-     buys nothing and just reads as dead space between the controls and the
-     chart. Collapse it — results push the chart down when they appear. */
+  /* Stacked: the document scrolls, so the reserve only reads as dead space
+     between the controls and the chart. Collapsed here, results push the
+     chart down when they appear. */
   @media (max-width: 759px) {
     /* bp: stacked */
     .results-slot {
