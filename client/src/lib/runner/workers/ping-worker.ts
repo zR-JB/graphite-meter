@@ -222,7 +222,8 @@ function connectWebTransport(): void {
   const session = wt;
   link = {
     ready: () => writer !== null,
-    send: (msg) => void writer?.write(encoder.encode(msg)),
+    // A rejected datagram write is a dropped frame; wt.closed reports the end.
+    send: (msg) => void writer?.write(encoder.encode(msg)).catch(() => {}),
     close: () => session.close(),
   };
   void wt.closed.then(

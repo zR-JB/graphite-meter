@@ -48,9 +48,9 @@ import {
   downloadWorker,
   stopWorker,
   uploadWorker,
-  wtTransferWorker,
   type AuthRequiredMsg,
 } from "./real/workerPool";
+import { WtTransferSession, type WtStartOptions } from "./real/wtTransfer";
 import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
 import { UploadProgressChannel } from "./real/uploadProgress";
 
@@ -72,6 +72,8 @@ const LANE_MAX_RESTARTS = 40;
 const EARLY_FAIL_RESTARTS = 3;
 // A hung upload-session request should skip the stage, not ride into max-stall.
 const UPLOAD_SESSION_TIMEOUT_MS = 3000;
+// A WebTransport session that has not become ready by now never will.
+const WT_VERIFY_TIMEOUT_MS = 3000;
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
@@ -106,9 +108,6 @@ interface ClientByteAggregation {
 
 interface LaneStreamState {
   dir: FlowDirection;
-  /** The stage activity this lane was primed for, so a transport that fails to
-   *  establish can be re-primed over the fallback. */
-  activity: PhaseActivity;
   /** The PhaseActivity.stage that owns this lane, and the target for failStage:
    *  a bidirectional lane failure reports against "bidirectional", never the
    *  direction-derived "download"/"upload" name. */
@@ -128,8 +127,6 @@ interface LaneStreamState {
   workers: (Worker | null)[];
   /** The fetch URL each stream worker (re)starts against, by index. */
   streamUrls: string[];
-  /** Where the WebTransport upload worker sends its finalizing DELETE. */
-  wtProgressUrl?: string;
   /** Per-lane byte windows awaiting the next aggregate sample. Each lane reports
    *  its own receive elapsed time, so the pool rate sums matching per-lane
    *  numerators and denominators. Client-counted download only: the
@@ -148,11 +145,11 @@ interface LaneStreamState {
   /** True once this direction has carried at least one byte. Gates the
    *  never-established early fail (see EARLY_FAIL_RESTARTS). */
   stageSawBytes: boolean;
-  /** Streams the WebTransport worker opens inside its one session; 0 for fetch
-   *  lanes, where each stream is its own worker. */
-  wtStreams: number;
-  /** Experimental: carry those lanes as datagrams instead of streams. */
-  wtDatagrams: boolean;
+  /** The WebTransport session owner when this direction rides WT; null for
+   *  fetch lanes, where each stream is its own worker. */
+  wt: WtTransferSession | null;
+  /** The frozen start options a WT restart respawns with. */
+  wtOpts: WtStartOptions | null;
   /** Per-lane consecutive restart counter (reset on recovery) + backoff timers. */
   laneRetry: number[];
   laneTimers: (ReturnType<typeof setTimeout> | null)[];
@@ -431,6 +428,20 @@ export class RealBackend implements RunnerBackend {
       throw new TransportUnavailableError("throughput evidence unavailable", {
         role: "throughput",
       });
+    // Verify-then-commit: an advertised WebTransport target still needs UDP to
+    // reach the server. A resolved WT throughput view that cannot establish is
+    // dropped here, before the run commits; mid-run errors retry WT only.
+    if (this.#wtThroughputTarget && role !== "latency") {
+      if (!(await this.#verifyWtThroughput(signal))) {
+        this.#wtThroughputTarget = null;
+        this.#host?.reportTransport({
+          kind: "webtransport",
+          role: "download",
+          status: "failed",
+          detail: "webtransport session did not establish",
+        });
+      }
+    }
 
     let latencyPathProbe: PathEvidence | undefined =
       role === "throughput" && previous?.latencyClientIp
@@ -609,6 +620,31 @@ export class RealBackend implements RunnerBackend {
     this.#closeAll();
   }
 
+  /** Dial a bare WT session (bytes=0: the server serves nothing) and await
+   *  ready under a deadline. The run commits to what this proves. */
+  async #verifyWtThroughput(signal?: AbortSignal): Promise<boolean> {
+    const wt = this.#wtThroughputTarget;
+    if (!wt) return false;
+    try {
+      const session = new WebTransport(
+        `${wt.origin}${wt.routes.wtDownload}?bytes=0`,
+      );
+      const close = (): void => session.close();
+      signal?.addEventListener("abort", close, { once: true });
+      const deadline = setTimeout(close, WT_VERIFY_TIMEOUT_MS);
+      try {
+        await session.ready;
+      } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener("abort", close);
+      }
+      session.close();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /* ================= TRANSPORT NEGOTIATION ================= */
   /** Prove the selected ping bus answers. An advertised WebTransport target
    *  still needs UDP to reach the server, so a failure reselects the WebSocket
@@ -623,6 +659,8 @@ export class RealBackend implements RunnerBackend {
       return;
     } catch (error) {
       if (this.#latencyTarget?.transport !== "webtransport") throw error;
+      // An explicit WT selection fails rather than silently changing transport.
+      if (config.transports.latencyTarget !== "auto") throw error;
     }
     this.#idle.stop();
     this.#latencyTarget = selectLatencyTarget(
@@ -744,7 +782,6 @@ export class RealBackend implements RunnerBackend {
 
     const state: LaneStreamState = {
       dir,
-      activity,
       stage: activity.stage,
       laneCount,
       chunkDownload,
@@ -766,8 +803,8 @@ export class RealBackend implements RunnerBackend {
       measuring: false,
       stalled: false,
       stageSawBytes: false,
-      wtStreams: 0,
-      wtDatagrams: !!wt && cfg.experimentalDatagramThroughput,
+      wt: null,
+      wtOpts: null,
       laneRetry: [],
       laneTimers: [],
     };
@@ -799,7 +836,20 @@ export class RealBackend implements RunnerBackend {
     if (dir === "up")
       return this.#primeUploadTransfer(dir, base, laneCount, url, streams, wt);
 
-    state.wtStreams = wt ? streams : 0;
+    if (wt) {
+      const datagrams = cfg.experimentalDatagramThroughput;
+      const query = datagrams
+        ? `?bytes=${PER_STREAM_BYTES}&datagrams=1`
+        : `?bytes=${PER_STREAM_BYTES}&streams=${streams}`;
+      this.#armWtLane(state, {
+        url: `${wt.origin}${wt.routes.wtDownload}${query}`,
+        dir,
+        lanes: streams,
+        datagrams,
+      });
+      this.#spawnWorker(dir, 0);
+      return;
+    }
     for (let i = 0; i < laneCount; i++) {
       state.streamUrls[i] = url(i);
       this.#spawnLaneStaggered(dir, i);
@@ -833,17 +883,25 @@ export class RealBackend implements RunnerBackend {
     }
     const sessionLane = this.#lanes[dir];
     if (!this.#transferActive || !sessionLane) return;
-    sessionLane.wtStreams = wt ? streams : 0;
     sessionLane.streamUrls[0] = url(0, id);
-    if (wt)
-      sessionLane.wtProgressUrl = `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`;
     if (wt) {
-      // The session worker opens the feed before its lanes, so the counter is
-      // already running when bytes start. Spawning it is what establishes both.
+      this.#armWtLane(sessionLane, {
+        url: url(0, id),
+        dir,
+        lanes: streams,
+        datagrams: this.#host!.config!.experimentalDatagramThroughput,
+        progressUrl: `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`,
+        headers: {
+          ...(this.#authHeaders() as Record<string, string> | undefined),
+          ...csrfHeader(),
+        },
+        credentials: authEnabled ? "include" : "same-origin",
+      });
+      // The session worker reads the feed before its lanes write, so the
+      // counter is already running when bytes start.
       this.#spawnWorker(dir, 0);
-      const attached = this.#lanes[dir]?.workers[0];
-      if (!attached) return;
-      if (!(await this.#uploadProgress.attach(attached))) {
+      const feed = await this.#uploadProgress.attachExternal();
+      if (feed === "timeout") {
         this.#host!.failStage(
           sessionLane.stage,
           "connection-lost",
@@ -918,11 +976,11 @@ export class RealBackend implements RunnerBackend {
   #spawnWorker(dir: FlowDirection, i: number): void {
     const state = this.#lanes[dir];
     if (!state) return; // torn down with a staggered/restart timer still pending
-    const w = state.wtStreams
-      ? wtTransferWorker()
-      : dir === "down"
-        ? downloadWorker()
-        : uploadWorker();
+    if (state.wt) {
+      state.wt.start(state.wtOpts!);
+      return;
+    }
+    const w = dir === "down" ? downloadWorker() : uploadWorker();
     w.onmessage = (e: MessageEvent) => this.#onWorkerMessage(dir, e.data, i);
     w.onerror = (e: ErrorEvent) =>
       this.#onWorkerError(dir, i, e.message || "worker error");
@@ -930,11 +988,6 @@ export class RealBackend implements RunnerBackend {
     w.postMessage({
       type: "start",
       url: state.streamUrls[i],
-      dir,
-      lanes: state.wtStreams,
-      datagrams: state.wtDatagrams,
-      bytesPerLane: PER_STREAM_BYTES,
-      progressUrl: state.wtProgressUrl,
       debug: debugEnabled(),
       id: i,
       streams: state.laneCount,
@@ -952,6 +1005,26 @@ export class RealBackend implements RunnerBackend {
       w.postMessage({ type: "measure", seq: state.measureSeq });
     }
     state.workers[i] = w;
+  }
+
+  /** Bind a WebTransport session owner to this lane. Its callbacks feed the
+   *  same message and error paths the fetch workers use, so retry accounting,
+   *  aggregation and the progress channel see one protocol. */
+  #armWtLane(state: LaneStreamState, opts: WtStartOptions): void {
+    const dir = state.dir;
+    state.wtOpts = opts;
+    state.wt = new WtTransferSession({
+      onProgress: (bytes, elapsedMs, seq) =>
+        this.#onWorkerMessage(
+          dir,
+          { type: "progress", bytes, elapsedMs, seq },
+          0,
+        ),
+      onAlive: () => this.#onWorkerMessage(dir, { type: "alive" }, 0),
+      onError: (recoverable, detail) =>
+        this.#onWorkerError(dir, 0, detail, recoverable),
+      onUploadProgress: (msg) => this.#uploadProgress.accept(msg),
+    });
   }
 
   /* ================= MEASURE: push real samples on primed connections ====== */
@@ -972,6 +1045,7 @@ export class RealBackend implements RunnerBackend {
     }
     if (dir === "down") {
       state.measureSeq++;
+      state.wt?.measure(state.measureSeq);
       for (const w of state.workers)
         w?.postMessage({ type: "measure", seq: state.measureSeq });
     } else {
@@ -1041,19 +1115,11 @@ export class RealBackend implements RunnerBackend {
       | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
       | { type: "alive" }
       | { type: "error"; recoverable: boolean; detail: string }
-      | {
-          type: "upload-progress";
-          msg: Parameters<UploadProgressChannel["accept"]>[0];
-        }
       | AuthRequiredMsg,
     i: number,
   ): void {
     const state = this.#lanes[dir];
     if (!state) return; // late message after teardown
-    if (msg.type === "upload-progress") {
-      this.#uploadProgress.accept(msg.msg);
-      return;
-    }
     if (msg.type === "auth-required") {
       this.#discardTransfer();
       redirectToLogin();
@@ -1097,21 +1163,6 @@ export class RealBackend implements RunnerBackend {
     if (!this.#transferActive) return;
     const state = this.#lanes[dir];
     if (!state) return;
-    // An advertised WebTransport session still needs UDP to reach the server.
-    // One that never carried a byte gives the direction back to fetch streams.
-    if (state.wtStreams && !state.stageSawBytes && !state.measuring) {
-      const activity = state.activity;
-      this.#releaseLane(dir);
-      this.#host!.reportTransport({
-        kind: "webtransport",
-        role: activity.stage,
-        status: "failed",
-        detail,
-      });
-      this.#activeTransport = "fetch-stream";
-      void this.#primeTransfer("fetch-stream", dir, activity);
-      return;
-    }
     if (!recoverable) {
       this.#host!.fail(
         "connection-lost",
@@ -1123,6 +1174,9 @@ export class RealBackend implements RunnerBackend {
     if (state.measuring) this.#setLaneStalled(dir, true, detail);
     // Re-open the lane after a backoff, so a persistently failing stream cannot
     // spin a tight respawn loop. Give up once a lane exhausts its restarts.
+    // A WT lane respawns through its session owner, which replaces the worker
+    // and keeps the progress feed attached.
+    state.wt?.discard();
     state.workers[i]?.terminate();
     state.workers[i] = null;
     state.laneRetry[i] = (state.laneRetry[i] ?? 0) + 1;
@@ -1172,49 +1226,40 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Drop one direction's lane state and its workers, leaving the stage active
-   *  so the direction can be primed again over another transport. */
-  #releaseLane(dir: FlowDirection): void {
-    const state = this.#lanes[dir];
-    if (!state) return;
-    delete this.#lanes[dir];
-    const timer = state.clientAggregation?.timer;
-    if (timer != null) clearInterval(timer);
-    for (const t of state.laneTimers) if (t) clearTimeout(t);
-    for (const w of state.workers) if (w) stopWorker(w);
-    if (dir === "up") void this.#uploadProgress.teardown(false);
-  }
-
-  #stopTransferWorkers(): void {
+  #stopTransferWorkers(): Promise<void> {
     // Preserve the partial download cadence window at the stage boundary.
     const down = this.#lanes.down;
     if (down?.measuring && down.clientAggregation)
       this.#aggregateDownload(down, down.clientAggregation);
-    for (const [dir, state] of Object.entries(this.#lanes)) {
+    const wtStops: Promise<void>[] = [];
+    for (const state of Object.values(this.#lanes)) {
       if (!state) continue;
       const timer = state.clientAggregation?.timer;
       if (timer != null) clearInterval(timer);
       for (const t of state.laneTimers) if (t) clearTimeout(t);
-      // The WebTransport upload worker carries the progress feed too, so the
-      // progress channel finalizes and terminates it after the lanes stop.
-      if (dir === "up" && state.wtStreams) continue;
+      // A WT session stops gracefully: its worker finalizes the upload and
+      // lets the terminal progress record land before it is terminated.
+      if (state.wt) wtStops.push(state.wt.stop());
       for (const w of state.workers) if (w) stopWorker(w);
     }
+    return Promise.all(wtStops).then(() => {});
   }
 
   /** Stop every POST lane, wait for the server's terminal upload count, then
    *  release the stage state. */
   async #teardownTransfer(): Promise<void> {
-    this.#stopTransferWorkers();
-    // Stop the progress worker once the POST lanes end: BYE must follow them,
+    // A graceful WT stop finalizes in the worker; the progress teardown then
+    // has nothing left to wait on. For fetch, BYE must follow the POST lanes,
     // so the server's final count includes everything they drained.
+    await this.#stopTransferWorkers();
     await this.#uploadProgress.teardown(true);
     this.#transferActive = false;
     this.#lanes = {};
   }
 
   #discardTransfer(): void {
-    this.#stopTransferWorkers();
+    for (const state of Object.values(this.#lanes)) state?.wt?.discard();
+    void this.#stopTransferWorkers();
     void this.#uploadProgress.teardown(false);
     this.#transferActive = false;
     this.#lanes = {};

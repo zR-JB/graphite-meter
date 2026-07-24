@@ -43,6 +43,10 @@ export class UploadProgressChannel {
   #deps: UploadProgressDeps;
   #worker: Worker | null = null;
   #ready: { finish: (ready: boolean) => void } | null = null;
+  /** Pending external attach (WebTransport), resolved open/timeout/superseded. */
+  #external: {
+    finish: (state: "open" | "timeout" | "superseded") => void;
+  } | null = null;
   #done: (() => void) | null = null;
   /** Latest cumulative byte count the server reports. */
   #serverBytes = 0;
@@ -52,6 +56,8 @@ export class UploadProgressChannel {
   #curveNs = 0;
   /** True once the measured window has its baseline frame. */
   #haveBaseline = false;
+  /** True once the terminal complete record landed for this stage. */
+  #completed = false;
 
   constructor(deps: UploadProgressDeps) {
     this.#deps = deps;
@@ -113,31 +119,39 @@ export class UploadProgressChannel {
     return ready;
   }
 
-  /** Take over a feed another worker already carries: the WebTransport upload
-   *  session runs it on the same connection as its lanes. That worker also owns
-   *  the finalizing DELETE, so teardown only waits for the terminal record. */
-  attach(worker: Worker): Promise<boolean> {
+  /** Await a feed an external owner carries: the WebTransport session worker
+   *  runs it on the same connection as its lanes and owns the finalizing
+   *  DELETE. "superseded" means the lane was torn down or replaced first, which
+   *  is not a stage failure: exactly one owner may act on the outcome. */
+  attachExternal(): Promise<"open" | "timeout" | "superseded"> {
+    this.#external?.finish("superseded");
     this.#resetCounters();
-    this.#worker = worker;
-    return new Promise<boolean>((resolve) => {
-      const finish = (established: boolean): void => {
-        if (this.#ready?.finish !== finish) return;
+    this.#worker = null;
+    return new Promise((resolve) => {
+      const finish = (state: "open" | "timeout" | "superseded"): void => {
+        if (this.#external?.finish !== finish) return;
         clearTimeout(timer);
-        this.#ready = null;
-        resolve(established);
+        this.#external = null;
+        resolve(state);
       };
       const timer = setTimeout(
-        () => finish(false),
+        () => finish("timeout"),
         PROGRESS_ESTABLISH_TIMEOUT_MS,
       );
-      this.#ready = { finish };
+      this.#external = { finish };
     });
+  }
+
+  /** Resolve a pending external attach as out of date: its lane was torn down
+   *  or its worker replaced, so no verdict may fail the stage. */
+  supersede(): void {
+    this.#external?.finish("superseded");
   }
 
   /** Feed one relayed record in. Used by the WebTransport upload worker, whose
    *  messages reach the main thread through the lane channel. */
   accept(msg: ProgressOutMsg | AuthRequiredMsg): void {
-    if (msg.type === "open") this.#ready?.finish(true);
+    if (msg.type === "open") this.#external?.finish("open");
     this.#onMessage(msg);
   }
 
@@ -152,10 +166,18 @@ export class UploadProgressChannel {
    *  session with DELETE and lets the stream receive the terminal complete
    *  record. */
   teardown(finalize: boolean): Promise<void> {
+    this.#external?.finish("superseded");
     this.#ready?.finish(false);
     this.#ready = null;
     const worker = this.#worker;
     if (!worker) return Promise.resolve();
+    // The terminal record already landed: nothing to wait on, stop the worker.
+    if (this.#completed) {
+      this.#worker = null;
+      worker.postMessage({ type: "stop" });
+      worker.terminate();
+      return Promise.resolve();
+    }
     if (!finalize) {
       if (this.#done) {
         this.#done();
@@ -180,6 +202,7 @@ export class UploadProgressChannel {
   }
 
   #resetCounters(): void {
+    this.#completed = false;
     this.#serverBytes = 0;
     this.#curveBytes = 0;
     this.#curveNs = 0;
@@ -251,6 +274,9 @@ export class UploadProgressChannel {
     if (delta > 0) {
       this.#deps.setLaneStalled(false);
     }
-    if (msg.type === "complete") this.#done?.();
+    if (msg.type === "complete") {
+      this.#completed = true;
+      this.#done?.();
+    }
   }
 }

@@ -48,8 +48,6 @@ function render(frame: Frame): string {
       return `op=PING;id=${frame.id}`;
     case "PONG":
       return `op=PONG;id=${frame.id};nanos=${frame.nanos}`;
-    case "SIZE":
-      return `op=SIZE;bytes=${frame.bytes}`;
     case "HI":
       return `op=HI;proto=${frame.proto}`;
     case "ERR":
@@ -78,8 +76,6 @@ function parseCanonical(spec: string): Frame {
         id: Number(fields.get("id")),
         nanos: BigInt(fields.get("nanos")!),
       };
-    case "SIZE":
-      return { op: "SIZE", bytes: BigInt(fields.get("bytes")!) };
     case "HI":
       return { op: "HI", proto: fields.get("proto")! };
     case "ERR":

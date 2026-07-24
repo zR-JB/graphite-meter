@@ -13,20 +13,18 @@ export const Op = {
   READY: "READY",
   PING: "PING",
   PONG: "PONG",
-  SIZE: "SIZE",
   BYE: "BYE",
   ERR: "ERR",
 } as const;
 
-/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` and
- *  `bytes` are uint64 and MUST be `bigint`: 18446744073709551615 exceeds
+/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` is a
+ *  uint64 and MUST be `bigint`: 18446744073709551615 exceeds
  *  Number.MAX_SAFE_INTEGER and still has to round-trip byte-exact. */
 export type Frame =
   | { op: "READY" }
   | { op: "BYE" }
   | { op: "PING"; id: number }
   | { op: "PONG"; id: number; nanos: bigint }
-  | { op: "SIZE"; bytes: bigint }
   | { op: "HI"; proto: string }
   | { op: "ERR"; code: string; text: string };
 
@@ -102,9 +100,6 @@ export function decode(msg: string): Frame {
       return { op: "PONG", id, nanos };
     }
 
-    case Op.SIZE:
-      return { op: "SIZE", bytes: u64(rest, "SIZE bytes") };
-
     case Op.HI:
       if (rest === "") throw new DecodeError(ErrBadArgs, "HI proto");
       return { op: "HI", proto: rest };
@@ -122,12 +117,6 @@ export function decode(msg: string): Frame {
   }
 }
 
-/** Render a Frame as a WebTransport stream preamble: WT byte streams carry no
- *  framing, so an opening control frame is newline-terminated. */
-export function encodePreamble(f: Frame): string {
-  return `${encode(f)}\n`;
-}
-
 /** Render a Frame to its exact on-wire string. */
 export function encode(f: Frame): string {
   switch (f.op) {
@@ -139,8 +128,6 @@ export function encode(f: Frame): string {
       return `${Op.PING},${f.id}`;
     case "PONG":
       return `${Op.PONG},${f.id};TIME,${f.nanos}`;
-    case "SIZE":
-      return `${Op.SIZE},${f.bytes}`;
     case "HI":
       return `${Op.HI},${f.proto}`;
     case "ERR":

@@ -6,13 +6,10 @@
  * pumps its chunks through the owning realm, so lanes cannot be split across
  * workers the way fetch lanes are.
  *
- * Download opens a bidirectional stream per lane, sized by its SIZE preamble.
- * Upload writes one unidirectional stream per lane and carries the server's
- * progress feed on a bidirectional stream of the same session, so the counter
- * rides the connection under test.
+ * Streams carry raw bytes end to end; the session URL carries every parameter.
+ * The server opens the download lanes and the upload progress feed, so this
+ * worker reads incoming streams for both and only opens the upload lanes.
  * ============================================================ */
-
-import { encode, encodePreamble } from "../real/wire";
 
 /** Records of the server's upload feed, relayed verbatim to the main thread. */
 type ProgressMsg =
@@ -28,7 +25,6 @@ type InMsg =
       dir: "down" | "up";
       lanes: number;
       datagrams: boolean;
-      bytesPerLane: number;
       progressUrl?: string;
       headers?: Record<string, string>;
       credentials?: RequestCredentials;
@@ -37,10 +33,12 @@ type InMsg =
   | { type: "stop" };
 
 type OutMsg =
+  | { type: "established" }
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "alive" }
   | { type: "error"; recoverable: boolean; detail: string }
-  | { type: "upload-progress"; msg: ProgressMsg };
+  | { type: "upload-progress"; msg: ProgressMsg }
+  | { type: "stopped" };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: OutMsg): void => ctx.postMessage(m);
@@ -51,6 +49,8 @@ const REPORT_GAP_MS = 50;
 const UPLOAD_CHUNK_BYTES = 1024 * 1024;
 /** crypto.getRandomValues' hard per-call byte quota. */
 const RNG_CHUNK_BYTES = 65536;
+/** A session that has not become ready by now never will on this network. */
+const ESTABLISH_TIMEOUT_MS = 3000;
 /** Grace for the terminal progress record after the finalizing DELETE. */
 const COMPLETE_GRACE_MS = 1000;
 
@@ -60,7 +60,6 @@ let measureSeq = 0;
 /** Bytes read since the last report, and when that window opened. */
 let windowBytes = 0;
 let windowStart = 0;
-let progressWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
 
 ctx.onmessage = (e: MessageEvent<InMsg>): void => {
   const msg = e.data;
@@ -85,41 +84,73 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   try {
     session = new WebTransport(msg.url, { congestionControl: "throughput" });
-    await session.ready;
+    await Promise.race([
+      session.ready,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("webtransport session did not establish")),
+          ESTABLISH_TIMEOUT_MS,
+        ),
+      ),
+    ]);
   } catch (err) {
-    post({ type: "error", recoverable: false, detail: String(err) });
+    post({ type: "error", recoverable: true, detail: String(err) });
     return;
   }
+  post({ type: "established" });
   void session.closed.catch(() => fail(true, "webtransport session closed"));
   if (msg.dir === "down") {
     if (msg.datagrams) {
-      void downloadDatagrams(msg.bytesPerLane * msg.lanes);
+      void readDatagrams();
       return;
     }
-    for (let i = 0; i < msg.lanes; i++) void downloadLane(msg.bytesPerLane);
+    void acceptDownloadStreams();
     return;
   }
-  // The feed opens first, so the server is already reporting when bytes start.
-  if (!(await openProgress(msg.progressUrl, msg.headers, msg.credentials)))
-    return;
-  const block = incompressibleBlock();
+  // The feed is read first, so the server is already reporting when bytes start.
+  if (!openProgress(msg.progressUrl, msg.headers, msg.credentials)) return;
   if (msg.datagrams) {
     void uploadDatagrams();
     return;
   }
+  const block = incompressibleBlock();
   for (let i = 0; i < msg.lanes; i++) void uploadLane(block);
 }
 
-/** Experimental: ask for the whole request as datagrams and count what lands.
- *  Loss shows up as missing goodput, since nothing is retransmitted. */
-async function downloadDatagrams(bytes: number): Promise<void> {
+/** Drain every server-opened stream: each is one sized lane request, replaced
+ *  by the server when exhausted, so the accept loop runs for the whole stage. */
+async function acceptDownloadStreams(): Promise<void> {
+  if (!session) return;
+  const incoming = session.incomingUnidirectionalStreams.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await incoming.read();
+      if (done || stopped) return;
+      void drainLane(value as ReadableStream);
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+async function drainLane(lane: ReadableStream): Promise<void> {
+  const reader = lane.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done || stopped) return;
+      countDownload((value as Uint8Array).byteLength);
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** Experimental: the query asked for the request as datagrams; count what
+ *  lands. Loss shows up as missing goodput, since nothing is retransmitted. */
+async function readDatagrams(): Promise<void> {
   if (!session) return;
   try {
-    const writer = session.datagrams.writable.getWriter();
-    await writer.write(
-      new TextEncoder().encode(encode({ op: "SIZE", bytes: BigInt(bytes) })),
-    );
-    writer.releaseLock();
     const reader = session.datagrams.readable.getReader();
     for (;;) {
       const { value, done } = await reader.read();
@@ -146,31 +177,6 @@ async function uploadDatagrams(): Promise<void> {
     }
   } catch (err) {
     if (!stopped) fail(true, String(err));
-  }
-}
-
-/** One download lane: request bytes with a SIZE preamble, count what comes back
- *  on that same stream, and reopen when the request is exhausted. */
-async function downloadLane(bytes: number): Promise<void> {
-  const preamble = new TextEncoder().encode(
-    encodePreamble({ op: "SIZE", bytes: BigInt(bytes) }),
-  );
-  while (!stopped && session) {
-    try {
-      const stream = await session.createBidirectionalStream();
-      const writer = stream.writable.getWriter();
-      await writer.write(preamble);
-      await writer.close();
-      const reader = stream.readable.getReader();
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done || stopped) break;
-        countDownload((value as Uint8Array).byteLength);
-      }
-    } catch (err) {
-      if (!stopped) fail(true, String(err));
-      return;
-    }
   }
 }
 
@@ -203,29 +209,31 @@ async function uploadLane(block: Uint8Array<ArrayBuffer>): Promise<void> {
   }
 }
 
-/** Open the progress feed on a bidirectional stream of this session and relay
- *  its records. The HI preamble is what announces the stream: a QUIC stream
- *  reaches the peer on its first write. */
-async function openProgress(
+/** Read the one stream the server opens on an upload session as the progress
+ *  feed and relay its records. */
+function openProgress(
   progressUrl?: string,
   headers?: Record<string, string>,
   credentials?: RequestCredentials,
-): Promise<boolean> {
+): boolean {
   if (!session || !progressUrl) {
     fail(false, "upload progress route missing");
     return false;
   }
-  try {
-    const stream = await session.createBidirectionalStream();
-    progressWriter = stream.writable.getWriter();
-    await progressWriter.write(
-      new TextEncoder().encode(encodePreamble({ op: "HI", proto: "wt" })),
-    );
-    void readProgress(stream.readable);
-  } catch (err) {
-    fail(false, String(err));
-    return false;
-  }
+  const incoming = session.incomingUnidirectionalStreams.getReader();
+  void incoming
+    .read()
+    .then(({ value, done }) => {
+      if (done || !value) throw new Error("no progress stream");
+      return readProgress(value as ReadableStream);
+    })
+    .catch((err: unknown) => {
+      if (!stopped)
+        post({
+          type: "upload-progress",
+          msg: { type: "fatal", detail: String(err) },
+        });
+    });
   finalize = async (): Promise<void> => {
     await fetch(progressUrl, {
       method: "DELETE",
@@ -243,17 +251,7 @@ async function readProgress(readable: ReadableStream): Promise<void> {
   let buffered = "";
   let opened = false;
   for (;;) {
-    let chunk;
-    try {
-      chunk = await reader.read();
-    } catch (err) {
-      if (!stopped)
-        post({
-          type: "upload-progress",
-          msg: { type: "fatal", detail: String(err) },
-        });
-      return;
-    }
+    const chunk = await reader.read();
     if (chunk.done) return;
     buffered += decoder.decode(chunk.value as AllowSharedBufferSource, {
       stream: true,
@@ -310,8 +308,8 @@ function parseRecord(line: string): ProgressRecord | null {
 /** Sends the finalizing DELETE once the lanes stop; set when upload starts. */
 let finalize: (() => Promise<void>) | null = null;
 
-/** Stop the lanes, finalize the upload, and let the terminal progress record
- *  land before the main thread terminates this worker. */
+/** Stop the lanes, finalize the upload, let the terminal progress record land,
+ *  and ack, so the main thread can terminate this worker deterministically. */
 async function shutdown(): Promise<void> {
   if (stopped) return;
   stopped = true;
@@ -319,13 +317,9 @@ async function shutdown(): Promise<void> {
     await finalize();
     await new Promise((resolve) => setTimeout(resolve, COMPLETE_GRACE_MS));
   }
-  try {
-    await progressWriter?.close();
-  } catch {
-    /* the session is closing anyway */
-  }
   session?.close();
   session = null;
+  post({ type: "stopped" });
 }
 
 function fail(recoverable: boolean, detail: string): void {
