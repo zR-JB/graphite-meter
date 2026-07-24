@@ -314,6 +314,24 @@ func exactlyOne(q url.Values, key string) (string, bool) {
 	v, ok := q[key]
 	return first(v), ok && len(v) == 1 && v[0] != ""
 }
+
+// validAuthCode holds an incoming authorization code to RFC 6749's grammar,
+// code = 1*VSCHAR (printable ASCII 0x20-0x7E). A compliant provider never issues
+// a code outside this range, so the check cannot reject a real one; it stops a
+// forged callback from relaying control bytes or binary to the provider's token
+// endpoint on an anonymous request. Length is left unbounded: the spec leaves
+// code size undefined and the client must not assume a bound.
+func validAuthCode(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
 func first(v []string) string {
 	if len(v) == 0 {
 		return ""
@@ -369,7 +387,7 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
-	if !cok || !sok || len(q["error"]) > 0 || len(q["iss"]) > 1 {
+	if !cok || !sok || !validAuthCode(code) || len(q["error"]) > 0 || len(q["iss"]) > 1 {
 		s.oidcLoginFailure(w, r, reasonCallbackParameters)
 		return oidcTransaction{}, "", false
 	}
