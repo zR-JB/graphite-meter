@@ -6,17 +6,18 @@ import (
 	"net/url"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // Registry maps paths to endpoints. The HTTP mux is built by walking it, and bus
-// endpoints (WebSocket) resolve from the same registry. Adding an endpoint is one
-// Register call, no listener code changes. WebTransport has no dispatcher
-// (docs/ARCHITECTURE.md#roadmap).
+// endpoints (WebSocket) and WebTransport sessions resolve from the same
+// registry. Adding an endpoint is one Register call, no listener code changes.
 type Registry struct {
 	httpEndpoints map[string]Endpoint
 	wsEndpoints   map[string]Endpoint
+	wtEndpoints   map[string]WTHandler
 }
 
 // NewRegistry returns an empty registry.
@@ -24,6 +25,7 @@ func NewRegistry() *Registry {
 	return &Registry{
 		httpEndpoints: make(map[string]Endpoint),
 		wsEndpoints:   make(map[string]Endpoint),
+		wtEndpoints:   make(map[string]WTHandler),
 	}
 }
 
@@ -36,6 +38,39 @@ func (r *Registry) RegisterHTTP(path string, e Endpoint) {
 // HTTP/1.1 Upgrade on the existing h1 origin, no new listener.
 func (r *Registry) RegisterWS(path string, e Endpoint) {
 	r.wsEndpoints[path] = e
+}
+
+// RegisterWT mounts a WebTransport session handler at path. The upgrade is an
+// extended CONNECT on the existing HTTP/3 listener, no new listener.
+func (r *Registry) RegisterWT(path string, h WTHandler) {
+	r.wtEndpoints[path] = h
+}
+
+// MountWebTransport attaches the registered session handlers onto mux as
+// CONNECT upgraders. parent bounds every session's lifetime.
+func (r *Registry) MountWebTransport(parent context.Context, mux *http.ServeMux, server *webtransport.Server) {
+	for path, h := range r.wtEndpoints {
+		mux.Handle(path, wtAdapter(parent, h, server))
+	}
+}
+
+// wtAdapter upgrades the request to a WebTransport session and serves it until
+// it ends. The handler blocks: Upgrade detaches the session from the request, so
+// returning early would release the admission slot bounding the session.
+func wtAdapter(parent context.Context, h WTHandler, server *webtransport.Server) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sess, err := server.Upgrade(w, r)
+		if err != nil {
+			http.Error(w, "webtransport upgrade failed", http.StatusBadRequest)
+			return
+		}
+		defer sess.CloseWithError(0, "") //nolint:errcheck // the session is going away either way
+		ctx, cancel := context.WithCancel(parent)
+		defer cancel()
+		defer context.AfterFunc(r.Context(), cancel)()
+		defer context.AfterFunc(sess.Context(), cancel)()
+		h.HandleSession(ctx, sess, r)
+	})
 }
 
 // Mount attaches every registered endpoint onto mux: HTTP request/response

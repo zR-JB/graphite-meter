@@ -82,17 +82,13 @@ func (u *Upload) Handle(s transport.Session) error {
 	if u.store != nil {
 		id := s.Query().Get("id")
 		if id != "" {
-			owner := ""
-			if _, r, ok := s.HTTP(); ok {
-				owner = ClientKey(r, u.trusted)
-			}
+			owner := sessionOwner(s, u.trusted)
 			a, access := u.store.getOrCreateFor(id, owner)
 			if access != uploadAccessOK {
 				if w, _, ok := s.HTTP(); ok {
 					writeUploadAccessError(w, access)
-					return nil
 				}
-				return transport.ErrUnsupported
+				return nil
 			}
 			agg = a
 			agg.changePosts(1)

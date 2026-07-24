@@ -36,6 +36,22 @@ are additionally pinned as a shared constant table in each implemented language
 | C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
 | S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
 
+## WebTransport routes
+
+Sessions are opened with extended CONNECT on the HTTP/3 origin. The session URL carries what a
+query string carries elsewhere; a stream carries nothing, so anything per-stream is a preamble.
+A QUIC stream reaches the peer on its first write, which is what a preamble is for.
+
+| Route | Streams | Datagrams |
+|---|---|---|
+| `/wt/ping` | none | the message bus above, one frame per datagram |
+| `/wt/download` | one bidi stream per lane, opened with `SIZE,<bytes>` | `SIZE,<bytes>` requests the same bytes as datagrams |
+| `/wt/upload?id=&datagrams=` | client uni streams are raw upload bytes; one bidi stream opened with `HI,wt` is the progress feed | counted as upload bytes when the session URL sets `datagrams=` |
+
+The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
+over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
+records as `GET /upload/progress`.
+
 ## Ids (PING/PONG)
 
 - The **client** owns a per-bus monotonic `uint32` counter: `id = (id + 1) >>> 0` (wraps at 2³²).

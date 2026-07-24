@@ -1,7 +1,9 @@
 package endpoint
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/netip"
 	"time"
@@ -111,38 +113,75 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 	if !emit(uploadProgressEvent{Type: "ready"}) {
 		return nil
 	}
+	runProgress(r.Context().Done(), agg, emit, func() bool {
+		if _, err := w.Write([]byte("\n")); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	})
+	return nil
+}
 
+// HandleStream serves the same feed over a byte stream, the WebTransport
+// bidirectional stream on an upload session. Stream writes are unbuffered, so
+// there is no flush step.
+func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
+	enc := json.NewEncoder(w)
+	emit := func(event uploadProgressEvent) bool { return enc.Encode(event) == nil }
+
+	agg, access := e.store.getOrCreateForActivity(id, owner, false)
+	if access != uploadAccessOK {
+		emit(uploadProgressEvent{Type: "error", Message: uploadAccessMessage(access)})
+		return
+	}
+	if !agg.progressActive.CompareAndSwap(false, true) {
+		emit(uploadProgressEvent{Type: "error", Message: "upload progress already connected"})
+		return
+	}
+	defer agg.progressActive.Store(false)
+	if !emit(uploadProgressEvent{Type: "ready"}) {
+		return
+	}
+	runProgress(ctx.Done(), agg, emit, func() bool {
+		_, err := w.Write([]byte("\n"))
+		return err == nil
+	})
+}
+
+// runProgress reports agg's counter until the upload completes, expires, or done
+// fires. emit and heartbeat report false once their sink is gone.
+func runProgress(done <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
 	tick := time.NewTicker(uploadProgressTick)
 	defer tick.Stop()
-	heartbeat := time.NewTicker(uploadProgressHeartbeat)
-	defer heartbeat.Stop()
+	beat := time.NewTicker(uploadProgressHeartbeat)
+	defer beat.Stop()
 	var lastBytes uint64
 	for {
 		select {
-		case <-r.Context().Done():
-			return nil
+		case <-done:
+			return
 		case <-agg.expired:
-			return nil
+			return
 		case <-agg.finished:
-			if !waitForUploadPosts(r.Context().Done(), agg) {
-				return nil
+			if !waitForUploadPosts(done, agg) {
+				return
 			}
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
-			return nil
-		case <-heartbeat.C:
-			if _, err := w.Write([]byte("\n")); err != nil {
-				return nil
+			return
+		case <-beat.C:
+			if !heartbeat() {
+				return
 			}
-			flusher.Flush()
 		case <-tick.C:
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {
 				lastBytes = n
 				if !emit(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: elapsed}) {
-					return nil
+					return
 				}
 			}
 		}

@@ -26,17 +26,45 @@ func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	return addr.String()
 }
 
+// uploadAccessMessage is the reason a refused upload reports, over HTTP as the
+// status text and over a stream as an error record.
+func uploadAccessMessage(access uploadAccess) string {
+	switch access {
+	case uploadAccessInvalid:
+		return "unknown upload id"
+	case uploadAccessGlobalFull:
+		return "upload capacity exhausted"
+	case uploadAccessClientFull:
+		return "client upload capacity exhausted"
+	case uploadAccessOwnerMismatch:
+		return "upload id belongs to another client"
+	}
+	return ""
+}
+
+// sessionOwner reads the client key from an HTTP request, or from the session
+// that owns a WebTransport stream, which carries no request of its own.
+func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
+	if _, r, ok := s.HTTP(); ok {
+		return ClientKey(r, trusted)
+	}
+	if owner, ok := s.(interface{ ClientOwner() string }); ok {
+		return owner.ClientOwner()
+	}
+	return ""
+}
+
 func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
 	switch access {
 	case uploadAccessInvalid:
-		http.Error(w, "unknown upload id", http.StatusBadRequest)
+		http.Error(w, uploadAccessMessage(access), http.StatusBadRequest)
 	case uploadAccessGlobalFull:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "upload capacity exhausted", http.StatusServiceUnavailable)
+		http.Error(w, uploadAccessMessage(access), http.StatusServiceUnavailable)
 	case uploadAccessClientFull:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "client upload capacity exhausted", http.StatusTooManyRequests)
+		http.Error(w, uploadAccessMessage(access), http.StatusTooManyRequests)
 	case uploadAccessOwnerMismatch:
-		http.Error(w, "upload id belongs to another client", http.StatusForbidden)
+		http.Error(w, uploadAccessMessage(access), http.StatusForbidden)
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
@@ -45,7 +46,8 @@ const (
 type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.Endpoint
 	download, uploadSession, upload  endpoint.Endpoint
-	ping, uploadProgress             endpoint.Endpoint
+	ping                             endpoint.Endpoint
+	uploadProgress                   *endpoint.UploadProgress
 	admission                        *requestAdmission
 	trustedProxies                   []netip.Prefix
 }
@@ -97,6 +99,9 @@ func publicH3Port(cfg *config.Config) string {
 type muxTopology struct {
 	spa, discovery, latency, transfers, bootstrap bool
 	requiredProto                                 int
+	// wt mounts the WebTransport routes as extended CONNECT upgraders. Set on
+	// the HTTP/3 listener only, and only in public mode.
+	wt *webtransport.Server
 }
 
 type protocolEndpoint struct {
@@ -149,11 +154,19 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	if topology.latency {
 		reg.RegisterWS(routePing, e.ping)
 	}
+	if topology.wt != nil {
+		reg.RegisterWT(routeWTDownload, endpoint.NewWTDownload(e.download))
+		reg.RegisterWT(routeWTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies))
+		reg.RegisterWT(routeWTPing, endpoint.NewWTPing(e.ping))
+	}
 	inner := http.NewServeMux()
 	if authn != nil && authn.Enabled() {
 		reg.MountWithOrigin(ctx, inner, authn.PublicOrigin())
 	} else {
 		reg.Mount(ctx, inner)
+	}
+	if topology.wt != nil {
+		reg.MountWebTransport(ctx, inner, topology.wt)
 	}
 	if topology.spa && authn != nil {
 		authn.Mount(inner)
@@ -169,7 +182,7 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		publicOrigin = authn.PublicOrigin()
 	}
 	m := http.NewServeMux()
-	for _, path := range []string{routeDownload, routeUpload, routeUploadProgress, routePing} {
+	for _, path := range []string{routeDownload, routeUpload, routeUploadProgress, routePing, routeWTDownload, routeWTUpload, routeWTPing} {
 		m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
 	}
 	m.Handle("/", inner)
@@ -329,13 +342,29 @@ func (b *listenerBuild) assemble(spa http.Handler) error {
 	return nil
 }
 
+// serveWebTransport hands each accepted QUIC connection to the WebTransport
+// server, which serves the HTTP/3 requests on it and routes WebTransport
+// streams to the session an extended CONNECT opened.
+func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Listener) error {
+	for {
+		conn, err := ln.Accept(ctx)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := wt.ServeQUICConn(conn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("[gm:h3] webtransport connection: %v", err)
+			}
+		}()
+	}
+}
+
 // assembleH3 binds the HTTP/3 UDP listener plus its TCP Alt-Svc bootstrap
 // companion.
 func (b *listenerBuild) assembleH3() error {
 	if err := b.tcpTLS("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, static.Handler(), "http/1.1"); err != nil {
 		return err
 	}
-	h3mux := listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true}, static.Handler(), b.authn)
 	quicConfig := transport.NewQUICConfig()
 	if b.authn.Enabled() {
 		quicConfig.HandshakeIdleTimeout = 10 * time.Second
@@ -343,7 +372,18 @@ func (b *listenerBuild) assembleH3() error {
 		quicConfig.MaxIncomingStreams = 256
 		quicConfig.MaxIncomingUniStreams = 32
 	}
-	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig, Handler: b.authn.Enforce(h3mux, auth.Listener{})}
+	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
+	// A WebTransport session carries neither cookies nor an Authorization header,
+	// so it cannot cross the enforcement boundary and is public-mode only. The
+	// origin check mirrors the wildcard CORS the other public routes answer with.
+	var wt *webtransport.Server
+	if !b.authn.Enabled() {
+		wt = &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
+		// Advertises the WebTransport settings and wraps ConnContext, so it must
+		// run before the listener starts.
+		webtransport.ConfigureHTTP3Server(h3)
+	}
+	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{})
 	if b.authn.Enabled() {
 		h3.MaxHeaderBytes = 32 << 10
 	}
@@ -361,12 +401,20 @@ func (b *listenerBuild) assembleH3() error {
 	}
 	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress", addr: b.cfg.Native.H3, network: "udp",
 		run: func() error {
-			err := h3.ServeListener(quicListener)
+			var err error
+			if wt != nil {
+				err = serveWebTransport(b.ctx, wt, quicListener)
+			} else {
+				err = h3.ServeListener(quicListener)
+			}
 			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			return err
 		}, stop: func(ctx context.Context) error {
+			if wt != nil {
+				_ = wt.Close()
+			}
 			err := h3.Shutdown(ctx)
 			// The listener and transport close unconditionally to free the UDP
 			// socket. The graceful shutdown result is the one worth reporting.

@@ -104,7 +104,7 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 	addThroughput := func(base, protocol string) {
 		base = strings.TrimRight(base, "/")
 		for i := range throughput {
-			if origin.Equal(throughput[i].Origin, base) {
+			if throughput[i].Transport == wire.TransportFetchStream && origin.Equal(throughput[i].Origin, base) {
 				if throughput[i].Protocol != protocol {
 					throughput[i].Protocol = "negotiated"
 				}
@@ -116,20 +116,27 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 	addLatency := func(base string) {
 		base = strings.TrimRight(base, "/")
 		for _, e := range latency {
-			if origin.Equal(e.Origin, base) {
+			if e.Transport == wire.TransportWebSocket && origin.Equal(e.Origin, base) {
 				return
 			}
 		}
 		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
 	}
+	// WebTransport is the same HTTP/3 origin reached over QUIC sessions. It
+	// carries no credentials, so it is neither mounted nor advertised under auth.
+	addWebTransport := func(base string) {
+		base = strings.TrimRight(base, "/")
+		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
+		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultLatencyRoutes()})
+	}
 	native := []struct {
 		name, public, scheme, addr, protocol string
-		latency                              bool
+		latency, webTransport                bool
 	}{
-		{config.NativeH1Clear, p.cfg.NativePublic.H1, "http", p.cfg.Native.H1, "http1", true},
-		{config.NativeH1TLS, p.cfg.NativePublic.H1TLS, "https", p.cfg.Native.H1TLS, "http1", true},
-		{config.NativeH2, p.cfg.NativePublic.H2, "https", p.cfg.Native.H2, "http2", false},
-		{config.NativeH3, p.cfg.NativePublic.H3, "https", p.cfg.Native.H3, "http3", false},
+		{config.NativeH1Clear, p.cfg.NativePublic.H1, "http", p.cfg.Native.H1, "http1", true, false},
+		{config.NativeH1TLS, p.cfg.NativePublic.H1TLS, "https", p.cfg.Native.H1TLS, "http1", true, false},
+		{config.NativeH2, p.cfg.NativePublic.H2, "https", p.cfg.Native.H2, "http2", false, false},
+		{config.NativeH3, p.cfg.NativePublic.H3, "https", p.cfg.Native.H3, "http3", false, true},
 	}
 	for _, e := range native {
 		if p.cfg.NativeAdvertised(e.name) {
@@ -137,6 +144,9 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 			addThroughput(base, e.protocol)
 			if e.latency {
 				addLatency(base)
+			}
+			if e.webTransport && p.cfg.Auth.Mode == "off" {
+				addWebTransport(base)
 			}
 		}
 	}

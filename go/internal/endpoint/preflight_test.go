@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
@@ -13,12 +14,40 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
 	cfg.NativePublic = config.NativeOrigins{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
-	if len(pf.Capabilities.ThroughputTargets) != 4 || len(pf.Capabilities.LatencyTargets) != 2 {
-		t.Fatalf("capabilities = %+v, want 4 throughput and 2 latency targets", pf.Capabilities)
+	// Four fetch-stream targets plus the WebTransport view of the HTTP/3 one.
+	if len(pf.Capabilities.ThroughputTargets) != 5 || len(pf.Capabilities.LatencyTargets) != 3 {
+		t.Fatalf("capabilities = %+v, want 5 throughput and 3 latency targets", pf.Capabilities)
 	}
 	for i, want := range []string{"http1", "http1", "http2", "http3"} {
 		if got := pf.Capabilities.ThroughputTargets[i].Protocol; got != want {
 			t.Fatalf("protocol[%d] = %q, want %q", i, got, want)
+		}
+	}
+	wt := pf.Capabilities.ThroughputTargets[4]
+	if wt.Transport != wire.TransportWebTransport || wt.Origin != cfg.NativePublic.H3 {
+		t.Fatalf("webtransport throughput = %+v, want the HTTP/3 origin", wt)
+	}
+	wtLatency := pf.Capabilities.LatencyTargets[2]
+	if wtLatency.Transport != wire.TransportWebTransport || wtLatency.Origin != cfg.NativePublic.H3 {
+		t.Fatalf("webtransport latency = %+v, want the HTTP/3 origin", wtLatency)
+	}
+}
+
+// WebTransport carries no credentials, so it is not advertised behind auth.
+func TestPreflightSkipsWebTransportUnderAuth(t *testing.T) {
+	cfg := config.Default()
+	cfg.Native.H3 = ":7249"
+	cfg.NativePublic.H3 = "https://meter.example:7249"
+	cfg.Auth.Mode = "password"
+	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	for _, target := range pf.Capabilities.ThroughputTargets {
+		if target.Transport == wire.TransportWebTransport {
+			t.Fatalf("throughput advertises WebTransport under auth: %+v", target)
+		}
+	}
+	for _, target := range pf.Capabilities.LatencyTargets {
+		if target.Transport == wire.TransportWebTransport {
+			t.Fatalf("latency advertises WebTransport under auth: %+v", target)
 		}
 	}
 }

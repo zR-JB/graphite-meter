@@ -10,7 +10,7 @@ func TestQUICConfigFitsMinimumTunnelMTU(t *testing.T) {
 	if cfg.DisablePathMTUDiscovery {
 		t.Fatal("path MTU discovery is disabled")
 	}
-	if !cfg.EnableDatagrams {
-		t.Fatal("datagrams are disabled: WebTransport upgrade requires them")
+	if !cfg.EnableDatagrams || !cfg.EnableStreamResetPartialDelivery {
+		t.Fatalf("config = %+v, want the WebTransport prerequisites enabled", cfg)
 	}
 }
