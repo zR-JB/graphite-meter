@@ -241,7 +241,7 @@ inside the TUI before a run starts.
 
 | Flag                       | Default                 | Meaning                                                                                        |
 | -------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
-| `--url`                    | `http://127.0.0.1:7246` | Server base URL.                                                                               |
+| `--url`                    | `http://127.0.0.1:7246` | Server base URL. Nothing is dialled until it is picked in the TUI or rechecked with `v`.       |
 | `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
 | `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
 | `--latency-origin`         | `auto`                  | Discovered WebSocket latency origin.                                                           |

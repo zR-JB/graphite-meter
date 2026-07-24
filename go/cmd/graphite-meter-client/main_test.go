@@ -219,9 +219,45 @@ func TestTargetChoiceLabelFallsBackToTheRawTarget(t *testing.T) {
 	}
 }
 
+// A launch reaches no server on its own. Picking one is what starts the check,
+// including re-picking the server the client already holds.
+func TestLaunchChecksNothingUntilAServerIsPicked(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	if cmd := m.Init(); cmd != nil {
+		t.Fatal("launch opened a connection on its own")
+	}
+	if m.prepareStatus != statusIdle {
+		t.Fatalf("launch status = %q, want %q", m.prepareStatus, statusIdle)
+	}
+	for _, c := range m.connectionChecks() {
+		if c.state != checkPending {
+			t.Errorf("check %q = %v at launch, want pending", c.label, c.state)
+		}
+	}
+
+	// The preset already holds the configured URL, so nothing changes but the
+	// check still runs.
+	m.section, m.row = sectionServers, 0
+	m.cfg.BaseURL = serverPresets[0].url
+	updated, cmd := m.confirm()
+	m = updated.(model)
+	if cmd == nil || m.prepareStatus != "checking" {
+		t.Fatalf("picking the current server left status %q with cmd %v", m.prepareStatus, cmd != nil)
+	}
+
+	// So does applying the URL editor over an unchanged URL.
+	m.prepareStatus = statusIdle
+	m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
+	updated, cmd = m.handleEditKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m = updated.(model); cmd == nil || m.prepareStatus != "checking" {
+		t.Fatalf("reapplying the same URL left status %q with cmd %v", m.prepareStatus, cmd != nil)
+	}
+}
+
 func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.prepareSeq = 2
+	m.prepareStatus = "checking"
 
 	updated, _ := m.Update(preparationMsg{seq: 1, err: errors.New("old")})
 	m = updated.(model)
@@ -1949,9 +1985,16 @@ func TestConnectionChecksFollowTheHandshake(t *testing.T) {
 		want  []checkState
 	}{
 		{
-			name:  "checking",
+			name:  "not checked",
 			setup: func(m *model) {},
-			want:  []checkState{checkActive, checkPending, checkPending, checkPending},
+			want:  []checkState{checkPending, checkPending, checkPending, checkPending},
+		},
+		{
+			name: "checking",
+			setup: func(m *model) {
+				m.prepareStatus, m.prepareStep = "checking", stepReach
+			},
+			want: []checkState{checkActive, checkPending, checkPending, checkPending},
 		},
 		{
 			name: "unreachable",

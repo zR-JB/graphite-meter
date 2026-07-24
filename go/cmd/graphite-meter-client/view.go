@@ -263,6 +263,8 @@ func (m model) runMenuView(w int) string {
 		label = accentStyle.Render(label)
 	case "failed":
 		label = warnStyle.Render(label)
+	case statusIdle:
+		label = mutedStyle.Render(label)
 	default:
 		label = m.spin.View() + " " + label
 	}
@@ -298,7 +300,11 @@ func (m model) menuLine(i int, s string, w int) string {
 }
 
 func (m model) planView() string {
-	throughput, latency, observed := "Checking", "Checking", ""
+	pending := "Checking"
+	if m.prepareStatus == statusIdle {
+		pending = "Not checked"
+	}
+	throughput, latency, observed := pending, pending, ""
 	// A pending check keeps the figures of the last verified one, dimmed:
 	// blanking them on every keypress made cycling an endpoint flicker.
 	value := valueStyle

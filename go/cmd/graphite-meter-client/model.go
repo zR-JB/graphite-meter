@@ -134,12 +134,19 @@ type check struct {
 	note  string
 }
 
+// statusIdle is where a launched client sits until the operator points it at a
+// server. Nothing is dialled and nothing is claimed about the path, so the
+// screen carries no result — good or bad — that the operator did not ask for.
+const statusIdle = "not checked"
+
 // connectionChecks is the readiness checklist for the current preparation
 // attempt. Authorization is orthogonal to the handshake order: a server can
 // demand it at the preflight request itself or at a later target probe.
 func (m model) connectionChecks() []check {
 	state := func(step prepareStep) checkState {
 		switch {
+		case m.prepareStatus == statusIdle:
+			return checkPending
 		case m.prepareStep > step:
 			return checkDone
 		case m.prepareStep < step:
@@ -256,9 +263,9 @@ func newModel(cfg goclient.Config) model {
 		cfg:           cfg,
 		mode:          modeConfigure,
 		openApproval:  (*goclient.PendingAuthorization).Open,
-		notice:        "Choose a server while the selected paths are checked.",
+		notice:        "Press enter on a server to check it.",
 		prepareSeq:    1,
-		prepareStatus: "checking",
+		prepareStatus: statusIdle,
 		spin:          spin,
 		help:          newHelp(),
 		now:           time.Now(),
@@ -268,9 +275,10 @@ func newModel(cfg goclient.Config) model {
 	}
 }
 
-func (m model) Init() tea.Cmd {
-	return tea.Batch(prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
-}
+// Init draws the configure screen and waits. A launch reaches no server on its
+// own: the URL a client starts with is a default, not a destination, and
+// dialling it unasked answers with a failure the operator never requested.
+func (m model) Init() tea.Cmd { return nil }
 
 // animating reports whether the screen changes without an incoming message:
 // the spinner frames and the elapsed clocks. Anything that enters one of these
@@ -427,12 +435,18 @@ func (m *model) focusServer() {
 }
 
 // confirm activates the selected row. A configuration edit invalidates the
-// current preparation, so it starts a fresh connection check.
+// current preparation, so it starts a fresh connection check. Picking a server
+// starts one whether or not the URL changed: that row is how an idle client is
+// pointed at something, and re-picking the server it already holds is a request
+// to check it.
 func (m model) confirm() (tea.Model, tea.Cmd) {
 	before := m.cfg
 	updated, cmd := m.activate()
 	next := updated.(model)
-	if next.mode == modeConfigure && next.edit.kind == editNone && next.cfg != before {
+	if next.mode != modeConfigure || next.edit.kind != editNone {
+		return next, cmd
+	}
+	if next.cfg != before || (m.section == sectionServers && m.row < len(serverPresets)) {
 		return next.reprepare(cmd)
 	}
 	return next, cmd
@@ -450,9 +464,11 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.edit = editState{}
 		return m, nil
 	case key.Matches(msg, keys.apply):
-		before := m.cfg
+		before, wasURL := m.cfg, m.edit.kind == editURL
 		m.commitEdit()
-		if m.cfg != before {
+		// Applying the URL editor is the other way to point an idle client at a
+		// server, so it checks even when the same URL is retyped.
+		if m.cfg != before || (wasURL && m.edit.kind == editNone) {
 			return m.reprepare(nil)
 		}
 		return m, nil

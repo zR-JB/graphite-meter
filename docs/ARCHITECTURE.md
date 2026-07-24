@@ -212,7 +212,9 @@ The TUI has five configuration sections (Server — the local-dev preset plus a 
 typed: a missing scheme becomes `http://`, and a missing port is the scheme's own; Run
 setup; Timing; Connections — endpoint choices, each named by the protocol it fixes and whether it
 is encrypted, plus stream count and TLS verification; Start) and a live telemetry view
-(session panel, stage timeline, ASCII throughput bars, a running results log). Keys: `tab`/arrows
+(session panel, stage timeline, ASCII throughput bars, a running results log). A launched client
+checks nothing: `--url` is a default, not a destination, so the connection checklist stays idle
+until a server is picked with `enter` (or a check is asked for with `v`). Keys: `tab`/arrows
 to move between sections and rows, `enter`/`space` to toggle or edit, `r` to run or run again, `v`
 to recheck the connection, `esc` to cancel a run (confirmed by a second `esc`) or to leave a
 finished one, `?` to expand the key list, `q` to quit; the footer lists every binding the screen on
