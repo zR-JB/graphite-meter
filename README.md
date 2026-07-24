@@ -74,8 +74,8 @@ pushes rates a browser can't.
   stream choices, with live bars, loaded latency, and per-stage progress.
 - Throughput and latency targets are chosen independently, so you can pin a protocol
   (HTTP/1.1, HTTP/2, HTTP/3) instead of trusting negotiation.
-- Works against authenticated servers: it asks your browser to approve it once per launch and
-  holds the grant in memory only.
+- Works against authenticated servers: it shows a verification code and opens the approval page
+  in your browser when you press `enter`, then holds the grant in memory only.
 
 Prebuilt binaries for Linux, macOS, and Windows are attached to every
 [release](https://github.com/zR-JB/graphite-meter/releases); the

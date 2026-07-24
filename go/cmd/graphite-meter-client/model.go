@@ -225,6 +225,13 @@ type model struct {
 	prepareError                        string
 	auth                                *goclient.PendingAuthorization
 	authSince                           time.Time
+	// authOpened records that the approval page was sent to the browser. Until
+	// it is set, enter is the key that sends it; afterwards enter goes back to
+	// the row it belongs to.
+	authOpened bool
+	// openApproval launches the browser. It is a field so a test can watch the
+	// call instead of opening a window.
+	openApproval func(*goclient.PendingAuthorization)
 
 	rates   map[goclient.Direction]goclient.ThroughputSample
 	peaks   map[goclient.Direction]float64
@@ -245,6 +252,7 @@ func newModel(cfg goclient.Config) model {
 	return model{
 		cfg:           cfg,
 		mode:          modeConfigure,
+		openApproval:  (*goclient.PendingAuthorization).Open,
 		notice:        "Choose a server while the selected paths are checked.",
 		prepareSeq:    1,
 		prepareStatus: "checking",
@@ -307,6 +315,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
+	case m.auth != nil && !m.authOpened && key.Matches(msg, keys.approve):
+		m.openApproval(m.auth)
+		m.authOpened = true
+		m.notice = "Approval page opened in the browser."
+		return m, nil
 	case m.urlRowRune(msg):
 		// A bracketed paste arrives as one rune message and lands whole.
 		m.edit = beginEdit(editURL, "url", string(msg.Runes))
@@ -390,6 +403,22 @@ func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.notice = "Canceling the run."
 	return m, nil
+}
+
+// focusServer puts the configure screen on the server the current URL names.
+// The server selection is what asks a server for authorization, so an approval
+// prompt lands beside the row that caused it. An open editor keeps the cursor:
+// the operator is mid-entry and the section is already on show.
+func (m *model) focusServer() {
+	m.mode = modeConfigure
+	if m.edit.kind != editNone {
+		return
+	}
+	m.section = sectionServers
+	m.row = len(serverPresets)
+	if i := activePreset(m.cfg.BaseURL); i >= 0 {
+		m.row = i
+	}
 }
 
 // confirm activates the selected row. A configuration edit invalidates the

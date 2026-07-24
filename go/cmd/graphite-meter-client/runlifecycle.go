@@ -88,6 +88,7 @@ func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	m.prepareError = ""
 	m.prepared = nil
 	m.auth = nil
+	m.authOpened = false
 	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
 }
 
@@ -152,7 +153,8 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 				m.prepareStep = stepOrigins
 			}
 			m.prepareError = ""
-			m.notice = "Authentication is required. Preparing browser approval…"
+			m.focusServer()
+			m.notice = "This server requires authorization. Preparing the approval page…"
 			return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 		}
 		m.prepareStatus = "failed"
@@ -185,9 +187,11 @@ func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.auth = msg.pending
+	m.authOpened = false
 	m.authSince = time.Now()
 	m.now = m.authSince
-	m.notice = "Waiting for the browser approval."
+	m.focusServer()
+	m.notice = "Check the code below, then press enter to open the approval page."
 	return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
 }
 
@@ -242,7 +246,8 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		if m.prepareStep < stepPreflight {
 			m.prepareStep = stepPreflight
 		}
-		m.notice = "Authentication expired. Preparing browser approval…"
+		m.focusServer()
+		m.notice = "Authorization expired. Preparing the approval page…"
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 	}
 	if msg.err != nil {

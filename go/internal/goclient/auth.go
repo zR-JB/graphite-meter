@@ -76,9 +76,11 @@ type PendingAuthorization struct {
 	close              func()
 }
 
-// BeginAuthorization starts a PKCE exchange against authURL and opens the
-// operator's browser at it. The grant only ever travels over verified HTTPS, so
-// an unparseable, plaintext or -insecure server URL is refused outright.
+// BeginAuthorization starts a PKCE exchange against authURL. Opening the
+// browser is left to the caller, so the operator can read the code the approval
+// page asks them to match before a window takes the screen. The grant only ever
+// travels over verified HTTPS, so an unparseable, plaintext or -insecure server
+// URL is refused outright.
 func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
 	if cfg.InsecureSkipTLSVerify {
 		return nil, errors.New("authenticated operation refuses -insecure")
@@ -115,10 +117,13 @@ func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("authentication endpoints must not redirect")
 	}
-	p := &PendingAuthorization{BrowserURL: login.String(), Code: code, Origin: issuingOrigin, verifier: verifier, tokenURL: token.String(), client: client, close: tr.CloseIdleConnections}
-	openBrowser(p.BrowserURL)
-	return p, nil
+	return &PendingAuthorization{BrowserURL: login.String(), Code: code, Origin: issuingOrigin, verifier: verifier, tokenURL: token.String(), client: client, close: tr.CloseIdleConnections}, nil
 }
+
+// Open shows the approval page in the operator's browser. It is best-effort:
+// the caller also surfaces BrowserURL and Code, so a headless or misconfigured
+// desktop costs the operator nothing.
+func (p *PendingAuthorization) Open() { openBrowser(p.BrowserURL) }
 
 func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 	login, err := url.Parse(raw)
@@ -174,8 +179,6 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	}
 }
 
-// openBrowser is best-effort: the caller also surfaces BrowserURL and Code, so
-// a headless or misconfigured desktop costs the operator nothing.
 func openBrowser(target string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

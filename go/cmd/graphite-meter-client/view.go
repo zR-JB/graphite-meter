@@ -346,18 +346,26 @@ func (m model) checkGlyph(state checkState) string {
 	}
 }
 
-// authView is the browser approval wait: where to approve, the code the page
-// asks the operator to match, and how much of the polling window is left.
+// authView is the browser approval wait: the code the approval page asks the
+// operator to match, where that page lives, and how much of the polling window
+// is left. The browser opens on a keypress, so the code can be read first.
 func (m model) authView() []string {
 	if m.auth == nil {
 		return nil
 	}
 	waited := m.now.Sub(m.authSince)
+	prompt := accentStyle.Render("Press enter to open the approval page")
+	if m.authOpened {
+		prompt = accentStyle.Render("Approve this client in the browser")
+	}
+	// The code sits in a bordered box, so its label is centered against the box
+	// rather than concatenated onto the box's top line.
+	code := lipgloss.JoinHorizontal(lipgloss.Center, labelStyle.Render("Match this code")+" ", codeStyle.Render(m.auth.Code))
 	return []string{
 		"",
-		m.spin.View() + " " + accentStyle.Render("Approve this client in the browser"),
+		m.spin.View() + " " + prompt,
+		code,
 		mutedStyle.Render(m.auth.BrowserURL),
-		codeStyle.Render(m.auth.Code),
 		mutedStyle.Render("waiting " + fmtClock(waited) + " · expires in " + fmtClock(authWait-waited)),
 	}
 }

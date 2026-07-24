@@ -1785,6 +1785,60 @@ func TestCurrentAuthMessagesStillPublishFailure(t *testing.T) {
 	}
 }
 
+// TestAuthChallengeWaitsForTheOperator holds the two halves of the approval
+// prompt: the browser stays shut until a key asks for it, and the prompt lands
+// on the server selection, which is what asked the server for a grant.
+func TestAuthChallengeWaitsForTheOperator(t *testing.T) {
+	opened := 0
+	m := newModel(goclient.DefaultConfig())
+	m.openApproval = func(*goclient.PendingAuthorization) { opened++ }
+	m.section, m.row = sectionTiming, 3
+
+	pending := &goclient.PendingAuthorization{BrowserURL: "https://meter.example/auth/cli", Code: "ABCDE"}
+	updated, _ := m.Update(authChallengeMsg{seq: m.prepareSeq, pending: pending})
+	m = updated.(model)
+
+	if opened != 0 {
+		t.Fatalf("browser opened %d times before a keypress, want 0", opened)
+	}
+	if m.section != sectionServers || m.row != activePreset(m.cfg.BaseURL) {
+		t.Fatalf("approval landed on section %d row %d, want the server row", m.section, m.row)
+	}
+	if view := ansiPattern.ReplaceAllString(strings.Join(m.authView(), "\n"), ""); !strings.Contains(view, "ABCDE") {
+		t.Errorf("approval panel = %q, want the code on show", view)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if opened != 1 || !m.authOpened {
+		t.Fatalf("enter opened the browser %d times (authOpened=%v), want once", opened, m.authOpened)
+	}
+
+	// With the page open, enter belongs to the selected row again.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(model)
+	if opened != 1 {
+		t.Errorf("browser opened %d times, want no second launch", opened)
+	}
+}
+
+// A run that dies on a revoked grant restarts the approval, which belongs on
+// the server selection just as the first one did.
+func TestExpiredGrantReturnsToTheServerSelection(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.mode = modeRun
+	m.section, m.row = sectionConnections, 2
+
+	updated, _ := m.Update(doneMsg{seq: m.runSeq, err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}})
+	m = updated.(model)
+	if m.mode != modeConfigure || m.section != sectionServers {
+		t.Fatalf("expired grant left the screen at mode %d section %d", m.mode, m.section)
+	}
+	if m.prepareStatus != "authorizing" {
+		t.Errorf("prepareStatus = %q, want authorizing", m.prepareStatus)
+	}
+}
+
 // --- layout ---
 
 var (
