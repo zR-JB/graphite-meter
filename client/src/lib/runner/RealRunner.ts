@@ -490,8 +490,9 @@ export class RealBackend implements RunnerBackend {
     return info;
   }
 
-  /** What THIS engine can drive today: WebSocket pings + fetch-stream transfer.
-   *  Grows as webtransport/h3 land; a future per-role selection UI reads it. */
+  /** What this engine can drive: WebSocket pings + fetch-stream transfer. The
+   *  per-role lists are reported rather than hardcoded by the caller, so a
+   *  second engine describes itself the same way. */
   describe(): EngineInfo {
     return {
       name: "real",
@@ -647,8 +648,9 @@ export class RealBackend implements RunnerBackend {
     return advertised ? null : "not advertised by server";
   }
 
-  /** WebTransport stays first for future support; today it falls through to the
-   *  serviced fallback: WebSocket for pings, fetch streams for byte lanes. */
+  /** WebTransport heads the preference order but is never serviced — its
+   *  contract is reserved and inactive — so every role resolves to the
+   *  fallback: WebSocket for pings, fetch streams for byte lanes. */
   #transportOrder(role: TransportRole): TransportKind[] {
     return role === "latency"
       ? ["webtransport", "websocket"]

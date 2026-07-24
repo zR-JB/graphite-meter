@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Upload generate-and-POST worker (Stage 3)
+ * The Graphite Meter — Upload generate-and-POST worker
  * ============================================================
  *
  * One worker per parallel upload stream. It builds ONE incompressible Blob "pool"

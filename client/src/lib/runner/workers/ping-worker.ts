@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Latency ping worker (Stage 4)
+ * The Graphite Meter — Latency ping worker
  * ============================================================
  *
  * Owns the WebSocket latency bus (/ws/ping) and the entire ping algorithm. It
@@ -29,7 +29,8 @@
  *     estimator could never learn the link slowed — lost pings carry no RTT — and
  *     would false-flag loss forever.
  *   • Loss = timeout-only: over TCP/WS this is a stalled socket/queue, NOT real
- *     packet loss (TCP retransmits). Real measurable loss is WT datagrams (Stage 5).
+ *     packet loss (TCP retransmits). Measuring real loss would need WebTransport
+ *     datagrams, whose contract is reserved and inactive.
  *   • Auto-reconnect: a handoff often drops the TCP socket outright. On an
  *     unexpected close the worker clears in-flight pings (a connection gap, not
  *     per-packet loss), emits `stall`, and reconnects with capped backoff; on

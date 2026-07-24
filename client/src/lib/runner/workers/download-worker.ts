@@ -1,5 +1,5 @@
 /* ============================================================
- * The Graphite Meter — Download read-and-count worker (Stage 2)
+ * The Graphite Meter — Download read-and-count worker
  * ============================================================
  *
  * One worker per parallel download stream. It opens a streaming fetch
@@ -32,7 +32,8 @@
  *     h1.1 origin). The Blob is referenced, not copied, so the footprint stays flat.
  * The worker message protocol is the same shape both ways (download posts
  * `progress` byte deltas; upload posts `alive` per completed POST), so RealBackend's
- * pool treats them uniformly. WebTransport (Stage 5) is the truly-symmetric path.
+ * pool treats them uniformly. A truly symmetric path would need WebTransport,
+ * whose contract is reserved and inactive (docs/ARCHITECTURE.md#reserved-contract-surface).
  *
  * ── Firefox download RAM caveat (known, documented, not a bug we can fix) ──
  * When the LINK is faster than this read loop (loopback / fast LAN), Firefox

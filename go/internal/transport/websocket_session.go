@@ -12,7 +12,7 @@ import (
 // wsBus adapts a *websocket.Conn to MessageBus: one logical wire message per text
 // frame (api/wire.md — WS frames are already message-delimited, no length prefix).
 // Reliable() is true: WS rides TCP, which retransmits, so packet loss is hidden.
-// Measurable loss is the WT-datagram bus (Stage 5).
+// This is the only bus transport, so no session exposes measurable loss.
 type wsBus struct {
 	conn *websocket.Conn
 	ctx  context.Context

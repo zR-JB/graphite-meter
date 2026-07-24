@@ -361,9 +361,9 @@ export interface RunnerError {
 export interface EngineInfo {
   /** Engine id, e.g. "real" | "dummy". */
   name: string;
-  /** Per-engine version. Both built-ins are versioned with the client build
-   *  today (same build phase); the field exists so a future pluggable engine
-   *  can version independently. */
+  /** Per-engine version. Both built-ins report the client build version,
+   *  because both ship with it; the field is per-engine so an engine that did
+   *  not could report its own. */
   version: string;
   /** Transports this engine can drive for latency probing, preference order. */
   latencyTransports: string[];

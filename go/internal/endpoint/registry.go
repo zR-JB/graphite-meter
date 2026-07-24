@@ -12,8 +12,9 @@ import (
 
 // Registry maps paths to endpoints. The HTTP mux is built by walking it; bus
 // endpoints (WebSocket today) resolve from the same registry. Adding an
-// endpoint is a Register call — no listener code changes. WebTransport is
-// reserved for Stage 5 — see docs/ARCHITECTURE.md#roadmap.
+// endpoint is a Register call — no listener code changes. There is no
+// WebTransport dispatcher; that contract surface is inactive by design (see
+// docs/ARCHITECTURE.md#reserved-contract-surface).
 type Registry struct {
 	httpEndpoints map[string]Endpoint
 	wsEndpoints   map[string]Endpoint
@@ -33,8 +34,7 @@ func (r *Registry) RegisterHTTP(path string, e Endpoint) {
 }
 
 // RegisterWS mounts an endpoint as a WebSocket bus at path. The upgrade is an
-// HTTP/1.1 Upgrade on the existing h1 origin — no new listener. The WebTransport
-// dispatcher will resolve bus endpoints from this same registry by path.
+// HTTP/1.1 Upgrade on the existing h1 origin — no new listener.
 func (r *Registry) RegisterWS(path string, e Endpoint) {
 	r.wsEndpoints[path] = e
 }
