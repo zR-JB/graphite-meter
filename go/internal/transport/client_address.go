@@ -64,10 +64,20 @@ func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
 	return ClientAddress{Addr: addr, Version: version, Source: source}
 }
 
-// forwardedChain returns the proxy chain in client-to-proxy order. The
-// highest-fidelity header present wins outright: a malformed Forwarded is never
-// rescued by an X-Forwarded-For that a nearer hop may write.
+// forwardedChain returns the proxy chain in client-to-proxy order. One header
+// wins outright: a malformed one is never rescued by another that a nearer hop
+// may write. X-Real-IP is consulted first because it is the header the trusted
+// proxy is configured to overwrite from its own peer (docs/REVERSE_PROXY.md);
+// ranking a client-settable Forwarded above it would let a failed strip
+// upstream override the one value the proxy actually vouches for.
 func forwardedChain(h http.Header) ([]netip.Addr, bool) {
+	if raw := h.Get("X-Real-IP"); raw != "" {
+		addr, ok := parseAddress(raw)
+		if !ok {
+			return nil, false
+		}
+		return []netip.Addr{addr}, true
+	}
 	if raw := h.Get("Forwarded"); raw != "" {
 		elements, ok := splitQuoted(raw, ',')
 		if !ok {
@@ -106,13 +116,6 @@ func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 			chain = append(chain, addr)
 		}
 		return chain, len(chain) > 0
-	}
-	if raw := h.Get("X-Real-IP"); raw != "" {
-		addr, ok := parseAddress(raw)
-		if !ok {
-			return nil, false
-		}
-		return []netip.Addr{addr}, true
 	}
 	return nil, false
 }

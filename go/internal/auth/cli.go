@@ -31,6 +31,16 @@ func validChallenge(v string) bool {
 	b, err := base64.RawURLEncoding.DecodeString(v)
 	return err == nil && len(b) == 32 && len(v) <= 64
 }
+
+// challengeOrEmpty admits a well-formed CLI challenge at the request boundary
+// and collapses anything else to the no-challenge case, so only conforming
+// values ride through templates, redirects, and the OIDC transaction store.
+func challengeOrEmpty(v string) string {
+	if validChallenge(v) {
+		return v
+	}
+	return ""
+}
 func verificationCode(challenge string) string {
 	value, err := base64.RawURLEncoding.DecodeString(challenge)
 	if err != nil || len(value) < 5 {

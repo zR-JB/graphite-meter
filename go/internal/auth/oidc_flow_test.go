@@ -354,6 +354,44 @@ func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 	}
 }
 
+// A CLI challenge enters the OIDC transaction only when it is well-formed;
+// anything else is stored as the no-challenge case.
+func TestOIDCStartStoresOnlyValidChallenge(t *testing.T) {
+	f := newFakeOIDC(t)
+	s := f.service(t)
+	start := func(challenge string) string {
+		t.Helper()
+		csrf := "abcdefghijklmnopqrstuvwxyz0123456789"
+		body := url.Values{"csrf": {csrf}, "challenge": {challenge}}.Encode()
+		r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
+		r.Body = io.NopCloser(strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Origin", s.public.String())
+		r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
+		rr := httptest.NewRecorder()
+		s.oidcStart(rr, r)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("start status=%d, want 303", rr.Code)
+		}
+		location, err := url.Parse(rr.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := sha256.Sum256([]byte(location.Query().Get("state")))
+		s.oidc.mu.Lock()
+		defer s.oidc.mu.Unlock()
+		return s.oidc.tx[key].cliChallenge
+	}
+	sum := sha256.Sum256([]byte("terminal-verifier"))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	if got := start(challenge); got != challenge {
+		t.Fatalf("valid challenge stored as %q", got)
+	}
+	if got := start("not-a-challenge"); got != "" {
+		t.Fatalf("invalid challenge stored as %q", got)
+	}
+}
+
 // A CLI challenge carried through the OIDC transaction must reach the approval
 // page through the same same-site hop, and only when it is well-formed.
 func TestOIDCInterstitialCarriesOnlyValidCLIChallenge(t *testing.T) {

@@ -264,7 +264,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := budgetKey(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: r.FormValue("challenge")}
+	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge"))}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
@@ -313,6 +313,25 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 func exactlyOne(q url.Values, key string) (string, bool) {
 	v, ok := q[key]
 	return first(v), ok && len(v) == 1 && v[0] != ""
+}
+
+// validAuthCode holds an incoming authorization code to RFC 6749's grammar,
+// code = 1*VSCHAR (printable ASCII 0x20-0x7E). A compliant provider never issues
+// a code outside this range, so the check cannot reject a real one. It keeps
+// out-of-grammar bytes from reaching the provider's token endpoint even
+// percent-encoded, and fails a malformed callback before the one-time
+// transaction is consumed. Length is left unbounded: the spec leaves code size
+// undefined and the client must not assume a bound.
+func validAuthCode(v string) bool {
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 func first(v []string) string {
 	if len(v) == 0 {
@@ -369,7 +388,7 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
-	if !cok || !sok || len(q["error"]) > 0 || len(q["iss"]) > 1 {
+	if !cok || !sok || !validAuthCode(code) || len(q["error"]) > 0 || len(q["iss"]) > 1 {
 		s.oidcLoginFailure(w, r, reasonCallbackParameters)
 		return oidcTransaction{}, "", false
 	}
