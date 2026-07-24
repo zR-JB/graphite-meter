@@ -26,7 +26,7 @@ go/                           Go module: the measurement server + a native Bubbl
 api/                          Cross-language contract, source of truth for client/server agreement:
                                  preflight schema/golden — logical discovery
                                  probe schema/golden     — selected-path evidence
-                                 wire.md / wire.testvectors.txt                — message protocol + stream preambles
+                                 wire.md / wire.testvectors.txt                — the message-bus protocol
 container/                    Deployment: image-based docker-compose.yml + quadlet unit (default),
                                the multi-stage Dockerfile, and build-from-source variants.
 ```
@@ -110,15 +110,17 @@ navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/r
 | `/upload`                | POST         | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                      |
 | `/ws/ping`               | WS upgrade   | WebSocket                            | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                              |
 | `/wt/ping`               | CONNECT      | HTTP/3 WebTransport                  | The same echo over session datagrams, where a ping that never returns is real packet loss rather than a stalled queue.                                                                          |
-| `/wt/download`           | CONNECT      | HTTP/3 WebTransport                  | One bidirectional stream per lane, each opened with a `SIZE,<bytes>` preamble that sizes the response on that same stream. A `SIZE` datagram floods the request as datagrams instead.           |
-| `/wt/upload`             | CONNECT      | HTTP/3 WebTransport                  | Client unidirectional streams are upload bytes; one bidirectional stream carries the `/upload/progress` records, so the counter rides the connection under test. `?id=` names the upload.       |
+| `/wt/download`           | CONNECT      | HTTP/3 WebTransport                  | The CONNECT query names everything (`bytes=&streams=&datagrams=`): the server opens the lanes, each writing `bytes` and replaced when exhausted, or sends one datagram flood. `bytes=0` is the transport check. |
+| `/wt/upload`             | CONNECT      | HTTP/3 WebTransport                  | Client unidirectional streams are upload bytes (`?id=` names the upload); the server opens one stream at establishment carrying the `/upload/progress` records, so the counter rides the connection under test. |
+| `/wt/session`            | POST         | selected throughput target, JSON     | Mints the single-use 30 s token an authenticated browser CONNECT carries in its URL, since a WebTransport CONNECT can send neither cookies nor headers. Empty token when auth is off.           |
 | `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON   | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop.            |
 | `/` (anything unmatched) | GET          | H1/H1-TLS UI listeners               | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it). |
 
-WebTransport is mounted and advertised wherever HTTP/3 is configured, except under authentication:
-a session carries neither cookies nor an `Authorization` header, so it cannot cross the enforcement
-boundary. One session holds one request-admission slot for its whole life, where a fetch target
-takes one per request.
+WebTransport is mounted and advertised wherever HTTP/3 is configured. Under authentication the
+boundary authenticates the extended CONNECT before any upgrade runs: native clients send their
+bearer grant, and browsers carry a session-linked single-use token minted at `/wt/session`;
+revoking the auth session unwinds live WebTransport sessions. One session holds one
+request-admission slot for its whole life, where a fetch target takes one per request.
 
 ### Server-authoritative upload accounting
 
@@ -147,7 +149,6 @@ for one bad frame. Full spec: [`api/wire.md`](../api/wire.md); shared byte-exact
 | `READY` | S→C       | `READY`                  | Bus is up.                                                                  |
 | `PING`  | C→S       | `PING,<id>`              | Latency probe; `id` is a client-owned monotonic uint32.                     |
 | `PONG`  | S→C       | `PONG,<id>;TIME,<nanos>` | Echo; `id` verbatim, server clock is diagnostics-only.                      |
-| `SIZE`  | C→S       | `SIZE,<bytes>`           | WebTransport download size, as a stream preamble or a datagram.             |
 | `BYE`   | C→S       | `BYE`                    | Graceful bus close.                                                         |
 | `ERR`   | S→C       | `ERR,<code>,<text>`      | Non-fatal protocol error.                                                   |
 
@@ -302,7 +303,7 @@ the primary summary.
 | `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                       |
 | `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss algorithm, off the main thread.                                                 |
-| `wt-transfer-worker.ts`     | Owns one WebTransport session and every lane stream on it; for upload it also carries the progress feed and the finalizing DELETE.                   |
+| `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE.  |
 | `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                   |
 
 ### Testing

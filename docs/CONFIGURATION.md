@@ -106,9 +106,10 @@ connections — otherwise an anonymous client can pull sustained traffic at your
 ## Authentication
 
 Off by default. When enabled, every UI asset, discovery request, probe, transfer, progress
-stream, and WebSocket requires a browser session or terminal grant. WebTransport is neither
-mounted nor advertised while authentication is on: a session carries neither cookies nor an
-`Authorization` header, so it cannot cross the enforcement boundary.
+stream, WebSocket, and WebTransport session requires a browser session or terminal grant. A
+WebTransport CONNECT can send neither cookies nor headers from a browser, so the client mints a
+single-use 30-second token at `POST /wt/session` and carries it in the CONNECT URL; the native
+client sends its grant as a header. Revoking a session ends its live WebTransport sessions.
 
 | Environment                       | Flag                             | Default    | Meaning                                                              |
 | --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------------- |
@@ -246,7 +247,7 @@ inside the TUI before a run starts.
 | `--url`                    | `http://127.0.0.1:7246` | Server base URL. Nothing is dialled until it is picked in the TUI or rechecked with `v`.       |
 | `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
 | `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
-| `--throughput-transport`   | `auto`                  | `auto`, `fetch-stream`, or `webtransport`; `auto` leads with WebTransport where advertised.     |
+| `--throughput-transport`   | `auto`                  | `auto`, `fetch-stream`, or `webtransport`; automatic prefers fetch streams.                     |
 | `--latency-origin`         | `auto`                  | Discovered latency origin.                                                                     |
 | `--latency-transport`      | `auto`                  | `auto`, `websocket`, or `webtransport`; datagrams measure loss a WebSocket cannot show.         |
 | `--stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.      |

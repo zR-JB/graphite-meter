@@ -38,7 +38,7 @@ Built to measure the link, not the tool: in Chrome it sustains up to **60 Gbit/s
 - **WebTransport where HTTP/3 runs** — transfers ride QUIC streams, and pings ride unreliable
   datagrams, so reported loss is packets that never arrived rather than a stalled TCP queue.
 - **Optional private access** — operator password, OIDC with a group allowlist, or both,
-  covering every asset, transfer, and WebSocket.
+  covering every asset, transfer, WebSocket, and WebTransport session.
 - **Featherweight** — a single static Go binary (~10 MB, browser client embedded,
   `FROM scratch` image, no shell, no libc) with low CPU and memory draw while sinking gigabits.
 - **Free and open source** — AGPL-3.0.

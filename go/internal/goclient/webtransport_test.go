@@ -19,19 +19,26 @@ func webTransportCatalog() wire.Preflight {
 	}}
 }
 
-// TestAutomaticSelectionLeadsWithWebTransport pins the preference order: one
-// origin advertising both mechanisms is reached over WebTransport first.
-func TestAutomaticSelectionLeadsWithWebTransport(t *testing.T) {
+// TestAutomaticSelectionPreference pins the order: throughput prefers fetch
+// streams, latency prefers the datagram bus, whose loss is real packet loss.
+func TestAutomaticSelectionPreference(t *testing.T) {
 	pf := webTransportCatalog()
 	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: "auto", LatencyTarget: "auto", LatencyTransport: "auto"}
 
 	throughput, err := selectTarget(cfg, pf)
-	if err != nil || throughput.Transport != wire.TransportWebTransport {
+	if err != nil || throughput.Transport != wire.TransportFetchStream {
 		t.Fatalf("automatic throughput target = %+v, %v", throughput, err)
 	}
 	latency, err := selectLatencyTarget(cfg, pf.Capabilities.LatencyTargets)
 	if err != nil || latency.Transport != wire.TransportWebTransport {
 		t.Fatalf("automatic latency target = %+v, %v", latency, err)
+	}
+
+	// An origin advertising only WebTransport remains reachable automatically.
+	wtOnly := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{pf.Capabilities.ThroughputTargets[1]}}}
+	fallback, err := selectTarget(cfg, wtOnly)
+	if err != nil || fallback.Transport != wire.TransportWebTransport {
+		t.Fatalf("fallback throughput target = %+v, %v", fallback, err)
 	}
 }
 

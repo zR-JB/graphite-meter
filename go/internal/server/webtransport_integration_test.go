@@ -222,6 +222,7 @@ func TestGoClientRunsOverWebTransport(t *testing.T) {
 
 	clientCfg := goclient.DefaultConfig()
 	clientCfg.BaseURL = "http://" + cfg.Native.H1
+	clientCfg.ThroughputTransport = "webtransport"
 	clientCfg.InsecureSkipTLSVerify = true
 	clientCfg.Stages = goclient.StageSet{Latency: true, Download: true, Upload: true}
 	clientCfg.Warmup = 100 * time.Millisecond
