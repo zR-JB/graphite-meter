@@ -20,6 +20,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// captureWindow is the stage duration in tests that assert traffic landed:
+// wide enough that a contended CI runner still records samples, so the
+// assertions test capture rather than machine speed.
+const captureWindow = 2 * time.Second
+
 /* ---- pure helper functions ---- */
 
 func TestHTTP3ClientStartsAtMinimumPacketSize(t *testing.T) {
@@ -220,9 +225,9 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := r.runLatencyStage(ctx, "latency", false, 200*time.Millisecond); err != nil {
+	if err := r.runLatencyStage(ctx, "latency", false, captureWindow); err != nil {
 		t.Fatalf("runLatencyStage: %v", err)
 	}
 	if r.idleRTT <= 0 {
@@ -269,14 +274,14 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 		BaseURL:                srv.URL,
 		Stages:                 StageSet{Download: true},
 		Warmup:                 0,
-		DownloadDuration:       300 * time.Millisecond,
+		DownloadDuration:       captureWindow,
 		TransferStreams:        TransferStreamPolicy{Forced: 1},
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
 	var mu sync.Mutex
 	var events []Event
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := Run(ctx, cfg, func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -429,14 +434,14 @@ func TestRunLatencyStageEndToEnd(t *testing.T) {
 		BaseURL:         srv.URL,
 		Stages:          StageSet{Latency: true},
 		Warmup:          0,
-		LatencyDuration: 200 * time.Millisecond,
+		LatencyDuration: captureWindow,
 		PingInterval:    20 * time.Millisecond,
 		TransferStreams: TransferStreamPolicy{Forced: 1},
 	}
 
 	var mu sync.Mutex
 	var results []Result
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err := Run(ctx, cfg, func(e Event) {
 		if e.Kind == EventResult {

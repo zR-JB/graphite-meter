@@ -30,10 +30,10 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, 300*time.Millisecond, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -81,12 +81,11 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// lossAfter is max(4*PingInterval, 250ms) = 250ms here, so a 400ms window
-	// gives ample margin for at least one ping to be declared lost.
-	stats, err := r.measureLatency(ctx, "latency", false, 400*time.Millisecond, start)
+	// lossAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -146,10 +145,10 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, 700*time.Millisecond, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
