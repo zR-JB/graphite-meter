@@ -261,6 +261,38 @@ func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 	}
 }
 
+// Cycling an endpoint row edits the configuration on every press. Only the
+// last press of a burst may reach the network, and the readiness panel holds
+// the figures of the last verified connection until a new one lands.
+func TestEndpointCyclingChecksOnceAndHoldsTheLastFigures(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section, m.row = sectionConnections, 2
+	updated, _ := m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}})
+	m = updated.(model)
+
+	var due []prepareDueMsg
+	for range 3 {
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = next.(model)
+		due = append(due, prepareDueMsg{seq: m.prepareSeq})
+	}
+	if m.cfg.ThroughputProtocol != "http3" {
+		t.Fatalf("three presses left the protocol at %q, want the third choice", m.cfg.ThroughputProtocol)
+	}
+	if m.prepared == nil {
+		t.Error("the last verified connection was dropped, so the panel has nothing to show")
+	}
+
+	for _, msg := range due[:len(due)-1] {
+		if _, cmd := m.Update(msg); cmd != nil {
+			t.Errorf("superseded debounce %d opened a connection", msg.seq)
+		}
+	}
+	if _, cmd := m.Update(due[len(due)-1]); cmd == nil {
+		t.Error("the last change never reached the network")
+	}
+}
+
 func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections

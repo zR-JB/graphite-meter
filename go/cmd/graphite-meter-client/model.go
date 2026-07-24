@@ -36,6 +36,11 @@ type preparationMsg struct {
 	err        error
 }
 
+// prepareDueMsg is the debounce timer of the preparation it carries the
+// sequence of. A later configuration change bumps the sequence, so the timer of
+// a superseded change fires into nothing.
+type prepareDueMsg struct{ seq int }
+
 // Both auth messages carry the prepareSeq of the preparation that starts the
 // authorization. A browser approval stays outstanding for up to two minutes.
 // The sequence stops a poll detached by a server switch from overwriting a
@@ -287,6 +292,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case spinner.TickMsg:
 		return m.handleTick(msg)
+	case prepareDueMsg:
+		return m.handlePrepareDue(msg)
 	case preparationMsg:
 		return m.handlePreparation(msg)
 	case authChallengeMsg:

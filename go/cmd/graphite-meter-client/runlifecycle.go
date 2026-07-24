@@ -81,15 +81,35 @@ func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
 	}
 }
 
+// prepareDebounce is the quiet period a configuration change waits out before
+// the connection is checked again. Cycling an endpoint row changes the
+// configuration on every press, and without the pause each press would tear
+// down the checklist and open a connection the next press invalidates.
+const prepareDebounce = 350 * time.Millisecond
+
+// reprepare puts the checklist back to the start and schedules a fresh check.
+// The last verified connection is kept for the readiness panel to show while
+// the new one is unproven, so a burst of keypresses moves the values it edits
+// and nothing else.
 func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	m.prepareSeq++
 	m.prepareStatus = "checking"
 	m.prepareStep = stepReach
 	m.prepareError = ""
-	m.prepared = nil
 	m.auth = nil
 	m.authOpened = false
-	return m, tea.Batch(cmd, prepareConnection(m.prepareSeq, m.cfg), m.spin.Tick)
+	tick := tea.Tick(prepareDebounce, func(time.Time) tea.Msg { return prepareDueMsg{seq: m.prepareSeq} })
+	return m, tea.Batch(cmd, tick, m.spin.Tick)
+}
+
+// handlePrepareDue opens the connection the last configuration change asked
+// for. A newer change has already bumped the sequence, so only the final change
+// of a burst reaches the network.
+func (m model) handlePrepareDue(msg prepareDueMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.prepareSeq {
+		return m, nil
+	}
+	return m, prepareConnection(m.prepareSeq, m.cfg)
 }
 
 func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {

@@ -296,13 +296,15 @@ func (m model) menuLine(i int, s string, w int) string {
 }
 
 func (m model) planView(w int) string {
-	throughput := "Checking"
-	latency := "Checking"
-	observed := ""
-	if m.prepared.FreshFor(m.cfg) {
-		throughput = m.prepared.ThroughputSummary()
-		latency = m.prepared.LatencySummary()
-		observed = m.prepared.Probe.ProtocolNegotiated
+	throughput, latency, observed := "Checking", "Checking", ""
+	// A pending check keeps the figures of the last verified one, dimmed:
+	// blanking them on every keypress made cycling an endpoint flicker.
+	value := valueStyle
+	if p := m.prepared; p != nil {
+		throughput, latency, observed = p.ThroughputSummary(), p.LatencySummary(), p.Probe.ProtocolNegotiated
+		if !p.FreshFor(m.cfg) {
+			value = mutedStyle
+		}
 	}
 	lines := []string{accentStyle.Render("Connection readiness")}
 	lines = append(lines, m.checklistView()...)
@@ -312,9 +314,9 @@ func (m model) planView(w int) string {
 	lines = append(lines, m.authView()...)
 	lines = append(lines,
 		"",
-		labelStyle.Render("Throughput ")+valueStyle.Render(throughput),
-		labelStyle.Render("Latency    ")+valueStyle.Render(latency),
-		labelStyle.Render("Observed   ")+valueStyle.Render(emptyDash(observed)),
+		labelStyle.Render("Throughput ")+value.Render(throughput),
+		labelStyle.Render("Latency    ")+value.Render(latency),
+		labelStyle.Render("Observed   ")+value.Render(emptyDash(observed)),
 		"",
 		mutedStyle.Render("Run order"),
 	)
