@@ -177,8 +177,11 @@ past its cap.
 
 ### Saturation envelope (`just stress`)
 
-The loopback harness (`saturation_stress_test.go`, build tag `stress`) measures an observer
-latency client against growing loader concurrency. Results on an 8-core dev box: observer RTT is
+The loopback harness (`saturation_stress_test.go`, build tag `stress`) measures observer latency
+clients — one per bus, WebSocket and WebTransport datagrams — against growing background load:
+transfer loaders alternating download and upload (two forced lanes each) over kernel TCP or
+userspace QUIC, and reply-driven ping-chain spammers, alone and combined. Results on an 8-core dev
+box: observer RTT is
 sub-millisecond while CPU has headroom, and once transfer load saturates the cores it inflates
 roughly linearly with concurrency (p50 ≈ 5 ms at 8 loaders, ≈ 20 ms at 32; ~2.5× worse when
 confined to 2 cores) with zero loss — contamination is CPU scheduling, not queue drops, so it is

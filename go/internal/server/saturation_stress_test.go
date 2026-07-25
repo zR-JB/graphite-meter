@@ -47,7 +47,8 @@ func TestSaturationEnvelope(t *testing.T) {
 	base := "http://" + cfg.Native.H1
 
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
-	t.Logf("%-28s %8s %8s %8s %6s %10s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "goodput", "pings/s", "cpu")
+	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
+	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s", "cpu")
 
 	run := func(name string, mix loadMix) {
 		if mix.procs > 0 {
@@ -56,13 +57,18 @@ func TestSaturationEnvelope(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		var loaderBytes, spamPings atomic.Uint64
+		var downBytes, upBytes, spamPings atomic.Uint64
 		var wg sync.WaitGroup
 		for i := range mix.loaders {
+			upload := i%2 == 1
+			bytes := &downBytes
+			if upload {
+				bytes = &upBytes
+			}
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				loaderRun(ctx, base, mix.transport, i%2 == 1, &loaderBytes)
+				loaderRun(ctx, base, mix.transport, upload, bytes)
 			}()
 		}
 		for range mix.spammers {
@@ -81,19 +87,20 @@ func TestSaturationEnvelope(t *testing.T) {
 		time.Sleep(1500 * time.Millisecond)
 		for _, bus := range []struct{ transport, label string }{{"websocket", "ws"}, {"webtransport", "wt"}} {
 			cpu0, wall0 := cpuNow()
-			bytes0 := loaderBytes.Load()
+			down0, up0 := downBytes.Load(), upBytes.Load()
 			pings0 := spamPings.Load()
 			rtts, loss := observe(t, base, bus.transport)
 			cpu1, wall1 := cpuNow()
 			window := wall1.Sub(wall0).Seconds()
-			goodput := float64(loaderBytes.Load()-bytes0) * 8 / window / 1e9
+			gbps := func(delta uint64) float64 { return float64(delta) * 8 / window / 1e9 }
 			spamRate := float64(spamPings.Load()-pings0) / window
 			if len(rtts) == 0 {
 				t.Errorf("%s/%s: observer collected no samples", name, bus.label)
 				continue
 			}
-			t.Logf("%-28s %8s %8s %8s %5.1f%% %7.2f Gb %9.0f/s %5.0f%%",
-				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100, goodput, spamRate,
+			t.Logf("%-28s %8s %8s %8s %5.1f%% %5.1f Gb %5.1f Gb %9.0f/s %5.0f%%",
+				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100,
+				gbps(downBytes.Load()-down0), gbps(upBytes.Load()-up0), spamRate,
 				(cpu1-cpu0).Seconds()/window*100)
 		}
 		cancel()
