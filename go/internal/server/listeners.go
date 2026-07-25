@@ -405,7 +405,7 @@ func (b *listenerBuild) assembleH3() error {
 	// Advertises the WebTransport settings and wraps ConnContext, so it must
 	// run before the listener starts.
 	webtransport.ConfigureHTTP3Server(h3)
-	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{})
+	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{WebTransport: true})
 	if b.authn.Enabled() {
 		h3.MaxHeaderBytes = 32 << 10
 	}

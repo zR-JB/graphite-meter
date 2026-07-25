@@ -8,6 +8,7 @@ import type {
   PhaseActivity,
   ProtocolTarget,
   TransportDiscovery,
+  TransportKind,
   ThroughputTargetSelection,
 } from "../contract";
 import type {
@@ -191,6 +192,25 @@ export function classifyTransportDiscovery(
  *  the picker, since one origin advertises several mechanisms. */
 export const WT_SELECTION_SUFFIX = "::wt";
 export const WT_DATAGRAM_SELECTION_SUFFIX = "::wtdg";
+
+/** Whether a throughput transport rides a WebTransport session rather than
+ *  fetch requests. The switch is exhaustive by construction: a new
+ *  TransportKind fails to compile here until it is classified, so the transfer
+ *  path can never silently treat an unhandled kind as fetch. */
+export function throughputRidesSession(kind: TransportKind): boolean {
+  switch (kind) {
+    case "webtransport":
+    case "webtransport-datagram":
+      return true;
+    case "fetch-stream":
+    case "websocket":
+      return false;
+    default: {
+      const unclassified: never = kind;
+      throw new Error(`unclassified transport ${String(unclassified)}`);
+    }
+  }
+}
 
 /** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;
  *  protocol evidence disambiguates multiple targets sharing an origin. An

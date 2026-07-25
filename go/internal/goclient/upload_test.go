@@ -301,9 +301,18 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	}
 }
 
+// newWaitNextProgress builds a progress channel whose own context decides when
+// the report is over, which is what waitNext reads: an individual feed ending
+// only means a replacement session is about to re-attach.
+func newWaitNextProgress() (*uploadProgress, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1)}, cancel
+}
+
 func TestUploadProgressWaitNext(t *testing.T) {
 	t.Run("already advanced", func(t *testing.T) {
-		progress := &uploadProgress{done: make(chan struct{}), changed: make(chan struct{}, 1)}
+		progress, cancel := newWaitNextProgress()
+		defer cancel()
 		progress.seq.Store(2)
 		if !progress.waitNext(context.Background(), 1) {
 			t.Fatal("waitNext rejected an available update")
@@ -311,7 +320,8 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 
 	t.Run("notification", func(t *testing.T) {
-		progress := &uploadProgress{done: make(chan struct{}), changed: make(chan struct{}, 1)}
+		progress, cancel := newWaitNextProgress()
+		defer cancel()
 		result := make(chan bool, 1)
 		go func() { result <- progress.waitNext(context.Background(), 0) }()
 		progress.seq.Store(1)
@@ -322,30 +332,52 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 
 	t.Run("cancellation", func(t *testing.T) {
-		progress := &uploadProgress{done: make(chan struct{}), changed: make(chan struct{}, 1)}
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		progress, cancel := newWaitNextProgress()
+		defer cancel()
+		ctx, cancelCaller := context.WithCancel(context.Background())
+		cancelCaller()
 		if progress.waitNext(ctx, 0) {
 			t.Fatal("waitNext succeeded after cancellation")
 		}
 	})
 
 	t.Run("terminal", func(t *testing.T) {
-		done := make(chan struct{})
-		close(done)
-		progress := &uploadProgress{done: done, changed: make(chan struct{}, 1)}
+		progress, cancel := newWaitNextProgress()
+		cancel()
 		if progress.waitNext(context.Background(), 0) {
-			t.Fatal("waitNext succeeded after the progress stream closed")
+			t.Fatal("waitNext succeeded after the progress channel closed")
 		}
 	})
 
 	t.Run("final update", func(t *testing.T) {
-		done := make(chan struct{})
-		close(done)
-		progress := &uploadProgress{done: done, changed: make(chan struct{}, 1)}
+		progress, cancel := newWaitNextProgress()
+		cancel()
 		progress.seq.Store(1)
 		if !progress.waitNext(context.Background(), 0) {
 			t.Fatal("waitNext dropped the final progress update")
+		}
+	})
+
+	// A feed replaced mid-stage closes its own reader. Treating that as the end
+	// of the report would fail the stage on every session rollover.
+	t.Run("feed replaced", func(t *testing.T) {
+		progress, cancel := newWaitNextProgress()
+		defer cancel()
+		result := make(chan bool, 1)
+		go func() { result <- progress.waitNext(context.Background(), 0) }()
+		progress.mu.Lock()
+		close(progress.done)
+		progress.done = make(chan struct{})
+		progress.mu.Unlock()
+		select {
+		case <-result:
+			t.Fatal("waitNext ended the report when one feed was replaced")
+		case <-time.After(200 * time.Millisecond):
+		}
+		progress.seq.Store(1)
+		progress.changed <- struct{}{}
+		if !<-result {
+			t.Fatal("waitNext missed the replacement feed's update")
 		}
 	})
 }

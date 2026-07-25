@@ -394,12 +394,15 @@ func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
 	}
 }
 
+// waitNext blocks until the server's counter advances past `after`. One feed
+// ending is not the end of the report: a replacement session re-attaches to the
+// same aggregate, so only this channel's own cancellation is terminal.
 func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	for p.seq.Load() <= after {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-p.currentDone():
+		case <-p.ctx.Done():
 			return p.seq.Load() > after
 		case <-p.changed:
 		}

@@ -16,7 +16,9 @@ import (
 
 // Listener describes what a wrapped listener is allowed to serve. UI listeners
 // carry the login surface; measurement-only listeners refuse it outright.
-type Listener struct{ UI bool }
+// WebTransport marks the listener that mounts the session routes: only there
+// does a CONNECT reach a handler, so only there is its single-use token spent.
+type Listener struct{ UI, WebTransport bool }
 
 type principalKey struct{}
 
@@ -58,7 +60,7 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			s.corsPreflight(w, r, t.Secure)
 			return
 		}
-		if r.Method == http.MethodConnect && isWebTransportRoute(r.URL.Path) {
+		if r.Method == http.MethodConnect && listener.WebTransport && isWebTransportRoute(r.URL.Path) {
 			s.serveWebTransportConnect(w, r, next, listener, t)
 			return
 		}

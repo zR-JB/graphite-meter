@@ -40,6 +40,7 @@ import {
   selectLatencyTarget,
   fetchViewOfWebTransport,
   browserProtocolMatchesTarget,
+  throughputRidesSession,
   WT_DATAGRAM_SELECTION_SUFFIX,
   WT_SELECTION_SUFFIX,
   classifyTransportDiscovery,
@@ -835,8 +836,10 @@ export class RealBackend implements RunnerBackend {
     dir: FlowDirection,
     activity: PhaseActivity,
   ): void | Promise<void> {
-    const wt = kind === "webtransport" ? this.#wtThroughputTarget : null;
-    if (kind === "webtransport" && !wt) throw new Error(`unsupported ${kind}`);
+    // Session-borne kinds need the resolved session target; reaching here
+    // without one is a dispatch gap, never a quiet fall back to fetch.
+    const wt = throughputRidesSession(kind) ? this.#wtThroughputTarget : null;
+    if (!wt && kind !== "fetch-stream") throw new Error(`unsupported ${kind}`);
 
     // A stage names each direction once (bidirectional calls this twice, one per
     // direction): a duplicate call for the SAME direction is a real bug.

@@ -31,6 +31,11 @@ const wtMaxStreams = 16
 // QUIC, HTTP/3 and WebTransport framing is accounted for.
 const wtDatagramPayload = 1000
 
+// wtVerifyLinger bounds an establish-only (bytes=0) session. A client closes one
+// as soon as the handshake proves the path, so this only limits how long a
+// parked one occupies a measurement slot.
+const wtVerifyLinger = 30 * time.Second
+
 type wtPing struct{ ping Endpoint }
 
 // NewWTPing serves the latency bus over session datagrams, where a ping that
@@ -52,9 +57,16 @@ func NewWTDownload(download Endpoint) WTHandler { return &wtDownload{download: d
 func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 	query := r.URL.Query()
 	// Parse rather than compare spellings: any zero request serves nothing, and
-	// a lane loop over a zero length would spin without moving bytes.
+	// a lane loop over a zero length would spin without moving bytes. An
+	// establish-only session holds an admission slot while it lives, and its
+	// answer is the handshake, so it is bounded far below the session lifetime.
 	if parseBytes(query.Get("bytes")) == 0 {
-		<-ctx.Done()
+		linger := time.NewTimer(wtVerifyLinger)
+		defer linger.Stop()
+		select {
+		case <-ctx.Done():
+		case <-linger.C:
+		}
 		return
 	}
 	if query.Get("datagrams") != "" {

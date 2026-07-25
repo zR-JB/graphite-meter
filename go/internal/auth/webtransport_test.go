@@ -39,8 +39,30 @@ func wtConnect(t *testing.T, s *Service, path string) (reached bool, status int)
 	r := secureRequest(http.MethodGet, path, nil)
 	r.Method = http.MethodConnect
 	w := httptest.NewRecorder()
-	s.Enforce(next, Listener{}).ServeHTTP(w, r)
+	s.Enforce(next, Listener{WebTransport: true}).ServeHTTP(w, r)
 	return reachedHandler, w.Code
+}
+
+// A listener that does not mount the session routes must not run the CONNECT
+// branch: the request would 404 anyway, and the token is single-use.
+func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
+	s := testService(t)
+	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	token := mintForSession(t, s, sess)
+
+	r := secureRequest(http.MethodGet, "/wt/download", nil)
+	r.Method = http.MethodConnect
+	r.URL.RawQuery = "token=" + token
+	w := httptest.NewRecorder()
+	s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Listener{}).ServeHTTP(w, r)
+
+	// Unspent: the same token still authenticates on the listener that serves it.
+	if _, ok := s.consumeWebTransportToken(token); !ok {
+		t.Fatal("a CONNECT to a listener without the session routes spent the token")
+	}
 }
 
 func TestWebTransportConnectAcceptsAMintedTokenOnce(t *testing.T) {

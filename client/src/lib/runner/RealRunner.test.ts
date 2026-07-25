@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import type { CoreHost } from "./core";
 import {
   httpToWs,
+  throughputRidesSession,
   median,
   needsPings,
   laneStaggerMs,
@@ -764,4 +765,16 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     ])
       Reflect.deleteProperty(buildGlobals, key);
   }
+});
+
+// The transfer path dispatches on transport kind: a kind #transportOrder can
+// emit but #primeTransfer does not recognise would fall through to the fetch
+// branch and measure the wrong thing while reporting the selected transport.
+// The classifier is the single source both sides read, and its `never` default
+// makes an unclassified kind a compile error.
+test("every throughput transport is classified as session-borne or fetch", () => {
+  expect(throughputRidesSession("webtransport")).toBe(true);
+  expect(throughputRidesSession("webtransport-datagram")).toBe(true);
+  expect(throughputRidesSession("fetch-stream")).toBe(false);
+  expect(throughputRidesSession("websocket")).toBe(false);
 });
