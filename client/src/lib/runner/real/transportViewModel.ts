@@ -19,6 +19,7 @@ export interface TransportOptionView {
 
 const NOT_ADVERTISED = "Not offered in /preflight.";
 const DISCOVERY_PENDING = "Checking server transports…";
+const NO_BROWSER_WT = "WebTransport is not supported by this browser.";
 
 function automaticDetail(
   target: FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
@@ -69,6 +70,8 @@ export function throughputOptionView(
         };
   }
   if (selection.endsWith(WT_SELECTION_SUFFIX)) {
+    if (typeof WebTransport === "undefined")
+      return { disabled: true, detail: NO_BROWSER_WT };
     const entry =
       discovery.throughput[selection.slice(0, -WT_SELECTION_SUFFIX.length)];
     return {
@@ -107,6 +110,11 @@ export function latencyOptionView(
         };
   }
   const entry = discovery.latency[selection];
+  if (
+    entry?.target?.transport === "webtransport" &&
+    typeof WebTransport === "undefined"
+  )
+    return { disabled: true, detail: NO_BROWSER_WT };
   return {
     disabled: entry?.state !== "advertised",
     detail: entry ? advertisedDetail(entry, discovery) : NOT_ADVERTISED,

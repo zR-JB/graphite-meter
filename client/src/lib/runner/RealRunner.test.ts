@@ -12,7 +12,6 @@ import {
   classifyTransportDiscovery,
   isLoopbackHostname,
   throughputTargetKey,
-  webTransportThroughputTarget,
   fetchViewOfWebTransport,
   ROUTES,
 } from "./real/backendPure";
@@ -149,9 +148,6 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   expect(entry.target?.transport).toBe("fetch-stream");
   expect(entry.wt?.id).toBe("https://meter:7249::wt");
   expect(entry.wt?.routes.wtDownload).toBe(ROUTES.wtDownload);
-  expect(webTransportThroughputTarget(catalog, "https://meter:7249")).toBe(
-    entry.wt!,
-  );
 
   // Auto prefers fetch; the ::wt id names the WebTransport view explicitly.
   expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(

@@ -80,6 +80,35 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
   ).toBe(false);
 });
 
+test("WebTransport options disable in a browser without the API", () => {
+  // bun's test environment has no WebTransport global, which is the case
+  // these views must catch before a probe fails on it.
+  const catalog = classifyTransportDiscovery(
+    [
+      transfer("http3", "https://meter:7249", "http3", true),
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport" as const,
+        protocol: "http3" as const,
+      },
+    ],
+    [{ baseUrl: "https://meter:7249", transport: "webtransport" as const }],
+    "https://meter:7249",
+    true,
+    "h3",
+  );
+  const wtThroughput = throughputOptionView(catalog, "https://meter:7249::wt");
+  expect(wtThroughput.disabled).toBe(true);
+  expect(wtThroughput.detail).toBe(
+    "WebTransport is not supported by this browser.",
+  );
+  const wtLatency = latencyOptionView(catalog, "https://meter:7249");
+  expect(wtLatency.disabled).toBe(true);
+  expect(wtLatency.detail).toBe(
+    "WebTransport is not supported by this browser.",
+  );
+});
+
 test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () => {
   const direct = classifyTransportDiscovery(
     [transfer("http1-clear", "http://meter:7246", "http1", false)],

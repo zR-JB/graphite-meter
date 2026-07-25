@@ -277,15 +277,6 @@ export function selectLatencyTarget(
   );
 }
 
-/** The WebTransport view of a selected throughput origin, when advertised. */
-export function webTransportThroughputTarget(
-  discovery: TransportDiscovery,
-  origin: string,
-): WebTransportThroughputTarget | null {
-  const entry = discovery.throughput[origin];
-  return entry?.state === "advertised" ? (entry.wt ?? null) : null;
-}
-
 /** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything
  *  already ws(s):// (or relative) passes through unchanged. */
 export function httpToWs(origin: string): string {

@@ -142,12 +142,6 @@ export class UploadProgressChannel {
     });
   }
 
-  /** Resolve a pending external attach as out of date: its lane was torn down
-   *  or its worker replaced, so no verdict may fail the stage. */
-  supersede(): void {
-    this.#external?.finish("superseded");
-  }
-
   /** Feed one relayed record in. Used by the WebTransport upload worker, whose
    *  messages reach the main thread through the lane channel. */
   accept(msg: ProgressOutMsg | AuthRequiredMsg): void {

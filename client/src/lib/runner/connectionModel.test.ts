@@ -310,6 +310,41 @@ test("probe failure and stale evidence remain retryable presentation states", ()
   expect(model.latency.validation).toBe("stale");
 });
 
+test("a ::wt selection shares its origin's availability", () => {
+  const cfg = config();
+  cfg.transports.throughputTarget = "https://meter.test::wt";
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [
+        throughput,
+        {
+          baseUrl: "https://meter.test",
+          transport: "webtransport" as const,
+          protocol: "http3" as const,
+        },
+      ],
+      [latency],
+      "https://meter.test",
+      true,
+      "h2",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: { selection: "https://meter.test::wt", state: "checking" },
+    latency: { selection: "auto", state: "checking" },
+  };
+
+  const model = presentConnections(cfg, discovery, validation, null);
+  expect(model.throughput.availability).toBe("advertised");
+  expect(model.throughput.target?.transport).toBe("webtransport");
+});
+
 test("validation retries only the changed role and carries an aborted stale role", () => {
   const cfg = config();
   const validation: ConnectionValidation = {
