@@ -227,9 +227,10 @@ run concurrently during a transfer stage, to measure RTT-under-load / bufferbloa
 the idle baseline).
 
 Transport: protocol-specific streamed HTTP GET/POST clients for throughput and its NDJSON upload
-progress, plus an independently selected latency channel. Both roles run over WebTransport when the
-server advertises it, falling back to fetch streams and a WebSocket; `-throughput-transport` and
-`-latency-transport` name one explicitly.
+progress, plus an independently selected latency channel. Latency runs over WebTransport datagrams
+where the server advertises them, since an unanswered ping there is real packet loss; throughput
+prefers fetch streams, which still win raw rate over TCP. Both fall back to the other mechanism,
+and `--throughput-transport` / `--latency-transport` name one explicitly.
 
 To reduce measurement noise, the runner adaptively stretches warmup to roughly 10x the measured
 idle RTT (floor = configured warmup, ceiling 4s) so TCP slow start finishes before the measured

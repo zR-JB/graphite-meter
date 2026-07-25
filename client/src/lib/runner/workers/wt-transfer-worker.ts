@@ -12,6 +12,7 @@
  * ============================================================ */
 
 import { mintWtToken, withWtToken, type WtMint } from "./wtToken";
+import { sessionAuthenticationRequired } from "../../request-auth";
 
 /** Records of the server's upload feed, relayed verbatim to the main thread. */
 type ProgressMsg =
@@ -41,6 +42,7 @@ type OutMsg =
   | { type: "alive" }
   | { type: "error"; recoverable: boolean; detail: string }
   | { type: "upload-progress"; msg: ProgressMsg }
+  | { type: "auth-required" }
   | { type: "stopped" };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -102,6 +104,18 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   const token = await mintWtToken(msg.mint);
   if (stopped) return;
+  // An authenticated dial cannot proceed without a token, and a failed mint
+  // usually means the session is gone: the session check decides between the
+  // login redirect and a plain retry, as the ping worker does.
+  if (msg.mint && token === "") {
+    if (await sessionAuthenticationRequired(self.location.origin)) {
+      post({ type: "auth-required" });
+      stopped = true;
+      return;
+    }
+    fail(true, "webtransport token mint failed");
+    return;
+  }
   let dialed: WebTransport;
   try {
     dialed = new WebTransport(withWtToken(msg.url, token), {

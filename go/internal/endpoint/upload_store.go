@@ -65,8 +65,10 @@ func (a *uploadAgg) postsWaiter() <-chan struct{} {
 
 // claimProgress makes the caller the aggregate's one live feed, superseding any
 // current holder. A client that lost its transport re-dials long before the
-// dead connection's idle timeout, so the newest feed always wins; the ownership
-// check has already tied both to the same client.
+// dead connection's idle timeout, so the newest feed always wins. Both feeds
+// have passed the owner check, which in public mode groups by address (IPv6 by
+// /64), so a shared address can take over a feed; the unguessable minted id is
+// what actually gates the aggregate, and authenticated mode keys by session.
 func (a *uploadAgg) claimProgress() chan struct{} {
 	a.progressMu.Lock()
 	defer a.progressMu.Unlock()

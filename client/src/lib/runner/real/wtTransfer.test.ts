@@ -38,6 +38,7 @@ function session() {
     onAlive: () => {},
     onError: (_recoverable, detail) => errors.push(detail),
     onUploadProgress: () => {},
+    onAuthRequired: () => {},
   });
   owner.start({
     url: "https://meter/wt/download",

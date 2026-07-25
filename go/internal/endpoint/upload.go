@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -85,9 +86,14 @@ func (u *Upload) Handle(s transport.Session) error {
 			owner := sessionOwner(s, u.trusted)
 			a, access := u.store.getOrCreateFor(id, owner)
 			if access != uploadAccessOK {
-				if w, _, ok := s.HTTP(); ok {
-					writeUploadAccessError(w, access)
+				w, _, ok := s.HTTP()
+				if !ok {
+					// A stream carries no status line, so the refusal is the
+					// return value: its caller resets the stream rather than
+					// leaving the client parked on flow control.
+					return fmt.Errorf("upload refused: %s", uploadAccessMessage(access))
 				}
+				writeUploadAccessError(w, access)
 				return nil
 			}
 			agg = a

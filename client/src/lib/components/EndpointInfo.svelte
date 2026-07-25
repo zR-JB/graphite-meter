@@ -48,7 +48,8 @@
     if (value === "fetch-streams") return "Fetch streams";
     if (value === "websocket") return "WebSocket";
     if (value === "webtransport-streams") return "WebTransport streams";
-    if (value === "webtransport-datagrams") return "WebTransport datagrams";
+    if (value.startsWith("webtransport-datagram"))
+      return "WebTransport datagrams";
     if (value === "webtransport")
       return role === "throughput"
         ? "WebTransport streams"
@@ -79,7 +80,7 @@
   const serverLoad = $derived.by(() => {
     const load = store.infra?.serverLoad;
     if (!load) return null;
-    const busy = load.active / load.max >= 0.5;
+    const busy = load.max > 0 && load.active / load.max >= 0.5;
     return {
       text: `${load.active} of ${load.max} slots`,
       caution: busy ? "server busy — results may be affected" : null,
@@ -98,7 +99,9 @@
         streams: describeTransferStreams(
           store.runConfig.transferStreams,
           store.infra?.selectedThroughputProtocol,
-          store.infra?.selectedThroughputTransport === "webtransport",
+          store.infra?.selectedThroughputTransport?.startsWith(
+            "webtransport",
+          ) ?? false,
         ),
         compensation: store.config.compensation,
       },
@@ -240,7 +243,9 @@
             {describeTransferStreams(
               store.runConfig.transferStreams,
               store.infra?.selectedThroughputProtocol,
-              store.infra?.selectedThroughputTransport === "webtransport",
+              store.infra?.selectedThroughputTransport?.startsWith(
+                "webtransport",
+              ) ?? false,
             )}
           </dd>
         </div>

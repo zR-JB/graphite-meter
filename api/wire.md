@@ -1,9 +1,11 @@
 # Graphite Meter — Message-Bus Wire Protocol (normative)
 
-This spec governs the **message-based channels only**: the WebSocket latency bus (`/ws/ping`) and
-the WebTransport datagram bus (`/wt/ping`). The plain request/response HTTP endpoints
-(`/preflight`, `/probe`, `/download`, `/upload/session`, `/upload`, `/upload/progress`) are
-**not** covered here — they use normal HTTP (query params, status codes, streaming bodies).
+This spec governs the **message-based channels**: the WebSocket latency bus (`/ws/ping`) and the
+WebTransport datagram bus (`/wt/ping`), plus the **WebTransport session routes**, whose streams
+carry no messages at all and are defined by their CONNECT URL (see [WebTransport
+routes](#webtransport-routes)). The plain request/response HTTP endpoints (`/preflight`, `/probe`,
+`/download`, `/upload/session`, `/upload`, `/upload/progress`) are **not** covered here — they use
+normal HTTP (query params, status codes, streaming bodies).
 
 The Go and TypeScript implementations MUST agree with the shared conformance corpus
 `api/wire.testvectors.txt`; the Rust rewrite must preserve the same contract. The opcode keywords

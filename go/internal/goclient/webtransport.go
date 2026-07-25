@@ -70,17 +70,28 @@ func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.Lat
 		return err
 	}
 	defer sess.close()
-	if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "wt"}))); err != nil {
-		return fmt.Errorf("latency WebTransport hello failed: %w", err)
+	// The hello and its reply are unacknowledged datagrams, so one lost packet
+	// must not decide the transport for the whole run: retry within the window.
+	var lastErr error
+	for verifyCtx.Err() == nil {
+		if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "wt"}))); err != nil {
+			return fmt.Errorf("latency WebTransport hello failed: %w", err)
+		}
+		replyCtx, cancelReply := context.WithTimeout(verifyCtx, wtVerifyReplyTimeout)
+		reply, err := sess.ReceiveDatagram(replyCtx)
+		cancelReply()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if frame, err := wire.Decode(string(reply)); err == nil && frame.Op == wire.OpREADY {
+			return nil
+		}
 	}
-	reply, err := sess.ReceiveDatagram(verifyCtx)
-	if err != nil {
-		return fmt.Errorf("latency WebTransport readiness failed: %w", err)
+	if lastErr != nil {
+		return fmt.Errorf("latency WebTransport readiness failed: %w", lastErr)
 	}
-	if frame, err := wire.Decode(string(reply)); err != nil || frame.Op != wire.OpREADY {
-		return fmt.Errorf("latency WebTransport did not become ready")
-	}
-	return nil
+	return fmt.Errorf("latency WebTransport did not become ready")
 }
 
 // verifyThroughputWebTransport proves a session can be established. bytes=0
@@ -112,6 +123,10 @@ func (b wtBus) Close() { b.sess.close() }
 // wtRedialBackoff paces session re-dials, mirroring the fetch lanes' retry
 // cadence without spinning on a hard-down server.
 const wtRedialBackoff = 500 * time.Millisecond
+
+// wtVerifyReplyTimeout bounds one hello's wait inside the verification window,
+// leaving room for retries: the datagram carrying it may simply be lost.
+const wtVerifyReplyTimeout = 750 * time.Millisecond
 
 // wtStageSession owns one stage's session and re-dials it when it drops, so a
 // stage outlasting the server's session lifetime continues on a fresh session
@@ -194,10 +209,17 @@ func (w *wtStageSession) close() {
 func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) error) error {
 	for ctx.Err() == nil {
 		sess, gen := host.current()
+		started := time.Now()
 		if err := lane(ctx, sess); err == nil {
 			return nil
 		}
 		if ctx.Err() != nil {
+			return nil
+		}
+		// A session that dies as fast as it dials (a server refusing at
+		// capacity) would otherwise be re-dialed at handshake speed; one that
+		// ran and then hit its lifetime bound reconnects without the pause.
+		if time.Since(started) < wtRedialBackoff && !laneRetryPause(ctx) {
 			return nil
 		}
 		if err := host.redial(ctx, gen); err != nil {

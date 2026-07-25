@@ -184,7 +184,8 @@ client-e2e:
 # all but go-lint, and only those matching the staged files.
 # Loopback saturation harness (issue #44): observer RTT percentiles under
 # growing loader concurrency, on kernel TCP and userspace QUIC, plus a
-# CPU-constrained pass. Measurement only; not part of ci.
+# CPU-constrained pass. Measurement only; not part of ci. Unix only: the CPU
+# column reads getrusage.
 stress:
     cd go && go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/
 

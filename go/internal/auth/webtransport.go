@@ -112,9 +112,16 @@ func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Reques
 		s.writeAuthRequired(w, r, listener)
 		return
 	}
+	// The token is consumed whichever credential wins, so one carried alongside
+	// a valid grant is spent here rather than staying usable until its TTL.
+	token := r.URL.Query().Get("token")
 	p, ok := s.authenticate(r)
-	if !ok {
-		p, ok = s.consumeWebTransportToken(r.URL.Query().Get("token"))
+	if ok {
+		if token != "" {
+			s.consumeWebTransportToken(token) //nolint:errcheck // the grant already authenticated this CONNECT
+		}
+	} else {
+		p, ok = s.consumeWebTransportToken(token)
 	}
 	if !ok || p.session == nil {
 		s.writeAuthRequired(w, r, listener)

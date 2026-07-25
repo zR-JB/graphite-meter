@@ -127,9 +127,9 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 	return nil
 }
 
-// HandleStream serves the same feed over a byte stream, the WebTransport
-// bidirectional stream on an upload session. Stream writes are unbuffered, so
-// there is no flush step.
+// HandleStream serves the same feed over a byte stream, the unidirectional
+// stream the server opens on a WebTransport upload session. Stream writes are
+// unbuffered, so there is no flush step.
 func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
 	enc := json.NewEncoder(w)
 	emit := func(event uploadProgressEvent) bool { return enc.Encode(event) == nil }

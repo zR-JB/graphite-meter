@@ -118,7 +118,10 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 	owner := ClientKey(r, h.trusted)
 	go h.serveProgress(ctx, sess, query.Get("id"), owner)
 	if query.Get("datagrams") != "" {
-		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, datagramSource{conn: sess, ctx: ctx}, owner)) //nolint:errcheck // a closed session ends the drain
+		// Bounded by inactivity like the stream lanes, so a silent session
+		// cannot pin its drain and hold the aggregate off the sweeper.
+		src := idleTimeoutSource{src: datagramSource{conn: sess, ctx: ctx}, timeout: uploadReadTimeout}
+		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner)) //nolint:errcheck // a closed session ends the drain
 	}
 	for {
 		str, err := sess.AcceptUniStream(ctx)
@@ -131,7 +134,11 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 
 func (h *wtUpload) serveLane(ctx context.Context, str *webtransport.ReceiveStream, query url.Values, owner string) {
 	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout}
-	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
+	// A refused lane is told so: without the reset the client would sit on flow
+	// control with its buffered bytes stranded until the session ends.
+	if err := h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner)); err != nil {
+		str.CancelRead(0)
+	}
 }
 
 func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, id, owner string) {
@@ -158,6 +165,19 @@ type idleTimeoutReader struct {
 func (r idleTimeoutReader) Read(p []byte) (int, error) {
 	_ = r.str.SetReadDeadline(time.Now().Add(r.timeout))
 	return r.str.Read(p)
+}
+
+// idleTimeoutSource is idleTimeoutReader for the datagram drain, whose receive
+// blocks on the session context alone.
+type idleTimeoutSource struct {
+	src     datagramSource
+	timeout time.Duration
+}
+
+func (s idleTimeoutSource) Read(p []byte) (int, error) {
+	ctx, cancel := context.WithTimeout(s.src.ctx, s.timeout)
+	defer cancel()
+	return datagramSource{conn: s.src.conn, ctx: ctx}.Read(p)
 }
 
 // datagramSink splits a download into unreliable datagrams. What arrives is

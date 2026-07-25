@@ -36,6 +36,7 @@ func wtTestServer(t *testing.T) (string, string, *webtransport.Dialer) {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed test certificate
 		QUICConfig:      transport.NewQUICConfig(),
 	}
+	t.Cleanup(func() { _ = dialer.Close() })
 	return "https://" + cfg.Native.H3, "http://" + cfg.Native.H1, dialer
 }
 
@@ -63,34 +64,39 @@ func TestWebTransportPingEchoesOverDatagrams(t *testing.T) {
 	base, _, dialer := wtTestServer(t)
 	sess := dialWT(t, dialer, base+"/wt/ping")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "wt"}))); err != nil {
-		t.Fatalf("send HI: %v", err)
+	// Datagrams may be dropped, so each frame is re-sent until its reply lands
+	// or the window closes: what is pinned is the echo, not delivery.
+	if !echoes(t, ctx, sess, wire.Frame{Op: wire.OpHI, Proto: "wt"}, func(reply string) bool {
+		return reply == wire.OpREADY
+	}) {
+		t.Fatal("HI never drew READY")
 	}
-	reply, err := sess.ReceiveDatagram(ctx)
-	if err != nil {
-		t.Fatalf("receive READY: %v", err)
+	if !echoes(t, ctx, sess, wire.Frame{Op: wire.OpPING, ID: 42}, func(reply string) bool {
+		f, err := wire.Decode(reply)
+		return err == nil && f.Op == wire.OpPONG && f.ID == 42
+	}) {
+		t.Fatal("PING never drew PONG with id 42")
 	}
-	if string(reply) != wire.OpREADY {
-		t.Fatalf("HI reply = %q, want READY", reply)
-	}
+}
 
-	if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: 42}))); err != nil {
-		t.Fatalf("send PING: %v", err)
+// echoes sends frame until want accepts a reply or ctx ends.
+func echoes(t *testing.T, ctx context.Context, sess *webtransport.Session, frame wire.Frame, want func(string) bool) bool {
+	t.Helper()
+	for ctx.Err() == nil {
+		if err := sess.SendDatagram([]byte(wire.Encode(frame))); err != nil {
+			t.Fatalf("send %s: %v", frame.Op, err)
+		}
+		replyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		reply, err := sess.ReceiveDatagram(replyCtx)
+		cancel()
+		if err == nil && want(string(reply)) {
+			return true
+		}
 	}
-	reply, err = sess.ReceiveDatagram(ctx)
-	if err != nil {
-		t.Fatalf("receive PONG: %v", err)
-	}
-	f, err := wire.Decode(string(reply))
-	if err != nil {
-		t.Fatalf("decode %q: %v", reply, err)
-	}
-	if f.Op != wire.OpPONG || f.ID != 42 {
-		t.Fatalf("PING reply = %+v, want PONG with id 42", f)
-	}
+	return false
 }
 
 // TestWebTransportDownloadServesTheRequestedSize proves the CONNECT query sizes

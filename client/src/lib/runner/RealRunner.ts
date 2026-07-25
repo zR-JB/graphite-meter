@@ -803,7 +803,11 @@ export class RealBackend implements RunnerBackend {
    *  only when the picker selects it (or nothing else is advertised). */
   #transportOrder(role: TransportRole): TransportKind[] {
     if (role === "latency") return ["webtransport", "websocket"];
-    return this.#wtThroughputTarget ? ["webtransport"] : ["fetch-stream"];
+    // The committed transport names itself, so a datagram run reports the
+    // datagram kind rather than being described as streams.
+    return this.#wtThroughputTarget
+      ? [this.#wtThroughputTarget.transport]
+      : ["fetch-stream"];
   }
 
   /* ================= PRIME (warmup window): open, don't measure ================= */
@@ -1104,6 +1108,10 @@ export class RealBackend implements RunnerBackend {
       onError: (recoverable, detail) =>
         this.#onWorkerError(dir, 0, detail, recoverable),
       onUploadProgress: (msg) => this.#uploadProgress.accept(msg),
+      onAuthRequired: () => {
+        this.#discardTransfer();
+        redirectToLogin();
+      },
     });
   }
 

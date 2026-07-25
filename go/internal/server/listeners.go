@@ -184,8 +184,21 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	if authn != nil {
 		publicOrigin = authn.PublicOrigin()
 	}
+	// Only routes this listener actually mounts: wrapping one it answers with a
+	// 404 would take an admission slot for nothing, and a CONNECT there would
+	// spend its single-use token before reaching a handler.
+	var wrapped []string
+	if topology.transfers {
+		wrapped = append(wrapped, routeDownload, routeUpload, routeUploadProgress)
+	}
+	if topology.latency {
+		wrapped = append(wrapped, routePing)
+	}
+	if topology.wt != nil {
+		wrapped = append(wrapped, routeWTDownload, routeWTUpload, routeWTPing)
+	}
 	m := http.NewServeMux()
-	for _, path := range []string{routeDownload, routeUpload, routeUploadProgress, routePing, routeWTDownload, routeWTUpload, routeWTPing} {
+	for _, path := range wrapped {
 		m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
 	}
 	m.Handle("/", inner)

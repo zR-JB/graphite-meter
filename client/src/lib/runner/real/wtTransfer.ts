@@ -32,6 +32,7 @@ type WorkerMsg =
   | { type: "alive" }
   | { type: "error"; recoverable: boolean; detail: string }
   | { type: "upload-progress"; msg: WtProgressRelay }
+  | { type: "auth-required" }
   | { type: "stopped" };
 
 export interface WtTransferCallbacks {
@@ -39,6 +40,8 @@ export interface WtTransferCallbacks {
   onAlive(): void;
   onError(recoverable: boolean, detail: string): void;
   onUploadProgress(msg: WtProgressRelay): void;
+  /** The session's token mint found the login session gone. */
+  onAuthRequired(): void;
 }
 
 /** The worker's own establish deadline plus margin for spawn and messaging. */
@@ -163,6 +166,9 @@ export class WtTransferSession {
         break;
       case "upload-progress":
         this.#cb.onUploadProgress(msg.msg);
+        break;
+      case "auth-required":
+        this.#cb.onAuthRequired();
         break;
       case "stopped":
         break;
