@@ -117,6 +117,23 @@ func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 	}
 }
 
+// TestWebTransportDatagramFloodRepeats proves the flood re-runs while the
+// session lives: more than one `bytes=` total arrives.
+func TestWebTransportDatagramFloodRepeats(t *testing.T) {
+	base, _, dialer := wtTestServer(t)
+	sess := dialWT(t, dialer, base+"/wt/download?bytes=2000&datagrams=1")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for got := 0; got <= 2000; {
+		d, err := sess.ReceiveDatagram(ctx)
+		if err != nil {
+			t.Fatalf("flood ended after %d bytes: %v", got, err)
+		}
+		got += len(d)
+	}
+}
+
 // TestWebTransportVerifySessionServesNothing pins the bytes=0 transport check:
 // the session establishes and no stream arrives.
 func TestWebTransportVerifySessionServesNothing(t *testing.T) {
