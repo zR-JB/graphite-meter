@@ -125,16 +125,21 @@ test("a forced count above the session cap is clamped and said so", () => {
       webTransport: true,
     }),
   ).toBe(WT_MAX_LANES);
-  expect(describeTransferStreams(policy, "http3", true)).toBe(
+  expect(describeTransferStreams(policy, "http3", "webtransport")).toBe(
     `Forced · ${WT_MAX_LANES} per direction (capped from 128 by the session)`,
   );
 
   // Below the cap it is exact, and fetch lanes are untouched.
   const modest = { mode: "forced" as const, count: 4 };
-  expect(describeTransferStreams(modest, "http3", true)).toBe(
+  expect(describeTransferStreams(modest, "http3", "webtransport")).toBe(
     "Forced · 4 per direction",
   );
-  expect(describeTransferStreams(policy, "http3", false)).toBe(
+  expect(describeTransferStreams(policy, "http3", "fetch-stream")).toBe(
     "Forced · 128 per direction",
   );
+
+  // A datagram run opens no lanes at all, so no lane count describes it.
+  expect(
+    describeTransferStreams(policy, "http3", "webtransport-datagram"),
+  ).toBe("Datagram flood · no lanes");
 });

@@ -136,3 +136,25 @@ test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () =
     "WebSocket endpoint · https://meter",
   );
 });
+
+// An unrecognised mechanism is unvalidated JSON from a newer server. Renaming
+// it to fetch-stream would let it claim the origin and hide the target that
+// actually serves it, so classification skips it instead.
+test("an unknown transport is skipped, not renamed", () => {
+  const unknown = {
+    baseUrl: "https://meter.example",
+    protocol: "http1",
+    transport: "webtransport-v2",
+  } as unknown as FetchThroughputTarget;
+  const real = transfer("", "https://meter.example", "http3", true);
+  const discovery = classifyTransportDiscovery(
+    [unknown, real],
+    [{ baseUrl: "https://meter.example", transport: "quic-ping" } as never],
+    "https://meter.example",
+    true,
+  );
+  const entry = discovery.throughput["https://meter.example"];
+  expect(entry.target?.protocol).toBe("http3");
+  expect(entry.wt).toBeUndefined();
+  expect(discovery.latency["https://meter.example"].target).toBeUndefined();
+});

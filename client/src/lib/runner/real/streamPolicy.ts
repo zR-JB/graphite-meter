@@ -6,6 +6,7 @@ import type {
   FlowDirection,
   ProtocolTarget,
   TransferStreamPolicy,
+  TransportKind,
 } from "../contract";
 
 export const BROWSER_CONNECTION_BUDGET = 6;
@@ -68,8 +69,12 @@ export function transferStreamCount(opts: TransferStreamOptions): number {
 export function describeTransferStreams(
   policy: TransferStreamPolicy,
   protocol?: ProtocolTarget,
-  webTransport = false,
+  transport?: TransportKind,
 ): string {
+  // A datagram run opens no lanes in either direction; the transport's own
+  // send queue paces it, so a lane count would describe nothing.
+  if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
+  const webTransport = transport === "webtransport";
   if (policy.mode === "forced") {
     const forced = normalizeStreamCount(policy.count);
     if (webTransport && forced > WT_MAX_LANES)

@@ -126,9 +126,11 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     return;
   }
   session = dialed;
-  // A session that never establishes rejects `closed` as well as `ready`;
-  // both are observed from here on, so no path leaves one unhandled.
-  void dialed.closed.catch(() => fail(true, "webtransport session closed"));
+  // `closed` resolves on a graceful close and rejects on an abrupt one, and the
+  // server always closes gracefully, so both arms end this session's work. A
+  // stop has already latched `stopped`, which keeps the report silent.
+  const closed = (): void => fail(true, "webtransport session closed");
+  void dialed.closed.then(closed, closed);
   try {
     await Promise.race([
       dialed.ready,
@@ -219,13 +221,20 @@ async function readDatagrams(): Promise<void> {
  *  the transport's own high-water mark without a promise round trip per packet. */
 async function uploadDatagrams(): Promise<void> {
   if (!session) return;
+  const datagrams = session.datagrams;
   try {
-    const writer = session.datagrams.writable.getWriter();
-    const payload = new Uint8Array(session.datagrams.maxDatagramSize);
+    const writer = datagrams.writable.getWriter();
+    const payload = new Uint8Array(datagrams.maxDatagramSize);
     crypto.getRandomValues(payload);
     while (!stopped) {
       await writer.ready;
-      void writer.write(payload).catch(() => {});
+      // The path MTU estimate can shrink mid-session, and an oversized datagram
+      // is dropped with a resolved promise: the queue would never fill, so
+      // `ready` would never park and this loop would never yield to the task
+      // that carries `stop`.
+      const size = Math.min(payload.length, datagrams.maxDatagramSize);
+      if (size === 0) return;
+      void writer.write(payload.subarray(0, size)).catch(() => {});
       postAlive();
     }
   } catch (err) {
@@ -337,7 +346,10 @@ async function readProgress(readable: ReadableStream): Promise<void> {
           t: record.nanos ?? 0,
         },
       });
-      if (record.type === "complete") return;
+      if (record.type === "complete") {
+        completed?.();
+        return;
+      }
     }
   }
 }
@@ -359,6 +371,9 @@ function parseRecord(line: string): ProgressRecord | null {
 
 /** Sends the finalizing DELETE once the lanes stop; set when upload starts. */
 let finalize: (() => Promise<void>) | null = null;
+/** Resolves the shutdown grace as soon as the terminal record lands, so the
+ *  stage does not sit its full length with the lanes already silent. */
+let completed: (() => void) | null = null;
 
 /** Stop the lanes, finalize the upload, let the terminal progress record land,
  *  and ack, so the main thread can terminate this worker deterministically. */
@@ -367,7 +382,11 @@ async function shutdown(): Promise<void> {
   stopped = true;
   if (finalize) {
     await finalize();
-    await new Promise((resolve) => setTimeout(resolve, COMPLETE_GRACE_MS));
+    await new Promise<void>((resolve) => {
+      completed = resolve;
+      setTimeout(resolve, COMPLETE_GRACE_MS);
+    });
+    completed = null;
   }
   session?.close();
   session = null;

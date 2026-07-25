@@ -93,19 +93,19 @@ export function classifyTransportDiscovery(
 
   const throughput: TransportDiscovery["throughput"] = {};
   for (const endpoint of throughputEndpoints) {
+    // Widened because the wire value is unvalidated JSON: a mechanism this
+    // client does not know is skipped below, never renamed to one it does.
+    const mechanism: string = endpoint.transport;
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (throughput[origin] ??= { state: stateOf(origin) });
-    if (
-      endpoint.transport === "webtransport" ||
-      endpoint.transport === "webtransport-datagram"
-    ) {
-      const streams = endpoint.transport === "webtransport";
+    if (mechanism === "webtransport" || mechanism === "webtransport-datagram") {
+      const streams = mechanism === "webtransport";
       const view: WebTransportThroughputTarget = {
         ...endpoint,
         id: `${origin}${streams ? WT_SELECTION_SUFFIX : WT_DATAGRAM_SELECTION_SUFFIX}`,
         origin,
-        transport: endpoint.transport,
+        transport: streams ? "webtransport" : "webtransport-datagram",
         protocol: "http3",
         tls,
         routes: {
@@ -121,6 +121,7 @@ export function classifyTransportDiscovery(
       else entry.wtDatagram = view;
       continue;
     }
+    if (mechanism !== "fetch-stream") continue;
     // A target naming its protocol outranks a negotiated one: selection can only
     // act on a named protocol.
     if (entry.target && entry.target.protocol !== "negotiated") continue;
@@ -142,13 +143,14 @@ export function classifyTransportDiscovery(
 
   const latency: TransportDiscovery["latency"] = {};
   for (const endpoint of latencyEndpoints) {
+    const mechanism: string = endpoint.transport;
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (latency[origin] ??= { state: stateOf(origin) });
     // One origin commonly advertises both buses (a proxy serving TCP and UDP
     // on one hostname), so they are kept side by side: a client that cannot
     // reach UDP still has the WebSocket view of that origin.
-    if (endpoint.transport === "webtransport") {
+    if (mechanism === "webtransport") {
       entry.wt = {
         ...endpoint,
         id: `${origin}${WT_SELECTION_SUFFIX}`,
@@ -164,6 +166,7 @@ export function classifyTransportDiscovery(
       };
       continue;
     }
+    if (mechanism !== "websocket") continue;
     entry.target = {
       ...endpoint,
       id: origin,

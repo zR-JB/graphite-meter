@@ -19,6 +19,10 @@ type ProgressOutMsg =
   | { type: "resume" };
 
 const PROGRESS_ESTABLISH_TIMEOUT_MS = 3500;
+/** A session feed mints a token, completes a QUIC handshake and an extended
+ *  CONNECT before the server opens it, so it gets the WebTransport
+ *  establishment budget rather than the one request the fetch feed costs. */
+const WT_PROGRESS_ESTABLISH_TIMEOUT_MS = 6000;
 const PROGRESS_BYE_GRACE_MS = 1000;
 
 /** The upload lane fields this channel reads and marks. */
@@ -47,6 +51,8 @@ export class UploadProgressChannel {
   #external: {
     finish: (state: "open" | "timeout" | "superseded") => void;
   } | null = null;
+  /** Sends the finalizing DELETE for an external feed whose owner did not. */
+  #finalize: (() => void) | null = null;
   #done: (() => void) | null = null;
   /** Latest cumulative byte count the server reports. */
   #serverBytes = 0;
@@ -123,10 +129,13 @@ export class UploadProgressChannel {
    *  runs it on the same connection as its lanes and owns the finalizing
    *  DELETE. "superseded" means the lane was torn down or replaced first, which
    *  is not a stage failure: exactly one owner may act on the outcome. */
-  attachExternal(): Promise<"open" | "timeout" | "superseded"> {
+  attachExternal(
+    finalize: () => void,
+  ): Promise<"open" | "timeout" | "superseded"> {
     this.#external?.finish("superseded");
     this.#resetCounters();
     this.#worker = null;
+    this.#finalize = finalize;
     return new Promise((resolve) => {
       const finish = (state: "open" | "timeout" | "superseded"): void => {
         if (this.#external?.finish !== finish) return;
@@ -136,7 +145,7 @@ export class UploadProgressChannel {
       };
       const timer = setTimeout(
         () => finish("timeout"),
-        PROGRESS_ESTABLISH_TIMEOUT_MS,
+        WT_PROGRESS_ESTABLISH_TIMEOUT_MS,
       );
       this.#external = { finish };
     });
@@ -166,6 +175,15 @@ export class UploadProgressChannel {
     this.#external?.finish("superseded");
     this.#ready?.finish(false);
     this.#ready = null;
+    // A session feed finalizes from its own worker, which cannot when the
+    // session died before the stage ended. Without a terminal record there is
+    // nothing to wait for, and the DELETE is idempotent.
+    const external = this.#finalize;
+    this.#finalize = null;
+    if (external) {
+      if (finalize && !this.#completed) external();
+      return Promise.resolve();
+    }
     const worker = this.#worker;
     if (!worker) return Promise.resolve();
     // The terminal record already landed: nothing to wait on, stop the worker.

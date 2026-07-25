@@ -8,6 +8,7 @@
   } from "../../api/endpoints";
   import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
+  import { WT_DATAGRAM_SELECTION_SUFFIX } from "../../runner/real/backendPure";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import CompensationEditor from "./CompensationEditor.svelte";
@@ -29,6 +30,13 @@
         .label,
     };
   }
+  // The caution belongs to the selection, not the toggle: turning the toggle
+  // off keeps a selected datagram card, so it must keep its warning too.
+  const datagramSelected = $derived(
+    store.config.transports.throughputTarget.endsWith(
+      WT_DATAGRAM_SELECTION_SUFFIX,
+    ),
+  );
   // One card per mechanism: an origin advertising WebTransport as well gets a
   // second card for it (::wt), and a third for the experimental datagram path
   // (::wtdg) while its toggle is on or it is the current selection.
@@ -462,7 +470,7 @@
       over unreliable datagrams, so the rate is what arrives rather than what a
       stream redelivers.
     </p>
-    {#if store.config.experimentalDatagramThroughput}
+    {#if store.config.experimentalDatagramThroughput || datagramSelected}
       <p class="caution">
         <strong>Diagnostic, not a speed test.</strong> Browsers hand over one datagram
         per call, and that cost — not the link — is what the upload direction ends

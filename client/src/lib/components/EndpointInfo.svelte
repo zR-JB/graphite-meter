@@ -69,11 +69,15 @@
     return values?.map((value) => capability(value, role)).join(" · ") ?? "—";
   }
 
-  const uploadProgressPath = $derived(
-    connections.throughput.target
-      ? `Fetch streams over ${connections.throughput.summary.replace("Fetch stream · ", "")}`
-      : "Pending",
-  );
+  // The feed rides the session that carries the bytes, or its own fetch when
+  // the lanes are fetches.
+  const uploadProgressPath = $derived.by(() => {
+    const target = connections.throughput.target;
+    if (!target) return "Pending";
+    const carrier =
+      target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
+    return `${carrier} · ${connections.throughput.summary}`;
+  });
   const serverInstance = $derived.by(() => {
     const value = store.transportDiscovery?.generation;
     if (!value || value === "dummy") return value ?? "—";
@@ -103,9 +107,7 @@
         streams: describeTransferStreams(
           store.runConfig.transferStreams,
           store.infra?.selectedThroughputProtocol,
-          store.infra?.selectedThroughputTransport?.startsWith(
-            "webtransport",
-          ) ?? false,
+          store.infra?.selectedThroughputTransport,
         ),
         compensation: store.config.compensation,
       },
@@ -247,9 +249,7 @@
             {describeTransferStreams(
               store.runConfig.transferStreams,
               store.infra?.selectedThroughputProtocol,
-              store.infra?.selectedThroughputTransport?.startsWith(
-                "webtransport",
-              ) ?? false,
+              store.infra?.selectedThroughputTransport,
             )}
           </dd>
         </div>

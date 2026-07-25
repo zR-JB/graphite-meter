@@ -138,18 +138,16 @@ export class LatencyChannel {
 
     this.#underLoad = false;
     this.#active = true;
-    // The idle latency stage has no byte lanes to prove the link. Bound the
-    // wait for its first pong; the stage fails once that bound expires.
-    if (isLatencyStage) {
-      this.#establishTimer = setTimeout(() => {
-        this.#establishTimer = null;
-        host.failStage(
-          "latency",
-          "connection-lost",
-          "ping connection could not be established",
-        );
-      }, PING_ESTABLISH_TIMEOUT_MS);
-    }
+    // A bus that never establishes reports nothing at all — a hung handshake
+    // produces no samples and no stall — so the wait for the first pong is
+    // bounded on every stage. Only the idle stage fails on it; a loaded stage
+    // has byte lanes of its own and reports the gap instead.
+    this.#establishTimer = setTimeout(() => {
+      this.#establishTimer = null;
+      const detail = "ping connection could not be established";
+      if (isLatencyStage) host.failStage("latency", "connection-lost", detail);
+      else this.#deps.stall(detail);
+    }, PING_ESTABLISH_TIMEOUT_MS);
     const worker = pingWorker();
     worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);

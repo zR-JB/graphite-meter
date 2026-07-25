@@ -458,8 +458,9 @@ export class RealBackend implements RunnerBackend {
       });
     // Verify-then-commit: an advertised WebTransport target still needs UDP to
     // reach the server. A resolved WT throughput view that cannot establish is
-    // dropped here, before the run commits; mid-run errors retry WT only.
-    if (this.#wtThroughputTarget && role !== "latency") {
+    // dropped here, before the run commits; mid-run errors retry WT only. Every
+    // probe verifies, since every probe re-resolves the target it commits to.
+    if (this.#wtThroughputTarget) {
       const verdict = await this.#verifyWtThroughput(signal);
       if (!verdict.ok) {
         if (
@@ -559,8 +560,10 @@ export class RealBackend implements RunnerBackend {
       latencyTransports: RUNNABLE_TRANSPORT.webtransport
         ? ["webtransport", "websocket"]
         : ["websocket"],
+      // Preference order, which for throughput leads with fetch: streams over
+      // TCP still win raw rate, so a session is the explicit choice.
       throughputTransports: RUNNABLE_TRANSPORT.webtransport
-        ? ["webtransport", "webtransport-datagram", "fetch-stream"]
+        ? ["fetch-stream", "webtransport", "webtransport-datagram"]
         : ["fetch-stream"],
     };
   }
@@ -975,23 +978,36 @@ export class RealBackend implements RunnerBackend {
     if (!this.#transferActive || !sessionLane) return;
     sessionLane.streamUrls[0] = url(0, id);
     if (wt) {
+      const progressUrl = `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`;
+      const headers = {
+        ...(this.#authHeaders() as Record<string, string> | undefined),
+        ...csrfHeader(),
+      };
+      const credentials: RequestCredentials = authEnabled
+        ? "include"
+        : "same-origin";
       this.#armWtLane(sessionLane, {
         url: url(0, id),
         dir,
         lanes: streams,
         datagrams: wt.transport === "webtransport-datagram",
         mint: this.#wtMint(wt.origin, wt.routes.wtSession),
-        progressUrl: `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`,
-        headers: {
-          ...(this.#authHeaders() as Record<string, string> | undefined),
-          ...csrfHeader(),
-        },
-        credentials: authEnabled ? "include" : "same-origin",
+        progressUrl,
+        headers,
+        credentials,
       });
       // The session worker reads the feed before its lanes write, so the
       // counter is already running when bytes start.
       this.#spawnWorker(dir, 0);
-      const feed = await this.#uploadProgress.attachExternal();
+      const feed = await this.#uploadProgress.attachExternal(() => {
+        void fetch(progressUrl, {
+          method: "DELETE",
+          cache: "no-store",
+          keepalive: true,
+          headers,
+          credentials,
+        }).catch(() => {});
+      });
       if (feed === "timeout") {
         this.#host!.failStage(
           sessionLane.stage,
