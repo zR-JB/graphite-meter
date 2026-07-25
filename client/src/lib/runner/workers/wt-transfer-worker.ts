@@ -71,6 +71,8 @@ function postAlive(): void {
 
 let session: WebTransport | null = null;
 let stopped = false;
+/** Latches the first failure of this session, so its echoes stay silent. */
+let failed = false;
 let measureSeq = 0;
 /** Bytes read since the last report, and when that window opened. */
 let windowBytes = 0;
@@ -81,6 +83,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
   switch (msg.type) {
     case "start":
       stopped = false;
+      failed = false;
       windowBytes = 0;
       windowStart = performance.now();
       void run(msg);
@@ -99,12 +102,22 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   const token = await mintWtToken(msg.mint);
   if (stopped) return;
+  let dialed: WebTransport;
   try {
-    session = new WebTransport(withWtToken(msg.url, token), {
+    dialed = new WebTransport(withWtToken(msg.url, token), {
       congestionControl: "throughput",
     });
+  } catch (err) {
+    fail(true, String(err));
+    return;
+  }
+  session = dialed;
+  // A session that never establishes rejects `closed` as well as `ready`;
+  // both are observed from here on, so no path leaves one unhandled.
+  void dialed.closed.catch(() => fail(true, "webtransport session closed"));
+  try {
     await Promise.race([
-      session.ready,
+      dialed.ready,
       new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error("webtransport session did not establish")),
@@ -113,11 +126,16 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
       ),
     ]);
   } catch (err) {
-    post({ type: "error", recoverable: true, detail: String(err) });
+    // A dial still in flight would otherwise outlive this worker's report.
+    try {
+      dialed.close();
+    } catch {
+      /* already closing */
+    }
+    fail(true, String(err));
     return;
   }
   post({ type: "established" });
-  void session.closed.catch(() => fail(true, "webtransport session closed"));
   if (msg.dir === "down") {
     if (msg.datagrams) {
       void readDatagrams();
@@ -342,8 +360,12 @@ async function shutdown(): Promise<void> {
   post({ type: "stopped" });
 }
 
+/** One session death reaches every lane reader, the accept loop and the
+ *  session's close promise. They describe one incident, so only the first is
+ *  reported; the owner restarts the session either way. */
 function fail(recoverable: boolean, detail: string): void {
-  if (stopped) return;
+  if (stopped || failed) return;
+  failed = true;
   post({ type: "error", recoverable, detail });
 }
 

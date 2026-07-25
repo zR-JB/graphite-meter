@@ -51,6 +51,12 @@ export class WtTransferSession {
   #worker: Worker | null = null;
   #stopAck: (() => void) | null = null;
   #established = false;
+  /** One session death reaches every lane reader, the accept loop and the
+   *  session's own close promise, so the first failure of a generation is the
+   *  one reported: the rest describe the same incident and would each cost the
+   *  caller a retry. */
+  #failed = false;
+  #establishTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(cb: WtTransferCallbacks) {
     this.#cb = cb;
@@ -61,18 +67,34 @@ export class WtTransferSession {
   start(opts: WtStartOptions): void {
     this.discard();
     this.#established = false;
+    this.#failed = false;
     const worker = wtTransferWorker();
     worker.onmessage = (e: MessageEvent<WorkerMsg>): void =>
       this.#onMessage(e.data);
     worker.onerror = (e: ErrorEvent): void =>
-      this.#cb.onError(true, e.message || "webtransport worker error");
+      this.#fail(true, e.message || "webtransport worker error");
     worker.postMessage({ type: "start", ...opts });
     this.#worker = worker;
     const armed = worker;
-    setTimeout(() => {
+    this.#establishTimer = setTimeout(() => {
+      this.#establishTimer = null;
       if (this.#worker === armed && !this.#established)
-        this.#cb.onError(true, "webtransport session did not establish");
+        this.#fail(true, "webtransport session did not establish");
     }, ESTABLISH_TIMEOUT_MS);
+  }
+
+  /** Report the first failure of this generation and swallow its echoes. */
+  #fail(recoverable: boolean, detail: string): void {
+    if (this.#failed) return;
+    this.#failed = true;
+    this.#cb.onError(recoverable, detail);
+  }
+
+  /** Stop listening to a worker being torn down: messages already queued would
+   *  otherwise still deliver, past the point this owner speaks for them. */
+  #detach(worker: Worker): void {
+    worker.onmessage = null;
+    worker.onerror = null;
   }
 
   measure(seq: number): void {
@@ -85,10 +107,12 @@ export class WtTransferSession {
     const worker = this.#worker;
     if (!worker) return Promise.resolve();
     this.#worker = null;
+    this.#clearEstablishTimer();
     return new Promise((resolve) => {
       const done = (): void => {
         clearTimeout(timer);
         if (this.#stopAck === done) this.#stopAck = null;
+        this.#detach(worker);
         worker.terminate();
         resolve();
       };
@@ -107,9 +131,18 @@ export class WtTransferSession {
   /** Immediate teardown for aborts: nothing to finalize, kill the session. */
   discard(): void {
     this.#stopAck?.();
+    this.#clearEstablishTimer();
     if (this.#worker) {
+      this.#detach(this.#worker);
       this.#worker.terminate();
       this.#worker = null;
+    }
+  }
+
+  #clearEstablishTimer(): void {
+    if (this.#establishTimer !== null) {
+      clearTimeout(this.#establishTimer);
+      this.#establishTimer = null;
     }
   }
 
@@ -117,6 +150,7 @@ export class WtTransferSession {
     switch (msg.type) {
       case "established":
         this.#established = true;
+        this.#clearEstablishTimer();
         break;
       case "progress":
         this.#cb.onProgress(msg.bytes, msg.elapsedMs, msg.seq);
@@ -125,7 +159,7 @@ export class WtTransferSession {
         this.#cb.onAlive();
         break;
       case "error":
-        this.#cb.onError(msg.recoverable, msg.detail);
+        this.#fail(msg.recoverable, msg.detail);
         break;
       case "upload-progress":
         this.#cb.onUploadProgress(msg.msg);

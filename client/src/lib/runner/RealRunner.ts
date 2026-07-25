@@ -219,7 +219,7 @@ export class RealBackend implements RunnerBackend {
       if (!this.#transferActive && !this.#stalled) {
         this.#host!.stall({
           reason: "connection-lost",
-          transport: "websocket",
+          transport: this.#latencyTarget?.transport ?? "websocket",
           detail,
         });
         this.#stalled = true;
@@ -689,11 +689,16 @@ export class RealBackend implements RunnerBackend {
             headers: { ...this.#authHeaders(), ...csrfHeader() },
           },
         );
+        // A refused mint is not a transport verdict: without the token the
+        // dial would fail for a reason that says nothing about UDP.
+        if (!minted.ok) return false;
         const body = (await minted.json()) as { token?: unknown };
         if (typeof body.token === "string" && body.token !== "")
           url += `&token=${encodeURIComponent(body.token)}`;
       }
       const session = new WebTransport(url);
+      // A session that never establishes rejects `closed` as well as `ready`.
+      void session.closed.catch(() => {});
       const close = (): void => session.close();
       signal?.addEventListener("abort", close, { once: true });
       const deadline = setTimeout(close, WT_VERIFY_TIMEOUT_MS);
@@ -1273,9 +1278,15 @@ export class RealBackend implements RunnerBackend {
       );
       return;
     }
+    // One pending restart per lane: a second error before the timer fires
+    // would otherwise leave an orphan that spawns a duplicate worker into the
+    // next stage, and the lane would be counted twice.
+    const pending = state.laneTimers[i];
+    if (pending) clearTimeout(pending);
     state.laneTimers[i] = setTimeout(() => {
       state.laneTimers[i] = null;
-      if (this.#transferActive) this.#spawnWorker(dir, i);
+      if (this.#transferActive && this.#lanes[dir] === state)
+        this.#spawnWorker(dir, i);
     }, LANE_RESTART_BACKOFF_MS);
   }
 
