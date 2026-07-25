@@ -94,8 +94,10 @@ export function classifyTransportDiscovery(
   const throughput: TransportDiscovery["throughput"] = {};
   for (const endpoint of throughputEndpoints) {
     // Widened because the wire value is unvalidated JSON: a mechanism this
-    // client does not know is skipped below, never renamed to one it does.
-    const mechanism: string = endpoint.transport;
+    // client does not know is skipped below, never renamed to one it does. An
+    // absent one is the original contract's fetch stream, which the Go decoder
+    // assumes too; dropping it would leave an older server unmeasurable.
+    const mechanism: string = endpoint.transport ?? "fetch-stream";
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (throughput[origin] ??= { state: stateOf(origin) });

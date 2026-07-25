@@ -76,7 +76,13 @@
     if (!target) return "Pending";
     const carrier =
       target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
-    return `${carrier} · ${connections.throughput.summary}`;
+    // The summary opens with its own mechanism, so naming the carrier again
+    // would stutter: what is left is the path it runs over.
+    const over = connections.throughput.summary
+      .split(" · ")
+      .slice(1)
+      .join(" · ");
+    return `${carrier} over ${over}`;
   });
   const serverInstance = $derived.by(() => {
     const value = store.transportDiscovery?.generation;
