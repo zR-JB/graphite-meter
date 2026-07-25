@@ -238,10 +238,12 @@ jobs:
             and (.generation | type == "string" and length > 0)
             and .capabilities.throughput == [{
               "baseUrl": "http://localhost:7246",
+              "transport": "fetch-stream",
               "protocol": "http1"
             }]
             and .capabilities.latency == [{
-              "baseUrl": "http://localhost:7246"
+              "baseUrl": "http://localhost:7246",
+              "transport": "websocket"
             }]
             and .server.name == "graphite-meter"
           ' /tmp/preflight.json
