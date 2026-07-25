@@ -56,9 +56,12 @@ func (r *runner) dialPingBus(ctx context.Context) (pingBus, string, error) {
 	return wsBus{conn: conn}, "ws", nil
 }
 
+// busRedialWindow bounds one mid-stage reconnect: long enough for a handshake
+// and a retry, short enough not to spend the measured window inside it.
+const busRedialWindow = 2 * time.Second
+
 // redialPingBus re-opens the latency channel after the bus dropped or outlived
-// its route's lifetime bound, retrying with backoff until ctx ends or the
-// measurement window closes at deadline.
+// its route's lifetime bound, retrying with backoff until ctx ends or deadline.
 func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, string, error) {
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
@@ -102,9 +105,6 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	var everPong atomic.Bool
 	var measuring atomic.Bool
 	var measureTimer <-chan time.Time
-	// When the measured window closes; zero until it opens. It bounds a
-	// mid-stage bus redial, which nothing else can interrupt.
-	var windowEnd time.Time
 	// The read goroutine outlives every return below, so stats must be
 	// snapshotted under mu.
 	snapshot := func() LatencyStats {
@@ -180,7 +180,6 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			timer := time.NewTimer(duration)
 			defer timer.Stop()
 			measureTimer = timer.C
-			windowEnd = time.Now().Add(duration)
 		case <-measureCtx.Done():
 			// BYE releases the server's session promptly; the samples are
 			// already collected, so a failed farewell changes nothing.
@@ -202,16 +201,13 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			// and continue, as the browser worker does. The gap's pings clear
 			// without counting loss, since a connection gap is not packet loss.
 			conn.Close()
-			// The redial is bounded: a server that stays down must end the
-			// stage with the samples already collected rather than outlive its
-			// own window, which nothing else can service from in here.
-			budget := windowEnd
-			if budget.IsZero() {
-				budget = time.Now().Add(duration)
-			}
-			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, budget)
+			// Bounded well below the window: this loop is the only servicer of
+			// the measurement gate and the stage timer, so a long redial here
+			// would shift the measured window off the load it is meant to sit
+			// under. A bus that stays down that long fails the stage.
+			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, time.Now().Add(busRedialWindow))
 			if dialErr != nil {
-				if measureCtx.Err() != nil || !time.Now().Before(budget) {
+				if measureCtx.Err() != nil {
 					return snapshot(), nil
 				}
 				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", dialErr)

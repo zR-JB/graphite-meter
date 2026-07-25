@@ -243,7 +243,7 @@ func (m model) networkView(w int) string {
 		endpointRow("Latency endpoint", m.cfg.LatencyTarget, m.latencyChoices()),
 		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated only"),
 		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
-		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 = automatic"),
+		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol, m.cfg.ThroughputTransport), "0 = automatic"),
 		toggleLine("Skip TLS verify", m.cfg.InsecureSkipTLSVerify, "unsafe"),
 		warnStyle.Render("Reset to defaults"),
 	}
@@ -429,8 +429,8 @@ func (m model) summaryView(w int) string {
 		field("Stage", mark+valueStyle.Render(emptyDash(m.stage))+mutedStyle.Render(" / "+emptyDash(m.status))),
 		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
 		field("Throughput", valueStyle.Render(emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol))),
-		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol))),
-		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.target, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
+		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · "+emptyDash(m.latencyTransport)+" · "+emptyDash(m.latencyProtocol))),
+		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
 		"",
 	}
 	lines = append(lines, m.timelineView(w)...)

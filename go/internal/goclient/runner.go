@@ -205,14 +205,11 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		return fail(err)
 	}
 	// An advertised WebTransport target still needs UDP to reach the server.
+	// Automatic selection reaches here only when no fetch target was advertised,
+	// so there is nothing left to fall back to and the dial failure is the answer.
 	if advertisedTarget.Transport == wire.TransportWebTransport {
 		if verifyErr := verifyThroughputWebTransport(ctx, cfg, advertisedTarget); verifyErr != nil {
-			if cfg.ThroughputTransport != "auto" {
-				return fail(verifyErr)
-			}
-			if advertisedTarget, err = selectTargetOver(cfg, pf, wire.TransportFetchStream); err != nil {
-				return fail(err)
-			}
+			return fail(verifyErr)
 		}
 	}
 	target := *advertisedTarget
@@ -296,6 +293,7 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol, ThroughputTransport: target.Transport}
 	if latencyTarget != nil {
 		event.LatencyTarget = latencyTarget.ID
+		event.LatencyTransport = latencyTarget.Transport
 		if latencyProbe != nil {
 			event.LatencyProtocol = latencyProbe.ProtocolNegotiated
 		}

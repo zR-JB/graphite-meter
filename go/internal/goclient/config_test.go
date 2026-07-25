@@ -53,8 +53,20 @@ func TestTransferStreamPolicy(t *testing.T) {
 			t.Errorf("forced %s streams = %d, want 9", protocol, got)
 		}
 	}
-	if got := forced.Label("http3"); got != "Forced · 9 per direction" {
+	if got := forced.Label("http3", wire.TransportFetchStream); got != "Forced · 9 per direction" {
 		t.Errorf("forced label = %q", got)
+	}
+	if got := forced.Label("http3", wire.TransportWebTransport); got != "Forced · 9 per direction" {
+		t.Errorf("forced webtransport label = %q", got)
+	}
+	// The session carries one continuous lane per direction, not the three a
+	// negotiated HTTP/3 fetch path opens.
+	session := TransferStreamPolicy{AutomaticMax: 6}
+	if got := session.Label("http3", wire.TransportWebTransport); got != "Automatic · 1 continuous stream per direction" {
+		t.Errorf("automatic webtransport label = %q", got)
+	}
+	if got := session.ResolveWebTransport(); got != 1 {
+		t.Errorf("automatic webtransport streams = %d, want 1", got)
 	}
 }
 

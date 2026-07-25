@@ -59,16 +59,18 @@ func (p TransferStreamPolicy) ResolveWebTransport() int {
 	return 1
 }
 
-// Label describes the resolved policy. transports lists the mechanisms the
-// label must hold for; naming WebTransport reports the session's lane cap
-// rather than a forced count it will not deliver.
-func (p TransferStreamPolicy) Label(protocol string, transports ...string) string {
-	webTransport := len(transports) > 0 && transports[0] == wire.TransportWebTransport
+// Label describes the resolved policy for the transport that will carry it, so
+// it reports what a session delivers rather than what was asked of it.
+func (p TransferStreamPolicy) Label(protocol, transport string) string {
+	webTransport := transport == wire.TransportWebTransport
 	if p.Forced > 0 {
 		if webTransport && p.Forced > WTMaxLanes {
 			return fmt.Sprintf("Forced · %d per direction (capped from %d by the session)", WTMaxLanes, p.Forced)
 		}
 		return fmt.Sprintf("Forced · %d per direction", p.Forced)
+	}
+	if webTransport {
+		return "Automatic · 1 continuous stream per direction"
 	}
 	if protocol == "http3" {
 		return fmt.Sprintf("Automatic · %d per direction", defaultH3Streams)

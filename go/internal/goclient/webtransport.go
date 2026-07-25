@@ -203,27 +203,38 @@ func (w *wtStageSession) close() {
 	w.sess.close()
 }
 
+// wtLaneMaxFastFailures is how many back-to-back instant failures a lane
+// absorbs before it reports one. A server refusing at capacity resets every
+// lane it is handed, which must fail the stage rather than be re-dialed for
+// the whole measurement window.
+const wtLaneMaxFastFailures = 5
+
 // runWTLane keeps one lane alive across session replacements: run the lane on
 // the current session, and when it dies with the stage still running, redial
 // and continue.
 func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) error) error {
+	fastFailures := 0
 	for ctx.Err() == nil {
 		sess, gen := host.current()
 		started := time.Now()
-		if err := lane(ctx, sess); err == nil {
+		err := lane(ctx, sess)
+		if err == nil || ctx.Err() != nil {
 			return nil
 		}
-		if ctx.Err() != nil {
-			return nil
+		// A session that ran before it died reconnects without a pause; one
+		// that died as fast as it dialled is paced, and is making no progress.
+		if time.Since(started) >= wtRedialBackoff {
+			fastFailures = 0
+		} else {
+			if fastFailures++; fastFailures >= wtLaneMaxFastFailures {
+				return err
+			}
+			if !laneRetryPause(ctx) {
+				return nil
+			}
 		}
-		// A session that dies as fast as it dials (a server refusing at
-		// capacity) would otherwise be re-dialed at handshake speed; one that
-		// ran and then hit its lifetime bound reconnects without the pause.
-		if time.Since(started) < wtRedialBackoff && !laneRetryPause(ctx) {
-			return nil
-		}
-		if err := host.redial(ctx, gen); err != nil {
-			return laneStopError(ctx, err)
+		if redialErr := host.redial(ctx, gen); redialErr != nil {
+			return laneStopError(ctx, redialErr)
 		}
 	}
 	return nil

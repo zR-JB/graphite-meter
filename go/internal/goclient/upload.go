@@ -31,6 +31,12 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		return Result{}, err
 	}
 
+	progressURL, err := r.endpoint(r.routes().UploadProgress)
+	if err != nil {
+		return Result{}, err
+	}
+	progressURL = withUploadID(progressURL, id)
+
 	var progress *uploadProgress
 	var lane func(context.Context, int) error
 	if r.targetTransport() == wire.TransportWebTransport {
@@ -46,11 +52,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 				return err
 			}
 			if progress == nil {
-				base, err := r.endpoint(r.routes().UploadProgress)
-				if err != nil {
-					return err
-				}
-				progress, err = r.readUploadProgress(ctx, wtProgressStream{str}, withUploadID(base, id))
+				progress, err = r.readUploadProgress(ctx, wtProgressStream{str}, progressURL)
 				return err
 			}
 			progress.attach(wtProgressStream{str})
@@ -60,13 +62,17 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 			return Result{}, err
 		}
 		defer host.close()
+		// A feed can end while its session lives: the server reaps an idle
+		// aggregate, or refuses after ready. HTTP re-attaches to the same
+		// aggregate, so the counter survives either.
+		go r.reattachUploadProgress(progress, progressURL)
 		lane = func(laneCtx context.Context, _ int) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
 				return r.uploadLaneWT(lctx, sess, bodyBlock)
 			})
 		}
 	} else {
-		if progress, err = r.openUploadProgress(ctx, id); err != nil {
+		if progress, err = r.openUploadProgress(ctx, progressURL); err != nil {
 			return Result{}, err
 		}
 		lane = func(laneCtx context.Context, i int) error {
@@ -249,12 +255,7 @@ func withUploadID(base, id string) string {
 	return u.String()
 }
 
-func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
-	base, err := r.endpoint(r.routes().UploadProgress)
-	if err != nil {
-		return nil, err
-	}
-	target := withUploadID(base, id)
+func (r *runner) openUploadProgress(ctx context.Context, target string) (*uploadProgress, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
@@ -375,6 +376,11 @@ func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
 		case "ready":
 			p.signalReady(nil)
 		case "progress", "complete":
+			// A replaced feed's reader can still drain a record it had already
+			// buffered; the server's count only moves forward.
+			if event.Bytes < p.n.Load() {
+				continue
+			}
 			p.n.Store(event.Bytes)
 			p.t.Store(event.Nanos)
 			p.seq.Add(1)
@@ -429,7 +435,10 @@ func (p *uploadProgress) close() {
 	p.once.Do(func() {
 		p.cancel()
 		p.closeBody()
-		<-p.currentDone()
+		// nil when the feed was cancelled before its first reader was installed.
+		if done := p.currentDone(); done != nil {
+			<-done
+		}
 	})
 }
 
