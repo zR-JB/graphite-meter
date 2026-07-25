@@ -1,4 +1,7 @@
-//go:build stress
+//go:build stress && unix
+
+// The CPU column reads getrusage, so this harness is Unix-only; `just stress`
+// is a measurement tool, never part of ci.
 
 package server
 

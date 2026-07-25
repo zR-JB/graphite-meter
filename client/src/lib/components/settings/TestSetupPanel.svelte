@@ -462,6 +462,15 @@
       over unreliable datagrams, so the rate is what arrives rather than what a
       stream redelivers.
     </p>
+    {#if store.config.experimentalDatagramThroughput}
+      <p class="caution">
+        <strong>Diagnostic, not a speed test.</strong> Browsers hand over one datagram
+        per call, and that cost — not the link — is what the upload direction ends
+        up measuring: roughly 40–80 Mbit/s on Chromium and under 1 Mbit/s on Firefox,
+        whatever the connection can actually carry. The download direction stays useful:
+        nothing is retransmitted, so missing goodput is real packet loss.
+      </p>
+    {/if}
   </section>
 </div>
 
@@ -614,6 +623,20 @@
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 1.55;
+  }
+  .caution {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--warn-soft);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.55;
+  }
+  .caution strong {
+    color: var(--warn);
   }
   .duration-fields {
     display: grid;
