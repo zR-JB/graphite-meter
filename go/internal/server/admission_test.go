@@ -143,9 +143,6 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 type deadlineEndpoint struct{}
 
 func (deadlineEndpoint) ID() string { return "deadline" }
-func (deadlineEndpoint) Capabilities() endpoint.Capabilities {
-	return endpoint.Capabilities{WebSocket: true}
-}
 func (deadlineEndpoint) Handle(s transport.Session) error {
 	<-s.Context().Done()
 	return nil

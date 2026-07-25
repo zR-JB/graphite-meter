@@ -411,13 +411,15 @@ func (b *listenerBuild) assembleH3() error {
 	if err := b.tcpTLS("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, static.Handler(), "http/1.1"); err != nil {
 		return err
 	}
+	// What a connection may cost is a capacity property of the socket, not of
+	// authentication, so these bound every H3 listener the way ReadHeaderTimeout
+	// and IdleTimeout bound every TCP one. The uni-stream ceiling is what caps
+	// client-opened upload lanes on a session.
 	quicConfig := transport.NewQUICConfig()
-	if b.authn.Enabled() {
-		quicConfig.HandshakeIdleTimeout = 10 * time.Second
-		quicConfig.MaxIdleTimeout = 60 * time.Second
-		quicConfig.MaxIncomingStreams = 256
-		quicConfig.MaxIncomingUniStreams = 32
-	}
+	quicConfig.HandshakeIdleTimeout = 10 * time.Second
+	quicConfig.MaxIdleTimeout = 60 * time.Second
+	quicConfig.MaxIncomingStreams = 256
+	quicConfig.MaxIncomingUniStreams = 32
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
 	// Public mode answers every origin, as the wildcard-CORS measurement routes
 	// do: there is no session state a forged origin could reach. Under
@@ -429,9 +431,7 @@ func (b *listenerBuild) assembleH3() error {
 	// run before the listener starts.
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{WebTransport: true})
-	if b.authn.Enabled() {
-		h3.MaxHeaderBytes = 32 << 10
-	}
+	h3.MaxHeaderBytes = 32 << 10
 	pc, err := net.ListenPacket("udp", b.cfg.Native.H3)
 	if err != nil {
 		b.closeOpened()

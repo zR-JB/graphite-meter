@@ -39,8 +39,7 @@ func NewUpload(meter *Meter, store *UploadStore, trusted ...[]netip.Prefix) *Upl
 	return u
 }
 
-func (u *Upload) ID() string                 { return "upload" }
-func (u *Upload) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (u *Upload) ID() string { return "upload" }
 
 // uploadBufSize is the drain buffer per in-flight upload. Larger than
 // io.Discard's internal 8 KiB so a saturated link costs far fewer read syscalls.

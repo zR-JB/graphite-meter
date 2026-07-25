@@ -34,8 +34,7 @@ func NewPreflight(cfg *config.Config) *Preflight {
 	return &Preflight{cfg: cfg, generation: hex.EncodeToString(id[:])}
 }
 
-func (p *Preflight) ID() string                 { return "preflight" }
-func (p *Preflight) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (p *Preflight) ID() string { return "preflight" }
 func (p *Preflight) Handle(s transport.Session) error {
 	w, r, ok := s.HTTP()
 	if !ok {

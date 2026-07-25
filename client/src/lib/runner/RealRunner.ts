@@ -460,21 +460,21 @@ export class RealBackend implements RunnerBackend {
     // reach the server. A resolved WT throughput view that cannot establish is
     // dropped here, before the run commits; mid-run errors retry WT only.
     if (this.#wtThroughputTarget && role !== "latency") {
-      if (!(await this.#verifyWtThroughput(signal))) {
+      const verdict = await this.#verifyWtThroughput(signal);
+      if (!verdict.ok) {
         if (
           selection.endsWith(WT_SELECTION_SUFFIX) ||
           selection.endsWith(WT_DATAGRAM_SELECTION_SUFFIX)
         )
-          throw new TransportUnavailableError(
-            "webtransport session did not establish",
-            { role: "throughput" },
-          );
+          throw new TransportUnavailableError(verdict.detail, {
+            role: "throughput",
+          });
         this.#wtThroughputTarget = null;
         this.#host?.reportTransport({
           kind: "webtransport",
           role: "download",
           status: "failed",
-          detail: "webtransport session did not establish",
+          detail: verdict.detail,
         });
       }
     }
@@ -557,11 +557,11 @@ export class RealBackend implements RunnerBackend {
       name: "real",
       version: BUILD.clientVersion, // built with the client
       latencyTransports: RUNNABLE_TRANSPORT.webtransport
-        ? ["webtransport-datagrams", "websocket"]
+        ? ["webtransport", "websocket"]
         : ["websocket"],
       throughputTransports: RUNNABLE_TRANSPORT.webtransport
-        ? ["webtransport-streams", "fetch-streams"]
-        : ["fetch-streams"],
+        ? ["webtransport", "webtransport-datagram", "fetch-stream"]
+        : ["fetch-stream"],
     };
   }
 
@@ -675,9 +675,11 @@ export class RealBackend implements RunnerBackend {
 
   /** Dial a bare WT session (bytes=0: the server serves nothing) and await
    *  ready under a deadline. The run commits to what this proves. */
-  async #verifyWtThroughput(signal?: AbortSignal): Promise<boolean> {
+  async #verifyWtThroughput(
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; detail: string }> {
     const wt = this.#wtThroughputTarget;
-    if (!wt) return false;
+    if (!wt) return { ok: false, detail: "no webtransport target resolved" };
     try {
       let url = `${wt.origin}${wt.routes.wtDownload}?bytes=0`;
       if (authEnabled) {
@@ -691,8 +693,13 @@ export class RealBackend implements RunnerBackend {
           },
         );
         // A refused mint is not a transport verdict: without the token the
-        // dial would fail for a reason that says nothing about UDP.
-        if (!minted.ok) return false;
+        // dial would fail for a reason that says nothing about UDP, so it is
+        // reported as itself rather than as an unreachable transport.
+        if (!minted.ok)
+          return {
+            ok: false,
+            detail: `webtransport token mint refused (${minted.status})`,
+          };
         const body = (await minted.json()) as { token?: unknown };
         if (typeof body.token === "string" && body.token !== "")
           url += `&token=${encodeURIComponent(body.token)}`;
@@ -710,9 +717,9 @@ export class RealBackend implements RunnerBackend {
         signal?.removeEventListener("abort", close);
       }
       session.close();
-      return true;
+      return { ok: true, detail: "" };
     } catch {
-      return false;
+      return { ok: false, detail: "webtransport session did not establish" };
     }
   }
 
@@ -897,12 +904,12 @@ export class RealBackend implements RunnerBackend {
     // generated body up until the stage stops, keyed by a per-stage id.
     const url = (i: number, uploadId?: string): string => {
       const cb = `${this.#cbSeed}-${i}`;
+      // A WebTransport download builds its own session URL below; only the
+      // upload half reaches here, where the minted id has to be carried.
       if (wt) {
-        return dir === "down"
-          ? `${wt.origin}${wt.routes.wtDownload}`
-          : `${wt.origin}${wt.routes.wtUpload}?id=${encodeURIComponent(uploadId ?? "")}${
-              wt.transport === "webtransport-datagram" ? "&datagrams=1" : ""
-            }`;
+        return `${wt.origin}${wt.routes.wtUpload}?id=${encodeURIComponent(uploadId ?? "")}${
+          wt.transport === "webtransport-datagram" ? "&datagrams=1" : ""
+        }`;
       }
       if (dir === "down") {
         const path = this.#throughputTarget?.routes.download ?? ROUTES.download;

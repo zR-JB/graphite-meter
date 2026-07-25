@@ -58,9 +58,6 @@ func TestWebTransportBusSession(t *testing.T) {
 	if !ok {
 		t.Fatal("Bus() ok = false, want true")
 	}
-	if bus.Reliable() {
-		t.Error("Reliable() = true, want false: datagrams expose loss")
-	}
 
 	msg, err := bus.Recv()
 	if err != nil {

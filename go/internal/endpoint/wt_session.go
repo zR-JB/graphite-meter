@@ -22,8 +22,7 @@ type WTSession struct {
 // NewWTSession builds the mint endpoint. mint may be nil (authentication off).
 func NewWTSession(mint WTTokenMinter) *WTSession { return &WTSession{mint: mint} }
 
-func (e *WTSession) ID() string                 { return "wt-session" }
-func (e *WTSession) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (e *WTSession) ID() string { return "wt-session" }
 
 type wtSessionResponse struct {
 	Token   string `json:"token"`

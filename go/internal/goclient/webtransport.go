@@ -248,15 +248,8 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 		if err != nil {
 			return laneStopError(ctx, err)
 		}
-		// A blocked read observes neither the context nor a dead session on its
-		// own; only a deadline unblocks the wait for a close that may never
-		// arrive, so the cancel and the poke always travel together.
-		unblock := func() {
-			str.CancelRead(0)
-			_ = str.SetReadDeadline(time.Now())
-		}
-		stopOnCancel := context.AfterFunc(ctx, unblock)
-		stopOnGone := context.AfterFunc(sess.Context(), unblock)
+		stopOnCancel := transport.UnblockReadsOnDone(ctx, str)
+		stopOnGone := transport.UnblockReadsOnDone(sess.Context(), str)
 		for {
 			n, readErr := str.Read(buf)
 			if n > 0 {
@@ -284,23 +277,12 @@ func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte
 		return laneStopError(ctx, err)
 	}
 	defer str.Close() //nolint:errcheck // the stage is over either way
-	// A blocked write observes neither the context nor a dead session on its
-	// own; only a deadline unblocks the wait for a close that may never arrive,
-	// so the cancel and the poke always travel together.
-	unblock := func() {
-		str.CancelWrite(0)
-		_ = str.SetWriteDeadline(time.Now())
-	}
-	defer context.AfterFunc(ctx, unblock)()
-	defer context.AfterFunc(sess.Context(), unblock)()
-	body := &cyclingBody{ctx: ctx, block: block}
-	buf := make([]byte, len(block))
+	defer transport.UnblockWritesOnDone(ctx, str)()
+	defer transport.UnblockWritesOnDone(sess.Context(), str)()
+	// The block is already the payload: a lane with no length limit writes it
+	// unchanged, so there is nothing for a cycling body to assemble.
 	for ctx.Err() == nil {
-		n, err := body.Read(buf)
-		if err != nil {
-			return laneStopError(ctx, err)
-		}
-		if _, err := str.Write(buf[:n]); err != nil {
+		if _, err := str.Write(block); err != nil {
 			return laneStopError(ctx, err)
 		}
 	}

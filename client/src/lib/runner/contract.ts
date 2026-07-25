@@ -349,11 +349,11 @@ export interface EngineInfo {
   version: string;
   /** Transports this engine can drive for latency probing, preference order.
    *  A message bus: websocket, or webtransport datagrams. */
-  latencyTransports: string[];
+  latencyTransports: TransportKind[];
   /** Transports this engine can drive for throughput transfer, preference
    *  order. Byte lanes: fetch streams over h1.1/h2/h3, or webtransport streams.
    *  Websocket is never a throughput transport. */
-  throughputTransports: string[];
+  throughputTransports: TransportKind[];
 }
 
 /* ---------- Pre-test handshake info ---------- */

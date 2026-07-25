@@ -27,8 +27,7 @@ func NewProbe(cfg *config.Config, bootstrapPort string, load LoadFunc) *Probe {
 	return &Probe{cfg: cfg, bootstrapPort: bootstrapPort, load: load}
 }
 
-func (p *Probe) ID() string                 { return "probe" }
-func (p *Probe) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (p *Probe) ID() string { return "probe" }
 
 func (p *Probe) Handle(s transport.Session) error {
 	w, r, ok := s.HTTP()

@@ -4,6 +4,7 @@
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { httpProtocolLabel } from "../runner/protocol";
+  import type { TransportKind } from "../runner/contract";
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
@@ -44,17 +45,20 @@
     return `Browser to endpoint ${httpProtocolLabel(connection.browserProtocol)} · server received ${httpProtocolLabel(connection.serverProtocol)}`;
   }
 
-  function capability(value: string, role: PathRole) {
-    if (value === "fetch-streams") return "Fetch streams";
-    if (value === "websocket") return "WebSocket";
-    if (value === "webtransport-streams") return "WebTransport streams";
-    if (value.startsWith("webtransport-datagram"))
-      return "WebTransport datagrams";
-    if (value === "webtransport")
-      return role === "throughput"
-        ? "WebTransport streams"
-        : "WebTransport datagrams";
-    return value;
+  // One vocabulary throughout: TransportKind. Bare "webtransport" names the
+  // session, whose throughput half is streams and whose latency half is the
+  // datagram bus.
+  function capability(value: TransportKind, role: PathRole) {
+    const labels: Record<TransportKind, string> = {
+      "fetch-stream": "Fetch streams",
+      websocket: "WebSocket",
+      "webtransport-datagram": "WebTransport datagrams",
+      webtransport:
+        role === "throughput"
+          ? "WebTransport streams"
+          : "WebTransport datagrams",
+    };
+    return labels[value] ?? value;
   }
 
   function capabilities(role: PathRole) {

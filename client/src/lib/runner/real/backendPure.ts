@@ -314,12 +314,21 @@ export function selectLatencyTarget(
   const advertised = Object.values(discovery.latency).filter(
     (entry) => entry.state === "advertised",
   );
-  const wt = advertised.map((entry) => entry.wt).find(runnable);
-  if (wt) return wt;
-  const ws = advertised.map((entry) => entry.target).filter(runnable);
+  // Each bus resolves by the same rule: the page's own origin, else the only
+  // candidate. Guessing between several origins is what an explicit selection
+  // is for, on either bus.
+  const only = (
+    targets: (LatencyTarget | undefined)[],
+  ): LatencyTarget | null => {
+    const usable = targets.filter(runnable) as LatencyTarget[];
+    return (
+      usable.find((target) => target.origin === discovery.pageOrigin) ??
+      (usable.length === 1 ? usable[0] : null)
+    );
+  };
   return (
-    ws.find((target) => target!.origin === discovery.pageOrigin) ??
-    (ws.length === 1 ? ws[0]! : null)
+    only(advertised.map((entry) => entry.wt)) ??
+    only(advertised.map((entry) => entry.target))
   );
 }
 

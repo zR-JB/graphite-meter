@@ -5,6 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
+
+	"github.com/quic-go/webtransport-go"
 )
 
 // DatagramConn is the datagram half of a WebTransport session.
@@ -14,7 +17,7 @@ type DatagramConn interface {
 }
 
 // wtDatagramBus adapts WebTransport datagrams to MessageBus: one wire message
-// per datagram. Reliable() is false, so a ping that never returns is real
+// per datagram. Nothing retransmits here, so a ping that never returns is real
 // packet loss rather than a stalled reliable queue.
 type wtDatagramBus struct {
 	conn DatagramConn
@@ -30,8 +33,6 @@ func (b *wtDatagramBus) Recv() (string, error) {
 }
 
 func (b *wtDatagramBus) Send(msg string) error { return b.conn.SendDatagram([]byte(msg)) }
-
-func (b *wtDatagramBus) Reliable() bool { return false }
 
 // webtransportSession is one logical request inside a WebTransport session:
 // either its datagram bus or a single accepted stream. A session hosts many of
@@ -88,3 +89,34 @@ func (s *webtransportSession) Bus() (MessageBus, bool) {
 
 // ClientOwner reports the client key of the session this stream belongs to.
 func (s *webtransportSession) ClientOwner() string { return s.owner }
+
+// A blocked WebTransport stream operation observes neither its context nor a
+// dead session: cancelling alone leaves the call waiting on a session close
+// that may never arrive, so the cancel and a deadline poke always travel
+// together. These tie that pair to ctx and return the deregistering stop.
+
+type wtSendStream interface {
+	CancelWrite(webtransport.StreamErrorCode)
+	SetWriteDeadline(time.Time) error
+}
+
+type wtReceiveStream interface {
+	CancelRead(webtransport.StreamErrorCode)
+	SetReadDeadline(time.Time) error
+}
+
+// UnblockWritesOnDone releases a write blocked on flow control once ctx ends.
+func UnblockWritesOnDone(ctx context.Context, s wtSendStream) func() bool {
+	return context.AfterFunc(ctx, func() {
+		s.CancelWrite(0)
+		_ = s.SetWriteDeadline(time.Now())
+	})
+}
+
+// UnblockReadsOnDone releases a read blocked on an idle peer once ctx ends.
+func UnblockReadsOnDone(ctx context.Context, s wtReceiveStream) func() bool {
+	return context.AfterFunc(ctx, func() {
+		s.CancelRead(0)
+		_ = s.SetReadDeadline(time.Now())
+	})
+}

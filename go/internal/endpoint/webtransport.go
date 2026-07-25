@@ -92,12 +92,7 @@ func (h *wtDownload) serveLane(ctx context.Context, sess *webtransport.Session, 
 		if err != nil {
 			return
 		}
-		// A blocked write observes neither the context nor a dead session on its
-		// own; the deadline poke unblocks a wait for a close that never arrives.
-		stopOnCancel := context.AfterFunc(ctx, func() {
-			str.CancelWrite(0)
-			_ = str.SetWriteDeadline(time.Now())
-		})
+		stopOnCancel := transport.UnblockWritesOnDone(ctx, str)
 		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, str, nil, ""))
 		stopOnCancel()
 		_ = str.Close()
@@ -136,12 +131,24 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 		src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout)
 		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner)) //nolint:errcheck // a closed session ends the drain
 	}
+	// The client opens these, so the ceiling the download side applies to its
+	// own lanes applies here too: past it a lane is refused rather than served,
+	// since each one holds a goroutine and a scratch buffer for the session.
+	lanes := make(chan struct{}, wtMaxStreams)
 	for {
 		str, err := sess.AcceptUniStream(ctx)
 		if err != nil {
 			return
 		}
-		go h.serveLane(ctx, str, query, owner)
+		select {
+		case lanes <- struct{}{}:
+			go func() {
+				defer func() { <-lanes }()
+				h.serveLane(ctx, str, query, owner)
+			}()
+		default:
+			str.CancelRead(0)
+		}
 	}
 }
 
@@ -160,10 +167,7 @@ func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session
 		return
 	}
 	defer str.Close()
-	defer context.AfterFunc(ctx, func() {
-		str.CancelWrite(0)
-		_ = str.SetWriteDeadline(time.Now())
-	})()
+	defer transport.UnblockWritesOnDone(ctx, str)()
 	h.progress.HandleStream(ctx, id, owner, str)
 }
 

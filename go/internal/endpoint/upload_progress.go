@@ -30,8 +30,7 @@ func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadPro
 	return e
 }
 
-func (e *UploadProgress) ID() string                 { return "upload-progress" }
-func (e *UploadProgress) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (e *UploadProgress) ID() string { return "upload-progress" }
 
 const (
 	uploadProgressTick      = 100 * time.Millisecond

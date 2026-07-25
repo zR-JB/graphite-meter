@@ -28,7 +28,6 @@ var ErrUnsupported = errors.New("transport: operation not supported on this sess
 type MessageBus interface {
 	Recv() (string, error)
 	Send(msg string) error
-	Reliable() bool
 }
 
 // Session is a transport-agnostic measurement session.
