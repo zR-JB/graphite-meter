@@ -135,8 +135,17 @@ func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 
 // Probe is a target's /probe response: how the server sees this client.
 type Probe struct {
-	ClientIP           string `json:"clientIp"`
-	ClientIPVersion    int    `json:"clientIpVersion"`
-	ClientIPSource     string `json:"clientIpSource"`
-	ProtocolNegotiated string `json:"protocolNegotiated"`
+	ClientIP           string     `json:"clientIp"`
+	ClientIPVersion    int        `json:"clientIpVersion"`
+	ClientIPSource     string     `json:"clientIpSource"`
+	ProtocolNegotiated string     `json:"protocolNegotiated"`
+	Load               *ProbeLoad `json:"load,omitempty"`
+}
+
+// ProbeLoad is the server's measurement occupancy at probe time: concurrent
+// tests contend for bandwidth and CPU, so a busy server means results may be
+// affected. Admission still refuses outright overload with 429/503.
+type ProbeLoad struct {
+	Active int `json:"active"`
+	Max    int `json:"max"`
 }

@@ -73,11 +73,12 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 	store := endpoint.NewUploadStore()
 	go store.RunSweeper(ctx)
 	h3Port := publicH3Port(cfg)
+	admission := newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration)
 	return &endpoints{
-		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, ""), bootstrapProbe: endpoint.NewProbe(cfg, h3Port),
+		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, "", admission.load), bootstrapProbe: endpoint.NewProbe(cfg, h3Port, admission.load),
 		download: endpoint.NewDownload(block, downloadMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(uploadMeter, store, cfg.TrustedProxies),
 		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
-		admission:      newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration),
+		admission:      admission,
 		trustedProxies: cfg.TrustedProxies,
 	}, nil
 }

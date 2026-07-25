@@ -63,7 +63,7 @@ func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
 		value any
 	}{
 		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter"}, EngineVersion: "test", Generation: "test-generation", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{throughput}, LatencyTargets: []LatencyTarget{latency}}}},
-		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}},
+		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2", Load: &ProbeLoad{Active: 1, Max: 256}}},
 	}
 	for _, tc := range values {
 		t.Run(tc.name, func(t *testing.T) {

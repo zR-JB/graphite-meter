@@ -71,6 +71,13 @@ type admissionStats struct {
 	rejectedGlobal, rejectedClient uint64
 }
 
+// load reports occupancy for the probe's saturation signal.
+func (a *requestAdmission) load() (active, max int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.active, a.globalMax
+}
+
 func (a *requestAdmission) stats() admissionStats {
 	a.mu.Lock()
 	defer a.mu.Unlock()

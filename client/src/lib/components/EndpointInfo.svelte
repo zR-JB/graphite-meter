@@ -74,6 +74,17 @@
     if (!value || value === "dummy") return value ?? "—";
     return `${value.slice(0, 8)}…`;
   });
+  // Concurrent tests contend for bandwidth and CPU; past half occupancy the
+  // caution tells the user their numbers may reflect the neighbors.
+  const serverLoad = $derived.by(() => {
+    const load = store.infra?.serverLoad;
+    if (!load) return null;
+    const busy = load.active / load.max >= 0.5;
+    return {
+      text: `${load.active} of ${load.max} slots`,
+      caution: busy ? "server busy — results may be affected" : null,
+    };
+  });
 
   function diagnosticReport() {
     return JSON.stringify(
@@ -210,6 +221,15 @@
               ?.selectedLatencyTransport ?? "—"}
           </dd>
         </div>
+        {#if serverLoad}
+          <div>
+            <dt>Server load</dt>
+            <dd>
+              {serverLoad.text}{#if serverLoad.caution}
+                · {serverLoad.caution}{/if}
+            </dd>
+          </div>
+        {/if}
         <div>
           <dt>Latency origin</dt>
           <dd>{connections.latency.target?.origin ?? "—"}</dd>

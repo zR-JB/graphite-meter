@@ -86,6 +86,7 @@ interface PathEvidence {
   clientIpVersion: 4 | 6;
   clientIpSource: "socket" | "forwarded";
   protocolNegotiated: string;
+  load?: { active: number; max: number };
 }
 
 // The protocol advertises some transports this client cannot drive.
@@ -537,6 +538,7 @@ export class RealBackend implements RunnerBackend {
       latencyProtocolNegotiated: latencyPathProbe?.protocolNegotiated,
       firstHopProtocol,
       firstHopSecure: selected.tls,
+      serverLoad: pathProbe.load,
     };
     this.#probeInfo = info;
     return info;

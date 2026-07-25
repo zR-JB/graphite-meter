@@ -378,6 +378,10 @@ export interface InfraInfo {
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;
+  /** Measurement occupancy the server reported at probe time. Concurrent tests
+   *  contend for bandwidth and CPU, so a busy server means results may be
+   *  affected. */
+  serverLoad?: { active: number; max: number };
 }
 
 export type TransportDiscoveryState =
