@@ -44,8 +44,9 @@ func (h *wtPing) HandleSession(ctx context.Context, sess *webtransport.Session, 
 type wtDownload struct{ download Endpoint }
 
 // NewWTDownload serves ?bytes= per lane on ?streams= server-opened streams,
-// each replaced when exhausted, or as one datagram flood when ?datagrams= is
-// set. bytes=0 establishes a session that serves nothing, the transport check.
+// each replaced when exhausted, or as a datagram flood repeated while the
+// session lives when ?datagrams= is set. bytes=0 establishes a session that
+// serves nothing, the transport check.
 func NewWTDownload(download Endpoint) WTHandler { return &wtDownload{download: download} }
 
 func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
@@ -55,7 +56,10 @@ func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Sessi
 		return
 	}
 	if query.Get("datagrams") != "" {
-		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, datagramSink{conn: sess}, nil, ""))
+		sink := &datagramSink{conn: sess}
+		for ctx.Err() == nil && !sink.failed {
+			_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, sink, nil, ""))
+		}
 		return
 	}
 	var wg sync.WaitGroup
@@ -149,12 +153,17 @@ func (r idleTimeoutReader) Read(p []byte) (int, error) {
 
 // datagramSink splits a download into unreliable datagrams. What arrives is
 // goodput; what does not is loss the client sees directly. SendDatagram blocks
-// on quic-go's bounded send queue, so the flood stays congestion-paced.
-type datagramSink struct{ conn transport.DatagramConn }
+// on quic-go's bounded send queue, so the flood stays congestion-paced. failed
+// latches a send error, ending the flood loop without a context round trip.
+type datagramSink struct {
+	conn   transport.DatagramConn
+	failed bool
+}
 
-func (s datagramSink) Write(p []byte) (int, error) {
+func (s *datagramSink) Write(p []byte) (int, error) {
 	for off := 0; off < len(p); off += wtDatagramPayload {
 		if err := s.conn.SendDatagram(p[off:min(off+wtDatagramPayload, len(p))]); err != nil {
+			s.failed = true
 			return off, err
 		}
 	}

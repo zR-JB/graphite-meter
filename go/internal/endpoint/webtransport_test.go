@@ -33,7 +33,7 @@ func (c *recordingConn) ReceiveDatagram(context.Context) ([]byte, error) {
 
 func TestDatagramSinkSplitsAtThePayloadBound(t *testing.T) {
 	conn := &recordingConn{}
-	n, err := datagramSink{conn: conn}.Write(make([]byte, wtDatagramPayload+1))
+	n, err := (&datagramSink{conn: conn}).Write(make([]byte, wtDatagramPayload+1))
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -42,6 +42,22 @@ func TestDatagramSinkSplitsAtThePayloadBound(t *testing.T) {
 	}
 	if len(conn.sent) != 2 || len(conn.sent[0]) != wtDatagramPayload || len(conn.sent[1]) != 1 {
 		t.Fatalf("datagram sizes = %v, want one full payload and a remainder", datagramSizes(conn.sent))
+	}
+}
+
+type failingConn struct{ recordingConn }
+
+func (c *failingConn) SendDatagram([]byte) error { return io.ErrClosedPipe }
+
+// The flood loop in HandleSession re-runs the download until the session dies;
+// the latched failure is what ends it without spinning on a dead sink.
+func TestDatagramSinkLatchesASendFailure(t *testing.T) {
+	sink := &datagramSink{conn: &failingConn{}}
+	if _, err := sink.Write(make([]byte, 1)); err == nil {
+		t.Fatal("write on a dead sink reported no error")
+	}
+	if !sink.failed {
+		t.Fatal("send failure did not latch")
 	}
 }
 
