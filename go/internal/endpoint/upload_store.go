@@ -46,8 +46,32 @@ type uploadAgg struct {
 	finished       chan struct{} // explicitly closed by DELETE /upload/progress
 	expired        chan struct{} // closed when idle state is reaped
 	finishOnce     sync.Once
-	progressActive atomic.Bool
+	progressMu     sync.Mutex
+	progressHeld   chan struct{} // closed when a later claim supersedes the holder
 	owner          string
+}
+
+// claimProgress makes the caller the aggregate's one live feed, superseding any
+// current holder. A client that lost its transport re-dials long before the
+// dead connection's idle timeout, so the newest feed always wins; the ownership
+// check has already tied both to the same client.
+func (a *uploadAgg) claimProgress() chan struct{} {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if a.progressHeld != nil {
+		close(a.progressHeld)
+	}
+	a.progressHeld = make(chan struct{})
+	return a.progressHeld
+}
+
+// releaseProgress clears the claim unless a later feed already superseded it.
+func (a *uploadAgg) releaseProgress(claim chan struct{}) {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if a.progressHeld == claim {
+		a.progressHeld = nil
+	}
 }
 
 // recordChunk counts one drained chunk and starts the elapsed clock on the first

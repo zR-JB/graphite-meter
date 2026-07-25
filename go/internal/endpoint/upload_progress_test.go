@@ -123,11 +123,15 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	}
 }
 
-func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
+// A reconnecting client re-dials long before its dead transport's idle timeout
+// releases the old feed, so the newest feed takes the aggregate over and the
+// stale holder terminates.
+func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -136,13 +140,21 @@ func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
 	}()
 	waitProgressText(t, rec, `{"type":"ready"}`)
 
-	duplicate := httptest.NewRecorder()
-	h.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
-	if duplicate.Code != http.StatusConflict {
-		t.Fatalf("duplicate status = %d, want %d", duplicate.Code, http.StatusConflict)
+	takeover := newProgressRecorder()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() {
+		h.ServeHTTP(takeover, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx2))
+		close(done2)
+	}()
+	waitProgressText(t, takeover, `{"type":"ready"}`)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("superseded feed did not terminate")
 	}
-	cancel()
-	<-done
+	cancel2()
+	<-done2
 }
 
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {

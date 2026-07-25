@@ -105,15 +105,12 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		writeUploadAccessError(w, access)
 		return nil
 	}
-	if !agg.progressActive.CompareAndSwap(false, true) {
-		http.Error(w, "upload progress already connected", http.StatusConflict)
-		return nil
-	}
-	defer agg.progressActive.Store(false)
+	claim := agg.claimProgress()
+	defer agg.releaseProgress(claim)
 	if !emit(uploadProgressEvent{Type: "ready"}) {
 		return nil
 	}
-	runProgress(r.Context().Done(), agg, emit, func() bool {
+	runProgress(r.Context().Done(), claim, agg, emit, func() bool {
 		if _, err := w.Write([]byte("\n")); err != nil {
 			return false
 		}
@@ -135,23 +132,21 @@ func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w i
 		emit(uploadProgressEvent{Type: "error", Message: uploadAccessMessage(access)})
 		return
 	}
-	if !agg.progressActive.CompareAndSwap(false, true) {
-		emit(uploadProgressEvent{Type: "error", Message: "upload progress already connected"})
-		return
-	}
-	defer agg.progressActive.Store(false)
+	claim := agg.claimProgress()
+	defer agg.releaseProgress(claim)
 	if !emit(uploadProgressEvent{Type: "ready"}) {
 		return
 	}
-	runProgress(ctx.Done(), agg, emit, func() bool {
+	runProgress(ctx.Done(), claim, agg, emit, func() bool {
 		_, err := w.Write([]byte("\n"))
 		return err == nil
 	})
 }
 
-// runProgress reports agg's counter until the upload completes, expires, or done
-// fires. emit and heartbeat report false once their sink is gone.
-func runProgress(done <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
+// runProgress reports agg's counter until the upload completes, expires, done
+// fires, or a newer feed supersedes this one. emit and heartbeat report false
+// once their sink is gone.
+func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
 	tick := time.NewTicker(uploadProgressTick)
 	defer tick.Stop()
 	beat := time.NewTicker(uploadProgressHeartbeat)
@@ -160,6 +155,8 @@ func runProgress(done <-chan struct{}, agg *uploadAgg, emit func(uploadProgressE
 	for {
 		select {
 		case <-done:
+			return
+		case <-superseded:
 			return
 		case <-agg.expired:
 			return
