@@ -51,7 +51,9 @@ func NewWTDownload(download Endpoint) WTHandler { return &wtDownload{download: d
 
 func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 	query := r.URL.Query()
-	if query.Get("bytes") == "0" {
+	// Parse rather than compare spellings: any zero request serves nothing, and
+	// a lane loop over a zero length would spin without moving bytes.
+	if parseBytes(query.Get("bytes")) == 0 {
 		<-ctx.Done()
 		return
 	}

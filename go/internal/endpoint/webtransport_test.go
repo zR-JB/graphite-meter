@@ -61,6 +61,19 @@ func TestDatagramSinkLatchesASendFailure(t *testing.T) {
 	}
 }
 
+// Every spelling of zero is the park path. A zero that reached the lane loop
+// would spin without moving bytes for the whole session lifetime.
+func TestWTDownloadParksOnEveryZeroSpelling(t *testing.T) {
+	for _, spelling := range []string{"0", "00", "+0", "-0"} {
+		if got := parseBytes(spelling); got != 0 {
+			t.Errorf("parseBytes(%q) = %d, want 0 so the session parks", spelling, got)
+		}
+	}
+	if got := parseBytes(""); got != defaultBytes {
+		t.Errorf("parseBytes(\"\") = %d, want the default: an absent size is not a park request", got)
+	}
+}
+
 func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
 	src := datagramSource{conn: &recordingConn{incoming: []string{"first", "second"}}, ctx: context.Background()}
 	buf := make([]byte, 64)

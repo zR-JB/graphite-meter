@@ -47,17 +47,24 @@ type uploadProgressEvent struct {
 
 // waitForUploadPosts blocks until no POST lane is still draining into agg, so the
 // terminal count includes every in-flight lane rather than racing them. It
-// reports false if done fires first, meaning the client left and there is no one
-// to report the total to.
-func waitForUploadPosts(done <-chan struct{}, agg *uploadAgg) bool {
-	for agg.posts.Load() > 0 {
+// reports false if done or superseded fires first, meaning this feed has no one
+// left to report the total to.
+func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
+	for {
+		// Register before reading the count: a lane finishing in between still
+		// closes this exact channel.
+		changed := agg.postsWaiter()
+		if agg.posts.Load() == 0 {
+			return true
+		}
 		select {
 		case <-done:
 			return false
-		case <-agg.postsChanged:
+		case <-superseded:
+			return false
+		case <-changed:
 		}
 	}
-	return true
 }
 
 func (e *UploadProgress) Handle(s transport.Session) error {
@@ -161,7 +168,7 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(upl
 		case <-agg.expired:
 			return
 		case <-agg.finished:
-			if !waitForUploadPosts(done, agg) {
+			if !waitForUploadPosts(done, superseded, agg) {
 				return
 			}
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
