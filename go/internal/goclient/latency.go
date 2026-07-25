@@ -57,12 +57,15 @@ func (r *runner) dialPingBus(ctx context.Context) (pingBus, string, error) {
 }
 
 // redialPingBus re-opens the latency channel after the bus dropped or outlived
-// its route's lifetime bound, retrying with backoff until ctx ends.
-func (r *runner) redialPingBus(ctx context.Context) (pingBus, string, error) {
+// its route's lifetime bound, retrying with backoff until ctx ends or the
+// measurement window closes at deadline.
+func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, string, error) {
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	for {
-		dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		dialCtx, dialCancel := context.WithTimeout(ctx, 3*time.Second)
 		bus, proto, err := r.dialPingBus(dialCtx)
-		cancel()
+		dialCancel()
 		if err == nil {
 			return bus, proto, nil
 		}
@@ -99,6 +102,9 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	var everPong atomic.Bool
 	var measuring atomic.Bool
 	var measureTimer <-chan time.Time
+	// When the measured window closes; zero until it opens. It bounds a
+	// mid-stage bus redial, which nothing else can interrupt.
+	var windowEnd time.Time
 	// The read goroutine outlives every return below, so stats must be
 	// snapshotted under mu.
 	snapshot := func() LatencyStats {
@@ -164,9 +170,9 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	for {
 		select {
 		case <-start:
-			if measuring.Load() {
-				continue
-			}
+			// A closed gate stays ready, so drop it once armed rather than
+			// spinning this select for the whole window.
+			start = nil
 			mu.Lock()
 			pending = make(map[uint32]time.Time)
 			mu.Unlock()
@@ -174,6 +180,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			timer := time.NewTimer(duration)
 			defer timer.Stop()
 			measureTimer = timer.C
+			windowEnd = time.Now().Add(duration)
 		case <-measureCtx.Done():
 			// BYE releases the server's session promptly; the samples are
 			// already collected, so a failed farewell changes nothing.
@@ -195,9 +202,16 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			// and continue, as the browser worker does. The gap's pings clear
 			// without counting loss, since a connection gap is not packet loss.
 			conn.Close()
-			fresh, freshProto, dialErr := r.redialPingBus(measureCtx)
+			// The redial is bounded: a server that stays down must end the
+			// stage with the samples already collected rather than outlive its
+			// own window, which nothing else can service from in here.
+			budget := windowEnd
+			if budget.IsZero() {
+				budget = time.Now().Add(duration)
+			}
+			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, budget)
 			if dialErr != nil {
-				if measureCtx.Err() != nil {
+				if measureCtx.Err() != nil || !time.Now().Before(budget) {
 					return snapshot(), nil
 				}
 				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", dialErr)

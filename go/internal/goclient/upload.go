@@ -141,7 +141,8 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			if ctx.Err() != nil {
+			// A refused POST paces its retry, like every other reconnect path.
+			if !laneRetryPause(ctx) {
 				return nil
 			}
 			continue
@@ -330,10 +331,17 @@ func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, del
 
 // attach replaces the feed's byte source with a stream from a replacement
 // session. The server keeps one aggregate per id and the newest feed takes it
-// over, so the counters and the measurement baseline carry across.
+// over, so the counters and the measurement baseline carry across. A feed
+// already closed takes no new reader: close() has run its one-shot cancel and
+// would otherwise block forever on a reader installed behind it.
 func (p *uploadProgress) attach(body io.ReadCloser) {
 	done := make(chan struct{})
 	p.mu.Lock()
+	if p.ctx.Err() != nil {
+		p.mu.Unlock()
+		_ = body.Close()
+		return
+	}
 	old := p.body
 	p.body = body
 	p.done = done

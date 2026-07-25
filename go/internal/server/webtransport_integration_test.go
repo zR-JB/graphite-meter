@@ -282,7 +282,7 @@ func TestGoClientRunsOverWebTransport(t *testing.T) {
 // runGoClientUnderLifetimeCaps runs the shipped client against a server whose
 // request and session bounds are far shorter than the stages, so every channel
 // is killed mid-stage several times. Completion proves the reconnect paths.
-func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport string) {
+func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTransport string) {
 	t.Helper()
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
@@ -298,6 +298,7 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport string) {
 	clientCfg := goclient.DefaultConfig()
 	clientCfg.BaseURL = "http://" + cfg.Native.H1
 	clientCfg.ThroughputTransport = throughputTransport
+	clientCfg.LatencyTransport = latencyTransport
 	clientCfg.InsecureSkipTLSVerify = true
 	clientCfg.Stages = goclient.StageSet{Latency: true, Download: true, Upload: true}
 	clientCfg.Warmup = 100 * time.Millisecond
@@ -327,15 +328,18 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport string) {
 }
 
 // TestGoClientOutlivesSessionBoundOverWebTransport: 5 s stages under a 2 s
-// session cap force at least two session kills per stage.
+// session cap force at least two session kills per stage, on the transfer
+// session and the datagram ping bus alike.
 func TestGoClientOutlivesSessionBoundOverWebTransport(t *testing.T) {
-	runGoClientUnderLifetimeCaps(t, "webtransport")
+	runGoClientUnderLifetimeCaps(t, "webtransport", "webtransport")
 }
 
 // TestGoClientOutlivesOperationBoundOverFetch: the WebSocket ping bus and the
-// upload progress GET both die at the 2 s request cap and reconnect.
+// upload progress GET both die at the 2 s request cap and reconnect. The bus
+// is named rather than left automatic, which would select WebTransport here
+// and leave the WebSocket reconnect untested.
 func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
-	runGoClientUnderLifetimeCaps(t, "")
+	runGoClientUnderLifetimeCaps(t, "fetch-stream", "websocket")
 }
 
 func readProgressType(t *testing.T, records *bufio.Scanner, want string) bool {

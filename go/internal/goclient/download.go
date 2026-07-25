@@ -2,7 +2,9 @@ package goclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -11,6 +13,18 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
+
+// laneRetryPause paces a transfer lane's reopen after a fault, reporting false
+// once the stage ends. Every reconnect path shares this cadence so a hard-down
+// server cannot be hot-retried by every lane at once.
+func laneRetryPause(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(wtRedialBackoff):
+		return true
+	}
+}
 
 func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
 	var total atomic.Uint64
@@ -69,7 +83,10 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			if ctx.Err() != nil {
+			// A refused dial must not spin: pace the reopen like every other
+			// reconnect path, so a dead server costs a retry cadence rather
+			// than a core per lane.
+			if !laneRetryPause(ctx) {
 				return nil
 			}
 			continue
@@ -86,8 +103,12 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 			}
 			if readErr != nil {
 				// A stream dropped mid-body reopens like any finished request:
-				// the gap is a measured pause, not a stage failure.
+				// the gap is a measured pause, not a stage failure. A drop
+				// before EOF is a fault, so the reopen is paced.
 				_ = res.Body.Close()
+				if !errors.Is(readErr, io.EOF) && !laneRetryPause(ctx) {
+					return nil
+				}
 				break
 			}
 			if ctx.Err() != nil {
