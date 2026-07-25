@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -14,8 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // TestSaturationEnvelope is the repeatable loopback stress harness behind
@@ -42,22 +47,33 @@ func TestSaturationEnvelope(t *testing.T) {
 	base := "http://" + cfg.Native.H1
 
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
-	t.Logf("%-28s %8s %8s %8s %6s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "goodput", "cpu")
+	t.Logf("%-28s %8s %8s %8s %6s %10s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "goodput", "pings/s", "cpu")
 
-	run := func(name string, loaders int, loaderTransport string, procs int) {
-		if procs > 0 {
-			old := runtime.GOMAXPROCS(procs)
+	run := func(name string, mix loadMix) {
+		if mix.procs > 0 {
+			old := runtime.GOMAXPROCS(mix.procs)
 			defer runtime.GOMAXPROCS(old)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		var loaderBytes atomic.Uint64
+		var loaderBytes, spamPings atomic.Uint64
 		var wg sync.WaitGroup
-		for i := range loaders {
+		for i := range mix.loaders {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				loaderRun(ctx, base, loaderTransport, i%2 == 1, &loaderBytes)
+				loaderRun(ctx, base, mix.transport, i%2 == 1, &loaderBytes)
+			}()
+		}
+		for range mix.spammers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if mix.spamWT {
+					wtPingSpam(ctx, "https://"+cfg.Native.H3, &spamPings)
+				} else {
+					wsPingSpam(ctx, "ws://"+cfg.Native.H1+"/ws/ping", &spamPings)
+				}
 			}()
 		}
 		// Let the loaders' congestion windows ramp before observing. The two
@@ -66,27 +82,45 @@ func TestSaturationEnvelope(t *testing.T) {
 		for _, bus := range []struct{ transport, label string }{{"websocket", "ws"}, {"webtransport", "wt"}} {
 			cpu0, wall0 := cpuNow()
 			bytes0 := loaderBytes.Load()
+			pings0 := spamPings.Load()
 			rtts, loss := observe(t, base, bus.transport)
 			cpu1, wall1 := cpuNow()
-			goodput := float64(loaderBytes.Load()-bytes0) * 8 / wall1.Sub(wall0).Seconds() / 1e9
+			window := wall1.Sub(wall0).Seconds()
+			goodput := float64(loaderBytes.Load()-bytes0) * 8 / window / 1e9
+			spamRate := float64(spamPings.Load()-pings0) / window
 			if len(rtts) == 0 {
 				t.Errorf("%s/%s: observer collected no samples", name, bus.label)
 				continue
 			}
-			t.Logf("%-28s %8s %8s %8s %5.1f%% %7.2f Gb %5.0f%%",
-				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100, goodput,
-				(cpu1-cpu0).Seconds()/wall1.Sub(wall0).Seconds()*100)
+			t.Logf("%-28s %8s %8s %8s %5.1f%% %7.2f Gb %9.0f/s %5.0f%%",
+				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100, goodput, spamRate,
+				(cpu1-cpu0).Seconds()/window*100)
 		}
 		cancel()
 		wg.Wait()
 	}
 
-	run("idle", 0, "", 0)
+	run("idle", loadMix{})
 	for _, n := range []int{2, 4, 8, 16, 32} {
-		run(fmt.Sprintf("fetch-load-%d", n), n, "fetch-stream", 0)
+		run(fmt.Sprintf("fetch-load-%d", n), loadMix{loaders: n, transport: "fetch-stream"})
 	}
-	run("wt-load-8", 8, "webtransport", 0)
-	run("fetch-load-8-2cores", 8, "fetch-stream", 2)
+	run("wt-load-8", loadMix{loaders: 8, transport: "webtransport"})
+	run("ws-spam-16", loadMix{spammers: 16})
+	run("ws-spam-64", loadMix{spammers: 64})
+	run("wt-spam-16", loadMix{spammers: 16, spamWT: true})
+	run("wt-spam-64", loadMix{spammers: 64, spamWT: true})
+	run("fetch-load-8+ws-spam-32", loadMix{loaders: 8, transport: "fetch-stream", spammers: 32})
+	run("fetch-load-8-2cores", loadMix{loaders: 8, transport: "fetch-stream", procs: 2})
+}
+
+// loadMix is one scenario's background load: bulk transfer loaders, reply-driven
+// ping spammers, and an optional GOMAXPROCS ceiling.
+type loadMix struct {
+	loaders   int
+	transport string
+	spammers  int
+	spamWT    bool
+	procs     int
 }
 
 // observe runs one latency-only client over the named bus and returns its raw
@@ -147,6 +181,72 @@ func loaderRun(ctx context.Context, base, transport string, upload bool, bytes *
 			}
 		}
 	})
+}
+
+// wsPingSpam runs one reply-driven chain over a WebSocket: a new PING the
+// moment the PONG lands, the heaviest per-client cadence the bus allows.
+func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) {
+	conn, _, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		return
+	}
+	defer conn.CloseNow()
+	var id uint32
+	send := func() error {
+		id++
+		return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+	}
+	if send() != nil {
+		return
+	}
+	for ctx.Err() == nil {
+		_, msg, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
+			continue
+		}
+		pings.Add(1)
+		if send() != nil {
+			return
+		}
+	}
+}
+
+// wtPingSpam is the same chain over session datagrams.
+func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) {
+	dialer := &webtransport.Dialer{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed test certificate
+		QUICConfig:      transport.NewQUICConfig(),
+	}
+	defer dialer.Close()
+	_, sess, err := dialer.Dial(ctx, origin+"/wt/ping", nil)
+	if err != nil {
+		return
+	}
+	defer sess.CloseWithError(0, "")
+	var id uint32
+	send := func() error {
+		id++
+		return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+	}
+	if send() != nil {
+		return
+	}
+	for ctx.Err() == nil {
+		msg, err := sess.ReceiveDatagram(ctx)
+		if err != nil {
+			return
+		}
+		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
+			continue
+		}
+		pings.Add(1)
+		if send() != nil {
+			return
+		}
+	}
 }
 
 func pct(rtts []time.Duration, p int) time.Duration {
