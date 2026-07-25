@@ -119,6 +119,7 @@ func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
 	fs.IntVar(&cfg.MaxConnections, "max-connections", cfg.MaxConnections, "maximum concurrent TCP and QUIC connections")
 	fs.IntVar(&cfg.MaxConnectionsPerClient, "max-connections-per-client", cfg.MaxConnectionsPerClient, "maximum concurrent connections per direct client")
 	fs.DurationVar(&cfg.MaxOperationDuration, "max-operation-duration", cfg.MaxOperationDuration, "maximum measurement operation lifetime")
+	fs.DurationVar(&cfg.MaxSessionDuration, "max-session-duration", cfg.MaxSessionDuration, "maximum WebTransport session lifetime")
 	fs.StringVar(&cfg.Auth.Mode, "auth-mode", cfg.Auth.Mode, "authentication mode: off, password, oidc, or hybrid")
 	authStringFlag(fs, cfg, "auth-public-url", &cfg.Auth.PublicURL, "canonical HTTPS UI origin")
 	authStringFlag(fs, cfg, "auth-password-hash-file", &cfg.Auth.PasswordHashFile, "file containing the operator Argon2id PHC hash")

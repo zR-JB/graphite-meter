@@ -16,7 +16,7 @@ import (
 )
 
 func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
-	a := newRequestAdmission(3, 2, time.Minute)
+	a := newRequestAdmission(3, 2, time.Minute, time.Hour)
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -53,7 +53,7 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 }
 
 func TestRequestAdmissionGlobalLimit(t *testing.T) {
-	a := newRequestAdmission(1, 1, time.Minute)
+	a := newRequestAdmission(1, 1, time.Minute, time.Hour)
 	release, status := a.acquire("192.0.2.1")
 	if status != 0 {
 		t.Fatal("first request rejected")
@@ -89,7 +89,7 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 }
 
 func TestRequestAdmissionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, 10*time.Millisecond)
+	a := newRequestAdmission(1, 1, 10*time.Millisecond, time.Hour)
 	done := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
@@ -103,8 +103,23 @@ func TestRequestAdmissionLifetime(t *testing.T) {
 	}
 }
 
+func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
+	a := newRequestAdmission(1, 1, time.Minute, 10*time.Millisecond)
+	done := make(chan struct{})
+	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(done)
+	}), nil, "")
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/wt/download", nil))
+	select {
+	case <-done:
+	default:
+		t.Fatal("session route did not observe the session deadline")
+	}
+}
+
 func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
-	a := newRequestAdmission(1, 1, time.Minute)
+	a := newRequestAdmission(1, 1, time.Minute, time.Hour)
 	release, status := a.acquire("occupied")
 	if status != 0 {
 		t.Fatal("failed to occupy admission slot")
@@ -139,7 +154,7 @@ func (deadlineEndpoint) Handle(s transport.Session) error {
 func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
 	e := &endpoints{
 		ping:      deadlineEndpoint{},
-		admission: newRequestAdmission(1, 1, 20*time.Millisecond),
+		admission: newRequestAdmission(1, 1, 20*time.Millisecond, time.Hour),
 	}
 	srv := httptest.NewServer(listenerMux(context.Background(), e, muxTopology{latency: true}))
 	defer srv.Close()

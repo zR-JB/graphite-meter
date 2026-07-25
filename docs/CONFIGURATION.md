@@ -94,7 +94,8 @@ GM_PUBLIC_ORIGINS=self
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `512`            | Global TCP/QUIC connections.                                                     |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Per-direct-client connections.                                                   |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Maximum operation lifetime.                                                      |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Maximum lifetime of one measurement request.                                     |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Maximum lifetime of one WebTransport session, which hosts a whole test. Must be at least the operation duration. |
 | `GM_VERBOSE`                            | `--verbose`                            | `false`          | Per-second server measurement logs.                                              |
 
 The measurement endpoints are meant to move data fast: a single `/download` streams up to

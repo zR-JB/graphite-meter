@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,19 +13,30 @@ import (
 )
 
 type requestAdmission struct {
-	mu             sync.Mutex
-	active         int
-	byClient       map[string]int
-	globalMax      int
-	clientMax      int
-	maxLifetime    time.Duration
-	peak           int
-	rejectedGlobal uint64
-	rejectedClient uint64
+	mu              sync.Mutex
+	active          int
+	byClient        map[string]int
+	globalMax       int
+	clientMax       int
+	requestLifetime time.Duration
+	sessionLifetime time.Duration
+	peak            int
+	rejectedGlobal  uint64
+	rejectedClient  uint64
 }
 
-func newRequestAdmission(globalMax, clientMax int, maxLifetime time.Duration) *requestAdmission {
-	return &requestAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, maxLifetime: maxLifetime}
+func newRequestAdmission(globalMax, clientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
+	return &requestAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, requestLifetime: requestLifetime, sessionLifetime: sessionLifetime}
+}
+
+// lifetimeFor picks the bound a wrapped route lives under. A WebTransport
+// session hosts a whole test and gets the session bound; every other wrapped
+// route is one request or one reconnecting stream under the request bound.
+func (a *requestAdmission) lifetimeFor(path string) time.Duration {
+	if strings.HasPrefix(path, "/wt/") {
+		return a.sessionLifetime
+	}
+	return a.requestLifetime
 }
 
 func (a *requestAdmission) acquire(key string) (release func(), status int) {
@@ -82,7 +94,7 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 			return
 		}
 		defer release()
-		ctx, cancel := context.WithTimeout(r.Context(), a.maxLifetime)
+		ctx, cancel := context.WithTimeout(r.Context(), a.lifetimeFor(r.URL.Path))
 		defer cancel()
 		// A socket deadline tears the ping WebSocket down mid-stream. Its
 		// context bounds that route alone.

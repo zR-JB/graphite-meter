@@ -77,6 +77,7 @@ type Config struct {
 	MaxConnections                            int
 	MaxConnectionsPerClient                   int
 	MaxOperationDuration                      time.Duration
+	MaxSessionDuration                        time.Duration
 	Auth                                      AuthConfig
 }
 
@@ -91,6 +92,7 @@ func Default() Config {
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
 		MaxConnections: 512, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
+		MaxSessionDuration:   2 * time.Hour,
 		Auth:                 AuthConfig{Mode: "off", OIDCProviderName: "Authelia"},
 	}
 }
@@ -157,9 +159,16 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
-	if v := os.Getenv("GM_MAX_OPERATION_DURATION"); v != "" {
-		if c.MaxOperationDuration, err = time.ParseDuration(v); err != nil {
-			return Config{}, fmt.Errorf("GM_MAX_OPERATION_DURATION: %w", err)
+	for _, env := range []struct {
+		name string
+		dst  *time.Duration
+	}{
+		{"GM_MAX_OPERATION_DURATION", &c.MaxOperationDuration}, {"GM_MAX_SESSION_DURATION", &c.MaxSessionDuration},
+	} {
+		if v := os.Getenv(env.name); v != "" {
+			if *env.dst, err = time.ParseDuration(v); err != nil {
+				return Config{}, fmt.Errorf("%s: %w", env.name, err)
+			}
 		}
 	}
 	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
@@ -315,6 +324,9 @@ func (c Config) validateLimits() error {
 	}
 	if c.MaxOperationDuration <= 0 {
 		return fmt.Errorf("GM_MAX_OPERATION_DURATION must be greater than zero")
+	}
+	if c.MaxSessionDuration < c.MaxOperationDuration {
+		return fmt.Errorf("GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION")
 	}
 	return nil
 }
