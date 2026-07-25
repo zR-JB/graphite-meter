@@ -30,7 +30,8 @@
     };
   }
   // One card per mechanism: an origin advertising WebTransport as well gets a
-  // second card for it, selected by its ::wt id.
+  // second card for it (::wt), and a third for the experimental datagram path
+  // (::wtdg) while its toggle is on or it is the current selection.
   const throughputTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
@@ -48,6 +49,11 @@
             ]
           : []),
         ...(entry.wt ? [targetOption(entry.wt)] : []),
+        ...(entry.wtDatagram &&
+        (store.config.experimentalDatagramThroughput ||
+          store.config.transports.throughputTarget === entry.wtDatagram.id)
+          ? [targetOption(entry.wtDatagram)]
+          : []),
       ],
     ),
   ]);
@@ -447,8 +453,9 @@
       label="Datagram throughput (experimental)"
     />
     <p class="hint">
-      Moves WebTransport transfers onto unreliable datagrams, so the rate is
-      what arrives rather than what a stream redelivers.
+      Adds the WebTransport datagram card to the connection picker: transfers
+      over unreliable datagrams, so the rate is what arrives rather than what a
+      stream redelivers.
     </p>
   </section>
 </div>

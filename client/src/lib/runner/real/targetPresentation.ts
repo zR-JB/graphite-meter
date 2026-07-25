@@ -24,6 +24,13 @@ export function describeTarget(
   observedProtocol?: ProtocolTarget,
 ): TargetPresentation {
   const security = target.tls ? "TLS" : "clear";
+  if (target.transport === "webtransport-datagram") {
+    return {
+      label: `WebTransport datagrams · ${security}`,
+      summary: `WebTransport datagrams · ${httpProtocolLabel("http3")} · ${security}`,
+      advertisedDetail: `Experimental unreliable-datagram flood over ${httpProtocolLabel("http3")} · ${target.origin}`,
+    };
+  }
   if (target.transport === "webtransport") {
     const mechanism = `WebTransport · ${httpProtocolLabel("http3")}`;
     // The throughput view rides QUIC streams; the latency view rides datagrams.

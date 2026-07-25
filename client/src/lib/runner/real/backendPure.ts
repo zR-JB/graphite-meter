@@ -95,12 +95,16 @@ export function classifyTransportDiscovery(
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (throughput[origin] ??= { state: stateOf(origin) });
-    if (endpoint.transport === "webtransport") {
-      entry.wt = {
+    if (
+      endpoint.transport === "webtransport" ||
+      endpoint.transport === "webtransport-datagram"
+    ) {
+      const streams = endpoint.transport === "webtransport";
+      const view: WebTransportThroughputTarget = {
         ...endpoint,
-        id: `${origin}${WT_SELECTION_SUFFIX}`,
+        id: `${origin}${streams ? WT_SELECTION_SUFFIX : WT_DATAGRAM_SELECTION_SUFFIX}`,
         origin,
-        transport: "webtransport",
+        transport: endpoint.transport,
         protocol: "http3",
         tls,
         routes: {
@@ -112,6 +116,8 @@ export function classifyTransportDiscovery(
           uploadProgress: ROUTES.uploadProgress,
         },
       };
+      if (streams) entry.wt = view;
+      else entry.wtDatagram = view;
       continue;
     }
     // A target naming its protocol outranks a negotiated one: selection can only
@@ -179,9 +185,10 @@ export function classifyTransportDiscovery(
   };
 }
 
-/** Suffix marking the WebTransport view of an origin in selection ids and the
- *  picker, since one origin advertises both mechanisms. */
+/** Suffixes marking the WebTransport views of an origin in selection ids and
+ *  the picker, since one origin advertises several mechanisms. */
 export const WT_SELECTION_SUFFIX = "::wt";
+export const WT_DATAGRAM_SELECTION_SUFFIX = "::wtdg";
 
 /** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;
  *  protocol evidence disambiguates multiple targets sharing an origin. An
@@ -191,6 +198,13 @@ export function selectThroughputTarget(
   discovery: TransportDiscovery,
   selection: ThroughputTargetSelection,
 ): FetchThroughputTarget | WebTransportThroughputTarget | null {
+  if (selection.endsWith(WT_DATAGRAM_SELECTION_SUFFIX)) {
+    const entry =
+      discovery.throughput[
+        selection.slice(0, -WT_DATAGRAM_SELECTION_SUFFIX.length)
+      ];
+    return entry?.state === "advertised" ? (entry.wtDatagram ?? null) : null;
+  }
   if (selection.endsWith(WT_SELECTION_SUFFIX)) {
     const entry =
       discovery.throughput[selection.slice(0, -WT_SELECTION_SUFFIX.length)];

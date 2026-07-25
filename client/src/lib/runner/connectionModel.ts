@@ -13,7 +13,6 @@ import type {
 import {
   selectLatencyTarget,
   selectThroughputTarget,
-  WT_SELECTION_SUFFIX,
 } from "./real/backendPure";
 import { describeTarget } from "./real/targetPresentation";
 
@@ -166,13 +165,11 @@ function availability(
   selection: string,
 ): ConnectionPresentation["availability"] {
   // "current"/"auto" have no entry of their own: they resolve to whichever
-  // advertised target the selector picks. A ::wt selection shares its
-  // origin's entry, and with it that origin's availability.
+  // advertised target the selector picks. A ::-suffixed selection names a
+  // mechanism view of its origin and shares that origin's availability.
   if (selection !== "current" && selection !== "auto") {
-    const key =
-      role === "throughput" && selection.endsWith(WT_SELECTION_SUFFIX)
-        ? selection.slice(0, -WT_SELECTION_SUFFIX.length)
-        : selection;
+    const cut = role === "throughput" ? selection.indexOf("::") : -1;
+    const key = cut >= 0 ? selection.slice(0, cut) : selection;
     return discovery[role][key]?.state ?? "not-advertised";
   }
   return selectTarget(discovery, role, selection)

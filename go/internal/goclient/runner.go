@@ -557,6 +557,10 @@ func transportOrder(selection string, preferred, fallback string) []string {
 // Automatic throughput prefers fetch streams, which still win raw throughput
 // over TCP; WebTransport is the explicit choice and the fallback.
 func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
+	// The datagram path is a browser diagnostic; this client drives streams.
+	if cfg.ThroughputTransport == wire.TransportWebTransportDatagram {
+		return nil, fmt.Errorf("webtransport-datagram throughput is not supported by this client")
+	}
 	for _, mechanism := range transportOrder(cfg.ThroughputTransport, wire.TransportFetchStream, wire.TransportWebTransport) {
 		t, err := selectTargetOver(cfg, pf, mechanism)
 		if err == nil {

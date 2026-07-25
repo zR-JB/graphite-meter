@@ -154,9 +154,9 @@ export interface RunnerConfig {
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
-  /** Experimental: move WebTransport throughput onto unreliable datagrams. What
-   *  arrives is goodput with loss visible, not the stream goodput the other
-   *  transports report. Default off. */
+  /** Experimental: show the WebTransport datagram card in the picker, its own
+   *  advertised path beside the stream card. What arrives there is goodput with
+   *  loss visible, not the stream goodput the other transports report. */
   experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */
   transports: {
@@ -272,7 +272,8 @@ export type TerminationReason =
 /** The connection method a backend may negotiate for a phase's I/O. A real
  *  engine tries these in preference order; each can fail to establish, and a
  *  failure of one is non-fatal as long as another succeeds. */
-export type TransportKind = "webtransport" | "websocket" | "fetch-stream";
+export type TransportKind =
+  "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
 
 /** The stage a transport is negotiated for. A backend negotiates once, at stage
  *  begin: the warmup primes it and the measured window reuses it, so there is no
@@ -392,10 +393,11 @@ export interface DiscoveredTarget<T> {
   target?: T;
 }
 
-/** One throughput origin. `wt` is the same origin reached over WebTransport,
- *  present when the server advertises it. */
+/** One throughput origin. `wt` and `wtDatagram` are the same origin reached
+ *  over WebTransport streams and datagrams, separately advertised paths. */
 export interface DiscoveredThroughput extends DiscoveredTarget<FetchThroughputTarget> {
   wt?: WebTransportThroughputTarget;
+  wtDatagram?: WebTransportThroughputTarget;
 }
 
 /** Server-advertised transports classified against the page that uses them.

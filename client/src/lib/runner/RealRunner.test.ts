@@ -135,6 +135,11 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
         transport: "webtransport",
         protocol: "http3",
       },
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport-datagram",
+        protocol: "http3",
+      },
     ],
     [
       { baseUrl: "https://meter:7247", transport: "websocket" },
@@ -148,6 +153,9 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   expect(entry.target?.transport).toBe("fetch-stream");
   expect(entry.wt?.id).toBe("https://meter:7249::wt");
   expect(entry.wt?.routes.wtDownload).toBe(ROUTES.wtDownload);
+  // The datagram path is its own advertised view, never folded onto ::wt.
+  expect(entry.wtDatagram?.id).toBe("https://meter:7249::wtdg");
+  expect(entry.wtDatagram?.transport).toBe("webtransport-datagram");
 
   // Auto prefers fetch; the ::wt id names the WebTransport view explicitly.
   expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
@@ -156,6 +164,9 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   expect(
     selectThroughputTarget(catalog, "https://meter:7249::wt")?.transport,
   ).toBe("webtransport");
+  expect(
+    selectThroughputTarget(catalog, "https://meter:7249::wtdg")?.transport,
+  ).toBe("webtransport-datagram");
   expect(selectThroughputTarget(catalog, "https://meter:7249")?.transport).toBe(
     "fetch-stream",
   );

@@ -8,6 +8,7 @@ import {
   isLoopbackHostname,
   selectLatencyTarget,
   selectThroughputTarget,
+  WT_DATAGRAM_SELECTION_SUFFIX,
   WT_SELECTION_SUFFIX,
 } from "./backendPure";
 import { describeTarget } from "./targetPresentation";
@@ -68,6 +69,20 @@ export function throughputOptionView(
           disabled: true,
           detail: "No offered target matches this page origin and protocol.",
         };
+  }
+  if (selection.endsWith(WT_DATAGRAM_SELECTION_SUFFIX)) {
+    if (typeof WebTransport === "undefined")
+      return { disabled: true, detail: NO_BROWSER_WT };
+    const entry =
+      discovery.throughput[
+        selection.slice(0, -WT_DATAGRAM_SELECTION_SUFFIX.length)
+      ];
+    return {
+      disabled: entry?.state !== "advertised" || !entry.wtDatagram,
+      detail: entry?.wtDatagram
+        ? describeTarget(discovery, entry.wtDatagram).advertisedDetail
+        : NOT_ADVERTISED,
+    };
   }
   if (selection.endsWith(WT_SELECTION_SUFFIX)) {
     if (typeof WebTransport === "undefined")

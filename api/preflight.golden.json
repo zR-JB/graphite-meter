@@ -19,6 +19,11 @@
         "transport": "webtransport",
         "protocol": "http3"
       },
+      {
+        "baseUrl": "https://speed.example:7249",
+        "transport": "webtransport-datagram",
+        "protocol": "http3"
+      },
       { "baseUrl": ".", "transport": "fetch-stream", "protocol": "negotiated" }
     ],
     "latency": [

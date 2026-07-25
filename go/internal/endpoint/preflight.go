@@ -122,10 +122,12 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 		}
 		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
 	}
-	// WebTransport is the same HTTP/3 origin reached over QUIC sessions.
+	// WebTransport is the same HTTP/3 origin reached over QUIC sessions. The
+	// stream and datagram modes are separate advertised paths on it.
 	addWebTransport := func(base string) {
 		base = strings.TrimRight(base, "/")
 		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
+		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransportDatagram, Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
 		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultLatencyRoutes()})
 	}
 	native := []struct {

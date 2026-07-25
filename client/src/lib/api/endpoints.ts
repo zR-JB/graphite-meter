@@ -24,8 +24,9 @@ export interface FetchThroughputTarget extends Omit<
   };
 }
 
-/** WebTransport throughput rides HTTP/3 sessions. Upload ids are still minted
- *  and finalized over HTTP, so those routes come along. */
+/** WebTransport throughput rides HTTP/3 sessions, as raw streams or as the
+ *  experimental datagram flood, separately advertised paths. Upload ids are
+ *  still minted and finalized over HTTP, so those routes come along. */
 export interface WebTransportThroughputTarget extends Omit<
   ThroughputEndpoint,
   "baseUrl" | "transport" | "protocol"
@@ -33,7 +34,7 @@ export interface WebTransportThroughputTarget extends Omit<
   baseUrl?: string;
   id: string;
   origin: string;
-  transport: "webtransport";
+  transport: "webtransport" | "webtransport-datagram";
   protocol: "http3";
   tls: boolean;
   routes: {

@@ -40,6 +40,7 @@ import {
   selectLatencyTarget,
   fetchViewOfWebTransport,
   browserProtocolMatchesTarget,
+  WT_DATAGRAM_SELECTION_SUFFIX,
   WT_SELECTION_SUFFIX,
   classifyTransportDiscovery,
   ROUTES,
@@ -92,6 +93,7 @@ interface PathEvidence {
 // The protocol advertises some transports this client cannot drive.
 const RUNNABLE_TRANSPORT: Record<TransportKind, boolean> = {
   "fetch-stream": true,
+  "webtransport-datagram": typeof WebTransport !== "undefined",
   websocket: true,
   webtransport: typeof WebTransport !== "undefined",
 };
@@ -324,9 +326,10 @@ export class RealBackend implements RunnerBackend {
       throw new TransportUnavailableError(`${selection} target unavailable`, {
         role: "throughput",
       });
-    // A WebTransport resolution keeps a fetch view of the same origin: /probe
-    // evidence and the upload id are HTTP whichever mechanism moves the bytes.
-    if (advertisedTarget.transport === "webtransport") {
+    // A WebTransport resolution (streams or datagrams) keeps a fetch view of
+    // the same origin: /probe evidence and the upload id are HTTP whichever
+    // mechanism moves the bytes.
+    if (advertisedTarget.transport !== "fetch-stream") {
       if (!RUNNABLE_TRANSPORT.webtransport)
         throw new TransportUnavailableError(
           "webtransport is not supported by this client",
@@ -337,7 +340,7 @@ export class RealBackend implements RunnerBackend {
       this.#wtThroughputTarget = null;
     }
     const selected =
-      advertisedTarget.transport === "webtransport"
+      advertisedTarget.transport !== "fetch-stream"
         ? {
             ...(discovery.throughput[advertisedTarget.origin]?.target ??
               fetchViewOfWebTransport(advertisedTarget)),
@@ -457,7 +460,10 @@ export class RealBackend implements RunnerBackend {
     // dropped here, before the run commits; mid-run errors retry WT only.
     if (this.#wtThroughputTarget && role !== "latency") {
       if (!(await this.#verifyWtThroughput(signal))) {
-        if (selection.endsWith(WT_SELECTION_SUFFIX))
+        if (
+          selection.endsWith(WT_SELECTION_SUFFIX) ||
+          selection.endsWith(WT_DATAGRAM_SELECTION_SUFFIX)
+        )
           throw new TransportUnavailableError(
             "webtransport session did not establish",
             { role: "throughput" },
@@ -530,9 +536,8 @@ export class RealBackend implements RunnerBackend {
       protocolNegotiated: pathProbe.protocolNegotiated,
       selectedThroughputTarget: this.#wtThroughputTarget?.id ?? selected.id,
       selectedThroughputProtocol: selected.protocol,
-      selectedThroughputTransport: this.#wtThroughputTarget
-        ? "webtransport"
-        : "fetch-stream",
+      selectedThroughputTransport:
+        this.#wtThroughputTarget?.transport ?? "fetch-stream",
       selectedLatencyTarget: this.#latencyTarget?.id,
       selectedLatencyTransport: this.#latencyTarget?.transport,
       latencyProtocolNegotiated: latencyPathProbe?.protocolNegotiated,
@@ -779,6 +784,11 @@ export class RealBackend implements RunnerBackend {
             ? this.#latencyTarget?.transport === "webtransport"
             : this.#wtThroughputTarget !== null;
         break;
+      case "webtransport-datagram":
+        advertised =
+          role !== "latency" &&
+          this.#wtThroughputTarget?.transport === "webtransport-datagram";
+        break;
     }
     return advertised ? null : "not advertised by server";
   }
@@ -879,7 +889,7 @@ export class RealBackend implements RunnerBackend {
         return dir === "down"
           ? `${wt.origin}${wt.routes.wtDownload}`
           : `${wt.origin}${wt.routes.wtUpload}?id=${encodeURIComponent(uploadId ?? "")}${
-              cfg.experimentalDatagramThroughput ? "&datagrams=1" : ""
+              wt.transport === "webtransport-datagram" ? "&datagrams=1" : ""
             }`;
       }
       if (dir === "down") {
@@ -897,7 +907,7 @@ export class RealBackend implements RunnerBackend {
       return this.#primeUploadTransfer(dir, base, laneCount, url, streams, wt);
 
     if (wt) {
-      const datagrams = cfg.experimentalDatagramThroughput;
+      const datagrams = wt.transport === "webtransport-datagram";
       const query = datagrams
         ? `?bytes=${PER_STREAM_BYTES}&datagrams=1`
         : `?bytes=${PER_STREAM_BYTES}&streams=${streams}`;
@@ -950,7 +960,7 @@ export class RealBackend implements RunnerBackend {
         url: url(0, id),
         dir,
         lanes: streams,
-        datagrams: this.#host!.config!.experimentalDatagramThroughput,
+        datagrams: wt.transport === "webtransport-datagram",
         mint: this.#wtMint(wt.origin, wt.routes.wtSession),
         progressUrl: `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`,
         headers: {

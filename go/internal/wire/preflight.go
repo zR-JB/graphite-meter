@@ -28,11 +28,14 @@ type Capabilities struct {
 }
 
 // Transport names the mechanism that reaches a target. One origin can offer
-// several, so a client picks a target by (baseUrl, transport).
+// several, so a client picks a target by (baseUrl, transport). The datagram
+// variant serves throughput as unreliable datagrams on the same session
+// routes: goodput with visible loss, advertised as its own path.
 const (
-	TransportFetchStream  = "fetch-stream"
-	TransportWebSocket    = "websocket"
-	TransportWebTransport = "webtransport"
+	TransportFetchStream          = "fetch-stream"
+	TransportWebSocket            = "websocket"
+	TransportWebTransport         = "webtransport"
+	TransportWebTransportDatagram = "webtransport-datagram"
 )
 
 // ThroughputTarget is one download/upload endpoint. The non-JSON fields are

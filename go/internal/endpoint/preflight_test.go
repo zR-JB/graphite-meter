@@ -14,18 +14,21 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
 	cfg.NativePublic = config.NativeOrigins{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
-	// Four fetch-stream targets plus the WebTransport view of the HTTP/3 one.
-	if len(pf.Capabilities.ThroughputTargets) != 5 || len(pf.Capabilities.LatencyTargets) != 3 {
-		t.Fatalf("capabilities = %+v, want 5 throughput and 3 latency targets", pf.Capabilities)
+	// Four fetch-stream targets plus the stream and datagram WebTransport views
+	// of the HTTP/3 one.
+	if len(pf.Capabilities.ThroughputTargets) != 6 || len(pf.Capabilities.LatencyTargets) != 3 {
+		t.Fatalf("capabilities = %+v, want 6 throughput and 3 latency targets", pf.Capabilities)
 	}
 	for i, want := range []string{"http1", "http1", "http2", "http3"} {
 		if got := pf.Capabilities.ThroughputTargets[i].Protocol; got != want {
 			t.Fatalf("protocol[%d] = %q, want %q", i, got, want)
 		}
 	}
-	wt := pf.Capabilities.ThroughputTargets[4]
-	if wt.Transport != wire.TransportWebTransport || wt.Origin != cfg.NativePublic.H3 {
-		t.Fatalf("webtransport throughput = %+v, want the HTTP/3 origin", wt)
+	for i, want := range []string{wire.TransportWebTransport, wire.TransportWebTransportDatagram} {
+		wt := pf.Capabilities.ThroughputTargets[4+i]
+		if wt.Transport != want || wt.Origin != cfg.NativePublic.H3 {
+			t.Fatalf("webtransport throughput[%d] = %+v, want %s on the HTTP/3 origin", i, wt, want)
+		}
 	}
 	wtLatency := pf.Capabilities.LatencyTargets[2]
 	if wtLatency.Transport != wire.TransportWebTransport || wtLatency.Origin != cfg.NativePublic.H3 {
