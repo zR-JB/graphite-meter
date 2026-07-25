@@ -11,12 +11,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 )
 
-// maxSessionsPerClient bounds the routes that hold a slot for a whole test
-// rather than one request. A run needs two: a transfer session and a ping bus.
-// Without a bound of its own, one client could hold its entire request budget
-// for the session lifetime, which is orders of magnitude longer.
-const maxSessionsPerClient = 4
-
 type requestAdmission struct {
 	mu               sync.Mutex
 	active           int
@@ -24,6 +18,7 @@ type requestAdmission struct {
 	sessionsByClient map[string]int
 	globalMax        int
 	clientMax        int
+	sessionClientMax int
 	requestLifetime  time.Duration
 	sessionLifetime  time.Duration
 	peak             int
@@ -31,8 +26,8 @@ type requestAdmission struct {
 	rejectedClient   uint64
 }
 
-func newRequestAdmission(globalMax, clientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
-	return &requestAdmission{byClient: make(map[string]int), sessionsByClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, requestLifetime: requestLifetime, sessionLifetime: sessionLifetime}
+func newRequestAdmission(globalMax, clientMax, sessionClientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
+	return &requestAdmission{byClient: make(map[string]int), sessionsByClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, sessionClientMax: sessionClientMax, requestLifetime: requestLifetime, sessionLifetime: sessionLifetime}
 }
 
 // isSessionRoute reports the routes a whole test rides, enumerated rather than
@@ -58,7 +53,7 @@ func (a *requestAdmission) lifetimeFor(path string) time.Duration {
 func (a *requestAdmission) acquire(key string, session bool) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.byClient[key] >= a.clientMax || (session && a.sessionsByClient[key] >= maxSessionsPerClient) {
+	if a.byClient[key] >= a.clientMax || (session && a.sessionsByClient[key] >= a.sessionClientMax) {
 		a.rejectedClient++
 		return nil, http.StatusTooManyRequests
 	}

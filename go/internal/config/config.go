@@ -74,6 +74,7 @@ type Config struct {
 	TrustedProxies                            []netip.Prefix
 	MaxActiveMeasurements                     int
 	MaxActiveMeasurementsPerClient            int
+	MaxSessionsPerClient                      int
 	MaxConnections                            int
 	MaxConnectionsPerClient                   int
 	MaxOperationDuration                      time.Duration
@@ -90,7 +91,8 @@ func Default() Config {
 		AdvertisedNative: map[string]bool{}, AdvertiseAllNative: true,
 		ServerName: "graphite-meter", EngineVersion: EngineVersion,
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
-		MaxConnections: 512, MaxConnectionsPerClient: 64,
+		MaxSessionsPerClient: 4,
+		MaxConnections:       512, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
 		MaxSessionDuration:   2 * time.Hour,
 		Auth:                 AuthConfig{Mode: "off", OIDCProviderName: "Authelia"},
@@ -153,6 +155,7 @@ func Load() (Config, error) {
 		dst  *int
 	}{
 		{"GM_MAX_ACTIVE_MEASUREMENTS", &c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", &c.MaxActiveMeasurementsPerClient},
+		{"GM_MAX_SESSIONS_PER_CLIENT", &c.MaxSessionsPerClient},
 		{"GM_MAX_CONNECTIONS", &c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", &c.MaxConnectionsPerClient},
 	} {
 		if *env.dst, err = envInt(env.name, *env.dst); err != nil {
@@ -311,13 +314,16 @@ func (c Config) validateLimits() error {
 	for _, limit := range []struct {
 		name  string
 		value int
-	}{{"GM_MAX_ACTIVE_MEASUREMENTS", c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", c.MaxActiveMeasurementsPerClient}, {"GM_MAX_CONNECTIONS", c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", c.MaxConnectionsPerClient}} {
+	}{{"GM_MAX_ACTIVE_MEASUREMENTS", c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", c.MaxActiveMeasurementsPerClient}, {"GM_MAX_SESSIONS_PER_CLIENT", c.MaxSessionsPerClient}, {"GM_MAX_CONNECTIONS", c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", c.MaxConnectionsPerClient}} {
 		if limit.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", limit.name)
 		}
 	}
 	if c.MaxActiveMeasurementsPerClient > c.MaxActiveMeasurements {
 		return fmt.Errorf("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS")
+	}
+	if c.MaxSessionsPerClient > c.MaxActiveMeasurementsPerClient {
+		return fmt.Errorf("GM_MAX_SESSIONS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT")
 	}
 	if c.MaxConnectionsPerClient > c.MaxConnections {
 		return fmt.Errorf("GM_MAX_CONNECTIONS_PER_CLIENT must not exceed GM_MAX_CONNECTIONS")

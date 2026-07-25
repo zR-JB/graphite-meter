@@ -16,7 +16,7 @@ import (
 )
 
 func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
-	a := newRequestAdmission(3, 2, time.Minute, time.Hour)
+	a := newRequestAdmission(3, 2, 4, time.Minute, time.Hour)
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -53,7 +53,7 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 }
 
 func TestRequestAdmissionGlobalLimit(t *testing.T) {
-	a := newRequestAdmission(1, 1, time.Minute, time.Hour)
+	a := newRequestAdmission(1, 1, 4, time.Minute, time.Hour)
 	release, status := a.acquire("192.0.2.1", false)
 	if status != 0 {
 		t.Fatal("first request rejected")
@@ -89,7 +89,7 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 }
 
 func TestRequestAdmissionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, 10*time.Millisecond, time.Hour)
+	a := newRequestAdmission(1, 1, 4, 10*time.Millisecond, time.Hour)
 	done := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
@@ -104,7 +104,7 @@ func TestRequestAdmissionLifetime(t *testing.T) {
 }
 
 func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, time.Minute, 10*time.Millisecond)
+	a := newRequestAdmission(1, 1, 4, time.Minute, 10*time.Millisecond)
 	done := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
@@ -118,8 +118,37 @@ func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
 	}
 }
 
+// Session routes carry their own per-client budget, since one holds a slot for
+// a whole test rather than a request. The bound is configurable: a deployment
+// behind CGNAT collapses many users onto one address.
+func TestRequestAdmissionBoundsSessionsPerClient(t *testing.T) {
+	a := newRequestAdmission(100, 100, 2, time.Minute, time.Hour)
+	first, status := a.acquire("client", true)
+	if status != 0 {
+		t.Fatalf("first session rejected with %d", status)
+	}
+	second, status := a.acquire("client", true)
+	if status != 0 {
+		t.Fatalf("second session rejected with %d", status)
+	}
+	if _, status := a.acquire("client", true); status != http.StatusTooManyRequests {
+		t.Fatalf("third session = %d, want %d", status, http.StatusTooManyRequests)
+	}
+	// The budget is the session routes' own: ordinary requests still pass.
+	if _, status := a.acquire("client", false); status != 0 {
+		t.Fatalf("request rejected while sessions were full: %d", status)
+	}
+	first()
+	if release, status := a.acquire("client", true); status != 0 {
+		t.Fatalf("session rejected after release: %d", status)
+	} else {
+		release()
+	}
+	second()
+}
+
 func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
-	a := newRequestAdmission(1, 1, time.Minute, time.Hour)
+	a := newRequestAdmission(1, 1, 4, time.Minute, time.Hour)
 	release, status := a.acquire("occupied", false)
 	if status != 0 {
 		t.Fatal("failed to occupy admission slot")
@@ -151,7 +180,7 @@ func (deadlineEndpoint) Handle(s transport.Session) error {
 func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
 	e := &endpoints{
 		ping:      deadlineEndpoint{},
-		admission: newRequestAdmission(1, 1, 20*time.Millisecond, time.Hour),
+		admission: newRequestAdmission(1, 1, 4, 20*time.Millisecond, time.Hour),
 	}
 	srv := httptest.NewServer(listenerMux(context.Background(), e, muxTopology{latency: true}))
 	defer srv.Close()
