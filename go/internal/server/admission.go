@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/netip"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,9 +30,12 @@ func newRequestAdmission(globalMax, clientMax int, requestLifetime, sessionLifet
 
 // lifetimeFor picks the bound a wrapped route lives under. A WebTransport
 // session hosts a whole test and gets the session bound; every other wrapped
-// route is one request or one reconnecting stream under the request bound.
+// route is one request or one reconnecting stream under the request bound. The
+// session routes are enumerated rather than prefix-matched, so /wt/session, a
+// plain mint POST, keeps the request bound if it is ever wrapped.
 func (a *requestAdmission) lifetimeFor(path string) time.Duration {
-	if strings.HasPrefix(path, "/wt/") {
+	switch path {
+	case routeWTDownload, routeWTUpload, routeWTPing:
 		return a.sessionLifetime
 	}
 	return a.requestLifetime

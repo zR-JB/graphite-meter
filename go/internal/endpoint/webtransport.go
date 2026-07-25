@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -132,7 +133,7 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 	if query.Get("datagrams") != "" {
 		// Bounded by inactivity like the stream lanes, so a silent session
 		// cannot pin its drain and hold the aggregate off the sweeper.
-		src := idleTimeoutSource{src: datagramSource{conn: sess, ctx: ctx}, timeout: uploadReadTimeout}
+		src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout)
 		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner)) //nolint:errcheck // a closed session ends the drain
 	}
 	for {
@@ -180,16 +181,33 @@ func (r idleTimeoutReader) Read(p []byte) (int, error) {
 }
 
 // idleTimeoutSource is idleTimeoutReader for the datagram drain, whose receive
-// blocks on the session context alone.
+// blocks on the session context alone. One timer is re-armed per read rather
+// than a context built per datagram: this is the drain's hot path.
 type idleTimeoutSource struct {
 	src     datagramSource
+	ctx     context.Context
+	cancel  context.CancelFunc
+	timer   *time.Timer
 	timeout time.Duration
 }
 
-func (s idleTimeoutSource) Read(p []byte) (int, error) {
-	ctx, cancel := context.WithTimeout(s.src.ctx, s.timeout)
-	defer cancel()
-	return datagramSource{conn: s.src.conn, ctx: ctx}.Read(p)
+func newIdleTimeoutSource(parent context.Context, conn transport.DatagramConn, timeout time.Duration) *idleTimeoutSource {
+	ctx, cancel := context.WithCancel(parent)
+	s := &idleTimeoutSource{ctx: ctx, cancel: cancel}
+	s.src = datagramSource{conn: conn, ctx: ctx}
+	s.timer = time.AfterFunc(timeout, cancel)
+	s.timeout = timeout
+	return s
+}
+
+func (s *idleTimeoutSource) Read(p []byte) (int, error) {
+	s.timer.Reset(s.timeout)
+	n, err := s.src.Read(p)
+	if err != nil {
+		s.timer.Stop()
+		s.cancel()
+	}
+	return n, err
 }
 
 // datagramSink splits a download into unreliable datagrams. What arrives is
@@ -218,10 +236,15 @@ type datagramSource struct {
 	ctx  context.Context
 }
 
+// A datagram is delivered whole or not at all: silently dropping its tail would
+// under-report the upload counter, which is the one number this drain feeds.
 func (s datagramSource) Read(p []byte) (int, error) {
 	data, err := s.conn.ReceiveDatagram(s.ctx)
 	if err != nil {
 		return 0, err
+	}
+	if len(data) > len(p) {
+		return 0, io.ErrShortBuffer
 	}
 	return copy(p, data), nil
 }

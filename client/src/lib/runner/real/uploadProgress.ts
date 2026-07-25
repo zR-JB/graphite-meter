@@ -143,9 +143,12 @@ export class UploadProgressChannel {
   }
 
   /** Feed one relayed record in. Used by the WebTransport upload worker, whose
-   *  messages reach the main thread through the lane channel. */
+   *  messages reach the main thread through the lane channel. A refusal ends
+   *  the attach as surely as a ready record: leaving it pending would fail the
+   *  stage once for the refusal and again when the wait times out. */
   accept(msg: ProgressOutMsg | AuthRequiredMsg): void {
     if (msg.type === "open") this.#external?.finish("open");
+    else if (msg.type === "fatal") this.#external?.finish("superseded");
     this.#onMessage(msg);
   }
 

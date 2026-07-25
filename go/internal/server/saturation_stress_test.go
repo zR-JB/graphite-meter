@@ -45,6 +45,7 @@ func TestSaturationEnvelope(t *testing.T) {
 	cfg.MaxActiveMeasurementsPerClient = 4096
 	cfg.MaxConnections = 8192
 	cfg.MaxConnectionsPerClient = 8192
+
 	defer runUntilCancel(t, &cfg)()
 	waitForOK(t, http.DefaultClient, "http://"+cfg.Native.H1+"/preflight")
 	base := "http://" + cfg.Native.H1
@@ -53,6 +54,22 @@ func TestSaturationEnvelope(t *testing.T) {
 	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
 	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s", "cpu")
 
+	// A second server whose sessions die every few seconds, so one scenario
+	// drives the redial and progress-handover paths under the same contention
+	// the harness measures rather than against an idle server.
+	redialCfg := config.Default()
+	redialCfg.Native.H1 = freeTCPAddr(t)
+	redialCfg.Native.H3 = freeTCPAddr(t)
+	redialCfg.TLSCert, redialCfg.TLSKey = cert, key
+	redialCfg.MaxActiveMeasurements, redialCfg.MaxActiveMeasurementsPerClient = 4096, 4096
+	redialCfg.MaxConnections, redialCfg.MaxConnectionsPerClient = 8192, 8192
+	// The session bound may not sit below the request bound, so both drop.
+	redialCfg.MaxOperationDuration = 5 * time.Second
+	redialCfg.MaxSessionDuration = 5 * time.Second
+	defer runUntilCancel(t, &redialCfg)()
+	waitForOK(t, http.DefaultClient, "http://"+redialCfg.Native.H1+"/preflight")
+	redialBase := "http://" + redialCfg.Native.H1
+
 	run := func(name string, mix loadMix) {
 		if mix.procs > 0 {
 			old := runtime.GOMAXPROCS(mix.procs)
@@ -60,6 +77,10 @@ func TestSaturationEnvelope(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		loadBase := base
+		if mix.base != "" {
+			loadBase = mix.base
+		}
 		var downBytes, upBytes, spamPings atomic.Uint64
 		var wg sync.WaitGroup
 		for i := range mix.loaders {
@@ -71,7 +92,7 @@ func TestSaturationEnvelope(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				loaderRun(ctx, base, mix.transport, upload, bytes)
+				loaderRun(ctx, loadBase, mix.transport, upload, bytes)
 			}()
 		}
 		for range mix.spammers {
@@ -115,6 +136,9 @@ func TestSaturationEnvelope(t *testing.T) {
 		run(fmt.Sprintf("fetch-load-%d", n), loadMix{loaders: n, transport: "fetch-stream"})
 	}
 	run("wt-load-8", loadMix{loaders: 8, transport: "webtransport"})
+	// Same load against the short-bound server: goodput here is what survives
+	// a session kill every 5 s.
+	run("wt-load-8-redialing", loadMix{loaders: 8, transport: "webtransport", base: redialBase})
 	run("ws-spam-16", loadMix{spammers: 16})
 	run("ws-spam-64", loadMix{spammers: 64})
 	run("wt-spam-16", loadMix{spammers: 16, spamWT: true})
@@ -131,6 +155,8 @@ type loadMix struct {
 	spammers  int
 	spamWT    bool
 	procs     int
+	// base overrides the server the loaders drive; empty uses the main one.
+	base string
 }
 
 // observe runs one latency-only client over the named bus and returns its raw

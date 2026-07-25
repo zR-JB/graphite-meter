@@ -225,16 +225,19 @@ type model struct {
 	server                              string
 	target, latencyTarget               string
 	throughputProtocol, latencyProtocol string
-	err                                 error
-	complete                            bool
-	prepared                            *goclient.PreparedConnection
-	discovery                           *wire.Preflight
-	prepareSeq                          int
-	prepareStatus                       string
-	prepareStep                         prepareStep
-	prepareError                        string
-	auth                                *goclient.PendingAuthorization
-	authSince                           time.Time
+	// The transport the run committed to, so the stream label can name what a
+	// session delivers rather than what was requested.
+	throughputTransport string
+	err                 error
+	complete            bool
+	prepared            *goclient.PreparedConnection
+	discovery           *wire.Preflight
+	prepareSeq          int
+	prepareStatus       string
+	prepareStep         prepareStep
+	prepareError        string
+	auth                *goclient.PendingAuthorization
+	authSince           time.Time
 	// authOpened records that the approval page was sent to the browser. Until
 	// it is set, enter is the key that sends it; afterwards enter goes back to
 	// the row it belongs to.

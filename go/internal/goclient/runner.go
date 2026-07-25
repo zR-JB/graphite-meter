@@ -293,7 +293,7 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	if target.Protocol == "negotiated" {
 		throughputProtocol = probe.ProtocolNegotiated
 	}
-	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol}
+	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol, ThroughputTransport: target.Transport}
 	if latencyTarget != nil {
 		event.LatencyTarget = latencyTarget.ID
 		if latencyProbe != nil {

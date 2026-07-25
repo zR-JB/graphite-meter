@@ -430,7 +430,7 @@ func (m model) summaryView(w int) string {
 		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
 		field("Throughput", valueStyle.Render(emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol))),
 		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol))),
-		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.target))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
+		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.target, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
 		"",
 	}
 	lines = append(lines, m.timelineView(w)...)

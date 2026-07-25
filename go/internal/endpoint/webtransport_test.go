@@ -91,6 +91,15 @@ func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
 	}
 }
 
+// The drain feeds the upload counter, so a datagram larger than the buffer must
+// refuse rather than deliver a prefix and undercount the rest.
+func TestDatagramSourceRefusesToTruncate(t *testing.T) {
+	src := datagramSource{conn: &recordingConn{incoming: []string{"a datagram longer than the buffer"}}, ctx: context.Background()}
+	if _, err := src.Read(make([]byte, 8)); err != io.ErrShortBuffer {
+		t.Fatalf("read into a short buffer = %v, want io.ErrShortBuffer", err)
+	}
+}
+
 // TestUploadProgressHandleStreamReportsTheCounter runs the WebTransport feed
 // over a pipe: ready first, then the terminal count once the upload finishes.
 func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   BROWSER_CONNECTION_BUDGET,
+  WT_MAX_LANES,
   HTTP3_DOWNLOAD_STREAMS,
   MULTIPLEXED_UPLOAD_STREAMS,
   describeTransferStreams,
@@ -107,4 +108,33 @@ test("stream counts are clamped to a usable range", () => {
   expect(normalizeStreamCount(0)).toBe(1);
   expect(normalizeStreamCount(2.4)).toBe(2);
   expect(normalizeStreamCount(999)).toBe(128);
+});
+
+// A WebTransport session delivers at most WT_MAX_LANES per direction, so a
+// higher forced count must be reported as what the transport carries. Claiming
+// a lane count the session never opened misdescribes the measurement.
+test("a forced count above the session cap is clamped and said so", () => {
+  const policy = { mode: "forced" as const, count: 128 };
+  expect(
+    transferStreamCount({
+      protocol: "http3",
+      policy,
+      transfer: ["down"],
+      dir: "down",
+      needsPing: false,
+      webTransport: true,
+    }),
+  ).toBe(WT_MAX_LANES);
+  expect(describeTransferStreams(policy, "http3", true)).toBe(
+    `Forced · ${WT_MAX_LANES} per direction (capped from 128 by the session)`,
+  );
+
+  // Below the cap it is exact, and fetch lanes are untouched.
+  const modest = { mode: "forced" as const, count: 4 };
+  expect(describeTransferStreams(modest, "http3", true)).toBe(
+    "Forced · 4 per direction",
+  );
+  expect(describeTransferStreams(policy, "http3", false)).toBe(
+    "Forced · 128 per direction",
+  );
 });

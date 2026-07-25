@@ -33,13 +33,16 @@ type Event struct {
 	Message                             string
 	ThroughputTarget, LatencyTarget     string
 	ThroughputProtocol, LatencyProtocol string
-	Preflight                           *wire.Preflight
-	Probe                               *wire.Probe
-	LatencyProbe                        *wire.Probe
-	Throughput                          ThroughputSample
-	Latency                             LatencySample
-	Result                              *Result
-	Err                                 error
+	// The transport the run committed to, so a consumer can describe the lanes
+	// a session actually delivers rather than the count that was requested.
+	ThroughputTransport string
+	Preflight           *wire.Preflight
+	Probe               *wire.Probe
+	LatencyProbe        *wire.Probe
+	Throughput          ThroughputSample
+	Latency             LatencySample
+	Result              *Result
+	Err                 error
 }
 
 type ThroughputSample struct {

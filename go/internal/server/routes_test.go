@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -92,12 +93,48 @@ func TestRoutesMatchPin(t *testing.T) {
 			continue
 		}
 		if site.kind != want.kind {
-			t.Errorf("%s: Go mounts it as %q; pinned as %q", name, site.kind, want.kind)
+			t.Errorf("%s: Go declares it as %q; pinned as %q", name, site.kind, want.kind)
 		}
 		for _, path := range site.paths {
 			if path != want.path {
 				t.Errorf("%s: Go has %q; pinned as %q", name, path, want.path)
 			}
+		}
+	}
+}
+
+// TestRouteKindsMatchTheRegistry closes the loop the pinned kind column exists
+// for: the column is compared against the mechanism each route is registered
+// under, not against a second hand-written table. Moving a route between
+// RegisterHTTP / RegisterWS / RegisterWT fails here.
+func TestRouteKindsMatchTheRegistry(t *testing.T) {
+	pinned := loadRoutePin(t)
+	// One listener carrying every mechanism, so each pinned route is registered.
+	reg := buildRegistry(&endpoints{}, muxTopology{
+		discovery: true, latency: true, transfers: true, wt: &webtransport.Server{},
+	}, nil)
+	mounted := reg.Kinds()
+
+	byPath := make(map[string]string, len(pinned))
+	for name, route := range pinned {
+		byPath[route.path] = name
+	}
+	for path, kind := range mounted {
+		name, ok := byPath[path]
+		if !ok {
+			if path == "/preflight" {
+				continue // advertised by every language, never a client route
+			}
+			t.Errorf("%s is registered but not pinned", path)
+			continue
+		}
+		if pinned[name].kind != kind {
+			t.Errorf("%s: registered as %q; pinned as %q", name, kind, pinned[name].kind)
+		}
+	}
+	for name, route := range pinned {
+		if _, ok := mounted[route.path]; !ok {
+			t.Errorf("%s (%s) is pinned but never registered", name, route.path)
 		}
 	}
 }

@@ -123,6 +123,115 @@ func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 	}
 }
 
+// TestWebTransportDownloadClampsTheLaneCount pins the published range: a count
+// above the cap yields the cap, and an absent or unusable one yields a single
+// lane. Lanes are sized far past what the window drains and left unread, so
+// what is counted is concurrent lanes rather than their replacements.
+func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
+	base, _, dialer := wtTestServer(t)
+	const unread = "bytes=67108864"
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{unread + "&streams=99", 16},
+		{unread, 1},
+		{unread + "&streams=0", 1},
+		{unread + "&streams=nonsense", 1},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			sess := dialWT(t, dialer, base+"/wt/download?"+tc.query)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// One accept past the expected count must find nothing.
+			seen := 0
+			for seen <= tc.want {
+				accept, cancelAccept := context.WithTimeout(ctx, 500*time.Millisecond)
+				_, err := sess.AcceptUniStream(accept)
+				cancelAccept()
+				if err != nil {
+					break
+				}
+				seen++
+			}
+			if seen != tc.want {
+				t.Errorf("%s opened %d concurrent lanes, want %d", tc.query, seen, tc.want)
+			}
+		})
+	}
+}
+
+// TestWebTransportUploadDrainsDatagrams covers the datagram upload mode end to
+// end: the server counts what arrives and reports it on the progress feed the
+// same session carries.
+func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
+	base, httpBase, dialer := wtTestServer(t)
+	res, err := http.DefaultClient.Post(httpBase+"/upload/session", "", nil)
+	if err != nil {
+		t.Fatalf("mint upload session: %v", err)
+	}
+	defer res.Body.Close()
+	var minted struct {
+		UploadID string `json:"uploadId"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&minted); err != nil {
+		t.Fatalf("decode upload session: %v", err)
+	}
+
+	sess := dialWT(t, dialer, base+"/wt/upload?datagrams=1&id="+minted.UploadID)
+	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelAccept()
+	progress, err := sess.AcceptUniStream(acceptCtx)
+	if err != nil {
+		t.Fatalf("accept progress stream: %v", err)
+	}
+	records := bufio.NewScanner(progress)
+	if !firstProgressTypeIs(t, records, "ready") {
+		t.Fatal("progress stream never reported ready")
+	}
+
+	// Datagrams are lossy, so the assertion is that the drain counts them, not
+	// that every one lands: send until the feed reports bytes.
+	payload := make([]byte, 1000)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if err := sess.SendDatagram(payload); err != nil {
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if !records.Scan() {
+			break
+		}
+		if strings.TrimSpace(records.Text()) == "" {
+			continue
+		}
+		var event struct {
+			Type  string `json:"type"`
+			Bytes uint64 `json:"bytes"`
+		}
+		if json.Unmarshal(records.Bytes(), &event) != nil {
+			continue
+		}
+		if event.Type == "progress" && event.Bytes > 0 {
+			return
+		}
+	}
+	t.Fatal("datagram upload never reached the server-authoritative counter")
+}
+
 // TestWebTransportDatagramFloodRepeats proves the flood re-runs while the
 // session lives: more than one `bytes=` total arrives.
 func TestWebTransportDatagramFloodRepeats(t *testing.T) {
@@ -182,7 +291,7 @@ func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 		t.Fatalf("accept progress stream: %v", err)
 	}
 	records := bufio.NewScanner(progress)
-	if !readProgressType(t, records, "ready") {
+	if !firstProgressTypeIs(t, records, "ready") {
 		t.Fatal("progress stream never reported ready")
 	}
 
@@ -348,7 +457,10 @@ func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
 	runGoClientUnderLifetimeCaps(t, "fetch-stream", "websocket")
 }
 
-func readProgressType(t *testing.T, records *bufio.Scanner, want string) bool {
+// firstProgressTypeIs reports whether the FIRST non-blank record has this type.
+// The feed's opening record is part of the contract, so this asserts on it
+// rather than scanning ahead for a match.
+func firstProgressTypeIs(t *testing.T, records *bufio.Scanner, want string) bool {
 	t.Helper()
 	for records.Scan() {
 		line := strings.TrimSpace(records.Text())

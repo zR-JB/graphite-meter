@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"time"
 )
 
@@ -42,17 +43,31 @@ func (p TransferStreamPolicy) Resolve(protocol string) int {
 	return p.AutomaticMax
 }
 
+// WTMaxLanes is what a WebTransport session delivers per direction. The server
+// clamps its server-opened download lanes here (endpoint.wtMaxStreams) and
+// client-opened upload lanes are bounded by the peer's uni-stream credit, so a
+// forced count above it is reported as what the transport carries.
+const WTMaxLanes = 16
+
 // ResolveWebTransport is the WebTransport count: one continuous stream per
-// direction, since nothing turns around per request; a forced count passes.
+// direction, since nothing turns around per request; a forced count passes,
+// clamped to what a session delivers.
 func (p TransferStreamPolicy) ResolveWebTransport() int {
 	if p.Forced > 0 {
-		return p.Forced
+		return min(p.Forced, WTMaxLanes)
 	}
 	return 1
 }
 
-func (p TransferStreamPolicy) Label(protocol string) string {
+// Label describes the resolved policy. transports lists the mechanisms the
+// label must hold for; naming WebTransport reports the session's lane cap
+// rather than a forced count it will not deliver.
+func (p TransferStreamPolicy) Label(protocol string, transports ...string) string {
+	webTransport := len(transports) > 0 && transports[0] == wire.TransportWebTransport
 	if p.Forced > 0 {
+		if webTransport && p.Forced > WTMaxLanes {
+			return fmt.Sprintf("Forced · %d per direction (capped from %d by the session)", WTMaxLanes, p.Forced)
+		}
 		return fmt.Sprintf("Forced · %d per direction", p.Forced)
 	}
 	if protocol == "http3" {

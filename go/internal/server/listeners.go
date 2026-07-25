@@ -131,7 +131,9 @@ func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology,
 	return listenerMuxConfigured(ctx, e, topology, spa, nil)
 }
 
-func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler, authn *auth.Service) *http.ServeMux {
+// buildRegistry declares which routes this listener serves and by which
+// mechanism. api/routes.txt is pinned against the result (routes_test.go).
+func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *endpoint.Registry {
 	reg := endpoint.NewRegistry()
 	if topology.discovery {
 		reg.RegisterHTTP("/preflight", e.preflight)
@@ -162,6 +164,11 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		reg.RegisterWT(routeWTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies))
 		reg.RegisterWT(routeWTPing, endpoint.NewWTPing(e.ping))
 	}
+	return reg
+}
+
+func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler, authn *auth.Service) *http.ServeMux {
+	reg := buildRegistry(e, topology, authn)
 	inner := http.NewServeMux()
 	if authn != nil && authn.Enabled() {
 		reg.MountWithOrigin(ctx, inner, authn.PublicOrigin())
@@ -203,6 +210,20 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	}
 	m.Handle("/", inner)
 	return m
+}
+
+// wtOriginCheck pins the session upgrade to the canonical origin under
+// authentication, and accepts any origin in public mode. A request without an
+// Origin header is a native client, which no browser origin policy governs.
+func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
+	if authn == nil || !authn.Enabled() {
+		return func(*http.Request) bool { return true }
+	}
+	pinned := authn.PublicOrigin()
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin == "" || origin == pinned
+	}
 }
 
 // wtTokenMinter adapts the auth service's CONNECT-token mint; nil when
@@ -398,10 +419,12 @@ func (b *listenerBuild) assembleH3() error {
 		quicConfig.MaxIncomingUniStreams = 32
 	}
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
-	// The enforcement boundary authenticates a CONNECT before the upgrade runs,
-	// via Authorization or a minted single-use URL token, so the origin check
-	// mirrors the wildcard CORS the public routes answer with.
-	wt := &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
+	// Public mode answers every origin, as the wildcard-CORS measurement routes
+	// do: there is no session state a forged origin could reach. Under
+	// authentication the upgrade is pinned to the canonical origin, mirroring
+	// the WebSocket upgrade, even though the boundary already refuses a CONNECT
+	// without a credential no cross-origin page can mint.
+	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(b.authn)}
 	// Advertises the WebTransport settings and wraps ConnContext, so it must
 	// run before the listener starts.
 	webtransport.ConfigureHTTP3Server(h3)

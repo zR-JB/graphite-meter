@@ -20,6 +20,23 @@ type Registry struct {
 	wtEndpoints   map[string]WTHandler
 }
 
+// Kinds reports how each registered path is reached: the mounting mechanism
+// itself, not a restatement of it. api/routes.txt is pinned against this, so
+// moving a route between Register* calls fails the pin.
+func (r *Registry) Kinds() map[string]string {
+	kinds := make(map[string]string, len(r.httpEndpoints)+len(r.wsEndpoints)+len(r.wtEndpoints))
+	for path := range r.httpEndpoints {
+		kinds[path] = "http"
+	}
+	for path := range r.wsEndpoints {
+		kinds[path] = "ws"
+	}
+	for path := range r.wtEndpoints {
+		kinds[path] = "wt"
+	}
+	return kinds
+}
+
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{

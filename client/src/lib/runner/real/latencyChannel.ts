@@ -48,6 +48,12 @@ const IDLE_PING_INTERVAL_MS = 1000;
 const PROBE_PING_INTERVAL_MS = 120;
 const PROBE_PING_COUNT = 5;
 const PROBE_PING_TIMEOUT_MS = 1500;
+/** A WebTransport bus has to mint a token, complete a QUIC handshake and an
+ *  extended CONNECT before its first datagram, so its readiness gets the same
+ *  budget as every other WebTransport establishment rather than the WebSocket
+ *  one. Falling short downgrades an automatic run to WebSocket, losing the
+ *  real-loss measurement the datagram bus exists for. */
+const PROBE_PING_WT_TIMEOUT_MS = 3000;
 const IDLE_RESPAWN_MS = 2000;
 
 /** The bus URL for a target, or null when the target does not speak `kind`.
@@ -379,7 +385,9 @@ export class IdleKeepalive {
               { role: "latency" },
             ),
           ),
-        PROBE_PING_TIMEOUT_MS,
+        this.#deps.latencyTarget()?.transport === "webtransport"
+          ? PROBE_PING_WT_TIMEOUT_MS
+          : PROBE_PING_TIMEOUT_MS,
       );
       this.#probeReady = { finish };
       signal?.addEventListener("abort", aborted, { once: true });

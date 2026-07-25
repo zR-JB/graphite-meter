@@ -12,6 +12,12 @@ export const BROWSER_CONNECTION_BUDGET = 6;
 export const MULTIPLEXED_UPLOAD_STREAMS = 3;
 export const HTTP3_DOWNLOAD_STREAMS = 1;
 const MAX_FORCED_STREAMS = 128;
+/** Lanes a WebTransport session actually delivers per direction. The server
+ *  clamps its server-opened download lanes here (endpoint.wtMaxStreams), and
+ *  client-opened upload lanes are bounded by the peer's uni-stream credit, so a
+ *  forced count above this is reported as what the transport will carry rather
+ *  than what was asked for. */
+export const WT_MAX_LANES = 16;
 
 export interface TransferStreamOptions {
   protocol: ProtocolTarget;
@@ -35,7 +41,9 @@ export function transferStreamCount(opts: TransferStreamOptions): number {
   // Forced means exact even above the browser's nominal H1 pool. Required
   // control sockets already exist when these lanes start.
   if (opts.policy.mode === "forced")
-    return normalizeStreamCount(opts.policy.count);
+    return opts.webTransport
+      ? Math.min(WT_MAX_LANES, normalizeStreamCount(opts.policy.count))
+      : normalizeStreamCount(opts.policy.count);
   if (opts.webTransport) return 1;
   if (opts.protocol === "http2" || opts.protocol === "http3") {
     if (opts.dir === "up") return MULTIPLEXED_UPLOAD_STREAMS;
@@ -62,8 +70,12 @@ export function describeTransferStreams(
   protocol?: ProtocolTarget,
   webTransport = false,
 ): string {
-  if (policy.mode === "forced")
-    return `Forced · ${normalizeStreamCount(policy.count)} per direction`;
+  if (policy.mode === "forced") {
+    const forced = normalizeStreamCount(policy.count);
+    if (webTransport && forced > WT_MAX_LANES)
+      return `Forced · ${WT_MAX_LANES} per direction (capped from ${forced} by the session)`;
+    return `Forced · ${forced} per direction`;
+  }
   if (webTransport) return "Automatic · 1 continuous stream per direction";
   if (protocol === "http3")
     return `Automatic · ${HTTP3_DOWNLOAD_STREAMS} download / ${MULTIPLEXED_UPLOAD_STREAMS} upload`;
