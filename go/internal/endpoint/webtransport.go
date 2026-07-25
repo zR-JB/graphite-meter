@@ -25,8 +25,9 @@ type WTHandler interface {
 	HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request)
 }
 
-// wtMaxStreams caps the download lanes one session may request.
-const wtMaxStreams = 16
+// WTMaxLanes caps the lanes one session carries per direction: the download
+// lanes it may request, and the client-opened upload lanes it may run.
+const WTMaxLanes = 16
 
 // wtDatagramPayload keeps a flooded datagram inside QUICInitialPacketSize once
 // QUIC, HTTP/3 and WebTransport framing is accounted for.
@@ -85,18 +86,36 @@ func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Sessi
 }
 
 // serveLane keeps one lane filled: open a stream, write the requested bytes,
-// close, replace, until the session ends.
+// close, replace, until the session ends. A lane that carried nothing means the
+// peer is resetting what it is handed, so the loop stops rather than reopening
+// streams at handshake speed for as long as the peer keeps refusing them.
 func (h *wtDownload) serveLane(ctx context.Context, sess *webtransport.Session, query url.Values) {
 	for ctx.Err() == nil {
 		str, err := sess.OpenUniStreamSync(ctx)
 		if err != nil {
 			return
 		}
+		lane := &countingWriter{w: str}
 		stopOnCancel := transport.UnblockWritesOnDone(ctx, str)
-		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, str, nil, ""))
+		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, lane, nil, ""))
 		stopOnCancel()
 		_ = str.Close()
+		if lane.n == 0 {
+			return
+		}
 	}
+}
+
+// countingWriter reports whether a lane carried any bytes.
+type countingWriter struct {
+	w io.Writer
+	n int
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += n
+	return n, err
 }
 
 func wtStreamCount(query url.Values) int {
@@ -104,7 +123,7 @@ func wtStreamCount(query url.Values) int {
 	if err != nil || n < 1 {
 		return 1
 	}
-	return min(n, wtMaxStreams)
+	return min(n, WTMaxLanes)
 }
 
 type wtUpload struct {
@@ -126,15 +145,12 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 	owner := ClientKey(r, h.trusted)
 	go h.serveProgress(ctx, sess, query.Get("id"), owner)
 	if query.Get("datagrams") != "" {
-		// Bounded by inactivity like the stream lanes, so a silent session
-		// cannot pin its drain and hold the aggregate off the sweeper.
-		src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout)
-		go h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner)) //nolint:errcheck // a closed session ends the drain
+		go h.drainDatagrams(ctx, sess, query, owner)
 	}
 	// The client opens these, so the ceiling the download side applies to its
 	// own lanes applies here too: past it a lane is refused rather than served,
 	// since each one holds a goroutine and a scratch buffer for the session.
-	lanes := make(chan struct{}, wtMaxStreams)
+	lanes := make(chan struct{}, WTMaxLanes)
 	for {
 		str, err := sess.AcceptUniStream(ctx)
 		if err != nil {
@@ -154,11 +170,33 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 
 func (h *wtUpload) serveLane(ctx context.Context, str *webtransport.ReceiveStream, query url.Values, owner string) {
 	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout}
-	// A refused lane is told so: without the reset the client would sit on flow
-	// control with its buffered bytes stranded until the session ends.
-	if err := h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner)); err != nil {
-		str.CancelRead(0)
+	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
+	// Whatever ended the lane — a refusal, the idle bound, or a clean end — the
+	// stream is reset, so bytes this server will never read stop holding the
+	// session's flow control.
+	str.CancelRead(0)
+}
+
+// drainDatagrams counts received datagrams as upload bytes. A datagram carries
+// no end marker, so the finalizing DELETE is what ends the drain: waiting out
+// the idle bound instead would hold the terminal count back long past the
+// client's own grace for it.
+func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Session, query url.Values, owner string) {
+	agg, access := h.progress.store.getOrCreateForActivity(query.Get("id"), owner, false)
+	if access != uploadAccessOK {
+		return
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-agg.finished:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout)
+	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
 }
 
 func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, id, owner string) {

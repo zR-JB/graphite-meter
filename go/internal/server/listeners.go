@@ -192,8 +192,7 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		publicOrigin = authn.PublicOrigin()
 	}
 	// Only routes this listener actually mounts: wrapping one it answers with a
-	// 404 would take an admission slot for nothing, and a CONNECT there would
-	// spend its single-use token before reaching a handler.
+	// 404 would take an admission slot for nothing.
 	var wrapped []string
 	if topology.transfers {
 		wrapped = append(wrapped, routeDownload, routeUpload, routeUploadProgress)
@@ -413,13 +412,14 @@ func (b *listenerBuild) assembleH3() error {
 	}
 	// What a connection may cost is a capacity property of the socket, not of
 	// authentication, so these bound every H3 listener the way ReadHeaderTimeout
-	// and IdleTimeout bound every TCP one. The uni-stream ceiling is what caps
-	// client-opened upload lanes on a session.
+	// and IdleTimeout bound every TCP one. Each is at or below the quic-go
+	// default it replaces. The uni-stream ceiling is per connection, and HTTP/3
+	// spends three of them on its control and QPACK streams.
 	quicConfig := transport.NewQUICConfig()
-	quicConfig.HandshakeIdleTimeout = 10 * time.Second
-	quicConfig.MaxIdleTimeout = 60 * time.Second
-	quicConfig.MaxIncomingStreams = 256
-	quicConfig.MaxIncomingUniStreams = 32
+	quicConfig.HandshakeIdleTimeout = 5 * time.Second
+	quicConfig.MaxIdleTimeout = 30 * time.Second
+	quicConfig.MaxIncomingStreams = 100
+	quicConfig.MaxIncomingUniStreams = 3 + endpoint.WTMaxLanes
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
 	// Public mode answers every origin, as the wildcard-CORS measurement routes
 	// do: there is no session state a forged origin could reach. Under
@@ -444,18 +444,18 @@ func (b *listenerBuild) assembleH3() error {
 		b.closeOpened()
 		return err
 	}
-	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress", addr: b.cfg.Native.H3, network: "udp",
+	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
 		run: func() error {
 			err := serveWebTransport(b.ctx, wt, quicListener)
-			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
+			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
 				return nil
 			}
 			return err
-		}, stop: func(ctx context.Context) error {
-			_ = wt.Close()
-			err := h3.Shutdown(ctx)
-			// The listener and transport close unconditionally to free the UDP
-			// socket. The graceful shutdown result is the one worth reporting.
+		}, stop: func(context.Context) error {
+			// Serving connections directly leaves http3's graceful path
+			// uninitialised, so its Shutdown would answer nil without draining.
+			// Closing the sessions is the shutdown, and it frees the UDP socket.
+			err := wt.Close()
 			_ = quicListener.Close()
 			_ = quicTransport.Close()
 			return err

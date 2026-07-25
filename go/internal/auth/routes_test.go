@@ -24,6 +24,22 @@ const preflightPath = "/preflight"
 // loadRoutePin parses api/routes.txt into name → path. The parser is a copy of
 // the one in go/internal/server/routes_test.go because auth cannot import
 // server without inverting the dependency.
+// pinnedKinds is path → mounting mechanism, filled by the same parse.
+var pinnedKinds = map[string]string{}
+
+// pathsOfKind returns every pinned path reached by the named mechanism.
+func pathsOfKind(t *testing.T, kind string) []string {
+	t.Helper()
+	loadRoutePin(t)
+	var paths []string
+	for path, k := range pinnedKinds {
+		if k == kind {
+			paths = append(paths, path)
+		}
+	}
+	return slices.Sorted(slices.Values(paths))
+}
+
 func loadRoutePin(t *testing.T) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(routePinPath)
@@ -41,6 +57,7 @@ func loadRoutePin(t *testing.T) map[string]string {
 			t.Fatalf("want 3 fields: %q", line)
 		}
 		pinned[strings.TrimSpace(fields[0])] = strings.TrimSpace(fields[1])
+		pinnedKinds[strings.TrimSpace(fields[1])] = strings.TrimSpace(fields[2])
 	}
 	if len(pinned) == 0 {
 		t.Fatal("route pin is empty; expected populated routes")
@@ -133,6 +150,20 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 			if allowedCORSMethod("/login", m) {
 				t.Errorf("allowedCORSMethod(%q, %q) = true", "/login", m)
 			}
+		}
+	})
+
+	t.Run("isWebTransportRoute", func(t *testing.T) {
+		sessions := pathsOfKind(t, "wt")
+		assertEnumerates(t, "webtransport.go isWebTransportRoute", sessions, enumeratedPaths(t, "webtransport.go", "isWebTransportRoute"))
+		for _, path := range sessions {
+			if !isWebTransportRoute(path) {
+				t.Errorf("isWebTransportRoute(%q) = false", path)
+			}
+		}
+		// The mint is a plain POST, not a session upgrade.
+		if isWebTransportRoute(pinned["wtSession"]) {
+			t.Errorf("isWebTransportRoute(%q) = true", pinned["wtSession"])
 		}
 	})
 

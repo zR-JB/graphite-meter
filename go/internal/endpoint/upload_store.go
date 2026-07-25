@@ -248,10 +248,12 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 			sh.mu.Unlock()
 			return nil, uploadAccessOwnerMismatch
 		}
-		sh.mu.Unlock()
+		// Touch under the shard lock the sweeper also takes, so an aggregate
+		// cannot be reaped between the lookup that found it and the refresh.
 		if touch {
 			agg.lastTouchMono.Store(monoNanos())
 		}
+		sh.mu.Unlock()
 		return agg, uploadAccessOK
 	}
 	if !s.validID(id) {

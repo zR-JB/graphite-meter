@@ -93,7 +93,8 @@ func (s *webtransportSession) ClientOwner() string { return s.owner }
 // A blocked WebTransport stream operation observes neither its context nor a
 // dead session: cancelling alone leaves the call waiting on a session close
 // that may never arrive, so the cancel and a deadline poke always travel
-// together. These tie that pair to ctx and return the deregistering stop.
+// together. The deadline goes first, because CancelWrite takes the lock a
+// parked header write holds. These tie the pair to ctx and return the stop.
 
 type wtSendStream interface {
 	CancelWrite(webtransport.StreamErrorCode)
@@ -108,15 +109,15 @@ type wtReceiveStream interface {
 // UnblockWritesOnDone releases a write blocked on flow control once ctx ends.
 func UnblockWritesOnDone(ctx context.Context, s wtSendStream) func() bool {
 	return context.AfterFunc(ctx, func() {
-		s.CancelWrite(0)
 		_ = s.SetWriteDeadline(time.Now())
+		s.CancelWrite(0)
 	})
 }
 
 // UnblockReadsOnDone releases a read blocked on an idle peer once ctx ends.
 func UnblockReadsOnDone(ctx context.Context, s wtReceiveStream) func() bool {
 	return context.AfterFunc(ctx, func() {
-		s.CancelRead(0)
 		_ = s.SetReadDeadline(time.Now())
+		s.CancelRead(0)
 	})
 }

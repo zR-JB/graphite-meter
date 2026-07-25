@@ -54,12 +54,12 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 
 func TestRequestAdmissionGlobalLimit(t *testing.T) {
 	a := newRequestAdmission(1, 1, time.Minute, time.Hour)
-	release, status := a.acquire("192.0.2.1")
+	release, status := a.acquire("192.0.2.1", false)
 	if status != 0 {
 		t.Fatal("first request rejected")
 	}
 	defer release()
-	if _, status := a.acquire("192.0.2.2"); status != http.StatusServiceUnavailable {
+	if _, status := a.acquire("192.0.2.2", false); status != http.StatusServiceUnavailable {
 		t.Fatalf("global rejection = %d, want %d", status, http.StatusServiceUnavailable)
 	}
 	stats := a.stats()
@@ -120,7 +120,7 @@ func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
 
 func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	a := newRequestAdmission(1, 1, time.Minute, time.Hour)
-	release, status := a.acquire("occupied")
+	release, status := a.acquire("occupied", false)
 	if status != 0 {
 		t.Fatal("failed to occupy admission slot")
 	}

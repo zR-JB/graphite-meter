@@ -93,8 +93,9 @@ func (s *Service) expireWTTokensLocked(now time.Time) {
 	}
 }
 
-// isWebTransportRoute names the extended-CONNECT session routes. Pinned by
-// api/routes.txt (routes_test.go).
+// isWebTransportRoute names the extended-CONNECT session routes, the paths that
+// take the non-ambient credential instead of the origin rules. Held to the
+// "wt" rows of api/routes.txt by routes_test.go.
 func isWebTransportRoute(path string) bool {
 	switch path {
 	case "/wt/download", "/wt/upload", "/wt/ping":

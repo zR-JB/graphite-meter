@@ -11,40 +11,54 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 )
 
+// maxSessionsPerClient bounds the routes that hold a slot for a whole test
+// rather than one request. A run needs two: a transfer session and a ping bus.
+// Without a bound of its own, one client could hold its entire request budget
+// for the session lifetime, which is orders of magnitude longer.
+const maxSessionsPerClient = 4
+
 type requestAdmission struct {
-	mu              sync.Mutex
-	active          int
-	byClient        map[string]int
-	globalMax       int
-	clientMax       int
-	requestLifetime time.Duration
-	sessionLifetime time.Duration
-	peak            int
-	rejectedGlobal  uint64
-	rejectedClient  uint64
+	mu               sync.Mutex
+	active           int
+	byClient         map[string]int
+	sessionsByClient map[string]int
+	globalMax        int
+	clientMax        int
+	requestLifetime  time.Duration
+	sessionLifetime  time.Duration
+	peak             int
+	rejectedGlobal   uint64
+	rejectedClient   uint64
 }
 
 func newRequestAdmission(globalMax, clientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
-	return &requestAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, requestLifetime: requestLifetime, sessionLifetime: sessionLifetime}
+	return &requestAdmission{byClient: make(map[string]int), sessionsByClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, requestLifetime: requestLifetime, sessionLifetime: sessionLifetime}
+}
+
+// isSessionRoute reports the routes a whole test rides, enumerated rather than
+// prefix-matched so /wt/session, a plain mint POST, is not one of them.
+func isSessionRoute(path string) bool {
+	switch path {
+	case routeWTDownload, routeWTUpload, routeWTPing:
+		return true
+	}
+	return false
 }
 
 // lifetimeFor picks the bound a wrapped route lives under. A WebTransport
 // session hosts a whole test and gets the session bound; every other wrapped
-// route is one request or one reconnecting stream under the request bound. The
-// session routes are enumerated rather than prefix-matched, so /wt/session, a
-// plain mint POST, keeps the request bound if it is ever wrapped.
+// route is one request or one reconnecting stream under the request bound.
 func (a *requestAdmission) lifetimeFor(path string) time.Duration {
-	switch path {
-	case routeWTDownload, routeWTUpload, routeWTPing:
+	if isSessionRoute(path) {
 		return a.sessionLifetime
 	}
 	return a.requestLifetime
 }
 
-func (a *requestAdmission) acquire(key string) (release func(), status int) {
+func (a *requestAdmission) acquire(key string, session bool) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.byClient[key] >= a.clientMax {
+	if a.byClient[key] >= a.clientMax || (session && a.sessionsByClient[key] >= maxSessionsPerClient) {
 		a.rejectedClient++
 		return nil, http.StatusTooManyRequests
 	}
@@ -57,12 +71,21 @@ func (a *requestAdmission) acquire(key string) (release func(), status int) {
 		a.peak = a.active
 	}
 	a.byClient[key]++
+	if session {
+		a.sessionsByClient[key]++
+	}
 	return func() {
 		a.mu.Lock()
 		a.active--
 		a.byClient[key]--
 		if a.byClient[key] == 0 {
 			delete(a.byClient, key)
+		}
+		if session {
+			a.sessionsByClient[key]--
+			if a.sessionsByClient[key] == 0 {
+				delete(a.sessionsByClient, key)
+			}
 		}
 		a.mu.Unlock()
 	}, 0
@@ -95,7 +118,7 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 			next.ServeHTTP(w, r)
 			return
 		}
-		release, status := a.acquire(endpoint.ClientKey(r, trusted))
+		release, status := a.acquire(endpoint.ClientKey(r, trusted), isSessionRoute(r.URL.Path))
 		if status != 0 {
 			setAdmissionHeaders(w, r, publicOrigin)
 			w.Header().Set("Retry-After", "1")
@@ -105,9 +128,10 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 		defer release()
 		ctx, cancel := context.WithTimeout(r.Context(), a.lifetimeFor(r.URL.Path))
 		defer cancel()
-		// A socket deadline tears the ping WebSocket down mid-stream. Its
-		// context bounds that route alone.
-		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != routePing {
+		// A socket deadline tears a long-lived channel down mid-stream, and on a
+		// session route it would land on the stream carrying the closing capsule.
+		// Those routes are bounded by their context alone.
+		if deadline, ok := ctx.Deadline(); ok && r.URL.Path != routePing && !isSessionRoute(r.URL.Path) {
 			defer setSocketDeadlines(w, deadline)()
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -115,7 +139,7 @@ func (a *requestAdmission) wrap(next http.Handler, trusted []netip.Prefix, publi
 }
 
 // setSocketDeadlines bounds a transfer that stops reading its context and
-// returns the clear. HTTP/3 carries no deadlines and is served without.
+// returns the clear. Every protocol here carries them, HTTP/3 included.
 func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
 	controller := http.NewResponseController(w)
 	_ = controller.SetReadDeadline(deadline)
