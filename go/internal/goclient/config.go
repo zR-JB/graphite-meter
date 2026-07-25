@@ -44,9 +44,8 @@ func (p TransferStreamPolicy) Resolve(protocol string) int {
 }
 
 // WTMaxLanes is what a WebTransport session delivers per direction. The server
-// clamps its server-opened download lanes here (endpoint.wtMaxStreams) and
-// client-opened upload lanes are bounded by the peer's uni-stream credit, so a
-// forced count above it is reported as what the transport carries.
+// clamps both directions here (endpoint.WTMaxLanes), refusing an upload lane
+// past it, so a forced count above it is reported as what the transport carries.
 const WTMaxLanes = 16
 
 // ResolveWebTransport is the WebTransport count: one continuous stream per

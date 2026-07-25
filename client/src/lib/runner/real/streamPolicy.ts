@@ -13,9 +13,8 @@ export const BROWSER_CONNECTION_BUDGET = 6;
 export const MULTIPLEXED_UPLOAD_STREAMS = 3;
 export const HTTP3_DOWNLOAD_STREAMS = 1;
 const MAX_FORCED_STREAMS = 128;
-/** Lanes a WebTransport session actually delivers per direction. The server
- *  clamps its server-opened download lanes here (endpoint.wtMaxStreams), and
- *  client-opened upload lanes are bounded by the peer's uni-stream credit, so a
+/** Lanes a WebTransport session delivers per direction. The server clamps both
+ *  directions here (endpoint.WTMaxLanes), refusing an upload lane past it, so a
  *  forced count above this is reported as what the transport will carry rather
  *  than what was asked for. */
 export const WT_MAX_LANES = 16;

@@ -165,6 +165,12 @@ Upload aggregates retain their separate 1,000-entry global cap, add a 32-entry p
 allow one live progress feed per id, taken over by the newest same-owner feed on reconnect.
 Progress heartbeats do not extend aggregate TTL.
 
+A WebTransport session holds one slot for a whole test rather than one request, so it draws on a
+separate 4-per-client budget: without one, a client's request allowance could be held for the
+session lifetime, which is orders of magnitude longer. Within a session each direction carries at
+most 16 lanes — the server clamps the download lanes it opens and resets an upload lane offered
+past the ceiling — so one admitted session cannot fan out without bound.
+
 ### Lifetime bounds and long tests
 
 Request-shaped routes live under `GM_MAX_OPERATION_DURATION` (default 5 m) and the WebTransport
@@ -173,7 +179,9 @@ resume every channel across a kill — fetch lanes and the progress feed reopen 
 upload aggregate, WebTransport stages re-dial their session, and the ping bus reconnects — with the
 gap priced into the measured rate as a pause. A multi-hour or multi-day run therefore needs no
 server configuration; the bounds exist so an abandoned connection cannot hold an admission slot
-past its cap.
+past its cap. Reconnection is not unconditional: a session that dies as fast as it dials is a
+server refusing the stage, not a gap to ride out, and the stage fails rather than re-dialling for
+its whole window.
 
 ### Saturation envelope (`just stress`)
 

@@ -43,7 +43,7 @@ content it defines. Streams are raw bytes end to end.
 |---|---|---|---|
 | `/wt/ping` | `token=` | none | the message bus above, one frame per datagram |
 | `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives |
-| `/wt/upload` | `id=&datagrams=&token=` | client unidirectional streams are raw upload bytes; the server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes |
+| `/wt/upload` | `id=&datagrams=&token=` | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is reset rather than served. The server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes |
 
 Under authentication a CONNECT must present a credential before the upgrade: a single-use,
 short-lived, session-linked token minted by `POST /wt/session` and carried as `?token=` (a browser
@@ -54,6 +54,16 @@ unconditionally.
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
 records as `GET /upload/progress`.
+
+A session ends on the finalizing DELETE, on its own `GM_MAX_SESSION_DURATION` bound, or when the
+peer closes it. A client MUST treat a bound-driven close as a reconnect rather than a stage
+failure, and re-dial against the same upload `id`: the server keeps one aggregate per id, so the
+counters carry across.
+
+**Discovery compatibility.** `transport` is a required field on both target lists. A client that
+predates it reads every target as its own default (`fetch-stream` / `websocket`), which on an
+HTTP/3 origin turns one advertised origin into several identical ones and can make automatic
+selection ambiguous. Clients built before this field must be updated alongside the server.
 
 ## Ids (PING/PONG)
 
