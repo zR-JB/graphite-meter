@@ -179,6 +179,48 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   expect(wt?.origin).toBe("https://meter:7249");
 });
 
+// A proxy serving TCP and UDP on one hostname advertises both latency buses on
+// one origin. Keeping only the WebTransport view would leave a UDP-blocked or
+// WebTransport-less client with no latency target at all.
+test("one origin advertising both latency buses keeps the WebSocket fallback", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://meter",
+        transport: "fetch-stream",
+        protocol: "http3",
+      },
+    ],
+    [
+      { baseUrl: "https://meter", transport: "websocket" },
+      { baseUrl: "https://meter", transport: "webtransport" },
+    ],
+    "https://meter",
+    true,
+    "h3",
+  );
+  const entry = catalog.latency["https://meter"];
+  expect(entry.target?.transport).toBe("websocket");
+  expect(entry.wt?.transport).toBe("webtransport");
+  expect(entry.wt?.id).toBe("https://meter::wt");
+
+  // Auto prefers the datagram bus where it runs, and degrades to WebSocket on
+  // a client that cannot drive it — the UDP-blocked fallback.
+  expect(selectLatencyTarget(catalog, "auto", true)?.transport).toBe(
+    "webtransport",
+  );
+  expect(selectLatencyTarget(catalog, "auto", false)?.transport).toBe(
+    "websocket",
+  );
+  // Explicit ids name a bus each; the plain origin is the WebSocket view.
+  expect(
+    selectLatencyTarget(catalog, "https://meter::wt", true)?.transport,
+  ).toBe("webtransport");
+  expect(selectLatencyTarget(catalog, "https://meter", false)?.transport).toBe(
+    "websocket",
+  );
+});
+
 test("a WebTransport-only origin is auto's last resort and keeps a fetch view", () => {
   const catalog = classifyTransportDiscovery(
     [

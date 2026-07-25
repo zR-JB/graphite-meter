@@ -57,10 +57,15 @@
       ],
     ),
   ]);
+  // One card per bus here too: an origin serving both gets a WebSocket card
+  // and a WebTransport-datagram card.
   const latencyTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
-      (entry) => (entry.target ? [targetOption(entry.target)] : []),
+      (entry) => [
+        ...(entry.target ? [targetOption(entry.target)] : []),
+        ...(entry.wt ? [targetOption(entry.wt)] : []),
+      ],
     ),
   ]);
 

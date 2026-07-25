@@ -400,6 +400,13 @@ export interface DiscoveredThroughput extends DiscoveredTarget<FetchThroughputTa
   wtDatagram?: WebTransportThroughputTarget;
 }
 
+/** One latency origin. `target` is its WebSocket bus and `wt` its datagram
+ *  bus; an origin serving TCP and UDP on one hostname advertises both, so a
+ *  client that cannot reach UDP still resolves the WebSocket view. */
+export interface DiscoveredLatency extends DiscoveredTarget<LatencyTarget> {
+  wt?: LatencyTarget;
+}
+
 /** Server-advertised transports classified against the page that uses them.
  * Emitted as soon as /preflight completes, ahead of selection and probing. */
 export interface TransportDiscovery {
@@ -411,7 +418,7 @@ export interface TransportDiscovery {
   pageSecure: boolean;
   pageProtocol?: string;
   throughput: Record<string, DiscoveredThroughput>;
-  latency: Record<string, DiscoveredTarget<LatencyTarget>>;
+  latency: Record<string, DiscoveredLatency>;
 }
 
 /* ---------- The event union the UI listens to ---------- */

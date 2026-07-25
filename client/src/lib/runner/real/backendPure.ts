@@ -143,33 +143,35 @@ export function classifyTransportDiscovery(
   for (const endpoint of latencyEndpoints) {
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
-    // WebTransport wins a shared origin: its datagram bus measures real loss.
-    if (latency[origin]?.target?.transport === "webtransport") continue;
-    const target: LatencyTarget =
-      endpoint.transport === "webtransport"
-        ? {
-            ...endpoint,
-            id: origin,
-            origin,
-            transport: "webtransport",
-            protocol: "http3",
-            tls,
-            routes: {
-              probe: ROUTES.probe,
-              wtSession: ROUTES.wtSession,
-              wtPing: ROUTES.wtPing,
-            },
-          }
-        : {
-            ...endpoint,
-            id: origin,
-            origin,
-            transport: "websocket",
-            protocol: "http1",
-            tls,
-            routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-          };
-    latency[origin] = { state: stateOf(origin), target };
+    const entry = (latency[origin] ??= { state: stateOf(origin) });
+    // One origin commonly advertises both buses (a proxy serving TCP and UDP
+    // on one hostname), so they are kept side by side: a client that cannot
+    // reach UDP still has the WebSocket view of that origin.
+    if (endpoint.transport === "webtransport") {
+      entry.wt = {
+        ...endpoint,
+        id: `${origin}${WT_SELECTION_SUFFIX}`,
+        origin,
+        transport: "webtransport",
+        protocol: "http3",
+        tls,
+        routes: {
+          probe: ROUTES.probe,
+          wtSession: ROUTES.wtSession,
+          wtPing: ROUTES.wtPing,
+        },
+      };
+      continue;
+    }
+    entry.target = {
+      ...endpoint,
+      id: origin,
+      origin,
+      transport: "websocket",
+      protocol: "http1",
+      tls,
+      routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+    };
   }
 
   return {
@@ -265,9 +267,11 @@ export function throughputTargetKey(
   return target ? `${target.id}\n${target.origin}` : "";
 }
 
-/** Select latency independently. Auto prefers WebTransport, whose datagram bus
- *  measures real loss, then follows page security rather than throughput.
- *  `webTransport` is what this client can actually drive. */
+/** Select latency independently. An `origin::wt` selection names that origin's
+ *  datagram bus; a plain origin its WebSocket bus, falling back to the datagram
+ *  one for an origin that advertises nothing else. Auto prefers WebTransport,
+ *  whose datagram bus measures real loss, then follows page security rather
+ *  than throughput. `webTransport` is what this client can actually drive. */
 export function selectLatencyTarget(
   discovery: TransportDiscovery,
   selection: "auto" | string,
@@ -275,19 +279,27 @@ export function selectLatencyTarget(
 ): LatencyTarget | null {
   const runnable = (target?: LatencyTarget): boolean =>
     !!target && (webTransport || target.transport !== "webtransport");
+  const pick = (target?: LatencyTarget): LatencyTarget | null =>
+    runnable(target) ? target! : null;
   if (selection !== "auto") {
+    if (selection.endsWith(WT_SELECTION_SUFFIX)) {
+      const entry =
+        discovery.latency[selection.slice(0, -WT_SELECTION_SUFFIX.length)];
+      return entry?.state === "advertised" ? pick(entry.wt) : null;
+    }
     const entry = discovery.latency[selection];
-    return entry?.state === "advertised" && runnable(entry.target)
-      ? (entry.target ?? null)
-      : null;
+    if (entry?.state !== "advertised") return null;
+    return pick(entry.target) ?? pick(entry.wt);
   }
-  const advertised = Object.values(discovery.latency)
-    .filter((entry) => entry.state === "advertised" && runnable(entry.target))
-    .map((entry) => entry.target!);
+  const advertised = Object.values(discovery.latency).filter(
+    (entry) => entry.state === "advertised",
+  );
+  const wt = advertised.map((entry) => entry.wt).find(runnable);
+  if (wt) return wt;
+  const ws = advertised.map((entry) => entry.target).filter(runnable);
   return (
-    advertised.find((target) => target.transport === "webtransport") ??
-    advertised.find((target) => target.origin === discovery.pageOrigin) ??
-    (advertised.length === 1 ? advertised[0] : null)
+    ws.find((target) => target!.origin === discovery.pageOrigin) ??
+    (ws.length === 1 ? ws[0]! : null)
   );
 }
 

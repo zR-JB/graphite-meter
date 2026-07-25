@@ -124,14 +124,24 @@ export function latencyOptionView(
           detail: `${discovery.pageSecure ? "Secure" : "Clear"} WebSocket target is not offered in /preflight.`,
         };
   }
-  const entry = discovery.latency[selection];
-  if (
-    entry?.target?.transport === "webtransport" &&
-    typeof WebTransport === "undefined"
-  )
+  // Resolve exactly what the runner resolves, so a card never offers a bus the
+  // run would refuse.
+  const runnable = typeof WebTransport !== "undefined";
+  const target = selectLatencyTarget(discovery, selection, runnable);
+  if (target)
+    return {
+      disabled: false,
+      detail: describeTarget(discovery, target).advertisedDetail,
+    };
+  const wtOnly = selection.endsWith(WT_SELECTION_SUFFIX);
+  const entry =
+    discovery.latency[
+      wtOnly ? selection.slice(0, -WT_SELECTION_SUFFIX.length) : selection
+    ];
+  if (!runnable && (wtOnly || (entry?.wt && !entry.target)))
     return { disabled: true, detail: NO_BROWSER_WT };
   return {
-    disabled: entry?.state !== "advertised",
+    disabled: true,
     detail: entry ? advertisedDetail(entry, discovery) : NOT_ADVERTISED,
   };
 }

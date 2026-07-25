@@ -13,6 +13,8 @@ import type {
 import {
   selectLatencyTarget,
   selectThroughputTarget,
+  WT_DATAGRAM_SELECTION_SUFFIX,
+  WT_SELECTION_SUFFIX,
 } from "./real/backendPure";
 import { describeTarget } from "./real/targetPresentation";
 
@@ -83,9 +85,15 @@ function selectTarget(
   role: ConnectionRole,
   selection: string,
 ): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
+  // The panel must resolve what the runner resolves, so it applies the same
+  // browser-capability gate rather than the parameter's off default.
   return role === "throughput"
     ? selectThroughputTarget(discovery, selection)
-    : selectLatencyTarget(discovery, selection);
+    : selectLatencyTarget(
+        discovery,
+        selection,
+        typeof WebTransport !== "undefined",
+      );
 }
 
 export function validationRoles(
@@ -165,11 +173,14 @@ function availability(
   selection: string,
 ): ConnectionPresentation["availability"] {
   // "current"/"auto" have no entry of their own: they resolve to whichever
-  // advertised target the selector picks. A ::-suffixed selection names a
-  // mechanism view of its origin and shares that origin's availability.
+  // advertised target the selector picks. A mechanism-suffixed selection names
+  // a view of its origin and shares that origin's availability. The suffix is
+  // stripped only from the end: an IPv6 literal carries "::" of its own.
   if (selection !== "current" && selection !== "auto") {
-    const cut = role === "throughput" ? selection.indexOf("::") : -1;
-    const key = cut >= 0 ? selection.slice(0, cut) : selection;
+    const suffix = [WT_DATAGRAM_SELECTION_SUFFIX, WT_SELECTION_SUFFIX].find(
+      (candidate) => selection.endsWith(candidate),
+    );
+    const key = suffix ? selection.slice(0, -suffix.length) : selection;
     return discovery[role][key]?.state ?? "not-advertised";
   }
   return selectTarget(discovery, role, selection)
