@@ -56,6 +56,18 @@ const RNG_CHUNK_BYTES = 65536;
 const ESTABLISH_TIMEOUT_MS = 3000;
 /** Grace for the terminal progress record after the finalizing DELETE. */
 const COMPLETE_GRACE_MS = 1000;
+/** Upload alive cadence toward the main thread. A datagram loop iterates per
+ *  packet, so an unthrottled alive would jank the thread latency is measured on. */
+const ALIVE_GAP_MS = 250;
+
+let lastAlive = 0;
+
+function postAlive(): void {
+  const now = performance.now();
+  if (now - lastAlive < ALIVE_GAP_MS) return;
+  lastAlive = now;
+  post({ type: "alive" });
+}
 
 let session: WebTransport | null = null;
 let stopped = false;
@@ -180,7 +192,7 @@ async function uploadDatagrams(): Promise<void> {
     while (!stopped) {
       await writer.ready;
       await writer.write(payload);
-      post({ type: "alive" });
+      postAlive();
     }
   } catch (err) {
     if (!stopped) fail(true, String(err));
@@ -208,7 +220,7 @@ async function uploadLane(block: Uint8Array<ArrayBuffer>): Promise<void> {
     while (!stopped) {
       await writer.ready;
       await writer.write(block);
-      post({ type: "alive" });
+      postAlive();
     }
     await writer.close();
   } catch (err) {
