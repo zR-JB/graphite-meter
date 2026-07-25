@@ -162,7 +162,30 @@ or cancellation path. Per-client exhaustion returns `429`, global exhaustion ret
 verbose mode reports active, peak, and rejected counts without logging every hostile request.
 
 Upload aggregates retain their separate 1,000-entry global cap, add a 32-entry per-client cap, and
-allow only one progress stream per id. Progress heartbeats do not extend aggregate TTL.
+allow one live progress feed per id, taken over by the newest same-owner feed on reconnect.
+Progress heartbeats do not extend aggregate TTL.
+
+### Lifetime bounds and long tests
+
+Request-shaped routes live under `GM_MAX_OPERATION_DURATION` (default 5 m) and the WebTransport
+session routes under `GM_MAX_SESSION_DURATION` (default 2 h). Neither bounds a test: both clients
+resume every channel across a kill — fetch lanes and the progress feed reopen against the same
+upload aggregate, WebTransport stages re-dial their session, and the ping bus reconnects — with the
+gap priced into the measured rate as a pause. A multi-hour or multi-day run therefore needs no
+server configuration; the bounds exist so an abandoned connection cannot hold an admission slot
+past its cap.
+
+### Saturation envelope (`just stress`)
+
+The loopback harness (`saturation_stress_test.go`, build tag `stress`) measures an observer
+latency client against growing loader concurrency. Results on an 8-core dev box: observer RTT is
+sub-millisecond while CPU has headroom, and once transfer load saturates the cores it inflates
+roughly linearly with concurrency (p50 ≈ 5 ms at 8 loaders, ≈ 20 ms at 32; ~2.5× worse when
+confined to 2 cores) with zero loss — contamination is CPU scheduling, not queue drops, so it is
+visible in the numbers rather than silently corrupting them. Userspace QUIC moves roughly a tenth
+of kernel TCP's loopback goodput at equal CPU. `/probe` reports the admission occupancy
+(`load: {active, max}`), the endpoint panel surfaces it past half occupancy as a caution, and
+admission's `429`/`503` remains the hard refusal.
 
 ### Meter (`internal/endpoint/meter.go`)
 
