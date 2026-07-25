@@ -182,6 +182,12 @@ client-e2e:
 
 # The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
 # all but go-lint, and only those matching the staged files.
+# Loopback saturation harness (issue #44): observer RTT percentiles under
+# growing loader concurrency, on kernel TCP and userspace QUIC, plus a
+# CPU-constrained pass. Measurement only; not part of ci.
+stress:
+    cd go && go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/
+
 ci: check-generated client-ci server-check go-lint server-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the
