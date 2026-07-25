@@ -245,21 +245,25 @@ async function connectWebTransport(): Promise<void> {
     () => onDisconnect("webtransport closed"),
     (err: unknown) => onDisconnect(String(err)),
   );
-  void wt.ready.then(
-    async () => {
-      writer = wt.datagrams.writable.getWriter();
-      onConnected("wt");
-      const reader = wt.datagrams.readable.getReader();
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) return;
-        onFrame(decoder.decode(value as AllowSharedBufferSource));
-      }
-    },
-    () => {
-      /* wt.closed rejects too and drives the reconnect */
-    },
-  );
+  void wt.ready
+    .then(
+      async () => {
+        writer = wt.datagrams.writable.getWriter();
+        onConnected("wt");
+        const reader = wt.datagrams.readable.getReader();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return;
+          onFrame(decoder.decode(value as AllowSharedBufferSource));
+        }
+      },
+      () => {
+        /* wt.closed rejects too and drives the reconnect */
+      },
+    )
+    .catch(() => {
+      /* a dying session rejects the read loop; wt.closed drives the reconnect */
+    });
 }
 
 async function checkSessionThenReconnect(detail: string): Promise<void> {

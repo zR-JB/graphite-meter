@@ -247,11 +247,10 @@ function openProgress(
       return readProgress(value as ReadableStream);
     })
     .catch((err: unknown) => {
-      if (!stopped)
-        post({
-          type: "upload-progress",
-          msg: { type: "fatal", detail: String(err) },
-        });
+      // A transport-level break is the session dying: recoverable, the owner
+      // restarts the session and the server re-opens the feed. Only an error
+      // record inside the feed is a protocol refusal, posted by readProgress.
+      if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
     });
   finalize = async (): Promise<void> => {
     await fetch(progressUrl, {

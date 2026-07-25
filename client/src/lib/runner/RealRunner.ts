@@ -1038,6 +1038,9 @@ export class RealBackend implements RunnerBackend {
     if (!state) return; // torn down with a staggered/restart timer still pending
     if (state.wt) {
       state.wt.start(state.wtOpts!);
+      // A restarted session must resume the live measurement window: without
+      // the current seq its reports are discarded as pre-measure warmup.
+      if (state.measuring && dir === "down") state.wt.measure(state.measureSeq);
       return;
     }
     const w = dir === "down" ? downloadWorker() : uploadWorker();
