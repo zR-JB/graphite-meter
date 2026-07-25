@@ -204,7 +204,7 @@ function connectWebSocket(): void {
       return;
     }
     if (checkAuthentication && event.code === 1006) {
-      void checkSessionThenReconnect();
+      void checkSessionThenReconnect("websocket closed");
       return;
     }
     onDisconnect("websocket closed");
@@ -215,6 +215,13 @@ function connectWebSocket(): void {
 async function connectWebTransport(): Promise<void> {
   const token = await mintWtToken(mint);
   if (stopped) return;
+  // An authenticated bus cannot dial without a token, and the mint failing
+  // usually means the session died. The session check decides between the
+  // login redirect and a plain reconnect, as the WebSocket 1006 path does.
+  if (checkAuthentication && mint && token === "") {
+    void checkSessionThenReconnect("webtransport token mint failed");
+    return;
+  }
   let wt: WebTransport;
   try {
     wt = new WebTransport(withWtToken(url, token), {
@@ -255,13 +262,13 @@ async function connectWebTransport(): Promise<void> {
   );
 }
 
-async function checkSessionThenReconnect(): Promise<void> {
+async function checkSessionThenReconnect(detail: string): Promise<void> {
   if (await sessionAuthenticationRequired(self.location.origin)) {
     post({ type: "auth-required" });
     stopped = true;
     return;
   }
-  onDisconnect("websocket closed");
+  onDisconnect(detail);
 }
 
 function onDisconnect(detail: string): void {

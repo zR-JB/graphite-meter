@@ -63,8 +63,12 @@ function pingUrl(
 }
 
 /** Token mint for a WebTransport ping dial, when authentication is on. Minting
- *  is a measurement mutation, so it carries the CSRF header and credentials. */
-function pingMint(target: LatencyTarget | null):
+ *  is a measurement mutation, so it carries the CSRF header and credentials,
+ *  plus the bearer grant when the session rides on one instead of cookies. */
+function pingMint(
+  target: LatencyTarget | null,
+  authHeaders?: Record<string, string>,
+):
   | {
       url: string;
       headers?: Record<string, string>;
@@ -74,7 +78,7 @@ function pingMint(target: LatencyTarget | null):
   if (!authEnabled || target?.transport !== "webtransport") return undefined;
   return {
     url: target.origin + target.routes.wtSession,
-    headers: { ...csrfHeader() },
+    headers: { ...authHeaders, ...csrfHeader() },
     credentials: "include",
   };
 }
@@ -82,6 +86,8 @@ function pingMint(target: LatencyTarget | null):
 export interface LatencyChannelDeps {
   host: () => CoreHost;
   target: () => LatencyTarget | null;
+  /** Bearer grant for the token mint, when the runner authenticates with one. */
+  authHeaders: () => Record<string, string> | undefined;
   /** Stall/resume reported by the ping worker, for the coordinator to reconcile
    *  with the stage-level flag the byte lanes also drive. */
   stall: (detail: string) => void;
@@ -150,7 +156,7 @@ export class LatencyChannel {
       type: "start",
       url,
       transport: kind,
-      mint: pingMint(channel),
+      mint: pingMint(channel, this.#deps.authHeaders()),
       intervalMs,
       replyDriven,
       maxInFlight: replyDriven
@@ -230,6 +236,8 @@ export interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
   latencyTarget: () => LatencyTarget | null;
+  /** Bearer grant for the token mint, when the runner authenticates with one. */
+  authHeaders: () => Record<string, string> | undefined;
 }
 
 /** The persistent idle ping: connectivity indicator plus the preflight RTT
@@ -285,7 +293,7 @@ export class IdleKeepalive {
       type: "start",
       url,
       transport: channel.transport,
-      mint: pingMint(channel),
+      mint: pingMint(channel, this.#deps.authHeaders()),
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,

@@ -210,6 +210,8 @@ export class RealBackend implements RunnerBackend {
   #latency = new LatencyChannel({
     host: () => this.#host!,
     target: () => this.#latencyTarget,
+    authHeaders: () =>
+      this.#authHeaders() as Record<string, string> | undefined,
     stall: (detail) => {
       if (!this.#transferActive && !this.#stalled) {
         this.#host!.stall({
@@ -234,6 +236,8 @@ export class RealBackend implements RunnerBackend {
     host: () => this.#host!,
     throughputTarget: () => this.#throughputTarget,
     latencyTarget: () => this.#latencyTarget,
+    authHeaders: () =>
+      this.#authHeaders() as Record<string, string> | undefined,
   });
 
   #disposed = false;
