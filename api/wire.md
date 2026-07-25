@@ -39,9 +39,15 @@ content it defines. Streams are raw bytes end to end.
 
 | Route | Query | Streams | Datagrams |
 |---|---|---|---|
-| `/wt/ping` | — | none | the message bus above, one frame per datagram |
-| `/wt/download` | `bytes=&streams=&datagrams=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server sends one flood of `bytes` total |
-| `/wt/upload` | `id=&datagrams=` | client unidirectional streams are raw upload bytes; the server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes |
+| `/wt/ping` | `token=` | none | the message bus above, one frame per datagram |
+| `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives |
+| `/wt/upload` | `id=&datagrams=&token=` | client unidirectional streams are raw upload bytes; the server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes |
+
+Under authentication a CONNECT must present a credential before the upgrade: a single-use,
+short-lived, session-linked token minted by `POST /wt/session` and carried as `?token=` (a browser
+CONNECT can send neither cookies nor headers), or an `Authorization: Bearer` grant for native
+clients. `/wt/session` answers with an empty token when authentication is off, so clients mint
+unconditionally.
 
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
