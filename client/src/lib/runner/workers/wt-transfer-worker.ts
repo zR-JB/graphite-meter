@@ -182,7 +182,9 @@ async function readDatagrams(): Promise<void> {
 }
 
 /** Experimental: flood path-MTU-sized datagrams. The server counts what arrives
- *  and the progress feed reports it, as with the stream lanes. */
+ *  and the progress feed reports it, as with the stream lanes. `ready` is the
+ *  backpressure gate; the write itself is not awaited, so the queue stays at
+ *  the transport's own high-water mark without a promise round trip per packet. */
 async function uploadDatagrams(): Promise<void> {
   if (!session) return;
   try {
@@ -191,7 +193,7 @@ async function uploadDatagrams(): Promise<void> {
     crypto.getRandomValues(payload);
     while (!stopped) {
       await writer.ready;
-      await writer.write(payload);
+      void writer.write(payload).catch(() => {});
       postAlive();
     }
   } catch (err) {
