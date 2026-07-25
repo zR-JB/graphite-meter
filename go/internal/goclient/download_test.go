@@ -163,11 +163,12 @@ func newAbruptCloseDownloadServer(partial int) *httptest.Server {
 	}))
 }
 
-// TestDownloadLaneStopsOnAbruptConnectionDrop checks that a server closing
-// the connection mid-response (rather than a clean EOF) makes downloadLane
-// return promptly with only the bytes actually delivered counted, instead of
-// hanging or panicking on the broken stream.
-func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
+// TestDownloadLaneReopensAfterAbruptConnectionDrop checks that a server
+// closing the connection mid-response (rather than a clean EOF) makes
+// downloadLane reopen the request and keep counting delivered bytes, so a
+// stage outliving the server's request bound continues, and that the lane
+// still returns promptly once the stage ends.
+func TestDownloadLaneReopensAfterAbruptConnectionDrop(t *testing.T) {
 	const partial = 64 * 1024
 	srv := newAbruptCloseDownloadServer(partial)
 	defer srv.Close()
@@ -175,7 +176,7 @@ func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: partial * 4}.normalized()
 	r := &runner{cfg: cfg, streams: 1, http: srv.Client()}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	var total atomic.Uint64
 	done := make(chan struct{})
@@ -186,11 +187,11 @@ func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("downloadLane hung after the server closed the connection abruptly mid-transfer")
+	case <-time.After(2 * time.Second):
+		t.Fatal("downloadLane did not return after the stage ended")
 	}
-	if got := total.Load(); got == 0 || got > partial {
-		t.Errorf("total = %d, want > 0 and <= %d (only the bytes sent before the abrupt drop)", got, partial)
+	if got := total.Load(); got < 2*partial {
+		t.Errorf("total = %d, want at least %d (the lane must reopen after the drop)", got, 2*partial)
 	}
 }
 

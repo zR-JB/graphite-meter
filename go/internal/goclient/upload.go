@@ -35,17 +35,35 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	var lane func(context.Context, int) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		// The lanes and their counter share one session, so progress reports the
-		// connection actually under test.
-		sess, err := wtDial(ctx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
+		// connection actually under test. A replacement session re-attaches the
+		// same feed: the server keeps one aggregate per id, so the counters and
+		// the measurement baseline carry across.
+		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
+			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
+		}, func(establishCtx context.Context, sess *wtSession) error {
+			str, err := acceptUploadProgressWT(establishCtx, sess)
+			if err != nil {
+				return err
+			}
+			if progress == nil {
+				base, err := r.endpoint(r.routes().UploadProgress)
+				if err != nil {
+					return err
+				}
+				progress, err = r.readUploadProgress(ctx, wtProgressStream{str}, withUploadID(base, id))
+				return err
+			}
+			progress.attach(wtProgressStream{str})
+			return nil
+		})
 		if err != nil {
 			return Result{}, err
 		}
-		defer sess.close()
-		if progress, err = r.openUploadProgressWT(ctx, sess, id); err != nil {
-			return Result{}, err
-		}
+		defer host.close()
 		lane = func(laneCtx context.Context, _ int) error {
-			return r.uploadLaneWT(laneCtx, sess, bodyBlock)
+			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
+				return r.uploadLaneWT(lctx, sess, bodyBlock)
+			})
 		}
 	} else {
 		if progress, err = r.openUploadProgress(ctx, id); err != nil {
@@ -194,17 +212,20 @@ func (b *cyclingBody) Close() error { return nil }
 var _ io.ReadCloser = (*cyclingBody)(nil)
 
 type uploadProgress struct {
-	cancel  context.CancelFunc
-	body    io.ReadCloser
-	client  *http.Client
-	url     string
-	done    chan struct{}
-	ready   chan error
-	n       atomic.Uint64
-	t       atomic.Uint64
-	seq     atomic.Uint64
-	changed chan struct{}
-	once    sync.Once
+	ctx       context.Context // read lifetime; re-attachments stop with it
+	cancel    context.CancelFunc
+	client    *http.Client
+	url       string
+	mu        sync.Mutex // guards body and done across re-attachments
+	body      io.ReadCloser
+	done      chan struct{}
+	ready     chan error
+	readySent atomic.Bool
+	n         atomic.Uint64
+	t         atomic.Uint64
+	seq       atomic.Uint64
+	changed   chan struct{}
+	once      sync.Once
 }
 
 type uploadProgressEvent struct {
@@ -246,56 +267,54 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 		defer res.Body.Close()
 		return nil, unexpectedStatus(res)
 	}
-	return r.readUploadProgress(ctx, res.Body, target)
+	p, err := r.readUploadProgress(ctx, res.Body, target)
+	if err != nil {
+		return nil, err
+	}
+	go r.reattachUploadProgress(p, target)
+	return p, nil
+}
+
+// reattachUploadProgress keeps the fetch feed alive across the server's
+// request bound: when the GET dies with the stage still running, a fresh GET
+// resumes the same aggregate, as the browser's progress worker does.
+func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-p.currentDone():
+		}
+		for p.ctx.Err() == nil {
+			req, err := http.NewRequestWithContext(p.ctx, http.MethodGet, target, nil)
+			if err != nil {
+				return
+			}
+			req.Header.Set("Accept", "application/x-ndjson")
+			res, err := r.http.Do(req)
+			if err == nil && res.StatusCode == http.StatusOK {
+				p.attach(res.Body)
+				break
+			}
+			if res != nil {
+				_ = res.Body.Close()
+			}
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(wtRedialBackoff):
+			}
+		}
+	}
 }
 
 // readUploadProgress consumes the NDJSON feed from body, whichever transport
 // carries it, and finalizes over HTTP at deleteURL.
 func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, deleteURL string) (*uploadProgress, error) {
 	readCtx, cancel := context.WithCancel(ctx)
-	p := &uploadProgress{cancel: cancel, body: body, client: r.http, url: deleteURL, done: make(chan struct{}), ready: make(chan error, 1), changed: make(chan struct{}, 1)}
-	context.AfterFunc(readCtx, func() { _ = body.Close() })
-	go func() {
-		defer close(p.done)
-		scanner := bufio.NewScanner(body)
-		ready := false
-		for scanner.Scan() {
-			if len(scanner.Bytes()) == 0 {
-				continue
-			}
-			var event uploadProgressEvent
-			if json.Unmarshal(scanner.Bytes(), &event) != nil {
-				continue
-			}
-			switch event.Type {
-			case "ready":
-				if !ready {
-					ready = true
-					p.ready <- nil
-				}
-			case "progress", "complete":
-				p.n.Store(event.Bytes)
-				p.t.Store(event.Nanos)
-				p.seq.Add(1)
-				select {
-				case p.changed <- struct{}{}:
-				default:
-				}
-			case "error":
-				if !ready {
-					p.ready <- fmt.Errorf("upload progress: %s", event.Message)
-				}
-				return
-			}
-		}
-		if !ready {
-			if err := scanner.Err(); err != nil {
-				p.ready <- fmt.Errorf("upload progress read: %w", err)
-			} else {
-				p.ready <- fmt.Errorf("upload progress closed before ready")
-			}
-		}
-	}()
+	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	context.AfterFunc(readCtx, p.closeBody)
+	p.attach(body)
 	select {
 	case err := <-p.ready:
 		if err != nil {
@@ -309,12 +328,70 @@ func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, del
 	return p, nil
 }
 
+// attach replaces the feed's byte source with a stream from a replacement
+// session. The server keeps one aggregate per id and the newest feed takes it
+// over, so the counters and the measurement baseline carry across.
+func (p *uploadProgress) attach(body io.ReadCloser) {
+	done := make(chan struct{})
+	p.mu.Lock()
+	old := p.body
+	p.body = body
+	p.done = done
+	p.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	go p.read(body, done)
+}
+
+// signalReady delivers the first feed's ready-or-refused verdict exactly once;
+// later attachments repeat the handshake records to an already-running stage.
+func (p *uploadProgress) signalReady(err error) {
+	if p.readySent.CompareAndSwap(false, true) {
+		p.ready <- err
+	}
+}
+
+func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
+	defer close(done)
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		if len(scanner.Bytes()) == 0 {
+			continue
+		}
+		var event uploadProgressEvent
+		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			continue
+		}
+		switch event.Type {
+		case "ready":
+			p.signalReady(nil)
+		case "progress", "complete":
+			p.n.Store(event.Bytes)
+			p.t.Store(event.Nanos)
+			p.seq.Add(1)
+			select {
+			case p.changed <- struct{}{}:
+			default:
+			}
+		case "error":
+			p.signalReady(fmt.Errorf("upload progress: %s", event.Message))
+			return
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		p.signalReady(fmt.Errorf("upload progress read: %w", err))
+	} else {
+		p.signalReady(fmt.Errorf("upload progress closed before ready"))
+	}
+}
+
 func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	for p.seq.Load() <= after {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-p.done:
+		case <-p.currentDone():
 			return p.seq.Load() > after
 		case <-p.changed:
 		}
@@ -322,11 +399,26 @@ func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	return true
 }
 
+func (p *uploadProgress) currentDone() chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.done
+}
+
+func (p *uploadProgress) closeBody() {
+	p.mu.Lock()
+	body := p.body
+	p.mu.Unlock()
+	if body != nil {
+		_ = body.Close()
+	}
+}
+
 func (p *uploadProgress) close() {
 	p.once.Do(func() {
 		p.cancel()
-		_ = p.body.Close()
-		<-p.done
+		p.closeBody()
+		<-p.currentDone()
 	})
 }
 
@@ -340,7 +432,7 @@ func (p *uploadProgress) bye() {
 		}
 	}
 	select {
-	case <-p.done:
+	case <-p.currentDone():
 	case <-ctx.Done():
 	}
 	p.close()

@@ -2,9 +2,7 @@ package goclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,14 +16,19 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 	var total atomic.Uint64
 	var lane func(context.Context, int) error
 	if r.targetTransport() == wire.TransportWebTransport {
-		// One session hosts every lane; each lane opens its own stream on it.
-		sess, err := wtDial(ctx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
+		// One session hosts every lane, re-dialed when it outlives the server's
+		// session bound; each lane opens its own stream on the live session.
+		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
+			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
+		}, nil)
 		if err != nil {
 			return Result{}, err
 		}
-		defer sess.close()
+		defer host.close()
 		lane = func(laneCtx context.Context, _ int) error {
-			return r.downloadLaneWT(laneCtx, sess, &total)
+			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
+				return r.downloadLaneWT(lctx, sess, &total)
+			})
 		}
 	} else {
 		base, err := r.endpoint(r.routes().Download)
@@ -82,11 +85,10 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 				total.Add(uint64(n))
 			}
 			if readErr != nil {
+				// A stream dropped mid-body reopens like any finished request:
+				// the gap is a measured pause, not a stage failure.
 				_ = res.Body.Close()
-				if errors.Is(readErr, io.EOF) {
-					break
-				}
-				return readErr
+				break
 			}
 			if ctx.Err() != nil {
 				_ = res.Body.Close()

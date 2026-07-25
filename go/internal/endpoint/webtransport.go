@@ -77,8 +77,12 @@ func (h *wtDownload) serveLane(ctx context.Context, sess *webtransport.Session, 
 		if err != nil {
 			return
 		}
-		// A write blocked on flow control does not observe the context on its own.
-		stopOnCancel := context.AfterFunc(ctx, func() { str.CancelWrite(0) })
+		// A blocked write observes neither the context nor a dead session on its
+		// own; the deadline poke unblocks a wait for a close that never arrives.
+		stopOnCancel := context.AfterFunc(ctx, func() {
+			str.CancelWrite(0)
+			_ = str.SetWriteDeadline(time.Now())
+		})
 		_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, str, nil, ""))
 		stopOnCancel()
 		_ = str.Close()
@@ -134,7 +138,10 @@ func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session
 		return
 	}
 	defer str.Close()
-	defer context.AfterFunc(ctx, func() { str.CancelWrite(0) })()
+	defer context.AfterFunc(ctx, func() {
+		str.CancelWrite(0)
+		_ = str.SetWriteDeadline(time.Now())
+	})()
 	h.progress.HandleStream(ctx, id, owner, str)
 }
 

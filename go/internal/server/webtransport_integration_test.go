@@ -279,6 +279,65 @@ func TestGoClientRunsOverWebTransport(t *testing.T) {
 	}
 }
 
+// runGoClientUnderLifetimeCaps runs the shipped client against a server whose
+// request and session bounds are far shorter than the stages, so every channel
+// is killed mid-stage several times. Completion proves the reconnect paths.
+func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport string) {
+	t.Helper()
+	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
+		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	cfg := config.Default()
+	cfg.Native.H1 = freeTCPAddr(t)
+	cfg.Native.H3 = freeTCPAddr(t)
+	cfg.TLSCert, cfg.TLSKey = cert, key
+	cfg.MaxOperationDuration = 2 * time.Second
+	cfg.MaxSessionDuration = 2 * time.Second
+	defer runUntilCancel(t, &cfg)()
+	waitForOK(t, http.DefaultClient, "http://"+cfg.Native.H1+"/preflight")
+
+	clientCfg := goclient.DefaultConfig()
+	clientCfg.BaseURL = "http://" + cfg.Native.H1
+	clientCfg.ThroughputTransport = throughputTransport
+	clientCfg.InsecureSkipTLSVerify = true
+	clientCfg.Stages = goclient.StageSet{Latency: true, Download: true, Upload: true}
+	clientCfg.Warmup = 100 * time.Millisecond
+	clientCfg.LatencyDuration = 5 * time.Second
+	clientCfg.DownloadDuration = 5 * time.Second
+	clientCfg.UploadDuration = 5 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	results := map[string]goclient.Result{}
+	err := goclient.Run(ctx, clientCfg, func(e goclient.Event) {
+		if e.Kind == goclient.EventResult && e.Result != nil {
+			results[e.Stage] = *e.Result
+		}
+	})
+	if err != nil {
+		t.Fatalf("run under lifetime caps: %v", err)
+	}
+	if got := results["latency"].Latency.Count; got == 0 {
+		t.Error("latency stage collected no samples across bus reconnects")
+	}
+	for _, stage := range []string{"download", "upload"} {
+		if got := results[stage].TotalBytes; got == 0 {
+			t.Errorf("%s stage moved no bytes across reconnects", stage)
+		}
+	}
+}
+
+// TestGoClientOutlivesSessionBoundOverWebTransport: 5 s stages under a 2 s
+// session cap force at least two session kills per stage.
+func TestGoClientOutlivesSessionBoundOverWebTransport(t *testing.T) {
+	runGoClientUnderLifetimeCaps(t, "webtransport")
+}
+
+// TestGoClientOutlivesOperationBoundOverFetch: the WebSocket ping bus and the
+// upload progress GET both die at the 2 s request cap and reconnect.
+func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
+	runGoClientUnderLifetimeCaps(t, "")
+}
+
 func readProgressType(t *testing.T, records *bufio.Scanner, want string) bool {
 	t.Helper()
 	for records.Scan() {

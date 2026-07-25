@@ -56,6 +56,24 @@ func (r *runner) dialPingBus(ctx context.Context) (pingBus, string, error) {
 	return wsBus{conn: conn}, "ws", nil
 }
 
+// redialPingBus re-opens the latency channel after the bus dropped or outlived
+// its route's lifetime bound, retrying with backoff until ctx ends.
+func (r *runner) redialPingBus(ctx context.Context) (pingBus, string, error) {
+	for {
+		dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		bus, proto, err := r.dialPingBus(dialCtx)
+		cancel()
+		if err == nil {
+			return bus, proto, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, proto, ctx.Err()
+		case <-time.After(wtRedialBackoff):
+		}
+	}
+}
+
 func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, start <-chan struct{}) (LatencyStats, error) {
 	if r.latencyTarget == nil {
 		return LatencyStats{}, fmt.Errorf("no latency target selected")
@@ -64,7 +82,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	defer conn.Close()
+	// The deferred receiver must be the LATEST bus, not the first dial's.
+	defer func() { conn.Close() }()
 	// A failed hello needs no handling here: the read goroutine below sees the
 	// same broken channel and reports it through recvErr.
 	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
@@ -77,6 +96,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	var nextID uint32
 	stats := latencyStats{}
 	recvErr := make(chan error, 1)
+	var everPong atomic.Bool
 	var measuring atomic.Bool
 	var measureTimer <-chan time.Time
 	// The read goroutine outlives every return below, so stats must be
@@ -87,9 +107,9 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		return stats.snapshot()
 	}
 
-	go func() {
+	readLoop := func(bus pingBus) {
 		for {
-			msg, err := conn.Recv(measureCtx)
+			msg, err := bus.Recv(measureCtx)
 			if err != nil {
 				recvErr <- err
 				return
@@ -101,6 +121,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			if f.Op != wire.OpPONG {
 				continue
 			}
+			everPong.Store(true)
 			now := time.Now()
 			mu.Lock()
 			sent, ok := pending[f.ID]
@@ -121,7 +142,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad},
 			})
 		}
-	}()
+	}
+	go readLoop(conn)
 
 	ticker := time.NewTicker(r.cfg.PingInterval)
 	defer ticker.Stop()
@@ -164,11 +186,32 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			if measureCtx.Err() != nil {
 				return snapshot(), nil
 			}
-			return LatencyStats{}, fmt.Errorf("latency channel failed: %w", err)
-		case <-ticker.C:
-			if err := send(); err != nil {
-				return LatencyStats{}, err
+			// A bus that dies before ever answering never established; only a
+			// proven bus reconnects.
+			if !everPong.Load() {
+				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", err)
 			}
+			// The bus outlived its route's lifetime bound or dropped: reconnect
+			// and continue, as the browser worker does. The gap's pings clear
+			// without counting loss, since a connection gap is not packet loss.
+			conn.Close()
+			fresh, freshProto, dialErr := r.redialPingBus(measureCtx)
+			if dialErr != nil {
+				if measureCtx.Err() != nil {
+					return snapshot(), nil
+				}
+				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", dialErr)
+			}
+			conn, proto = fresh, freshProto
+			mu.Lock()
+			pending = make(map[uint32]time.Time)
+			mu.Unlock()
+			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
+			go readLoop(conn)
+		case <-ticker.C:
+			// A dead bus surfaces through recvErr and reconnects; a skipped ping
+			// costs one sample, not the stage.
+			_ = send()
 		case now := <-timeoutTicker.C:
 			if !measuring.Load() {
 				continue

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -108,6 +109,104 @@ func (b wtBus) Recv(ctx context.Context) (string, error) {
 
 func (b wtBus) Close() { b.sess.close() }
 
+// wtRedialBackoff paces session re-dials, mirroring the fetch lanes' retry
+// cadence without spinning on a hard-down server.
+const wtRedialBackoff = 500 * time.Millisecond
+
+// wtStageSession owns one stage's session and re-dials it when it drops, so a
+// stage outlasting the server's session lifetime continues on a fresh session
+// the way fetch lanes continue on fresh requests. establish, when set, runs
+// once per new session before any lane sees it.
+type wtStageSession struct {
+	dial      func(ctx context.Context) (*wtSession, error)
+	establish func(ctx context.Context, sess *wtSession) error
+	mu        sync.Mutex
+	sess      *wtSession
+	gen       int
+}
+
+func newWTStageSession(ctx context.Context, dial func(ctx context.Context) (*wtSession, error), establish func(ctx context.Context, sess *wtSession) error) (*wtStageSession, error) {
+	w := &wtStageSession{dial: dial, establish: establish}
+	sess, err := dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if establish != nil {
+		if err := establish(ctx, sess); err != nil {
+			sess.close()
+			return nil, err
+		}
+	}
+	w.sess = sess
+	return w, nil
+}
+
+// current returns the live session and the generation to hand redial after a
+// failure on it.
+func (w *wtStageSession) current() (*wtSession, int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.sess, w.gen
+}
+
+// redial replaces generation gen. Lanes share one session, so every lane races
+// here when it dies; the first replaces it and the rest adopt the replacement.
+// Dial failures retry until ctx ends: mid-run outages are the stall the
+// measured pause already prices in, exactly as on the fetch path.
+func (w *wtStageSession) redial(ctx context.Context, gen int) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.gen > gen {
+		return nil
+	}
+	w.sess.close()
+	for {
+		dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		sess, err := w.dial(dialCtx)
+		if err == nil && w.establish != nil {
+			if err = w.establish(dialCtx, sess); err != nil {
+				sess.close()
+			}
+		}
+		cancel()
+		if err == nil {
+			w.sess = sess
+			w.gen++
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wtRedialBackoff):
+		}
+	}
+}
+
+func (w *wtStageSession) close() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.sess.close()
+}
+
+// runWTLane keeps one lane alive across session replacements: run the lane on
+// the current session, and when it dies with the stage still running, redial
+// and continue.
+func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) error) error {
+	for ctx.Err() == nil {
+		sess, gen := host.current()
+		if err := lane(ctx, sess); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err := host.redial(ctx, gen); err != nil {
+			return laneStopError(ctx, err)
+		}
+	}
+	return nil
+}
+
 // wtDownloadQuery names what the session serves; the server opens the streams.
 func (r *runner) wtDownloadQuery() url.Values {
 	return url.Values{
@@ -118,6 +217,8 @@ func (r *runner) wtDownloadQuery() url.Values {
 
 // downloadLaneWT accepts and drains the server-opened streams. Every lane runs
 // the same accept loop, so a replaced stream lands on whichever lane is free.
+// It returns an error when the session dies with the stage still running, the
+// signal runWTLane redials on.
 func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64) error {
 	buf := make([]byte, 1024*1024)
 	for ctx.Err() == nil {
@@ -125,8 +226,15 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 		if err != nil {
 			return laneStopError(ctx, err)
 		}
-		// A blocked stream read does not observe the context on its own.
-		stopOnCancel := context.AfterFunc(ctx, func() { str.CancelRead(0) })
+		// A blocked read observes neither the context nor a dead session on its
+		// own; only a deadline unblocks the wait for a close that may never
+		// arrive, so the cancel and the poke always travel together.
+		unblock := func() {
+			str.CancelRead(0)
+			_ = str.SetReadDeadline(time.Now())
+		}
+		stopOnCancel := context.AfterFunc(ctx, unblock)
+		stopOnGone := context.AfterFunc(sess.Context(), unblock)
 		for {
 			n, readErr := str.Read(buf)
 			if n > 0 {
@@ -137,20 +245,32 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 			}
 		}
 		stopOnCancel()
+		stopOnGone()
+		if sess.Context().Err() != nil {
+			return laneStopError(ctx, sess.Context().Err())
+		}
 	}
 	return nil
 }
 
-// uploadLaneWT writes the cycling block on one unidirectional stream for the
-// whole stage: the stream's own flow control paces it.
+// uploadLaneWT writes the cycling block on one unidirectional stream while the
+// session lives: the stream's own flow control paces it. A dead session
+// surfaces as an error, the signal runWTLane redials on.
 func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte) error {
 	str, err := sess.OpenUniStreamSync(ctx)
 	if err != nil {
 		return laneStopError(ctx, err)
 	}
 	defer str.Close() //nolint:errcheck // the stage is over either way
-	// A write blocked on flow control does not observe the context on its own.
-	defer context.AfterFunc(ctx, func() { str.CancelWrite(0) })()
+	// A blocked write observes neither the context nor a dead session on its
+	// own; only a deadline unblocks the wait for a close that may never arrive,
+	// so the cancel and the poke always travel together.
+	unblock := func() {
+		str.CancelWrite(0)
+		_ = str.SetWriteDeadline(time.Now())
+	}
+	defer context.AfterFunc(ctx, unblock)()
+	defer context.AfterFunc(sess.Context(), unblock)()
 	body := &cyclingBody{ctx: ctx, block: block}
 	buf := make([]byte, len(block))
 	for ctx.Err() == nil {
@@ -165,27 +285,26 @@ func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte
 	return nil
 }
 
-// openUploadProgressWT reads the NDJSON feed off the one stream the server
-// opens on an upload session, so the counter rides the connection under test.
-func (r *runner) openUploadProgressWT(ctx context.Context, sess *wtSession, id string) (*uploadProgress, error) {
+// acceptUploadProgressWT reads the one stream the server opens on an upload
+// session as the progress feed, so the counter rides the connection under test.
+func acceptUploadProgressWT(ctx context.Context, sess *wtSession) (*webtransport.ReceiveStream, error) {
 	acceptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	str, err := sess.AcceptUniStream(acceptCtx)
 	if err != nil {
 		return nil, fmt.Errorf("upload progress stream: %w", err)
 	}
-	base, err := r.endpoint(r.routes().UploadProgress)
-	if err != nil {
-		return nil, err
-	}
-	return r.readUploadProgress(ctx, wtProgressStream{str}, withUploadID(base, id))
+	return str, nil
 }
 
 // wtProgressStream gives the receive stream the Close a blocked reader needs.
+// The deadline poke unblocks a read parked waiting on a session close that may
+// never arrive.
 type wtProgressStream struct{ *webtransport.ReceiveStream }
 
 func (s wtProgressStream) Close() error {
 	s.CancelRead(0)
+	_ = s.SetReadDeadline(time.Now())
 	return nil
 }
 
