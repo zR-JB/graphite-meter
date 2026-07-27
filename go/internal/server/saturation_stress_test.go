@@ -68,7 +68,11 @@ func TestSaturationEnvelope(t *testing.T) {
 		if mix.base != "" {
 			loadBase = mix.base
 		}
-		var downBytes, upBytes, spamPings atomic.Uint64
+		// A loader that gave up leaves the row reading as a measured result on a
+		// server under load, when in truth nothing was loading it. The envelope
+		// in docs/BENCHMARKS.md is taken from these rows, so a dead loader has
+		// to be visible rather than silent.
+		var downBytes, upBytes, spamPings, loaderExits atomic.Uint64
 		var wg sync.WaitGroup
 		for i := range mix.loaders {
 			upload := i%2 == 1
@@ -79,17 +83,21 @@ func TestSaturationEnvelope(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				loaderRun(ctx, loadBase, mix.transport, upload, bytes)
+				loaderRun(ctx, loadBase, mix.transport, upload, bytes, &loaderExits)
 			}()
 		}
 		for range mix.spammers {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				var err error
 				if mix.spamWT {
-					wtPingSpam(ctx, h3Base, &spamPings)
+					err = wtPingSpam(ctx, h3Base, &spamPings)
 				} else {
-					wsPingSpam(ctx, "ws"+strings.TrimPrefix(base, "http")+routePing, &spamPings)
+					err = wsPingSpam(ctx, "ws"+strings.TrimPrefix(base, "http")+routePing, &spamPings)
+				}
+				if err != nil && ctx.Err() == nil {
+					loaderExits.Add(1)
 				}
 			}()
 		}
@@ -108,6 +116,12 @@ func TestSaturationEnvelope(t *testing.T) {
 			if len(rtts) == 0 {
 				t.Errorf("%s/%s: observer collected no samples", name, bus.label)
 				continue
+			}
+			// Without this the row prints as a measurement taken under load
+			// when the load had in fact given up, and that number is what
+			// docs/BENCHMARKS.md publishes.
+			if exits := loaderExits.Load(); exits > 0 {
+				t.Errorf("%s/%s: %d loader(s) stopped early, so this row was not measured under the load it names", name, bus.label, exits)
 			}
 			t.Logf("%-28s %8s %8s %8s %5.1f%% %5.1f Gb %5.1f Gb %9.0f/s %5.0f%%",
 				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100,
@@ -184,7 +198,7 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 
 // loaderRun drives one continuous transfer client until ctx ends, counting the
 // bytes it moves. Odd loaders upload, even ones download.
-func loaderRun(ctx context.Context, base, transport string, upload bool, bytes *atomic.Uint64) {
+func loaderRun(ctx context.Context, base, transport string, upload bool, bytes, exits *atomic.Uint64) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = base
 	cfg.ThroughputTransport = transport
@@ -196,7 +210,7 @@ func loaderRun(ctx context.Context, base, transport string, upload bool, bytes *
 	cfg.TransferStreams = goclient.TransferStreamPolicy{Forced: 2}
 	cfg.LoadedLatency = false
 	var last uint64
-	_ = goclient.Run(ctx, cfg, func(e goclient.Event) {
+	err := goclient.Run(ctx, cfg, func(e goclient.Event) {
 		if e.Kind == goclient.EventThroughput {
 			if n := e.Throughput.TotalBytes; n > last {
 				bytes.Add(n - last)
@@ -204,14 +218,18 @@ func loaderRun(ctx context.Context, base, transport string, upload bool, bytes *
 			}
 		}
 	})
+	// The scenario's own context ending is the clean stop.
+	if err != nil && ctx.Err() == nil {
+		exits.Add(1)
+	}
 }
 
 // wsPingSpam runs one reply-driven chain over a WebSocket: a new PING the
 // moment the PONG lands, the heaviest per-client cadence the bus allows.
-func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) {
+func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 	conn, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
-		return
+		return err
 	}
 	defer conn.CloseNow()
 	var id uint32
@@ -219,31 +237,32 @@ func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) {
 		id++
 		return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
 	}
-	if send() != nil {
-		return
+	if err := send(); err != nil {
+		return err
 	}
 	for ctx.Err() == nil {
 		_, msg, err := conn.Read(ctx)
 		if err != nil {
-			return
+			return nil
 		}
 		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
 			continue
 		}
 		pings.Add(1)
-		if send() != nil {
-			return
+		if err := send(); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 // wtPingSpam is the same chain over session datagrams.
-func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) {
+func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error {
 	dialer := insecureWTDialer()
 	defer dialer.Close()
 	_, sess, err := dialer.Dial(ctx, origin+routeWTPing, nil)
 	if err != nil {
-		return
+		return err
 	}
 	defer sess.CloseWithError(0, "")
 	var id uint32
@@ -251,22 +270,23 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) {
 		id++
 		return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
 	}
-	if send() != nil {
-		return
+	if err := send(); err != nil {
+		return err
 	}
 	for ctx.Err() == nil {
 		msg, err := sess.ReceiveDatagram(ctx)
 		if err != nil {
-			return
+			return nil
 		}
 		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
 			continue
 		}
 		pings.Add(1)
-		if send() != nil {
-			return
+		if err := send(); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 func pct(rtts []time.Duration, p int) time.Duration {
