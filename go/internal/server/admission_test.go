@@ -182,8 +182,11 @@ func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
 	}
 	release()
 	second()
-	if stats := a.stats(); stats.active != 0 || stats.rejectedGlobal != 1 {
-		t.Fatalf("stats = %+v, want no active measurements and 1 global rejection", stats)
+	// The refusal came from the session budget with the pool half empty, so it
+	// is counted there: the pool's own counter must stay clean, or an operator
+	// raising GM_MAX_ACTIVE_MEASUREMENTS would change nothing.
+	if stats := a.stats(); stats.active != 0 || stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
+		t.Fatalf("stats = %+v, want no active measurements and 1 session-budget rejection", stats)
 	}
 }
 
@@ -218,6 +221,52 @@ func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
 	}
 }
 
+// A full pool and a full session budget both answer 503 and are raised with
+// different knobs, so an operator reading one counter learns that something is
+// refusing but not which bound to move. Sessions hold their slots for the
+// session bound rather than the request bound, so the session budget is the one
+// that stays full -- and it was the number nothing reported: 64 sessions live
+// against 20 measurements read as "plenty of room".
+func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
+	// Room for four measurements but only one session.
+	a := newRequestAdmission(4, 4, 1, 4, time.Minute, time.Hour)
+	session, status := a.acquire("client-a", "login-a")
+	if status != 0 {
+		t.Fatalf("first session rejected with %d", status)
+	}
+	defer session()
+	if _, status := a.acquire("client-b", "login-b"); status != http.StatusServiceUnavailable {
+		t.Fatalf("session past the budget = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+	stats := a.stats()
+	if stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
+		t.Errorf("stats = %+v, want the refusal counted against the session budget and not the pool", stats)
+	}
+	if stats.activeSessions != 1 || stats.sessionMax != 1 {
+		t.Errorf("stats = %+v, want the session budget reported as 1 of 1 occupied", stats)
+	}
+
+	// Fill the rest of the pool with request-shaped routes and prove the other
+	// counter is the one that moves. The pool is checked first, so a refusal
+	// once it is full is a pool refusal whatever route asked.
+	for i := range 3 {
+		release, status := a.acquire("client-c", "")
+		if status != 0 {
+			t.Fatalf("request %d rejected with %d while the pool had room", i, status)
+		}
+		defer release()
+	}
+	if _, status := a.acquire("client-d", ""); status != http.StatusServiceUnavailable {
+		t.Fatalf("request against a full pool = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+	if stats := a.stats(); stats.rejectedGlobal != 1 || stats.rejectedSessionBudget != 1 {
+		t.Errorf("stats = %+v, want one refusal on each counter", stats)
+	}
+	if stats := a.stats(); stats.active != 4 {
+		t.Errorf("stats = %+v, want the pool reported full", stats)
+	}
+}
+
 // The session budget is per login, not per person. A budget keyed by subject is
 // shared by every tab, browser and device, so sessions held on a phone decide
 // whether a desktop can run a test at all.
@@ -247,7 +296,9 @@ func TestSessionBudgetIsPerLogin(t *testing.T) {
 }
 
 // A principal with no login falls back to the address, so public mode keeps the
-// per-client budget it had before logins existed.
+// per-client budget it had before logins existed. The other half of the pair,
+// the login branch, is TestSessionKeyUsesTheLoginNotTheSubject in internal/auth:
+// only that package can build a principal with a non-empty LoginID.
 func TestSessionKeyFallsBackToTheClientKey(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/wt/download", nil)
 	r.RemoteAddr = "192.0.2.7:1234"
@@ -274,6 +325,45 @@ func TestPingBusesShareTheRequestBound(t *testing.T) {
 		}
 		if !isSessionRoute(path) {
 			t.Errorf("%s does not count against the session budget", path)
+		}
+	}
+}
+
+// deadlineRecordingWriter counts the socket deadlines wrap arms through
+// http.NewResponseController, which finds these methods on the writer itself.
+type deadlineRecordingWriter struct {
+	*httptest.ResponseRecorder
+	armed int
+}
+
+func (w *deadlineRecordingWriter) SetReadDeadline(time.Time) error  { w.armed++; return nil }
+func (w *deadlineRecordingWriter) SetWriteDeadline(time.Time) error { w.armed++; return nil }
+
+// A socket deadline bounds a request; it tears a channel down mid-stream. The
+// two ping buses hold a channel open without being session routes -- neither
+// holds a test, so both keep the request bound and the request bucket -- and a
+// deadline armed on one would cut the bus rather than closing it, and on a
+// session route would land on the very stream carrying the closing capsule.
+// Those routes are bounded by their context alone.
+func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
+	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
+	armedFor := func(path string) int {
+		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder()}
+		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), nil, "").
+			ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return w.armed
+	}
+	for _, path := range []string{routePing, routeWTPing, routeWTDownload, routeWTUpload} {
+		if got := armedFor(path); got != 0 {
+			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request", path, got)
+		}
+	}
+	// The control: a request-shaped route still gets its deadlines, so the
+	// exemption is a property of these routes and not of wrap having stopped
+	// arming deadlines at all.
+	for _, path := range []string{routeDownload, routeUpload} {
+		if got := armedFor(path); got == 0 {
+			t.Errorf("%s armed no socket deadline, want one: an unbounded transfer that stops reading its context has nothing else to stop it", path)
 		}
 	}
 }

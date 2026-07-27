@@ -31,6 +31,18 @@ const (
 	h3MaxTransferStreamsPerDirection = 128
 	h3UploadProgressStreams          = 1
 	h3MaxIncomingStreams             = 2*h3MaxTransferStreamsPerDirection + h3UploadProgressStreams
+	// browserH3UniStreams is what a browser's HTTP/3 connection spends on
+	// client-initiated unidirectional streams before WebTransport opens a single
+	// lane: the control stream plus the QPACK encoder and decoder streams. It is
+	// a property of HTTP/3, not of WebTransport, and it is the floor the lane
+	// credit has to clear -- a bare literal 3 read as if it were lane budget.
+	browserH3UniStreams = 3
+	// wtLaneCreditHeadroom keeps QUIC stream credit from being the limit that
+	// binds first, so the app-level lane semaphore is the one that refuses the
+	// 17th lane. Credit refuses by parking a stream forever; the semaphore
+	// refuses by resetting it, which is what api/wire.md promises and the only
+	// refusal a byte stream can carry.
+	wtLaneCreditHeadroom = 4
 )
 
 // Measurement route paths, the mounting half of the cross-language pin.
@@ -57,6 +69,22 @@ type endpoints struct {
 	uploadProgress                   *endpoint.UploadProgress
 	admission                        *requestAdmission
 	trustedProxies                   []netip.Prefix
+	// wtIdleBound is how long a WebTransport session may carry nothing the peer
+	// sent before it is closed. wire.WTIdleBound is the published contract both
+	// sides hold to; it lives here because the session handlers take it as a
+	// constructor argument, so this is the one place it is chosen.
+	//
+	// It may be shortened but MUST NOT be raised above wire.WTIdleBound. The
+	// upload store's aggregate TTL is derived from that constant
+	// (endpoint/upload_store.go: uploadIDTTL = 2*wire.WTIdleBound +
+	// uploadReconnectGrace) precisely so an aggregate outlasts a session's whole
+	// death and the counters carry across a bound-driven close, as api/wire.md
+	// promises. A session idle bound above the constant makes the session outlive
+	// its own aggregate: the re-dial then takes the create path and reports only
+	// the bytes that moved after the reconnect, silently resetting the upload
+	// counter to zero. Anything that makes this operator-configurable has to
+	// derive the TTL from the same value rather than from the constant.
+	wtIdleBound time.Duration
 }
 
 type service struct {
@@ -86,6 +114,7 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
 		admission:      admission,
 		trustedProxies: cfg.TrustedProxies,
+		wtIdleBound:    wire.WTIdleBound,
 	}, nil
 }
 
@@ -166,9 +195,9 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 		reg.RegisterWS(routePing, e.ping)
 	}
 	if topology.wt != nil {
-		reg.RegisterWT(routeWTDownload, endpoint.NewWTDownload(e.download))
-		reg.RegisterWT(routeWTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies))
-		reg.RegisterWT(routeWTPing, endpoint.NewWTPing(e.ping))
+		reg.RegisterWT(routeWTDownload, endpoint.NewWTDownload(e.download, e.wtIdleBound))
+		reg.RegisterWT(routeWTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies, e.wtIdleBound))
+		reg.RegisterWT(routeWTPing, endpoint.NewWTPing(e.ping, e.wtIdleBound))
 	}
 	return reg
 }
@@ -237,7 +266,7 @@ func wtTokenMinter(authn *auth.Service) endpoint.WTTokenMinter {
 	if authn == nil || !authn.Enabled() {
 		return nil
 	}
-	return authn.MintWebTransportToken
+	return authn.MintWebTransportSessionToken
 }
 
 // disableNagle stops Nagle batching a small latency probe into the following
@@ -275,23 +304,42 @@ func pinConnectOrigins(cfg *config.Config, authn *auth.Service) {
 // Run validates the config and certificate, binds every configured listener,
 // and shuts the logical server down as one unit.
 func Run(ctx context.Context, cfg *config.Config) error {
-	if err := cfg.Validate(); err != nil {
+	b, err := newListenerBuild(ctx, cfg)
+	if err != nil {
 		return err
+	}
+	if err := b.assemble(); err != nil {
+		return err
+	}
+	return runServices(ctx, cfg, b.services)
+}
+
+// newListenerBuild validates the config and brings up everything the listeners
+// share: authentication, the certificate manager, the endpoint set and the
+// connection budget. It is separate from Run because it is the seam a test
+// needs -- the endpoints exist here, and nothing has been assembled around them
+// yet, so a bound they were built with can still be chosen. That is what
+// replaced an exported setter over a package-global idle bound: the value is a
+// constructor argument all the way down, so there is nothing to race and
+// nothing test-only in the shipped handler.
+func newListenerBuild(ctx context.Context, cfg *config.Config) (*listenerBuild, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
 	authn, err := auth.New(ctx, cfg.Auth, cfg.TrustedProxies, cfg.Verbose)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var cm *certificateManager
 	if cfg.Native.H1TLS != "" || cfg.Native.H2 != "" || cfg.Native.H3 != "" {
 		if cm, err = newCertificateManager(cfg); err != nil {
-			return err
+			return nil, err
 		}
 		go cm.run(ctx)
 	}
 	e, err := buildEndpoints(ctx, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
 	spa := static.Handler()
@@ -302,11 +350,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}
-	b := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections}
-	if err := b.assemble(spa); err != nil {
-		return err
-	}
-	return runServices(ctx, cfg, b.services)
+	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa}, nil
 }
 
 // listenerBuild accumulates the listeners Run assembles: the shared
@@ -319,6 +363,7 @@ type listenerBuild struct {
 	authn       *auth.Service
 	cm          *certificateManager
 	connections *connectionAdmission
+	spa         http.Handler
 	services    []service
 	opened      []io.Closer
 }
@@ -358,7 +403,8 @@ func h1Protocols() *http.Protocols {
 }
 
 // assemble builds every configured listener into b.services.
-func (b *listenerBuild) assemble(spa http.Handler) error {
+func (b *listenerBuild) assemble() error {
+	spa := b.spa
 	// Clear HTTP/1.1 is the one listener bound unconditionally.
 	h1 := baseServer(b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, b.authn), auth.Listener{UI: true}), h1Protocols())
 	h1ln, err := net.Listen("tcp", b.cfg.Native.H1)
@@ -418,7 +464,7 @@ func h3QUICConfig() *quic.Config {
 	cfg.HandshakeIdleTimeout = 5 * time.Second
 	cfg.MaxIdleTimeout = 30 * time.Second
 	cfg.MaxIncomingStreams = h3MaxIncomingStreams
-	cfg.MaxIncomingUniStreams = 3 + wire.WTMaxStreams
+	cfg.MaxIncomingUniStreams = browserH3UniStreams + wire.WTMaxStreams + wtLaneCreditHeadroom
 	return cfg
 }
 
@@ -505,12 +551,20 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r, c := requests.stats(), connections.stats()
-			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d global + %d client; connections %d active / %d peak, rejected %d global + %d client",
-				r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
-				c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
+			log.Print(admissionLogLine(requests.stats(), connections.stats()))
 		}
 	}
+}
+
+// admissionLogLine is the operator's whole view of what is refusing traffic, so
+// every bound that can refuse has to appear in it with the occupancy that made
+// it refuse -- otherwise a saturated deployment reports room to spare while
+// every session CONNECT is turned away.
+func admissionLogLine(r requestAdmissionStats, c admissionStats) string {
+	return fmt.Sprintf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; sessions %d active / %d max, rejected %d budget; connections %d active / %d peak, rejected %d global + %d client",
+		r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
+		r.activeSessions, r.sessionMax, r.rejectedSessionBudget,
+		c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
 }
 
 // shutdown gives every listener the same bounded budget to drain. Failures are

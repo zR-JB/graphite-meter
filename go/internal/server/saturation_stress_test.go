@@ -32,9 +32,13 @@ import (
 func TestSaturationEnvelope(t *testing.T) {
 	// The harness studies measurement contamination, not admission refusal, and
 	// every client shares 127.0.0.1: lift the caps out of the way.
+	// Every cap, not merely most: MaxSessionsPerClient left at its default of 16
+	// while every loopback loader shares one client key made wt-load-8-redialing
+	// -- which churns a session per loader against a 5 s bound -- a measurement
+	// of admission refusal with 8 slots of slack rather than one of contention.
 	liftCaps := func(c *config.Config) {
 		c.MaxActiveMeasurements, c.MaxActiveMeasurementsPerClient = 4096, 4096
-		c.MaxActiveSessions = 4096
+		c.MaxActiveSessions, c.MaxSessionsPerClient = 4096, 4096
 		c.MaxConnections, c.MaxConnectionsPerClient = 8192, 8192
 	}
 	h3Base, base := wtTestOrigins(t, liftCaps)

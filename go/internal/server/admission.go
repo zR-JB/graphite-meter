@@ -26,6 +26,9 @@ type requestAdmission struct {
 	peak             int
 	rejectedGlobal   uint64
 	rejectedClient   uint64
+	// rejectedSessionBudget is kept apart from rejectedGlobal: both answer 503,
+	// but a full pool and a full session budget are raised with different knobs.
+	rejectedSessionBudget uint64
 }
 
 func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
@@ -90,8 +93,16 @@ func (a *requestAdmission) acquire(key, sessionKey string) (release func(), stat
 	// nothing for them, so a pool filled by request-shaped routes -- the ping
 	// buses among them, which are deliberately not session routes -- refuses
 	// every session while activeSessions is still zero.
-	if a.active >= a.globalMax || (session && a.activeSessions >= a.sessionMax) {
+	// Two 503s with two remedies, so two counters: raising the pool does nothing
+	// for a full session budget and raising the session budget does nothing for
+	// a full pool. The pool is tested first, since a session needs a slot in it
+	// either way.
+	if a.active >= a.globalMax {
 		a.rejectedGlobal++
+		return nil, http.StatusServiceUnavailable
+	}
+	if session && a.activeSessions >= a.sessionMax {
+		a.rejectedSessionBudget++
 		return nil, http.StatusServiceUnavailable
 	}
 	a.active++
@@ -128,6 +139,20 @@ type admissionStats struct {
 	rejectedGlobal, rejectedClient uint64
 }
 
+// requestAdmissionStats is admissionStats plus what only the measurement pool
+// has: the session budget's own occupancy and its own refusals. The two 503s
+// are raised with different knobs -- GM_MAX_ACTIVE_MEASUREMENTS against a full
+// pool, GM_MAX_ACTIVE_SESSIONS against a full session budget -- so one counter
+// for both told an operator a limit had been hit but not which one to raise.
+// Occupancy is the same problem read forward: sessions hold their slots for the
+// session bound, so a full session budget is the state that lasts, and it was
+// the one number nothing anywhere reported.
+type requestAdmissionStats struct {
+	admissionStats
+	activeSessions, sessionMax int
+	rejectedSessionBudget      uint64
+}
+
 // load reports occupancy for the probe's saturation signal.
 func (a *requestAdmission) load() (active, max int) {
 	a.mu.Lock()
@@ -135,10 +160,15 @@ func (a *requestAdmission) load() (active, max int) {
 	return a.active, a.globalMax
 }
 
-func (a *requestAdmission) stats() admissionStats {
+func (a *requestAdmission) stats() requestAdmissionStats {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient}
+	return requestAdmissionStats{
+		admissionStats:        admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient},
+		activeSessions:        a.activeSessions,
+		sessionMax:            a.sessionMax,
+		rejectedSessionBudget: a.rejectedSessionBudget,
+	}
 }
 
 // wrap accounts one in-flight measurement request. publicOrigin is the

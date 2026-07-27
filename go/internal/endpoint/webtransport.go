@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,22 +37,15 @@ const wtDatagramPayload = 1000
 // parked one occupies a measurement slot.
 const wtVerifyLinger = 30 * time.Second
 
-// wtIdleBound closes a transfer session that carries nothing. A real one always
-// has bytes moving, so silence means the peer is gone without saying so. The
-// value is wire.WTIdleBound, the published contract both sides hold to; it is
-// held atomically here because session handlers read it on goroutines a test's
-// override races.
-var wtIdleBound atomic.Int64
+// The idle bound -- how long a session may carry nothing the peer sent before it
+// is closed -- is a constructor argument to each handler below rather than a
+// package value. It is wire.WTIdleBound in production, chosen by the server that
+// builds these handlers, which is where every other bound in this tree is
+// chosen too. As a package global it needed an atomic and an exported setter to
+// let a test shorten it, and the atomic existed only to paper over the race
+// that setter created.
 
-func init() { wtIdleBound.Store(int64(wire.WTIdleBound)) }
-
-// SetWTIdleBoundForTest shortens the idle bound so a test need not wait it out.
-func SetWTIdleBoundForTest(d time.Duration) func() {
-	previous := wtIdleBound.Swap(int64(d))
-	return func() { wtIdleBound.Store(previous) }
-}
-
-// sessionActivity ends a session once nothing has moved for wtIdleBound. Byte
+// sessionActivity ends a session once nothing has moved for the idle bound. Byte
 // paths bump a counter and a watchdog samples it, so no timer is armed per byte.
 type sessionActivity struct {
 	n      atomic.Uint64
@@ -97,11 +91,17 @@ func (a *sessionActivity) watch(ctx context.Context, bound time.Duration) {
 	}
 }
 
-type wtPing struct{ ping Endpoint }
+type wtPing struct {
+	ping      Endpoint
+	idleBound time.Duration
+}
 
 // NewWTPing serves the latency bus over session datagrams, where a ping that
-// never returns is real packet loss.
-func NewWTPing(ping Endpoint) WTHandler { return &wtPing{ping: ping} }
+// never returns is real packet loss. idleBound is how long a bus may carry
+// nothing the peer sent before it is reaped.
+func NewWTPing(ping Endpoint, idleBound time.Duration) WTHandler {
+	return &wtPing{ping: ping, idleBound: idleBound}
+}
 
 // HandleSession runs the echo loop under the same idle watchdog the transfer
 // sessions use. The bus stays on the request bound and the request bucket -- it
@@ -113,7 +113,7 @@ func NewWTPing(ping Endpoint) WTHandler { return &wtPing{ping: ping} }
 // visible idle browser keepalives at 1 s, and a hidden one closes its bus
 // rather than going quiet.
 func (h *wtPing) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
-	ctx, live := watchSession(ctx, time.Duration(wtIdleBound.Load()))
+	ctx, live := watchSession(ctx, h.idleBound)
 	bus := transport.NewWebTransportBusSession(ctx, liveDatagramConn{conn: sess, live: live}, r.URL.Query())
 	_ = h.ping.Handle(bus)
 }
@@ -136,13 +136,18 @@ func (c liveDatagramConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return data, err
 }
 
-type wtDownload struct{ download Endpoint }
+type wtDownload struct {
+	download  Endpoint
+	idleBound time.Duration
+}
 
 // NewWTDownload serves ?bytes= per lane on ?streams= server-opened streams,
 // each replaced when exhausted, or as a datagram flood repeated while the
 // session lives when ?datagrams= is set. bytes=0 establishes a session that
 // serves nothing, the transport check.
-func NewWTDownload(download Endpoint) WTHandler { return &wtDownload{download: download} }
+func NewWTDownload(download Endpoint, idleBound time.Duration) WTHandler {
+	return &wtDownload{download: download, idleBound: idleBound}
+}
 
 func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 	query := r.URL.Query()
@@ -159,28 +164,68 @@ func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Sessi
 		}
 		return
 	}
-	ctx, live := watchSession(ctx, time.Duration(wtIdleBound.Load()))
-	if query.Get("datagrams") != "" {
-		sink := &datagramSink{conn: sess, live: live}
+	ctx, live := watchSession(ctx, h.idleBound)
+	if wtDatagramMode(query) {
+		// The flood is this server's own traffic, so it cannot be what keeps the
+		// session alive: datagrams carry neither flow control nor an application
+		// acknowledgement, so a peer that stopped reading is indistinguishable
+		// from one consuming at line rate, and a sink that bumped per send held a
+		// session slot until the session bound. Only what the peer sends counts,
+		// exactly as the upload progress feed's heartbeat does not. The shipped
+		// browser client sends nothing on this direction, so the watchdog runs as
+		// a wall clock here and an abandoned flood is reclaimed on the idle bound;
+		// a peer that does keepalive extends it like any other received traffic.
+		go bumpOnPeerDatagrams(ctx, sess, live)
+		sink := &datagramSink{conn: sess}
 		for ctx.Err() == nil && !sink.failed {
 			_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, sink, nil, ""))
 		}
 		return
 	}
 	var wg sync.WaitGroup
+	lanes := wtSessionLanes{sess: sess}
 	for range wtStreamCount(query) {
-		wg.Go(func() { h.serveLane(ctx, sess, query, live) })
+		wg.Go(func() { h.serveLane(ctx, lanes, query, live) })
 	}
 	wg.Wait()
+}
+
+// laneStream is the server-opened stream one download lane writes on: the
+// bytes, the close that ends the lane, and the two methods
+// transport.UnblockWritesOnDone needs to release a write once the session ends.
+type laneStream interface {
+	io.WriteCloser
+	CancelWrite(webtransport.StreamErrorCode)
+	SetWriteDeadline(time.Time) error
+}
+
+// laneOpener opens the next lane of a download session. It is an interface for
+// the same reason datagramSink takes a transport.DatagramConn rather than a
+// session: the loop that replaces exhausted lanes -- and stops replacing them
+// for a peer that refuses every one -- is then testable without a QUIC
+// connection to refuse anything on.
+type laneOpener interface {
+	openLane(ctx context.Context) (laneStream, error)
+}
+
+// wtSessionLanes opens a real session's lanes.
+type wtSessionLanes struct{ sess *webtransport.Session }
+
+func (o wtSessionLanes) openLane(ctx context.Context) (laneStream, error) {
+	str, err := o.sess.OpenUniStreamSync(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return str, nil
 }
 
 // serveLane keeps one lane filled: open a stream, write the requested bytes,
 // close, replace, until the session ends. A lane that carried nothing means the
 // peer is resetting what it is handed, so the loop stops rather than reopening
 // streams at handshake speed for as long as the peer keeps refusing them.
-func (h *wtDownload) serveLane(ctx context.Context, sess *webtransport.Session, query url.Values, live *sessionActivity) {
+func (h *wtDownload) serveLane(ctx context.Context, lanes laneOpener, query url.Values, live *sessionActivity) {
 	for ctx.Err() == nil {
-		str, err := sess.OpenUniStreamSync(ctx)
+		str, err := lanes.openLane(ctx)
 		if err != nil {
 			return
 		}
@@ -213,6 +258,36 @@ func (c *laneWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// wtDatagramMode reports whether a session asked for the datagram variant.
+// Presence is the request, as api/wire.md documents -- but a spelling of zero
+// or false is not presence, it is a refusal, and "parse rather than compare
+// spellings" is the same rule bytes= follows eleven lines into HandleSession.
+// ?datagrams=0 asks for no datagrams and gets none.
+func wtDatagramMode(query url.Values) bool {
+	raw, ok := query["datagrams"]
+	if !ok || len(raw) == 0 {
+		return false
+	}
+	// A query decodes "+" to a space, so the wire spelling "+0" arrives as " 0":
+	// trimming is what makes every spelling of zero one answer rather than
+	// leaving one of them to fall through to presence.
+	value := strings.TrimSpace(raw[0])
+	if value == "" {
+		return true
+	}
+	if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return n != 0
+	}
+	switch strings.ToLower(value) {
+	case "false", "off", "no":
+		return false
+	}
+	// Unparseable but present: presence is the documented request, so an
+	// unreadable value falls back to it, as an unreadable bytes= falls back to
+	// the default size rather than to the park.
+	return true
+}
+
 func wtStreamCount(query url.Values) int {
 	n, err := strconv.Atoi(query.Get("streams"))
 	if err != nil || n < 1 {
@@ -222,15 +297,16 @@ func wtStreamCount(query url.Values) int {
 }
 
 type wtUpload struct {
-	upload   Endpoint
-	progress *UploadProgress
-	trusted  []netip.Prefix
+	upload    Endpoint
+	progress  *UploadProgress
+	trusted   []netip.Prefix
+	idleBound time.Duration
 }
 
 // NewWTUpload drains client-opened streams as upload lanes and serves the
 // progress feed on one server-opened stream from session establishment.
-func NewWTUpload(upload Endpoint, progress *UploadProgress, trusted []netip.Prefix) WTHandler {
-	return &wtUpload{upload: upload, progress: progress, trusted: trusted}
+func NewWTUpload(upload Endpoint, progress *UploadProgress, trusted []netip.Prefix, idleBound time.Duration) WTHandler {
+	return &wtUpload{upload: upload, progress: progress, trusted: trusted, idleBound: idleBound}
 }
 
 func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
@@ -240,9 +316,9 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 	owner := ClientKey(r, h.trusted)
 	// The progress feed is server-generated, so its heartbeat must not count as
 	// activity: only bytes the peer sent keep the session alive.
-	ctx, live := watchSession(ctx, time.Duration(wtIdleBound.Load()))
+	ctx, live := watchSession(ctx, h.idleBound)
 	go h.serveProgress(ctx, sess, query.Get("id"), owner)
-	if query.Get("datagrams") != "" {
+	if wtDatagramMode(query) {
 		go h.drainDatagrams(ctx, sess, query, owner, live)
 	}
 	// The client opens these, so the ceiling the download side applies to its
@@ -311,9 +387,18 @@ func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session
 // lane is bounded by inactivity rather than one absolute deadline, matching the
 // fetch path's per-POST bound.
 type idleTimeoutReader struct {
-	str     *webtransport.ReceiveStream
+	str     deadlineReader
 	timeout time.Duration
 	live    *sessionActivity
+}
+
+// deadlineReader is the half of a received stream idleTimeoutReader bounds: the
+// bytes, and the read deadline it re-arms before each of them.
+// *webtransport.ReceiveStream is the production one; naming the two methods is
+// what lets the re-arm be observed without a QUIC connection.
+type deadlineReader interface {
+	io.Reader
+	SetReadDeadline(time.Time) error
 }
 
 func (r idleTimeoutReader) Read(p []byte) (int, error) {
@@ -363,13 +448,27 @@ func (s *idleTimeoutSource) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// bumpOnPeerDatagrams keeps a session alive on what the peer sends and discards
+// it: the download direction carries no request, so a received datagram is a
+// keepalive and nothing more. It is the receive half of the rule
+// liveDatagramConn applies to the ping bus, applied where nothing else reads.
+func bumpOnPeerDatagrams(ctx context.Context, conn transport.DatagramConn, live *sessionActivity) {
+	for {
+		if _, err := conn.ReceiveDatagram(ctx); err != nil {
+			return
+		}
+		live.bump()
+	}
+}
+
 // datagramSink splits a download into unreliable datagrams. What arrives is
 // goodput; what does not is loss the client sees directly. SendDatagram blocks
 // on quic-go's bounded send queue, so the flood stays congestion-paced. failed
 // latches a send error, ending the flood loop without a context round trip.
+// It holds no sessionActivity: these are the server's own sends, and counting
+// them as liveness is what let an unread flood outlive its peer.
 type datagramSink struct {
 	conn   transport.DatagramConn
-	live   *sessionActivity
 	failed bool
 }
 
@@ -382,7 +481,6 @@ func (s *datagramSink) Write(p []byte) (int, error) {
 			return off, err
 		}
 	}
-	s.live.bump()
 	return len(p), nil
 }
 

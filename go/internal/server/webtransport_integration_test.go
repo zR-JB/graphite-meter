@@ -5,8 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,6 +61,14 @@ func (d *testWTDialer) armClose() {
 // one, no dialer.
 func wtTestOrigins(t *testing.T, tune func(*config.Config)) (string, string) {
 	t.Helper()
+	cfg := wtTestConfig(t, tune)
+	t.Cleanup(runUntilCancel(t, &cfg))
+	waitForOK(t, http.DefaultClient, "http://"+cfg.Native.H1+"/preflight")
+	return "https://" + cfg.Native.H3, "http://" + cfg.Native.H1
+}
+
+func wtTestConfig(t *testing.T, tune func(*config.Config)) config.Config {
+	t.Helper()
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	cfg := config.Default()
@@ -66,10 +78,50 @@ func wtTestOrigins(t *testing.T, tune func(*config.Config)) (string, string) {
 	if tune != nil {
 		tune(&cfg)
 	}
+	return cfg
+}
 
-	t.Cleanup(runUntilCancel(t, &cfg))
-	waitForOK(t, http.DefaultClient, "http://"+cfg.Native.H1+"/preflight")
-	return "https://" + cfg.Native.H3, "http://" + cfg.Native.H1
+// wtTestServerWithIdleBound is wtTestServerTuned for the tests that turn on the
+// WebTransport idle bound, which is 30 seconds in production and cannot be
+// waited out per test. The bound is a constructor argument to each session
+// handler, so choosing it means building the endpoints and then assembling the
+// listeners around them -- exactly what Run does, through the same two calls,
+// with the one value set in between. Nothing test-only ships in the handlers.
+func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*config.Config)) (string, string, *testWTDialer) {
+	t.Helper()
+	h3Base, httpBase, _ := wtShapedServer(t, tune, func(e *endpoints) { e.wtIdleBound = bound })
+	return h3Base, httpBase, &testWTDialer{Dialer: insecureWTDialer(), owner: t}
+}
+
+// wtShapedServer is the seam described above, generalized: shape runs on the
+// built endpoints between the two calls Run makes, and the endpoints come back
+// so a test can watch what the server observed or move a limit mid-run. Nothing
+// test-only ships in the handlers.
+func wtShapedServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (string, string, *endpoints) {
+	t.Helper()
+	cfg := wtTestConfig(t, tune)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	build, err := newListenerBuild(ctx, &cfg)
+	if err != nil {
+		t.Fatalf("build listeners: %v", err)
+	}
+	if shape != nil {
+		shape(build.e)
+	}
+	if err := build.assemble(); err != nil {
+		t.Fatalf("assemble listeners: %v", err)
+	}
+	for _, svc := range build.services {
+		run, stop := svc.run, svc.stop
+		go func() { _ = run() }()
+		t.Cleanup(func() { _ = stop(context.Background()) })
+	}
+
+	httpBase := "http://" + cfg.Native.H1
+	waitForOK(t, http.DefaultClient, httpBase+"/preflight")
+	return "https://" + cfg.Native.H3, httpBase, build.e
 }
 
 // insecureWTDialer dials a test listener's self-signed certificate. The caller
@@ -354,16 +406,106 @@ func TestWebTransportDatagramFloodRepeats(t *testing.T) {
 	}
 }
 
-// TestWebTransportVerifySessionServesNothing pins the bytes=0 transport check:
-// the session establishes and no stream arrives.
-func TestWebTransportVerifySessionServesNothing(t *testing.T) {
+// TestWebTransportVerifySessionLingersAndServesNothing pins the bytes=0
+// transport check, which is two properties and not one: nothing is served, and
+// the session lingers rather than closing at once, because its answer is the
+// handshake and the client is what closes it.
+//
+// Asserting only "no stream arrives" held in a world with no park at all: the
+// session is torn down before webtransport-go's asynchronous header write can
+// deliver the empty lane, so the accept fails either way. Each half is pinned
+// on its own here.
+func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	base, _, dialer := wtTestServer(t)
 	sess := dialWT(t, dialer, base+"/wt/download?bytes=0")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if str, err := sess.AcceptUniStream(ctx); err == nil {
 		t.Fatalf("verify session opened a stream: %v", str)
+	}
+	// A second's worth of accepting has passed, so a session that was going to
+	// be torn down has been. Whatever ended the accept, it was not that.
+	select {
+	case <-sess.Context().Done():
+		t.Fatal("verify session closed instead of lingering: its answer is the handshake, and the client is what closes it")
+	default:
+	}
+}
+
+// A stream download's liveness is the peer draining its lanes, and that is the
+// only thing keeping the session open: the watchdog reaps one that carries
+// nothing. With the bound cut far below the stage, a session being read has to
+// outlive it several times over, or a lane writer that stopped counting its
+// bytes would reap sessions at full throughput.
+func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
+	const bound = 300 * time.Millisecond
+	base, _, dialer := wtTestServerWithIdleBound(t, bound, nil)
+	sess := dialWT(t, dialer, base+"/wt/download?bytes=262144&streams=1")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Now()
+	deadline := start.Add(6 * bound)
+	var total int64
+	for time.Now().Before(deadline) {
+		str, err := sess.AcceptUniStream(ctx)
+		if err != nil {
+			t.Fatalf("the session was reaped after %v of continuous draining, %d bytes in, under a %v idle bound: %v",
+				time.Since(start), total, bound, err)
+		}
+		n, err := io.Copy(io.Discard, str)
+		total += n
+		if err != nil {
+			t.Fatalf("lane read failed after %v, %d bytes in: %v", time.Since(start), total, err)
+		}
+	}
+	if total == 0 {
+		t.Fatal("the session survived without carrying anything, so nothing about liveness was proved")
+	}
+}
+
+// An upload session carries only what the peer sends, and the one thing the
+// server puts on it -- the progress feed -- heartbeats forever. So nothing
+// about a silent upload session looks idle to the transport, and only the
+// watchdog reclaims it. Without one it holds its slot for the session bound.
+func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
+	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
+
+	// Dial an upload session with a real id and then send nothing at all.
+	dialWT(t, dialer, base+"/wt/upload?id="+mintUploadID(t, httpBase))
+	waitForLoad(t, httpBase, 1)
+	waitForLoad(t, httpBase, 0)
+}
+
+// A byte stream carries no channel to report a refusal on, so the refusal is the
+// reset. Whatever ended an upload lane -- a refused id, the idle bound, or a
+// clean end -- the stream is reset, or bytes the server will never read sit in
+// the session's flow-control window with the client parked on a write that
+// nothing will ever drain.
+func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
+	base, _, dialer := wtTestServer(t)
+	sess := dialWT(t, dialer, base+"/wt/upload?id=gmu_nosuchupload")
+
+	openCtx, cancelOpen := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelOpen()
+	lane, err := sess.OpenUniStreamSync(openCtx)
+	if err != nil {
+		t.Fatalf("open lane: %v", err)
+	}
+	// The deadline is the harness's only way out: an unreset lane parks on flow
+	// control once the window fills, and parking forever reports nothing.
+	if err := lane.SetWriteDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		t.Fatalf("lane write deadline: %v", err)
+	}
+	block := make([]byte, 64<<10)
+	for {
+		if _, err := lane.Write(block); err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatal("a refused upload lane was left open: the client parked on flow control instead of seeing the reset that is the only refusal a byte stream can carry")
+			}
+			return
+		}
 	}
 }
 
@@ -406,12 +548,28 @@ func waitForLoad(t *testing.T, httpBase string, want int) {
 // worker, a reloaded page and a dropped network all look like this, and before
 // the idle bound they held a slot until the session lifetime expired.
 func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
-	defer endpoint.SetWTIdleBoundForTest(300 * time.Millisecond)()
-	base, httpBase, dialer := wtTestServer(t)
+	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
 
 	// Never accept the lane. The server fills the flow-control window and then
 	// nothing moves, which is what an abandoned session looks like from here.
 	dialWT(t, dialer, base+"/wt/download?bytes=1073741824&streams=1")
+	waitForLoad(t, httpBase, 1)
+	waitForLoad(t, httpBase, 0)
+}
+
+// A datagram download is served entirely by the server: the peer sends nothing
+// on it, and datagrams have neither flow control nor an application-level
+// acknowledgement, so a client that stops reading and never closes looks exactly
+// like one consuming at line rate. Counting the server's own sends as activity
+// made that session immortal -- it held a session slot for the whole session
+// bound and burned uplink the entire time. Only what the peer sends may keep a
+// session alive, so an abandoned flood is reclaimed on the idle bound.
+func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
+	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
+
+	// Dial the flood and never read a datagram. A terminated worker, a
+	// backgrounded tab and a hostile client all look like this from the server.
+	dialWT(t, dialer, base+"/wt/download?bytes=2000&datagrams=1")
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
 }
@@ -421,14 +579,65 @@ func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
 // bound. QUIC's MaxIdleTimeout does not fire under keepalives, so a bus carrying
 // nothing looks alive to the transport and only the watchdog reclaims it.
 func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
-	defer endpoint.SetWTIdleBoundForTest(300 * time.Millisecond)()
-	base, httpBase, dialer := wtTestServer(t)
+	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
 
 	// Dial and then send nothing. A terminated worker, a reloaded page and a
 	// dropped network all look like this from the server.
 	dialWT(t, dialer, base+routeWTPing)
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
+}
+
+// wtOriginCheck is the ONLY origin policy a WebTransport CONNECT passes
+// through. The auth boundary deliberately skips the ambient-credential origin
+// rules for an extended CONNECT -- the credential there is non-ambient,
+// short-lived and consumed on arrival -- so serveWebTransportConnect never
+// consults originHeaderAllowed. Nothing else stands between a foreign page and
+// a session, and no test had ever presented the upgrade an Origin that was not
+// the server's own.
+func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
+	s := newAuthenticatedStack(t)
+
+	foreign := http.Header{"Origin": {"https://attacker.example"}}
+	res, sess, err := dialWTUntilAnswered(t, s.wtDialer(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
+	if err == nil {
+		_ = sess.CloseWithError(0, "")
+		t.Fatal("a CONNECT carrying a foreign Origin opened a session")
+	}
+	if res == nil {
+		t.Fatalf("foreign-Origin CONNECT failed without a response: %v", err)
+	}
+	if res.StatusCode == http.StatusOK {
+		t.Fatalf("foreign-Origin CONNECT status=%d, want a refusal", res.StatusCode)
+	}
+
+	// The control: the same credential, the same dialer and the same header, and
+	// only the origin canonical. Without it a refusal of everything -- a broken
+	// token, a rejected header -- would read as the origin policy working.
+	res, sess, err = dialWTUntilAnswered(t, s.wtDialer(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
+	if err != nil {
+		t.Fatalf("CONNECT from the canonical origin was refused with status=%v: %v", res, err)
+	}
+	_ = sess.CloseWithError(0, "")
+}
+
+// dialWTUntilAnswered dials until the listener answers, so a QUIC listener
+// still coming up is not read as a refusal. A response means the server
+// answered: that is the outcome, whatever it says.
+func dialWTUntilAnswered(t *testing.T, d *webtransport.Dialer, target string, hdr http.Header) (*http.Response, *webtransport.Session, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		res, sess, err := d.Dial(ctx, target, hdr)
+		if err == nil || res != nil {
+			return res, sess, err
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("dial %s: %v", target, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // wtTestServerTuned must not arm a cleanup that closes a dialer its caller never
@@ -447,8 +656,7 @@ func TestWTTestServerLeavesAnUndialedDialerAlone(t *testing.T) {
 // many times it does. Abandoning a session per attempt is what a terminated
 // worker looks like, and before the idle bound the second attempt was refused.
 func TestFlappingWebTransportLaneCostsOneSlot(t *testing.T) {
-	defer endpoint.SetWTIdleBoundForTest(300 * time.Millisecond)()
-	base, httpBase, dialer := wtTestServerTuned(t, func(c *config.Config) {
+	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, func(c *config.Config) {
 		c.MaxSessionsPerClient = 1
 	})
 
@@ -628,6 +836,357 @@ func TestGoClientOutlivesSessionBoundOverWebTransport(t *testing.T) {
 // and leave the WebSocket reconnect untested.
 func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
 	runGoClientUnderLifetimeCaps(t, "fetch-stream", "websocket")
+}
+
+// wtObservedSession is what one WebTransport session looked like from inside the
+// endpoint it drove: how many lanes it ran in total, and the most it ran at once.
+type wtObservedSession struct{ lanes, live, peak int }
+
+// wtLaneCounter wraps a transfer endpoint and records what the server itself saw
+// on the WebTransport side of it. A session's context is its identity here --
+// endpoint/webtransport.go builds one per accepted session and hands it to every
+// lane on that session -- so a client that replaced its session shows up as a
+// second entry, which is the only way this side of the wire can tell a recycled
+// session from a reopened lane.
+//
+// The HTTP routes share these endpoints, so anything that is not a WebTransport
+// session passes straight through uncounted.
+type wtLaneCounter struct {
+	endpoint.Endpoint
+	// cut, when set, is consulted once per WebTransport lane and returns how long
+	// that lane may carry bytes before the endpoint gives up on it; zero serves it
+	// normally. Ending a lane early is what makes endpoint/webtransport.go reset
+	// the client's stream, which is the only refusal a byte stream can carry. It
+	// is set before assemble and never written again.
+	cut func(lane int) time.Duration
+
+	mu       sync.Mutex
+	byCtx    map[context.Context]*wtObservedSession
+	sessions []*wtObservedSession
+	lanes    int
+}
+
+func (c *wtLaneCounter) Handle(s transport.Session) error {
+	if s.Proto() != transport.ProtoWebTransport {
+		return c.Endpoint.Handle(s)
+	}
+	obs, lane := c.enterLane(s.Context())
+	defer c.leaveLane(obs)
+	if c.cut != nil {
+		if window := c.cut(lane); window > 0 {
+			return c.Endpoint.Handle(cutLaneSession{Session: s, until: time.Now().Add(window)})
+		}
+	}
+	return c.Endpoint.Handle(s)
+}
+
+func (c *wtLaneCounter) enterLane(ctx context.Context) (*wtObservedSession, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.byCtx == nil {
+		c.byCtx = map[context.Context]*wtObservedSession{}
+	}
+	obs, ok := c.byCtx[ctx]
+	if !ok {
+		obs = &wtObservedSession{}
+		c.byCtx[ctx] = obs
+		c.sessions = append(c.sessions, obs)
+	}
+	c.lanes++
+	obs.lanes++
+	if obs.live++; obs.live > obs.peak {
+		obs.peak = obs.live
+	}
+	return obs, c.lanes
+}
+
+func (c *wtLaneCounter) leaveLane(obs *wtObservedSession) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	obs.live--
+}
+
+// observed returns one entry per WebTransport session, in the order they first
+// carried a lane.
+func (c *wtLaneCounter) observed() []wtObservedSession {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]wtObservedSession, 0, len(c.sessions))
+	for _, s := range c.sessions {
+		out = append(out, *s)
+	}
+	return out
+}
+
+// reset forgets every session, so one server can serve several runs and each
+// still be read on its own.
+func (c *wtLaneCounter) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byCtx, c.sessions, c.lanes = nil, nil, 0
+}
+
+// cutLaneSession serves a lane's source only until its deadline. The source
+// ending is a clean end as far as the endpoint is concerned, and the
+// WebTransport upload handler resets every lane it finishes with, so what the
+// client meets is a stream reset mid-transfer. The bound is time rather than a
+// byte count: a count lands at whatever moment the link happens to reach it.
+type cutLaneSession struct {
+	transport.Session
+	until time.Time
+}
+
+func (s cutLaneSession) OpenUploadSource() (io.Reader, error) {
+	src, err := s.Session.OpenUploadSource()
+	if err != nil {
+		return nil, err
+	}
+	return &deadlineSource{src: src, until: s.until}, nil
+}
+
+// ClientOwner is not part of transport.Session, so embedding one does not carry
+// it. The upload endpoint reads the owner off the session by assertion, and a
+// lost owner would refuse the lane as another client's rather than serve it.
+func (s cutLaneSession) ClientOwner() string {
+	if owner, ok := s.Session.(interface{ ClientOwner() string }); ok {
+		return owner.ClientOwner()
+	}
+	return ""
+}
+
+type deadlineSource struct {
+	src   io.Reader
+	until time.Time
+}
+
+func (r *deadlineSource) Read(p []byte) (int, error) {
+	if !time.Now().Before(r.until) {
+		return 0, io.EOF
+	}
+	return r.src.Read(p)
+}
+
+// closeSessionBudget refuses every later WebTransport session with the 503 a
+// saturated session budget answers.
+//
+// Parked sessions cannot hold the budget shut here, and the arithmetic is why:
+// the client's own session, dying on the session bound, hands back the very slot
+// its redial needs, so parked sessions can only ever occupy sessionMax-1 of the
+// budget at that instant and whichever of the two dials the freed slot first is a
+// race. Moving the ceiling instead reaches the same acquire() refusal, with the
+// same status and the same Retry-After, at a moment the test chooses.
+func closeSessionBudget(a *requestAdmission) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessionMax = 0
+}
+
+// wtClientConfig is the shipped client pointed at a test server over
+// WebTransport, with the stage durations left to the caller. Loaded latency is
+// off: these tests are about the transfer session, and a probe riding alongside
+// it puts a second transport and a second per-stage result into the picture.
+func wtClientConfig(httpBase string) goclient.Config {
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = httpBase
+	cfg.ThroughputTransport = wire.TransportWebTransport
+	cfg.InsecureSkipTLSVerify = true
+	cfg.LoadedLatency = false
+	cfg.Warmup = 100 * time.Millisecond
+	return cfg
+}
+
+// A session that is refused for the rest of a measured window has to fail the
+// stage. The window's clock runs whether or not a session is up, so the bytes
+// that did move divided by the window they did not move over is not a rate: this
+// stage reported roughly a fifth of the truth as a completed result, MeanBps and
+// all, and returned no error to say so. A wrong number published as a
+// measurement is worse than no measurement.
+func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
+	_, httpBase, e := wtShapedServer(t, func(c *config.Config) {
+		// The session bound kills the stage's session a fifth of the way into the
+		// window; the closed budget is what stops it coming back.
+		c.MaxOperationDuration = 2 * time.Second
+		c.MaxSessionDuration = 2 * time.Second
+	}, nil)
+
+	clientCfg := wtClientConfig(httpBase)
+	clientCfg.Stages = goclient.StageSet{Download: true}
+	clientCfg.DownloadDuration = 10 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	closed, downloadResults := false, 0
+	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch ev.Kind {
+		case goclient.EventThroughput:
+			// Bytes are moving inside the measured window, so the stage's own
+			// session is established: shutting the budget now refuses the
+			// replacement rather than the original.
+			if !closed {
+				closed = true
+				closeSessionBudget(e.admission)
+			}
+		case goclient.EventResult:
+			if ev.Stage == "download" {
+				downloadResults++
+			}
+		}
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !closed {
+		t.Fatal("the stage never reported a throughput sample, so the session budget was never shut and nothing was tested")
+	}
+	if err == nil {
+		t.Fatal("a download whose session was refused for the rest of its window returned no error: the shortfall is being published as a rate")
+	}
+	const want = "webtransport session lost and not replaced within 2s"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("stage err = %q, want it to name the unreplaced session (%q)", err, want)
+	}
+	if downloadResults != 0 {
+		t.Fatalf("the failed download emitted %d result events; a stage that could not measure must publish no number at all", downloadResults)
+	}
+}
+
+// The published lane range is 1..16 over WebTransport, and nothing ran the top of
+// it end to end. These are whole client runs at 4 and 16 lanes per direction,
+// against the single-lane run as the control.
+func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
+	down, up := &wtLaneCounter{}, &wtLaneCounter{}
+	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
+		down.Endpoint, up.Endpoint = e.download, e.upload
+		e.download, e.upload = down, up
+	})
+
+	run := func(t *testing.T, streams int) map[string]goclient.Result {
+		t.Helper()
+		down.reset()
+		up.reset()
+		clientCfg := wtClientConfig(httpBase)
+		clientCfg.Stages = goclient.StageSet{Download: true, Upload: true}
+		clientCfg.DownloadDuration = 700 * time.Millisecond
+		clientCfg.UploadDuration = 700 * time.Millisecond
+		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		results := map[string]goclient.Result{}
+		err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
+			if ev.Kind == goclient.EventResult && ev.Result != nil {
+				results[ev.Stage] = *ev.Result
+			}
+		})
+		if err != nil {
+			t.Fatalf("run at %d lanes: %v", streams, err)
+		}
+		// The server opens the download lanes and the client opens the upload
+		// ones, so both directions are checked against what the server saw.
+		for name, counter := range map[string]*wtLaneCounter{"download": down, "upload": up} {
+			observed := counter.observed()
+			if len(observed) != 1 {
+				t.Fatalf("%s at %d lanes ran on %d WebTransport sessions, want exactly 1", name, streams, len(observed))
+			}
+			if observed[0].peak != streams {
+				t.Errorf("the server saw %d concurrent %s lanes at --streams %d, want %d", observed[0].peak, name, streams, streams)
+			}
+			if got := results[name].TotalBytes; got == 0 {
+				t.Errorf("%s at %d lanes moved no bytes", name, streams)
+			}
+		}
+		return results
+	}
+
+	var single map[string]goclient.Result
+	t.Run("1", func(t *testing.T) { single = run(t, 1) })
+	if single == nil {
+		t.Fatal("the single-lane control did not run, so there is nothing to compare against")
+	}
+	for _, streams := range []int{4, 16} {
+		t.Run(strconv.Itoa(streams), func(t *testing.T) {
+			results := run(t, streams)
+			// A loose band on purpose: loopback rates swing run to run, so what is
+			// pinned is that splitting the transfer across lanes does not collapse
+			// or run away with it, not any particular speedup.
+			const factor = 10
+			for _, stage := range []string{"download", "upload"} {
+				got, base := results[stage].MeanBps, single[stage].MeanBps
+				if base <= 0 {
+					t.Fatalf("the single-lane %s control reported %v B/s, so the comparison is meaningless", stage, base)
+				}
+				if got < base/factor || got > base*factor {
+					t.Errorf("%s at %d lanes ran at %.0f B/s against %.0f B/s on one lane, outside a factor of %d",
+						stage, streams, got, base, factor)
+				}
+			}
+		})
+	}
+}
+
+// One lane's stream failing is not a lost session. Every lane shares the one
+// session, so replacing it to serve a single lane's retry stops every sibling
+// mid-transfer -- and the lane that faulted is the one thing that did not need
+// it. Here the server resets exactly one lane mid-transfer and the session must
+// carry on: the reset lane reopens on the same session, and the server sees no
+// second one.
+func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
+	const lanes = 4
+	up := &wtLaneCounter{}
+	var cuts atomic.Int64
+	// The second lane the session runs, cut once it has carried bytes for long
+	// enough that the client reads the fault as a mid-transfer stream error
+	// rather than a lane that never started.
+	up.cut = func(lane int) time.Duration {
+		if lane != 2 {
+			return 0
+		}
+		cuts.Add(1)
+		return 700 * time.Millisecond
+	}
+	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
+		up.Endpoint = e.upload
+		e.upload = up
+	})
+
+	clientCfg := wtClientConfig(httpBase)
+	clientCfg.Stages = goclient.StageSet{Upload: true}
+	clientCfg.UploadDuration = 3 * time.Second
+	clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: lanes}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	results := map[string]goclient.Result{}
+	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
+		if ev.Kind == goclient.EventResult && ev.Result != nil {
+			results[ev.Stage] = *ev.Result
+		}
+	})
+	if err != nil {
+		t.Fatalf("a single reset lane failed the whole upload stage: %v", err)
+	}
+	if cuts.Load() != 1 {
+		t.Fatalf("the server reset %d lanes, want exactly 1: nothing about a single lane's fault was tested", cuts.Load())
+	}
+
+	observed := up.observed()
+	if len(observed) != 1 {
+		t.Fatalf("a reset lane cost the stage %d WebTransport sessions, want 1: replacing the session stops every sibling lane mid-transfer to serve the retry of the one that faulted", len(observed))
+	}
+	// The reset lane reopened on that same session: the original lanes plus at
+	// least one replacement.
+	if observed[0].lanes < lanes+1 {
+		t.Errorf("the session ran %d lanes in total, want at least %d: the reset lane never came back", observed[0].lanes, lanes+1)
+	}
+	if observed[0].peak != lanes {
+		t.Errorf("the server saw %d concurrent lanes, want %d", observed[0].peak, lanes)
+	}
+	if got := results["upload"].TotalBytes; got == 0 {
+		t.Error("the sibling lanes moved no bytes across the reset")
+	}
 }
 
 // firstProgressTypeIs reports whether the FIRST non-blank record has this type.

@@ -16,9 +16,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
-	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -36,6 +34,9 @@ type authenticatedStack struct {
 func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
+	// One port for the UDP listener and its TCP Alt-Svc companion, as
+	// TestRunServesH3 does.
+	cfg.Native.H3 = freeTCPAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -44,10 +45,6 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 		t.Fatal(err)
 	}
 	h2Ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h3PC, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,23 +69,19 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
 
-	// Mirrors assembleH3: the session routes ride the same listener behind the
-	// same boundary, so the CONNECT credential is exercised where it is served.
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig()}
-	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(authn)}
-	webtransport.ConfigureHTTP3Server(h3)
-	h3Mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true, wt: wt}, http.NotFoundHandler(), authn)
-	h3.Handler = authn.Enforce(h3Mux, auth.Listener{WebTransport: true})
-	// Served through the WebTransport server, as assembleH3 does: it is what
-	// demultiplexes a session's streams and datagrams off the QUIC connection,
-	// and it serves the plain HTTP/3 requests on it too.
-	quicTransport := &quic.Transport{Conn: h3PC}
-	quicLn, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
-	if err != nil {
+	// assembleH3 builds the HTTP/3 listener, rather than a copy of it here: the
+	// browser CONNECT path hangs entirely on the auth.Listener{WebTransport:
+	// true} it passes to Enforce, and a mirrored construction pins nothing.
+	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm,
+		connections: newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)}
+	if err := build.assembleH3(); err != nil {
 		t.Fatal(err)
 	}
-	go func() { _ = serveWebTransport(ctx, wt, quicLn) }()
-	t.Cleanup(func() { _ = wt.Close(); _ = quicLn.Close(); _ = quicTransport.Close() })
+	for _, svc := range build.services {
+		run, stop := svc.run, svc.stop
+		go func() { _ = run() }()
+		t.Cleanup(func() { _ = stop(context.Background()) })
+	}
 
 	uiProtocols := &http.Protocols{}
 	uiProtocols.SetHTTP1(true)
@@ -107,7 +100,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	s := &authenticatedStack{
 		authn: authn, origin: origin,
 		h2URL:    "https://" + h2Ln.Addr().String(),
-		h3URL:    "https://" + h3PC.LocalAddr().String(),
+		h3URL:    "https://" + cfg.Native.H3,
 		uiClient: &http.Client{Transport: uiTransport, CheckRedirect: noRedirect},
 		h2Client: &http.Client{Transport: h2Transport, CheckRedirect: noRedirect},
 		h3Client: &http.Client{Transport: h3Transport, CheckRedirect: noRedirect},
