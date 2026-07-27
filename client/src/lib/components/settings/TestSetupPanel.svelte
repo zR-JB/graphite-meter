@@ -467,8 +467,13 @@
       stream redelivers.
     </p>
     {#if store.config.experimentalDatagramThroughput || datagramSelected}
-      <p class="caution">
-        <strong>Loss diagnostic, not a speed test.</strong> Nothing is retransmitted
+      <!-- Appears when the setting or the selection turns it on, so it is
+           announced like ConnectivityIndicator's status rather than asserted
+           like LatencyProfile's alert: nothing has gone wrong yet. Its severity
+           is carried by the leading word, not only by the warn colour, so it
+           survives monochrome and high-contrast rendering. -->
+      <p class="caution" role="status">
+        <strong>Caution — loss diagnostic, not a speed test.</strong> Nothing is retransmitted
         here, so missing goodput is real packet loss — that is what this mode measures.
         Its rate is not comparable to the stream card: browsers hand over one datagram
         per call, and on a fast link that cost, rather than the connection, is what

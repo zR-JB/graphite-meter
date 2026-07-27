@@ -5,6 +5,7 @@
   import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { buildSegments } from "../runner/schedule";
   import { httpProtocolLabel } from "../runner/protocol";
+  import { serverLoadSummary } from "./endpointInfo";
   import type { TransportKind } from "../runner/contract";
 
   type PathRole = "throughput" | "latency";
@@ -90,17 +91,16 @@
     if (!value || value === "dummy") return value ?? "—";
     return `${value.slice(0, 8)}…`;
   });
-  // Concurrent tests contend for bandwidth and CPU; past half occupancy the
-  // caution tells the user their numbers may reflect the neighbors.
-  const serverLoad = $derived.by(() => {
-    const load = store.infra?.serverLoad;
-    if (!load) return null;
-    const busy = load.max > 0 && load.active / load.max >= 0.5;
-    return {
-      text: `${load.active} of ${load.max} slots`,
-      caution: busy ? "server busy — results may be affected" : null,
-    };
-  });
+  const serverLoad = $derived(serverLoadSummary(store.infra?.serverLoad));
+
+  // Every row here reads the same presentation the path cards do. `store.infra`
+  // is the last probe's evidence, which outlives the selection that produced it
+  // and is never cleared: reading it directly makes the drawer contradict the
+  // card four lines above whenever a role is failed, checking, or moved.
+  const throughputTransport = $derived(
+    connections.throughput.target?.transport,
+  );
+  const latencyTransport = $derived(connections.latency.target?.transport);
 
   // The lanes a stage opens depend on what it carries, so the run's own
   // timeline supplies the stages the count is resolved from.
@@ -110,8 +110,9 @@
       buildSegments(store.runConfig).segments.map(
         (segment) => segment.activity,
       ),
-      store.infra?.selectedThroughputProtocol,
-      store.infra?.selectedThroughputTransport,
+      connections.throughput.observedProtocol ??
+        connections.throughput.target?.protocol,
+      throughputTransport,
     ),
   );
 
@@ -242,17 +243,13 @@
         <div>
           <dt>Transports</dt>
           <dd>
-            {store.infra?.selectedThroughputTransport ?? "—"} · {store.infra
-              ?.selectedLatencyTransport ?? "—"}
+            {throughputTransport ?? "—"} · {latencyTransport ?? "—"}
           </dd>
         </div>
         {#if serverLoad}
           <div>
             <dt>Server load</dt>
-            <dd>
-              {serverLoad.text}{#if serverLoad.caution}
-                · {serverLoad.caution}{/if}
-            </dd>
+            <dd>{serverLoad}</dd>
           </div>
         {/if}
         <div>
