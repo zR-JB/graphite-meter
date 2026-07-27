@@ -138,12 +138,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		s.writeGrantPending(w)
 		return
 	}
-	grant, err := randomToken(32)
-	if err != nil {
-		s.mu.Unlock()
-		s.writeGrantPending(w)
-		return
-	}
+	grant := randomToken(32)
 	// The approval is consumed only once a grant exists: an RNG failure must not
 	// cost the operator a second browser confirmation.
 	delete(s.approvals, challenge)

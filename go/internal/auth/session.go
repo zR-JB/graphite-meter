@@ -45,19 +45,9 @@ func (s *Service) createSession(subject, name, provider string, expires time.Tim
 	if expires.IsZero() || expires.After(latest) {
 		expires = latest
 	}
-	raw, err := randomToken(32)
-	if err != nil {
-		return "", nil, err
-	}
+	raw := randomToken(32)
 	h := sha256.Sum256([]byte(raw))
-	csrf, err := randomToken(32)
-	if err != nil {
-		return "", nil, err
-	}
-	id, err := randomToken(16)
-	if err != nil {
-		return "", nil, err
-	}
+	csrf, id := randomToken(32), randomToken(16)
 	ctx, cancel := context.WithDeadline(context.Background(), expires)
 	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]struct{}{}, wtTokens: map[[32]byte]struct{}{}, csrf: csrf}
 	s.mu.Lock()
@@ -156,12 +146,12 @@ func (s *Service) sweep(ctx context.Context) {
 	}
 }
 
-func randomToken(n int) (string, error) {
+// randomToken is n CSPRNG bytes, base64url. crypto/rand.Read never returns an
+// error; it crashes the program rather than handing back weak bytes.
+func randomToken(n int) string {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {

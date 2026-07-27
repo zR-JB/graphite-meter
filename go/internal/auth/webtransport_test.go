@@ -187,10 +187,7 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 // grant and the browser login that approved it are one session.
 func grantFor(t *testing.T, s *Service, sess *session) string {
 	t.Helper()
-	grant, err := randomToken(32)
-	if err != nil {
-		t.Fatal(err)
-	}
+	grant := randomToken(32)
 	h := sha256.Sum256([]byte(grant))
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -12,11 +12,7 @@ import (
 
 func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
-	csrf, err := randomToken(32)
-	if err != nil {
-		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
-		return
-	}
+	csrf := randomToken(32)
 	setSessionCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute))
 	data := loginView{
 		Styles: authStyles, CSRF: csrf,

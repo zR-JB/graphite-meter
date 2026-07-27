@@ -49,11 +49,7 @@ func (s *Service) MintWebTransportSessionToken(r *http.Request) (token string, e
 	if !hasPrincipal || p.session == nil || p.Bearer {
 		return "", time.Time{}, WTMintNoSession
 	}
-	raw, err := randomToken(32)
-	if err != nil {
-		return "", time.Time{}, WTMintNoSession
-	}
-	token = wtTokenPrefix + raw
+	token = wtTokenPrefix + randomToken(32)
 	h := sha256.Sum256([]byte(token))
 	now := s.now()
 	expires = now.Add(wtTokenLifetime)
@@ -123,11 +119,9 @@ func isWebTransportRoute(path string) bool {
 // and its session lifetime, and skips the ambient-credential origin rules: this
 // credential is non-ambient, short-lived, and consumed on arrival.
 //
-// Only those two are consulted. The session cookie is ambient, and the origin,
-// Sec-Fetch-Site and double-submit rules that make an ambient credential safe on
-// serveAuthenticated are deliberately absent here, so a cookie must not
-// authenticate a CONNECT even if a browser were to attach one. That keeps the
-// claim above true by construction rather than by browser behaviour.
+// Those two and nothing else. The session cookie is ambient, so it must not
+// authenticate a CONNECT even if a browser attached one — which keeps the claim
+// above true by construction rather than by browser behaviour.
 func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
 	if !t.Secure {
 		s.writeAuthRequired(w, r, listener)
