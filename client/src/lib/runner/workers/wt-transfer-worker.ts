@@ -1,21 +1,18 @@
-/* ============================================================
- * The Graphite Meter: WebTransport transfer worker
- * ============================================================
- * One worker per direction, owning the session and every lane stream on it.
- * A WebTransport object cannot be transferred and a transferred stream still
- * pumps its chunks through the owning realm, so lanes cannot be split across
- * workers the way fetch lanes are.
+/* One worker per direction, owning the session and every lane stream on it: a
+ * WebTransport object cannot be transferred, and a transferred stream still
+ * pumps through the owning realm, so lanes cannot be split across workers the
+ * way fetch lanes are.
  *
- * Streams carry raw bytes end to end; the session URL carries every parameter.
- * The server opens the download lanes and the upload progress feed, so this
- * worker reads incoming streams for both and only opens the upload lanes.
- * ============================================================ */
+ * Streams carry raw bytes; the session URL carries every parameter. The server
+ * opens the download lanes and the upload progress feed, so this worker reads
+ * incoming streams for both and opens only the upload lanes. */
 
 import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
 import { ProgressWindow, type ProgressDelta } from "./progressWindow";
+import { taskTurn } from "./taskTurn";
 import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
 type InMsg =
@@ -53,9 +50,9 @@ const ALIVE_GAP_MS = 250;
  *  queue is dispatched only across a task, and both datagram loops can have
  *  their sole suspension settled by the transport within one microtask
  *  checkpoint, which would leave the loop outrunning the queue carrying its own
- *  `stop`. Yielding per packet would price a task turn into every packet of a
+ *  `stop`. Yielding per packet would price a turn into every packet of a
  *  measurement path; taking one on an interval bounds the starvation window to
- *  this gap at one timer per gap, whatever the packet rate. */
+ *  this gap at one turn per gap, whatever the packet rate. */
 const YIELD_GAP_MS = 4;
 
 /** Bytes per WebTransport stream write. */
@@ -63,10 +60,6 @@ const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Session congestion control hint. */
 const CONGESTION_CONTROL: WebTransportCongestionControl = "throughput";
-
-/** A task turn: a microtask checkpoint dispatches no `message` event. */
-const taskTurn = (): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve));
 
 let lastAlive = 0;
 
