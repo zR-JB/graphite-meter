@@ -34,6 +34,8 @@ export interface UploadProgressLane {
 
 export interface UploadProgressDeps {
   host: () => CoreHost;
+  /** False while another required direction, or this upload, is stalled. */
+  sampleProvesStageLiveness?: () => boolean;
   target: () => FetchThroughputTarget | null;
   /** The "up" lane, or undefined once the stage is torn down. */
   lane: () => UploadProgressLane | undefined;
@@ -304,7 +306,14 @@ export class UploadProgressChannel {
     this.#curveBytes = this.#serverBytes;
     this.#curveNs = serverNs;
     if (frameSec > 0) {
-      host.ingestThroughput("up", delta / frameSec, delta, frameSec, true);
+      host.ingestThroughput(
+        "up",
+        delta / frameSec,
+        delta,
+        frameSec,
+        true,
+        this.#deps.sampleProvesStageLiveness?.() ?? true,
+      );
     }
     if (delta > 0) {
       this.#deps.setLaneStalled(false);

@@ -121,6 +121,7 @@ export class RealBackend implements RunnerBackend {
   /** The server-authoritative upload meter (up stage only). */
   #uploadProgress = new UploadProgressChannel({
     host: () => this.#host!,
+    sampleProvesStageLiveness: () => !this.#stalled,
     target: () => this.#throughputTarget,
     lane: () => this.#lanes.up,
     transferActive: () => this.#transferActive,
@@ -132,6 +133,7 @@ export class RealBackend implements RunnerBackend {
   /** What every transfer direction of the stage is given. */
   #directionHost: DirectionHost = {
     host: () => this.#host!,
+    sampleProvesStageLiveness: () => !this.#stalled,
     stallChanged: (detail) => this.#reconcileStall(detail),
     uploadProgress: (msg) => this.#uploadProgress.accept(msg),
     beginUploadMeasure: () => this.#uploadProgress.beginMeasure(),

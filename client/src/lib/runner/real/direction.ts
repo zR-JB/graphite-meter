@@ -31,6 +31,9 @@ interface ClientByteAggregation {
 /** What a direction needs from the stage that owns it. */
 export interface DirectionHost {
   host: () => CoreHost;
+  /** Whether a sample can prove the whole stage live. A healthy sibling's
+   *  bytes remain accounted while another required direction is stalled. */
+  sampleProvesStageLiveness?: () => boolean;
   /** This direction's stall state flipped; the stage combines the directions. */
   stallChanged: (detail?: string) => void;
   /** A server upload-progress record relayed by a session lane. */
@@ -254,7 +257,14 @@ export class TransferDirection {
     }
     this.#deps
       .host()
-      .ingestThroughput(this.dir, bytesPerSec, delta, durationSec);
+      .ingestThroughput(
+        this.dir,
+        bytesPerSec,
+        delta,
+        durationSec,
+        false,
+        this.#deps.sampleProvesStageLiveness?.() ?? true,
+      );
     // Verbose: the pool's combined raw rate at 1 Hz, the sum the core smooths.
     // Compare it to the per-worker logs and the server figure to locate losses.
     if (debugEnabled()) {

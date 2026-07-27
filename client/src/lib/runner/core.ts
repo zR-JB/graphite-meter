@@ -62,6 +62,8 @@ export interface CoreHost {
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative?: boolean,
+    /** Whether this sample proves every required direction is healthy. */
+    provesLiveness?: boolean,
   ): void;
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
@@ -521,6 +523,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative = false,
+    provesLiveness = true,
   ): void {
     const cfg = this.#cfg;
     if (!cfg) return;
@@ -530,7 +533,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
       return;
     // Zero-byte samples retain time but cannot prove delivery or clear a stall.
-    if (bytesDelta > 0) this.#noteRealSample();
+    if (bytesDelta > 0 && provesLiveness) this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
     // De-alias the rate twice from one raw sample: fast `display` for the UI,
     // slow `stable` for the confidence accumulator. Byte totals stay exact.

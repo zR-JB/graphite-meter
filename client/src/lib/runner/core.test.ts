@@ -594,6 +594,51 @@ test("a real sample arriving mid-stall auto-resumes", async () => {
   expect(events.some((e) => e.type === "resume")).toBe(true);
 });
 
+test("a healthy sibling's bytes do not resume a stalled bidirectional stage", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  await core.start(
+    makeConfig({
+      stages: { download: false, bidirectional: true },
+      duration: { bidirectionalMs: 60_000 },
+    }),
+  );
+  core.stall({ reason: "connection-lost" });
+
+  // Download still moves and must remain accounted, but upload is stalled, so
+  // this sample cannot validate the combined stage or refresh its watchdog.
+  core.ingestThroughput("down", 1000, 100, 0.1, false, false);
+  expect(events.some((e) => e.type === "resume")).toBe(false);
+
+  advance(20_001);
+  expect(core.phase).toBe("error");
+});
+
+test("a non-liveness throughput sample remains in the result", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  let complete: Extract<RunnerEvent, { type: "complete" }> | undefined;
+  core.on((event) => {
+    if (event.type === "complete") complete = event;
+  });
+
+  await core.start(
+    makeConfig({
+      stages: { download: false, bidirectional: true },
+      duration: { bidirectionalMs: 100 },
+    }),
+  );
+  core.stall({ reason: "connection-lost" });
+  core.ingestThroughput("down", 1000, 100, 0.1, false, false);
+  core.resume();
+  advance(100);
+
+  expect(complete?.result.bidirectional?.down.totalBytes).toBe(100);
+});
+
 test("a stall that outlives max-stall escalates to a terminal failure", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

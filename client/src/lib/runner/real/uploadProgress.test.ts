@@ -43,14 +43,19 @@ const target: FetchThroughputTarget = {
   },
 };
 
-function channelUnderTest(laneState: Partial<UploadProgressLane> = {}): {
+function channelUnderTest(
+  laneState: Partial<UploadProgressLane> = {},
+  sampleProvesStageLiveness = true,
+): {
   channel: UploadProgressChannel;
   failures: string[];
   curve: number[];
+  liveness: boolean[];
 } {
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
   const curve: number[] = [];
+  const liveness: boolean[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
@@ -64,13 +69,22 @@ function channelUnderTest(laneState: Partial<UploadProgressLane> = {}): {
     fail(_reason: string, message: string) {
       failures.push(message);
     },
-    ingestThroughput(_dir: string, _rate: number, bytesDelta: number) {
+    ingestThroughput(
+      _dir: string,
+      _rate: number,
+      bytesDelta: number,
+      _duration: number,
+      _authoritative: boolean,
+      provesLiveness = true,
+    ) {
       curve.push(bytesDelta);
+      liveness.push(provesLiveness);
     },
   } as unknown as CoreHost;
   return {
     channel: new UploadProgressChannel({
       host: () => host,
+      sampleProvesStageLiveness: () => sampleProvesStageLiveness,
       target: () => target,
       lane: () => lane,
       transferActive: () => true,
@@ -79,6 +93,7 @@ function channelUnderTest(laneState: Partial<UploadProgressLane> = {}): {
     }),
     failures,
     curve,
+    liveness,
   };
 }
 
@@ -142,6 +157,19 @@ test("a server count that arrives behind the last one does not move the curve", 
   channel.accept({ type: "bytes", n: 500, t: 3_000_000_000 });
   channel.accept({ type: "bytes", n: 2600, t: 4_000_000_000 });
   expect(curve).toEqual([1000, 0, 600]);
+});
+
+test("upload recovery bytes stay accounted without resuming a stalled sibling", () => {
+  const { channel, curve, liveness } = channelUnderTest(
+    { measuring: true },
+    false,
+  );
+
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+
+  expect(curve).toEqual([150]);
+  expect(liveness).toEqual([false]);
 });
 
 // Unreachable today (every path tears down first), but a worker left running
