@@ -103,15 +103,11 @@ const (
 	// gutterWidth separates two side-by-side panels.
 	gutterWidth = 2
 	// twoColumnMin is the narrowest w where two panels stay readable side by
-	// side. Below it the caller stacks them, which is the better trade: a
-	// stacked panel is taller but whole, where a split one too narrow for a
-	// connection path loses that path's tail — the origin carrying it, then the
-	// mechanism naming it. It is sized from that row: the selection marker, the
-	// label column, the longest path summary, its position marker and its
-	// origin, against the 12/20 share below, with the readiness panel's own
-	// widest reading fitting in what is left. Rows longer still (the resolved
-	// stream policy) give up their trailing note here rather than push every
-	// terminal under ~119 columns into a stack.
+	// side; below it the caller stacks them, taller but whole. Sized from the
+	// connection path row — marker, label column, longest path summary,
+	// position and origin — against the 12/20 share below. Longer rows (the
+	// resolved stream policy) give up their trailing note rather than push
+	// every terminal under ~119 columns into a stack.
 	twoColumnMin = 115
 )
 
@@ -274,12 +270,10 @@ func (m model) networkView(w int) string {
 }
 
 // throughputProtocolRow offers the HTTP version only where the selected path
-// leaves one open. A path advertised as HTTP/3 is not going to answer HTTP/1.1
-// because a row here says so, and a WebTransport session is HTTP/3 by
-// construction; on those the row reports what the path serves and goes inert,
-// rather than cycling through versions the check would then refuse. It is
-// dimmed rather than dropped for the reason Auto H1 max is: it applies again
-// the moment the path changes, and a moving row loses the reader.
+// leaves one open. A path advertised as HTTP/3 will not answer HTTP/1.1 because
+// a row says so, so on those it reports what the path serves and goes inert.
+// Dimmed rather than dropped, as Auto H1 max is: it applies again the moment
+// the path changes, and a moving row loses the reader.
 func (m model) throughputProtocolRow() string {
 	if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
 		return inertValueLine("HTTP version", protocolChoiceLabel(t.Protocol), "fixed by this path")

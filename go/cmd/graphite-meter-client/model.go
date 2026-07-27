@@ -750,13 +750,11 @@ func (m model) capabilities() wire.Capabilities {
 	return m.discovery.Capabilities
 }
 
-// pathChoice is one stop of a path row's cycle. The origin and the mechanism
-// move together because they are two halves of one decision: pulled apart, the
-// rows spell combinations no server offers — WebTransport over an HTTP/1.1
-// listener, a WebSocket bus on a QUIC-only origin — and the operator only finds
-// out when the check fails. Every description comes from discovery, which the
-// model keeps across configuration changes, so a row says what it offers
-// without waiting for a connection.
+// pathChoice is one stop of a path row's cycle. Origin and mechanism move
+// together: pulled apart they spell combinations no server offers — WebTransport
+// over an HTTP/1.1 listener — and the operator finds out when the check fails.
+// Descriptions come from discovery, which the model keeps across configuration
+// changes, so a row says what it offers without waiting for a connection.
 type pathChoice struct {
 	target    string // the origin the configuration holds, or "auto"
 	transport string // the mechanism the configuration holds, or "auto"

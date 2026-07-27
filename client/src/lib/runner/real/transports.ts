@@ -1,24 +1,12 @@
-// What each measurement transport is. Adding a kind is a row here plus its lane
-// implementation, and Record<TransportKind, TransportSpec> makes a missing row a
-// build error.
-//
-// It does NOT make the branches a build error. Everything below switches on the
-// kind explicitly, and each site was verified with git grep; a new kind needs
-// every one of them read:
-//   contract.ts             the TransportKind union itself
-//   api/preflight.ts        wire endpoint variants, per role
-//   api/endpoints.ts        the target interface each kind resolves to
-//   real/backendPure.ts     classification, selection ids, per-role selection
-//   real/streamPolicy.ts    lane counts and the policy label
-//   real/latencyChannel.ts  bus URL and token mint — an if/else on
-//                           "webtransport", so an unhandled kind silently takes
-//                           the WebSocket branch rather than failing
-//   real/targetPresentation.ts  label / summary / settings detail
-//   real/transportViewModel.ts  which cards a role's picker lists
-//   RealRunner.ts           role binding, the session/fetch dispatch, describe()
-//   connectionModel.ts      resolving the committed target for the panel
-//   workers/ping-worker.ts  which bus the worker dials
+// What each measurement transport is. Record<TransportKind, TransportSpec>
+// makes a missing row here a build error; it does not make the branches one.
+// A new kind needs every site that switches on the kind read:
+//   contract.ts, api/preflight.ts, api/endpoints.ts, real/backendPure.ts,
+//   real/streamPolicy.ts, real/targetPresentation.ts, real/transportViewModel.ts,
+//   RealRunner.ts, connectionModel.ts, workers/ping-worker.ts,
 //   components/EndpointInfo.svelte, components/settings/TestSetupPanel.svelte
+// real/latencyChannel.ts is the one that fails quietly: an if/else on
+// "webtransport", so an unhandled kind takes the WebSocket branch.
 import type { TransportKind } from "../contract";
 
 export interface TransportSpec {
@@ -37,24 +25,17 @@ export interface TransportSpec {
 const hasWebTransport = (): boolean => typeof WebTransport !== "undefined";
 const always = (): boolean => true;
 
-/** Why this browser cannot drive WebTransport. */
-export type WebTransportGap =
-  /** The API exists in this browser but is withheld from a page served over
-   *  plain http, which the reader can fix by reopening the page over https. */
-  | "insecure-page"
-  /** This browser has never exposed the API; nothing about the page changes
-   *  that. */
-  | "no-api";
+/** Why this browser cannot drive WebTransport: a page served over plain http,
+ *  or a browser that never shipped the API. */
+export type WebTransportGap = "insecure-page" | "no-api";
 
-/** Which of the two reasons keeps WebTransport out of reach here, or null when
- *  it is reachable.
+/** Which reason applies, or null when WebTransport is reachable.
  *
- *  `WebTransport` is a [SecureContext] interface, so a plain-http page has no
- *  such global at all — by the presence check alone that is indistinguishable
- *  from Safari, which has never shipped it. Only one of the two is the reader's
- *  to fix, so the page's secure-context flag separates them before either is
- *  reported. A context that declares nothing (a non-browser test runner) is
- *  read as the browser gap, which is the honest answer where there is no page. */
+ *  `WebTransport` is [SecureContext], so an http page has no such global —
+ *  indistinguishable by presence alone from Safari, and only one of the two is
+ *  the reader's to fix. A context declaring no secure-context flag at all (a
+ *  test runner) reads as the browser gap, the honest answer where there is no
+ *  page. */
 export function webTransportGap(): WebTransportGap | null {
   if (hasWebTransport()) return null;
   return globalThis.isSecureContext === false ? "insecure-page" : "no-api";

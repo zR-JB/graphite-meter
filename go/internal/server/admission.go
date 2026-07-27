@@ -84,19 +84,12 @@ func (a *requestAdmission) acquire(key, sessionKey string) (release func(), stat
 		a.rejectedClient++
 		return nil, http.StatusTooManyRequests
 	}
-	// A session route takes a slot from the global pool AND from the session
-	// routes' own share of it. A session lives under the session bound rather
-	// than the request bound, so its slot is slow to come back; without the
-	// second budget a handful of clients' sessions would hold the whole pool for
-	// hours and every request-shaped route would be refused behind them. The
-	// second budget runs one way: it caps what sessions may occupy and reserves
-	// nothing for them, so a pool filled by request-shaped routes -- the ping
-	// buses among them, which are deliberately not session routes -- refuses
-	// every session while activeSessions is still zero.
-	// Two 503s with two remedies, so two counters: raising the pool does nothing
-	// for a full session budget and raising the session budget does nothing for
-	// a full pool. The pool is tested first, since a session needs a slot in it
-	// either way.
+	// A session takes a slot from the global pool AND from the session share of
+	// it, because it holds that slot for hours rather than for one request.
+	// The share runs one way: it caps sessions and reserves nothing, so a pool
+	// filled by request-shaped routes refuses every session while
+	// activeSessions is zero. Two 503s with two remedies, so two counters. The
+	// pool is tested first, since a session needs a slot in it either way.
 	if a.active >= a.globalMax {
 		a.rejectedGlobal++
 		return nil, http.StatusServiceUnavailable

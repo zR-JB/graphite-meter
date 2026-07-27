@@ -1,15 +1,10 @@
-/* ============================================================
- * The Graphite Meter: latency ping worker
- * ============================================================
- * Owns the ping bus and the ping algorithm. It runs off the main thread so its
- * in-worker timestamps keep RTT immune to main-thread jank, which matters most
- * for loaded latency, where the main thread is busiest. Only computed
- * { rtt, lost } samples cross the thread boundary.
+/* Owns the ping bus and the ping algorithm, off the main thread so in-worker
+ * timestamps keep RTT immune to main-thread jank — which matters most under
+ * load. Only computed { rtt, lost } samples cross the boundary.
  *
  * The bus is a /ws/ping WebSocket or a /wt/ping WebTransport session. Only the
- * link differs: over datagrams an evicted ping is real packet loss, while over
- * a WebSocket TCP retransmits and the same eviction means a stalled queue.
- * ============================================================ */
+ * link differs: over datagrams an evicted ping is real packet loss, over a
+ * WebSocket it is a stalled queue. */
 
 import { encode, decode } from "../real/wire";
 import {

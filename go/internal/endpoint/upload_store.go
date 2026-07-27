@@ -138,16 +138,12 @@ const (
 	// uploadReconnectGrace is the budget a client gets, on top of the transport
 	// bound, to notice a bound-driven close and re-dial against the same id.
 	uploadReconnectGrace = 30 * time.Second
-	// uploadIDTTL: an aggregate idle this long (no drained chunk) is reaped by
-	// the sweeper after abort, tab close, or crash. It MUST outlast a
-	// WebTransport session's whole death: api/wire.md promises the counters
-	// carry across a bound-driven close, and watchSession samples at
-	// wire.WTIdleBound/2 and cancels on the second quiet tick, so a stalled
-	// session survives up to 1.5 bounds of silence before it is closed at all.
-	// A TTL equal to the bound would reap the aggregate first, and the re-dial
-	// would take getOrCreateForActivity's create path and report only the bytes
-	// that moved after the reconnect. The progress feed does not touch the
-	// clock, so a watching client cannot stretch this.
+	// uploadIDTTL: an aggregate idle this long is reaped after an abort, tab
+	// close, or crash. It MUST outlast a session's whole death — watchSession
+	// cancels on the second quiet tick, so a stalled session survives up to 1.5
+	// bounds — or the re-dial takes the create path and restarts the count at
+	// zero. The progress feed does not touch the clock, so watching cannot
+	// stretch it.
 	uploadIDTTL = 2*wire.WTIdleBound + uploadReconnectGrace
 	// uploadTokenTTL limits how long a minted id may create its aggregate.
 	uploadTokenTTL = 2 * time.Minute

@@ -21,10 +21,9 @@ export interface TransportOptionView {
 const NOT_ADVERTISED = "Not offered in /preflight.";
 const DISCOVERY_PENDING = "Checking server transports…";
 
-/** Why a card the server advertises cannot be driven from here. "Unsupported"
- *  on its own sends a reader on an http page hunting for a browser that already
- *  supports it, so the two reasons are told apart and each names its own remedy
- *  — one of which the reader has. */
+/** Why an advertised card cannot be driven here. "Unsupported" alone sends a
+ *  reader on an http page hunting for a browser they already run, so each
+ *  reason names its own remedy. */
 function noBrowserWebTransport(): string {
   return webTransportGap() === "insecure-page"
     ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address."

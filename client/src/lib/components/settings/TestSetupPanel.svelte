@@ -461,13 +461,10 @@
   <section class="panel">
     <h3>Datagram throughput</h3>
     {#if store.config.experimentalDatagramThroughput || datagramSelected}
-      <!-- Above the toggle, not below it: this panel sits at the end of a long
-           scroll, and a note that appears past the control that summoned it is
-           a note nobody reads. Appearing at all is announced like
-           ConnectivityIndicator's status rather than asserted like
-           LatencyProfile's alert — nothing has gone wrong. What the mode is
-           good for is carried by the leading sentence, not only by the warn
-           colour, so it survives monochrome and high-contrast rendering. -->
+      <!-- Above the toggle: this panel ends a long scroll, and a note past the
+           control that summoned it is a note nobody reads. Announced as a
+           status rather than an alert — nothing has gone wrong — and its point
+           is carried by the leading sentence, not only by the warn colour. -->
       <p class="caution" role="status">
         <strong>Measures loss, not link speed.</strong> Datagrams are never resent,
         so whatever goes missing is real packet loss — which is the point of this

@@ -69,21 +69,12 @@ type endpoints struct {
 	uploadProgress                   *endpoint.UploadProgress
 	admission                        *requestAdmission
 	trustedProxies                   []netip.Prefix
-	// wtIdleBound is how long a WebTransport session may carry nothing the peer
-	// sent before it is closed. wire.WTIdleBound is the published contract both
-	// sides hold to; it lives here because the session handlers take it as a
-	// constructor argument, so this is the one place it is chosen.
-	//
-	// It may be shortened but MUST NOT be raised above wire.WTIdleBound. The
-	// upload store's aggregate TTL is derived from that constant
-	// (endpoint/upload_store.go: uploadIDTTL = 2*wire.WTIdleBound +
-	// uploadReconnectGrace) precisely so an aggregate outlasts a session's whole
-	// death and the counters carry across a bound-driven close, as api/wire.md
-	// promises. A session idle bound above the constant makes the session outlive
-	// its own aggregate: the re-dial then takes the create path and reports only
-	// the bytes that moved after the reconnect, silently resetting the upload
-	// counter to zero. Anything that makes this operator-configurable has to
-	// derive the TTL from the same value rather than from the constant.
+	// wtIdleBound is how long a session may carry nothing the peer sent before
+	// it is closed; the handlers take it as an argument, so this is where it is
+	// chosen. It may be shortened but MUST NOT exceed wire.WTIdleBound: the
+	// upload aggregate's TTL is derived from that constant (upload_store.go)
+	// so a counter survives a bound-driven close. A longer bound outlives the
+	// aggregate, and the re-dial then silently restarts the count at zero.
 	wtIdleBound time.Duration
 }
 

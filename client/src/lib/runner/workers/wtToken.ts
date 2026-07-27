@@ -31,18 +31,14 @@ export interface WtToken {
 
 /** The token last minted for a URL, held for the retries of the dial it feeds.
  *
- *  INVARIANT: a token is spent by a CONNECT the server accepted, and by nothing
- *  else. A dial that fails before that -- UDP blocked, a listener restarting --
- *  leaves it valid until its own expiry, so minting again for the retry parks a
- *  second token against the session's cap of eight, which every other stage and
- *  tab of the same login draws on. Reuse therefore ends at the first of:
- *  spendWtToken, the lifetime the server reported, and REUSE_WINDOW_MS, the
- *  bound that holds when no caller reports a spend.
+ *  INVARIANT: a token is spent by a CONNECT the server accepted, and nothing
+ *  else. A dial that fails before that leaves it valid, and minting per attempt
+ *  would fill the session's cap of eight, which every stage and tab of that
+ *  login draws on. Reuse ends at the first of spendWtToken, the lifetime the
+ *  server reported, and REUSE_WINDOW_MS.
  *
- *  This is realm state, so it only spans dials a single worker makes. The
- *  transfer workers are respawned per restart and never see it twice; the ping
- *  bus re-dials in the realm it is already running in, which is why every dial
- *  path has to report its spend for the invariant to hold anywhere. */
+ *  Realm state, so it spans only one worker's dials — which is why every dial
+ *  path must report its spend for the invariant to hold anywhere. */
 interface MintedToken {
   url: string;
   token: string;

@@ -251,26 +251,18 @@ func (p *uploadProgress) counters() (bytes, nanos uint64) {
 	return 0, 0
 }
 
-// advance publishes a counter pair no older than the one held, reporting
-// whether it did. Two readers can be draining the same aggregate at once -- the
-// HTTP re-attach and a replacement session's re-attached stream -- and a
-// replaced reader can still deliver a record it had already buffered. A check
-// followed by a store lets the older of two interleaved records land last and
-// walk the count backwards; the swap is one CAS on the pair, so the byte total
-// cannot regress and neither value can be split from the other.
+// advance publishes a counter pair no older than the one held. Two readers can
+// drain one aggregate at once (an HTTP re-attach and a replacement session's
+// stream), and a replaced reader can still deliver a buffered record, so the
+// swap is one CAS on the pair: the byte total cannot regress and the two values
+// cannot be split.
 //
-// The active time can still regress, on a record carrying more bytes and fewer
-// nanoseconds: the server reads the byte total and then the clock as two
-// separate operations, so two feeds can pair them differently, and the guard
-// only rejects a lower byte total or an equal one with a lower time. Bytes alone
-// would not even give that much -- the server repeats the byte total on its
-// terminal `complete` record, so a buffered record from a superseded feed
-// carries the same total with a shorter active time, which is what the
-// equal-bytes half of the guard rejects. What protects the reported figure is
-// the window sampleServerUpload installs, which takes the maximum of these
-// counters and the highest pair the sampler has seen, so a short time here
-// cannot shrink the denominator; the residue is one scheduling gap against the
-// server's 100 ms tick.
+// Time alone still can, on a record with more bytes and fewer nanos: the server
+// reads total and clock separately, so two feeds pair them differently. The
+// equal-bytes half of the guard catches the common case, a superseded feed's
+// buffered `complete` repeating the total with a shorter time. The reported
+// figure is protected by sampleServerUpload's window, which takes the maximum
+// pair seen, so a short time here cannot shrink the denominator.
 func (p *uploadProgress) advance(bytes, nanos uint64) bool {
 	next := &uploadCount{bytes: bytes, nanos: nanos}
 	for {
