@@ -30,9 +30,15 @@ proxy traffic negotiates H2.
 
 WebTransport rides HTTP/3 extended CONNECT over UDP, which a TCP reverse proxy cannot carry.
 Deployments that want WebTransport leave the native H3 endpoint advertised alongside
-`GM_PUBLIC_ORIGINS=self`, exactly like the other native protocol tests. Nothing breaks without
-it: discovery advertises mechanisms side by side, and clients fall back per role to WebSocket
-latency and fetch throughput.
+`GM_PUBLIC_ORIGINS=self`, exactly like the other native protocol tests, and open `7249/udp` to
+the internet rather than to the proxy. Nothing breaks without it: discovery advertises mechanisms
+side by side, and clients fall back per role to WebSocket latency and fetch throughput.
+
+Browsers additionally need the page itself in a secure context before they expose the API at all,
+so the proxy origin serving the UI has to be HTTPS — which it normally is, since the proxy is
+usually what owns TLS. A proxy terminating TLS while serving the UI over plain http leaves
+browsers with no WebTransport whatever the H3 endpoint advertises; the native client is
+unaffected.
 
 ## nginx
 

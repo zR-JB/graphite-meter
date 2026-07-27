@@ -31,6 +31,14 @@ in this repository:
 Only 7246 and 7247 serve a browser; 7248 and 7249 are strict measurement targets. The routes each
 listener owns are in [ARCHITECTURE.md](ARCHITECTURE.md#the-go-measurement-server).
 
+WebTransport lives on 7249/udp, but a browser reaches it only from a page in a secure context:
+`WebTransport` is a `[SecureContext]` interface, so a UI served over plain HTTP has no such API at
+all. Serve the UI from 7247 (or an HTTPS proxy origin) if browsers should use it. Loopback counts
+as secure, so the API is present over `http://localhost:7246` in local development and absent over
+the same server's LAN address. The native client is not subject to any of this. Where the API is
+missing the browser's path picker names which of the two reasons applies — an insecure page, or a
+browser that never shipped it — and each role falls back rather than the run failing.
+
 `GM_TLS_CERT`/`GM_TLS_KEY` are one PEM pair shared by every enabled native TLS listener. The pair
 is validated before binding, and a complete valid renewal is picked up without a restart. Mount
 the whole Let's Encrypt tree rather than one `live/` directory: its entries are symlinks into
@@ -243,13 +251,17 @@ network-level rate limit if you expect sustained hostile traffic.
 ## Native TUI client flags
 
 `graphite-meter-client` is configured by flags only. Every run setting below is also editable
-inside the TUI before a run starts.
+inside the TUI before a run starts, though the two halves of a path are one row there: the
+Connections section walks the advertised (origin, transport) pairs per role rather than offering
+`--throughput-origin` and `--throughput-transport` as independent cycles, so a combination no
+server advertises cannot be assembled by hand. The flags stay independent, and a pair the server
+does not offer is refused by the connection check with the reason.
 
 | Flag                       | Default                 | Meaning                                                                                        |
 | -------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
 | `--url`                    | `http://127.0.0.1:7246` | Server base URL. Nothing is dialled until it is picked in the TUI or rechecked with `v`.       |
 | `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
-| `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
+| `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches, so it decides anything only on a `negotiated` (reverse-proxy) origin. The TUI's version row goes inert on a path that fixes its own. |
 | `--throughput-transport`   | `auto`                  | `auto`, `fetch-stream`, or `webtransport`; automatic prefers fetch streams. Datagram throughput is a browser-only mode and this client refuses `webtransport-datagram`. |
 | `--latency-origin`         | `auto`                  | Discovered latency origin.                                                                     |
 | `--latency-transport`      | `auto`                  | `auto`, `websocket`, or `webtransport`; datagrams measure loss a WebSocket cannot show. Only `websocket` exempts the run from the `--ping` ceiling below. |

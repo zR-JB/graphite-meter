@@ -30,13 +30,18 @@ up**, and the native terminal client pushes **hundreds of Gbit/s**.\*
   HTTP framing; unobservable details are shown as a range instead of guessed.
 - **Stages you choose** — latency, download, upload, and a bidirectional stage that saturates
   both directions at once. Adaptive early stopping ends a stage once its result is stable.
-- **Configurable from the UI** — durations, parallel streams, ping cadence, units, gauge
-  scaling. No config files.
+- **Configurable from the UI** — connection paths, durations, parallel streams, ping cadence,
+  units, gauge scaling. Each role picks its own path from what the server advertises, and every
+  card says what it resolves to or why it cannot. No config files.
 - **Deploys the way you already deploy** — direct with native HTTP/1.1, HTTP/2, and HTTP/3
   listeners, behind nginx or Caddy, or both at once; clients measure the protocol they actually
   reached, so a proxy in front doesn't falsify results.
 - **WebTransport where HTTP/3 runs** — transfers ride QUIC streams, and pings ride unreliable
   datagrams, so reported loss is packets that never arrived rather than a stalled TCP queue.
+  Browsers offer it to secure contexts only, so serve the UI over HTTPS (or reach it on
+  `localhost`); the terminal client has no such rule. Where it is out of reach the picker says
+  which of the two reasons applies, and each role falls back on its own — fetch streams for
+  transfers, the WebSocket bus for pings.
 - **Optional private access** — operator password, OIDC with a group allowlist, or both,
   covering every asset, transfer, WebSocket, and WebTransport session.
 - **Featherweight** — a single static Go binary (~10 MB, browser client embedded,
@@ -72,11 +77,12 @@ The same measurement engine without a browser: `graphite-meter-client` is an int
 that runs the same stages over the same wire protocol against any Graphite Meter server — and
 pushes rates a browser can't.
 
-- Full run setup in the terminal: server URL, stage selection, timings, transport and
-  stream choices, with live bars, loaded latency, and per-stage progress.
-- Throughput and latency targets are chosen independently, so you can pin a protocol
-  (HTTP/1.1, HTTP/2, HTTP/3) or a transport (fetch streams, WebSocket, WebTransport) instead of
-  trusting negotiation.
+- Full run setup in the terminal: server URL, stage selection, timings, path and stream choices,
+  with live bars, loaded latency, and per-stage progress.
+- Throughput and latency paths are chosen independently, each from one list of what the server
+  actually advertises — origin and mechanism together (fetch streams over HTTP/1.1, HTTP/2 or
+  HTTP/3, WebSocket, WebTransport) — so you pin a path that exists instead of trusting
+  negotiation, and the HTTP version stays a choice only where the path leaves one open.
 - Works against authenticated servers: it shows a verification code and opens the approval page
   in your browser when you press `enter`, then holds the grant in memory only.
 

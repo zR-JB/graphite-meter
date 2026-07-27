@@ -167,6 +167,12 @@ GM_H1_TLS_ADDR=:7247 GM_H2_ADDR=:7248 GM_H3_ADDR=:7249 \
 That single command starts all four native listeners on their standard ports. Open the UI on
 `http://localhost:7246` or `https://localhost:7247`.
 
+Both page origins expose `WebTransport`, since a browser gates it on a secure context and loopback
+counts as one; whether a session then establishes is the H3 certificate question below. Reaching
+the same dev server on a LAN address over plain http is the case that has no API at all — the path
+cards report that rather than a missing server transport. To exercise the browser's WebTransport
+paths off loopback, serve the UI from `https://<host>:7247` with a certificate covering that name.
+
 Browsers can apply additional certificate and root-policy checks to HTTP/3 beyond their normal
 HTTPS trust decision. Firefox has a confirmed
 [additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341): by default it

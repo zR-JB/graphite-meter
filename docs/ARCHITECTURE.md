@@ -365,6 +365,22 @@ transport is a row plus a `ByteLane` implementation.
 A transport is a field on a target, never a suffix on an id. Selection ids are matched whole and
 never taken apart, so an IPv6 literal carrying `::` of its own resolves like any other origin.
 
+`webtransport-datagram` is the one transport the picker hides by default, behind the "Datagram
+throughput" setting. It is a loss diagnostic rather than a speed test: nothing is retransmitted, so
+missing goodput is packet loss that really happened — which is the measurement — and the rate is
+not comparable to the stream card, because browsers hand over one datagram per call and on a fast
+link that cost bounds the upload direction rather than the link doing so. The setting adds the
+card; a card already selected stays visible when the setting goes back off, since a run is still
+about to happen over datagrams, and the caution carries the selection rather than the toggle. The
+native client refuses the mechanism outright.
+
+"Whether the browser can drive it" is one bit for selection and two for the reader. `WebTransport`
+is a `[SecureContext]` interface, so a page served over plain http has no such global — by the
+presence check alone indistinguishable from a browser that never shipped it, and the two have
+different answers: reopen the page over https, or use another browser. `webTransportGap()` in the
+same module reads `isSecureContext` to tell them apart, and the path cards name the one that
+applies. Loopback is a secure context, so local development over `http://localhost` is unaffected.
+
 Every transport shares one establish budget, one restart cadence and one early-fail deadline
 (`real/budgets.ts`), so a stage that cannot carry bytes is skipped in the same time whichever
 mechanism was selected. The early fail is a deadline rather than an attempt count: a lane that
