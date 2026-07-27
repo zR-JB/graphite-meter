@@ -552,9 +552,9 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 // it refuse -- otherwise a saturated deployment reports room to spare while
 // every session CONNECT is turned away.
 func admissionLogLine(r requestAdmissionStats, c admissionStats) string {
-	return fmt.Sprintf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; sessions %d active / %d max, rejected %d budget; connections %d active / %d peak, rejected %d global + %d client",
+	return fmt.Sprintf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; sessions %d active / %d max, %d per client, rejected %d budget + %d client; connections %d active / %d peak, rejected %d global + %d client",
 		r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
-		r.activeSessions, r.sessionMax, r.rejectedSessionBudget,
+		r.activeSessions, r.sessionMax, r.sessionClientMax, r.rejectedSessionBudget, r.rejectedSessionClient,
 		c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
 }
 

@@ -29,6 +29,10 @@ type requestAdmission struct {
 	// rejectedSessionBudget is kept apart from rejectedGlobal: both answer 503,
 	// but a full pool and a full session budget are raised with different knobs.
 	rejectedSessionBudget uint64
+	// rejectedSessionClient is the per-login session bound, which at its default
+	// binds before either of the others. Folded into rejectedClient it read as
+	// the handler bound, and raising that one changes nothing.
+	rejectedSessionClient uint64
 }
 
 func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
@@ -81,7 +85,11 @@ func (a *requestAdmission) acquire(key, sessionKey string) (release func(), stat
 		clientFull = a.sessionsByClient[sessionKey] >= a.sessionClientMax
 	}
 	if clientFull {
-		a.rejectedClient++
+		if session {
+			a.rejectedSessionClient++
+		} else {
+			a.rejectedClient++
+		}
 		return nil, http.StatusTooManyRequests
 	}
 	// A session takes a slot from the global pool AND from the session share of
@@ -143,7 +151,9 @@ type admissionStats struct {
 type requestAdmissionStats struct {
 	admissionStats
 	activeSessions, sessionMax int
+	sessionClientMax           int
 	rejectedSessionBudget      uint64
+	rejectedSessionClient      uint64
 }
 
 // load reports occupancy for the probe's saturation signal.
@@ -160,7 +170,9 @@ func (a *requestAdmission) stats() requestAdmissionStats {
 		admissionStats:        admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient},
 		activeSessions:        a.activeSessions,
 		sessionMax:            a.sessionMax,
+		sessionClientMax:      a.sessionClientMax,
 		rejectedSessionBudget: a.rejectedSessionBudget,
+		rejectedSessionClient: a.rejectedSessionClient,
 	}
 }
 

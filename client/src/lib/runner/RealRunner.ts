@@ -468,7 +468,7 @@ export class RealBackend implements RunnerBackend {
             // Occupancy is the throughput probe's, and a latency-only recheck
             // learns nothing new about it. Dropped, the endpoint panel's slots
             // row silently disappears on every such recheck.
-            load: previous.load,
+            load: previous.serverLoad,
           }
         : null;
     let firstHopProtocol =
