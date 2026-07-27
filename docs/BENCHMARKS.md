@@ -133,7 +133,8 @@ worse, not better. Do not use h3 for upload.
 
 ### Server cost
 
-Across the whole Chromium matrix — 67 cells, 335 runs at `GM_BENCH_REPS=5` — the server never
+Across the whole Chromium matrix as it stood then — 67 cells, 335 runs at `GM_BENCH_REPS=5`; the
+shipped matrix is 44 cells since the knob sweeps were removed — the server never
 exceeded **1.73 cores or 27 MiB** while delivering up to 49.00 Gbit/s. Compare the matrices by their **CPU means**: 70% of a core under
 Chromium against 148% under Firefox, **2.1× the CPU for a fifth of the throughput**. The maxima
 are closer than the means — 1.73 cores against 2.12, and 27 MiB against 48 — because the bytes are
@@ -198,7 +199,7 @@ its `uploadBody: "stream"` path has since been deleted, since nothing but the sw
 **Effect** is the first swept arm against the second, or the low end against the high end where the
 sweep is ordered.
 
-`minPostBytes`, `writeChunkBytes`, `congestionControl` and `datagramClockEvery` are **unmeasured,
+`minPostBytes`, `writeChunkBytes` and `congestionControl` are **unmeasured,
 not null**. Sweeps are one-knob-at-a-time coordinate descent against a fixed baseline, so a jointly
 better (lanes, buffer) ridge would be invisible to them.
 

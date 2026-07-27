@@ -205,8 +205,28 @@ async function drainForKeepAlive(res: Response): Promise<void> {
  *  a loop. Mirrors download-worker.ts's re-fetch loop, and a network error ends
  *  the lane (RealBackend restarts it). Each completed POST resizes the NEXT one. */
 async function run(url: string): Promise<void> {
-  buildPool();
-  if (!pool) return;
+  try {
+    buildPool();
+  } catch (err) {
+    // The reservoir is up to 256 MiB, so a constrained device can refuse it.
+    // Left to reject, the promise takes no worker `error` event with it —
+    // unhandled rejections do not reach Worker.onerror — and the lane dies
+    // silently, reported later as a direction that carried no data.
+    post({
+      type: "error",
+      recoverable: true,
+      detail: `upload pool: ${String(err)}`,
+    });
+    return;
+  }
+  if (!pool) {
+    post({
+      type: "error",
+      recoverable: true,
+      detail: "upload pool unavailable",
+    });
+    return;
+  }
 
   for (;;) {
     const sentBytes = nextBytes;

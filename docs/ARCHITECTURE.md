@@ -133,7 +133,8 @@ when measurement begins, excluding warmup while retaining stalls, reconnects and
 This avoids client event-loop timing artifacts without inflating results by removing pauses. IDs
 are short-lived HMAC-authenticated tokens minted without server-side session state; forged IDs and
 `/upload/session` floods therefore allocate no aggregate state. A background sweeper reaps idle
-aggregates after 30s.
+aggregates after 90s — twice the WebTransport idle bound plus a reconnect grace, so a counter
+outlives the session death it has to survive.
 
 ### Wire protocol (message buses only)
 

@@ -65,9 +65,13 @@ The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /up
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
 records as `GET /upload/progress`.
 
-A session ends on its own `GM_MAX_SESSION_DURATION` bound, when the peer closes it — which a client
-does once the finalizing DELETE has returned — or on either of two server-side inactivity bounds: a
-transfer session that carries nothing the **peer** sent for about **30 seconds** is closed (a
+The `GM_MAX_SESSION_DURATION` bound covers the two **transfer** session routes. `/wt/ping` is not
+one: it lives under the ordinary request bound (`GM_MAX_OPERATION_DURATION`), while sharing the
+inactivity bound below — which is what the native client's ping-cadence ceiling is derived from.
+
+A session ends on its lifetime bound, when the peer closes it — which a client does once the
+finalizing DELETE has returned — or on either of two server-side inactivity bounds: a session that
+carries nothing the **peer** sent for about **30 seconds** is closed, ping buses included (a
 server-generated progress heartbeat is not traffic, and neither is a server-generated datagram
 flood, so a `/wt/download?datagrams=` session the peer never speaks on closes on the same bound),
 and an establish-only `/wt/download?bytes=0` session — which serves nothing, so its answer is the
@@ -97,7 +101,7 @@ selection ambiguous. Clients built before this field must be updated alongside t
 - A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
   not physical packet loss because TCP retransmits. The same eviction on the unreliable WT-datagram
   channel is physical packet loss, which is why that bus is preferred where it is advertised.
-- A small **in-flight window** (1–4 pings) keeps one delayed or missing response from deadlocking
+- A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) keeps one delayed or missing response from deadlocking
   the chain; an interval pacer is the floor and the on-receive send is the responsive fast path.
 
 ## Why text, not binary

@@ -465,6 +465,10 @@ export class RealBackend implements RunnerBackend {
             clientIpVersion: previous.clientIpVersion,
             clientIpSource: previous.clientIpSource,
             protocolNegotiated: previous.protocolNegotiated,
+            // Occupancy is the throughput probe's, and a latency-only recheck
+            // learns nothing new about it. Dropped, the endpoint panel's slots
+            // row silently disappears on every such recheck.
+            load: previous.load,
           }
         : null;
     let firstHopProtocol =
