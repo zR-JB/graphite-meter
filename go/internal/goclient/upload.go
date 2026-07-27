@@ -88,7 +88,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		return Result{}, err
 	}
 	if !progress.waitNext(ctx, progress.seq.Load()) {
-		return Result{}, fmt.Errorf("upload progress did not advance")
+		return Result{}, progress.failure(fmt.Errorf("upload progress did not advance"))
 	}
 	baselineN, baselineT := progress.counters()
 	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, streams, duration, baselineN, baselineT, lanes.errs)
@@ -440,6 +440,11 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 			case p.errs <- fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, lastErr):
 			default:
 			}
+			// Nothing will advance the counter now. waitNext blocks on this
+			// channel's cancellation and on p.changed alone, and the stage
+			// context carries no deadline, so without this a feed that dies
+			// before the first record hangs the run rather than failing it.
+			p.cancel()
 			return
 		}
 	}
@@ -546,6 +551,16 @@ func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 		}
 	}
 	return true
+}
+
+// failure is the reason the feed stopped, or fallback when it queued none.
+func (p *uploadProgress) failure(fallback error) error {
+	select {
+	case err := <-p.errs:
+		return err
+	default:
+		return fallback
+	}
 }
 
 func (p *uploadProgress) currentDone() chan struct{} {

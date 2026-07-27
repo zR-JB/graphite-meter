@@ -758,3 +758,34 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 		t.Fatalf("permanent auth refusal = %v, want AuthRequiredError", err)
 	}
 }
+
+// A feed that dies before its first record leaves nothing to advance the
+// counter: waitNext watches this channel's cancellation and p.changed alone,
+// and the stage context carries no deadline. Reattach giving up must therefore
+// cancel, or measureUpload blocks for the life of the process.
+func TestUploadProgressWaitNextEndsWhenTheFeedDiesForGood(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	readCtx, readCancel := context.WithCancel(ctx)
+	defer readCancel()
+	p := &uploadProgress{ctx: readCtx, cancel: readCancel, ready: make(chan error, 1), changed: make(chan struct{}, 1), errs: make(chan error, 1)}
+
+	go func() {
+		p.errs <- errors.New("upload progress lost and not reattached within 2s: context deadline exceeded")
+		p.cancel()
+	}()
+
+	done := make(chan bool, 1)
+	go func() { done <- p.waitNext(ctx, p.seq.Load()) }()
+	select {
+	case advanced := <-done:
+		if advanced {
+			t.Fatal("waitNext reported the counter advanced on a dead feed")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waitNext never returned: a dead feed hangs the upload stage")
+	}
+	if got := p.failure(errors.New("fallback")); !strings.Contains(got.Error(), "not reattached") {
+		t.Fatalf("failure() = %v, want the feed's own error", got)
+	}
+}
