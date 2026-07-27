@@ -120,14 +120,17 @@ func (p *PreparedConnection) FreshFor(cfg Config) bool {
 	return p != nil && p.configKey == preparationKey(cfg.normalized()) && time.Since(p.VerifiedAt) <= preparationFreshness
 }
 
-func connectionSummary(transport, protocol string, tls bool) string {
-	protocolLabel := map[string]string{"http1": "HTTP/1.1", "http2": "HTTP/2", "http3": "HTTP/3"}[protocol]
-	if protocolLabel == "" {
-		protocolLabel = protocol
-	}
+// ConnectionSummary names one measurement path: the mechanism that carries it,
+// the HTTP version underneath, and whether it is encrypted. Every surface that
+// names a path uses it — the TUI's selectors, its readiness panel, and its run
+// screen — so a path reads the same wherever it is mentioned. The protocol is
+// accepted in either spelling, since a run holds the negotiated evidence ("h3")
+// where discovery holds the target's own name for it ("http3").
+func ConnectionSummary(transport, protocol string, tls bool) string {
 	mechanism := map[string]string{
-		wire.TransportWebSocket:    "WebSocket",
-		wire.TransportWebTransport: "WebTransport",
+		wire.TransportWebSocket:            "WebSocket",
+		wire.TransportWebTransport:         "WebTransport",
+		wire.TransportWebTransportDatagram: "WebTransport datagrams",
 	}[transport]
 	if mechanism == "" {
 		mechanism = "Fetch stream"
@@ -136,7 +139,30 @@ func connectionSummary(transport, protocol string, tls bool) string {
 	if tls {
 		security = "TLS"
 	}
-	return fmt.Sprintf("%s · %s · %s", mechanism, protocolLabel, security)
+	return fmt.Sprintf("%s · %s · %s", mechanism, ProtocolLabel(protocol), security)
+}
+
+// ProtocolLabel names an HTTP version for a reader, in either spelling: the
+// negotiated evidence a run holds ("h3") and the name discovery gives the same
+// version ("http3") are one line on screen, not two. An unnamed version renders
+// as a dash rather than as nothing, which in the middle of a summary would be
+// two separators with a gap between them.
+func ProtocolLabel(protocol string) string {
+	switch protocolFromEvidence(protocol) {
+	case "http1":
+		return "HTTP/1.1"
+	case "http2":
+		return "HTTP/2"
+	case "http3":
+		return "HTTP/3"
+	// A negotiated origin fixes no version: the transport picks one at connect
+	// time, and until then that is the honest thing to name.
+	case "negotiated":
+		return "Negotiated"
+	case "":
+		return "--"
+	}
+	return protocol
 }
 
 func (p *PreparedConnection) ThroughputSummary() string {
@@ -144,7 +170,7 @@ func (p *PreparedConnection) ThroughputSummary() string {
 		return "Not checked"
 	}
 	t := p.ThroughputTarget
-	return connectionSummary(t.Transport, t.Protocol, t.TLS)
+	return ConnectionSummary(t.Transport, t.Protocol, t.TLS)
 }
 
 func (p *PreparedConnection) LatencySummary() string {
@@ -152,7 +178,7 @@ func (p *PreparedConnection) LatencySummary() string {
 		return "Not selected"
 	}
 	t := p.LatencyTarget
-	return connectionSummary(t.Transport, t.Protocol, t.TLS)
+	return ConnectionSummary(t.Transport, t.Protocol, t.TLS)
 }
 
 func baseTransport(cfg Config) *http.Transport {
@@ -335,9 +361,7 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	if latencyTarget != nil {
 		event.LatencyTarget = latencyTarget.ID
 		event.LatencyTransport = latencyTarget.Transport
-		if latencyProbe != nil {
-			event.LatencyProtocol = latencyProbe.ProtocolNegotiated
-		}
+		event.LatencyProtocol = latencyBusEvidence(latencyTarget, latencyProbe)
 	}
 	emit(event)
 
@@ -649,6 +673,23 @@ func selectTargetOver(cfg Config, pf wire.Preflight, mechanism string) (*wire.Th
 		}
 	}
 	return nil, fmt.Errorf("%s target unavailable over %s", selection, mechanism)
+}
+
+// latencyBusEvidence is the HTTP version the ping chain actually rides. The
+// probe that proved the origin reachable is a plain GET over the WebSocket
+// client, which is pinned to HTTP/1.1 whatever bus the stage goes on to use —
+// so reporting the probe's answer for a WebTransport bus describes an HTTP/1.1
+// run that never happened. The datagram bus is HTTP/3 by construction; the
+// WebSocket bus really is the HTTP/1.1 the probe observed, since its Upgrade
+// handshake cannot ride anything else.
+func latencyBusEvidence(target *wire.LatencyTarget, probe *wire.Probe) string {
+	if target.Transport == wire.TransportWebTransport {
+		return targetProtocolEvidence("http3")
+	}
+	if probe == nil {
+		return ""
+	}
+	return probe.ProtocolNegotiated
 }
 
 func targetProtocolEvidence(protocol string) string {

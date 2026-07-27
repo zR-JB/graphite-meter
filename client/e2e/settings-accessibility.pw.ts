@@ -41,10 +41,11 @@ test("settings expose live controls and lock run construction inputs", async ({
 });
 
 // The datagram card is gated on its experimental setting, but a card already
-// selected must not vanish under the user — and the warning that its number is
-// not a speed test belongs to that selection, not to the toggle. Read linearly
-// the warning is textually indistinguishable from the hints above it unless it
-// announces itself, so a screen reader is told a warning appeared.
+// selected must not vanish under the user — and the note that its number is not
+// a speed test belongs to that selection, not to the toggle. Read linearly the
+// note is textually indistinguishable from the hints around it unless it
+// announces itself, so a screen reader is told it appeared. Sighted readers get
+// it above the toggle rather than below, where the end of the scroll hides it.
 test("the datagram card follows its selection and announces its caution", async ({
   page,
 }) => {
@@ -60,15 +61,15 @@ test("the datagram card follows its selection and announces its caution", async 
   });
   const caution = settings
     .getByRole("status")
-    .filter({ hasText: "not a speed test" });
+    .filter({ hasText: "not link speed" });
   const toggle = settings.getByText("Datagram throughput (experimental)");
 
   await expect(card).toHaveCount(0);
-  await expect(settings.getByText("Loss diagnostic")).toHaveCount(0);
+  await expect(caution).toHaveCount(0);
 
   await toggle.click();
   await expect(card).toHaveCount(1);
-  await expect(caution).toContainText("Nothing is retransmitted here");
+  await expect(caution).toContainText("Datagrams are never resent");
 
   await card.click();
   await expect(card.locator("input")).toBeChecked();

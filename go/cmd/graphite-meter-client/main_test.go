@@ -263,7 +263,7 @@ func TestActivePreset(t *testing.T) {
 }
 
 func TestTimingLabel(t *testing.T) {
-	want := []string{"Warmup", "Latency duration", "Download duration", "Upload duration", "Bidirectional duration", "Ping interval"}
+	want := []string{"Warmup", "Latency", "Download", "Upload", "Bidirectional", "Ping interval"}
 	for i, w := range want {
 		if got := timingLabel(i); got != w {
 			t.Errorf("timingLabel(%d) = %q, want %q", i, got, w)
@@ -274,12 +274,31 @@ func TestTimingLabel(t *testing.T) {
 	}
 }
 
-func TestTargetChoiceLabelFallsBackToTheRawTarget(t *testing.T) {
-	if got, want := targetChoiceLabel("ws-http1-tls"), "WebSocket · HTTP/1.1 · TLS"; got != want {
-		t.Fatalf("targetChoiceLabel(%q) = %q, want %q", "ws-http1-tls", got, want)
+func TestProtocolChoiceLabelNamesEveryVersionTheRowOffers(t *testing.T) {
+	for raw, want := range map[string]string{
+		"auto": "Automatic", "http1": "HTTP/1.1", "http2": "HTTP/2",
+		"http3": "HTTP/3", protocolNegotiated: "Negotiated",
+		"": "--", "http9": "http9",
+	} {
+		if got := protocolChoiceLabel(raw); got != want {
+			t.Errorf("protocolChoiceLabel(%q) = %q, want %q", raw, got, want)
+		}
 	}
-	if got, want := targetChoiceLabel("custom-target"), "custom-target"; got != want {
-		t.Fatalf("targetChoiceLabel(%q) = %q, want %q", "custom-target", got, want)
+}
+
+// A pair the server never offered still has to render: it is what the next
+// check will be asked for, and blanking the row hides the reason it fails.
+func TestUnofferedPathLabelSpellsOutWhatWasAskedFor(t *testing.T) {
+	for _, c := range []struct{ target, transport, want string }{
+		{"auto", "auto", "Automatic"},
+		{"auto", wire.TransportWebTransport, "WebTransport · automatic origin"},
+		{"https://meter.example", "auto", "Automatic transport · https://meter.example"},
+		{"https://meter.example", wire.TransportFetchStream, "Fetch stream · https://meter.example"},
+		{"https://meter.example", "quic-v9", "quic-v9 · https://meter.example"},
+	} {
+		if got := unofferedPathLabel(c.target, c.transport); got != c.want {
+			t.Errorf("unofferedPathLabel(%q, %q) = %q, want %q", c.target, c.transport, got, c.want)
+		}
 	}
 }
 
@@ -366,7 +385,7 @@ func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 // the figures of the last verified connection until a new one lands.
 func TestEndpointCyclingChecksOnceAndHoldsTheLastFigures(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	m.section, m.row = sectionConnections, 2
+	m.section, m.row = sectionConnections, rowThroughputProtocol
 	updated, _ := m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}})
 	m = updated.(model)
 
@@ -396,11 +415,11 @@ func TestEndpointCyclingChecksOnceAndHoldsTheLastFigures(t *testing.T) {
 func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
-	m.row = 0
+	m.row = rowThroughputPath
 	pf := wire.Preflight{Capabilities: wire.Capabilities{
 		ThroughputTargets: []wire.ThroughputTarget{
-			{ID: "https://one.example", Origin: "https://one.example"},
-			{ID: "https://two.example", Origin: "https://two.example"},
+			{ID: "https://one.example", Origin: "https://one.example", Transport: wire.TransportFetchStream, Protocol: "http2"},
+			{ID: "https://two.example", Origin: "https://two.example", Transport: wire.TransportFetchStream, Protocol: "http2"},
 		},
 	}}
 
@@ -417,51 +436,58 @@ func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	if got, want := m.cfg.ThroughputTarget, "https://one.example"; got != want {
 		t.Fatalf("selected throughput target = %q, want %q", got, want)
 	}
+	if got, want := m.cfg.ThroughputTransport, wire.TransportFetchStream; got != want {
+		t.Fatalf("selected throughput transport = %q, want %q", got, want)
+	}
 }
 
-func TestNetworkEndpointPickerDeduplicatesEquivalentOrigins(t *testing.T) {
+// One origin serving several mechanisms is several paths, and the same origin
+// spelled two ways is one. The cycle is what an operator walks, so it must
+// carry each real choice exactly once.
+func TestPathPickerOffersEachMechanismAndDeduplicatesOrigins(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
-	m.row = 0
+	m.row = rowThroughputPath
 	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
 		ThroughputTargets: []wire.ThroughputTarget{
-			{Origin: "https://meter.example:443"},
-			{Origin: "https://meter.example"},
-			{Origin: "https://other.example"},
+			{Origin: "https://meter.example:443", Transport: wire.TransportFetchStream, Protocol: "http2", TLS: true},
+			{Origin: "https://meter.example", Transport: wire.TransportFetchStream, Protocol: "http2", TLS: true},
+			{Origin: "https://meter.example:7249", Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true},
+			// The client refuses the datagram flood, so it is never offered.
+			{Origin: "https://meter.example:7249", Transport: wire.TransportWebTransportDatagram, Protocol: "http3", TLS: true},
 		},
 		LatencyTargets: []wire.LatencyTarget{
-			{Origin: "http://meter.example:80"},
-			{Origin: "http://meter.example"},
-			{Origin: "http://other.example"},
+			{Origin: "http://meter.example:80", Transport: wire.TransportWebSocket, Protocol: "http1"},
+			{Origin: "http://meter.example", Transport: wire.TransportWebSocket, Protocol: "http1"},
+			{Origin: "https://meter.example:7249", Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true},
 		},
 	}}
 
-	updated, _ := m.activate()
-	m = updated.(model)
-	if got, want := m.cfg.ThroughputTarget, "https://meter.example:443"; got != want {
-		t.Fatalf("first throughput target = %q, want %q", got, want)
+	want := []struct{ target, transport string }{
+		{"https://meter.example:443", wire.TransportFetchStream},
+		{"https://meter.example:7249", wire.TransportWebTransport},
+		{"auto", "auto"},
 	}
-	updated, _ = m.activate()
-	m = updated.(model)
-	if got, want := m.cfg.ThroughputTarget, "https://other.example"; got != want {
-		t.Fatalf("second throughput target = %q, want %q", got, want)
-	}
-	updated, _ = m.activate()
-	m = updated.(model)
-	if got, want := m.cfg.ThroughputTarget, "auto"; got != want {
-		t.Fatalf("third throughput target = %q, want %q", got, want)
+	for i, w := range want {
+		updated, _ := m.activate()
+		m = updated.(model)
+		if m.cfg.ThroughputTarget != w.target || m.cfg.ThroughputTransport != w.transport {
+			t.Fatalf("throughput press %d = %q over %q, want %q over %q", i+1, m.cfg.ThroughputTarget, m.cfg.ThroughputTransport, w.target, w.transport)
+		}
 	}
 
-	m.row = 3
-	updated, _ = m.activate()
-	m = updated.(model)
-	if got, want := m.cfg.LatencyTarget, "http://meter.example:80"; got != want {
-		t.Fatalf("first latency target = %q, want %q", got, want)
+	m.row = rowLatencyPath
+	wantLatency := []struct{ target, transport string }{
+		{"http://meter.example:80", wire.TransportWebSocket},
+		{"https://meter.example:7249", wire.TransportWebTransport},
+		{"auto", "auto"},
 	}
-	updated, _ = m.activate()
-	m = updated.(model)
-	if got, want := m.cfg.LatencyTarget, "http://other.example"; got != want {
-		t.Fatalf("second latency target = %q, want %q", got, want)
+	for i, w := range wantLatency {
+		updated, _ := m.activate()
+		m = updated.(model)
+		if m.cfg.LatencyTarget != w.target || m.cfg.LatencyTransport != w.transport {
+			t.Fatalf("latency press %d = %q over %q, want %q over %q", i+1, m.cfg.LatencyTarget, m.cfg.LatencyTransport, w.target, w.transport)
+		}
 	}
 }
 
@@ -504,7 +530,7 @@ func TestRowCount(t *testing.T) {
 		{sectionServers, len(serverPresets) + 1},
 		{sectionRunSetup, 5},
 		{sectionTiming, 6},
-		{sectionConnections, 9},
+		{sectionConnections, rowConnectionsCount},
 		{sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -619,7 +645,7 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 		rows    int
 	}{
 		{"servers", sectionServers, len(serverPresets) + 1},
-		{"network", sectionConnections, 9},
+		{"network", sectionConnections, rowConnectionsCount},
 		{"run (single row)", sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -964,7 +990,7 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
-	for row, field := range map[int]string{5: "auto-streams", 6: "streams"} {
+	for row, field := range map[int]string{rowAutoStreams: "auto-streams", rowStreams: "streams"} {
 		m.row = row
 		next, _ := m.activate()
 		edited := next.(model)
@@ -1024,29 +1050,68 @@ func TestNetworkViewEditorsRenderOnTheirOwnRows(t *testing.T) {
 	}
 }
 
-func TestActivate_NetworkTransportSettings(t *testing.T) {
+// The HTTP version is a decision only where the path leaves one. On a path that
+// fixes it the row reports what is served and refuses to cycle, rather than
+// walking through versions the check would then have to refuse — and picking
+// such a path releases a version pinned while an earlier one was selected.
+func TestActivate_ThroughputProtocolFollowsTheSelectedPath(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
+	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{Origin: "https://fixed.example", Transport: wire.TransportFetchStream, Protocol: "http3", TLS: true},
+			{Origin: "https://proxy.example", Transport: wire.TransportFetchStream, Protocol: protocolNegotiated, TLS: true},
+		},
+	}}
 
-	m.row = 1
+	// Automatic leaves the version open, so the row still cycles.
+	m.row = rowThroughputProtocol
 	next, _ := m.activate()
 	m = next.(model)
-	if got := m.cfg.ThroughputTransport; got != wire.TransportFetchStream {
-		t.Fatalf("throughput transport = %q, want %q", got, wire.TransportFetchStream)
+	if got := m.cfg.ThroughputProtocol; got != "http1" {
+		t.Fatalf("protocol under an automatic path = %q, want http1", got)
 	}
 
-	m.row = 4
+	m.row = rowThroughputPath
 	next, _ = m.activate()
 	m = next.(model)
-	if got := m.cfg.LatencyTransport; got != wire.TransportWebSocket {
-		t.Fatalf("latency transport = %q, want %q", got, wire.TransportWebSocket)
+	if got := m.cfg.ThroughputTarget; got != "https://fixed.example" {
+		t.Fatalf("first path = %q, want https://fixed.example", got)
+	}
+	if got := m.cfg.ThroughputProtocol; got != "auto" {
+		t.Fatalf("a path that fixes HTTP/3 left the pinned %q behind, want auto", got)
+	}
+
+	m.row = rowThroughputProtocol
+	next, _ = m.activate()
+	m = next.(model)
+	if got := m.cfg.ThroughputProtocol; got != "auto" {
+		t.Fatalf("the row cycled on a path that fixes its version: %q", got)
+	}
+	if !strings.Contains(m.notice, "HTTP/3") {
+		t.Errorf("refusal notice = %q, want it to name what the path serves", m.notice)
+	}
+	plain := ansiPattern.ReplaceAllString(m.networkView(120), "")
+	if !strings.Contains(plain, "fixed by this path") {
+		t.Errorf("the version row does not read as inert:\n%s", plain)
+	}
+
+	// A negotiated origin is the one case where the version is still a choice.
+	m.row = rowThroughputPath
+	next, _ = m.activate()
+	m = next.(model)
+	m.row = rowThroughputProtocol
+	next, _ = m.activate()
+	m = next.(model)
+	if got := m.cfg.ThroughputProtocol; got != "http1" {
+		t.Fatalf("protocol on a negotiated path = %q, want http1", got)
 	}
 }
 
 func TestActivate_NetworkTLSToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
-	m.row = 7
+	m.row = rowSkipTLS
 	before := m.cfg.InsecureSkipTLSVerify
 	next, _ := m.activate()
 	m = next.(model)
@@ -1060,7 +1125,7 @@ func TestActivate_NetworkReset(t *testing.T) {
 	m.cfg.TransferStreams.Forced = 99
 	m.cfg.BaseURL = "http://changed.example"
 	m.section = sectionConnections
-	m.row = 8
+	m.row = rowReset
 	next, _ := m.activate()
 	m = next.(model)
 	want := goclient.DefaultConfig()
@@ -2564,41 +2629,84 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 	}
 }
 
-// An endpoint row has to say what the choice under the cursor is. The origins
-// a server advertises usually differ by port alone, so the protocol each one
-// fixes is what tells them apart.
-func TestEndpointRowNamesTheChoice(t *testing.T) {
+// The two-column threshold is sized from the connection path row: it is the
+// widest row an operator has to read to know what a run will do, and a split
+// too narrow to hold it drops the origin first and the mechanism after. At the
+// threshold the row must still be whole, and below it the panels stack so every
+// row is.
+func TestConnectionPathRowSurvivesTheTwoColumnThreshold(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.BaseURL = "https://meter.example:7247"
+	m.section, m.row = sectionConnections, rowThroughputPath
+	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
+		ThroughputTargets: []wire.ThroughputTarget{
+			{Origin: "https://meter.example:7247", Transport: wire.TransportFetchStream, Protocol: protocolNegotiated, TLS: true},
+			{Origin: "https://meter.example:7249", Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true},
+		},
+	}}
+	m.cfg.ThroughputTarget, m.cfg.ThroughputTransport = "https://meter.example:7249", wire.TransportWebTransport
+
+	// innerWidth is what splitColumns is given, and the shell's margin is what
+	// separates it from the terminal width the test has to set.
+	for _, width := range []int{twoColumnMin + shellMargin*2, twoColumnMin + shellMargin*2 - 1, 200} {
+		m.width = width
+		view := ansiPattern.ReplaceAllString(m.View(), "")
+		for _, want := range []string{"Throughput path", "WebTransport · HTTP/3 · TLS", "‹3/3›", ":7249"} {
+			if !strings.Contains(view, want) {
+				t.Errorf("at width %d the path row lost %q:\n%s", width, want, view)
+			}
+		}
+	}
+}
+
+// A path row has to say what the choice under the cursor is. The origins a
+// server advertises usually differ by port alone, so what tells them apart is
+// the mechanism and the HTTP version each one carries — the same phrase the
+// readiness panel and the run screen use for the path they commit to.
+func TestPathRowNamesTheChoice(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.BaseURL = "https://meter.example:7247"
 	m.discovery = &wire.Preflight{Capabilities: wire.Capabilities{
 		ThroughputTargets: []wire.ThroughputTarget{
-			{Origin: "https://meter.example:7247", Protocol: "http1", TLS: true},
-			{Origin: "https://meter.example:7248", Protocol: "http2", TLS: true},
-			{Origin: "https://elsewhere.example", Protocol: "negotiated", TLS: true},
+			{Origin: "https://meter.example:7247", Transport: wire.TransportFetchStream, Protocol: "http1", TLS: true},
+			{Origin: "https://meter.example:7248", Transport: wire.TransportFetchStream, Protocol: "http2", TLS: true},
+			{Origin: "https://meter.example:7249", Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true},
+			{Origin: "https://elsewhere.example", Transport: wire.TransportFetchStream, Protocol: protocolNegotiated, TLS: true},
 		},
 	}}
-	choices := m.throughputChoices()
+	choices := m.throughputPaths()
+	row := func(target, transport string) string {
+		return ansiPattern.ReplaceAllString(pathRow("Throughput path", target, transport, choices), "")
+	}
 
-	m.cfg.ThroughputTarget = "https://meter.example:7248"
-	got := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, choices), "")
-	for _, want := range []string{"Throughput endpoint", "HTTP/2 · TLS", "‹3/4›", ":7248"} {
+	got := row("https://meter.example:7248", wire.TransportFetchStream)
+	for _, want := range []string{"Throughput path", "Fetch stream · HTTP/2 · TLS", "‹3/5›", ":7248"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("endpoint row = %q, want %q", got, want)
+			t.Errorf("path row = %q, want %q", got, want)
+		}
+	}
+
+	// The session on the same host is a separate stop, named by its mechanism
+	// rather than reading as a second spelling of the origin beside it.
+	session := row("https://meter.example:7249", wire.TransportWebTransport)
+	for _, want := range []string{"WebTransport · HTTP/3 · TLS", "‹4/5›", ":7249"} {
+		if !strings.Contains(session, want) {
+			t.Errorf("session path row = %q, want %q", session, want)
 		}
 	}
 
 	// An origin on another host is named by that host, not by a bare port.
-	other := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "https://elsewhere.example", choices), "")
-	for _, want := range []string{"Negotiated · TLS", "elsewhere.example"} {
+	other := row("https://elsewhere.example", wire.TransportFetchStream)
+	for _, want := range []string{"Fetch stream · Negotiated · TLS", "elsewhere.example"} {
 		if !strings.Contains(other, want) {
-			t.Errorf("off-host endpoint row = %q, want %q", other, want)
+			t.Errorf("off-host path row = %q, want %q", other, want)
 		}
 	}
 
-	automatic := ansiPattern.ReplaceAllString(endpointRow("Throughput endpoint", "auto", choices), "")
-	for _, want := range []string{"Automatic", "‹1/4›"} {
+	automatic := row("auto", "auto")
+	for _, want := range []string{"Automatic", "‹1/5›"} {
 		if !strings.Contains(automatic, want) {
-			t.Errorf("automatic endpoint row = %q, want %q", automatic, want)
+			t.Errorf("automatic path row = %q, want %q", automatic, want)
 		}
 	}
 }
@@ -2663,6 +2771,37 @@ func TestRenderRunFrame(t *testing.T) {
 // The run screen holds the negotiated evidence ("h2"), which is what the stream
 // label has to resolve: an automatic multiplexed run opens a different number of
 // lanes per direction, so one number — or a bare "Automatic" — describes nothing.
+// The run screen names both committed paths in the vocabulary the selectors and
+// the readiness panel use. It used to name neither: the throughput line dropped
+// the mechanism entirely, and the latency line carried the HTTP/1.1 of the probe
+// that checked the origin — so a stage measured over the WebTransport bus
+// announced itself as an HTTP/1.1 run.
+func TestRunViewNamesTheCommittedPathsRatherThanTheProbes(t *testing.T) {
+	m := populatedRunModel(160)
+	m.target, m.latencyTarget = "https://meter.example:7249", "https://meter.example:7249"
+	m.throughputTransport, m.latencyTransport = wire.TransportWebTransport, wire.TransportWebTransport
+	m.throughputProtocol, m.latencyProtocol = "h3", "h3"
+
+	view := ansiPattern.ReplaceAllString(m.View(), "")
+	if strings.Contains(view, "HTTP/1.1") {
+		t.Errorf("a WebTransport run reports HTTP/1.1:\n%s", view)
+	}
+	if strings.Count(view, "WebTransport · HTTP/3 · TLS") != 2 {
+		t.Errorf("run view does not name both committed paths:\n%s", view)
+	}
+	if !strings.Contains(view, "meter.example:7249") {
+		t.Errorf("run view drops the origin carrying the paths:\n%s", view)
+	}
+
+	// Before preflight lands there is no committed path, and three empty fields
+	// must not render as a path made of separators.
+	blank := newModel(goclient.DefaultConfig())
+	blank.mode, blank.width = modeRun, 160
+	if strings.Contains(ansiPattern.ReplaceAllString(blank.View(), ""), " ·  · ") {
+		t.Error("an unannounced run renders an empty path summary")
+	}
+}
+
 func TestRunViewNamesThePerDirectionLaneCount(t *testing.T) {
 	m := populatedRunModel(140)
 	m.throughputProtocol = "h2"

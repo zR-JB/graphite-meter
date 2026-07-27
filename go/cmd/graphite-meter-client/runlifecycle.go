@@ -354,11 +354,11 @@ func (m *model) apply(e goclient.Event) {
 			m.throughputTransport = e.ThroughputTransport
 			m.latencyTransport = e.LatencyTransport
 			m.latencyProtocol = e.LatencyProtocol
-			observed := ""
-			if e.Probe != nil {
-				observed = "/" + e.Probe.ProtocolNegotiated
-			}
-			m.server = fmt.Sprintf("%s %s [%s%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message, observed)
+			// The negotiated version is not repeated here: the Throughput row
+			// below names the whole committed path, in the words the configure
+			// screen used to offer it, and the raw evidence spelling ("h3")
+			// beside it was the one place the run screen contradicted itself.
+			m.server = fmt.Sprintf("%s %s [%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message)
 			m.status = "connected"
 		}
 	case goclient.EventStage:

@@ -456,30 +456,33 @@
       bounds browser memory: Firefox holds roughly one byte per byte downloaded
       across a single long request.
     </p>
+  </section>
+
+  <section class="panel">
+    <h3>Datagram throughput</h3>
+    {#if store.config.experimentalDatagramThroughput || datagramSelected}
+      <!-- Above the toggle, not below it: this panel sits at the end of a long
+           scroll, and a note that appears past the control that summoned it is
+           a note nobody reads. Appearing at all is announced like
+           ConnectivityIndicator's status rather than asserted like
+           LatencyProfile's alert — nothing has gone wrong. What the mode is
+           good for is carried by the leading sentence, not only by the warn
+           colour, so it survives monochrome and high-contrast rendering. -->
+      <p class="caution" role="status">
+        <strong>Measures loss, not link speed.</strong> Datagrams are never resent,
+        so whatever goes missing is real packet loss — which is the point of this
+        mode. Expect a lower rate than the stream card, upload especially: browsers
+        hand over one datagram per call.
+      </p>
+    {/if}
     <Switch
       bind:checked={store.config.experimentalDatagramThroughput}
       disabled={running}
       label="Datagram throughput (experimental)"
     />
     <p class="hint">
-      Adds the WebTransport datagram card to the connection picker: transfers
-      over unreliable datagrams, so the rate is what arrives rather than what a
-      stream redelivers.
+      Adds the WebTransport datagram card to the connection picker.
     </p>
-    {#if store.config.experimentalDatagramThroughput || datagramSelected}
-      <!-- Appears when the setting or the selection turns it on, so it is
-           announced like ConnectivityIndicator's status rather than asserted
-           like LatencyProfile's alert: nothing has gone wrong yet. Its severity
-           is carried by the leading word, not only by the warn colour, so it
-           survives monochrome and high-contrast rendering. -->
-      <p class="caution" role="status">
-        <strong>Caution — loss diagnostic, not a speed test.</strong> Nothing is retransmitted
-        here, so missing goodput is real packet loss — that is what this mode measures.
-        Its rate is not comparable to the stream card: browsers hand over one datagram
-        per call, and on a fast link that cost, rather than the connection, is what
-        bounds the upload direction.
-      </p>
-    {/if}
   </section>
 </div>
 

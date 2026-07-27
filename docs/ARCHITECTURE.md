@@ -289,8 +289,11 @@ and loss ratio.
 
 The TUI has five configuration sections (Server — the local-dev preset plus a custom URL, taken as
 typed: a missing scheme becomes `http://`, and a missing port is the scheme's own; Run
-setup; Timing; Connections — endpoint choices, each named by the protocol it fixes and whether it
-is encrypted, plus stream count and TLS verification; Start) and a live telemetry view
+setup; Timing; Connections — one path selector per role, walking the advertised (origin, transport)
+pairs so the endpoint and the mechanism are never chosen apart into a combination no server offers,
+each named by its mechanism, the HTTP version it carries and whether it is encrypted, plus the HTTP
+version where the selected path leaves one open, stream count and TLS verification; Start) and a
+live telemetry view
 (session panel, stage timeline, ASCII throughput bars, a running results log). A launched client
 checks nothing: `--url` is a default, not a destination, so the connection checklist stays idle
 until a server is picked with `enter` (or a check is asked for with `v`). Keys: `tab`/arrows

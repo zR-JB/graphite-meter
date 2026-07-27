@@ -37,6 +37,29 @@ export interface TransportSpec {
 const hasWebTransport = (): boolean => typeof WebTransport !== "undefined";
 const always = (): boolean => true;
 
+/** Why this browser cannot drive WebTransport. */
+export type WebTransportGap =
+  /** The API exists in this browser but is withheld from a page served over
+   *  plain http, which the reader can fix by reopening the page over https. */
+  | "insecure-page"
+  /** This browser has never exposed the API; nothing about the page changes
+   *  that. */
+  | "no-api";
+
+/** Which of the two reasons keeps WebTransport out of reach here, or null when
+ *  it is reachable.
+ *
+ *  `WebTransport` is a [SecureContext] interface, so a plain-http page has no
+ *  such global at all — by the presence check alone that is indistinguishable
+ *  from Safari, which has never shipped it. Only one of the two is the reader's
+ *  to fix, so the page's secure-context flag separates them before either is
+ *  reported. A context that declares nothing (a non-browser test runner) is
+ *  read as the browser gap, which is the honest answer where there is no page. */
+export function webTransportGap(): WebTransportGap | null {
+  if (hasWebTransport()) return null;
+  return globalThis.isSecureContext === false ? "insecure-page" : "no-api";
+}
+
 /** The server clamps both directions here (wire.WTMaxStreams), refusing an
  *  upload lane past it. Callers clamp against it directly; see streamPolicy. */
 export const WT_MAX_LANES = 16;

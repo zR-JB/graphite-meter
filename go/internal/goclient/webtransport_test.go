@@ -90,8 +90,8 @@ func TestExplicitTransportSelectionIsHonoured(t *testing.T) {
 }
 
 func TestConnectionSummaryNamesWebTransport(t *testing.T) {
-	if got, want := connectionSummary(wire.TransportWebTransport, "http3", true), "WebTransport · HTTP/3 · TLS"; got != want {
-		t.Fatalf("connectionSummary = %q, want %q", got, want)
+	if got, want := ConnectionSummary(wire.TransportWebTransport, "http3", true), "WebTransport · HTTP/3 · TLS"; got != want {
+		t.Fatalf("ConnectionSummary = %q, want %q", got, want)
 	}
 }
 

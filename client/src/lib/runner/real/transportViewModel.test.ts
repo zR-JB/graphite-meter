@@ -84,6 +84,33 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
   ).toBe(false);
 });
 
+const NO_API =
+  "This browser has no WebTransport API. Chromium and Firefox have it; Safari does not.";
+const INSECURE_PAGE =
+  "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address.";
+
+/** Runs body with the page declaring itself insecure, which is what a browser
+ *  that has the API does on an http:// page. bun's environment declares no
+ *  secure context at all, so the flag is added and removed rather than set. */
+function onAnInsecurePage(body: () => void) {
+  const had = "isSecureContext" in globalThis;
+  const previous = globalThis.isSecureContext;
+  Object.defineProperty(globalThis, "isSecureContext", {
+    value: false,
+    configurable: true,
+  });
+  try {
+    body();
+  } finally {
+    if (had)
+      Object.defineProperty(globalThis, "isSecureContext", {
+        value: previous,
+        configurable: true,
+      });
+    else delete (globalThis as { isSecureContext?: boolean }).isSecureContext;
+  }
+}
+
 test("WebTransport options disable in a browser without the API", () => {
   // bun's test environment has no WebTransport global, which is the case
   // these views must catch before a probe fails on it.
@@ -103,14 +130,22 @@ test("WebTransport options disable in a browser without the API", () => {
   );
   const wtThroughput = throughputOptionView(catalog, "https://meter:7249::wt");
   expect(wtThroughput.disabled).toBe(true);
-  expect(wtThroughput.detail).toBe(
-    "WebTransport is not supported by this browser.",
-  );
+  expect(wtThroughput.detail).toBe(NO_API);
   const wtLatency = latencyOptionView(catalog, "https://meter:7249");
   expect(wtLatency.disabled).toBe(true);
-  expect(wtLatency.detail).toBe(
-    "WebTransport is not supported by this browser.",
-  );
+  expect(wtLatency.detail).toBe(NO_API);
+
+  // Same missing global, different cause and different remedy: a page served
+  // over http is withheld the API a browser does have. Answering "unsupported"
+  // there sends the reader shopping for a browser they are already running.
+  onAnInsecurePage(() => {
+    expect(throughputOptionView(catalog, "https://meter:7249::wt").detail).toBe(
+      INSECURE_PAGE,
+    );
+    expect(latencyOptionView(catalog, "https://meter:7249").detail).toBe(
+      INSECURE_PAGE,
+    );
+  });
 });
 
 // The automatic card resolves through the same selector the runner does, whose
@@ -132,8 +167,9 @@ test("the automatic throughput card refuses a WebTransport-only origin", () => {
   );
   const automatic = throughputOptionView(catalog, "auto");
   expect(automatic.disabled).toBe(true);
-  expect(automatic.detail).toBe(
-    "WebTransport is not supported by this browser.",
+  expect(automatic.detail).toBe(NO_API);
+  onAnInsecurePage(() =>
+    expect(throughputOptionView(catalog, "auto").detail).toBe(INSECURE_PAGE),
   );
 });
 

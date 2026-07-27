@@ -11,6 +11,7 @@ import {
   selectThroughputTarget,
 } from "./backendPure";
 import { describeTarget } from "./targetPresentation";
+import { webTransportGap } from "./transports";
 
 export interface TransportOptionView {
   disabled: boolean;
@@ -19,7 +20,16 @@ export interface TransportOptionView {
 
 const NOT_ADVERTISED = "Not offered in /preflight.";
 const DISCOVERY_PENDING = "Checking server transports…";
-const NO_BROWSER_WT = "WebTransport is not supported by this browser.";
+
+/** Why a card the server advertises cannot be driven from here. "Unsupported"
+ *  on its own sends a reader on an http page hunting for a browser that already
+ *  supports it, so the two reasons are told apart and each names its own remedy
+ *  — one of which the reader has. */
+function noBrowserWebTransport(): string {
+  return webTransportGap() === "insecure-page"
+    ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address."
+    : "This browser has no WebTransport API. Chromium and Firefox have it; Safari does not.";
+}
 
 function automaticDetail(
   target: FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
@@ -84,13 +94,13 @@ export function throughputOptionView(
     return {
       disabled: true,
       detail: refused
-        ? NO_BROWSER_WT
+        ? noBrowserWebTransport()
         : "No offered target matches this page origin and protocol.",
     };
   }
   const found = locateTarget(discovery.throughput, selection);
   if (found && needsMissingWebTransport(found.target.transport))
-    return { disabled: true, detail: NO_BROWSER_WT };
+    return { disabled: true, detail: noBrowserWebTransport() };
   const entry = found?.entry ?? discovery.throughput[selection];
   return {
     disabled: entry?.state !== "advertised" || !found,
@@ -137,7 +147,7 @@ export function latencyOptionView(
   const blocked = found
     ? needsMissingWebTransport(found.target.transport)
     : !runnable && entry?.targets.every((t) => t.transport === "webtransport");
-  if (blocked) return { disabled: true, detail: NO_BROWSER_WT };
+  if (blocked) return { disabled: true, detail: noBrowserWebTransport() };
   return {
     disabled: true,
     detail: entry

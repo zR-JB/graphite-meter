@@ -888,3 +888,47 @@ func newEchoPingServer(t *testing.T) *httptest.Server {
 	mux.Handle("/ws/ping", echoPingHandler())
 	return httptest.NewServer(mux)
 }
+
+// The probe that proves a latency origin reachable is a plain GET over the
+// WebSocket client, which is pinned to HTTP/1.1 whatever bus the stage then
+// runs on. Reporting its answer for a WebTransport bus announced an HTTP/1.1
+// run that never happened, so the bus names its own version.
+func TestLatencyBusEvidenceNamesTheBusNotTheProbe(t *testing.T) {
+	probe := &wire.Probe{ProtocolNegotiated: "HTTP/1.1"}
+	wt := &wire.LatencyTarget{Transport: wire.TransportWebTransport}
+	if got, want := latencyBusEvidence(wt, probe), "h3"; got != want {
+		t.Errorf("WebTransport bus evidence = %q, want %q", got, want)
+	}
+	// The WebSocket bus really is the HTTP/1.1 the probe observed: its Upgrade
+	// handshake cannot ride anything else.
+	ws := &wire.LatencyTarget{Transport: wire.TransportWebSocket}
+	if got, want := latencyBusEvidence(ws, probe), "HTTP/1.1"; got != want {
+		t.Errorf("WebSocket bus evidence = %q, want %q", got, want)
+	}
+	if got := latencyBusEvidence(ws, nil); got != "" {
+		t.Errorf("unprobed WebSocket bus evidence = %q, want empty", got)
+	}
+}
+
+// One phrase per path, shared by the selectors that offer it, the readiness
+// panel that verifies it, and the run screen that reports it.
+func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
+	for _, c := range []struct{ transport, protocol, want string }{
+		{wire.TransportFetchStream, "http1", "Fetch stream · HTTP/1.1 · TLS"},
+		{wire.TransportFetchStream, "negotiated", "Fetch stream · Negotiated · TLS"},
+		{wire.TransportWebSocket, "http1", "WebSocket · HTTP/1.1 · TLS"},
+		{wire.TransportWebTransport, "http3", "WebTransport · HTTP/3 · TLS"},
+		{wire.TransportWebTransportDatagram, "http3", "WebTransport datagrams · HTTP/3 · TLS"},
+		// A run holds the negotiated evidence rather than the target's name for
+		// it, and must not read as a different path for spelling it that way.
+		{wire.TransportWebTransport, "h3", "WebTransport · HTTP/3 · TLS"},
+		{wire.TransportFetchStream, "", "Fetch stream · -- · TLS"},
+	} {
+		if got := ConnectionSummary(c.transport, c.protocol, true); got != c.want {
+			t.Errorf("ConnectionSummary(%q, %q) = %q, want %q", c.transport, c.protocol, got, c.want)
+		}
+	}
+	if got, want := ConnectionSummary(wire.TransportFetchStream, "http1", false), "Fetch stream · HTTP/1.1 · clear"; got != want {
+		t.Errorf("clear summary = %q, want %q", got, want)
+	}
+}

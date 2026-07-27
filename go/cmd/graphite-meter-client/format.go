@@ -7,22 +7,18 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func targetChoiceLabel(target string) string {
-	labels := map[string]string{
-		"auto":           "Automatic",
-		"http1-clear":    "HTTP/1.1 · clear",
-		"http1-tls":      "HTTP/1.1 · TLS",
-		"http2":          "HTTP/2 · TLS",
-		"http3":          "HTTP/3 · QUIC",
-		"ws-http1-clear": "WebSocket · HTTP/1.1 · clear",
-		"ws-http1-tls":   "WebSocket · HTTP/1.1 · TLS",
+// protocolChoiceLabel names an HTTP version the way every other surface does,
+// so the version row and the path beside it do not spell the same protocol two
+// ways. "auto" is this row's own value and not a version at all: it is what the
+// row holds while the decision is still the transport's to make.
+func protocolChoiceLabel(protocol string) string {
+	if protocol == "auto" {
+		return "Automatic"
 	}
-	if label := labels[target]; label != "" {
-		return label
-	}
-	return target
+	return goclient.ProtocolLabel(protocol)
 }
 
 func stageSummary(s goclient.StageSet) string {
@@ -63,7 +59,7 @@ func runOrder(cfg goclient.Config) []string {
 // them line up down the panel. fieldColumn is the same idea for the readings
 // on the run screen, whose labels are single words.
 const (
-	labelColumn = 22
+	labelColumn = 18
 	fieldColumn = 11
 )
 
@@ -88,14 +84,13 @@ func inertValueLine(label, value, note string) string {
 	return fmt.Sprintf("%s %s  %s", mutedStyle.Render(pad(label, labelColumn)), mutedStyle.Render(value), mutedStyle.Render(note))
 }
 
-// endpointRow is an endpoint selector line: what the configured choice is,
-// where in the cycle enter walks it sits, and where it points. Both
-// descriptions come from discovery, so the row stands still while a connection
-// check runs.
-func endpointRow(label, configured string, choices []endpointChoice) string {
-	value, note, pos := targetChoiceLabel(configured), "", ""
+// pathRow is a path selector line: what the configured path is, where in the
+// cycle enter walks it sits, and which origin it points at. Every description
+// comes from discovery, so the row stands still while a connection check runs.
+func pathRow(label, target, transport string, choices []pathChoice) string {
+	value, note, pos := unofferedPathLabel(target, transport), "", ""
 	for i, c := range choices {
-		if c.value == configured {
+		if c.selects(target, transport) {
 			value, note = c.label, c.note
 			pos = fmt.Sprintf(" ‹%d/%d›", i+1, len(choices))
 			break
@@ -108,22 +103,28 @@ func endpointRow(label, configured string, choices []endpointChoice) string {
 	return row
 }
 
-// protocolFacts is what selecting a target means: the protocol it fixes and
-// whether it is encrypted. Discovery carries both for every origin it lists.
-func protocolFacts(protocol string, tls bool) string {
-	label := map[string]string{
-		"http1":      "HTTP/1.1",
-		"http2":      "HTTP/2",
-		"http3":      "HTTP/3",
-		"negotiated": "Negotiated",
-	}[protocol]
-	if label == "" {
-		label = emptyDash(protocol)
+// unofferedPathLabel names a pair no stop of the cycle carries: a flag
+// combination discovery has not confirmed, or a selection made before the
+// origin left discovery. It is spelled out rather than blanked, because it is
+// still what the next check will be asked for.
+func unofferedPathLabel(target, transport string) string {
+	if target == "auto" && transport == "auto" {
+		return "Automatic"
 	}
-	if tls {
-		return label + " · TLS"
+	mechanism := map[string]string{
+		"auto":                             "Automatic transport",
+		wire.TransportFetchStream:          "Fetch stream",
+		wire.TransportWebSocket:            "WebSocket",
+		wire.TransportWebTransport:         "WebTransport",
+		wire.TransportWebTransportDatagram: "WebTransport datagrams",
+	}[transport]
+	if mechanism == "" {
+		mechanism = emptyDash(transport)
 	}
-	return label + " · clear"
+	if target == "auto" {
+		return mechanism + " · automatic origin"
+	}
+	return mechanism + " · " + target
 }
 
 // shortOrigin names a target's origin against the server the client is talking
@@ -156,18 +157,23 @@ func checkbox(on bool) string {
 	return mutedStyle.Render("○")
 }
 
+// timingLabel names the Timing row at index row, in row order. The section is
+// already called Timing and every row but the last is a stage window, so the
+// stages carry their own names rather than repeating "duration" five times —
+// which is also what keeps a row inside the label column shared with the
+// Connections rows beside it.
 func timingLabel(row int) string {
 	switch row {
 	case 0:
 		return "Warmup"
 	case 1:
-		return "Latency duration"
+		return "Latency"
 	case 2:
-		return "Download duration"
+		return "Download"
 	case 3:
-		return "Upload duration"
+		return "Upload"
 	case 4:
-		return "Bidirectional duration"
+		return "Bidirectional"
 	case 5:
 		return "Ping interval"
 	default:
