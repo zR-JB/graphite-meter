@@ -125,12 +125,15 @@ func allowedCORSMethod(path, method string) bool {
 	switch path {
 	case "/preflight", "/probe", "/download":
 		return method == http.MethodGet
-	case "/upload/session", "/upload":
+	case "/upload/session", "/upload", "/wt/session":
 		return method == http.MethodPost
 	case "/upload/progress":
 		return method == http.MethodGet || method == http.MethodDelete
 	case "/ws/ping":
 		return method == http.MethodGet
+	// Session establishment is extended CONNECT; a browser never preflights it.
+	case "/wt/download", "/wt/upload", "/wt/ping":
+		return method == http.MethodConnect
 	}
 	return false
 }

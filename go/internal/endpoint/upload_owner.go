@@ -26,17 +26,62 @@ func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	return addr.String()
 }
 
+// SessionKey buckets the per-client session budget. A login is the unit, not a
+// subject: one device's held sessions must not starve the same user's others.
+// The login branch is pinned by TestSessionKeyUsesTheLoginNotTheSubject in
+// internal/auth: only that package can build a principal with a non-empty
+// LoginID, so no test here or in server catches the branch going away.
+func SessionKey(r *http.Request, trusted []netip.Prefix) string {
+	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.LoginID() != "" {
+		return "login:" + p.LoginID()
+	}
+	return ClientKey(r, trusted)
+}
+
+// uploadAccessMessage is the reason a refused upload reports, over HTTP as the
+// status text and over a stream as an error record.
+func uploadAccessMessage(access uploadAccess) string {
+	switch access {
+	case uploadAccessInvalid:
+		return "unknown upload id"
+	case uploadAccessGlobalFull:
+		return "upload capacity exhausted"
+	case uploadAccessClientFull:
+		return "client upload capacity exhausted"
+	case uploadAccessOwnerMismatch:
+		return "upload id belongs to another client"
+	}
+	return ""
+}
+
+// sessionOwner reads the client key from an HTTP request, or from the session
+// that owns a WebTransport stream, which carries no request of its own.
+func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
+	if _, r, ok := s.HTTP(); ok {
+		return ClientKey(r, trusted)
+	}
+	if owner, ok := s.(interface{ ClientOwner() string }); ok {
+		return owner.ClientOwner()
+	}
+	return ""
+}
+
 func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
 	switch access {
 	case uploadAccessInvalid:
-		http.Error(w, "unknown upload id", http.StatusBadRequest)
+		http.Error(w, uploadAccessMessage(access), http.StatusBadRequest)
 	case uploadAccessGlobalFull:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "upload capacity exhausted", http.StatusServiceUnavailable)
+		http.Error(w, uploadAccessMessage(access), http.StatusServiceUnavailable)
 	case uploadAccessClientFull:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "client upload capacity exhausted", http.StatusTooManyRequests)
+		http.Error(w, uploadAccessMessage(access), http.StatusTooManyRequests)
 	case uploadAccessOwnerMismatch:
-		http.Error(w, "upload id belongs to another client", http.StatusForbidden)
+		http.Error(w, uploadAccessMessage(access), http.StatusForbidden)
+	default:
+		// Every refusal must map to a status. One that reaches here would
+		// otherwise write nothing at all, and Handle's nil return would let the
+		// client read a bare 200 with an empty body as a completed upload.
+		http.Error(w, "upload refused", http.StatusInternalServerError)
 	}
 }

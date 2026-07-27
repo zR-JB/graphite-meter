@@ -1,7 +1,9 @@
 package endpoint
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/netip"
 	"time"
@@ -28,8 +30,7 @@ func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadPro
 	return e
 }
 
-func (e *UploadProgress) ID() string                 { return "upload-progress" }
-func (e *UploadProgress) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (e *UploadProgress) ID() string { return "upload-progress" }
 
 const (
 	uploadProgressTick      = 100 * time.Millisecond
@@ -45,17 +46,24 @@ type uploadProgressEvent struct {
 
 // waitForUploadPosts blocks until no POST lane is still draining into agg, so the
 // terminal count includes every in-flight lane rather than racing them. It
-// reports false if done fires first, meaning the client left and there is no one
-// to report the total to.
-func waitForUploadPosts(done <-chan struct{}, agg *uploadAgg) bool {
-	for agg.posts.Load() > 0 {
+// reports false if done or superseded fires first, meaning this feed has no one
+// left to report the total to.
+func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
+	for {
+		// Register before reading the count: a lane finishing in between still
+		// closes this exact channel.
+		changed := agg.postsWaiter()
+		if agg.posts.Load() == 0 {
+			return true
+		}
 		select {
 		case <-done:
 			return false
-		case <-agg.postsChanged:
+		case <-superseded:
+			return false
+		case <-changed:
 		}
 	}
-	return true
 }
 
 func (e *UploadProgress) Handle(s transport.Session) error {
@@ -64,6 +72,12 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return transport.ErrUnsupported
 	}
 	id := r.URL.Query().Get("id")
+	// This route is request-shaped only -- the check above refuses anything with
+	// no HTTP pair -- so the request key is the whole derivation. Upload.Handle
+	// reaches it through sessionOwner because it also serves WebTransport
+	// streams, which carry no request of their own; both land on the same key for
+	// the same client, which is what keeps the feed from being refused for the
+	// very upload the lane was admitted under.
 	owner := ClientKey(r, e.trusted)
 	if r.Method == http.MethodDelete {
 		if access := e.store.finishFor(id, owner); access != uploadAccessOK {
@@ -103,46 +117,80 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		writeUploadAccessError(w, access)
 		return nil
 	}
-	if !agg.progressActive.CompareAndSwap(false, true) {
-		http.Error(w, "upload progress already connected", http.StatusConflict)
-		return nil
-	}
-	defer agg.progressActive.Store(false)
+	claim := agg.claimProgress()
+	defer agg.releaseProgress(claim)
 	if !emit(uploadProgressEvent{Type: "ready"}) {
 		return nil
 	}
+	runProgress(r.Context().Done(), claim, agg, emit, func() bool {
+		if _, err := w.Write([]byte("\n")); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	})
+	return nil
+}
 
+// HandleStream serves the same feed over a byte stream, the unidirectional
+// stream the server opens on a WebTransport upload session. Stream writes are
+// unbuffered, so there is no flush step.
+func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
+	enc := json.NewEncoder(w)
+	emit := func(event uploadProgressEvent) bool { return enc.Encode(event) == nil }
+
+	agg, access := e.store.getOrCreateForActivity(id, owner, false)
+	if access != uploadAccessOK {
+		emit(uploadProgressEvent{Type: "error", Message: uploadAccessMessage(access)})
+		return
+	}
+	claim := agg.claimProgress()
+	defer agg.releaseProgress(claim)
+	if !emit(uploadProgressEvent{Type: "ready"}) {
+		return
+	}
+	runProgress(ctx.Done(), claim, agg, emit, func() bool {
+		_, err := w.Write([]byte("\n"))
+		return err == nil
+	})
+}
+
+// runProgress reports agg's counter until the upload completes, expires, done
+// fires, or a newer feed supersedes this one. emit and heartbeat report false
+// once their sink is gone.
+func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
 	tick := time.NewTicker(uploadProgressTick)
 	defer tick.Stop()
-	heartbeat := time.NewTicker(uploadProgressHeartbeat)
-	defer heartbeat.Stop()
+	beat := time.NewTicker(uploadProgressHeartbeat)
+	defer beat.Stop()
 	var lastBytes uint64
 	for {
 		select {
-		case <-r.Context().Done():
-			return nil
+		case <-done:
+			return
+		case <-superseded:
+			return
 		case <-agg.expired:
-			return nil
+			return
 		case <-agg.finished:
-			if !waitForUploadPosts(r.Context().Done(), agg) {
-				return nil
+			if !waitForUploadPosts(done, superseded, agg) {
+				return
 			}
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
-			return nil
-		case <-heartbeat.C:
-			if _, err := w.Write([]byte("\n")); err != nil {
-				return nil
+			return
+		case <-beat.C:
+			if !heartbeat() {
+				return
 			}
-			flusher.Flush()
 		case <-tick.C:
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {
 				lastBytes = n
 				if !emit(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: elapsed}) {
-					return nil
+					return
 				}
 			}
 		}

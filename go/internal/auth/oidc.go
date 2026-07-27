@@ -240,22 +240,9 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, why)
 		return
 	}
-	state, err := randomToken(32)
-	if err != nil {
-		s.oidcLoginFailure(w, r, reasonStateGeneration)
-		return
-	}
-	nonce, err := randomToken(32)
-	if err != nil {
-		s.oidcLoginFailure(w, r, reasonNonceGeneration)
-		return
-	}
+	state, nonce := randomToken(32), randomToken(32)
 	verifier := oauth2.GenerateVerifier()
-	browser, err := randomToken(32)
-	if err != nil {
-		s.oidcLoginFailure(w, r, reasonBrowserBinding)
-		return
-	}
+	browser := randomToken(32)
 	key := sha256.Sum256([]byte(state))
 	browserHash := sha256.Sum256([]byte(browser))
 	addr, ok := s.authClientAddress(r)

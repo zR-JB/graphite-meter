@@ -1,11 +1,10 @@
-/* ============================================================
- * The Graphite Meter: latency ping worker
- * ============================================================
- * Owns the /ws/ping WebSocket and the ping algorithm. It runs off the main
- * thread so its in-worker timestamps keep RTT immune to main-thread jank,
- * which matters most for loaded latency, where the main thread is busiest.
- * Only computed { rtt, lost } samples cross the thread boundary.
- * ============================================================ */
+/* Owns the ping bus and the ping algorithm, off the main thread so in-worker
+ * timestamps keep RTT immune to main-thread jank — which matters most under
+ * load. Only computed { rtt, lost } samples cross the boundary.
+ *
+ * The bus is a /ws/ping WebSocket or a /wt/ping WebTransport session. Only the
+ * link differs: over datagrams an evicted ping is real packet loss, over a
+ * WebSocket it is a stalled queue. */
 
 import { encode, decode } from "../real/wire";
 import {
@@ -15,15 +14,20 @@ import {
   type RttEstimate,
 } from "./rttEstimator";
 import { nextBackoff } from "./backoff";
+import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
+import { ESTABLISH_BUDGET_MS } from "../real/budgets";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
- *  reporting on for the SAME warmed socket; `stop` closes everything. */
+ *  reporting on for the SAME warmed socket. The bus is closed by terminating
+ *  the worker, so there is no shutdown message. */
 type InMsg =
   | {
       type: "start";
       url: string;
+      transport: "websocket" | "webtransport";
+      mint?: WtMint;
       intervalMs: number;
       replyDriven: boolean;
       maxInFlight: number;
@@ -32,8 +36,7 @@ type InMsg =
       lossFloorMs: number;
       checkAuthentication?: boolean;
     }
-  | { type: "measure"; intervalMs?: number }
-  | { type: "stop" };
+  | { type: "measure"; intervalMs?: number };
 
 /** Worker → main. Samples downsample to reportGapMs, so a ~1 kHz chain cannot
  *  flood host.ingestLatency, then batch every ~50 ms to cut postMessage
@@ -64,8 +67,19 @@ const REPLY_BACKUP_INITIAL_MS = 250;
 const REPLY_BACKUP_FLOOR_MS = 8;
 const REPLY_BACKUP_CEIL_MS = 1_000;
 
+/** The open bus. `ready` gates sends, so the scheduler never queues into a
+ *  connecting or dead link. There is no close: terminating the worker drops the
+ *  socket and the session, the server's read ends with them, and an unnoticed
+ *  WebTransport session still falls to its idle watchdog. */
+interface PingLink {
+  ready(): boolean;
+  send(msg: string): void;
+}
+
 let url = "";
-let ws: WebSocket | null = null;
+let transport: "websocket" | "webtransport" = "websocket";
+let mint: WtMint | undefined;
+let link: PingLink | null = null;
 let measuring = false;
 let stopped = false;
 let checkAuthentication = false;
@@ -93,7 +107,6 @@ let rttEstimate: RttEstimate = INITIAL_RTT_ESTIMATE;
 // Connection state.
 let backoff = 0;
 let stalledOut = false; // true between a `stall` and its matching `resume`
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 let scheduler: PingScheduler | null = null;
 
@@ -106,6 +119,8 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
   switch (m.type) {
     case "start":
       url = m.url;
+      transport = m.transport;
+      mint = m.mint;
       intervalMs = m.intervalMs;
       replyDriven = m.replyDriven;
       maxInFlight = m.maxInFlight;
@@ -118,7 +133,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
           ? { kind: "reply-driven", backupDelayMs: replyBackupDelay }
           : { kind: "fixed", intervalMs },
         (now) => {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+          if (!link?.ready()) return false;
           if (pending.size >= maxInFlight) return false;
           sendPing(now);
           return true;
@@ -135,33 +150,42 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
       break;
-    case "stop":
-      teardown();
-      break;
   }
 };
 
 function connect(): void {
   if (stopped) return;
+  if (transport === "webtransport") void connectWebTransport();
+  else connectWebSocket();
+}
+
+/** Announces an open bus and starts the chain. The warmup hello draws a READY,
+ *  so the wire is warm before `measure` flips reporting on. */
+function onConnected(proto: string): void {
+  backoff = 0;
+  if (stalledOut) {
+    post({ type: "resume" });
+    stalledOut = false;
+  }
+  post({ type: "open" });
+  trySend(encode({ op: "HI", proto }));
+  scheduler?.reset();
+  scheduler?.start();
+}
+
+function connectWebSocket(): void {
+  let ws: WebSocket;
   try {
     ws = new WebSocket(url);
   } catch (err) {
     scheduleReconnect(String(err));
     return;
   }
-  ws.onopen = (): void => {
-    backoff = 0;
-    if (stalledOut) {
-      post({ type: "resume" });
-      stalledOut = false;
-    }
-    post({ type: "open" });
-    // Warmup hello: the server replies READY. Pinging starts immediately so the
-    // wire is already warm when `measure` flips reporting on.
-    trySend(encode({ op: "HI", proto: "ws" }));
-    scheduler?.reset();
-    scheduler?.start();
+  link = {
+    ready: () => ws.readyState === WebSocket.OPEN,
+    send: (msg) => ws.send(msg),
   };
+  ws.onopen = (): void => onConnected("ws");
   ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
   // A WebSocket always follows onerror with onclose. Reconnect from onclose
   // only, to avoid a double schedule.
@@ -172,25 +196,119 @@ function connect(): void {
       return;
     }
     if (checkAuthentication && event.code === 1006) {
-      void checkSessionThenReconnect();
+      void checkSessionThenReconnect("websocket closed");
       return;
     }
     onDisconnect("websocket closed");
   };
 }
 
-async function checkSessionThenReconnect(): Promise<void> {
+/** One wire message per datagram, so the read loop needs no framing. */
+async function connectWebTransport(): Promise<void> {
+  const minted = await mintWtToken(mint);
+  if (stopped) return;
+  // An authenticated bus cannot dial without a token. The refusal already says
+  // whether the login session died, so a reconnect needs no second request.
+  if (checkAuthentication && mint && minted.token === "") {
+    if (minted.authRequired) {
+      post({ type: "auth-required" });
+      stopped = true;
+      return;
+    }
+    scheduleReconnect("webtransport token mint failed");
+    return;
+  }
+  const token = minted.token;
+  let wt: WebTransport;
+  try {
+    wt = new WebTransport(withWtToken(url, token), {
+      congestionControl: "low-latency",
+    });
+  } catch (err) {
+    scheduleReconnect(String(err));
+    return;
+  }
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  let disconnectReported = false;
+  const disconnect = (detail: string): void => {
+    if (disconnectReported) return;
+    disconnectReported = true;
+    onDisconnect(detail);
+  };
+  link = {
+    ready: () => writer !== null,
+    // A rejected datagram write is a dropped frame; wt.closed reports the end.
+    send: (msg) => void writer?.write(encoder.encode(msg)).catch(() => {}),
+  };
+  void wt.closed.then(
+    () => disconnect("webtransport closed"),
+    (err: unknown) => disconnect(String(err)),
+  );
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      wt.ready,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("webtransport session did not establish")),
+          ESTABLISH_BUDGET_MS,
+        );
+      }),
+    ]);
+  } catch (err) {
+    if (timer !== null) clearTimeout(timer);
+    try {
+      wt.close();
+    } catch {
+      /* already closing */
+    }
+    // Some implementations leave `closed` pending with a black-holed
+    // handshake, so the deadline itself must drive the retry. If close also
+    // settles it, the per-attempt latch above suppresses the echo.
+    disconnect(String(err));
+    return;
+  }
+  if (timer !== null) clearTimeout(timer);
+  // `ready` fulfils on the CONNECT the server accepted, which is the moment it
+  // deleted the token. This bus re-dials inside its own realm, so an unreported
+  // spend would replay it on every reconnect for the whole reuse window.
+  spendWtToken(token);
+  try {
+    writer = wt.datagrams.writable.getWriter();
+    onConnected("wt");
+    const reader = wt.datagrams.readable.getReader();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) {
+        disconnect("webtransport datagram stream closed");
+        return;
+      }
+      onFrame(decoder.decode(value as AllowSharedBufferSource));
+    }
+  } catch (err) {
+    try {
+      wt.close();
+    } catch {
+      /* already closing */
+    }
+    disconnect(String(err));
+  }
+}
+
+async function checkSessionThenReconnect(detail: string): Promise<void> {
   if (await sessionAuthenticationRequired(self.location.origin)) {
     post({ type: "auth-required" });
     stopped = true;
     return;
   }
-  onDisconnect("websocket closed");
+  onDisconnect(detail);
 }
 
 function onDisconnect(detail: string): void {
   if (stopped) return;
-  ws = null;
+  link = null;
   scheduler?.stop();
   // In-flight pings die with the socket. Dropping them silently is correct: a
   // connection gap is not per-packet loss, and the `stall` reports the gap.
@@ -207,7 +325,7 @@ function scheduleReconnect(detail: string): void {
     stalledOut = true;
   }
   backoff = nextBackoff(backoff, RECONNECT_MIN_MS, RECONNECT_MAX_MS);
-  reconnectTimer = setTimeout(connect, backoff);
+  setTimeout(connect, backoff);
 }
 
 function ensureTimers(): void {
@@ -280,15 +398,15 @@ function replyBackupDelay(): number {
 
 function trySend(msg: string): void {
   try {
-    ws?.send(msg);
+    link?.send(msg);
   } catch {
-    /* closed mid-send: onclose drives the reconnect */
+    /* closed mid-send: the close handler drives the reconnect */
   }
 }
 
-/** Evicts pings past the adaptive timeout and counts them lost. Over TCP/WS that
- *  means a stalled socket or queue, not packet loss: TCP retransmits. Real loss
- *  needs WebTransport datagrams (docs/ARCHITECTURE.md#roadmap). */
+/** Evicts pings past the adaptive timeout and counts them lost. Over datagrams
+ *  that is physical packet loss; over a WebSocket TCP retransmits, so it means
+ *  a stalled socket or queue instead. */
 function sweep(): void {
   const now = performance.now();
   const timeout = lossTimeout(rttEstimate, lossK, lossFloorMs, LOSS_CEIL_MS);
@@ -323,25 +441,4 @@ function flush(): void {
   const samples = outbox;
   outbox = [];
   post({ type: "samples", samples });
-}
-
-function teardown(): void {
-  stopped = true;
-  measuring = false;
-  if (reconnectTimer !== null) clearTimeout(reconnectTimer);
-  reconnectTimer = null;
-  scheduler?.stop();
-  scheduler = null;
-  for (const t of [sweeper, flusher]) if (t !== null) clearInterval(t);
-  sweeper = flusher = null;
-  flush(); // emit any tail
-  pending.clear();
-  graveyard.clear();
-  replyHeadId = null;
-  try {
-    ws?.close(1000, "");
-  } catch {
-    /* already closed */
-  }
-  ws = null;
 }

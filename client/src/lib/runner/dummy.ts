@@ -177,13 +177,36 @@ export class DummyBackend implements RunnerBackend {
   }
 
   /* ================= PROBE ================= */
-  async probe(_config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
     signal?.throwIfAborted();
     const pageOrigin =
       typeof location === "undefined" ? "http://localhost" : location.origin;
     const secure = pageOrigin.startsWith("https:");
     const throughputId = secure ? "http1-tls" : "http1-clear";
     const latencyId = secure ? "ws-http1-tls" : "ws-http1-clear";
+    // The page origin advertises every throughput mechanism a real one can, so
+    // the settings panel and the endpoint drawer render their whole surface
+    // against the dummy. Nothing here dials: the samples are synthetic either
+    // way, and the ids exist so a selection has something to name.
+    const wtId = `${throughputId}::wt`;
+    const wtDatagramId = `${throughputId}::wtdg`;
+    const wtRoutes = {
+      probe: ROUTES.probe,
+      wtSession: ROUTES.wtSession,
+      wtDownload: ROUTES.wtDownload,
+      wtUpload: ROUTES.wtUpload,
+      uploadSession: ROUTES.uploadSession,
+      uploadProgress: ROUTES.uploadProgress,
+    };
+    // A probe reports the path it committed to, and the dummy commits to
+    // whatever was selected: reporting the fetch lane under a session selection
+    // would deny the card the user chose.
+    const session =
+      config.transports.throughputTarget === wtId
+        ? ({ id: wtId, transport: "webtransport" } as const)
+        : config.transports.throughputTarget === wtDatagramId
+          ? ({ id: wtDatagramId, transport: "webtransport-datagram" } as const)
+          : null;
     this.#host?.emit({
       type: "transportDiscovery",
       discovery: {
@@ -200,33 +223,53 @@ export class DummyBackend implements RunnerBackend {
         throughput: {
           [throughputId]: {
             state: "advertised",
-            target: {
-              id: throughputId,
-              origin: pageOrigin,
-              transport: "fetch-stream",
-              protocol: "http1",
-              tls: secure,
-              routes: {
-                probe: ROUTES.probe,
-                download: ROUTES.download,
-                upload: ROUTES.upload,
-                uploadSession: ROUTES.uploadSession,
-                uploadProgress: ROUTES.uploadProgress,
+            targets: [
+              {
+                id: throughputId,
+                origin: pageOrigin,
+                transport: "fetch-stream",
+                protocol: "http1",
+                tls: secure,
+                routes: {
+                  probe: ROUTES.probe,
+                  download: ROUTES.download,
+                  upload: ROUTES.upload,
+                  uploadSession: ROUTES.uploadSession,
+                  uploadProgress: ROUTES.uploadProgress,
+                },
               },
-            },
+              {
+                id: wtId,
+                origin: pageOrigin,
+                transport: "webtransport",
+                protocol: "http3",
+                tls: secure,
+                routes: wtRoutes,
+              },
+              {
+                id: wtDatagramId,
+                origin: pageOrigin,
+                transport: "webtransport-datagram",
+                protocol: "http3",
+                tls: secure,
+                routes: wtRoutes,
+              },
+            ],
           },
         },
         latency: {
           [latencyId]: {
             state: "advertised",
-            target: {
-              id: latencyId,
-              origin: pageOrigin,
-              transport: "websocket",
-              protocol: "http1",
-              tls: secure,
-              routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-            },
+            targets: [
+              {
+                id: latencyId,
+                origin: pageOrigin,
+                transport: "websocket",
+                protocol: "http1",
+                tls: secure,
+                routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+              },
+            ],
           },
         },
       },
@@ -265,9 +308,10 @@ export class DummyBackend implements RunnerBackend {
       engineVersion: "dummy-1.0.0",
       discoveryGeneration: "dummy",
       protocolNegotiated: "http/1.1",
-      selectedThroughputTarget: throughputId,
-      selectedThroughputProtocol: "http1",
+      selectedThroughputTarget: session?.id ?? throughputId,
+      selectedThroughputProtocol: session ? "http3" : "http1",
       selectedLatencyTarget: latencyId,
+      selectedThroughputTransport: session?.transport ?? "fetch-stream",
       selectedLatencyTransport: "websocket",
       latencyProtocolNegotiated: "http/1.1",
       firstHopProtocol: "http/1.1",
@@ -283,8 +327,8 @@ export class DummyBackend implements RunnerBackend {
     return {
       name: "dummy",
       version: BUILD.clientVersion,
-      latencyTransports: ["webtransport-datagrams", "websocket"],
-      throughputTransports: ["webtransport-streams", "fetch-streams"],
+      latencyTransports: ["webtransport", "websocket"],
+      throughputTransports: ["webtransport", "fetch-stream"],
     };
   }
 

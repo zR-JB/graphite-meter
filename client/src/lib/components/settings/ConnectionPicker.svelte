@@ -82,8 +82,12 @@
       <small>{connection.message ?? connection.summary}</small>
     </span>
     {#if !locked && (connection.validation === "failed" || connection.validation === "stale")}
-      <button type="button" onclick={() => void validateConnections(true, role)}
-        >Retry</button
+      <!-- Both pickers mount at once and a <legend> does not name a descendant
+           button, so without this the rotor reads "Retry, Retry". -->
+      <button
+        type="button"
+        aria-label={`Retry ${title}`}
+        onclick={() => void validateConnections(true, role)}>Retry</button
       >
     {/if}
   </div>

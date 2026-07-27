@@ -50,6 +50,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       tui: ${{ steps.filter.outputs.tui }}
       client: ${{ steps.filter.outputs.client }}
+      e2e: ${{ steps.filter.outputs.e2e }}
       smoke: ${{ steps.filter.outputs.smoke }}
     steps:
       # Checkout is needed for push events; PR events are diffed via the API.
@@ -63,6 +64,9 @@ jobs:
           filters: |
             workflow: &workflow
               - ".github/workflows/ci.yml"
+              # The justfile is the executable definition of every substantive
+              # job below. A recipe-only change must exercise those jobs too.
+              - "justfile"
             go:
               - *workflow
               - "go/**"
@@ -80,6 +84,11 @@ jobs:
               - "go/internal/wire/**"
             client:
               - *workflow
+              - "client/**"
+              - "api/**"
+            e2e:
+              - *workflow
+              - "go/**"
               - "client/**"
               - "api/**"
             smoke:
@@ -189,8 +198,40 @@ jobs:
         run: just client-ci
       - name: Install browsers
         run: bunx playwright install --with-deps chromium firefox
-      - name: Browser accessibility and compatibility
+      - name: Stubbed browser suite
         working-directory: .
+        run: just client-browser
+
+  e2e:
+    name: End to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - name: Install
+        working-directory: client
+        run: bun install --frozen-lockfile
+      # Chromium alone: QUIC ignores ignoreHTTPSErrors, and Firefox reaches h3
+      # only through a system trust anchor.
+      - name: Install browser
+        working-directory: client
+        run: bunx playwright install --with-deps chromium
+      # The stubbed suite never reaches a backend, so this is the only coverage
+      # the browser half of a transport has.
+      - name: Real transports against a real server
         run: just client-e2e
 
   smoke:
@@ -238,10 +279,12 @@ jobs:
             and (.generation | type == "string" and length > 0)
             and .capabilities.throughput == [{
               "baseUrl": "http://localhost:7246",
+              "transport": "fetch-stream",
               "protocol": "http1"
             }]
             and .capabilities.latency == [{
-              "baseUrl": "http://localhost:7246"
+              "baseUrl": "http://localhost:7246",
+              "transport": "websocket"
             }]
             and .server.name == "graphite-meter"
           ' /tmp/preflight.json

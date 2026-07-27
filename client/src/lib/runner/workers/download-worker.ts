@@ -4,28 +4,24 @@
  * One worker per parallel download stream. It streams GET /download, counts
  * each chunk's byteLength and discards it, so the payload never crosses the
  * thread boundary and memory stays O(1). Only `{ bytes }` deltas go back,
- * batched to ~50 ms. The lane re-fetches until `stop` aborts the fetch.
+ * batched to ~50 ms. The lane re-fetches until the worker is terminated.
  * ============================================================ */
 
-import {
-  setDebugLogging,
-  debugEnabled,
-  dlog,
-  fmtRate,
-  fmtBytes,
-  fmtMs,
-} from "../../debug";
+import { setDebugLogging, debugEnabled, dlog, DebugWindow } from "../../debug";
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
+import { ProgressWindow, type ProgressDelta } from "./progressWindow";
+import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
 /** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
  *  selects the experimental mode: adaptively-sized `&bytes=N` requests (see
  *  autosize.ts) over one keep-alive connection, preserving cwnd. Default off
- *  runs one 64 GiB stream; the flag A/B-tests ramp responsiveness. */
+ *  runs one 64 GiB stream; the flag A/B-tests ramp responsiveness. The lane is
+ *  stopped by terminating the worker, so there is no shutdown message. */
 type InMsg =
   | {
       type: "start";
@@ -36,8 +32,7 @@ type InMsg =
       credentials?: RequestCredentials;
       headers?: HeadersInit;
     }
-  | { type: "measure"; seq: number }
-  | { type: "stop" };
+  | { type: "measure"; seq: number };
 /** Worker → main. */
 type OutMsg =
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
@@ -49,12 +44,10 @@ export function recoverableDownloadStatus(status: number): boolean {
 }
 
 export function downloadFetchInit(
-  signal: AbortSignal,
   requestCredentials: RequestCredentials,
   requestHeaders?: HeadersInit,
 ): RequestInit {
   return {
-    signal,
     cache: "no-store",
     credentials: requestCredentials,
     headers: requestHeaders,
@@ -68,15 +61,6 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 let credentials: RequestCredentials = "same-origin";
 let headers: HeadersInit | undefined;
 
-/** Post a delta no more often than this (ms); flushed on stream end / stop. */
-const POST_INTERVAL_MS = 50;
-
-/** Size of the single reused BYOB read buffer, one per worker for the whole
- *  stage. Firefox pulls far ahead of the reader into its own buffers when the
- *  link outruns this loop (loopback), inflating process RAM and undercounting.
- *  Reusing one buffer is the only backpressure lever fetch exposes. */
-const READ_BUF_BYTES = 1024 * 1024; // 1 MiB
-
 /** Experimental chunked-request sizer (see autosize.ts). The generous max costs
  *  no RAM because the reader discards as it counts, so a fast stable link climbs
  *  toward it and only a slow or dropping link shrinks for responsiveness. */
@@ -89,100 +73,59 @@ const CHUNK_SIZER: SizerCfg = {
   stepDown: 0.5,
 };
 
-let abort: AbortController | null = null;
-let stopped = false;
 /** Chunked mode (experimental) + its closed-loop state. */
 let chunked = false;
 let nextBytes = CHUNK_SIZER.minBytes;
 let rateEwma = 0;
 let measureSeq = 0;
-/** Bytes counted since the last posted delta, and when that window opened. */
-let windowBytes = 0;
-let windowStart = 0;
+let progress = new ProgressWindow(0, REPORT_GAP_MS);
 
 /** Stream index, tagging debug lines only (`dl-worker#<id>`). */
 let streamId = 0;
-/** Raw-receive debug window, independent of the 50 ms progress batching: bytes
- *  since the last 1 Hz log, its start time, and the per-stream total. Reflects
- *  what this reader pulls off the socket, comparable to btop and `-verbose`. */
-let dbgWinBytes = 0;
-let dbgWinStart = 0;
-let dbgTotal = 0;
+/** Raw-receive debug window, independent of the 50 ms progress batching.
+ *  Reflects what this reader pulls off the socket, comparable to btop and
+ *  `-verbose`. */
+const dbg = new DebugWindow();
 
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "start") {
-    stopped = false;
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
     chunked = msg.chunk ?? false;
+    progress = new ProgressWindow(performance.now(), REPORT_GAP_MS);
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers;
     nextBytes = CHUNK_SIZER.minBytes;
     rateEwma = 0;
     measureSeq = 0;
-    resetProgressWindow();
-    dbgWinBytes = 0;
-    dbgTotal = 0;
-    dbgWinStart = performance.now();
+    progress.reset();
+    dbg.reset();
     void run(msg.url);
   } else if (msg.type === "measure") {
     measureSeq = msg.seq;
-    resetProgressWindow();
-  } else if (msg.type === "stop") {
-    stopped = true;
-    abort?.abort();
+    progress.reset();
   }
 };
 
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-function resetProgressWindow(): void {
-  windowBytes = 0;
-  windowStart = performance.now();
-}
-
-function flushProgress(now = performance.now()): void {
-  if (windowBytes <= 0) {
-    windowStart = now;
-    return;
-  }
-  const elapsedMs = now - windowStart;
-  if (elapsedMs > 0)
-    post({ type: "progress", bytes: windowBytes, elapsedMs, seq: measureSeq });
-  windowBytes = 0;
-  windowStart = now;
+function postProgress(delta: ProgressDelta | null): void {
+  if (delta) post({ type: "progress", ...delta, seq: measureSeq });
 }
 
 async function run(url: string): Promise<void> {
   // Re-fetch loop: keep the lane busy for the whole measured window even if a
   // single request reaches its Content-Length.
-  while (!stopped) {
-    abort = new AbortController();
-    let lastPost = performance.now();
+  for (;;) {
     // Count the chunk and drop it. Deltas batch to the main thread; verbose mode
     // logs the pre-aggregation 1 Hz receive rate, ground truth for the reader.
     const count = (n: number): void => {
-      windowBytes += n;
       const now = performance.now();
-      if (now - lastPost >= POST_INTERVAL_MS) {
-        flushProgress(now);
-        lastPost = now;
-      }
+      postProgress(progress.add(n, now));
       if (debugEnabled()) {
-        dbgWinBytes += n;
-        dbgTotal += n;
-        const dt = now - dbgWinStart;
-        if (dt >= 1000) {
-          dlog(`dl-worker#${streamId}`, "raw-receive", {
-            rate: fmtRate(dbgWinBytes / (dt / 1000)),
-            window: fmtBytes(dbgWinBytes),
-            total: fmtBytes(dbgTotal),
-            dt: fmtMs(dt),
-          });
-          dbgWinBytes = 0;
-          dbgWinStart = now;
-        }
+        const window = dbg.add(n, now);
+        if (window) dlog(`dl-worker#${streamId}`, "raw-receive", window);
       }
     };
     // Chunked mode appends the adaptive size; long-stream mode uses the URL as-is
@@ -193,7 +136,7 @@ async function run(url: string): Promise<void> {
     try {
       const res = await fetch(
         requestUrl,
-        downloadFetchInit(abort.signal, credentials, headers),
+        downloadFetchInit(credentials, headers),
       );
       if (authenticationRequired(res)) {
         post({ type: "auth-required" });
@@ -208,7 +151,7 @@ async function run(url: string): Promise<void> {
         return;
       }
       await readBody(res.body, count);
-      flushProgress(); // the window's remainder
+      postProgress(progress.flush()); // the window's remainder
       if (chunked) {
         ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
           requestedBytes,
@@ -218,19 +161,16 @@ async function run(url: string): Promise<void> {
         ));
       }
     } catch (err) {
-      if (stopped) return; // stop() aborted it: a clean teardown
+      // A read that failed on an expired session is an auth failure, not a
+      // transport one, so the session is re-checked before the error is reported.
       if (
         credentials === "include" &&
-        (await sessionAuthenticationRequired(
-          self.location.origin,
-          abort.signal,
-        ))
+        (await sessionAuthenticationRequired(self.location.origin))
       ) {
-        stopped = true;
         post({ type: "auth-required" });
         return;
       }
-      flushProgress();
+      postProgress(progress.flush());
       post({ type: "error", recoverable: true, detail: String(err) });
       return; // the main thread decides whether to restart this lane
     }

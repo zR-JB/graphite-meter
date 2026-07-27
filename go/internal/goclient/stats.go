@@ -16,13 +16,14 @@ type laneGroup struct {
 	errs chan error
 }
 
-// startLanes spawns r.streams lanes of body, staggered so their congestion
-// windows don't ramp in lockstep.
-func (r *runner) startLanes(ctx context.Context, body func(ctx context.Context, lane int) error) *laneGroup {
+// startLanes spawns `streams` lanes of body, staggered so their congestion
+// windows don't ramp in lockstep. The count is the direction's own: the two
+// differ under an automatic multiplexed policy.
+func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx context.Context, lane int) error) *laneGroup {
 	laneCtx, cancel := context.WithCancel(ctx)
-	g := &laneGroup{cancel: cancel, errs: make(chan error, r.streams)}
-	stagger := r.laneStaggerStep()
-	for i := 0; i < r.streams; i++ {
+	g := &laneGroup{cancel: cancel, errs: make(chan error, streams)}
+	stagger := r.laneStaggerStep(streams)
+	for i := 0; i < streams; i++ {
 		g.wg.Add(1)
 		go func(lane int) {
 			defer g.wg.Done()
@@ -72,6 +73,7 @@ type rateLoop struct {
 	// measurement, for callers whose ctx carries the window as its deadline.
 	cancelEndsWindow bool
 	laneErr          <-chan error
+	stageErr         <-chan error
 	// sample folds one tick of the rate source into stats and emits it.
 	sample func(now time.Time, stats *rateStats)
 	// window records the measured byte and time totals at the end of the run.
@@ -100,6 +102,9 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 			l.window(&stats)
 			return stats, nil
 		case err := <-l.laneErr:
+			l.window(&stats)
+			return stats, err
+		case err := <-l.stageErr:
 			l.window(&stats)
 			return stats, err
 		case now := <-ticker.C:

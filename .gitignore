@@ -3,6 +3,8 @@ client/node_modules
 client/dist
 client/.vite
 client/test-results
+# raw benchmark rows; findings live in docs/BENCHMARKS.md, rows are not committed
+client/bench/results/
 
 # --- Go module (server + native client) ---
 go/graphite-meter
@@ -28,10 +30,7 @@ node_modules
 *.local
 .vite
 
-# Local planning artifact (mirror of ~/.claude/plans, not part of the repo)
-the-next-step-will-harmonic-harp.md
-
-# Claude Code — personal, machine-local settings (shared settings.json is tracked)
+# Claude Code — personal, machine-local settings
 .claude/settings.local.json
 
 # Local TLS material must stay outside Git. Certificates are public, but

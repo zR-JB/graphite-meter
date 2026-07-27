@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -123,11 +124,15 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	}
 }
 
-func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
+// A reconnecting client re-dials long before its dead transport's idle timeout
+// releases the old feed, so the newest feed takes the aggregate over and the
+// stale holder terminates.
+func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -136,13 +141,176 @@ func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
 	}()
 	waitProgressText(t, rec, `{"type":"ready"}`)
 
-	duplicate := httptest.NewRecorder()
-	h.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
-	if duplicate.Code != http.StatusConflict {
-		t.Fatalf("duplicate status = %d, want %d", duplicate.Code, http.StatusConflict)
+	takeover := newProgressRecorder()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() {
+		h.ServeHTTP(takeover, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx2))
+		close(done2)
+	}()
+	waitProgressText(t, takeover, `{"type":"ready"}`)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("superseded feed did not terminate")
 	}
-	cancel()
-	<-done
+	cancel2()
+	<-done2
+}
+
+// A superseded feed shares the terminal wait with the live one. A single-token
+// nudge would wake only one of them, so the feed that lost the race would never
+// emit its complete record. The broadcast is asserted on the channels
+// themselves: goroutines racing a lane count would return on their first read of
+// posts and never reach the wait at all.
+func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
+	var agg uploadAgg
+	a, b := agg.postsWaiter(), agg.postsWaiter()
+	if a != b {
+		t.Fatal("two waiters got different channels: a single change cannot reach both")
+	}
+	agg.changePosts(1)
+	for i, ch := range []<-chan struct{}{a, b} {
+		select {
+		case <-ch:
+		default:
+			t.Fatalf("waiter %d was not woken: the lane-count change did not broadcast", i)
+		}
+	}
+	if c := agg.postsWaiter(); c == a {
+		t.Fatal("the next waiter reused the closed channel: it would never see another change")
+	}
+}
+
+// A superseded feed must abandon the terminal wait rather than sit on it until
+// its transport dies.
+func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
+	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
+	agg.changePosts(1)
+	superseded := make(chan struct{})
+	done := make(chan bool, 1)
+	go func() { done <- waitForUploadPosts(make(chan struct{}), superseded, agg) }()
+	close(superseded)
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("superseded feed reported a drained count, want an abandoned wait")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded feed stayed in the terminal wait")
+	}
+}
+
+// The feed ticks every 100 ms whether or not bytes moved. Without the
+// de-duplication a stalled upload emits an identical record ten times a second
+// for the whole stall, and the client cannot tell a repeat from real progress.
+func TestProgressRepeatsNoRecordForAnUnchangedByteCount(t *testing.T) {
+	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
+	agg.recordChunk(monoNanos(), 4096)
+
+	done := make(chan struct{})
+	first := make(chan struct{})
+	var records atomic.Int32
+	go runProgress(done, make(chan struct{}), agg, func(e uploadProgressEvent) bool {
+		if e.Type == "progress" && records.Add(1) == 1 {
+			close(first)
+		}
+		return true
+	}, func() bool { return true })
+	defer close(done)
+
+	select {
+	case <-first:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the feed emitted no progress record for a counter that moved")
+	}
+	// The counter does not move again, so no further record is owed however many
+	// ticks pass.
+	time.Sleep(5 * uploadProgressTick)
+	if n := records.Load(); n != 1 {
+		t.Fatalf("%d progress records for one unchanged byte count, want 1: a stalled upload floods the feed every %v", n, uploadProgressTick)
+	}
+}
+
+// The refusals the WebTransport progress stream now carries as error records are
+// the same ones the HTTP feed answers with. Each status is the client's cue:
+// retry after a moment, give up, or treat the id as bad.
+func TestUploadProgressRefusalResponses(t *testing.T) {
+	t.Run("client cap is a retryable 429", func(t *testing.T) {
+		store := NewUploadStore()
+		const owner = "192.0.2.1"
+		for i := 0; i < maxLiveUploadsPerClient; i++ {
+			if _, access := store.getOrCreateFor(store.Mint(), owner); access != uploadAccessOK {
+				t.Fatalf("filler create %d below the per-owner cap = %v", i, access)
+			}
+		}
+		req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+store.Mint(), nil)
+		req.RemoteAddr = owner + ":1234"
+		rec := httptest.NewRecorder()
+		httpAdapter(NewUploadProgress(store)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "1" {
+			t.Fatalf("Retry-After = %q, want %q: the client cannot tell this refusal is temporary", got, "1")
+		}
+		if want := uploadAccessMessage(uploadAccessClientFull); !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("body = %s, want it to contain %q", rec.Body.String(), want)
+		}
+	})
+
+	t.Run("another client's id is a 403", func(t *testing.T) {
+		store := NewUploadStore()
+		id := store.Mint()
+		if _, access := store.getOrCreateFor(id, "192.0.2.1"); access != uploadAccessOK {
+			t.Fatalf("create = %v", access)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil)
+		req.RemoteAddr = "192.0.2.2:1234"
+		rec := httptest.NewRecorder()
+		httpAdapter(NewUploadProgress(store)).ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d: another client's upload was readable", rec.Code, http.StatusForbidden)
+		}
+		if want := uploadAccessMessage(uploadAccessOwnerMismatch); !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("body = %s, want it to contain %q", rec.Body.String(), want)
+		}
+	})
+
+	t.Run("finalizing an unknown id is a 400", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		httpAdapter(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/upload/progress?id=forged", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+		if want := uploadAccessMessage(uploadAccessInvalid); !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("body = %s, want it to contain %q", rec.Body.String(), want)
+		}
+	})
+
+	// Only GET streams and only DELETE finalizes. Anything else must be refused
+	// on the method alone, before any code that can block, or the request parks
+	// on a feed its method never asked for.
+	//
+	// The context is cancelled BEFORE the call, which is what makes this an
+	// ordering assertion rather than a timing one: the method check runs ahead of
+	// everything that observes the context, so a dead context cannot change the
+	// answer. Were the check ever moved after the streaming setup, the request
+	// would reach runProgress, return on the already-closed done channel, and
+	// answer 200 -- failing here immediately instead of hanging or flaking.
+	t.Run("any other method is a 405", func(t *testing.T) {
+		store := NewUploadStore()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		req := httptest.NewRequest(http.MethodPut, "/upload/progress?id="+store.Mint(), nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		httpAdapter(NewUploadProgress(store)).ServeHTTP(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		}
+	})
 }
 
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {

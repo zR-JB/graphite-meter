@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import type { CoreHost } from "./core";
 import {
   httpToWs,
-  median,
   needsPings,
   laneStaggerMs,
   protocolFromNextHop,
@@ -12,9 +11,19 @@ import {
   classifyTransportDiscovery,
   isLoopbackHostname,
   throughputTargetKey,
+  fetchViewOfWebTransport,
+  targetOfKind,
   ROUTES,
 } from "./real/backendPure";
-import type { PhaseActivity, RunnerConfig } from "./contract";
+import { TRANSPORTS, kindsForRole, ridesSession } from "./real/transports";
+import type {
+  InfraInfo,
+  PhaseActivity,
+  RunnerConfig,
+  StallInfo,
+  TransportDiscovery,
+  TransportKind,
+} from "./contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 
 const routes = {
@@ -56,8 +65,8 @@ const discovery = (
 
 test("proxy endpoints resolve relative to preflight and negotiate the browser hop", () => {
   const catalog = classifyTransportDiscovery(
-    [{ baseUrl: ".", protocol: "negotiated" }],
-    [{ baseUrl: "." }],
+    [{ baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" }],
+    [{ baseUrl: ".", transport: "websocket" }],
     "https://meter.example",
     true,
     "h2",
@@ -65,7 +74,8 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
   const target = selectThroughputTarget(catalog, "auto");
   expect(target?.origin).toBe("https://meter.example");
   expect(target?.protocol).toBe("negotiated");
-  expect(browserProtocolMatchesTarget(target!, "h2")).toBe(true);
+  if (target?.transport !== "fetch-stream") throw new Error("not fetch");
+  expect(browserProtocolMatchesTarget(target, "h2")).toBe(true);
   expect(selectLatencyTarget(catalog, "auto")?.origin).toBe(
     "https://meter.example",
   );
@@ -74,25 +84,38 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
 test("deterministic native target wins when self resolves to the same origin", () => {
   const catalog = classifyTransportDiscovery(
     [
-      { baseUrl: "https://meter.example", protocol: "http1" },
-      { baseUrl: ".", protocol: "negotiated" },
+      {
+        baseUrl: "https://meter.example",
+        transport: "fetch-stream",
+        protocol: "http1",
+      },
+      { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
     ],
     [],
     "https://meter.example",
     true,
     "http/1.1",
   );
-  expect(catalog.throughput["https://meter.example"].target?.protocol).toBe(
-    "http1",
-  );
+  expect(
+    targetOfKind(catalog.throughput["https://meter.example"], "fetch-stream")
+      ?.protocol,
+  ).toBe("http1");
   expect(selectThroughputTarget(catalog, "auto")?.protocol).toBe("http1");
 });
 
 test("native endpoints remain deterministic and mixed content stays blocked", () => {
   const catalog = classifyTransportDiscovery(
     [
-      { baseUrl: "http://meter:7246", protocol: "http1" },
-      { baseUrl: "https://meter:7248", protocol: "http2" },
+      {
+        baseUrl: "http://meter:7246",
+        transport: "fetch-stream",
+        protocol: "http1",
+      },
+      {
+        baseUrl: "https://meter:7248",
+        transport: "fetch-stream",
+        protocol: "http2",
+      },
     ],
     [],
     "https://ui.example",
@@ -103,12 +126,177 @@ test("native endpoints remain deterministic and mixed content stays blocked", ()
   expect(selectThroughputTarget(catalog, "https://meter:7248")?.protocol).toBe(
     "http2",
   );
+  const h2Target = selectThroughputTarget(catalog, "https://meter:7248");
+  if (h2Target?.transport !== "fetch-stream") throw new Error("not fetch");
+  expect(browserProtocolMatchesTarget(h2Target, "http/1.1")).toBe(false);
+});
+
+// An IPv6 literal carries "::" of its own, which is why a selection is matched
+// whole and never taken apart to find the origin inside it.
+test("an IPv6 origin resolves each of its mechanisms", () => {
+  const origin = "https://[2001:db8::1]:7249";
+  const catalog = classifyTransportDiscovery(
+    [
+      { baseUrl: origin, transport: "fetch-stream", protocol: "http3" },
+      { baseUrl: origin, transport: "webtransport", protocol: "http3" },
+    ],
+    [{ baseUrl: origin, transport: "webtransport" }],
+    origin,
+    true,
+    "h3",
+  );
+  expect(selectThroughputTarget(catalog, origin)?.transport).toBe(
+    "fetch-stream",
+  );
+  expect(selectThroughputTarget(catalog, `${origin}::wt`)?.transport).toBe(
+    "webtransport",
+  );
+  expect(selectLatencyTarget(catalog, `${origin}::wt`, true)?.transport).toBe(
+    "webtransport",
+  );
+  // The origin has no WebSocket bus, so a plain selection resolves its only one.
+  expect(selectLatencyTarget(catalog, origin, true)?.transport).toBe(
+    "webtransport",
+  );
+});
+
+test("WebTransport folds onto its origin and leads latency auto-selection", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://meter:7249",
+        transport: "fetch-stream",
+        protocol: "http3",
+      },
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport",
+        protocol: "http3",
+      },
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport-datagram",
+        protocol: "http3",
+      },
+    ],
+    [
+      { baseUrl: "https://meter:7247", transport: "websocket" },
+      { baseUrl: "https://meter:7249", transport: "webtransport" },
+    ],
+    "https://meter:7249",
+    true,
+    "h3",
+  );
+  const entry = catalog.throughput["https://meter:7249"];
+  const wtStreams = targetOfKind(entry, "webtransport");
+  const datagram = targetOfKind(entry, "webtransport-datagram");
+  expect(targetOfKind(entry, "fetch-stream")?.transport).toBe("fetch-stream");
+  expect(wtStreams?.id).toBe("https://meter:7249::wt");
   expect(
-    browserProtocolMatchesTarget(
-      selectThroughputTarget(catalog, "https://meter:7248")!,
-      "http/1.1",
-    ),
-  ).toBe(false);
+    wtStreams && "wtDownload" in wtStreams.routes
+      ? wtStreams.routes.wtDownload
+      : undefined,
+  ).toBe(ROUTES.wtDownload);
+  // The datagram path is its own advertised view, never folded onto the streams one.
+  expect(datagram?.id).toBe("https://meter:7249::wtdg");
+  expect(datagram?.transport).toBe("webtransport-datagram");
+
+  // Auto prefers fetch; the ::wt id names the WebTransport view explicitly.
+  expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
+    "fetch-stream",
+  );
+  expect(
+    selectThroughputTarget(catalog, "https://meter:7249::wt")?.transport,
+  ).toBe("webtransport");
+  expect(
+    selectThroughputTarget(catalog, "https://meter:7249::wtdg")?.transport,
+  ).toBe("webtransport-datagram");
+  expect(selectThroughputTarget(catalog, "https://meter:7249")?.transport).toBe(
+    "fetch-stream",
+  );
+
+  // A client that cannot drive WebTransport never selects it.
+  expect(selectLatencyTarget(catalog, "auto")?.transport).toBe("websocket");
+  expect(selectLatencyTarget(catalog, "https://meter:7249", false)).toBeNull();
+  const wt = selectLatencyTarget(catalog, "auto", true);
+  expect(wt?.transport).toBe("webtransport");
+  expect(wt?.origin).toBe("https://meter:7249");
+});
+
+// A proxy serving TCP and UDP on one hostname advertises both latency buses on
+// one origin. Keeping only the WebTransport view would leave a UDP-blocked or
+// WebTransport-less client with no latency target at all.
+test("one origin advertising both latency buses keeps the WebSocket fallback", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://meter",
+        transport: "fetch-stream",
+        protocol: "http3",
+      },
+    ],
+    [
+      { baseUrl: "https://meter", transport: "websocket" },
+      { baseUrl: "https://meter", transport: "webtransport" },
+    ],
+    "https://meter",
+    true,
+    "h3",
+  );
+  const entry = catalog.latency["https://meter"];
+  expect(targetOfKind(entry, "websocket")?.transport).toBe("websocket");
+  expect(targetOfKind(entry, "webtransport")?.transport).toBe("webtransport");
+  expect(targetOfKind(entry, "webtransport")?.id).toBe("https://meter::wt");
+
+  // Auto prefers the datagram bus where it runs, and degrades to WebSocket on
+  // a client that cannot drive it — the UDP-blocked fallback.
+  expect(selectLatencyTarget(catalog, "auto", true)?.transport).toBe(
+    "webtransport",
+  );
+  expect(selectLatencyTarget(catalog, "auto", false)?.transport).toBe(
+    "websocket",
+  );
+  // Explicit ids name a bus each; the plain origin is the WebSocket view.
+  expect(
+    selectLatencyTarget(catalog, "https://meter::wt", true)?.transport,
+  ).toBe("webtransport");
+  expect(selectLatencyTarget(catalog, "https://meter", false)?.transport).toBe(
+    "websocket",
+  );
+});
+
+test("a WebTransport-only origin is auto's last resort and keeps a fetch view", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport",
+        protocol: "http3",
+      },
+    ],
+    [],
+    "https://ui.example",
+    true,
+    "h3",
+  );
+  const target = selectThroughputTarget(catalog, "auto");
+  expect(target?.transport).toBe("webtransport");
+  if (target?.transport !== "webtransport") throw new Error("not wt");
+  const view = fetchViewOfWebTransport(target);
+  expect(view.transport).toBe("fetch-stream");
+  expect(view.origin).toBe("https://meter:7249");
+  expect(view.routes.uploadSession).toBe(ROUTES.uploadSession);
+});
+
+test("a legacy latency target without a transport remains a WebSocket bus", () => {
+  const catalog = classifyTransportDiscovery(
+    [{ baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" }],
+    [{ baseUrl: "." }],
+    "https://meter.test",
+    true,
+  );
+
+  expect(selectLatencyTarget(catalog, "auto")?.transport).toBe("websocket");
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {
@@ -165,26 +353,6 @@ test("httpToWs: passes through anything already ws(s):// or relative", () => {
   expect(httpToWs("wss://example.com")).toBe("wss://example.com");
   expect(httpToWs("ws://example.com")).toBe("ws://example.com");
   expect(httpToWs("")).toBe("");
-});
-
-/* ---------- median ---------- */
-
-test("median: odd-length list returns the middle value", () => {
-  expect(median([3, 1, 2])).toBe(2);
-});
-
-test("median: even-length list averages the two middle values", () => {
-  expect(median([4, 1, 3, 2])).toBe(2.5);
-});
-
-test("median: single-element list returns that element", () => {
-  expect(median([7])).toBe(7);
-});
-
-test("median: does not mutate the input array", () => {
-  const xs = [3, 1, 2];
-  median(xs);
-  expect(xs).toEqual([3, 1, 2]);
 });
 
 /* ---------- needsPings ---------- */
@@ -261,6 +429,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
   const workerStarts: { kind: string; url: string }[] = [];
   const pingMessages: Record<string, unknown>[] = [];
   const fetchUrls: string[] = [];
+  const transferWorkers: FakeWorker[] = [];
   let preflights = 0;
   let browserProtocol = "http/1.1";
   let progressWorker: FakeWorker | null = null;
@@ -281,6 +450,8 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
             ? "download"
             : "ping";
       if (this.kind === "ping") pingWorker = this;
+      if (this.kind === "upload" || this.kind === "download")
+        transferWorkers.push(this);
     }
 
     postMessage(
@@ -317,19 +488,63 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     terminate(): void {}
   }
 
+  /** Run a probe to completion, offering the keepalive RTTs it collects on
+   *  every turn. The collection installs several awaits into probe() with
+   *  nothing observable to wait on, so re-offering the samples pins the
+   *  collected median instead of counting turns until it happens to be there.
+   *  The fakes all resolve immediately, so turns are the only wait. */
+  const probeWithRtts = async (
+    probe: Promise<InfraInfo>,
+    rtt: number,
+  ): Promise<InfraInfo> => {
+    let settled = false;
+    const done = probe.then(
+      (info) => {
+        settled = true;
+        return info;
+      },
+      (error: unknown) => {
+        settled = true;
+        throw error;
+      },
+    );
+    for (let turn = 0; turn < 100 && !settled; turn++) {
+      pingWorker?.emit({
+        type: "samples",
+        samples: Array.from({ length: 5 }, () => ({ rtt, lost: false })),
+      });
+      await Promise.resolve();
+    }
+    return done;
+  };
+
   const discovery = (withH2: boolean) => ({
     server: { name: "test" },
     engineVersion: "test",
     generation: withH2 ? "b" : "a",
     capabilities: {
       throughput: [
-        { baseUrl: "http://meter.test:7246", protocol: "http1" },
-        { baseUrl: "https://proxy.test", protocol: "negotiated" },
+        {
+          baseUrl: "http://meter.test:7246",
+          transport: "fetch-stream",
+          protocol: "http1",
+        },
+        {
+          baseUrl: "https://proxy.test",
+          transport: "fetch-stream",
+          protocol: "negotiated",
+        },
         ...(withH2
-          ? [{ baseUrl: "https://meter.test:7248", protocol: "http2" as const }]
+          ? [
+              {
+                baseUrl: "https://meter.test:7248",
+                transport: "fetch-stream",
+                protocol: "http2" as const,
+              },
+            ]
           : []),
       ],
-      latency: [{ baseUrl: "http://meter.test:7246" }],
+      latency: [{ baseUrl: "http://meter.test:7246", transport: "websocket" }],
     },
   });
 
@@ -383,6 +598,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       pingCadence: "reply-driven",
       loadedPingCadence: "medium",
       experimentalChunkedDownload: false,
+      experimentalDatagramThroughput: false,
       compensation: {
         profile: "loopback",
         transport: "auto",
@@ -411,6 +627,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     const failures: string[] = [];
     const discoveries: import("./contract").TransportDiscovery[] = [];
     const uploadBytes: number[] = [];
+    const stalls: StallInfo[] = [];
     const host = {
       config,
       phase: "idle",
@@ -419,7 +636,6 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         if (event.type === "transportDiscovery")
           discoveries.push(event.discovery);
       },
-      reportTransport() {},
       fail() {},
       failStage(_stage, _reason, message) {
         failures.push(message);
@@ -428,13 +644,16 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         uploadBytes.push(bytes);
       },
       ingestLatency() {},
-      stall() {},
+      stall(info) {
+        stalls.push(info);
+      },
       resume() {},
     } as CoreHost;
     const backend = new RealBackend();
     backend.attach(host);
 
-    await backend.probe(config);
+    const firstProbe = await probeWithRtts(backend.probe(config), 3);
+    expect(firstProbe.preTestPingMs).toBe(3);
     config.transports.throughputTarget = "https://meter.test:7249";
     await expect(backend.probe(config)).rejects.toBeInstanceOf(
       TransportUnavailableError,
@@ -443,17 +662,14 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       discoveries.at(-1)?.throughput["https://meter.test:7248"].state,
     ).toBe("advertised");
     config.transports.throughputTarget = "http://meter.test:7246";
-    const secondProbe = backend.probe(config);
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    pingWorker!.emit({
-      type: "samples",
-      samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
-    });
-    const info = await secondProbe;
+    const info = await probeWithRtts(backend.probe(config), 5);
     expect(pingMessages).toContainEqual({
       type: "measure",
       intervalMs: 1000,
     });
+    // The collected RTTs are the pre-test ping median, so a collection that
+    // ran late and resolved empty would report the previous probe's value.
+    expect(info.preTestPingMs).toBe(5);
     expect(info.latencyClientIp).toBe("127.0.0.1");
     expect(info.latencyClientIpVersion).toBe(4);
     expect(info.latencyClientIpSource).toBe("socket");
@@ -484,13 +700,11 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
 
     fetchStart = fetchUrls.length;
-    const latencyProbe = backend.probe(config, undefined, "latency");
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    pingWorker!.emit({
-      type: "samples",
-      samples: Array.from({ length: 5 }, () => ({ rtt: 1, lost: false })),
-    });
-    await latencyProbe;
+    const latencyProbe = await probeWithRtts(
+      backend.probe(config, undefined, "latency"),
+      7,
+    );
+    expect(latencyProbe.preTestPingMs).toBe(7);
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
 
     config.transports.throughputTarget = "https://proxy.test";
@@ -502,7 +716,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     );
     expect(proxyWithoutTiming.selectedThroughputProtocol).toBe("negotiated");
     expect(
-      discoveries.at(-1)?.throughput["https://proxy.test"].target?.protocol,
+      targetOfKind(
+        discoveries.at(-1)!.throughput["https://proxy.test"],
+        "fetch-stream",
+      )?.protocol,
     ).toBe("negotiated");
 
     browserProtocol = "h2";
@@ -512,10 +729,17 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       "throughput",
     );
     expect(proxyThroughput.selectedThroughputProtocol).toBe("http2");
-    const proxyLatency = await backend.probe(config, undefined, "latency");
+    const proxyLatency = await probeWithRtts(
+      backend.probe(config, undefined, "latency"),
+      9,
+    );
     expect(proxyLatency.selectedThroughputProtocol).toBe("http2");
+    expect(proxyLatency.preTestPingMs).toBe(9);
     expect(
-      discoveries.at(-1)?.throughput["https://proxy.test"].target?.protocol,
+      targetOfKind(
+        discoveries.at(-1)!.throughput["https://proxy.test"],
+        "fetch-stream",
+      )?.protocol,
     ).toBe("negotiated");
 
     config.transports.throughputTarget = "http://meter.test:7246";
@@ -552,6 +776,12 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     });
     backend.onStageMeasure(loaded);
     expect(pingMessages.at(-1)).toEqual({ type: "measure" });
+    transferWorkers.at(-1)!.emit({
+      type: "error",
+      recoverable: true,
+      detail: "download stalled",
+    });
+    expect(stalls.at(-1)?.transport).toBe("fetch-stream");
     await backend.onStageEnd(loaded);
     started.length = 0;
     uploadBytes.length = 0;
@@ -616,4 +846,510 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     ])
       Reflect.deleteProperty(buildGlobals, key);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Probe lifecycle: supersession and the hidden-page keepalive. Both drive a real
+// RealBackend, so each needs the build tokens buildenv reads at import time plus
+// the DOM seams a probe touches.
+// ---------------------------------------------------------------------------
+
+const BUILD_TOKENS = {
+  __GM_DEFAULT_ENGINE__: "real",
+  __GM_ALLOW_DUMMY__: false,
+  __GM_DEV_TOOLS__: false,
+  __GM_BUILD_LABEL__: "test",
+  __GM_CLIENT_VERSION__: "0.0.0-test",
+};
+
+const preflightDocument = {
+  server: { name: "test" },
+  engineVersion: "test",
+  generation: "a",
+  capabilities: {
+    throughput: [
+      {
+        baseUrl: "http://meter.test:7246",
+        transport: "fetch-stream",
+        protocol: "http1",
+      },
+    ],
+    latency: [{ baseUrl: "http://meter.test:7246", transport: "websocket" }],
+  },
+};
+
+const pathProbeDocument = {
+  clientIp: "127.0.0.1",
+  clientIpVersion: 4,
+  clientIpSource: "socket",
+  protocolNegotiated: "http/1.1",
+};
+
+/** Install the globals a probe reads; the returned callback puts them back. */
+function stubProbeEnvironment(fetchImpl: typeof fetch): () => void {
+  const buildGlobals = globalThis as typeof globalThis &
+    Record<string, unknown>;
+  Object.assign(buildGlobals, BUILD_TOKENS);
+  const realFetch = globalThis.fetch;
+  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const realEntries = performance.getEntriesByName.bind(performance);
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: new URL("http://meter.test:7246/"),
+  });
+  performance.getEntriesByName = () =>
+    [{ nextHopProtocol: "http/1.1" }] as unknown as PerformanceEntry[];
+  globalThis.fetch = fetchImpl;
+  return () => {
+    globalThis.fetch = realFetch;
+    if (realLocation)
+      Object.defineProperty(globalThis, "location", realLocation);
+    else Reflect.deleteProperty(globalThis, "location");
+    performance.getEntriesByName = realEntries;
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(buildGlobals, key);
+  };
+}
+
+const probeConfig = (latency: boolean): RunnerConfig => ({
+  stages: { latency, download: true, upload: false, bidirectional: false },
+  skipLoadedLatencyWhenStageOff: true,
+  transports: {
+    throughputTarget: "http://meter.test:7246",
+    latencyTarget: "auto",
+  },
+  transferStreams: { mode: "auto", count: 1 },
+  duration: {
+    warmupMs: 0,
+    latencyMs: 1,
+    downloadMs: 1,
+    uploadMs: 0,
+    bidirectionalMs: 0,
+  },
+  pingCadence: "reply-driven",
+  loadedPingCadence: "medium",
+  experimentalChunkedDownload: false,
+  experimentalDatagramThroughput: false,
+  compensation: {
+    profile: "loopback",
+    transport: "auto",
+    params: {
+      mtuBytes: 65536,
+      ipVersion: "auto",
+      vlanTagged: false,
+      tcpOptionsMinBytes: 0,
+      tcpOptionsMaxBytes: 0,
+      encapsulationBytes: 0,
+      quicConnIdMinBytes: 0,
+      quicConnIdMaxBytes: 0,
+    },
+  },
+  adaptive: {
+    enabled: false,
+    minCoverageRatio: 1,
+    stabilityThreshold: 1,
+    maxPhaseReductionRatio: 0,
+    minLatencySamples: 1,
+    minTransferSamples: 1,
+    glideMs: 0,
+  },
+  visualization: { throughputMaxBytesPerSec: "auto" },
+});
+
+// `selectThroughputTarget`'s `webTransport` parameter defaults on where
+// `selectLatencyTarget`'s defaults off, and #selectThroughputRole is the reason:
+// it wants the raw advertisement so it can resolve first and refuse second,
+// naming the mechanism. Feeding it the browser's real capability instead — the
+// symmetry a reader is tempted by — returns null for a WebTransport-only origin
+// and degrades the refusal to "auto target unavailable", which blames the
+// server for a client limitation. Both halves are asserted so the trade is
+// visible: what the runner is handed, and what the tempting change would hand it.
+test("a WebTransport-less browser is refused by mechanism, not by availability", async () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://wt.meter.test",
+        transport: "webtransport",
+        protocol: "http3",
+      },
+    ],
+    [],
+    "http://meter.test:7246",
+    false,
+    "http/1.1",
+  );
+  // What #selectThroughputRole is handed today, and with an explicit `true`.
+  expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
+    "webtransport",
+  );
+  // What passing `transportRunnable("webtransport")` would hand it in a browser
+  // without the API: nothing to name, so the throw upstream of the refusal wins.
+  expect(selectThroughputTarget(catalog, "auto", false)).toBeNull();
+
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const realWebTransport = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "WebTransport",
+  );
+  Reflect.deleteProperty(globals, "WebTransport");
+  const restore = stubProbeEnvironment((async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/preflight"))
+      return Response.json({
+        server: { name: "test" },
+        engineVersion: "test",
+        generation: "a",
+        capabilities: {
+          throughput: [
+            {
+              baseUrl: "https://wt.meter.test",
+              transport: "webtransport",
+              protocol: "http3",
+            },
+          ],
+          latency: [],
+        },
+      });
+    if (url.includes("/probe")) return Response.json(pathProbeDocument);
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch);
+  try {
+    const { RealBackend } = await import("./RealRunner");
+    const backend = new RealBackend();
+    backend.attach({ emit() {} } as unknown as CoreHost);
+    await expect(
+      backend.probe({
+        ...probeConfig(false),
+        transports: { throughputTarget: "auto", latencyTarget: "auto" },
+      }),
+    ).rejects.toThrow(/^webtransport is not supported by this client$/);
+  } finally {
+    restore();
+    if (realWebTransport)
+      Object.defineProperty(globalThis, "WebTransport", realWebTransport);
+  }
+});
+
+// engine.svelte.ts reads a discovery generation change as a server swap: it
+// drops the prepared selection and marks both roles stale. A superseded probe
+// emitting on its way out would re-open the validation loop the newer probe
+// just closed, so the epoch guard has to cover the emit, not only what follows
+// it.
+test("a superseded probe does not publish its discovery", async () => {
+  let releaseFirst = (): void => {};
+  let preflights = 0;
+  const restore = stubProbeEnvironment((async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/preflight")) {
+      preflights++;
+      // Hold the first probe inside its discovery fetch, so a newer one takes
+      // over before it resumes.
+      if (preflights === 1)
+        await new Promise<void>((resolve) => (releaseFirst = resolve));
+      return Response.json(preflightDocument);
+    }
+    if (url.includes("/probe")) return Response.json(pathProbeDocument);
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch);
+  try {
+    const { RealBackend } = await import("./RealRunner");
+    const discoveries: TransportDiscovery[] = [];
+    const backend = new RealBackend();
+    backend.attach({
+      emit(event) {
+        if (event.type === "transportDiscovery")
+          discoveries.push(event.discovery);
+      },
+    } as CoreHost);
+
+    const superseded = backend.probe(probeConfig(false));
+    for (let turn = 0; turn < 20 && preflights < 1; turn++)
+      await Promise.resolve();
+    await backend.probe(probeConfig(false));
+    expect(discoveries).toHaveLength(1);
+
+    releaseFirst();
+    const outcome = await superseded.then(
+      () => "resolved",
+      (cause: unknown) => (cause as Error).message,
+    );
+    expect(outcome).toBe("probe superseded");
+    expect(discoveries).toHaveLength(1);
+  } finally {
+    restore();
+  }
+});
+
+// Chromium throttles a hidden page's dedicated workers to roughly one timer
+// wake a minute after five minutes hidden, far outside the ~30 s the server
+// gives a ping bus with nothing arriving on it. A keepalive left running in a
+// hidden tab is therefore reaped, reconnected and reaped again, latching the
+// pill offline each time. Parking on visibilitychange alone does not cover it:
+// a probe starts the keepalive, and an `online` edge or a boot in a background
+// tab probes while hidden.
+test("a hidden page parks the keepalive its probe started, and gets it back on visibility", async () => {
+  class FakePingWorker {
+    static all: FakePingWorker[] = [];
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    terminated = false;
+
+    constructor() {
+      FakePingWorker.all.push(this);
+    }
+    postMessage(): void {}
+    terminate(): void {
+      this.terminated = true;
+    }
+    emit(data: unknown): void {
+      this.onmessage?.({ data } as MessageEvent);
+    }
+  }
+
+  const restore = stubProbeEnvironment((async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/preflight")) return Response.json(preflightDocument);
+    if (url.includes("/probe")) return Response.json(pathProbeDocument);
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch);
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakePingWorker as unknown as typeof Worker;
+  try {
+    const { RealBackend } = await import("./RealRunner");
+    const connectivity: string[] = [];
+    const backend = new RealBackend();
+    backend.attach({
+      emit(event) {
+        if (event.type === "connectivity") connectivity.push(event.state);
+      },
+    } as CoreHost);
+
+    backend.setBackgroundActivity(false); // the page is hidden
+    // The keepalive is the probe's readiness and RTT source. Its collection
+    // reuses a worker started before the callback is installed, so the samples
+    // are re-offered every turn rather than counted.
+    let settled = false;
+    const probe = backend.probe(probeConfig(true)).finally(() => {
+      settled = true;
+    });
+    for (let turn = 0; turn < 100 && !settled; turn++) {
+      FakePingWorker.all.at(-1)?.emit({ type: "ready" });
+      FakePingWorker.all.at(-1)?.emit({
+        type: "samples",
+        samples: Array.from({ length: 5 }, () => ({ rtt: 3, lost: false })),
+      });
+      await Promise.resolve();
+    }
+    await probe;
+
+    const parked = FakePingWorker.all.at(-1)!;
+    expect(parked.terminated).toBe(true);
+    // Nothing is watching a hidden page, and its bus dying is expected there.
+    const emitted = connectivity.length;
+    parked.emit({ type: "stall", detail: "webtransport closed" });
+    expect(connectivity).toHaveLength(emitted);
+
+    const workers = FakePingWorker.all.length;
+    backend.setBackgroundActivity(true);
+    expect(FakePingWorker.all).toHaveLength(workers + 1);
+  } finally {
+    globalThis.Worker = realWorker;
+    restore();
+  }
+});
+
+/** One origin advertising both ping buses next to a fetch throughput target:
+ *  the shape a proxy serving TCP and UDP on one hostname takes. */
+const bothBusesDocument = {
+  server: { name: "test" },
+  engineVersion: "test",
+  generation: "a",
+  capabilities: {
+    throughput: [
+      {
+        baseUrl: "https://meter.test",
+        transport: "fetch-stream",
+        protocol: "http2",
+      },
+    ],
+    latency: [
+      { baseUrl: "https://meter.test", transport: "websocket" },
+      { baseUrl: "https://meter.test", transport: "webtransport" },
+    ],
+  },
+};
+
+// The latency channel check degrades a WebTransport ping bus that never
+// establishes to the origin's WebSocket bus. A throughput-role probe does not
+// run that check — it carries the latency role's evidence over — so it must not
+// re-run the selector either: re-selecting rebound the run to the bus the check
+// had just proved dead, and the latency stage then sat out its establish budget
+// and was skipped.
+test("a throughput-role probe keeps the latency bus the last check committed to", async () => {
+  const pingStarts: string[] = [];
+  class PingBusWorker {
+    static live: PingBusWorker[] = [];
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    transport = "";
+
+    constructor() {
+      PingBusWorker.live.push(this);
+    }
+
+    postMessage(message: { type: string; transport?: string }): void {
+      if (message.type !== "start") return;
+      this.transport = message.transport ?? "";
+      pingStarts.push(this.transport);
+      // The WebTransport bus never answers, the shape of a path without UDP.
+      if (this.transport === "websocket")
+        queueMicrotask(() => this.emit({ type: "ready" }));
+    }
+
+    terminate(): void {}
+
+    emit(data: unknown): void {
+      this.onmessage?.({ data } as MessageEvent);
+    }
+  }
+
+  const buildGlobals = globalThis as typeof globalThis &
+    Record<string, unknown>;
+  Object.assign(buildGlobals, BUILD_TOKENS);
+  const realFetch = globalThis.fetch;
+  const realWorker = globalThis.Worker;
+  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const realEntries = performance.getEntriesByName.bind(performance);
+  const globals = globalThis as Record<string, unknown>;
+  const realWebTransport = globals.WebTransport;
+  try {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: new URL("https://meter.test/"),
+    });
+    performance.getEntriesByName = () =>
+      [{ nextHopProtocol: "h2" }] as unknown as PerformanceEntry[];
+    globalThis.Worker = PingBusWorker as unknown as typeof Worker;
+    // Never dialled: it is what makes the advertised WebTransport bus
+    // selectable at all.
+    globals.WebTransport = class {};
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/preflight")) return Response.json(bothBusesDocument);
+      if (url.includes("/probe")) return Response.json(pathProbeDocument);
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    const { RealBackend } = await import("./RealRunner");
+    const config = probeConfig(true);
+    config.stages.download = false;
+    config.transports.throughputTarget = "https://meter.test";
+    const backend = new RealBackend();
+    backend.attach({
+      config,
+      emit() {},
+      failStage() {},
+      ingestLatency() {},
+    } as unknown as CoreHost);
+
+    // Real time has to pass here: the readiness budget the WebTransport bus
+    // blows through is a timer, and the keepalive's RTT collection has nothing
+    // observable to wait on, so its samples are re-offered every turn.
+    let settled = false;
+    const degrading = backend.probe(config).then(
+      (info) => {
+        settled = true;
+        return info;
+      },
+      (error: unknown) => {
+        settled = true;
+        throw error;
+      },
+    );
+    for (let turn = 0; turn < 1000 && !settled; turn++) {
+      const bus = PingBusWorker.live.at(-1);
+      if (bus?.transport === "websocket")
+        bus.emit({
+          type: "samples",
+          samples: Array.from({ length: 5 }, () => ({ rtt: 2, lost: false })),
+        });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect((await degrading).selectedLatencyTransport).toBe("websocket");
+
+    const throughputRole = await backend.probe(config, undefined, "throughput");
+    expect(throughputRole.selectedLatencyTransport).toBe("websocket");
+
+    // What the run actually primes, which is the sample source the latency
+    // stage lives or dies by.
+    backend.onRunStart(config);
+    backend.onStageBegin({
+      stage: "latency",
+      transfer: [],
+      loadedLatency: false,
+    });
+    expect(pingStarts.at(-1)).toBe("websocket");
+    backend.dispose();
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.Worker = realWorker;
+    performance.getEntriesByName = realEntries;
+    if (realWebTransport === undefined)
+      Reflect.deleteProperty(globals, "WebTransport");
+    else globals.WebTransport = realWebTransport;
+    if (realLocation)
+      Object.defineProperty(globalThis, "location", realLocation);
+    else Reflect.deleteProperty(globalThis, "location");
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(buildGlobals, key);
+  }
+}, 15000);
+
+// The transfer path dispatches on what the registry says, so a kind missing a
+// row would fall through to fetch and measure the wrong thing. Record<
+// TransportKind, TransportSpec> makes that a compile error; this pins the
+// values a row has to get right.
+test("every transport has a registry row saying how it is driven", () => {
+  const kinds: TransportKind[] = [
+    "fetch-stream",
+    "websocket",
+    "webtransport",
+    "webtransport-datagram",
+  ];
+  for (const kind of kinds) expect(TRANSPORTS[kind].kind).toBe(kind);
+  expect(ridesSession("webtransport")).toBe(true);
+  expect(ridesSession("webtransport-datagram")).toBe(true);
+  expect(ridesSession("fetch-stream")).toBe(false);
+  expect(ridesSession("websocket")).toBe(false);
+  // Picker order per role, which is what an origin's cards are listed in.
+  expect(kindsForRole("throughput")).toEqual([
+    "fetch-stream",
+    "webtransport",
+    "webtransport-datagram",
+  ]);
+  expect(kindsForRole("latency")).toEqual(["websocket", "webtransport"]);
+});
+
+// The datagram setting lists a card. Selection, dispatch and the registry are
+// blind to it, so a saved selection keeps working with the setting off.
+test("the datagram setting does not reach selection or dispatch", () => {
+  const origin = "https://meter:7249";
+  const catalog = classifyTransportDiscovery(
+    [
+      { baseUrl: origin, transport: "fetch-stream", protocol: "http3" },
+      {
+        baseUrl: origin,
+        transport: "webtransport-datagram",
+        protocol: "http3",
+      },
+    ],
+    [],
+    origin,
+    true,
+    "h3",
+  );
+  const datagram = selectThroughputTarget(catalog, `${origin}::wtdg`);
+  expect(datagram?.transport).toBe("webtransport-datagram");
+  expect(ridesSession(datagram!.transport)).toBe(true);
+  expect(kindsForRole("throughput")).toContain("webtransport-datagram");
 });

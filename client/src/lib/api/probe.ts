@@ -13,4 +13,11 @@ export interface Probe {
   clientIpVersion: 4 | 6;
   clientIpSource: "socket" | "forwarded";
   protocolNegotiated: "http/1.1" | "h2" | "h3";
+  /**
+   * Measurement-handler occupancy at probe time: active is the number of admission-wrapped handlers holding slots, and max is the configured handler ceiling.
+   */
+  load?: {
+    active: number;
+    max: number;
+  };
 }

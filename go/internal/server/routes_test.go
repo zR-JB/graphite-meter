@@ -6,15 +6,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const routePinPath = "../../../api/routes.txt"
 
-// loadRoutePin parses api/routes.txt into name → path, skipping comment/blank
+// pinnedRoute is one row of api/routes.txt: the path a route is mounted at and
+// the transport that reaches it.
+type pinnedRoute struct{ path, kind string }
+
+// loadRoutePin parses api/routes.txt into name → route, skipping comment/blank
 // lines. This is the same fixture the TS route table asserts against
 // (client/src/lib/runner/real/routes.test.ts).
-func loadRoutePin(t *testing.T) map[string]string {
+func loadRoutePin(t *testing.T) map[string]pinnedRoute {
 	t.Helper()
 	f, err := os.Open(routePinPath)
 	if err != nil {
@@ -22,7 +27,7 @@ func loadRoutePin(t *testing.T) map[string]string {
 	}
 	defer f.Close()
 
-	pinned := make(map[string]string)
+	pinned := make(map[string]pinnedRoute)
 	scanner := bufio.NewScanner(f)
 	lineNumber := 0
 	for scanner.Scan() {
@@ -31,11 +36,17 @@ func loadRoutePin(t *testing.T) map[string]string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		name, path, ok := strings.Cut(line, "|")
-		if !ok {
-			t.Fatalf("line %d: want 2 fields: %q", lineNumber, line)
+		fields := strings.Split(line, "|")
+		if len(fields) != 3 {
+			t.Fatalf("line %d: want 3 fields: %q", lineNumber, line)
 		}
-		pinned[strings.TrimSpace(name)] = strings.TrimSpace(path)
+		kind := strings.TrimSpace(fields[2])
+		switch kind {
+		case "http", "ws", "wt":
+		default:
+			t.Fatalf("line %d: kind %q is not http, ws or wt", lineNumber, kind)
+		}
+		pinned[strings.TrimSpace(fields[0])] = pinnedRoute{path: strings.TrimSpace(fields[1]), kind: kind}
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("scan route pin: %v", err)
@@ -55,28 +66,75 @@ func TestRoutesMatchPin(t *testing.T) {
 	latency := wire.DefaultLatencyRoutes()
 
 	// Every Go constant that must hold the pinned path: what the mux mounts,
-	// then the defaults a discovered target carries.
-	sites := map[string][]string{
-		"probe":          {routeProbe, throughput.Probe, latency.Probe},
-		"download":       {routeDownload, throughput.Download},
-		"upload":         {routeUpload, throughput.Upload},
-		"uploadSession":  {routeUploadSession, throughput.UploadSession},
-		"uploadProgress": {routeUploadProgress, throughput.UploadProgress},
-		"ping":           {routePing, latency.Ping},
+	// then the defaults a discovered target carries. The kind is how the
+	// registry mounts it, so a route moved between mechanisms fails here.
+	sites := map[string]struct {
+		kind  string
+		paths []string
+	}{
+		"probe":          {"http", []string{routeProbe, throughput.Probe, latency.Probe}},
+		"download":       {"http", []string{routeDownload, throughput.Download}},
+		"upload":         {"http", []string{routeUpload, throughput.Upload}},
+		"uploadSession":  {"http", []string{routeUploadSession, throughput.UploadSession}},
+		"uploadProgress": {"http", []string{routeUploadProgress, throughput.UploadProgress}},
+		"ping":           {"ws", []string{routePing, latency.Ping}},
+		"wtSession":      {"http", []string{routeWTSession, throughput.WTSession, latency.WTSession}},
+		"wtDownload":     {"wt", []string{routeWTDownload, throughput.WTDownload}},
+		"wtUpload":       {"wt", []string{routeWTUpload, throughput.WTUpload}},
+		"wtPing":         {"wt", []string{routeWTPing, latency.WTPing}},
 	}
 	if len(sites) != len(pinned) {
 		t.Errorf("Go declares %d routes; %d are pinned", len(sites), len(pinned))
 	}
-	for name, paths := range sites {
+	for name, site := range sites {
 		want, ok := pinned[name]
 		if !ok {
 			t.Errorf("%s: declared in Go but not pinned", name)
 			continue
 		}
-		for _, path := range paths {
-			if path != want {
-				t.Errorf("%s: Go has %q; pinned as %q", name, path, want)
+		if site.kind != want.kind {
+			t.Errorf("%s: Go declares it as %q; pinned as %q", name, site.kind, want.kind)
+		}
+		for _, path := range site.paths {
+			if path != want.path {
+				t.Errorf("%s: Go has %q; pinned as %q", name, path, want.path)
 			}
+		}
+	}
+}
+
+// TestRouteKindsMatchTheRegistry closes the loop the pinned kind column exists
+// for: the column is compared against the mechanism each route is registered
+// under, not against a second hand-written table. Moving a route between
+// RegisterHTTP / RegisterWS / RegisterWT fails here.
+func TestRouteKindsMatchTheRegistry(t *testing.T) {
+	pinned := loadRoutePin(t)
+	// One listener carrying every mechanism, so each pinned route is registered.
+	reg := buildRegistry(&endpoints{}, muxTopology{
+		discovery: true, latency: true, transfers: true, wt: &webtransport.Server{},
+	}, nil)
+	mounted := reg.Kinds()
+
+	byPath := make(map[string]string, len(pinned))
+	for name, route := range pinned {
+		byPath[route.path] = name
+	}
+	for path, kind := range mounted {
+		name, ok := byPath[path]
+		if !ok {
+			if path == "/preflight" {
+				continue // advertised by every language, never a client route
+			}
+			t.Errorf("%s is registered but not pinned", path)
+			continue
+		}
+		if pinned[name].kind != kind {
+			t.Errorf("%s: registered as %q; pinned as %q", name, kind, pinned[name].kind)
+		}
+	}
+	for name, route := range pinned {
+		if _, ok := mounted[route.path]; !ok {
+			t.Errorf("%s (%s) is pinned but never registered", name, route.path)
 		}
 	}
 }

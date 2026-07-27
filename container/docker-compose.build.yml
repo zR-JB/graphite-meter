@@ -21,7 +21,7 @@ services:
       # - "7247:7247/tcp"  # dedicated HTTPS HTTP/1.1 throughput + WSS latency
       # - "7248:7248/tcp"  # HTTP/2-only measurement probe, transfers, and progress
       # - "7249:7249/tcp"  # HTTP/3 Alt-Svc bootstrap probe only
-      # - "7249:7249/udp"  # HTTP/3 probe, transfers, and progress
+      # - "7249:7249/udp"  # HTTP/3 probe, transfers, progress, WebTransport
     environment:
       # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
       # running behind a reverse proxy so /preflight advertises reachable URLs.

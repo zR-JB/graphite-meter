@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // UploadStore holds per-test state shared between POST /upload lanes and the
@@ -40,14 +42,54 @@ type uploadShard struct {
 type uploadAgg struct {
 	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // mono ns of the last chunk or progress tick; the sweeper's idle clock
+	lastTouchMono  atomic.Int64 // mono ns of the last drained chunk; the sweeper's idle clock
 	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
-	postsChanged   chan struct{}
+	postsMu        sync.Mutex
+	postsChanged   chan struct{} // closed and replaced on every change: a broadcast
 	finished       chan struct{} // explicitly closed by DELETE /upload/progress
 	expired        chan struct{} // closed when idle state is reaped
 	finishOnce     sync.Once
-	progressActive atomic.Bool
+	progressMu     sync.Mutex
+	progressHeld   chan struct{} // closed when a later claim supersedes the holder
 	owner          string
+}
+
+// postsWaiter returns a channel closed by the next lane-count change. A caller
+// takes it BEFORE reading posts, so a change racing that read still wakes it.
+func (a *uploadAgg) postsWaiter() <-chan struct{} {
+	a.postsMu.Lock()
+	defer a.postsMu.Unlock()
+	if a.postsChanged == nil {
+		a.postsChanged = make(chan struct{})
+	}
+	return a.postsChanged
+}
+
+// claimProgress makes the caller the aggregate's one live feed, superseding any
+// current holder. A client that lost its transport re-dials long before the
+// dead connection's idle timeout, so the newest feed always wins. Both feeds
+// have passed the owner check, but that check is deliberately coarse: ClientKey
+// groups by authenticated SUBJECT, not by login, so the same user's second
+// device takes over the feed, and in public mode it groups by address (IPv6 by
+// /64), so a shared address does too. The unguessable minted id is what actually
+// gates the aggregate; the owner check only bounds per-client capacity.
+func (a *uploadAgg) claimProgress() chan struct{} {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if a.progressHeld != nil {
+		close(a.progressHeld)
+	}
+	a.progressHeld = make(chan struct{})
+	return a.progressHeld
+}
+
+// releaseProgress clears the claim unless a later feed already superseded it.
+func (a *uploadAgg) releaseProgress(claim chan struct{}) {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if a.progressHeld == claim {
+		a.progressHeld = nil
+	}
 }
 
 // recordChunk counts one drained chunk and starts the elapsed clock on the first
@@ -58,14 +100,17 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
 
-// changePosts adjusts the live lane count and nudges any waiter. The notify is a
-// non-blocking send into a buffered channel: a waiter re-reads posts after every
-// wake, so a coalesced or dropped nudge costs nothing.
+// changePosts adjusts the live lane count and wakes every waiter. A feed being
+// superseded can share the wait, and a single-token nudge would wake only one
+// of them, so the notification is a broadcast: close the current channel and
+// let the next waiter install a fresh one.
 func (a *uploadAgg) changePosts(delta int32) {
 	a.posts.Add(delta)
-	select {
-	case a.postsChanged <- struct{}{}:
-	default:
+	a.postsMu.Lock()
+	defer a.postsMu.Unlock()
+	if a.postsChanged != nil {
+		close(a.postsChanged)
+		a.postsChanged = nil
 	}
 }
 
@@ -90,9 +135,16 @@ const (
 	// maxLiveUploadsPerClient leaves ample room for rapid abort/retry cycles while
 	// preventing one source from occupying the global aggregate map.
 	maxLiveUploadsPerClient = 32
-	// uploadIDTTL: an aggregate idle this long (no chunk or progress tick) is
-	// reaped by the sweeper after abort, tab close, or crash.
-	uploadIDTTL = 30 * time.Second
+	// uploadReconnectGrace is the budget a client gets, on top of the transport
+	// bound, to notice a bound-driven close and re-dial against the same id.
+	uploadReconnectGrace = 30 * time.Second
+	// uploadIDTTL: an aggregate idle this long is reaped after an abort, tab
+	// close, or crash. It MUST outlast a session's whole death — watchSession
+	// cancels on the second quiet tick, so a stalled session survives up to 1.5
+	// bounds — or the re-dial takes the create path and restarts the count at
+	// zero. The progress feed does not touch the clock, so watching cannot
+	// stretch it.
+	uploadIDTTL = 2*wire.WTIdleBound + uploadReconnectGrace
 	// uploadTokenTTL limits how long a minted id may create its aggregate.
 	uploadTokenTTL = 2 * time.Minute
 	// uploadSweepInterval is how often RunSweeper scans for idle aggregates.
@@ -207,10 +259,12 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 			sh.mu.Unlock()
 			return nil, uploadAccessOwnerMismatch
 		}
-		sh.mu.Unlock()
+		// Touch under the shard lock the sweeper also takes, so an aggregate
+		// cannot be reaped between the lookup that found it and the refresh.
 		if touch {
 			agg.lastTouchMono.Store(monoNanos())
 		}
+		sh.mu.Unlock()
 		return agg, uploadAccessOK
 	}
 	if !s.validID(id) {
@@ -238,7 +292,7 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 		s.byOwner[owner]++
 		s.ownersMu.Unlock()
 	}
-	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), postsChanged: make(chan struct{}, 1), owner: owner}
+	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
 	agg.lastTouchMono.Store(monoNanos())
 	sh.m[id] = agg
 	sh.mu.Unlock()

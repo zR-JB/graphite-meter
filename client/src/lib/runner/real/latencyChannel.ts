@@ -1,17 +1,15 @@
 // The two ping channels: the stage-scoped latency channel and the persistent
-// idle keepalive. The ping worker owns its WebSocket, its reconnects and the
+// idle keepalive. The ping worker owns its bus, its reconnects and the
 // RTT timestamps; these classes own the worker's lifecycle and route its
 // samples into the core.
 import type { CoreHost } from "../core";
 import type { PingCadence, TransportKind } from "../contract";
-import type {
-  FetchThroughputTarget,
-  WebSocketLatencyTarget,
-} from "../../api/endpoints";
-import { authEnabled, redirectToLogin } from "../../auth";
+import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
+import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
 import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
+import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -44,18 +42,48 @@ const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
 const PING_REPORT_GAP_MS = 20;
-const PING_ESTABLISH_TIMEOUT_MS = 3500;
+const PING_ESTABLISH_TIMEOUT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 
 // One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
 const IDLE_PING_INTERVAL_MS = 1000;
 const PROBE_PING_INTERVAL_MS = 120;
 const PROBE_PING_COUNT = 5;
+/** How long the probe waits for its RTT samples once the bus is up. */
 const PROBE_PING_TIMEOUT_MS = 1500;
 const IDLE_RESPAWN_MS = 2000;
 
+/** The bus URL for a target, or null when the target does not speak `kind`.
+ *  WebSocket needs the ws(s) scheme; WebTransport dials the https origin. */
+function pingUrl(
+  target: LatencyTarget | null,
+  kind: TransportKind,
+): string | null {
+  if (!target || target.transport !== kind) return null;
+  return target.transport === "webtransport"
+    ? target.origin + target.routes.wtPing
+    : httpToWs(target.origin) + target.routes.ping;
+}
+
+/** Token mint for a WebTransport ping dial, when authentication is on. Minting
+ *  is a measurement mutation, so it carries the CSRF header and credentials. */
+function pingMint(target: LatencyTarget | null):
+  | {
+      url: string;
+      headers?: Record<string, string>;
+      credentials?: RequestCredentials;
+    }
+  | undefined {
+  if (!authEnabled || target?.transport !== "webtransport") return undefined;
+  return {
+    url: target.origin + target.routes.wtSession,
+    headers: csrfHeader(),
+    credentials: "include",
+  };
+}
+
 export interface LatencyChannelDeps {
   host: () => CoreHost;
-  target: () => WebSocketLatencyTarget | null;
+  target: () => LatencyTarget | null;
   /** Stall/resume reported by the ping worker, for the coordinator to reconcile
    *  with the stage-level flag the byte lanes also drive. */
   stall: (detail: string) => void;
@@ -82,18 +110,14 @@ export class LatencyChannel {
   }
 
   /** Open the latency (ping) channel over `kind` and warm it. The ping worker
-   *  owns the WebSocket and the ping algorithm. Its warmup pings stay inside the
-   *  worker; measure() flips reporting on over that same socket. */
+   *  owns the bus and the ping algorithm. Its warmup pings stay inside the
+   *  worker; measure() flips reporting on over that same connection. */
   prime(kind: TransportKind, isLatencyStage = false): void {
-    if (kind !== "websocket") throw new Error(`unsupported ${kind}`);
-
     const host = this.#deps.host();
     const cfg = host.config!;
     const channel = this.#deps.target();
-    const latencyRoute = channel?.routes.ping;
-    if (!channel || channel.transport !== "websocket" || !latencyRoute)
-      throw new Error("latency target not resolved");
-    const url = httpToWs(channel.origin) + latencyRoute;
+    const url = pingUrl(channel, kind);
+    if (!url) throw new Error("latency target not resolved");
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
     const replyDriven = cadence === "reply-driven";
     // Reply-driven uses this only for its loss sweep; its sends are driven by
@@ -101,21 +125,26 @@ export class LatencyChannel {
     const intervalMs = replyDriven
       ? PING_LOSS_FLOOR_MS
       : FIXED_PING_INTERVAL[cadence];
+    // A loaded stage shares the link with the transfer, so its depth is the
+    // same either way; the idle stage goes deeper unless PONGs pace the sends.
+    const maxInFlight = !isLatencyStage
+      ? PING_LOADED_MAX_IN_FLIGHT
+      : replyDriven
+        ? PING_REPLY_MAX_IN_FLIGHT
+        : PING_MAX_IN_FLIGHT;
 
     this.#underLoad = false;
     this.#active = true;
-    // The idle latency stage has no byte lanes to prove the link. Bound the
-    // wait for its first pong; the stage fails once that bound expires.
-    if (isLatencyStage) {
-      this.#establishTimer = setTimeout(() => {
-        this.#establishTimer = null;
-        host.failStage(
-          "latency",
-          "connection-lost",
-          "ping connection could not be established",
-        );
-      }, PING_ESTABLISH_TIMEOUT_MS);
-    }
+    // A bus that never establishes reports nothing at all — a hung handshake
+    // produces no samples and no stall — so the wait for the first pong is
+    // bounded on every stage. Only the idle stage fails on it; a loaded stage
+    // has byte lanes of its own and reports the gap instead.
+    this.#establishTimer = setTimeout(() => {
+      this.#establishTimer = null;
+      const detail = "ping connection could not be established";
+      if (isLatencyStage) host.failStage("latency", "connection-lost", detail);
+      else this.#deps.stall(detail);
+    }, PING_ESTABLISH_TIMEOUT_MS);
     const worker = pingWorker();
     worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);
@@ -127,16 +156,11 @@ export class LatencyChannel {
     worker.postMessage({
       type: "start",
       url,
+      transport: kind,
+      mint: pingMint(channel),
       intervalMs,
       replyDriven,
-      maxInFlight: replyDriven
-        ? Math.min(
-            PING_REPLY_MAX_IN_FLIGHT,
-            isLatencyStage ? PING_MAX_IN_FLIGHT : PING_LOADED_MAX_IN_FLIGHT,
-          )
-        : isLatencyStage
-          ? PING_MAX_IN_FLIGHT
-          : PING_LOADED_MAX_IN_FLIGHT,
+      maxInFlight,
       reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
@@ -154,7 +178,8 @@ export class LatencyChannel {
     this.#worker?.postMessage({ type: "measure" });
   }
 
-  /** Stop + terminate the ping worker (closes its WebSocket). Idempotent. */
+  /** Stop + terminate the ping worker, which drops its bus without a close
+   *  frame: the server's read ends with the socket. Idempotent. */
   teardown(): void {
     this.#active = false;
     this.#clearEstablishTimer();
@@ -188,8 +213,12 @@ export class LatencyChannel {
       case "resume":
         this.#deps.resume();
         break;
-      case "open":
       case "ready":
+        // READY is the peer's protocol acknowledgement. Warmup pongs stay in
+        // the worker, so waiting for a measured sample can outlive warmup.
+        this.#clearEstablishTimer();
+        break;
+      case "open":
         break;
     }
   }
@@ -205,7 +234,7 @@ export class LatencyChannel {
 export interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
-  latencyTarget: () => WebSocketLatencyTarget | null;
+  latencyTarget: () => LatencyTarget | null;
 }
 
 /** The persistent idle ping: connectivity indicator plus the preflight RTT
@@ -231,16 +260,15 @@ export class IdleKeepalive {
   }
 
   /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
-   *  a no-op without a websocket latency target. Each run end restarts it, so
+   *  a no-op without a resolvable latency target. Each run end restarts it, so
    *  the connectivity pill stays live outside a test. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     const targetKey = `${throughputTargetKey(this.#deps.throughputTarget())}\n${this.#deps.latencyTarget()?.id ?? ""}`;
     if (this.#active && this.#targetKey === targetKey) return;
     if (this.#active) this.stop();
     const channel = this.#deps.latencyTarget();
-    const latencyRoute = channel?.routes.ping;
-    if (!channel || channel.transport !== "websocket" || !latencyRoute) return;
-    const url = httpToWs(channel.origin) + latencyRoute;
+    const url = channel && pingUrl(channel, channel.transport);
+    if (!channel || !url) return;
     this.#active = true;
     this.#targetKey = targetKey;
     // The store latches its pulse offline on connection-lost. A fresh worker's
@@ -261,6 +289,8 @@ export class IdleKeepalive {
     worker.postMessage({
       type: "start",
       url,
+      transport: channel.transport,
+      mint: pingMint(channel),
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,
@@ -285,7 +315,7 @@ export class IdleKeepalive {
     }
     this.#probeCollect?.finish();
     this.#probeReady?.finish(
-      new TransportUnavailableError("latency WebSocket validation stopped", {
+      new TransportUnavailableError("latency channel validation stopped", {
         role: "latency",
       }),
     );
@@ -332,21 +362,27 @@ export class IdleKeepalive {
       const finish = (error?: Error): void => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", aborted);
-        this.#probeReady = null;
+        // Only the live wait clears the slot: an older instance timing out or
+        // aborting would otherwise silence the newer one's ready message, which
+        // then waits out its own budget on a channel that is already up.
+        if (this.#probeReady?.finish === finish) this.#probeReady = null;
         if (error) reject(error);
         else resolve();
       };
       const aborted = (): void =>
-        finish(new Error("latency WebSocket validation aborted"));
+        finish(new Error("latency channel validation aborted"));
       const timer = setTimeout(
         () =>
           finish(
             new TransportUnavailableError(
-              "latency WebSocket did not become ready",
+              "latency channel did not become ready",
               { role: "latency" },
             ),
           ),
-        PROBE_PING_TIMEOUT_MS,
+        // The worker's own establish deadline plus its mint sit inside this
+        // one, so without the margin the owner always fires first and a healthy
+        // slow bus is degraded before it can report ready.
+        PING_ESTABLISH_TIMEOUT_MS,
       );
       this.#probeReady = { finish };
       signal?.addEventListener("abort", aborted, { once: true });

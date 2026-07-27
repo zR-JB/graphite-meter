@@ -5,6 +5,11 @@ import type { PhaseActivity } from "../contract";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { uploadProgressWorker, type AuthRequiredMsg } from "./workerPool";
+import {
+  ESTABLISH_BUDGET_MS,
+  ESTABLISH_MARGIN_MS,
+  PROGRESS_FINAL_GRACE_MS,
+} from "./budgets";
 
 /** Upload-progress worker → channel messages. `bytes`/`complete` carry the
  *  server's cumulative drained count `n` and its elapsed clock `t` (ns), the
@@ -18,8 +23,7 @@ type ProgressOutMsg =
   | { type: "stall"; detail: string }
   | { type: "resume" };
 
-const PROGRESS_ESTABLISH_TIMEOUT_MS = 3500;
-const PROGRESS_BYE_GRACE_MS = 1000;
+const PROGRESS_ESTABLISH_TIMEOUT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 
 /** The upload lane fields this channel reads and marks. */
 export interface UploadProgressLane {
@@ -30,19 +34,28 @@ export interface UploadProgressLane {
 
 export interface UploadProgressDeps {
   host: () => CoreHost;
+  /** False while another required direction, or this upload, is stalled. */
+  sampleProvesStageLiveness?: () => boolean;
   target: () => FetchThroughputTarget | null;
-  headers: () => HeadersInit | undefined;
   /** The "up" lane, or undefined once the stage is torn down. */
   lane: () => UploadProgressLane | undefined;
   transferActive: () => boolean;
   discardTransfer: () => void;
   setLaneStalled: (stalled: boolean, detail?: string) => void;
+  /** Positive receiver-authoritative bytes for the upload direction. */
+  noteLaneProgress?: (bytes: number) => void;
 }
 
 export class UploadProgressChannel {
   #deps: UploadProgressDeps;
   #worker: Worker | null = null;
   #ready: { finish: (ready: boolean) => void } | null = null;
+  /** Pending external attach (WebTransport), resolved open/timeout/superseded. */
+  #external: {
+    finish: (state: "open" | "timeout" | "superseded") => void;
+  } | null = null;
+  /** Sends the finalizing DELETE for an external feed whose owner did not. */
+  #finalize: (() => void) | null = null;
   #done: (() => void) | null = null;
   /** Latest cumulative byte count the server reports. */
   #serverBytes = 0;
@@ -52,6 +65,8 @@ export class UploadProgressChannel {
   #curveNs = 0;
   /** True once the measured window has its baseline frame. */
   #haveBaseline = false;
+  /** True once the terminal complete record landed for this stage. */
+  #completed = false;
 
   constructor(deps: UploadProgressDeps) {
     this.#deps = deps;
@@ -60,6 +75,7 @@ export class UploadProgressChannel {
   /** Establish the server-authoritative upload progress stream ahead of the
    *  POST lanes. Upload cannot be measured honestly without this channel. */
   prime(stage: PhaseActivity["stage"], uploadId: string): Promise<boolean> {
+    this.#releaseWorker();
     this.#resetCounters();
 
     if (!uploadId) return Promise.resolve(false);
@@ -105,12 +121,47 @@ export class UploadProgressChannel {
     worker.postMessage({
       type: "start",
       url,
-      headers: this.#deps.headers(),
       csrf: csrfHeader(),
       credentials: authEnabled ? "include" : "same-origin",
     });
     this.#worker = worker;
     return ready;
+  }
+
+  /** Await a feed an external owner carries: the WebTransport session worker
+   *  runs it on the same connection as its lanes and owns the finalizing
+   *  DELETE. "superseded" means the lane was torn down or replaced first, which
+   *  is not a stage failure: exactly one owner may act on the outcome. */
+  attachExternal(
+    finalize: () => void,
+  ): Promise<"open" | "timeout" | "superseded"> {
+    this.#external?.finish("superseded");
+    this.#resetCounters();
+    this.#releaseWorker();
+    this.#finalize = finalize;
+    return new Promise((resolve) => {
+      const finish = (state: "open" | "timeout" | "superseded"): void => {
+        if (this.#external?.finish !== finish) return;
+        clearTimeout(timer);
+        this.#external = null;
+        resolve(state);
+      };
+      const timer = setTimeout(
+        () => finish("timeout"),
+        PROGRESS_ESTABLISH_TIMEOUT_MS,
+      );
+      this.#external = { finish };
+    });
+  }
+
+  /** Feed one relayed record in. Used by the WebTransport upload worker, whose
+   *  messages reach the main thread through the lane channel. A refusal ends
+   *  the attach as surely as a ready record: leaving it pending would fail the
+   *  stage once for the refusal and again when the wait times out. */
+  accept(msg: ProgressOutMsg | AuthRequiredMsg): void {
+    if (msg.type === "open") this.#external?.finish("open");
+    else if (msg.type === "fatal") this.#external?.finish("superseded");
+    this.#onMessage(msg);
   }
 
   /** Open the measured window: the first progress frame after this boundary
@@ -120,15 +171,43 @@ export class UploadProgressChannel {
     this.#curveBytes = this.#serverBytes;
   }
 
-  /** Stop the progress worker once the POST lanes finish. It finalizes the
-   *  session with DELETE and lets the stream receive the terminal complete
-   *  record. */
+  /** Stop the feed once the POST lanes finish. `finalize` sends the terminating
+   *  DELETE and waits for the terminal complete record; without it the feed is
+   *  simply dropped. Exactly one of the two feed kinds is ever live. */
   teardown(finalize: boolean): Promise<void> {
+    this.#external?.finish("superseded");
     this.#ready?.finish(false);
     this.#ready = null;
+    const external = this.#finalize;
+    this.#finalize = null;
+    if (external) {
+      this.#teardownExternalFeed(external, finalize);
+      return Promise.resolve();
+    }
+    return this.#teardownWorkerFeed(finalize);
+  }
+
+  /** A session feed finalizes from its own worker, which cannot when the
+   *  session died before the stage ended. Without a terminal record there is
+   *  nothing to wait for, and the DELETE is idempotent. */
+  #teardownExternalFeed(finalizeFeed: () => void, finalize: boolean): void {
+    if (finalize && !this.#completed) finalizeFeed();
+  }
+
+  /** Stop the progress worker. It gets the BYE grace to deliver the terminal
+   *  record, unless one already landed or the caller is discarding the stage. */
+  #teardownWorkerFeed(finalize: boolean): Promise<void> {
     const worker = this.#worker;
     if (!worker) return Promise.resolve();
+    // The terminal record already landed: nothing to wait on.
+    if (this.#completed) {
+      this.#worker = null;
+      worker.postMessage({ type: "stop" });
+      worker.terminate();
+      return Promise.resolve();
+    }
     if (!finalize) {
+      // A grace already running owns the worker; resolving it terminates.
       if (this.#done) {
         this.#done();
         return Promise.resolve();
@@ -145,13 +224,24 @@ export class UploadProgressChannel {
         worker.terminate();
         resolve();
       };
-      const timer = setTimeout(done, PROGRESS_BYE_GRACE_MS);
+      const timer = setTimeout(done, PROGRESS_FINAL_GRACE_MS);
       this.#done = done;
       worker.postMessage({ type: "stop" });
     });
   }
 
+  /** Drop the worker this channel still owns before it takes another feed.
+   *  Every current path tears down first; a worker that did outlive its stage
+   *  would keep routing its upload id's cumulative count, which the monotonic
+   *  guard accepts, into the next stage's meter. */
+  #releaseWorker(): void {
+    if (!this.#worker) return;
+    this.#worker.terminate();
+    this.#worker = null;
+  }
+
   #resetCounters(): void {
+    this.#completed = false;
     this.#serverBytes = 0;
     this.#curveBytes = 0;
     this.#curveNs = 0;
@@ -218,11 +308,22 @@ export class UploadProgressChannel {
     this.#curveBytes = this.#serverBytes;
     this.#curveNs = serverNs;
     if (frameSec > 0) {
-      host.ingestThroughput("up", delta / frameSec, delta, frameSec, true);
+      host.ingestThroughput(
+        "up",
+        delta / frameSec,
+        delta,
+        frameSec,
+        true,
+        this.#deps.sampleProvesStageLiveness?.() ?? true,
+      );
     }
     if (delta > 0) {
-      this.#deps.setLaneStalled(false);
+      if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(delta);
+      else this.#deps.setLaneStalled(false);
     }
-    if (msg.type === "complete") this.#done?.();
+    if (msg.type === "complete") {
+      this.#completed = true;
+      this.#done?.();
+    }
   }
 }

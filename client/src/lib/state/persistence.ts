@@ -2,7 +2,7 @@
 // Load merges stale or partial blobs onto the current defaults.
 import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/real/streamPolicy";
-import { DEFAULT_CONFIG } from "./store.svelte";
+import { DEFAULT_CONFIG } from "./defaults";
 
 const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
@@ -184,6 +184,8 @@ export function loadPersisted(): PersistedState {
   merged.config.transferStreams.count = normalizeStreamCount(
     merged.config.transferStreams.count,
   );
+  if (!["setup", "developer"].includes(merged.settingsTab))
+    merged.settingsTab = "setup";
   return merged;
 }
 

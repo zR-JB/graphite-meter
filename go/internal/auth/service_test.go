@@ -473,7 +473,7 @@ func TestBrowserAuthRoutesRequireCanonicalPort(t *testing.T) {
 func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 	s := testService(t)
 	_, sess, _ := s.createSession("subject", "Name", "local", time.Time{})
-	grant, _ := randomToken(32)
+	grant := randomToken(32)
 	grantHash := sha256.Sum256([]byte(grant))
 	sess.grants[grantHash] = struct{}{}
 	s.grants[grantHash] = sess
@@ -758,10 +758,7 @@ func TestUnknownCLIChallengeAllocatesNothing(t *testing.T) {
 }
 func TestVerificationCodeIsAlwaysEightCharacters(t *testing.T) {
 	for i := 0; i < 100; i++ {
-		challenge, err := randomToken(32)
-		if err != nil {
-			t.Fatal(err)
-		}
+		challenge := randomToken(32)
 		if code := verificationCode(challenge); len(code) != 8 {
 			t.Fatalf("code=%q length=%d", code, len(code))
 		}

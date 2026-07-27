@@ -12,8 +12,7 @@ test("admission rejections are terminal for a download lane", () => {
 });
 
 test("download requests retain bearer credentials", () => {
-  const controller = new AbortController();
-  const init = downloadFetchInit(controller.signal, "include", {
+  const init = downloadFetchInit("include", {
     authorization: "Bearer grant",
   });
   expect(init.credentials).toBe("include");

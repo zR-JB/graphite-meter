@@ -40,6 +40,52 @@ test("settings expose live controls and lock run construction inputs", async ({
   ).toBeDisabled();
 });
 
+// The datagram card is gated on its experimental setting, but a card already
+// selected must not vanish under the user — and the note that its number is not
+// a speed test belongs to that selection, not to the toggle. Read linearly the
+// note is textually indistinguishable from the hints around it unless it
+// announces itself, so a screen reader is told it appeared. Sighted readers get
+// it above the toggle rather than below, where the end of the scroll hides it.
+test("the datagram card follows its selection and announces its caution", async ({
+  page,
+}) => {
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  await expect(
+    settings.getByText("Ready", { exact: true }).first(),
+  ).toBeVisible();
+
+  const card = settings.locator("label", {
+    hasText: "WebTransport datagrams",
+  });
+  const caution = settings
+    .getByRole("status")
+    .filter({ hasText: "not link speed" });
+  const toggle = settings.getByText("Datagram throughput (experimental)");
+
+  await expect(card).toHaveCount(0);
+  await expect(caution).toHaveCount(0);
+
+  await toggle.click();
+  await expect(card).toHaveCount(1);
+  await expect(caution).toContainText("Datagrams are never resent");
+
+  await card.click();
+  await expect(card.locator("input")).toBeChecked();
+
+  // Turning the setting off leaves the selection standing, so the card and its
+  // caution both stay: a run is still about to happen over datagrams.
+  await toggle.click();
+  await expect(card.locator("input")).toBeChecked();
+  await expect(caution).toBeVisible();
+
+  const accessibility = await new AxeBuilder({ page })
+    .include('[aria-label="Settings"]')
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+});
+
 test("endpoint summary and diagnostics use accessible disclosure", async ({
   page,
 }) => {
@@ -57,7 +103,7 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
     endpoint.getByText("WebTransport datagrams · WebSocket"),
   ).toBeVisible();
   await expect(
-    endpoint.getByText("Fetch streams over HTTP/1.1 · clear"),
+    endpoint.getByText("Fetch stream over HTTP/1.1 · clear"),
   ).toBeVisible();
   const summary = endpoint.locator("summary", { hasText: "Diagnostics" });
   await summary.focus();

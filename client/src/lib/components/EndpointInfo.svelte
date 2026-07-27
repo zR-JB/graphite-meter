@@ -3,7 +3,10 @@
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
+  import { buildSegments } from "../runner/schedule";
   import { httpProtocolLabel } from "../runner/protocol";
+  import { serverLoadSummary } from "./endpointInfo";
+  import type { TransportKind } from "../runner/contract";
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
@@ -44,16 +47,20 @@
     return `Browser to endpoint ${httpProtocolLabel(connection.browserProtocol)} · server received ${httpProtocolLabel(connection.serverProtocol)}`;
   }
 
-  function capability(value: string, role: PathRole) {
-    if (value === "fetch-streams") return "Fetch streams";
-    if (value === "websocket") return "WebSocket";
-    if (value === "webtransport-streams") return "WebTransport streams";
-    if (value === "webtransport-datagrams") return "WebTransport datagrams";
-    if (value === "webtransport")
-      return role === "throughput"
-        ? "WebTransport streams"
-        : "WebTransport datagrams";
-    return value;
+  // One vocabulary throughout: TransportKind. Bare "webtransport" names the
+  // session, whose throughput half is streams and whose latency half is the
+  // datagram bus.
+  function capability(value: TransportKind, role: PathRole) {
+    const labels: Record<TransportKind, string> = {
+      "fetch-stream": "Fetch streams",
+      websocket: "WebSocket",
+      "webtransport-datagram": "WebTransport datagrams",
+      webtransport:
+        role === "throughput"
+          ? "WebTransport streams"
+          : "WebTransport datagrams",
+    };
+    return labels[value] ?? value;
   }
 
   function capabilities(role: PathRole) {
@@ -64,16 +71,50 @@
     return values?.map((value) => capability(value, role)).join(" · ") ?? "—";
   }
 
-  const uploadProgressPath = $derived(
-    connections.throughput.target
-      ? `Fetch streams over ${connections.throughput.summary.replace("Fetch stream · ", "")}`
-      : "Pending",
-  );
+  // The feed rides the session that carries the bytes, or its own fetch when
+  // the lanes are fetches.
+  const uploadProgressPath = $derived.by(() => {
+    const target = connections.throughput.target;
+    if (!target) return "Pending";
+    const carrier =
+      target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
+    // The summary opens with its own mechanism, so naming the carrier again
+    // would stutter: what is left is the path it runs over.
+    const over = connections.throughput.summary
+      .split(" · ")
+      .slice(1)
+      .join(" · ");
+    return `${carrier} over ${over}`;
+  });
   const serverInstance = $derived.by(() => {
     const value = store.transportDiscovery?.generation;
     if (!value || value === "dummy") return value ?? "—";
     return `${value.slice(0, 8)}…`;
   });
+  const serverLoad = $derived(serverLoadSummary(store.infra?.serverLoad));
+
+  // Every row here reads the same presentation the path cards do. `store.infra`
+  // is the last probe's evidence, which outlives the selection that produced it
+  // and is never cleared: reading it directly makes the drawer contradict the
+  // card four lines above whenever a role is failed, checking, or moved.
+  const throughputTransport = $derived(
+    connections.throughput.target?.transport,
+  );
+  const latencyTransport = $derived(connections.latency.target?.transport);
+
+  // The lanes a stage opens depend on what it carries, so the run's own
+  // timeline supplies the stages the count is resolved from.
+  const transferStreams = $derived(
+    describeTransferStreams(
+      store.runConfig.transferStreams,
+      buildSegments(store.runConfig).segments.map(
+        (segment) => segment.activity,
+      ),
+      connections.throughput.observedProtocol ??
+        connections.throughput.target?.protocol,
+      throughputTransport,
+    ),
+  );
 
   function diagnosticReport() {
     return JSON.stringify(
@@ -84,10 +125,7 @@
         throughput: connections.throughput,
         latency: connections.latency,
         preTestPingMs: connections.latency.preTestPingMs,
-        streams: describeTransferStreams(
-          store.runConfig.transferStreams,
-          store.infra?.selectedThroughputProtocol,
-        ),
+        streams: transferStreams,
         compensation: store.config.compensation,
       },
       null,
@@ -203,17 +241,24 @@
           <dd>{connections.throughput.target?.origin ?? "—"}</dd>
         </div>
         <div>
+          <dt>Transports</dt>
+          <dd>
+            {throughputTransport ?? "—"} · {latencyTransport ?? "—"}
+          </dd>
+        </div>
+        {#if serverLoad}
+          <div>
+            <dt>Server load</dt>
+            <dd>{serverLoad}</dd>
+          </div>
+        {/if}
+        <div>
           <dt>Latency origin</dt>
           <dd>{connections.latency.target?.origin ?? "—"}</dd>
         </div>
         <div>
           <dt>Streams</dt>
-          <dd>
-            {describeTransferStreams(
-              store.runConfig.transferStreams,
-              store.infra?.selectedThroughputProtocol,
-            )}
-          </dd>
+          <dd>{transferStreams}</dd>
         </div>
         <div>
           <dt>Compensation</dt>

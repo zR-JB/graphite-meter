@@ -25,8 +25,7 @@ func NewUploadSession(store *UploadStore) *UploadSession {
 	return &UploadSession{store: store}
 }
 
-func (u *UploadSession) ID() string                 { return "upload-session" }
-func (u *UploadSession) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (u *UploadSession) ID() string { return "upload-session" }
 
 func (u *UploadSession) Handle(s transport.Session) error {
 	w, r, ok := s.HTTP()

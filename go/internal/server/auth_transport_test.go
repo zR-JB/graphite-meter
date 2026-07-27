@@ -34,6 +34,9 @@ type authenticatedStack struct {
 func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
+	// One port for the UDP listener and its TCP Alt-Svc companion, as
+	// TestRunServesH3 does.
+	cfg.Native.H3 = freeTCPAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -42,10 +45,6 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 		t.Fatal(err)
 	}
 	h2Ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h3PC, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +69,19 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
 
-	h3Mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, http.NotFoundHandler(), authn)
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: authn.Enforce(h3Mux, auth.Listener{})}
-	go h3.Serve(h3PC)
-	t.Cleanup(func() { _ = h3.Close(); _ = h3PC.Close() })
+	// assembleH3 builds the HTTP/3 listener, rather than a copy of it here: the
+	// browser CONNECT path hangs entirely on the auth.Listener{WebTransport:
+	// true} it passes to Enforce, and a mirrored construction pins nothing.
+	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm,
+		connections: newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)}
+	if err := build.assembleH3(); err != nil {
+		t.Fatal(err)
+	}
+	for _, svc := range build.services {
+		run, stop := svc.run, svc.stop
+		go func() { _ = run() }()
+		t.Cleanup(func() { _ = stop(context.Background()) })
+	}
 
 	uiProtocols := &http.Protocols{}
 	uiProtocols.SetHTTP1(true)
@@ -92,7 +100,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	s := &authenticatedStack{
 		authn: authn, origin: origin,
 		h2URL:    "https://" + h2Ln.Addr().String(),
-		h3URL:    "https://" + h3PC.LocalAddr().String(),
+		h3URL:    "https://" + cfg.Native.H3,
 		uiClient: &http.Client{Transport: uiTransport, CheckRedirect: noRedirect},
 		h2Client: &http.Client{Transport: h2Transport, CheckRedirect: noRedirect},
 		h3Client: &http.Client{Transport: h3Transport, CheckRedirect: noRedirect},

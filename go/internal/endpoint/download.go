@@ -28,8 +28,7 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-func (d *Download) ID() string                 { return "download" }
-func (d *Download) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (d *Download) ID() string { return "download" }
 
 // Handle streams ?bytes= of the shared block into the session's download sink,
 // wrapping at the block end. Context cancellation or a write error stops early.

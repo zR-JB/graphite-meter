@@ -9,11 +9,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type observedBody struct {
@@ -191,6 +194,140 @@ func TestPublicH3Port(t *testing.T) {
 	cfg.NativePublic.H3 = "https://meter.example"
 	if got := publicH3Port(&cfg); got != "443" {
 		t.Fatalf("default TLS port = %q, want %q", got, "443")
+	}
+}
+
+// The idle bound is a contract value: clients pace their traffic under it, and
+// the native client validates its ping cadence against the same constant. It
+// reaches the session handlers as a constructor argument, so this is where it
+// is chosen and where server and contract are held together.
+func TestEndpointsCarryThePublishedIdleBound(t *testing.T) {
+	cfg := config.Default()
+	e, err := buildEndpoints(context.Background(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Equality, not "at most": raising it above the constant makes a session
+	// outlive the upload aggregate whose TTL is derived from that same constant
+	// (endpoint/upload_store.go), and the re-dial after a bound-driven close
+	// then reports only post-reconnect bytes. Whoever makes this configurable
+	// has to change this line, which is the point of pinning it here.
+	if e.wtIdleBound != wire.WTIdleBound {
+		t.Errorf("WebTransport idle bound = %v, want the published %v: the upload aggregate TTL is derived from that constant, so a longer bound resets the upload counter to zero across a reconnect", e.wtIdleBound, wire.WTIdleBound)
+	}
+}
+
+func TestH3QUICConfigCarriesTheSupportedTransferEnvelope(t *testing.T) {
+	cfg := h3QUICConfig()
+	if want := int64(257); cfg.MaxIncomingStreams != want {
+		t.Fatalf("incoming request streams = %d, want %d (128 download + 128 upload + progress)", cfg.MaxIncomingStreams, want)
+	}
+	// The literal, not the production expression: repeating that expression here
+	// asserts only that it equals itself, and any of its three terms could then
+	// change without a test noticing.
+	if want := int64(23); cfg.MaxIncomingUniStreams != want {
+		t.Fatalf("incoming unidirectional streams = %d, want %d (3 HTTP/3 control + 16 lanes + 4 headroom)", cfg.MaxIncomingUniStreams, want)
+	}
+}
+
+// api/wire.md promises the lane past wire.WTMaxStreams is reset rather than
+// served. Only the app-level semaphore in endpoint/webtransport.go can reset
+// one: a lane refused by QUIC stream credit instead parks on the credit
+// indefinitely, with no error frame and nothing for the client to observe -- a
+// byte stream carries no channel to report a refusal on. So the credit has to
+// outrun what a browser can spend before its first lane, or the documented
+// refusal is unreachable from the only client that has to see it. Granting
+// exactly browserH3UniStreams + wire.WTMaxStreams left a browser with exactly
+// 16 lanes and made the app guard dead code.
+func TestH3UniStreamCreditOutrunsABrowsersLaneCeiling(t *testing.T) {
+	credit := h3QUICConfig().MaxIncomingUniStreams
+	floor := int64(browserH3UniStreams + wire.WTMaxStreams)
+	if credit <= floor {
+		t.Fatalf("MaxIncomingUniStreams = %d, want more than %d (%d HTTP/3 streams a browser has already spent + the %d lane ceiling), so the app-level guard refuses the %dth lane rather than stream credit parking it",
+			credit, floor, browserH3UniStreams, wire.WTMaxStreams, wire.WTMaxStreams+1)
+	}
+}
+
+// The unit half of TestWebTransportConnectRefusesAForeignOrigin, which needs a
+// whole authenticated HTTP/3 stack to reach this function. wtOriginCheck is the
+// only origin policy an extended CONNECT passes through, so it is pinned here
+// too: a live-fire test that stops compiling takes the guard with it.
+func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
+	hash, err := auth.HashPassword("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authn, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withOrigin := func(origin string) *http.Request {
+		r := httptest.NewRequest(http.MethodConnect, "/wt/ping", nil)
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		return r
+	}
+	check := wtOriginCheck(authn)
+	for _, tc := range []struct {
+		origin string
+		want   bool
+	}{
+		// No Origin at all is a native client, which no browser origin policy
+		// governs; the credential is what admits it.
+		{"", true},
+		{authn.PublicOrigin(), true},
+		{"https://attacker.example", false},
+		// Neither a suffix nor a prefix of the canonical origin is it.
+		{"https://meter.example.attacker.example", false},
+		{"https://meter.example.evil", false},
+		// The scheme is part of an origin.
+		{"http://meter.example", false},
+		{"null", false},
+	} {
+		if got := check(withOrigin(tc.origin)); got != tc.want {
+			t.Errorf("wtOriginCheck(Origin: %q) = %v, want %v", tc.origin, got, tc.want)
+		}
+	}
+	// Public mode holds no session state a forged origin could reach, and
+	// answers every origin as the wildcard-CORS measurement routes do.
+	if open := wtOriginCheck(nil); !open(withOrigin("https://attacker.example")) {
+		t.Error("public mode refused a cross-origin CONNECT")
+	}
+}
+
+// The admission log is the operator's whole view of what is refusing traffic.
+// A deployment whose session budget is full refuses every /wt/* CONNECT with
+// 503 while the measurement pool still reports room, so the line has to carry
+// the session budget's own occupancy and its own refusals or it names no
+// remedy: /probe's published load shape reports the pool alone.
+func TestAdmissionLogLineNamesTheSessionBudget(t *testing.T) {
+	a := newRequestAdmission(256, 32, 64, 16, time.Minute, time.Hour)
+	for i := range 3 {
+		release, status := a.acquire("client", "login-"+strconv.Itoa(i))
+		if status != 0 {
+			t.Fatalf("session %d rejected with %d", i, status)
+		}
+		defer release()
+	}
+	line := admissionLogLine(a.stats(), admissionStats{})
+	for _, want := range []string{"sessions 3 active", "64 max"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("admission log line %q does not report %q", line, want)
+		}
+	}
+
+	full := newRequestAdmission(4, 4, 1, 4, time.Minute, time.Hour)
+	release, status := full.acquire("client-a", "login-a")
+	if status != 0 {
+		t.Fatalf("first session rejected with %d", status)
+	}
+	defer release()
+	if _, status := full.acquire("client-b", "login-b"); status != http.StatusServiceUnavailable {
+		t.Fatalf("session past the budget = %d, want %d", status, http.StatusServiceUnavailable)
+	}
+	if line := admissionLogLine(full.stats(), admissionStats{}); !strings.Contains(line, "1 budget") {
+		t.Errorf("admission log line %q does not distinguish a session-budget refusal from a full pool", line)
 	}
 }
 

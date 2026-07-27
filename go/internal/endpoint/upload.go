@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -38,8 +39,7 @@ func NewUpload(meter *Meter, store *UploadStore, trusted ...[]netip.Prefix) *Upl
 	return u
 }
 
-func (u *Upload) ID() string                 { return "upload" }
-func (u *Upload) Capabilities() Capabilities { return Capabilities{HTTP: true} }
+func (u *Upload) ID() string { return "upload" }
 
 // uploadBufSize is the drain buffer per in-flight upload. Larger than
 // io.Discard's internal 8 KiB so a saturated link costs far fewer read syscalls.
@@ -82,17 +82,18 @@ func (u *Upload) Handle(s transport.Session) error {
 	if u.store != nil {
 		id := s.Query().Get("id")
 		if id != "" {
-			owner := ""
-			if _, r, ok := s.HTTP(); ok {
-				owner = ClientKey(r, u.trusted)
-			}
+			owner := sessionOwner(s, u.trusted)
 			a, access := u.store.getOrCreateFor(id, owner)
 			if access != uploadAccessOK {
-				if w, _, ok := s.HTTP(); ok {
-					writeUploadAccessError(w, access)
-					return nil
+				w, _, ok := s.HTTP()
+				if !ok {
+					// A stream carries no status line, so the refusal is the
+					// return value: its caller resets the stream rather than
+					// leaving the client parked on flow control.
+					return fmt.Errorf("upload refused: %s", uploadAccessMessage(access))
 				}
-				return transport.ErrUnsupported
+				writeUploadAccessError(w, access)
+				return nil
 			}
 			agg = a
 			agg.changePosts(1)

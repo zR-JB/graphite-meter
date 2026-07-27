@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -80,8 +81,8 @@ func TestLaneStaggerStep(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &runner{cfg: Config{Warmup: c.warmup}, streams: c.streams, idleRTT: c.idleRTT}
-			if got := r.laneStaggerStep(); got != c.want {
+			r := &runner{cfg: Config{Warmup: c.warmup}, idleRTT: c.idleRTT}
+			if got := r.laneStaggerStep(c.streams); got != c.want {
 				t.Errorf("laneStaggerStep() = %v, want %v", got, c.want)
 			}
 		})
@@ -615,6 +616,79 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	}
 }
 
+// TestTransferStagesOpenTheirOwnDirectionsLanes checks each direction opens the
+// lane count it resolved rather than one count shared by both, which is what an
+// automatic multiplexed policy asks for: h2 runs one download lane and four
+// upload lanes.
+func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
+	var uploaded atomic.Uint64
+	var mu sync.Mutex
+	lanes := map[Direction]map[string]bool{Down: {}, Up: {}}
+	note := func(dir Direction, r *http.Request) {
+		mu.Lock()
+		lanes[dir][r.URL.Query().Get("lane")] = true
+		mu.Unlock()
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		note(Down, r)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, 16*1024))
+	})
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "lane-count"})
+	})
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		note(Up, r)
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Body.Read(buf)
+			if n > 0 {
+				uploaded.Add(uint64(n))
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	mountFakeProgress(mux, &uploaded, time.Now())
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, DownloadBytesPerStream: 16 * 1024}.normalized()
+	reported := map[Direction]int{}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 4}, http: srv.Client(), emit: func(e Event) {
+		if e.Kind != EventThroughput {
+			return
+		}
+		mu.Lock()
+		reported[e.Direction] = e.Throughput.StreamCount
+		mu.Unlock()
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, captureWindow); err != nil {
+		t.Fatalf("runTransferStage: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range []struct {
+		dir  Direction
+		want int
+	}{{Down, 1}, {Up, 4}} {
+		if got := len(lanes[c.dir]); got != c.want {
+			t.Errorf("%s opened %d lanes, want %d", c.dir, got, c.want)
+		}
+		if got := reported[c.dir]; got != c.want {
+			t.Errorf("%s reported StreamCount %d, want %d", c.dir, got, c.want)
+		}
+	}
+}
+
 // TestRunTransferStageFanInErrorCancelsSiblingLane checks that when one lane
 // of a transfer stage fails, its sibling, still actively transferring, is
 // cancelled promptly rather than left running until its own duration expires.
@@ -640,7 +714,7 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -657,6 +731,118 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	}
 	if downloadBytesServed.Load() == 0 {
 		t.Error("download lane made no progress before the sibling upload lane's error; test didn't exercise a genuine mid-transfer cancellation")
+	}
+}
+
+// A failed transfer stage publishes no result of any kind. The loaded-latency
+// probe holds samples when the stage is cancelled and its cancellation is not
+// an error, so a result emitted from inside that goroutine would carry the
+// failed stage's name: a consumer keying results by stage would read the stage
+// as having measured something.
+func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ping", echoPingHandler())
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		// The delay puts the failure well after the loaded-latency probe has
+		// samples in hand, so suppression is what the assertion turns on.
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{
+		BaseURL:                srv.URL,
+		Warmup:                 0,
+		LoadedLatency:          true,
+		PingInterval:           20 * time.Millisecond,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
+		DownloadBytesPerStream: 64 * 1024,
+	}.normalized()
+
+	var mu sync.Mutex
+	var results []Result
+	var samples int
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1}, http: srv.Client(), emit: func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch e.Kind {
+		case EventResult:
+			results = append(results, *e.Result)
+		case EventLatency:
+			samples++
+		}
+	}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := r.runTransferStage(ctx, "download", []Direction{Down}, 3*time.Second)
+	if err == nil {
+		t.Fatal("want the download lane's HTTP 500 surfaced")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if samples == 0 {
+		t.Fatal("the loaded-latency probe took no samples before the lane failed; the test never exercised the suppression")
+	}
+	if len(results) != 0 {
+		t.Fatalf("failed stage published %d result(s): %+v", len(results), results)
+	}
+}
+
+// A stage that succeeds publishes both of its results, and the transfer one
+// lands last: the two share the stage's name, so a consumer that keys results
+// by stage keeps whichever arrived last, and that has to be the throughput
+// number rather than the loaded-latency companion.
+func TestLoadedLatencyResultPrecedesTheTransferResult(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ping", echoPingHandler())
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, 64*1024))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{
+		BaseURL:                srv.URL,
+		Warmup:                 0,
+		LoadedLatency:          true,
+		PingInterval:           20 * time.Millisecond,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
+		DownloadBytesPerStream: 64 * 1024,
+	}.normalized()
+
+	var mu sync.Mutex
+	var results []Result
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1}, http: srv.Client(), emit: func(e Event) {
+		if e.Kind != EventResult {
+			return
+		}
+		mu.Lock()
+		results = append(results, *e.Result)
+		mu.Unlock()
+	}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.runTransferStage(ctx, "download", []Direction{Down}, captureWindow); err != nil {
+		t.Fatalf("runTransferStage: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(results) != 2 {
+		t.Fatalf("stage published %d result(s), want the transfer result and its loaded-latency companion: %+v", len(results), results)
+	}
+	if results[0].Latency.Count == 0 || results[0].TotalBytes != 0 {
+		t.Errorf("first result = %+v, want the loaded-latency one", results[0])
+	}
+	if results[1].Direction != Down || results[1].TotalBytes == 0 {
+		t.Errorf("last result = %+v, want the download transfer one", results[1])
 	}
 }
 
@@ -702,4 +888,71 @@ func newEchoPingServer(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.Handle("/ws/ping", echoPingHandler())
 	return httptest.NewServer(mux)
+}
+
+// The probe that proves a latency origin reachable is a plain GET over the
+// WebSocket client, which is pinned to HTTP/1.1 whatever bus the stage then
+// runs on. Reporting its answer for a WebTransport bus announced an HTTP/1.1
+// run that never happened, so the bus names its own version.
+func TestLatencyBusEvidenceNamesTheBusNotTheProbe(t *testing.T) {
+	probe := &wire.Probe{ProtocolNegotiated: "HTTP/1.1"}
+	wt := &wire.LatencyTarget{Transport: wire.TransportWebTransport}
+	if got, want := latencyBusEvidence(wt, probe), "h3"; got != want {
+		t.Errorf("WebTransport bus evidence = %q, want %q", got, want)
+	}
+	// The WebSocket bus really is the HTTP/1.1 the probe observed: its Upgrade
+	// handshake cannot ride anything else.
+	ws := &wire.LatencyTarget{Transport: wire.TransportWebSocket}
+	if got, want := latencyBusEvidence(ws, probe), "HTTP/1.1"; got != want {
+		t.Errorf("WebSocket bus evidence = %q, want %q", got, want)
+	}
+	if got := latencyBusEvidence(ws, nil); got != "" {
+		t.Errorf("unprobed WebSocket bus evidence = %q, want empty", got)
+	}
+}
+
+// One phrase per path, shared by the selectors that offer it, the readiness
+// panel that verifies it, and the run screen that reports it.
+func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
+	for _, c := range []struct{ transport, protocol, want string }{
+		{wire.TransportFetchStream, "http1", "Fetch stream · HTTP/1.1 · TLS"},
+		{wire.TransportFetchStream, "negotiated", "Fetch stream · Negotiated · TLS"},
+		{wire.TransportWebSocket, "http1", "WebSocket · HTTP/1.1 · TLS"},
+		{wire.TransportWebTransport, "http3", "WebTransport · HTTP/3 · TLS"},
+		{wire.TransportWebTransportDatagram, "http3", "WebTransport datagrams · HTTP/3 · TLS"},
+		// A run holds the negotiated evidence rather than the target's name for
+		// it, and must not read as a different path for spelling it that way.
+		{wire.TransportWebTransport, "h3", "WebTransport · HTTP/3 · TLS"},
+		{wire.TransportFetchStream, "", "Fetch stream · -- · TLS"},
+	} {
+		if got := ConnectionSummary(c.transport, c.protocol, true); got != c.want {
+			t.Errorf("ConnectionSummary(%q, %q) = %q, want %q", c.transport, c.protocol, got, c.want)
+		}
+	}
+	if got, want := ConnectionSummary(wire.TransportFetchStream, "http1", false), "Fetch stream · HTTP/1.1 · clear"; got != want {
+		t.Errorf("clear summary = %q, want %q", got, want)
+	}
+}
+
+// A bound inside a stage expiring wraps context.DeadlineExceeded, which the
+// stage filter once swallowed along with the caller's own cancellation. The
+// silent-server case reaches it that way — the redial window expires rather
+// than being refused — so the stage published a part-window byte total as the
+// whole window's rate. The refused case never did, because a refusal is not a
+// deadline, which is why the integration test beside it stayed green.
+func TestStageFailedKeepsABoundExpiryAndDropsACancellation(t *testing.T) {
+	redialExpired := fmt.Errorf("webtransport session lost and not replaced within %v: %w", wtSessionRedialWindow, context.DeadlineExceeded)
+	feedExpired := fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, context.DeadlineExceeded)
+	for _, err := range []error{redialExpired, feedExpired, context.DeadlineExceeded, errors.New("refused")} {
+		if !stageFailed(err) {
+			t.Errorf("stageFailed(%v) = false, want the stage to fail", err)
+		}
+	}
+	// A stop is not a failure: the caller's cancellation, and the sibling
+	// direction's through cancelStage, both arrive as Canceled.
+	for _, err := range []error{nil, context.Canceled, fmt.Errorf("lane %d: %w", 1, context.Canceled)} {
+		if stageFailed(err) {
+			t.Errorf("stageFailed(%v) = true, want the stage to report", err)
+		}
+	}
 }

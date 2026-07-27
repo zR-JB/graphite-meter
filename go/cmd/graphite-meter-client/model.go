@@ -77,6 +77,24 @@ const (
 
 var sectionLabels = []string{"Server", "Run setup", "Timing", "Connections", "Start"}
 
+// The Connections rows, in the order networkView draws them. Named because the
+// activation switch, the row count, and the two editors that render in place
+// all have to agree on which row is which.
+const (
+	rowThroughputPath = iota
+	rowThroughputProtocol
+	rowLatencyPath
+	rowAutoStreams
+	rowStreams
+	rowSkipTLS
+	rowReset
+	rowConnectionsCount
+)
+
+// protocolNegotiated is the protocol an origin advertises when it fixes no HTTP
+// version — the one case where the version row still has a decision to make.
+const protocolNegotiated = "negotiated"
+
 type editKind int
 
 const (
@@ -225,16 +243,21 @@ type model struct {
 	server                              string
 	target, latencyTarget               string
 	throughputProtocol, latencyProtocol string
-	err                                 error
-	complete                            bool
-	prepared                            *goclient.PreparedConnection
-	discovery                           *wire.Preflight
-	prepareSeq                          int
-	prepareStatus                       string
-	prepareStep                         prepareStep
-	prepareError                        string
-	auth                                *goclient.PendingAuthorization
-	authSince                           time.Time
+	// The transports the run committed to: the stream label names what a session
+	// delivers rather than what was requested, and the latency line names the
+	// bus, since loss means different things on each.
+	throughputTransport, latencyTransport string
+
+	err           error
+	complete      bool
+	prepared      *goclient.PreparedConnection
+	discovery     *wire.Preflight
+	prepareSeq    int
+	prepareStatus string
+	prepareStep   prepareStep
+	prepareError  string
+	auth          *goclient.PendingAuthorization
+	authSince     time.Time
 	// authOpened records that the approval page was sent to the browser. Until
 	// it is set, enter is the key that sends it; afterwards enter goes back to
 	// the row it belongs to.
@@ -554,6 +577,17 @@ func (m *model) commitDuration(raw, field string) {
 			m.editRejected(s.zeroError)
 			return
 		}
+		// The ping cadence has an upper bound over the datagram bus, which the
+		// server reaps once the client stops feeding it. The bound is the
+		// client's one statement of that rule, message included; the WebSocket
+		// bus has no idle timer, and automatic selection defers the decision to
+		// Prepare so an unreachable datagram bus can fall back first.
+		if field == "ping" && goclient.PingIntervalBoundApplies(m.cfg.LatencyTransport) {
+			if err := goclient.ValidatePingInterval(d); err != nil {
+				m.editRejected(err.Error())
+				return
+			}
+		}
 		*s.ptr = d
 	}
 	m.editAccepted("Timing updated.")
@@ -615,25 +649,43 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		m.notice = "Editing duration. Use values like 800ms, 4s, or 1m."
 	case sectionConnections:
 		switch m.row {
-		case 0:
-			m.cfg.ThroughputTarget = nextEndpoint(m.cfg.ThroughputTarget, m.throughputChoices())
-			m.notice = "Throughput endpoint updated."
-		case 1:
-			m.cfg.LatencyTarget = nextEndpoint(m.cfg.LatencyTarget, m.latencyChoices())
-			m.notice = "Latency endpoint updated."
-		case 2:
+		case rowThroughputPath:
+			next := nextPath(m.cfg.ThroughputTarget, m.cfg.ThroughputTransport, m.throughputPaths())
+			m.cfg.ThroughputTarget, m.cfg.ThroughputTransport = next.target, next.transport
+			// A path that fixes its HTTP version leaves a pinned one from the
+			// previous selection stranded, where it fails the check with
+			// "endpoint is fixed to http1, cannot use http2" and points at a row
+			// that now reads as inert. Selecting the path releases the pin.
+			if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
+				m.cfg.ThroughputProtocol = "auto"
+			}
+			m.notice = "Throughput path set to " + next.label + "."
+		case rowThroughputProtocol:
+			if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
+				m.notice = "This path serves " + goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS) + " only."
+				break
+			}
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
-			m.notice = "Throughput protocol updated."
-		case 3:
+			m.notice = "Throughput HTTP version updated."
+		case rowLatencyPath:
+			next := nextPath(m.cfg.LatencyTarget, m.cfg.LatencyTransport, m.latencyPaths())
+			m.cfg.LatencyTarget, m.cfg.LatencyTransport = next.target, next.transport
+			m.notice = "Latency path set to " + next.label + "."
+		case rowAutoStreams:
 			m.edit = beginEdit(editInt, "auto-streams", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax))
 			m.notice = "Editing maximum automatic HTTP/1 streams. Use 1 through 128."
-		case 4:
+			// The editor still opens: the value is kept for the transports that
+			// read it, so it stays settable while WebTransport is selected.
+			if m.cfg.ThroughputTransport == wire.TransportWebTransport {
+				m.notice += " WebTransport ignores it."
+			}
+		case rowStreams:
 			m.edit = beginEdit(editInt, "streams", fmt.Sprintf("%d", m.cfg.TransferStreams.Forced))
 			m.notice = "Editing streams per direction. Use 0 for automatic or 1 through 128 to force."
-		case 5:
+		case rowSkipTLS:
 			m.cfg.InsecureSkipTLSVerify = !m.cfg.InsecureSkipTLSVerify
 			m.notice = "TLS verification setting updated."
-		case 6:
+		case rowReset:
 			m.cfg = goclient.DefaultConfig()
 			m.notice = "Configuration reset to defaults."
 		}
@@ -652,7 +704,7 @@ func (m model) rowCount() int {
 	case sectionTiming:
 		return 6
 	case sectionConnections:
-		return 7
+		return rowConnectionsCount
 	case sectionRun:
 		return 1
 	default:
@@ -698,66 +750,118 @@ func (m model) capabilities() wire.Capabilities {
 	return m.discovery.Capabilities
 }
 
-// throughputChoices and latencyChoices are what the two endpoint rows cycle
-// through. A discovered origin is named by the protocol it fixes rather than by
-// its URL: a server usually offers one hostname on several ports, so the
-// protocol is what tells the choices apart. "Automatic" is named by where the
-// last check resolved it, which is kept across configuration changes and so
-// never blanks mid-cycle.
-func (m model) throughputChoices() []endpointChoice {
-	choices := endpointChoices(m.capabilities().ThroughputTargets, func(t wire.ThroughputTarget) endpointChoice {
-		return endpointChoice{value: t.Origin, label: protocolFacts(t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)}
-	})
+// pathChoice is one stop of a path row's cycle. Origin and mechanism move
+// together: pulled apart they spell combinations no server offers — WebTransport
+// over an HTTP/1.1 listener — and the operator finds out when the check fails.
+// Descriptions come from discovery, which the model keeps across configuration
+// changes, so a row says what it offers without waiting for a connection.
+type pathChoice struct {
+	target    string // the origin the configuration holds, or "auto"
+	transport string // the mechanism the configuration holds, or "auto"
+	label     string
+	note      string
+}
+
+// selects reports whether this stop is the one the configuration currently
+// holds. Discovery can advertise one origin under several spellings, so
+// origin.Key decides equivalence.
+func (c pathChoice) selects(target, transport string) bool {
+	return origin.Key(c.target) == origin.Key(target) && c.transport == transport
+}
+
+// automaticPath is the first stop of every path cycle: the server decides. Its
+// note names where the last check resolved it, which the model keeps across
+// configuration changes and so never blanks mid-cycle.
+func automaticPath(note string) pathChoice {
+	choice := pathChoice{target: "auto", transport: "auto", label: "Automatic"}
+	if note != "" {
+		choice.note = "→ " + note
+	}
+	return choice
+}
+
+// throughputPaths and latencyPaths are what the two path rows cycle through:
+// automatic, then one stop per advertised (origin, mechanism) pair, each named
+// the way the readiness panel and the run screen name the path it commits to.
+func (m model) throughputPaths() []pathChoice {
+	resolved := ""
 	if m.prepared != nil {
-		choices[0].note = "→ " + shortOrigin(m.cfg.BaseURL, m.prepared.ThroughputTarget.Origin)
+		resolved = shortOrigin(m.cfg.BaseURL, m.prepared.ThroughputTarget.Origin)
 	}
-	return choices
-}
-
-func (m model) latencyChoices() []endpointChoice {
-	choices := endpointChoices(m.capabilities().LatencyTargets, func(t wire.LatencyTarget) endpointChoice {
-		return endpointChoice{value: t.Origin, label: protocolFacts(t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)}
-	})
-	if m.prepared != nil && m.prepared.LatencyTarget != nil {
-		choices[0].note = "→ " + shortOrigin(m.cfg.BaseURL, m.prepared.LatencyTarget.Origin)
-	}
-	return choices
-}
-
-// endpointChoice is one stop of an endpoint row's cycle: the value the
-// configuration holds, what selecting it means, and where it points. Both
-// descriptions come from discovery, which the model keeps across configuration
-// changes, so the row says what it offers without waiting for a connection.
-type endpointChoice struct {
-	value string
-	label string
-	note  string
-}
-
-// endpointChoices is the cycle offered for an endpoint row: "auto" first, then
-// each discovered origin. Discovery can advertise one origin under several
-// spellings, so origin.Key decides equivalence and the first spelling wins.
-func endpointChoices[T any](targets []T, describe func(T) endpointChoice) []endpointChoice {
-	choices := []endpointChoice{{value: "auto", label: "Automatic"}}
-	seen := map[string]struct{}{origin.Key("auto"): {}}
-	for _, target := range targets {
-		choice := describe(target)
-		key := origin.Key(choice.value)
+	choices := []pathChoice{automaticPath(resolved)}
+	seen := map[string]struct{}{}
+	for _, t := range m.capabilities().ThroughputTargets {
+		// The datagram flood is a browser-side loss diagnostic; selectTarget
+		// refuses it outright, so it is not offered as something to pick.
+		if t.Transport == wire.TransportWebTransportDatagram {
+			continue
+		}
+		key := origin.Key(t.Origin) + "\x00" + t.Transport
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		choices = append(choices, choice)
+		choices = append(choices, pathChoice{
+			target:    t.Origin,
+			transport: t.Transport,
+			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS),
+			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
+		})
 	}
 	return choices
 }
 
-func nextEndpoint(current string, choices []endpointChoice) string {
-	values := make([]string, 0, len(choices))
-	for _, choice := range choices {
-		values = append(values, choice.value)
+func (m model) latencyPaths() []pathChoice {
+	resolved := ""
+	if m.prepared != nil && m.prepared.LatencyTarget != nil {
+		resolved = shortOrigin(m.cfg.BaseURL, m.prepared.LatencyTarget.Origin)
 	}
-	return nextChoice(current, values)
+	choices := []pathChoice{automaticPath(resolved)}
+	seen := map[string]struct{}{}
+	for _, t := range m.capabilities().LatencyTargets {
+		key := origin.Key(t.Origin) + "\x00" + t.Transport
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		choices = append(choices, pathChoice{
+			target:    t.Origin,
+			transport: t.Transport,
+			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS),
+			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
+		})
+	}
+	return choices
+}
+
+// selectedThroughputPath is the advertised target the configuration names, or
+// nil where it names automatic, something discovery has not offered, or nothing
+// discovered yet. It is what tells the HTTP-version row whether it has a
+// decision left to make.
+func (m model) selectedThroughputPath() *wire.ThroughputTarget {
+	if m.cfg.ThroughputTarget == "auto" || m.cfg.ThroughputTransport == "auto" {
+		return nil
+	}
+	targets := m.capabilities().ThroughputTargets
+	for i := range targets {
+		t := &targets[i]
+		if t.Transport == m.cfg.ThroughputTransport && origin.Key(t.Origin) == origin.Key(m.cfg.ThroughputTarget) {
+			return t
+		}
+	}
+	return nil
+}
+
+// nextPath walks the cycle from wherever the configuration sits. A pair no stop
+// carries — a flag combination, or a selection whose origin has left discovery
+// — resumes at automatic rather than at an arbitrary stop.
+func nextPath(target, transport string, choices []pathChoice) pathChoice {
+	for i, choice := range choices {
+		if choice.selects(target, transport) {
+			return choices[(i+1)%len(choices)]
+		}
+	}
+	return choices[0]
 }
 
 func nextChoice(current string, choices []string) string {

@@ -3,7 +3,8 @@
 
 import type {
   FetchThroughputTarget,
-  WebSocketLatencyTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
 } from "../api/endpoints";
 
 /* ---------- Lifecycle ---------- */
@@ -153,6 +154,10 @@ export interface RunnerConfig {
   /** Experimental: request adaptively-sized download chunks instead of one long
    *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
   experimentalChunkedDownload: boolean;
+  /** Lists the WebTransport datagram card in the picker. Filters that list and
+   *  nothing else: the transport is a peer everywhere else, and a selected card
+   *  stays listed and runnable with this off. */
+  experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */
   transports: {
     throughputTarget: ThroughputTargetSelection;
@@ -267,7 +272,8 @@ export type TerminationReason =
 /** The connection method a backend may negotiate for a phase's I/O. A real
  *  engine tries these in preference order; each can fail to establish, and a
  *  failure of one is non-fatal as long as another succeeds. */
-export type TransportKind = "webtransport" | "websocket" | "fetch-stream";
+export type TransportKind =
+  "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
 
 /** The stage a transport is negotiated for. A backend negotiates once, at stage
  *  begin: the warmup primes it and the measured window reuses it, so there is no
@@ -286,17 +292,6 @@ export interface StageFailure {
   stage: TransportRole;
   reason: Exclude<TerminationReason, "user-abort">;
   message: string;
-}
-
-/** One step in negotiating a transport for a phase's I/O. A backend reports
- *  `negotiating`, then `established` (measuring can begin) or `failed` (try the
- *  next kind). When every kind fails the backend skips the stage via failStage,
- *  or fails the run when nothing else can run. */
-export interface TransportAttempt {
-  kind: TransportKind;
-  role: TransportRole;
-  status: "negotiating" | "established" | "failed";
-  detail?: string;
 }
 
 /* ---------- Transient link health ---------- */
@@ -343,11 +338,11 @@ export interface EngineInfo {
   version: string;
   /** Transports this engine can drive for latency probing, preference order.
    *  A message bus: websocket, or webtransport datagrams. */
-  latencyTransports: string[];
+  latencyTransports: TransportKind[];
   /** Transports this engine can drive for throughput transfer, preference
    *  order. Byte lanes: fetch streams over h1.1/h2/h3, or webtransport streams.
    *  Websocket is never a throughput transport. */
-  throughputTransports: string[];
+  throughputTransports: TransportKind[];
 }
 
 /* ---------- Pre-test handshake info ---------- */
@@ -366,21 +361,35 @@ export interface InfraInfo {
   protocolNegotiated: string;
   selectedThroughputTarget?: string;
   selectedThroughputProtocol?: ProtocolTarget;
+  selectedThroughputTransport?: TransportKind;
   selectedLatencyTarget?: string;
   selectedLatencyTransport?: TransportKind;
   latencyProtocolNegotiated?: string;
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;
+  /** Measurement occupancy the server reported at probe time. Concurrent tests
+   *  contend for bandwidth and CPU, so a busy server means results may be
+   *  affected. */
+  serverLoad?: { active: number; max: number };
 }
 
 export type TransportDiscoveryState =
   "advertised" | "browser-blocked" | "not-advertised";
 
+/** One origin and every mechanism it advertises, in picker order. A proxy
+ *  serving TCP and UDP on one hostname appears once per mechanism, so a client
+ *  that cannot reach UDP still resolves the others. */
 export interface DiscoveredTarget<T> {
   state: TransportDiscoveryState;
-  target?: T;
+  targets: T[];
 }
+
+export type DiscoveredThroughput = DiscoveredTarget<
+  FetchThroughputTarget | WebTransportThroughputTarget
+>;
+
+export type DiscoveredLatency = DiscoveredTarget<LatencyTarget>;
 
 /** Server-advertised transports classified against the page that uses them.
  * Emitted as soon as /preflight completes, ahead of selection and probing. */
@@ -392,8 +401,8 @@ export interface TransportDiscovery {
   pageOrigin: string;
   pageSecure: boolean;
   pageProtocol?: string;
-  throughput: Record<string, DiscoveredTarget<FetchThroughputTarget>>;
-  latency: Record<string, DiscoveredTarget<WebSocketLatencyTarget>>;
+  throughput: Record<string, DiscoveredThroughput>;
+  latency: Record<string, DiscoveredLatency>;
 }
 
 /* ---------- The event union the UI listens to ---------- */
@@ -426,7 +435,6 @@ export type RunnerEvent =
   // Transport negotiation telemetry: which connection method a phase is trying,
   // and whether it is negotiating / established / failed. The core re-emits it
   // verbatim; the store records it.
-  | { type: "transport"; attempt: TransportAttempt }
   // A stage is skipped because it cannot run (see StageFailure). The rest of
   // the run continues; the UI surfaces the reason in the stage's instrument.
   | { type: "stageSkipped"; failure: StageFailure }
@@ -470,7 +478,10 @@ export type LiveRunConfig = Pick<
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
   /** Verify the selected target, then run. Emits `connecting` immediately so
-   *  asynchronous path verification is visible and cancellable. */
+   *  asynchronous path verification is visible and cancellable. `prepared` is
+   *  the InfraInfo an earlier probe() already resolved; omitting it makes start
+   *  probe itself. The app always has one (validateConnections runs first), so
+   *  the internal probe serves a caller holding this interface alone. */
   start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
   abort(): void;
   /** Permanently stop background activity owned by this runner. */

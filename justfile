@@ -60,7 +60,7 @@ hooks:
     git config core.hooksPath .githooks
 
 # Run the same fast client gates used by CI.
-client-ci:
+client-ci: client-check-generated
     cd client && bun run format:check
     cd client && bun run check
     cd client && bun test
@@ -99,6 +99,19 @@ client-gen-types:
     cd client && bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts
     cd client && bunx json-schema-to-typescript ../api/probe.schema.json -o src/lib/api/probe.ts
 
+# The same drift gate check-generated applies to the embedded auth assets, for
+# the schema-derived client types. It hangs off client-ci rather than
+# check-generated because the generator needs bun and client/node_modules, and
+# ci.yml calls check-generated from the Go job, which sets up neither.
+# Regenerate the schema-derived client types and fail if they drift from api/.
+client-check-generated: client-gen-types
+    #!/usr/bin/env sh
+    set -e
+    if ! git diff --quiet -- client/src/lib/api/; then
+        echo "client/src/lib/api is stale; run 'just client-gen-types' and commit the result"
+        exit 1
+    fi
+
 # --- Embedding (Go module + client, shared by both profiles) ---
 
 # Copy the just-built client/dist into the Go module so //go:embed picks it up.
@@ -124,10 +137,12 @@ server-build-prod: client-build-prod _embed-client
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion={{version}}" \
       -trimpath -o graphite-meter ./cmd/graphite-meter
 
-# Check Go formatting and vet diagnostics.
+# Check Go formatting and vet diagnostics. The second vet carries the stress
+# tag so the saturation harness cannot rot outside the gate.
 server-check:
     cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
     cd go && go vet ./...
+    cd go && go vet -tags stress ./internal/server/
 
 # Regenerate the embedded auth assets and fail if they drift from source. The
 # pre-commit hook and ci.yml both call this recipe.
@@ -173,21 +188,68 @@ server-test:
     awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
         || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
 
-# Playwright browser tests (chromium + firefox). ci.yml calls this recipe after
-# installing the browsers. Slow (~45s), so it is not in the pre-commit hook;
-# run it explicitly or via `just ci-full`. The bundle is rebuilt by test:e2e,
-# since playwright's webServer previews dist.
+# The stubbed browser suite (chromium + firefox): accessibility, panel
+# behaviour, presentation. Serves the bundle alone, so nothing here reaches a
+# backend. Slow (~45s), so it is not in the pre-commit hook. The bundle is
+# rebuilt by the script, since playwright's webServer previews dist.
+client-browser:
+    cd client && bun run test:browser
+
+# End to end: boots the server and moves bytes over every real transport from
+# a real browser, through the production lanes. The only check where both ends
+# are real. Chromium only: QUIC ignores ignoreHTTPSErrors, and Firefox reaches
+# h3 only through a system trust anchor. Needs Go and openssl; the certificate
+# is generated per run, so nothing is a prerequisite.
 client-e2e:
+    #!/usr/bin/env sh
+    set -e
+    certs=$(mktemp -d)
+    trap 'rm -rf "$certs"' EXIT
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+      -keyout "$certs/key.pem" -out "$certs/cert.pem" -subj "/CN=127.0.0.1" \
+      -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>/dev/null
+    GM_E2E_TLS_CERT="$certs/cert.pem"
+    GM_E2E_TLS_KEY="$certs/key.pem"
+    GM_E2E_SPKI=$(openssl x509 -in "$certs/cert.pem" -pubkey -noout \
+      | openssl pkey -pubin -outform der \
+      | openssl dgst -sha256 -binary | openssl enc -base64)
+    export GM_E2E_TLS_CERT GM_E2E_TLS_KEY GM_E2E_SPKI
     cd client && bun run test:e2e
+
+# Measurement only; not part of ci. Unix only, since the CPU column reads
+# getrusage. Loads the server over kernel TCP and again over userspace QUIC, and
+# once more with the CPU constrained.
+# Server saturation envelope (issue #44): observer RTT percentiles under growing loader concurrency.
+stress:
+    cd go && go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/
+
+# Excluded from CI. Every benchmark decodes or encodes a PONG; the progress
+# feed's NDJSON is not measured here or anywhere.
+# Ping-bus encoding evidence, Go and TypeScript: why the bus keeps a text codec.
+bench-wire:
+    cd go && go test ./internal/wire/ -run '^$' -bench 'Decode|Encode' -benchmem -benchtime=2s
+    cd client && bun run src/lib/runner/real/wire.bench.ts
+
+# Measurement only; not part of ci, and it takes hours. `filter` is a playwright
+# -g filter and `project` a --project passthrough; omit either and that axis is
+# not narrowed, so a bare filter still runs against every browser project. Cell
+# ids look like `h1-clear/down/lanes=2`, so one cell on one engine is:
+#   just bench-throughput 'h1-clear/down/lanes=2' chromium
+# Needs ../.dev-certs (see docs/DEVELOPMENT.md) on every run, since the config
+# starts all four listeners whatever origins were asked for, and GM_BENCH_SPKI
+# set, or the chromium project does not exist at all.
+# Browser throughput matrix against a real server, chromium and firefox.
+bench-throughput filter="" project="":
+    cd client && bunx playwright test -c playwright.bench.config.ts {{ if filter != "" { "-g '" + filter + "'" } else { "" } }} {{ if project != "" { "--project=" + project } else { "" } }}
 
 # The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
 # all but go-lint, and only those matching the staged files.
 ci: check-generated client-ci server-check go-lint server-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the
-# browser E2E. The Docker smoke job and the cross-build matrix stay CI-only
-# infrastructure (a container runtime / other toolchains).
-ci-full: ci client-e2e
+# browser E2E, stubbed and live. The Docker smoke job and the cross-build matrix
+# stay CI-only infrastructure (a container runtime / other toolchains).
+ci-full: ci client-browser client-e2e
 
 # --- Go native TUI client (graphite-meter-client) ---
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.

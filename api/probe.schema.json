@@ -10,6 +10,16 @@
     "clientIp": { "type": "string" },
     "clientIpVersion": { "type": "integer", "enum": [4, 6] },
     "clientIpSource": { "type": "string", "enum": ["socket", "forwarded"] },
-    "protocolNegotiated": { "type": "string", "enum": ["http/1.1", "h2", "h3"] }
+    "protocolNegotiated": { "type": "string", "enum": ["http/1.1", "h2", "h3"] },
+    "load": {
+      "description": "Measurement-handler occupancy at probe time: active is the number of admission-wrapped handlers holding slots, and max is the configured handler ceiling.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "max"],
+      "properties": {
+        "active": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 1 }
+      }
+    }
   }
 }

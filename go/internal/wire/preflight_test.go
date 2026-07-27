@@ -63,7 +63,7 @@ func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
 		value any
 	}{
 		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter"}, EngineVersion: "test", Generation: "test-generation", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{throughput}, LatencyTargets: []LatencyTarget{latency}}}},
-		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}},
+		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2", Load: &ProbeLoad{Active: 1, Max: 256}}},
 	}
 	for _, tc := range values {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +73,48 @@ func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
 			}
 			mustValidate(t, loadSchema(t, tc.name), data)
 		})
+	}
+}
+
+// api/wire.md calls `transport` a required field but keeps a back-compat path
+// for documents written before it existed: a target with no transport reads as
+// the default its list always carried. Dropping the default leaves the field
+// empty, and a client selecting by (baseUrl, transport) matches no target at all.
+func TestTargetsWithoutATransportKeepTheirLegacyDefault(t *testing.T) {
+	var throughput ThroughputTarget
+	if err := json.Unmarshal([]byte(`{"baseUrl":"https://speed.example:7246","protocol":"http2"}`), &throughput); err != nil {
+		t.Fatalf("unmarshal throughput: %v", err)
+	}
+	if got := throughput.Transport; got != TransportFetchStream {
+		t.Errorf("throughput transport = %q, want the pre-transport default %q", got, TransportFetchStream)
+	}
+
+	var latency LatencyTarget
+	if err := json.Unmarshal([]byte(`{"baseUrl":"https://speed.example:7246"}`), &latency); err != nil {
+		t.Fatalf("unmarshal latency: %v", err)
+	}
+	if got := latency.Transport; got != TransportWebSocket {
+		t.Errorf("latency transport = %q, want the pre-transport default %q", got, TransportWebSocket)
+	}
+}
+
+// A latency target's protocol never crosses the wire; it follows the transport.
+// WebTransport is an HTTP/3 extended CONNECT, so reporting http1 for it would
+// mislabel every result the WebTransport ping bus produces.
+func TestLatencyTargetProtocolFollowsItsTransport(t *testing.T) {
+	for transport, want := range map[string]string{
+		TransportWebSocket:    "http1",
+		TransportWebTransport: "http3",
+		"":                    "http1",
+	} {
+		var target LatencyTarget
+		document := `{"baseUrl":"https://speed.example:7246","transport":"` + transport + `"}`
+		if err := json.Unmarshal([]byte(document), &target); err != nil {
+			t.Fatalf("unmarshal %q: %v", transport, err)
+		}
+		if got := target.Protocol; got != want {
+			t.Errorf("transport %q derived protocol %q, want %q", transport, got, want)
+		}
 	}
 }
 

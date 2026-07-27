@@ -3,5 +3,14 @@
   "compilerOptions": {
     "types": ["bun"]
   },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.js",
+    "src/**/*.svelte",
+    "bench/**/*.ts",
+    "e2e/**/*.ts",
+    "playwright.bench.config.ts",
+    "playwright.e2e.config.ts"
+  ],
   "exclude": []
 }

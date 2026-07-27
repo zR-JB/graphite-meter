@@ -24,9 +24,6 @@ const (
 
 	// OIDC authorization-request outcomes.
 	reasonProviderNotReady      reason = "provider_not_ready"
-	reasonStateGeneration       reason = "state_generation"
-	reasonNonceGeneration       reason = "nonce_generation"
-	reasonBrowserBinding        reason = "browser_binding_generation"
 	reasonClientAddress         reason = "client_address"
 	reasonTransactionCapacity   reason = "transaction_capacity"
 	reasonExchangeRateLimited   reason = "exchange_rate_limited"

@@ -33,13 +33,19 @@ type Event struct {
 	Message                             string
 	ThroughputTarget, LatencyTarget     string
 	ThroughputProtocol, LatencyProtocol string
-	Preflight                           *wire.Preflight
-	Probe                               *wire.Probe
-	LatencyProbe                        *wire.Probe
-	Throughput                          ThroughputSample
-	Latency                             LatencySample
-	Result                              *Result
-	Err                                 error
+	// The transports the run committed to. A consumer needs the throughput one
+	// to describe the lanes a session delivers rather than the count that was
+	// requested, and the latency one because an evicted ping means packet loss
+	// on a datagram bus and a stalled queue on a WebSocket.
+	ThroughputTransport, LatencyTransport string
+
+	Preflight    *wire.Preflight
+	Probe        *wire.Probe
+	LatencyProbe *wire.Probe
+	Throughput   ThroughputSample
+	Latency      LatencySample
+	Result       *Result
+	Err          error
 }
 
 type ThroughputSample struct {

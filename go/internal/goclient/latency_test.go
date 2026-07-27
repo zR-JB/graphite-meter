@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,6 +164,75 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 	}
 	if stats.Loss < 0.10 || stats.Loss > 0.55 {
 		t.Errorf("Loss = %v, want roughly 1/%d given the drop pattern", stats.Loss, dropEvery)
+	}
+}
+
+// newDroppingPingServer answers PONGs and then drops the connection without a
+// close handshake once it has sent dropAfter of them: what a route's lifetime
+// bound looks like from the client. It counts the connections it accepts, so a
+// test can tell a reconnect from a bus that merely survived.
+func newDroppingPingServer(t *testing.T, dropAfter int) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var accepted atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		accepted.Add(1)
+		ctx := r.Context()
+		for sent := 0; sent < dropAfter; {
+			_, msg, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			f, derr := wire.Decode(string(msg))
+			if derr != nil || f.Op != wire.OpPING {
+				continue
+			}
+			pong := wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Now().UnixNano())})
+			if err := conn.Write(ctx, websocket.MessageText, []byte(pong)); err != nil {
+				return
+			}
+			sent++
+		}
+	})
+	return httptest.NewServer(mux), &accepted
+}
+
+// TestMeasureLatencyRedialsAProvenBus covers the reconnect path directly: a bus
+// that has answered is replaced when it drops mid-window, and the stage keeps
+// sampling across the gap rather than failing or counting it as loss.
+func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
+	const dropAfter = 3
+	srv, accepted := newDroppingPingServer(t, dropAfter)
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
+	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	start := make(chan struct{})
+	close(start)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
+	if err != nil {
+		t.Fatalf("measureLatency: %v", err)
+	}
+	if got := accepted.Load(); got < 2 {
+		t.Fatalf("server accepted %d connections, want the bus redialled at least once", got)
+	}
+	if stats.Count <= dropAfter {
+		t.Errorf("Count = %d, want more than the %d samples one bus answers before dropping", stats.Count, dropAfter)
+	}
+	// The gap between buses is a connection gap, not packet loss: the pings in
+	// flight when the bus died are dropped from pending rather than counted.
+	if stats.Loss == 1 {
+		t.Errorf("Loss = %v, want the redialled bus's answers to count", stats.Loss)
 	}
 }
 

@@ -26,12 +26,16 @@ const (
 )
 
 type session struct {
-	hash                    [32]byte
+	hash [32]byte
+	// id names this login to the rest of the server. Not the hash: that is the
+	// lookup key for the credential itself.
+	id                      string
 	subject, name, provider string
 	expires, created        time.Time
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	grants                  map[[32]byte]struct{}
+	wtTokens                map[[32]byte]struct{}
 	csrf                    string
 }
 
@@ -41,17 +45,11 @@ func (s *Service) createSession(subject, name, provider string, expires time.Tim
 	if expires.IsZero() || expires.After(latest) {
 		expires = latest
 	}
-	raw, err := randomToken(32)
-	if err != nil {
-		return "", nil, err
-	}
+	raw := randomToken(32)
 	h := sha256.Sum256([]byte(raw))
-	csrf, err := randomToken(32)
-	if err != nil {
-		return "", nil, err
-	}
+	csrf, id := randomToken(32), randomToken(16)
 	ctx, cancel := context.WithDeadline(context.Background(), expires)
-	sess := &session{hash: h, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]struct{}{}, csrf: csrf}
+	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]struct{}{}, wtTokens: map[[32]byte]struct{}{}, csrf: csrf}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
@@ -80,6 +78,9 @@ func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
 	for grant := range sess.grants {
 		delete(s.grants, grant)
+	}
+	for token := range sess.wtTokens {
+		delete(s.wtTokens, token)
 	}
 	for challenge, approval := range s.approvals {
 		if approval.session == sess {
@@ -127,7 +128,10 @@ func (s *Service) expireLocked(now time.Time) {
 }
 
 func (s *Service) sweep(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
+	// Faster than the shortest thing it reaps: a CONNECT token lives 30 s and
+	// occupies its session's cap until swept, so a minute would let dead tokens
+	// crowd out live ones for a client that dials often.
+	t := time.NewTicker(wtTokenLifetime)
 	defer t.Stop()
 	for {
 		select {
@@ -136,17 +140,18 @@ func (s *Service) sweep(ctx context.Context) {
 		case <-t.C:
 			s.mu.Lock()
 			s.expireLocked(s.now())
+			s.expireWTTokensLocked(s.now())
 			s.mu.Unlock()
 		}
 	}
 }
 
-func randomToken(n int) (string, error) {
+// randomToken is n CSPRNG bytes, base64url. crypto/rand.Read never returns an
+// error; it crashes the program rather than handing back weak bytes.
+func randomToken(n int) string {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {

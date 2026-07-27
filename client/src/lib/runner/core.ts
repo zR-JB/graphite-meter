@@ -17,7 +17,6 @@ import type {
   LatencyResult,
   StallInfo,
   FlowDirection,
-  TransportAttempt,
   TransportRole,
   StageFailure,
   PhaseActivity,
@@ -63,12 +62,13 @@ export interface CoreHost {
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative?: boolean,
+    /** Whether this sample proves every required direction is healthy. */
+    provesLiveness?: boolean,
   ): void;
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
   resume(): void;
-  reportTransport(attempt: TransportAttempt): void;
   // Direct events bypass measurement accumulation.
   emit(e: RunnerEvent): void;
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
@@ -209,6 +209,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   /* ================= START ================= */
+  /** `prepared` is the InfraInfo an earlier probe() resolved. The app always
+   *  passes one, since validateConnections probes before it starts a run; a
+   *  caller that has not probed omits it and start resolves the selection
+   *  itself, inside the `connecting` phase so the wait stays cancellable. */
   async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
     if (this.#running || this.#prepareAbort) this.abort();
     const generation = ++this.#runGeneration;
@@ -519,6 +523,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative = false,
+    provesLiveness = true,
   ): void {
     const cfg = this.#cfg;
     if (!cfg) return;
@@ -528,7 +533,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
       return;
     // Zero-byte samples retain time but cannot prove delivery or clear a stall.
-    if (bytesDelta > 0) this.#noteRealSample();
+    if (bytesDelta > 0 && provesLiveness) this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
     // De-alias the rate twice from one raw sample: fast `display` for the UI,
     // slow `stable` for the confidence accumulator. Byte totals stay exact.
@@ -686,13 +691,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
     this.emit({ type: "resume" });
-  }
-
-  /** Pure pass-through: negotiation lives in the backend, the core relays the
-   *  telemetry. The backend itself calls fail("transport-unavailable", …) once
-   *  every transport fails. */
-  reportTransport(attempt: TransportAttempt): void {
-    this.emit({ type: "transport", attempt });
   }
 
   /** Refresh the watchdog for a real measured sample, and auto-resume a stall:

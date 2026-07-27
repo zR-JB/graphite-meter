@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // shellMargin is shellStyle's horizontal margin.
@@ -102,8 +103,12 @@ const (
 	// gutterWidth separates two side-by-side panels.
 	gutterWidth = 2
 	// twoColumnMin is the narrowest w where two panels stay readable side by
-	// side. Below it the caller stacks them.
-	twoColumnMin = 96
+	// side; below it the caller stacks them, taller but whole. Sized from the
+	// connection path row — marker, label column, longest path summary,
+	// position and origin — against the 12/20 share below. Longer rows (the
+	// resolved stream policy) give up their trailing note rather than push
+	// every terminal under ~119 columns into a stack.
+	twoColumnMin = 115
 )
 
 // splitColumns sizes panel content so a rendered pair, or one stacked panel,
@@ -114,7 +119,7 @@ func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 		return w - panelBorderWidth, w - panelBorderWidth, false
 	}
 	inner := w - gutterWidth - 2*panelBorderWidth
-	leftW = inner * 11 / 20
+	leftW = inner * 12 / 20
 	return leftW, inner - leftW, true
 }
 
@@ -224,11 +229,11 @@ func (m model) stagesView(w int) string {
 
 func (m model) timingView(w int) string {
 	rows := []string{
-		valueLine("Warmup", m.cfg.Warmup.String(), "per stage"),
-		valueLine("Latency duration", m.cfg.LatencyDuration.String(), "baseline"),
-		valueLine("Download duration", m.cfg.DownloadDuration.String(), "transfer"),
-		valueLine("Upload duration", m.cfg.UploadDuration.String(), "transfer"),
-		valueLine("Bidirectional duration", m.cfg.BidirectionalDuration.String(), "transfer"),
+		valueLine("Warmup", m.cfg.Warmup.String(), "per stage, before the clock starts"),
+		valueLine("Latency", m.cfg.LatencyDuration.String(), "measured window"),
+		valueLine("Download", m.cfg.DownloadDuration.String(), "measured window"),
+		valueLine("Upload", m.cfg.UploadDuration.String(), "measured window"),
+		valueLine("Bidirectional", m.cfg.BidirectionalDuration.String(), "measured window"),
 		valueLine("Ping interval", m.cfg.PingInterval.String(), "cadence"),
 	}
 	if m.edit.kind == editDuration {
@@ -238,22 +243,42 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
-	rows := []string{
-		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, m.throughputChoices()),
-		endpointRow("Latency endpoint", m.cfg.LatencyTarget, m.latencyChoices()),
-		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated only"),
-		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
-		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 = automatic"),
-		toggleLine("Skip TLS verify", m.cfg.InsecureSkipTLSVerify, "unsafe"),
-		warnStyle.Render("Reset to defaults"),
+	// A WebTransport session resolves its own lane count, so this ceiling is not
+	// read on that transport. The row is dimmed rather than dropped: it applies
+	// again the moment the transport changes, and a moving row loses the reader.
+	autoMax := valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction")
+	if m.cfg.ThroughputTransport == wire.TransportWebTransport {
+		autoMax = inertValueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "unused over WebTransport")
 	}
+	rows := make([]string, rowConnectionsCount)
+	rows[rowThroughputPath] = pathRow("Throughput path", m.cfg.ThroughputTarget, m.cfg.ThroughputTransport, m.throughputPaths())
+	rows[rowThroughputProtocol] = m.throughputProtocolRow()
+	rows[rowLatencyPath] = pathRow("Latency path", m.cfg.LatencyTarget, m.cfg.LatencyTransport, m.latencyPaths())
+	rows[rowAutoStreams] = autoMax
+	// The value already spells out what automatic resolves to, so the note only
+	// has to say what to type to get it back.
+	rows[rowStreams] = valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol, m.cfg.ThroughputTransport), "0 = auto")
+	rows[rowSkipTLS] = toggleLine("Skip TLS verify", m.cfg.InsecureSkipTLSVerify, "unsafe")
+	rows[rowReset] = warnStyle.Render("Reset to defaults")
 	if m.edit.field == "auto-streams" {
-		rows[3] = valueLine("Auto H1 max", m.edit.input.View(), "editing") + m.editError()
+		rows[rowAutoStreams] = valueLine("Auto H1 max", m.edit.input.View(), "editing") + m.editError()
 	}
 	if m.edit.field == "streams" {
-		rows[4] = valueLine("Streams", m.edit.input.View(), "editing") + m.editError()
+		rows[rowStreams] = valueLine("Streams", m.edit.input.View(), "editing") + m.editError()
 	}
 	return m.listWithTitle("Connections", rows, w)
+}
+
+// throughputProtocolRow offers the HTTP version only where the selected path
+// leaves one open. A path advertised as HTTP/3 will not answer HTTP/1.1 because
+// a row says so, so on those it reports what the path serves and goes inert.
+// Dimmed rather than dropped, as Auto H1 max is: it applies again the moment
+// the path changes, and a moving row loses the reader.
+func (m model) throughputProtocolRow() string {
+	if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
+		return inertValueLine("HTTP version", protocolChoiceLabel(t.Protocol), "fixed by this path")
+	}
+	return valueLine("HTTP version", protocolChoiceLabel(m.cfg.ThroughputProtocol), "where the path negotiates")
 }
 
 func (m model) runMenuView(w int) string {
@@ -323,7 +348,7 @@ func (m model) planView() string {
 		"",
 		field("Throughput", value.Render(throughput)),
 		field("Latency", value.Render(latency)),
-		field("Observed", value.Render(emptyDash(observed))),
+		field("Observed", value.Render(goclient.ProtocolLabel(observed))),
 		"",
 		mutedStyle.Render("Run order"),
 	)
@@ -428,9 +453,12 @@ func (m model) summaryView(w int) string {
 		field("Target", valueStyle.Render(server)),
 		field("Stage", mark+valueStyle.Render(emptyDash(m.stage))+mutedStyle.Render(" / "+emptyDash(m.status))),
 		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
-		field("Throughput", valueStyle.Render(emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol))),
-		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol))),
-		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.target))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
+		// Both paths are named the way the selector that offered them and the
+		// readiness panel that verified them name them, so a WebTransport run
+		// does not report itself as the HTTP/1.1 its origin also serves.
+		field("Throughput", m.runPath(m.throughputTransport, m.throughputProtocol, m.target)),
+		field("Latency", m.runPath(m.latencyTransport, m.latencyProtocol, m.latencyTarget)),
+		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
 		"",
 	}
 	lines = append(lines, m.timelineView(w)...)
@@ -438,6 +466,18 @@ func (m model) summaryView(w int) string {
 		lines = append(lines, "", successStyle.Render("✓")+accentStyle.Render(" Finished. Press esc for setup or r to run again."))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// runPath is one committed path on the run screen, in the vocabulary the
+// configure screen uses, trailed by the origin carrying it. A run that has not
+// announced its preflight yet has no path to name, and says so rather than
+// rendering a summary out of three empty fields.
+func (m model) runPath(transport, protocol, target string) string {
+	if target == "" {
+		return mutedStyle.Render("--")
+	}
+	summary := goclient.ConnectionSummary(transport, protocol, strings.HasPrefix(target, "https://"))
+	return valueStyle.Render(summary) + mutedStyle.Render("  "+shortOrigin(m.cfg.BaseURL, target))
 }
 
 // timelineView is the run's stage timeline. A measuring stage runs for exactly

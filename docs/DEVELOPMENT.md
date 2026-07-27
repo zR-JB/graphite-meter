@@ -57,17 +57,26 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just client-watch`      | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend.                                                                      |
 | `just client-check`      | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`).                                                                   |
 | `just client-test`       | `bun test` — pure-`.ts`-logic unit tests (no component rendering).                                                                                               |
-| `just client-ci`         | Runs the fast client CI gates: Prettier check, semantic type check, and Bun tests.                                                                               |
+| `just client-ci`         | Runs the fast client CI gates: the schema-type drift check, Prettier check, semantic type check, and Bun tests.                                                  |
+| `just client-browser`    | The stubbed browser suite in Chromium and Firefox: accessibility, panel behaviour, presentation. Serves the bundle alone, so nothing here reaches a backend. Slow (~45s), so it is outside `just ci`.               |
+| `just client-e2e`        | End to end: boots the measurement server and moves bytes over every real transport from Chromium, through the production lanes. The only check where both ends are real. Needs Go and openssl; the certificate is generated per run. ~6s.               |
 | `just client-gen-types`  | Regenerates TypeScript discovery and probe types from both JSON schemas.                                                                                         |
+| `just client-check-generated` | Regenerates those types and fails if they drift from `api/*.schema.json`. Hangs off `client-ci` rather than `check-generated`: the generator needs bun and `client/node_modules`, and `ci.yml` calls `check-generated` from the Go job, which sets up neither. |
 | `just auth-preview`      | Serves the real server-rendered login page on `127.0.0.1:4174`; `mode=` and `oidc_ready=` pick the variant.                                                      |
 | `just server-build-dev`  | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
 | `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy.                                                        |
-| `just server-check`      | Checks Go formatting and `go vet ./...`.                                                                                                                         |
-| `just server-test`       | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test.                                                                           |
-| `just ci`                | Runs the main local CI gates: `client-ci`, `server-check`, and `server-test`.                                                                                    |
+| `just server-check`      | Checks Go formatting, `go vet ./...`, and `go vet -tags stress ./internal/server/` so the saturation harness cannot rot outside the gate.                        |
+| `just server-test`       | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test — then fails if total statement coverage is below the **75% floor**.       |
+| `just check-generated`   | Regenerates the embedded auth assets and fails if `go/internal/auth/assets_generated.go` drifts from source. Called by both the pre-commit hook and `ci.yml`. Covers the auth assets only; the schema-derived client types are gated by `client-check-generated`. |
+| `just go-lint`           | Pinned `staticcheck` and `govulncheck` over the Go module. `ci.yml` calls this exact recipe; the pre-commit hook is the one gate that skips it.                  |
+| `just ci`                | The fast local gate, in order: `check-generated`, `client-ci`, `server-check`, `go-lint`, `server-test`. Same recipes `ci.yml` runs.                             |
+| `just ci-full`           | `ci` plus `client-browser` and `client-e2e`. The Docker smoke job and the cross-build matrix stay CI-only (they need a container runtime or other toolchains).                        |
 | `just goclient-build`    | Builds only `go/graphite-meter-client` — does not touch the Svelte client.                                                                                       |
 | `just goclient-run`      | `go run`s the native TUI client against a running server.                                                                                                        |
 | `just container-build`   | `docker build -f container/Dockerfile -t graphite-meter:latest .`                                                                                                |
+| `just stress`            | Server saturation envelope: observer RTT under growing loader concurrency. Measurement only, never in CI.                                                        |
+| `just bench-wire`        | Both halves of the ping-bus encoding evidence, Go and TypeScript. Excluded from CI.                                                                              |
+| `just bench-throughput`  | Browser throughput matrix against a real server; takes an optional Playwright `-g` filter and an optional project, e.g. `just bench-throughput 'h1-clear/down/lanes=2' chromium`. Hours long, never in CI — see [BENCHMARKS.md](BENCHMARKS.md). |
 
 ## Browser ping-cadence capture
 
@@ -159,6 +168,12 @@ GM_H1_TLS_ADDR=:7247 GM_H2_ADDR=:7248 GM_H3_ADDR=:7249 \
 That single command starts all four native listeners on their standard ports. Open the UI on
 `http://localhost:7246` or `https://localhost:7247`.
 
+Both page origins expose `WebTransport`, since a browser gates it on a secure context and loopback
+counts as one; whether a session then establishes is the H3 certificate question below. Reaching
+the same dev server on a LAN address over plain http is the case that has no API at all — the path
+cards report that rather than a missing server transport. To exercise the browser's WebTransport
+paths off loopback, serve the UI from `https://<host>:7247` with a certificate covering that name.
+
 Browsers can apply additional certificate and root-policy checks to HTTP/3 beyond their normal
 HTTPS trust decision. Firefox has a confirmed
 [additional protection](https://bugzilla.mozilla.org/show_bug.cgi?id=1985341): by default it
@@ -179,6 +194,29 @@ and CI rejects tracked TLS material. Never copy a private key into another
 tracked path. The mkcert CA key (shown by `mkcert -CAROOT`) is especially
 sensitive and must never be shared or committed. Use publicly trusted
 certificates for deployed servers; mkcert is development-only.
+
+## The throughput benchmark
+
+`client/bench/` drives the production workers against a real server and appends one NDJSON row per
+run; `rig.sh` in the same directory puts the server in a network namespace behind a shaped `veth`
+pair. Neither is part of CI: they take hours and measure the machine rather than the code. It runs
+against an ordinary dev server, which `playwright.bench.config.ts` starts.
+
+```sh
+cd client
+GM_BENCH_SPKI=<base64 SHA-256 of the dev leaf's SPKI> \
+  GM_BENCH_ORIGINS=h1-clear GM_BENCH_REPS=5 \
+  bunx playwright test -c playwright.bench.config.ts --project=chromium
+```
+
+Always pass `--project`. Without it every browser project runs, which is how a previous session
+exhausted a machine's memory. `GM_BENCH_SPKI` pins the development certificate for QUIC, which
+`ignoreHTTPSErrors` does not cover; the config's own comment gives the `openssl` pipeline that
+derives it, and the `chromium` project is skipped rather than run against a guessed pin when it is
+unset. `GM_BENCH_FIREFOX` behaves the same way for the `firefox-stock` project.
+
+Every finding — per-transport figures, tuning verdicts, shaped-path results, Firefox's memory
+behavior, and the limits of all of it — is in [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Building the container image from source
 
