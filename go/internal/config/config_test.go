@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 // clearConfigEnv makes the listener, origin, and proxy variables absent, so Load
@@ -207,5 +209,74 @@ func TestLoadReadsTheSessionBudgetFromTheEnvironment(t *testing.T) {
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Both session limits are held above zero by the same loop the measurement and
+// connection limits use. The relational checks cannot stand in for it: they all
+// pass when the two numbers are zero together.
+func TestValidateRejectsNonPositiveSessionLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, want                        string
+		activeSessions, sessionsPerClient int
+	}{
+		{"zero", "GM_MAX_ACTIVE_SESSIONS", 0, 0},
+		{"negative", "GM_MAX_ACTIVE_SESSIONS", -1, -1},
+		{"zero per client", "GM_MAX_SESSIONS_PER_CLIENT", 64, 0},
+		{"negative per client", "GM_MAX_SESSIONS_PER_CLIENT", 64, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			c.MaxActiveSessions, c.MaxSessionsPerClient = tc.activeSessions, tc.sessionsPerClient
+			err := c.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() = %v, want an error naming %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// A client's session budget is a share of its measurement budget, not an
+// extension of it: sessions and requests draw on the same per-client pool.
+func TestValidateHoldsTheClientSessionBudgetInsideTheClientPool(t *testing.T) {
+	c := Default()
+	c.MaxSessionsPerClient = c.MaxActiveMeasurementsPerClient + 1
+	if err := c.Validate(); err == nil {
+		t.Fatalf("MaxSessionsPerClient=%d accepted over MaxActiveMeasurementsPerClient=%d", c.MaxSessionsPerClient, c.MaxActiveMeasurementsPerClient)
+	}
+}
+
+// A session shorter than one operation cannot carry one: it ends mid-transfer.
+func TestValidateRequiresASessionToOutlastAnOperation(t *testing.T) {
+	c := Default()
+	c.MaxSessionDuration = c.MaxOperationDuration - time.Second
+	if err := c.Validate(); err == nil {
+		t.Fatalf("MaxSessionDuration=%v accepted under MaxOperationDuration=%v", c.MaxSessionDuration, c.MaxOperationDuration)
+	}
+}
+
+// Both documented duration variables, pinned by name: the loop that reads them
+// is the only thing making them work.
+func TestLoadReadsTheDurationsFromTheEnvironment(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("GM_MAX_OPERATION_DURATION", "90s")
+	t.Setenv("GM_MAX_SESSION_DURATION", "3h")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxOperationDuration != 90*time.Second || c.MaxSessionDuration != 3*time.Hour {
+		t.Fatalf("durations = (%v, %v), want (90s, 3h)", c.MaxOperationDuration, c.MaxSessionDuration)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A session route holds its admission slot for this long, so the default is a
+// capacity number and belongs beside the two session counts.
+func TestDefaultSessionDurationIsTwoHours(t *testing.T) {
+	if c := Default(); c.MaxSessionDuration != 2*time.Hour {
+		t.Fatalf("MaxSessionDuration = %v, want 2h", c.MaxSessionDuration)
 	}
 }

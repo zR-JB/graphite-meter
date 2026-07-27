@@ -24,16 +24,34 @@ type wtToken struct {
 	expires time.Time
 }
 
-// MintWebTransportToken mints a CONNECT token for the request's authenticated
-// session. ok is false when the request carries no session-backed principal.
-func (s *Service) MintWebTransportToken(r *http.Request) (token string, expires time.Time, ok bool) {
+// WTMint says why a mint produced no token. The two refusals need different
+// answers: a session that holds no slot is intact and gets one back within
+// wtTokenLifetime, so it must not be told its login is gone.
+type WTMint int
+
+const (
+	WTMintOK WTMint = iota
+	// WTMintNoSession is a request with nothing to bind a token to: no
+	// principal, none with a session, or a native grant, which needs none.
+	WTMintNoSession
+	WTMintAtCapacity
+)
+
+// MintWebTransportSessionToken mints a CONNECT token for the request's
+// authenticated session and classifies a refusal.
+//
+// A bearer grant is refused with the rest. It carries the very session its
+// browser approval created, so a token minted from one occupies that login's
+// cap, and nothing needs it to: a native CONNECT presents its Authorization
+// header directly.
+func (s *Service) MintWebTransportSessionToken(r *http.Request) (token string, expires time.Time, mint WTMint) {
 	p, hasPrincipal := PrincipalFromContext(r.Context())
-	if !hasPrincipal || p.session == nil {
-		return "", time.Time{}, false
+	if !hasPrincipal || p.session == nil || p.Bearer {
+		return "", time.Time{}, WTMintNoSession
 	}
 	raw, err := randomToken(32)
 	if err != nil {
-		return "", time.Time{}, false
+		return "", time.Time{}, WTMintNoSession
 	}
 	token = wtTokenPrefix + raw
 	h := sha256.Sum256([]byte(token))
@@ -43,18 +61,18 @@ func (s *Service) MintWebTransportToken(r *http.Request) (token string, expires 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p.session.ctx.Err() != nil {
-		return "", time.Time{}, false
+		return "", time.Time{}, WTMintNoSession
 	}
 	// Refuse at the cap rather than evicting: the oldest live token is one
 	// another tab is about to present, and killing it turns one client's dial
 	// into another's 403, whose remedy is a re-mint that evicts again.
 	s.expireWTTokensLocked(now)
 	if len(p.session.wtTokens) >= maxSessionWTTokens {
-		return "", time.Time{}, false
+		return "", time.Time{}, WTMintAtCapacity
 	}
 	p.session.wtTokens[h] = struct{}{}
 	s.wtTokens[h] = wtToken{sess: p.session, expires: expires}
-	return token, expires, true
+	return token, expires, WTMintOK
 }
 
 // consumeWebTransportToken authenticates and deletes one token: a captured URL
