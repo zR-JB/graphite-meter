@@ -755,6 +755,11 @@ export class RealBackend implements RunnerBackend {
     if (!flush) {
       this.#discardTransfer();
       this.#latency.teardown();
+      // The stall belonged to the stage that just ended. Latched past it, it
+      // gates sampleProvesStageLiveness for every later stage, whose bytes then
+      // never refresh the core's watchdog: a healthy stage runs to the max-stall
+      // timeout and its measurement is discarded.
+      this.#stalled = false;
       return;
     }
     return this.#teardownTransfer().then(() => {
