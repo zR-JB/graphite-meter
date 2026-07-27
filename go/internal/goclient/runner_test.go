@@ -733,6 +733,118 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	}
 }
 
+// A failed transfer stage publishes no result of any kind. The loaded-latency
+// probe holds samples when the stage is cancelled and its cancellation is not
+// an error, so a result emitted from inside that goroutine would carry the
+// failed stage's name: a consumer keying results by stage would read the stage
+// as having measured something.
+func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ping", echoPingHandler())
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		// The delay puts the failure well after the loaded-latency probe has
+		// samples in hand, so suppression is what the assertion turns on.
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{
+		BaseURL:                srv.URL,
+		Warmup:                 0,
+		LoadedLatency:          true,
+		PingInterval:           20 * time.Millisecond,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
+		DownloadBytesPerStream: 64 * 1024,
+	}.normalized()
+
+	var mu sync.Mutex
+	var results []Result
+	var samples int
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1}, http: srv.Client(), emit: func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch e.Kind {
+		case EventResult:
+			results = append(results, *e.Result)
+		case EventLatency:
+			samples++
+		}
+	}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := r.runTransferStage(ctx, "download", []Direction{Down}, 3*time.Second)
+	if err == nil {
+		t.Fatal("want the download lane's HTTP 500 surfaced")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if samples == 0 {
+		t.Fatal("the loaded-latency probe took no samples before the lane failed; the test never exercised the suppression")
+	}
+	if len(results) != 0 {
+		t.Fatalf("failed stage published %d result(s): %+v", len(results), results)
+	}
+}
+
+// A stage that succeeds publishes both of its results, and the transfer one
+// lands last: the two share the stage's name, so a consumer that keys results
+// by stage keeps whichever arrived last, and that has to be the throughput
+// number rather than the loaded-latency companion.
+func TestLoadedLatencyResultPrecedesTheTransferResult(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ping", echoPingHandler())
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, 64*1024))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{
+		BaseURL:                srv.URL,
+		Warmup:                 0,
+		LoadedLatency:          true,
+		PingInterval:           20 * time.Millisecond,
+		TransferStreams:        TransferStreamPolicy{Forced: 1},
+		DownloadBytesPerStream: 64 * 1024,
+	}.normalized()
+
+	var mu sync.Mutex
+	var results []Result
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1}, http: srv.Client(), emit: func(e Event) {
+		if e.Kind != EventResult {
+			return
+		}
+		mu.Lock()
+		results = append(results, *e.Result)
+		mu.Unlock()
+	}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.runTransferStage(ctx, "download", []Direction{Down}, captureWindow); err != nil {
+		t.Fatalf("runTransferStage: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(results) != 2 {
+		t.Fatalf("stage published %d result(s), want the transfer result and its loaded-latency companion: %+v", len(results), results)
+	}
+	if results[0].Latency.Count == 0 || results[0].TotalBytes != 0 {
+		t.Errorf("first result = %+v, want the loaded-latency one", results[0])
+	}
+	if results[1].Direction != Down || results[1].TotalBytes == 0 {
+		t.Errorf("last result = %+v, want the download transfer one", results[1])
+	}
+}
+
 /* ---- shared WS test fixture ---- */
 
 // echoPingHandler answers every PING with an immediate PONG, echoing the id.

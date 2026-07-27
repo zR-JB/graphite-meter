@@ -58,7 +58,7 @@ func TestParsePing(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := parsePing(c.raw)
+			got, err := parsePing(c.raw, "auto")
 			if err != nil {
 				t.Fatalf("parsePing(%q): %v", c.raw, err)
 			}
@@ -69,16 +69,65 @@ func TestParsePing(t *testing.T) {
 	}
 }
 
-// A cadence past the bus's idle bound produces one datagram and then silence,
-// which the server reaps: the flag is refused rather than left to churn through
-// a redial in every stage.
-func TestParsePingRejectsACadencePastTheIdleBound(t *testing.T) {
-	got, err := parsePing("45s")
-	if err == nil {
-		t.Fatalf("parsePing(\"45s\") = %v, want an error naming the bound", got)
+// A cadence past the datagram bus's idle bound produces one datagram and then
+// silence, which the server reaps: the flag is refused rather than left to churn
+// through a redial in every stage. The bound is that bus's alone, so a run
+// pinned to the WebSocket bus -- which has no idle timer -- takes the same
+// cadence rather than being refused for a constraint that cannot reach it.
+func TestParsePingBindsTheCadenceToTheSelectedBus(t *testing.T) {
+	for _, transport := range []string{"auto", wire.TransportWebTransport} {
+		got, err := parsePing("45s", transport)
+		if err == nil {
+			t.Fatalf("parsePing(\"45s\", %q) = %v, want an error naming the bound", transport, got)
+		}
+		if !strings.Contains(err.Error(), goclient.MaxPingInterval.String()) {
+			t.Errorf("error for %q = %q, want it to name the %v bound", transport, err, goclient.MaxPingInterval)
+		}
 	}
-	if !strings.Contains(err.Error(), goclient.MaxPingInterval.String()) {
-		t.Errorf("error = %q, want it to name the %v bound", err, goclient.MaxPingInterval)
+
+	got, err := parsePing("45s", wire.TransportWebSocket)
+	if err != nil {
+		t.Fatalf("parsePing(\"45s\", %q) = %v, want the cadence accepted: the WebSocket bus has no idle timer", wire.TransportWebSocket, err)
+	}
+	if got != 45*time.Second {
+		t.Errorf("parsePing(\"45s\", %q) = %v, want 45s", wire.TransportWebSocket, got)
+	}
+}
+
+// A mistyped transport is a typo, and the answer is the list of names. Left to
+// the run it reads as an endpoint the server did not advertise.
+func TestFlagsRejectAnUnknownTransport(t *testing.T) {
+	cases := []struct {
+		name                string
+		throughput, latency string
+		wantFlag            string
+	}{
+		{"both default", "auto", "auto", ""},
+		{"both named", wire.TransportWebTransport, wire.TransportWebSocket, ""},
+		{"fetch stream", wire.TransportFetchStream, "auto", ""},
+		{"throughput typo", "webscoket", "auto", "-throughput-transport"},
+		{"latency typo", "auto", "websockets", "-latency-transport"},
+		// The datagram bus carries no transfer, but it is a name: the refusal
+		// that explains why comes from the run, not from the flag.
+		{"latency datagram is not a bus", "auto", wire.TransportWebTransportDatagram, "-latency-transport"},
+		{"throughput datagram passes the flag", wire.TransportWebTransportDatagram, "auto", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := transportFlags(c.throughput, c.latency)
+			if c.wantFlag == "" {
+				if err != nil {
+					t.Fatalf("transportFlags(%q, %q) = %v, want it accepted", c.throughput, c.latency, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("transportFlags(%q, %q) accepted an unknown transport", c.throughput, c.latency)
+			}
+			if !strings.Contains(err.Error(), c.wantFlag) {
+				t.Errorf("error = %q, want it to name %s", err, c.wantFlag)
+			}
+		})
 	}
 }
 
@@ -944,6 +993,40 @@ func TestNetworkView_AutoH1MaxIsMarkedUnusedOverWebTransport(t *testing.T) {
 	}
 }
 
+// TestNetworkViewEditorsRenderOnTheirOwnRows pins where an open editor draws:
+// on the row carrying the field it edits, and on no other. The cursor is put on
+// an unrelated row, so a view that drew the editor at the selection instead
+// would put the streams field over the throughput endpoint.
+func TestNetworkViewEditorsRenderOnTheirOwnRows(t *testing.T) {
+	cases := []struct{ field, label, other string }{
+		{"auto-streams", "Auto H1 max", "Streams"},
+		{"streams", "Streams", "Auto H1 max"},
+	}
+	for _, c := range cases {
+		t.Run(c.field, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			m.section, m.row = sectionConnections, 0
+			m.edit = beginEdit(editInt, c.field, "7")
+
+			var editing []string
+			for _, line := range strings.Split(ansiPattern.ReplaceAllString(m.networkView(120), ""), "\n") {
+				if strings.Contains(line, "editing") {
+					editing = append(editing, strings.TrimSpace(line))
+				}
+			}
+			if len(editing) != 1 {
+				t.Fatalf("editing %q marked %d rows as being edited, want exactly 1:\n%s", c.field, len(editing), strings.Join(editing, "\n"))
+			}
+			if !strings.Contains(editing[0], c.label) {
+				t.Errorf("editing %q drew the field on %q, want the %q row", c.field, editing[0], c.label)
+			}
+			if strings.Contains(editing[0], c.other) {
+				t.Errorf("editing %q drew over the %q row: %q", c.field, c.other, editing[0])
+			}
+		})
+	}
+}
+
 func TestActivate_NetworkTransportSettings(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
@@ -1172,6 +1255,29 @@ func TestCommitEdit_BareNumberIsSeconds(t *testing.T) {
 	m.commitEdit()
 	if m.cfg.DownloadDuration != 500*time.Millisecond {
 		t.Errorf("duration=%v, want a bare 0.5 committed as 500ms", m.cfg.DownloadDuration)
+	}
+}
+
+// The TUI states the cadence rule once, by asking goclient rather than by
+// carrying its own copy: a run pinned to the WebSocket bus, which has no idle
+// timer, takes a wide cadence, and one that can still land on the datagram bus
+// does not.
+func TestCommitEdit_PingBoundFollowsTheLatencyBus(t *testing.T) {
+	wide := (goclient.MaxPingInterval + 5*time.Second).String()
+
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.LatencyTransport = wire.TransportWebSocket
+	m.edit = beginEdit(editDuration, "ping", wide)
+	m.commitEdit()
+	if m.edit.kind != editNone || m.cfg.PingInterval.String() != wide {
+		t.Fatalf("a %s cadence over the WebSocket bus was refused: kind=%v err=%q interval=%v", wide, m.edit.kind, m.edit.err, m.cfg.PingInterval)
+	}
+
+	m.cfg.LatencyTransport = wire.TransportWebTransport
+	m.edit = beginEdit(editDuration, "ping", wide)
+	m.commitEdit()
+	if m.edit.err == "" || !strings.Contains(m.edit.err, goclient.MaxPingInterval.String()) {
+		t.Fatalf("a %s cadence over the datagram bus gave err=%q, want one naming the %v bound", wide, m.edit.err, goclient.MaxPingInterval)
 	}
 }
 

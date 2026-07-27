@@ -26,6 +26,20 @@ func laneRetryPause(ctx context.Context) bool {
 	}
 }
 
+// windowCarriedBytes refuses a window that moved nothing. A lane that never
+// errors but never transfers -- a stream the server accepts and never writes on
+// -- leaves the byte total at zero while the window's clock runs to its end, and
+// publishing that hands the caller 0 B/s as a measurement rather than a failure.
+// ctx must be the stage's own, not the window's: a window bounded by its own
+// deadline would otherwise read as a cancellation. A stage the caller cancelled
+// is a stop and reports nothing.
+func windowCarriedBytes(ctx context.Context, stage string, dir Direction, stats rateStats) error {
+	if ctx.Err() != nil || stats.total > 0 {
+		return nil
+	}
+	return fmt.Errorf("%s %s carried no bytes in %v", stage, dir, stats.elapsed)
+}
+
 func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
 	var total atomic.Uint64
 	var lane func(context.Context, int) error
@@ -63,6 +77,9 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, streams, lanes.errs)
 	cancel()
 	lanes.stop()
+	if err == nil {
+		err = windowCarriedBytes(ctx, stage, Down, stats)
+	}
 	return stats.result(stage, Down, false), err
 }
 

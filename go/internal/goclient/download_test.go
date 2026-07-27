@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -205,6 +206,68 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	if paced := int64(window/wtRedialBackoff) + 2; requests.Load() > paced {
 		t.Errorf("issued %d requests in %v, want at most %d: the reopen is not paced",
 			requests.Load(), time.Since(start), paced)
+	}
+}
+
+// newSilentDownloadServer answers 200 with its headers flushed and then writes
+// nothing until the request ends: the lane neither fails nor carries a byte,
+// the shape a WebTransport session that accepts a stream and never writes on it
+// takes over fetch.
+func newSilentDownloadServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+}
+
+// TestMeasureDownloadRefusesAWindowThatCarriedNoBytes covers the stage half of
+// the empty-window defect: a lane that never errors leaves the window's error
+// nil, and without the guard the stage publishes 0 B/s as a measurement.
+func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
+	srv := newSilentDownloadServer()
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
+
+	start := make(chan struct{})
+	close(start)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := r.measureDownload(ctx, "download", 300*time.Millisecond, start)
+	if err == nil {
+		t.Fatalf("a window that carried no bytes reported success: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "carried no bytes") {
+		t.Errorf("err = %v, want it to name the empty window", err)
+	}
+}
+
+// TestMeasureDownloadCancelledEmptyWindowIsACleanStop pins the other side of
+// the guard: the caller cancelling the stage is a stop, not a measurement that
+// failed, and an empty window under cancellation must stay silent.
+func TestMeasureDownloadCancelledEmptyWindowIsACleanStop(t *testing.T) {
+	srv := newSilentDownloadServer()
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
+
+	start := make(chan struct{})
+	close(start)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	res, err := r.measureDownload(ctx, "download", 5*time.Second, start)
+	if err != nil {
+		t.Fatalf("cancelled stage returned %v, want a clean stop", err)
+	}
+	if res.TotalBytes != 0 {
+		t.Errorf("TotalBytes = %d, want 0 from a server that wrote nothing", res.TotalBytes)
 	}
 }
 

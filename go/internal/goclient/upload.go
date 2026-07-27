@@ -94,6 +94,9 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, streams, duration, baselineN, baselineT, lanes.errs)
 	lanes.stop()
 	progress.bye()
+	if sampleErr == nil {
+		sampleErr = windowCarriedBytes(ctx, stage, Up, stats)
+	}
 	return stats.result(stage, Up, true), sampleErr
 }
 
@@ -326,11 +329,19 @@ func (r *runner) openUploadProgress(ctx context.Context, target string) (*upload
 // request bound: when the GET dies with the stage still running, a fresh GET
 // resumes the same aggregate, as the browser's progress worker does.
 func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
+	opened := time.Now()
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
 		case <-p.currentDone():
+		}
+		// A feed that ended as fast as it opened is making no progress, and a
+		// server closing every one of them instantly would otherwise be hot-
+		// retried for the whole stage. One that ran first reopens without a
+		// pause, so a rollover at the server's request bound costs no records.
+		if time.Since(opened) < wtRedialBackoff && !laneRetryPause(p.ctx) {
+			return
 		}
 		for p.ctx.Err() == nil {
 			req, err := http.NewRequestWithContext(p.ctx, http.MethodGet, target, nil)
@@ -340,6 +351,7 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 			req.Header.Set("Accept", "application/x-ndjson")
 			res, err := r.http.Do(req)
 			if err == nil && res.StatusCode == http.StatusOK {
+				opened = time.Now()
 				p.attach(res.Body)
 				break
 			}

@@ -3,6 +3,7 @@ package goclient
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -21,11 +22,37 @@ import (
 type wtSession struct {
 	*webtransport.Session
 	dialer *webtransport.Dialer
+	// lifetime ends when the session does. It is the session's own context,
+	// captured at dial rather than read back through the embedded session: the
+	// retry decisions below have to hold for a session that was never dialled,
+	// and the embedded value answers Context with a nil context until quic-go
+	// has built one.
+	lifetime context.Context
+	closed   atomic.Bool
 }
 
+// close releases the session and the dialer that owns it, once. Whichever of
+// the stage host, the replacement dial, or the lane that found it dead gets
+// there first does the work; quic-go takes a lock on the way through, so the
+// guards also keep a session this client never dialled from panicking there.
 func (s *wtSession) close() {
-	_ = s.CloseWithError(0, "")
-	_ = s.dialer.Close()
+	if s == nil || !s.closed.CompareAndSwap(false, true) {
+		return
+	}
+	if s.Session != nil {
+		_ = s.CloseWithError(0, "")
+	}
+	if s.dialer != nil {
+		_ = s.dialer.Close()
+	}
+}
+
+// alive reports whether the session can still carry a stream. A lane error on a
+// live session is a stream-level fault that lane retries by itself; only a dead
+// session is worth replacing, and replacing one that sibling lanes are still
+// transferring on stops every one of them.
+func (s *wtSession) alive() bool {
+	return s != nil && !s.closed.Load() && s.lifetime != nil && s.lifetime.Err() == nil
 }
 
 // wtDial opens a session on origin's path. query carries every parameter: a
@@ -57,7 +84,7 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 		_ = dialer.Close()
 		return nil, fmt.Errorf("webtransport dial %s: %w", u, err)
 	}
-	return &wtSession{Session: sess, dialer: dialer}, nil
+	return &wtSession{Session: sess, dialer: dialer, lifetime: sess.Context()}, nil
 }
 
 // verifyLatencyWebTransport proves the datagram bus answers before a run
@@ -128,6 +155,17 @@ const wtRedialBackoff = 500 * time.Millisecond
 // leaving room for retries: the datagram carrying it may simply be lost.
 const wtVerifyReplyTimeout = 750 * time.Millisecond
 
+// wtSessionRedialWindow bounds one session replacement, for the reason
+// busRedialWindow bounds the latency bus's: a measured window's clock runs
+// whether or not a session is up, so a stage that spends longer than this
+// without one is dividing bytes it did move by a window it did not measure over.
+// Past it the stage fails instead of reporting that quotient as a rate.
+const wtSessionRedialWindow = busRedialWindow
+
+// errWTStageClosed answers a lane still unwinding after its stage tore the
+// session host down. The stage is over; nothing may dial behind it.
+var errWTStageClosed = errors.New("webtransport stage session closed")
+
 // wtStageSession owns one stage's session and re-dials it when it drops, so a
 // stage outlasting the server's session lifetime continues on a fresh session
 // the way fetch lanes continue on fresh requests. establish, when set, runs
@@ -138,6 +176,7 @@ type wtStageSession struct {
 	mu        sync.Mutex
 	sess      *wtSession
 	gen       int
+	closed    bool
 }
 
 func newWTStageSession(ctx context.Context, dial func(ctx context.Context) (*wtSession, error), establish func(ctx context.Context, sess *wtSession) error) (*wtStageSession, error) {
@@ -166,32 +205,51 @@ func (w *wtStageSession) current() (*wtSession, int) {
 
 // redial replaces generation gen. Lanes share one session, so every lane races
 // here when it dies; the first replaces it and the rest adopt the replacement.
-// Dial failures retry until ctx ends: mid-run outages are the stall the
-// measured pause already prices in, exactly as on the fetch path.
+// Dial failures retry within wtSessionRedialWindow and then give up: a stage
+// with no session is not measuring, and the window it reports over keeps
+// running regardless, so a longer outage has to fail the stage rather than be
+// priced into it.
 func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return errWTStageClosed
+	}
 	if w.gen > gen {
 		return nil
 	}
+	// The dead session stays in place until a replacement lands: a sibling lane
+	// reading it finds it closed and asks for a replacement of its own, which is
+	// the same answer, whereas a nil would be a crash.
 	w.sess.close()
+	windowCtx, cancelWindow := context.WithTimeout(ctx, wtSessionRedialWindow)
+	defer cancelWindow()
+	var lastErr error
 	for {
-		dialCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		sess, err := w.dial(dialCtx)
+		// The window is the whole bound an attempt gets. A separate per-attempt
+		// timeout would have to be shorter than the window to be reachable and
+		// longer than a handshake to be usable, and the window is already both:
+		// an attempt that outlives it fails with it, which is the same answer.
+		sess, err := w.dial(windowCtx)
 		if err == nil && w.establish != nil {
-			if err = w.establish(dialCtx, sess); err != nil {
+			if err = w.establish(windowCtx, sess); err != nil {
 				sess.close()
 			}
 		}
-		cancel()
 		if err == nil {
 			w.sess = sess
 			w.gen++
 			return nil
 		}
+		lastErr = err
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-windowCtx.Done():
+			// The stage's own cancellation is a stop, not a failure; the window
+			// expiring while the stage still wants bytes is the failure.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("webtransport session lost and not replaced within %v: %w", wtSessionRedialWindow, lastErr)
 		case <-time.After(wtRedialBackoff):
 		}
 	}
@@ -200,20 +258,31 @@ func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 func (w *wtStageSession) close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closed = true
 	w.sess.close()
 }
 
-// wtLaneMaxFastFailures is how many back-to-back instant failures a lane
-// absorbs before it reports one. A server refusing at capacity resets every
-// lane it is handed, which must fail the stage rather than be re-dialed for
-// the whole measurement window.
+// wtLaneMaxFastFailures is the run of back-to-back instant failures that fails a
+// lane: every one before the last is absorbed as a retry, and the last is
+// reported. A server refusing at capacity resets every lane it is handed, which
+// must fail the stage rather than be re-dialed for the whole measurement window.
 const wtLaneMaxFastFailures = 5
+
+// wtLaneProgressWindow bounds a lane whose failures are slower than the backoff,
+// which the count above cannot see. A lane run at least this long is a stretch
+// the stage was measuring over and clears the bound; a lane that goes this long
+// without one has carried nothing while the measured window's clock kept
+// running, and reporting that as a stop publishes the shortfall as a rate. It is
+// wtSessionRedialWindow because it answers that same question: a run too short
+// to have been worth waiting out a lost session for is too short to be progress.
+const wtLaneProgressWindow = wtSessionRedialWindow
 
 // runWTLane keeps one lane alive across session replacements: run the lane on
 // the current session, and when it dies with the stage still running, redial
 // and continue.
 func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) error) error {
 	fastFailures := 0
+	var failingSince time.Time
 	for ctx.Err() == nil {
 		sess, gen := host.current()
 		started := time.Now()
@@ -225,6 +294,22 @@ func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.
 		// that died as fast as it dialled is paced, and is making no progress.
 		if time.Since(started) >= wtRedialBackoff {
 			fastFailures = 0
+			// The two bounds partition the failures between them by how long the
+			// lane ran, so neither can pre-empt the other: this branch owns every
+			// failure the count above cannot see.
+			if time.Since(started) >= wtLaneProgressWindow {
+				failingSince = time.Time{}
+			} else {
+				if failingSince.IsZero() {
+					failingSince = started
+				}
+				// Whatever the session's liveness: a live session this lane cannot
+				// carry a byte on is the same shortfall as no session at all, and
+				// the window it is reported over runs either way.
+				if time.Since(failingSince) >= wtLaneProgressWindow {
+					return err
+				}
+			}
 		} else {
 			if fastFailures++; fastFailures >= wtLaneMaxFastFailures {
 				return err
@@ -233,8 +318,22 @@ func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.
 				return nil
 			}
 		}
+		// A lane's own stream failing is not a lost session: the siblings sharing
+		// it are still transferring, and replacing it to serve one lane's retry
+		// stops every one of them mid-stream. Only a session that is actually
+		// gone is replaced; anything else is this lane's to retry.
+		if sess.alive() {
+			continue
+		}
 		if redialErr := host.redial(ctx, gen); redialErr != nil {
-			return laneStopError(ctx, redialErr)
+			// A stage the caller cancelled, or one whose own window ended, is a
+			// clean stop. Anything else means the session stayed down while the
+			// measured window kept running: the bytes stop and the clock does
+			// not, so reporting nil here publishes the shortfall as a rate.
+			if ctx.Err() != nil {
+				return nil
+			}
+			return redialErr
 		}
 	}
 	return nil

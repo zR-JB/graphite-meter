@@ -559,11 +559,15 @@ func (m *model) commitDuration(raw, field string) {
 			m.editRejected(s.zeroError)
 			return
 		}
-		// The ping cadence has an upper bound too: the server reaps a
-		// WebTransport ping bus the client has stopped feeding.
-		if field == "ping" && d > goclient.MaxPingInterval {
-			m.editRejected(fmt.Sprintf("Ping interval must be at most %v, half the server's WebTransport idle bound.", goclient.MaxPingInterval))
-			return
+		// The ping cadence has an upper bound over the datagram bus, which the
+		// server reaps once the client stops feeding it. The bound is the
+		// client's one statement of that rule, message included; the WebSocket
+		// bus has no idle timer, so a run pinned to it is not held to it.
+		if field == "ping" && goclient.PingIntervalBoundApplies(m.cfg.LatencyTransport) {
+			if err := goclient.ValidatePingInterval(d); err != nil {
+				m.editRejected(err.Error())
+				return
+			}
 		}
 		*s.ptr = d
 	}

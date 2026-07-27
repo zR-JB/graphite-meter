@@ -195,9 +195,13 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	default:
 		return nil, fmt.Errorf("invalid throughput protocol %q", cfg.ThroughputProtocol)
 	}
-	// A cadence outside the bus's idle bound leaves every stage redialing a
-	// reaped bus instead of measuring, so it fails here rather than there.
-	if err := ValidatePingInterval(cfg.PingInterval); err != nil {
+	// A misspelled transport is answerable without a server, and the selection
+	// failure it otherwise produces ("auto target unavailable over webscoket")
+	// names the typo only to a reader who already knows the spelling.
+	if err := ValidateThroughputTransport(cfg.ThroughputTransport); err != nil {
+		return nil, err
+	}
+	if err := ValidateLatencyTransport(cfg.LatencyTransport); err != nil {
 		return nil, err
 	}
 	discoveryTransport := baseTransport(cfg)
@@ -215,12 +219,22 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if err != nil {
 		return fail(err)
 	}
-	// An advertised WebTransport target still needs UDP to reach the server.
-	// Automatic selection reaches here only when no fetch target was advertised,
-	// so there is nothing left to fall back to and the dial failure is the answer.
+	// An advertised WebTransport target still needs UDP to reach the server, and
+	// a blocked path surfaces here as a QUIC dial error. Automatic selection
+	// reaches WebTransport whenever fetch selection failed -- including when it
+	// refused an ambiguous choice between several advertised fetch origins --
+	// so under auto the fetch pass is re-run and its own refusal, which is the
+	// one an operator can act on, is what the caller sees.
 	if advertisedTarget.Transport == wire.TransportWebTransport {
 		if verifyErr := verifyThroughputWebTransport(ctx, cfg, advertisedTarget); verifyErr != nil {
-			return fail(verifyErr)
+			if cfg.ThroughputTransport != "auto" {
+				return fail(verifyErr)
+			}
+			fetchTarget, fetchErr := selectTargetOver(cfg, pf, wire.TransportFetchStream)
+			if fetchErr != nil {
+				return fail(fmt.Errorf("%w (the advertised WebTransport target is unreachable: %v)", fetchErr, verifyErr))
+			}
+			advertisedTarget = fetchTarget
 		}
 	}
 	target := *advertisedTarget
@@ -250,6 +264,16 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if !needsLatency {
 		latencyTarget = nil
 	} else if latencyTarget != nil {
+		// A cadence past the bus's idle bound leaves every stage redialing a
+		// reaped bus instead of measuring, so it fails here rather than there --
+		// but only once the bus that carries the bound is the one selected. The
+		// check waits for that selection: refusing a cadence the chosen bus has
+		// no opinion on names a constraint that cannot reach the run.
+		if PingIntervalBoundApplies(latencyTarget.Transport) {
+			if err := ValidatePingInterval(cfg.PingInterval); err != nil {
+				return fail(err)
+			}
+		}
 		if latencyTarget.Transport == wire.TransportWebTransport {
 			if verifyErr := verifyLatencyWebTransport(ctx, cfg, latencyTarget); verifyErr != nil {
 				if cfg.LatencyTransport != "auto" {
@@ -457,24 +481,24 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 		}()
 	}
 
-	latDone := make(chan struct{})
+	// The loaded-latency result is handed back rather than emitted here: the
+	// probe treats the stage's cancellation as a clean end, so a stage that
+	// failed would still publish a result under its own name and a consumer
+	// keyed by stage would read the failed stage as having measured.
+	latency := make(chan Result, 1)
 	if r.cfg.LoadedLatency {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer close(latDone)
 			stats, err := r.measureLatency(stageCtx, stage, true, duration, start)
 			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				errs <- err
 				return
 			}
 			if stats.Count > 0 {
-				res := Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}
-				r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: &res})
+				latency <- Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}
 			}
 		}()
-	} else {
-		close(latDone)
 	}
 
 	done := make(chan struct{})
@@ -495,10 +519,16 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 		return ctx.Err()
 	}
 	close(results)
+	close(latency)
+	// The loaded-latency result carries the transfer stage's own name, so it
+	// goes out first: a consumer that keys results by stage keeps the last one
+	// it sees, and the transfer result is the stage's headline.
+	for res := range latency {
+		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: &res})
+	}
 	for res := range results {
 		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Direction: res.Direction, Result: &res})
 	}
-	<-latDone
 	return nil
 }
 

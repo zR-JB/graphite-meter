@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -303,6 +306,99 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	}
 }
 
+// newStalledUploadServer accepts the POSTs and reports a feed whose active time
+// advances while the byte total stays at zero: the upload window is measured
+// from the server's aggregate, so an aggregate that never advances is a window
+// that carried nothing, with no lane failing to say so. The sink drains the
+// body rather than ignoring it because a handler parked on an unread body never
+// learns the client aborted, and httptest.Server.Close would wait on it.
+func newStalledUploadServer() *httptest.Server {
+	started := time.Now()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "stalled-upload"})
+	})
+	mux.HandleFunc("/upload", func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+	})
+	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher := w.(http.Flusher)
+		enc := json.NewEncoder(w)
+		_ = enc.Encode(uploadProgressEvent{Type: "ready"})
+		flusher.Flush()
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				_ = enc.Encode(uploadProgressEvent{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
+				flusher.Flush()
+			}
+		}
+	})
+	return httptest.NewServer(mux)
+}
+
+// TestMeasureUploadRefusesAWindowThatCarriedNoBytes is the upload half of the
+// empty-window guard: the server's counters advance in time but not in bytes,
+// so no lane fails and the window would otherwise publish 0 B/s.
+func TestMeasureUploadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
+	srv := newStalledUploadServer()
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}}.normalized()
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	start := make(chan struct{})
+	close(start)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, start)
+	if err == nil {
+		t.Fatalf("a window that carried no bytes reported success: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "carried no bytes") {
+		t.Errorf("err = %v, want it to name the empty window", err)
+	}
+}
+
+// TestMeasureUploadCancelledEmptyWindowIsACleanStop pins the cancellation side:
+// the sampler already reports the caller's cancellation as context.Canceled,
+// which runTransferStage treats as a stop, and the empty-window guard must not
+// replace it with a measurement failure.
+func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
+	srv := newStalledUploadServer()
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}}.normalized()
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
+
+	start := make(chan struct{})
+	close(start)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	_, err := r.measureUpload(ctx, "upload", 5*time.Second, start)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled stage returned %v, want context.Canceled", err)
+	}
+	if strings.Contains(err.Error(), "carried no bytes") {
+		t.Errorf("err = %v, want the cancellation reported as a stop", err)
+	}
+}
+
 // TestUploadProgressHoldsTheForwardPairAcrossFeeds covers the interleaving two
 // readers of one aggregate produce: the live feed publishes the terminal
 // `complete` record, then the superseded feed lands a record it had already
@@ -436,13 +532,24 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		}
 	})
 
+	// The last record and the end of the report can land together: the feed
+	// publishes its count and closes, and the waiter is woken by the close with
+	// the edge already consumed. It has to answer from what it can see rather
+	// than from which channel woke it. Storing the count before the call instead
+	// would leave waitNext's own loop condition to answer, and the branch that
+	// resolves the race would never run.
 	t.Run("final update", func(t *testing.T) {
-		progress, cancel := newWaitNextProgress()
-		cancel()
-		progress.seq.Store(1)
-		if !progress.waitNext(context.Background(), 0) {
-			t.Fatal("waitNext dropped the final progress update")
-		}
+		synctest.Test(t, func(t *testing.T) {
+			progress, cancel := newWaitNextProgress()
+			result := make(chan bool, 1)
+			go func() { result <- progress.waitNext(context.Background(), 0) }()
+			synctest.Wait() // the waiter is parked with nothing published
+			progress.seq.Store(1)
+			cancel()
+			if !<-result {
+				t.Fatal("waitNext dropped the final progress update")
+			}
+		})
 	})
 
 	// A feed replaced mid-stage closes its own reader. Treating that as the end
@@ -531,5 +638,90 @@ func TestUploadProgressCounterHoldsUnderConcurrentFeeds(t *testing.T) {
 	}
 	if bytes, nanos := p.counters(); bytes != records || nanos != records {
 		t.Fatalf("final counter = (%d, %d), want (%d, %d)", bytes, nanos, records, records)
+	}
+}
+
+// closeRecorder is a feed body that reports whether the reader that adopted it
+// released it.
+type closeRecorder struct {
+	io.Reader
+	closed atomic.Bool
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed.Store(true)
+	return nil
+}
+
+// TestReattachUploadProgressResumesTheSameAggregate covers the server's request
+// bound arriving mid-stage: the NDJSON feed ends after a few records and the
+// client has to open another GET onto the same aggregate. The counter is the
+// server's, so it has to carry across the seam rather than restart the
+// measurement baseline, and the reopen has to be paced -- a feed that ends the
+// moment it opens is as down as one that refuses, and every other reconnect path
+// in this client answers that with a backoff rather than a spin.
+func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
+	const recordsPerFeed = 3
+	const window = 1500 * time.Millisecond
+	var gets, served atomic.Int64
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, _ *http.Request) {
+		gets.Add(1)
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher := w.(http.Flusher)
+		enc := json.NewEncoder(w)
+		_ = enc.Encode(uploadProgressEvent{Type: "ready"})
+		flusher.Flush()
+		for range recordsPerFeed {
+			n := uint64(served.Add(1))
+			_ = enc.Encode(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: n})
+			flusher.Flush()
+		}
+		// The handler returns: the request's bound, not the aggregate's.
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), http: srv.Client(), emit: func(Event) {}}
+	ctx, cancel := context.WithTimeout(context.Background(), window)
+	defer cancel()
+	p, err := r.openUploadProgress(ctx, srv.URL+"/upload/progress")
+	if err != nil {
+		t.Fatalf("openUploadProgress: %v", err)
+	}
+	defer p.close()
+
+	<-ctx.Done()
+	if carried, _ := p.counters(); carried <= recordsPerFeed {
+		t.Errorf("the counter stopped at %d, want it past %d: one feed cannot carry the stage, and the reattach resumes the same aggregate", carried, recordsPerFeed)
+	}
+	// One GET per backoff interval, plus the first: anything near the hundreds an
+	// unpaced loop would issue is the regression.
+	if paced := int64(window/wtRedialBackoff) + 2; gets.Load() > paced {
+		t.Errorf("issued %d progress GETs in %v, want at most %d: the reopen is not paced", gets.Load(), window, paced)
+	}
+}
+
+// TestAttachRefusesAReaderAfterClose covers the reader a replacement session
+// installs just after the stage ended. close() has run its one-shot cancel and
+// already joined the last reader, so one installed behind it is never joined and
+// its records reach a counter nothing is reading.
+func TestAttachRefusesAReaderAfterClose(t *testing.T) {
+	progress, cancel := newWaitNextProgress()
+	before := progress.currentDone()
+	cancel()
+
+	late := &closeRecorder{Reader: strings.NewReader("{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n")}
+	progress.attach(late)
+
+	if !late.closed.Load() {
+		t.Error("the reader offered after the report ended was adopted instead of released")
+	}
+	if progress.currentDone() != before {
+		t.Error("attach installed a reader behind the closed feed")
+	}
+	if bytes, _ := progress.counters(); bytes != 0 {
+		t.Errorf("the late reader's records reached the counter (%d bytes)", bytes)
 	}
 }

@@ -32,7 +32,7 @@ func main() {
 	flag.DurationVar(&cfg.BidirectionalDuration, "bidirectional-duration", cfg.BidirectionalDuration, "bidirectional measurement duration")
 	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum automatic HTTP/1 streams per direction")
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force streams per active direction (0 = automatic)")
-	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration up to "+goclient.MaxPingInterval.String())
+	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency bus)")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
@@ -44,7 +44,11 @@ func main() {
 	}
 
 	cfg.Stages = parseStages(stages)
-	interval, err := parsePing(ping)
+	if err := transportFlags(cfg.ThroughputTransport, cfg.LatencyTransport); err != nil {
+		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
+		os.Exit(2)
+	}
+	interval, err := parsePing(ping, cfg.LatencyTransport)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graphite-meter-client: -ping: %v\n", err)
 		os.Exit(2)
@@ -83,11 +87,27 @@ func parseStages(raw string) goclient.StageSet {
 	return s
 }
 
-// parsePing resolves the cadence flag. An unusable value falls back to the
-// medium preset, but one the latency bus would not survive is an error: the
-// server reaps a ping bus that has gone quiet, so honouring it silently would
-// spend every stage redialing.
-func parsePing(raw string) (time.Duration, error) {
+// transportFlags refuses a mistyped transport where the answer is the list of
+// names. Left to the run, a typo reads as an endpoint the server did not
+// advertise ("auto target unavailable over webscoket") rather than as a typo.
+func transportFlags(throughput, latency string) error {
+	if err := goclient.ValidateThroughputTransport(throughput); err != nil {
+		return fmt.Errorf("-throughput-transport: %w", err)
+	}
+	if err := goclient.ValidateLatencyTransport(latency); err != nil {
+		return fmt.Errorf("-latency-transport: %w", err)
+	}
+	return nil
+}
+
+// parsePing resolves the cadence flag against the bus latencyTransport names. An
+// unusable value falls back to the medium preset, but one the datagram bus would
+// not survive is an error: the server reaps a WebTransport ping bus that has
+// gone quiet, so honouring it silently would spend every stage redialing. A run
+// pinned to the WebSocket bus is not subject to that bound, and refusing there
+// would name a constraint that cannot apply; Prepare re-checks against the bus
+// it actually selected.
+func parsePing(raw, latencyTransport string) (time.Duration, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "instant":
 		return 80 * time.Millisecond, nil
@@ -100,8 +120,10 @@ func parsePing(raw string) (time.Duration, error) {
 		if err != nil || d <= 0 {
 			return 250 * time.Millisecond, nil
 		}
-		if err := goclient.ValidatePingInterval(d); err != nil {
-			return 0, err
+		if goclient.PingIntervalBoundApplies(latencyTransport) {
+			if err := goclient.ValidatePingInterval(d); err != nil {
+				return 0, err
+			}
 		}
 		return d, nil
 	}

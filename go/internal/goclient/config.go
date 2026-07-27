@@ -93,6 +93,40 @@ func ValidatePingInterval(d time.Duration) error {
 	return nil
 }
 
+// PingIntervalBoundApplies reports whether MaxPingInterval governs a run whose
+// latency bus is named by transport. The bound belongs to the datagram bus and
+// to nothing else: the server reaps a WebTransport ping bus it has heard nothing
+// from, and this client's pings are its only traffic. The WebSocket bus has no
+// idle timer, so a run pinned to it takes any positive cadence. Automatic
+// selection may still resolve to WebTransport, so it takes the bound.
+func PingIntervalBoundApplies(latencyTransport string) bool {
+	return latencyTransport != wire.TransportWebSocket
+}
+
+// ValidateThroughputTransport reports whether name is a transport this client
+// can select a transfer over. wire.TransportWebTransportDatagram is a known name
+// refused later, by selectTarget, where the reason it cannot carry a transfer
+// can be given. The message is user-facing: the CLI prints it beside the flag
+// and Prepare returns it.
+func ValidateThroughputTransport(name string) error {
+	switch name {
+	case "", "auto", wire.TransportFetchStream, wire.TransportWebTransport, wire.TransportWebTransportDatagram:
+		return nil
+	}
+	return fmt.Errorf("invalid throughput transport %q: use auto, %s, or %s", name, wire.TransportFetchStream, wire.TransportWebTransport)
+}
+
+// ValidateLatencyTransport reports whether name is a bus this client can run the
+// ping chain over. The empty name is what an unset field carries; normalized()
+// reads it as automatic.
+func ValidateLatencyTransport(name string) error {
+	switch name {
+	case "", "auto", wire.TransportWebSocket, wire.TransportWebTransport:
+		return nil
+	}
+	return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", name, wire.TransportWebSocket, wire.TransportWebTransport)
+}
+
 // ResolveWebTransport is the WebTransport count: one continuous stream per
 // direction, since nothing turns around per request; a forced count passes,
 // clamped to wire.WTMaxStreams, which the server refuses an upload lane past.

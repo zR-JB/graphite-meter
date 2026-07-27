@@ -2,6 +2,9 @@ package goclient
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -156,12 +159,50 @@ func TestValidatePingInterval(t *testing.T) {
 	}
 }
 
+// newWTLatencyServer advertises a WebTransport latency bus and nothing else, so
+// selection resolves to the transport the idle bound belongs to.
+func newWTLatencyServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		origin := "http://" + r.Host
+		wtPing := testChannel("wt-ping", origin, false)
+		wtPing.Transport, wtPing.Protocol = wire.TransportWebTransport, "http3"
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
+			LatencyTargets:    []wire.LatencyTarget{wtPing},
+		}})
+	})
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+	})
+	return httptest.NewServer(mux)
+}
+
 // Prepare refuses the run rather than letting every stage redial a reaped bus.
 func TestPrepareRejectsAPingIntervalPastTheIdleBound(t *testing.T) {
+	srv := newWTLatencyServer(t)
+	defer srv.Close()
 	cfg := DefaultConfig()
+	cfg.BaseURL, cfg.LatencyTransport = srv.URL, wire.TransportWebTransport
 	cfg.PingInterval = 45 * time.Second
 	if _, err := Prepare(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), MaxPingInterval.String()) {
-		t.Fatalf("Prepare with a 45s ping interval = %v, want an error naming the %v bound", err, MaxPingInterval)
+		t.Fatalf("Prepare with a 45s ping interval over the datagram bus = %v, want an error naming the %v bound", err, MaxPingInterval)
+	}
+}
+
+// The idle bound is the WebTransport bus's own: the server reaps a datagram bus
+// it has heard nothing from, and this client's pings are the only traffic on it.
+// The WebSocket bus has no idle timer at all, so a wide cadence over it is a
+// legal configuration and refusing it names a constraint that cannot apply.
+func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
+	srv := newLatencyOnlyServer(t)
+	defer srv.Close()
+	cfg := DefaultConfig()
+	cfg.BaseURL, cfg.LatencyTransport = srv.URL, wire.TransportWebSocket
+	cfg.PingInterval = MaxPingInterval + 5*time.Second
+	if _, err := Prepare(context.Background(), cfg); err != nil {
+		t.Fatalf("Prepare over the WebSocket bus with a %v cadence = %v, want it accepted", cfg.PingInterval, err)
 	}
 }
 
