@@ -8,7 +8,9 @@
     "src/**/*.js",
     "src/**/*.svelte",
     "bench/**/*.ts",
-    "playwright.bench.config.ts"
+    "e2e-live/**/*.ts",
+    "playwright.bench.config.ts",
+    "playwright.live.config.ts"
   ],
   "exclude": []
 }
