@@ -483,6 +483,15 @@ func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bo
 	return nil
 }
 
+// stageFailed reports whether err ends the stage rather than merely stopping
+// it. Cancellation is a stop: the caller's, or the sibling direction's through
+// cancelStage. Everything else is a failure -- including a bound inside the
+// stage expiring, which wraps context.DeadlineExceeded and was once swallowed
+// along with it, publishing a part-window byte total as the window's rate.
+func stageFailed(err error) bool {
+	return err != nil && !errors.Is(err, context.Canceled)
+}
+
 func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Direction, duration time.Duration) error {
 	start := r.warmupGate(ctx, stage)
 
@@ -503,7 +512,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 			} else {
 				res, err = r.measureUpload(stageCtx, stage, duration, start)
 			}
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if stageFailed(err) {
 				errs <- err
 				return
 			}
@@ -521,7 +530,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 		go func() {
 			defer wg.Done()
 			stats, err := r.measureLatency(stageCtx, stage, true, duration, start)
-			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if stageFailed(err) {
 				errs <- err
 				return
 			}

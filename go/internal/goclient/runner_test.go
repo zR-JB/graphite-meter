@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -930,5 +931,28 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 	}
 	if got, want := ConnectionSummary(wire.TransportFetchStream, "http1", false), "Fetch stream · HTTP/1.1 · clear"; got != want {
 		t.Errorf("clear summary = %q, want %q", got, want)
+	}
+}
+
+// A bound inside a stage expiring wraps context.DeadlineExceeded, which the
+// stage filter once swallowed along with the caller's own cancellation. The
+// silent-server case reaches it that way — the redial window expires rather
+// than being refused — so the stage published a part-window byte total as the
+// whole window's rate. The refused case never did, because a refusal is not a
+// deadline, which is why the integration test beside it stayed green.
+func TestStageFailedKeepsABoundExpiryAndDropsACancellation(t *testing.T) {
+	redialExpired := fmt.Errorf("webtransport session lost and not replaced within %v: %w", wtSessionRedialWindow, context.DeadlineExceeded)
+	feedExpired := fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, context.DeadlineExceeded)
+	for _, err := range []error{redialExpired, feedExpired, context.DeadlineExceeded, errors.New("refused")} {
+		if !stageFailed(err) {
+			t.Errorf("stageFailed(%v) = false, want the stage to fail", err)
+		}
+	}
+	// A stop is not a failure: the caller's cancellation, and the sibling
+	// direction's through cancelStage, both arrive as Canceled.
+	for _, err := range []error{nil, context.Canceled, fmt.Errorf("lane %d: %w", 1, context.Canceled)} {
+		if stageFailed(err) {
+			t.Errorf("stageFailed(%v) = true, want the stage to report", err)
+		}
 	}
 }
