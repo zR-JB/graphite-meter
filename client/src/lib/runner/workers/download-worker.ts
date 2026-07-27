@@ -15,7 +15,7 @@ import {
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 import { ProgressWindow, type ProgressDelta } from "./progressWindow";
-import { tuned, DEFAULT_TUNING, type Tuning } from "./tuning";
+import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
 /** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
  *  selects the experimental mode: adaptively-sized `&bytes=N` requests (see
@@ -31,7 +31,6 @@ type InMsg =
       chunk?: boolean;
       credentials?: RequestCredentials;
       headers?: HeadersInit;
-      tune?: Partial<Tuning>;
     }
   | { type: "measure"; seq: number };
 /** Worker → main. */
@@ -45,12 +44,10 @@ export function recoverableDownloadStatus(status: number): boolean {
 }
 
 export function downloadFetchInit(
-  signal: AbortSignal,
   requestCredentials: RequestCredentials,
   requestHeaders?: HeadersInit,
 ): RequestInit {
   return {
-    signal,
     cache: "no-store",
     credentials: requestCredentials,
     headers: requestHeaders,
@@ -76,18 +73,12 @@ const CHUNK_SIZER: SizerCfg = {
   stepDown: 0.5,
 };
 
-/** Per-request controller, supplying `fetch` with a signal. Nothing aborts it:
- *  the lane is stopped by terminating the worker, which drops the request. */
-let abort: AbortController | null = null;
 /** Chunked mode (experimental) + its closed-loop state. */
 let chunked = false;
 let nextBytes = CHUNK_SIZER.minBytes;
 let rateEwma = 0;
 let measureSeq = 0;
-/** Reusing one BYOB buffer is the only backpressure lever fetch exposes: without
- *  it Firefox reads far ahead into its own buffers, inflating RAM and undercounting. */
-let tuning = tuned();
-let progress = new ProgressWindow(0, tuning.reportGapMs);
+let progress = new ProgressWindow(0, REPORT_GAP_MS);
 
 /** Stream index, tagging debug lines only (`dl-worker#<id>`). */
 let streamId = 0;
@@ -102,10 +93,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     setDebugLogging(msg.debug ?? false);
     streamId = msg.id ?? 0;
     chunked = msg.chunk ?? false;
-    // Folded to DEFAULT_TUNING unless the build opts into the bench surface
-    // (GM_CLIENT_BENCH=1), which also eliminates the merge and msg.tune.
-    tuning = __GM_BENCH__ ? tuned(msg.tune) : DEFAULT_TUNING;
-    progress = new ProgressWindow(performance.now(), tuning.reportGapMs);
+    progress = new ProgressWindow(performance.now(), REPORT_GAP_MS);
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers;
     nextBytes = CHUNK_SIZER.minBytes;
@@ -130,7 +118,6 @@ async function run(url: string): Promise<void> {
   // Re-fetch loop: keep the lane busy for the whole measured window even if a
   // single request reaches its Content-Length.
   for (;;) {
-    abort = new AbortController();
     // Count the chunk and drop it. Deltas batch to the main thread; verbose mode
     // logs the pre-aggregation 1 Hz receive rate, ground truth for the reader.
     const count = (n: number): void => {
@@ -149,7 +136,7 @@ async function run(url: string): Promise<void> {
     try {
       const res = await fetch(
         requestUrl,
-        downloadFetchInit(abort.signal, credentials, headers),
+        downloadFetchInit(credentials, headers),
       );
       if (authenticationRequired(res)) {
         post({ type: "auth-required" });
@@ -178,10 +165,7 @@ async function run(url: string): Promise<void> {
       // transport one, so the session is re-checked before the error is reported.
       if (
         credentials === "include" &&
-        (await sessionAuthenticationRequired(
-          self.location.origin,
-          abort.signal,
-        ))
+        (await sessionAuthenticationRequired(self.location.origin))
       ) {
         post({ type: "auth-required" });
         return;
@@ -199,7 +183,6 @@ async function run(url: string): Promise<void> {
 function byobReader(
   body: ReadableStream<Uint8Array>,
 ): ReadableStreamBYOBReader | null {
-  if (tuning.reader !== "byob") return null;
   try {
     return body.getReader({ mode: "byob" });
   } catch {
@@ -217,7 +200,7 @@ async function readBody(
 ): Promise<void> {
   const byob = byobReader(body);
   if (byob) {
-    let buf = new ArrayBuffer(tuning.readBufBytes);
+    let buf = new ArrayBuffer(READ_BUF_BYTES);
     for (;;) {
       const chunk = await byob.read(new Uint8Array(buf));
       if (chunk.done) break;

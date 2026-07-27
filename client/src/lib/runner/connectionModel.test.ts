@@ -343,9 +343,254 @@ test("a ::wt selection shares its origin's availability", () => {
     latency: { selection: "auto", state: "checking" },
   };
 
+  // Availability describes the origin, so it is the same either way; the
+  // resolved target additionally needs a browser that can drive the session.
   const model = presentConnections(cfg, discovery, validation, null);
   expect(model.throughput.availability).toBe("advertised");
-  expect(model.throughput.target?.transport).toBe("webtransport");
+  expect(model.throughput.target).toBeNull();
+
+  const globals = globalThis as Record<string, unknown>;
+  const realWebTransport = globals.WebTransport;
+  globals.WebTransport = class {};
+  try {
+    const driveable = presentConnections(cfg, discovery, validation, null);
+    expect(driveable.throughput.availability).toBe("advertised");
+    expect(driveable.throughput.target?.transport).toBe("webtransport");
+  } finally {
+    if (realWebTransport === undefined)
+      Reflect.deleteProperty(globals, "WebTransport");
+    else globals.WebTransport = realWebTransport;
+  }
+});
+
+// A probe can commit to a transport the selector does not prefer: a WebTransport
+// ping bus that never establishes is degraded to the origin's WebSocket bus.
+// Naming the preferred mechanism and marking it verified reports a path the run
+// never used, which is the silent transport change the role failure is there to
+// prevent.
+test("the panel names the latency bus the probe committed to, not the preferred one", () => {
+  const globals = globalThis as Record<string, unknown>;
+  const realWebTransport = globals.WebTransport;
+  globals.WebTransport = class {};
+  try {
+    const cfg = config();
+    const discovery = Object.assign(
+      classifyTransportDiscovery(
+        [throughput],
+        [
+          { baseUrl: throughput.origin, transport: "websocket" },
+          { baseUrl: throughput.origin, transport: "webtransport" },
+        ],
+        throughput.origin,
+        true,
+        "h2",
+      ),
+      {
+        generation: "generation-a",
+        engineVersion: "test",
+        server: { name: "meter" },
+        fetchedAt: 1,
+      },
+    );
+    // What the run wanted, and what it proved.
+    expect(connectionRoleKey(cfg, "latency", discovery)).toContain("::wt");
+    const validation: ConnectionValidation = {
+      throughput: { selection: "auto", state: "stale" },
+      latency: {
+        selection: "auto",
+        identity: connectionRoleKey(cfg, "latency", discovery),
+        state: "verified",
+        verifiedAt: 2,
+      },
+    };
+    const infra: InfraInfo = {
+      clientIp: "192.0.2.2",
+      clientIpVersion: 4,
+      clientIpSource: "socket",
+      server: discovery.server,
+      preTestPingMs: 4,
+      engineVersion: "test",
+      discoveryGeneration: discovery.generation,
+      protocolNegotiated: "h2",
+      selectedLatencyTarget: throughput.origin,
+      selectedLatencyTransport: "websocket",
+    };
+
+    const presented = presentConnections(
+      cfg,
+      discovery,
+      validation,
+      infra,
+    ).latency;
+    expect(presented.target?.transport).toBe("websocket");
+    expect(presented.summary).toBe("WebSocket · TLS");
+  } finally {
+    if (realWebTransport === undefined)
+      Reflect.deleteProperty(globals, "WebTransport");
+    else globals.WebTransport = realWebTransport;
+  }
+});
+
+// The same degrade on the other role: a session target whose dial carries no
+// bytes falls back to the origin's fetch view, which a WebTransport-only origin
+// never advertised, so no discovery id names it.
+test("a throughput role degraded off its session target presents the fetch view", () => {
+  const cfg = config();
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [
+        {
+          baseUrl: "https://wt.test",
+          transport: "webtransport",
+          protocol: "http3",
+        },
+      ],
+      [],
+      "https://ui.test",
+      true,
+      "h2",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: {
+      selection: "auto",
+      identity: connectionRoleKey(cfg, "throughput", discovery),
+      state: "verified",
+      verifiedAt: 2,
+    },
+    latency: { selection: "auto", state: "stale" },
+  };
+  const infra: InfraInfo = {
+    clientIp: "192.0.2.2",
+    clientIpVersion: 4,
+    clientIpSource: "socket",
+    server: discovery.server,
+    preTestPingMs: 0,
+    engineVersion: "test",
+    discoveryGeneration: discovery.generation,
+    protocolNegotiated: "h3",
+    selectedThroughputTarget: "https://wt.test",
+    selectedThroughputProtocol: "http3",
+    selectedThroughputTransport: "fetch-stream",
+  };
+
+  const presented = presentConnections(
+    cfg,
+    discovery,
+    validation,
+    infra,
+  ).throughput;
+  expect(presented.target?.transport).toBe("fetch-stream");
+  expect(presented.summary).toBe("Fetch stream · HTTP/3 · TLS");
+});
+
+// The fetch fallback off a session origin negotiates whatever the TCP path
+// offers, which is not the HTTP/3 the session failed to reach. Carrying the
+// session's protocol into the fetch view names the one protocol known to be
+// wrong, while the drawer's observed-HTTP row reports the truth beside it.
+test("a degraded throughput role names the protocol its fetch view negotiated", () => {
+  const cfg = config();
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [
+        {
+          baseUrl: "https://wt.test",
+          transport: "webtransport",
+          protocol: "http3",
+        },
+      ],
+      [],
+      "https://ui.test",
+      true,
+      "h2",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: {
+      selection: "auto",
+      identity: connectionRoleKey(cfg, "throughput", discovery),
+      state: "verified",
+      verifiedAt: 2,
+    },
+    latency: { selection: "auto", state: "stale" },
+  };
+  const infra: InfraInfo = {
+    clientIp: "192.0.2.2",
+    clientIpVersion: 4,
+    clientIpSource: "socket",
+    server: discovery.server,
+    preTestPingMs: 0,
+    engineVersion: "test",
+    discoveryGeneration: discovery.generation,
+    protocolNegotiated: "h2",
+    selectedThroughputTarget: "https://wt.test",
+    selectedThroughputProtocol: "http2",
+    selectedThroughputTransport: "fetch-stream",
+  };
+
+  const presented = presentConnections(
+    cfg,
+    discovery,
+    validation,
+    infra,
+  ).throughput;
+  expect(presented.target?.transport).toBe("fetch-stream");
+  expect(presented.observedProtocol).toBe("http2");
+  expect(presented.summary).toBe("Fetch stream · HTTP/2 · TLS");
+});
+
+// bun's test environment has no WebTransport global, which is exactly the
+// browser the panel must not offer a session path to: the selector's last
+// resort is a WebTransport-only origin, and every run there is refused.
+test("the panel resolves no throughput path this browser cannot drive", () => {
+  const cfg = config();
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [
+        {
+          baseUrl: "https://wt.test",
+          transport: "webtransport",
+          protocol: "http3",
+        },
+      ],
+      [],
+      "https://ui.test",
+      true,
+      "h2",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: { selection: "auto", state: "checking" },
+    latency: { selection: "auto", state: "stale" },
+  };
+
+  const presented = presentConnections(
+    cfg,
+    discovery,
+    validation,
+    null,
+  ).throughput;
+  expect(presented.target).toBeNull();
+  expect(presented.availability).toBe("not-advertised");
+  expect(presented.summary).toBe("Selection unresolved");
 });
 
 test("validation retries only the changed role and carries an aborted stale role", () => {
@@ -447,7 +692,14 @@ test("the panel names a failure rather than reading as a check", () => {
   );
   expect(panelReadiness(present("failed", "verified"), true)).toBe("failed");
   expect(panelReadiness(present("verified", "stale"), true)).toBe("stale");
-  expect(panelReadiness(present("checking", "failed"), true)).toBe("checking");
+  // Retrying one role puts it in flight while the other stays failed. The badge
+  // is the panel's one summary, so the failure outranks the check: a spinner
+  // there says the path may yet come good, and it will not.
+  expect(panelReadiness(present("checking", "failed"), true)).toBe("failed");
+  expect(panelReadiness(present("failed", "checking"), true)).toBe("failed");
+  // Below a failure, a check in flight outranks a role merely owed one: the
+  // check is what will resolve it.
+  expect(panelReadiness(present("checking", "stale"), true)).toBe("checking");
   // A latency path the run never opens cannot hold the panel back.
   expect(panelReadiness(present("verified", "failed"), false)).toBe("verified");
 });

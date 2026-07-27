@@ -317,13 +317,27 @@ function advertisedById<T extends { id: string }>(
 }
 
 /** Resolve one bulk transfer path. A selection names one mechanism on one
- *  origin; automatic states its own preference below. */
+ *  origin; automatic states its own preference below. `webTransport` is what
+ *  this client can actually drive, which gates every session path.
+ *
+ *  It defaults on, unlike `selectLatencyTarget`'s: the runner resolves first and
+ *  refuses second, so its "webtransport is not supported by this client" names
+ *  the mechanism instead of degrading to "target unavailable". Callers that
+ *  present a path rather than drive one pass the browser's real capability, so
+ *  no card offers what the runner would refuse. */
 export function selectThroughputTarget(
   discovery: TransportDiscovery,
   selection: ThroughputTargetSelection,
+  webTransport = true,
 ): FetchThroughputTarget | WebTransportThroughputTarget | null {
+  const runnable = (
+    target: FetchThroughputTarget | WebTransportThroughputTarget | null,
+  ): FetchThroughputTarget | WebTransportThroughputTarget | null =>
+    target && (webTransport || target.transport === "fetch-stream")
+      ? target
+      : null;
   if (selection !== "current" && selection !== "auto")
-    return advertisedById(discovery.throughput, selection);
+    return runnable(advertisedById(discovery.throughput, selection));
   const advertised = Object.values(discovery.throughput).filter(
     (entry) => entry.state === "advertised",
   );
@@ -336,13 +350,16 @@ export function selectThroughputTarget(
     fetch.find((target) => target.origin === discovery.pageOrigin) ??
     (fetch.length === 1 ? fetch[0] : null);
   if (preferred) return preferred;
-  // A WebTransport-only origin is the last resort.
+  // A WebTransport-only origin is the last resort, and `runnable` is what keeps
+  // it to a client that can drive the session.
   const wtOnly = advertised.filter(
     (entry) =>
       !targetOfKind(entry, "fetch-stream") &&
       targetOfKind(entry, "webtransport"),
   );
-  return wtOnly.length === 1 ? targetOfKind(wtOnly[0], "webtransport")! : null;
+  return wtOnly.length === 1
+    ? runnable(targetOfKind(wtOnly[0], "webtransport")!)
+    : null;
 }
 
 /** The fetch view of the origin a WebTransport target sits on: its advertised
@@ -362,7 +379,10 @@ export function fetchViewOfOrigin(
 }
 
 /** The fetch-stream view of a WebTransport-only origin: its HTTP routes serve
- *  probe, upload minting, and the fetch fallback lanes. */
+ *  probe, upload minting, and the fetch fallback lanes. The session names
+ *  HTTP/3, but these lanes are ordinary fetches whose version the browser
+ *  negotiates — often the h2 over TCP a blocked UDP path degraded to, which is
+ *  the one protocol this view must not claim. */
 export function fetchViewOfWebTransport(
   target: WebTransportThroughputTarget,
 ): FetchThroughputTarget {
@@ -370,7 +390,7 @@ export function fetchViewOfWebTransport(
     id: target.origin,
     origin: target.origin,
     transport: "fetch-stream",
-    protocol: "http3",
+    protocol: "negotiated",
     tls: target.tls,
     routes: {
       probe: ROUTES.probe,

@@ -124,7 +124,6 @@ test("a refused WebTransport check is re-dialled on the next probe, so Retry wor
       phase: "idle",
       elapsed: 0,
       emit() {},
-      reportTransport() {},
       push() {},
       stall() {},
       resume() {},
@@ -224,6 +223,96 @@ test("a session that establishes but carries no bytes is not Ready", async () =>
     );
     expect(closes).toBe(2); // one per established session, both released
   } finally {
+    globalThis.fetch = realFetch;
+    performance.getEntriesByName = realEntries;
+    if (realWebTransport === undefined) delete globals.WebTransport;
+    else globals.WebTransport = realWebTransport;
+    if (realLocation)
+      Object.defineProperty(globalThis, "location", realLocation);
+  }
+});
+
+// The guard in front of a session dial has to test the kind that was actually
+// advertised. Both WebTransport rows share one `usable` today, so a literal
+// reads correct; a kind whose API this client lacks would be dialled anyway.
+test("a session kind this client cannot drive fails its role before any dial", async () => {
+  Object.assign(globalThis as Record<string, unknown>, {
+    __GM_DEFAULT_ENGINE__: "real",
+    __GM_ALLOW_DUMMY__: false,
+    __GM_DEV_TOOLS__: false,
+    __GM_BUILD_LABEL__: "test",
+    __GM_CLIENT_VERSION__: "0.0.0-test",
+  });
+  const { RealBackend } = await import("./RealRunner");
+  const { TRANSPORTS } = await import("./real/transports");
+  const datagramPreflight = {
+    ...preflight,
+    capabilities: {
+      throughput: [
+        {
+          baseUrl: WT_ORIGIN,
+          transport: "webtransport-datagram",
+          protocol: "http3",
+        },
+      ],
+      latency: [],
+    },
+  };
+  const realFetch = globalThis.fetch;
+  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const realEntries = performance.getEntriesByName.bind(performance);
+  const globals = globalThis as Record<string, unknown>;
+  const realWebTransport = globals.WebTransport;
+  const realUsable = TRANSPORTS["webtransport-datagram"].usable;
+  try {
+    // The session API is present, so the streams kind stays drivable; only the
+    // datagram kind is not, which is the split a literal cannot see.
+    globals.WebTransport = FakeWebTransport;
+    TRANSPORTS["webtransport-datagram"].usable = () => false;
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: new URL(`${WT_ORIGIN}/`),
+    });
+    performance.getEntriesByName = () => [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/preflight")) return Response.json(datagramPreflight);
+      if (url.includes("/probe"))
+        return Response.json({
+          clientIp: "127.0.0.1",
+          clientIpVersion: 4,
+          clientIpSource: "socket",
+          protocolNegotiated: "h3",
+        });
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    const backend = new RealBackend();
+    backend.attach({
+      config,
+      phase: "idle",
+      elapsed: 0,
+      emit() {},
+      push() {},
+      stall() {},
+      resume() {},
+      fail() {},
+      failStage() {},
+    } as unknown as CoreHost);
+
+    const dialled = dials.length;
+    await expect(
+      backend.probe({
+        ...config,
+        transports: {
+          throughputTarget: `${WT_ORIGIN}::wtdg`,
+          latencyTarget: "auto",
+        },
+      }),
+    ).rejects.toThrow(/webtransport-datagram is not supported by this client/);
+    expect(dials.length).toBe(dialled);
+  } finally {
+    TRANSPORTS["webtransport-datagram"].usable = realUsable;
     globalThis.fetch = realFetch;
     performance.getEntriesByName = realEntries;
     if (realWebTransport === undefined) delete globals.WebTransport;

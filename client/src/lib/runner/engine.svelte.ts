@@ -447,5 +447,10 @@ export function teardownRunner() {
   unsubscribe?.();
   unsubscribe = null;
   store.reset();
+  // Server-scoped evidence, cleared with the server binding rather than in
+  // `store.reset()`: a run resets the store but keeps talking to the same
+  // server, and several surfaces read `store.infra` without the connection
+  // presentation's generation gate.
   store.transportDiscovery = null;
+  store.infra = null;
 }

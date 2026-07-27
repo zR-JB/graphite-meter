@@ -22,7 +22,6 @@ import {
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 import { incompressibleBlock } from "./payload";
-import { tuned, DEFAULT_TUNING, type Tuning } from "./tuning";
 
 /** `debug`/`id` drive verbose per-stream logging only. The lane is stopped by
  *  terminating the worker, so there is no shutdown message. */
@@ -34,7 +33,6 @@ type InMsg = {
   streams?: number;
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
-  tune?: Partial<Tuning>;
 };
 /** `alive` marks one POST the server drained, proving the lane is live. It
  *  carries no byte count: fetch has no upload-progress events, and the
@@ -55,51 +53,28 @@ const MIN_POOL_BYTES = 2 * 1024 * 1024;
  *  evidence of a large device: Chromium reports navigator.deviceMemory, so this
  *  is the Firefox/Safari tier, phones included. */
 const UNKNOWN_DEVICE_POOL_BYTES = 128 * 1024 * 1024;
-/** A streamed body cycles one small pool: there is no POST size to reserve for. */
-const STREAM_POOL_BYTES = 8 * 1024 * 1024;
+/** Upload reservoir, divided across the lanes and also the sizer's ceiling.
+ *  Worth +10.9% at 256 MiB over 64 MiB; see docs/BENCHMARKS.md. */
+const UPLOAD_TOTAL_POOL_BYTES = 256 * 1024 * 1024;
+/** Wall time each POST aims to span. */
+const TARGET_POST_MS = 500;
+/** Smallest POST, below which per-request overhead dominates. */
+const MIN_POST_BYTES = 128 * 1024;
 
-/** A streamed body reserves nothing: it cycles one small pool instead of sizing
- *  POSTs out of a reservoir, so the device-scaled budget does not apply. */
-export function bodyPoolBytes(
-  body: Tuning["uploadBody"],
-  streams: number,
-  deviceMemory?: number,
-  totalPoolBytes?: number,
-): number {
-  return body === "stream"
-    ? STREAM_POOL_BYTES
-    : uploadPoolBytes(streams, deviceMemory, totalPoolBytes);
-}
-
-/** Whether fetch accepts a ReadableStream request body. Chromium only, and it
- *  refuses one over HTTP/1.1, so a caller must also be on h2 or h3. */
-export function requestStreamsSupported(): boolean {
-  try {
-    let asked = false;
-    const req = new Request("https://gm.invalid/", {
-      method: "POST",
-      body: new ReadableStream(),
-      get duplex() {
-        asked = true;
-        return "half";
-      },
-    } as RequestInit);
-    return asked && !req.headers.has("Content-Type");
-  } catch {
-    return false;
-  }
-}
+/** How the POST body reaches fetch. A Blob slice is a view fetch reads through;
+ *  an ArrayBuffer is copied per POST, which is the cost the Blob path avoids. */
+type UploadBody = "blob" | "arrayBuffer";
+const UPLOAD_BODY: UploadBody = "blob";
 
 /* ---- Closed-loop POST sizing, per worker (see autosize.ts) ---- */
 /** The POST target is about ACCURACY: the request/response turnaround sits
  *  inside the server's elapsed-time denominator, so a too-short POST lowers the
  *  measured rate. Interleaved lanes cover each other's turnaround.
  *  maxBytes is the pool size, set on `start`. */
-let tuning = tuned();
 const sizer: SizerCfg = {
-  targetMs: tuning.targetPostMs,
-  minBytes: tuning.minPostBytes,
-  maxBytes: tuning.minPostBytes,
+  targetMs: TARGET_POST_MS,
+  minBytes: MIN_POST_BYTES,
+  maxBytes: MIN_POST_BYTES,
   alpha: 0.3,
   stepUp: 2,
   stepDown: 0.5,
@@ -109,7 +84,7 @@ const sizer: SizerCfg = {
 export function uploadPoolBytes(
   streams: number,
   deviceMemory?: number,
-  totalPoolBytes = tuning.uploadTotalPoolBytes,
+  totalPoolBytes = UPLOAD_TOTAL_POOL_BYTES,
 ): number {
   streams = Math.max(1, streams);
   const reservoir =
@@ -136,9 +111,6 @@ export function recoverableStatus(status: number): boolean {
   );
 }
 
-/** Per-POST controller, supplying `fetch` with a signal. Nothing aborts it: the
- *  lane is stopped by terminating the worker, which drops the request with it. */
-let abort: AbortController | null = null;
 /** The reused incompressible pool, built on first start. A Blob slice is a view
  *  fetch reads through, which is why Blob is the default. */
 let pool: Blob | Uint8Array<ArrayBuffer> | null = null;
@@ -146,10 +118,10 @@ let pool: Blob | Uint8Array<ArrayBuffer> | null = null;
 let poolBytes = 0;
 /** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the
  *  autosizer's upper clamp. */
-let poolTargetBytes = tuning.uploadTotalPoolBytes;
+let poolTargetBytes = UPLOAD_TOTAL_POOL_BYTES;
 /** Bytes the NEXT POST sends, the closed-loop variable. Starts at the minimum
  *  for a fast first sample, then tracks the target times this lane's rate. */
-let nextBytes = tuning.minPostBytes;
+let nextBytes = MIN_POST_BYTES;
 /** This lane's smoothed throughput (bytes/sec); 0 until the first POST completes. */
 let rateEwma = 0;
 
@@ -166,22 +138,11 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     streamId = msg.id ?? 0;
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers ?? {};
-    // Folded to DEFAULT_TUNING unless the build opts into the bench surface
-    // (GM_CLIENT_BENCH=1), which also eliminates the merge and msg.tune.
-    tuning = __GM_BENCH__ ? tuned(msg.tune) : DEFAULT_TUNING;
-    sizer.targetMs = tuning.targetPostMs;
-    sizer.minBytes = tuning.minPostBytes;
-    const deviceMemory =
-      tuning.deviceMemory ??
-      (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-    poolTargetBytes = bodyPoolBytes(
-      tuning.uploadBody,
-      msg.streams ?? 1,
-      deviceMemory,
-      tuning.uploadTotalPoolBytes,
-    );
+    const deviceMemory = (navigator as unknown as { deviceMemory?: number })
+      .deviceMemory;
+    poolTargetBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
     sizer.maxBytes = poolTargetBytes; // the pool is the size ceiling
-    nextBytes = Math.min(tuning.minPostBytes, poolTargetBytes);
+    nextBytes = Math.min(MIN_POST_BYTES, poolTargetBytes);
     rateEwma = 0;
     dbg.reset();
     void run(msg.url);
@@ -192,7 +153,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
  *  The Blob copies each part into its own backing store, so the construction
  *  heap peaks at ~block + pool. Every POST then slices a view of it. */
 function buildPool(): void {
-  const wantBlob = tuning.uploadBody === "blob";
+  const wantBlob = UPLOAD_BODY === "blob";
   if (
     pool &&
     poolBytes === poolTargetBytes &&
@@ -234,88 +195,26 @@ function bodyFor(sentBytes: number): BodyInit {
  *  a failed release costs at most one connection. */
 async function drainForKeepAlive(res: Response): Promise<void> {
   try {
-    if (tuning.uploadDrain === "cancel") await res.body?.cancel();
-    else await res.arrayBuffer();
+    await res.arrayBuffer();
   } catch {
     /* the POST already completed */
   }
 }
 
-/** One POST whose body never ends, so no request turnaround idles the wire.
- *  `pull` is the backpressure: it fires only when fetch wants more bytes, and
- *  each chunk is a view on the reused pool rather than a copy. */
-async function streamPost(url: string): Promise<void> {
-  const src = pool as Uint8Array<ArrayBuffer>;
-  let off = 0;
-  let aliveAt = 0;
-  const body = new ReadableStream<Uint8Array>({
-    pull(c) {
-      const n = Math.min(tuning.writeChunkBytes, src.byteLength);
-      if (off + n > src.byteLength) off = 0;
-      c.enqueue(src.subarray(off, off + n));
-      off += n;
-      // A pull is proof of life; the lane only needs it often enough to reset
-      // the restart counter, not once per chunk.
-      const now = performance.now();
-      if (now - aliveAt >= 1000) {
-        aliveAt = now;
-        post({ type: "alive" });
-      }
-    },
-  });
-  abort = new AbortController();
-  const res = await fetch(url, {
-    method: "POST",
-    body,
-    duplex: "half",
-    signal: abort.signal,
-    cache: "no-store",
-    headers: { ...headers, "Content-Type": "application/octet-stream" },
-    credentials,
-    redirect: redirectForCredentials(credentials),
-  } as RequestInit);
-  if (authenticationRequired(res)) return void post({ type: "auth-required" });
-  await drainForKeepAlive(res);
-  if (!res.ok)
-    post({
-      type: "error",
-      recoverable: recoverableStatus(res.status),
-      detail: `HTTP ${res.status}`,
-    });
-}
-
-/** Drive the lane for the whole stage: one endless streamed body, or POSTs of
- *  adaptively-sized pool slices in a loop. Mirrors download-worker.ts's
- *  re-fetch loop, and a network error ends the lane (RealBackend restarts it).
- *  Each completed POST resizes the NEXT one. */
+/** Drive the lane for the whole stage: POSTs of adaptively-sized pool slices in
+ *  a loop. Mirrors download-worker.ts's re-fetch loop, and a network error ends
+ *  the lane (RealBackend restarts it). Each completed POST resizes the NEXT one. */
 async function run(url: string): Promise<void> {
   buildPool();
   if (!pool) return;
 
-  if (tuning.uploadBody === "stream") {
-    if (!requestStreamsSupported())
-      return void post({
-        type: "error",
-        recoverable: false,
-        detail: "request streaming unsupported",
-      });
-    try {
-      await streamPost(url);
-    } catch (err) {
-      post({ type: "error", recoverable: true, detail: String(err) });
-    }
-    return;
-  }
-
   for (;;) {
-    abort = new AbortController();
     const sentBytes = nextBytes;
     const postStart = performance.now();
     try {
       const res = await fetch(url, {
         method: "POST",
         body: bodyFor(sentBytes),
-        signal: abort.signal,
         cache: "no-store",
         headers: { ...headers, "Content-Type": "application/octet-stream" },
         credentials,
@@ -359,10 +258,7 @@ async function run(url: string): Promise<void> {
       // transport one, so the session is re-checked before the error is reported.
       if (
         credentials === "include" &&
-        (await sessionAuthenticationRequired(
-          self.location.origin,
-          abort.signal,
-        ))
+        (await sessionAuthenticationRequired(self.location.origin))
       ) {
         post({ type: "auth-required" });
         return;

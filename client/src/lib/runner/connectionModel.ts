@@ -13,6 +13,7 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import {
+  fetchViewOfWebTransport,
   locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
@@ -95,15 +96,50 @@ function selectTarget(
   role: ConnectionRole,
   selection: string,
 ): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
-  // The panel must resolve what the runner resolves, so it applies the same
-  // browser-capability gate rather than the parameter's off default.
+  // The panel must resolve what the runner resolves, so both roles apply the
+  // same browser-capability gate rather than either parameter's default.
   return role === "throughput"
-    ? selectThroughputTarget(discovery, selection)
+    ? selectThroughputTarget(
+        discovery,
+        selection,
+        typeof WebTransport !== "undefined",
+      )
     : selectLatencyTarget(
         discovery,
         selection,
         typeof WebTransport !== "undefined",
       );
+}
+
+/** The target a probe committed to for `role`, read off its evidence instead of
+ *  re-running the selector. A probe can commit to something the selector does
+ *  not prefer: a WebTransport ping bus that never establishes reselects the
+ *  origin's WebSocket bus, and a session target that carries no bytes falls back
+ *  to that origin's fetch view. Null when the evidence names nothing this
+ *  discovery carries, which leaves the caller on the selector. */
+function committedTarget(
+  discovery: TransportDiscovery,
+  role: ConnectionRole,
+  infra: InfraInfo,
+): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
+  if (role === "latency") {
+    const id = infra.selectedLatencyTarget;
+    return id ? (locateTarget(discovery.latency, id)?.target ?? null) : null;
+  }
+  const id = infra.selectedThroughputTarget;
+  if (!id) return null;
+  const advertised = locateTarget(discovery.throughput, id)?.target;
+  if (advertised) return advertised;
+  // A degrade off a session-only origin commits to a fetch view that origin
+  // never advertised, so no id names it; the committed id is the origin itself.
+  // Every session target on it yields the same view.
+  const session = discovery.throughput[id]?.targets.find(
+    (target): target is WebTransportThroughputTarget =>
+      target.transport !== "fetch-stream",
+  );
+  return infra.selectedThroughputTransport === "fetch-stream" && session
+    ? fetchViewOfWebTransport(session)
+    : null;
 }
 
 export function validationRoles(
@@ -221,7 +257,9 @@ export function presentConnections(
 ): Record<ConnectionRole, ConnectionPresentation> {
   const make = (role: ConnectionRole): ConnectionPresentation => {
     const selection = connectionSelection(config, role);
-    const target = discovery ? selectTarget(discovery, role, selection) : null;
+    const preferred = discovery
+      ? selectTarget(discovery, role, selection)
+      : null;
     const status = validation[role];
     const evidenceMatches = status.identity
       ? status.identity === connectionRoleKey(config, role, discovery)
@@ -231,6 +269,12 @@ export function presentConnections(
       evidenceMatches &&
       infra?.discoveryGeneration === discovery?.generation;
     const evidence = currentEvidence ? infra : null;
+    // Evidence names the path the run drove; the selector names the one it
+    // wanted. They differ whenever a role degraded, and the panel reports the
+    // former — a preferred transport shown as verified denies the degrade.
+    const target =
+      (discovery && evidence && committedTarget(discovery, role, evidence)) ??
+      preferred;
     const observedProtocol =
       evidence && role === "throughput"
         ? evidence.selectedThroughputProtocol
@@ -287,7 +331,10 @@ export function presentConnections(
 }
 
 /** The one state a panel covering both roles reports: the worst across the
- *  roles the run opens. A failure must not read as a check still in flight. */
+ *  roles the run opens. A failure must not read as a check still in flight —
+ *  retrying one role while the other is failed is exactly when the badge would
+ *  otherwise downgrade a dead path to a spinner. Below a failure the in-flight
+ *  check outranks a role merely owed one, because it is what resolves it. */
 export function panelReadiness(
   connections: Record<ConnectionRole, ConnectionPresentation>,
   latencyEnabled: boolean,
@@ -296,7 +343,7 @@ export function panelReadiness(
     connections.throughput.validation,
     ...(latencyEnabled ? [connections.latency.validation] : []),
   ];
-  for (const state of ["checking", "failed", "stale"] as const)
+  for (const state of ["failed", "checking", "stale"] as const)
     if (states.includes(state)) return state;
   return "verified";
 }

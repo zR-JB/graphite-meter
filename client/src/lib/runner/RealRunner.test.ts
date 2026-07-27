@@ -625,7 +625,6 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         if (event.type === "transportDiscovery")
           discoveries.push(event.discovery);
       },
-      reportTransport() {},
       fail() {},
       failStage(_stage, _reason, message) {
         failures.push(message);
@@ -946,6 +945,80 @@ const probeConfig = (latency: boolean): RunnerConfig => ({
   visualization: { throughputMaxBytesPerSec: "auto" },
 });
 
+// `selectThroughputTarget`'s `webTransport` parameter defaults on where
+// `selectLatencyTarget`'s defaults off, and #selectThroughputRole is the reason:
+// it wants the raw advertisement so it can resolve first and refuse second,
+// naming the mechanism. Feeding it the browser's real capability instead — the
+// symmetry a reader is tempted by — returns null for a WebTransport-only origin
+// and degrades the refusal to "auto target unavailable", which blames the
+// server for a client limitation. Both halves are asserted so the trade is
+// visible: what the runner is handed, and what the tempting change would hand it.
+test("a WebTransport-less browser is refused by mechanism, not by availability", async () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://wt.meter.test",
+        transport: "webtransport",
+        protocol: "http3",
+      },
+    ],
+    [],
+    "http://meter.test:7246",
+    false,
+    "http/1.1",
+  );
+  // What #selectThroughputRole is handed today, and with an explicit `true`.
+  expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
+    "webtransport",
+  );
+  // What passing `transportRunnable("webtransport")` would hand it in a browser
+  // without the API: nothing to name, so the throw upstream of the refusal wins.
+  expect(selectThroughputTarget(catalog, "auto", false)).toBeNull();
+
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const realWebTransport = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "WebTransport",
+  );
+  Reflect.deleteProperty(globals, "WebTransport");
+  const restore = stubProbeEnvironment((async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/preflight"))
+      return Response.json({
+        server: { name: "test" },
+        engineVersion: "test",
+        generation: "a",
+        capabilities: {
+          throughput: [
+            {
+              baseUrl: "https://wt.meter.test",
+              transport: "webtransport",
+              protocol: "http3",
+            },
+          ],
+          latency: [],
+        },
+      });
+    if (url.includes("/probe")) return Response.json(pathProbeDocument);
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch);
+  try {
+    const { RealBackend } = await import("./RealRunner");
+    const backend = new RealBackend();
+    backend.attach({ emit() {} } as unknown as CoreHost);
+    await expect(
+      backend.probe({
+        ...probeConfig(false),
+        transports: { throughputTarget: "auto", latencyTarget: "auto" },
+      }),
+    ).rejects.toThrow(/^webtransport is not supported by this client$/);
+  } finally {
+    restore();
+    if (realWebTransport)
+      Object.defineProperty(globalThis, "WebTransport", realWebTransport);
+  }
+});
+
 // engine.svelte.ts reads a discovery generation change as a server swap: it
 // drops the prepared selection and marks both roles stale. A superseded probe
 // emitting on its way out would re-open the validation loop the newer probe
@@ -1073,6 +1146,153 @@ test("a hidden page parks the keepalive its probe started, and gets it back on v
     restore();
   }
 });
+
+/** One origin advertising both ping buses next to a fetch throughput target:
+ *  the shape a proxy serving TCP and UDP on one hostname takes. */
+const bothBusesDocument = {
+  server: { name: "test" },
+  engineVersion: "test",
+  generation: "a",
+  capabilities: {
+    throughput: [
+      {
+        baseUrl: "https://meter.test",
+        transport: "fetch-stream",
+        protocol: "http2",
+      },
+    ],
+    latency: [
+      { baseUrl: "https://meter.test", transport: "websocket" },
+      { baseUrl: "https://meter.test", transport: "webtransport" },
+    ],
+  },
+};
+
+// The latency channel check degrades a WebTransport ping bus that never
+// establishes to the origin's WebSocket bus. A throughput-role probe does not
+// run that check — it carries the latency role's evidence over — so it must not
+// re-run the selector either: re-selecting rebound the run to the bus the check
+// had just proved dead, and the latency stage then sat out its establish budget
+// and was skipped.
+test("a throughput-role probe keeps the latency bus the last check committed to", async () => {
+  const pingStarts: string[] = [];
+  class PingBusWorker {
+    static live: PingBusWorker[] = [];
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    transport = "";
+
+    constructor() {
+      PingBusWorker.live.push(this);
+    }
+
+    postMessage(message: { type: string; transport?: string }): void {
+      if (message.type !== "start") return;
+      this.transport = message.transport ?? "";
+      pingStarts.push(this.transport);
+      // The WebTransport bus never answers, the shape of a path without UDP.
+      if (this.transport === "websocket")
+        queueMicrotask(() => this.emit({ type: "ready" }));
+    }
+
+    terminate(): void {}
+
+    emit(data: unknown): void {
+      this.onmessage?.({ data } as MessageEvent);
+    }
+  }
+
+  const buildGlobals = globalThis as typeof globalThis &
+    Record<string, unknown>;
+  Object.assign(buildGlobals, BUILD_TOKENS);
+  const realFetch = globalThis.fetch;
+  const realWorker = globalThis.Worker;
+  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+  const realEntries = performance.getEntriesByName.bind(performance);
+  const globals = globalThis as Record<string, unknown>;
+  const realWebTransport = globals.WebTransport;
+  try {
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: new URL("https://meter.test/"),
+    });
+    performance.getEntriesByName = () =>
+      [{ nextHopProtocol: "h2" }] as unknown as PerformanceEntry[];
+    globalThis.Worker = PingBusWorker as unknown as typeof Worker;
+    // Never dialled: it is what makes the advertised WebTransport bus
+    // selectable at all.
+    globals.WebTransport = class {};
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/preflight")) return Response.json(bothBusesDocument);
+      if (url.includes("/probe")) return Response.json(pathProbeDocument);
+      throw new Error(`unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    const { RealBackend } = await import("./RealRunner");
+    const config = probeConfig(true);
+    config.stages.download = false;
+    config.transports.throughputTarget = "https://meter.test";
+    const backend = new RealBackend();
+    backend.attach({
+      config,
+      emit() {},
+      failStage() {},
+      ingestLatency() {},
+    } as unknown as CoreHost);
+
+    // Real time has to pass here: the readiness budget the WebTransport bus
+    // blows through is a timer, and the keepalive's RTT collection has nothing
+    // observable to wait on, so its samples are re-offered every turn.
+    let settled = false;
+    const degrading = backend.probe(config).then(
+      (info) => {
+        settled = true;
+        return info;
+      },
+      (error: unknown) => {
+        settled = true;
+        throw error;
+      },
+    );
+    for (let turn = 0; turn < 1000 && !settled; turn++) {
+      const bus = PingBusWorker.live.at(-1);
+      if (bus?.transport === "websocket")
+        bus.emit({
+          type: "samples",
+          samples: Array.from({ length: 5 }, () => ({ rtt: 2, lost: false })),
+        });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect((await degrading).selectedLatencyTransport).toBe("websocket");
+
+    const throughputRole = await backend.probe(config, undefined, "throughput");
+    expect(throughputRole.selectedLatencyTransport).toBe("websocket");
+
+    // What the run actually primes, which is the sample source the latency
+    // stage lives or dies by.
+    backend.onRunStart(config);
+    backend.onStageBegin({
+      stage: "latency",
+      transfer: [],
+      loadedLatency: false,
+    });
+    expect(pingStarts.at(-1)).toBe("websocket");
+    backend.dispose();
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.Worker = realWorker;
+    performance.getEntriesByName = realEntries;
+    if (realWebTransport === undefined)
+      Reflect.deleteProperty(globals, "WebTransport");
+    else globals.WebTransport = realWebTransport;
+    if (realLocation)
+      Object.defineProperty(globalThis, "location", realLocation);
+    else Reflect.deleteProperty(globalThis, "location");
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(buildGlobals, key);
+  }
+}, 15000);
 
 // The transfer path dispatches on what the registry says, so a kind missing a
 // row would fall through to fetch and measure the wrong thing. Record<

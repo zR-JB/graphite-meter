@@ -69,16 +69,24 @@ export function throughputOptionView(
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
   if (selection === "current" || selection === "auto") {
-    const target = selectThroughputTarget(discovery, selection);
-    return target
-      ? {
-          disabled: false,
-          detail: automaticDetail(target, discovery, "throughput"),
-        }
-      : {
-          disabled: true,
-          detail: "No offered target matches this page origin and protocol.",
-        };
+    // Resolve exactly what the runner resolves, so the automatic card never
+    // offers the session path a WebTransport-less browser would refuse.
+    const runnable = typeof WebTransport !== "undefined";
+    const target = selectThroughputTarget(discovery, selection, runnable);
+    if (target)
+      return {
+        disabled: false,
+        detail: automaticDetail(target, discovery, "throughput"),
+      };
+    // Automatic's last resort is a session origin: say which of the two reasons
+    // left the card unresolved rather than blaming the server for both.
+    const refused = !runnable && selectThroughputTarget(discovery, selection);
+    return {
+      disabled: true,
+      detail: refused
+        ? NO_BROWSER_WT
+        : "No offered target matches this page origin and protocol.",
+    };
   }
   const found = locateTarget(discovery.throughput, selection);
   if (found && needsMissingWebTransport(found.target.transport))

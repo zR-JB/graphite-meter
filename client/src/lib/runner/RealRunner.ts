@@ -229,7 +229,12 @@ export class RealBackend implements RunnerBackend {
       previous,
       role,
     );
-    const needsLatency = this.#selectLatencyRole(config, discovery, role);
+    const needsLatency = this.#selectLatencyRole(
+      config,
+      discovery,
+      previous,
+      role,
+    );
 
     const { pathProbe, firstHopProtocol } = await this.#probeThroughputPath(
       selected,
@@ -352,15 +357,20 @@ export class RealBackend implements RunnerBackend {
     role?: ConnectionRole,
   ): FetchThroughputTarget {
     const selection = config.transports.throughputTarget;
-    const advertisedTarget = selectThroughputTarget(discovery, selection);
+    // Unfiltered on purpose, which is why this parameter defaults on where
+    // `selectLatencyTarget`'s defaults off: resolving first and refusing below
+    // names the mechanism. Passing the browser's real capability here — the
+    // symmetry the two calls in #selectLatencyRole invite — would return null
+    // for a WebTransport-only origin and degrade that to "target unavailable".
+    const advertisedTarget = selectThroughputTarget(discovery, selection, true);
     if (!advertisedTarget)
       throw new TransportUnavailableError(`${selection} target unavailable`, {
         role: "throughput",
       });
     if (advertisedTarget.transport !== "fetch-stream") {
-      if (!transportRunnable("webtransport"))
+      if (!transportRunnable(advertisedTarget.transport))
         throw new TransportUnavailableError(
-          "webtransport is not supported by this client",
+          `${advertisedTarget.transport} is not supported by this client`,
           { role: "throughput" },
         );
       this.#wtThroughputTarget = advertisedTarget;
@@ -385,17 +395,35 @@ export class RealBackend implements RunnerBackend {
   }
 
   /** Bind the latency role, and report whether this run needs one at all: the
-   *  latency stage, or a transfer stage measuring loaded latency. */
+   *  latency stage, or a transfer stage measuring loaded latency. A
+   *  throughput-role probe reuses what the latency role committed to, the way
+   *  it reuses that role's /probe evidence. */
   #selectLatencyRole(
     config: RunnerConfig,
     discovery: TransportDiscovery,
+    previous: InfraInfo | null,
     role?: ConnectionRole,
   ): boolean {
-    this.#latencyTarget = selectLatencyTarget(
-      discovery,
-      config.transports.latencyTarget,
-      transportRunnable("webtransport"),
-    );
+    // A throughput-role probe does not run #verifyLatencyChannel, so it must
+    // not re-select either: the check may have degraded off the transport the
+    // selector prefers, and re-running the selector would rebind the run to a
+    // bus already proven dead. The caller clears `role` unless the generation
+    // still matches, so a carried id names a target this discovery advertises.
+    const committed =
+      role === "throughput" && previous?.selectedLatencyTarget
+        ? selectLatencyTarget(
+            discovery,
+            previous.selectedLatencyTarget,
+            transportRunnable("webtransport"),
+          )
+        : null;
+    this.#latencyTarget =
+      committed ??
+      selectLatencyTarget(
+        discovery,
+        config.transports.latencyTarget,
+        transportRunnable("webtransport"),
+      );
     const needsLatency =
       config.stages.latency ||
       (!config.skipLoadedLatencyWhenStageOff &&

@@ -1,7 +1,6 @@
 // One seam for the byte lanes. A transfer direction drives lanes through this
 // interface and never learns which transport is underneath.
 import type { FlowDirection } from "../contract";
-import type { Tuning } from "../workers/tuning";
 import type { ProgressEvent } from "../workers/progressFeed";
 import {
   downloadWorker,
@@ -47,8 +46,6 @@ export interface FetchLaneOptions {
   credentials: RequestCredentials;
   chunk: boolean;
   debug: boolean;
-  /** Overrides the worker's measurement constants; absent means the defaults. */
-  tune?: Partial<Tuning>;
 }
 
 export interface SessionLaneOptions {
@@ -65,8 +62,6 @@ export interface SessionLaneOptions {
   progressUrl?: string;
   headers?: Record<string, string>;
   credentials?: RequestCredentials;
-  /** Overrides the worker's measurement constants; absent means the defaults. */
-  tune?: Partial<Tuning>;
 }
 
 type WorkerMsg =
@@ -117,7 +112,6 @@ export function fetchLane(
         credentials: opts.credentials,
         headers: opts.headers,
         chunk: opts.chunk,
-        tune: opts.tune,
       });
       worker = w;
     },

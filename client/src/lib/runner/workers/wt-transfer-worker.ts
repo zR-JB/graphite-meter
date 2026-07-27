@@ -11,16 +11,12 @@
  * worker reads incoming streams for both and only opens the upload lanes.
  * ============================================================ */
 
-import { mintWtToken, withWtToken, type WtMint } from "./wtToken";
+import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
-import {
-  readProgressFeed,
-  type ProgressEvent,
-  type ProgressFeedState,
-} from "./progressFeed";
+import { readProgressFeed, type ProgressEvent } from "./progressFeed";
 import { ProgressWindow, type ProgressDelta } from "./progressWindow";
-import { tuned, DEFAULT_TUNING, type Tuning } from "./tuning";
+import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
 type InMsg =
   | {
@@ -33,7 +29,6 @@ type InMsg =
       progressUrl?: string;
       headers?: Record<string, string>;
       credentials?: RequestCredentials;
-      tune?: Partial<Tuning>;
     }
   | { type: "measure"; seq: number }
   | { type: "stop" };
@@ -54,13 +49,30 @@ const post = (m: OutMsg): void => ctx.postMessage(m);
  *  packet, so an unthrottled alive would jank the thread latency is measured on. */
 const ALIVE_GAP_MS = 250;
 
-let lastAlive = 0;
-/** Survives a session restart: a replacement feed reports the same aggregate,
- *  so it must not report fewer bytes than its predecessor already did. */
-const feed: ProgressFeedState = { lastN: 0 };
+/** Longest a datagram loop may run without a task turn. A worker's message
+ *  queue is dispatched only across a task, and both datagram loops can have
+ *  their sole suspension settled by the transport within one microtask
+ *  checkpoint, which would leave the loop outrunning the queue carrying its own
+ *  `stop`. Yielding per packet would price a task turn into every packet of a
+ *  measurement path; taking one on an interval bounds the starvation window to
+ *  this gap at one timer per gap, whatever the packet rate. */
+const YIELD_GAP_MS = 4;
 
-function postAlive(): void {
-  const now = performance.now();
+/** Bytes per WebTransport stream write. */
+const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
+
+/** Session congestion control hint. */
+const CONGESTION_CONTROL: WebTransportCongestionControl = "throughput";
+
+/** A task turn: a microtask checkpoint dispatches no `message` event. */
+const taskTurn = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve));
+
+let lastAlive = 0;
+
+/** `now` is passed in from a loop that has already read the clock: a datagram
+ *  loop reads it per packet and must not read it twice. */
+function postAlive(now = performance.now()): void {
   if (now - lastAlive < ALIVE_GAP_MS) return;
   lastAlive = now;
   post({ type: "alive" });
@@ -68,22 +80,27 @@ function postAlive(): void {
 
 let session: WebTransport | null = null;
 let stopped = false;
+/** Separate from `stopped`, which a terminal refusal latches too: the owner
+ *  waits on the ack whatever ended the session, so a stop must still run. */
+let stopping = false;
 /** Latches the first failure of this session, so its echoes stay silent. */
 let failed = false;
 let measureSeq = 0;
-let tuning = tuned();
-let progress = new ProgressWindow(0, tuning.reportGapMs);
+let progress = new ProgressWindow(0, REPORT_GAP_MS);
+/** Sends the finalizing DELETE once the lanes stop; set when upload starts. */
+let finalize: (() => Promise<void>) | null = null;
+/** Resolves the shutdown grace as soon as the terminal record lands, so the
+ *  stage does not sit its full length with the lanes already silent. */
+let completed: (() => void) | null = null;
 
 ctx.onmessage = (e: MessageEvent<InMsg>): void => {
   const msg = e.data;
   switch (msg.type) {
     case "start":
       stopped = false;
+      stopping = false;
       failed = false;
-      // Folded to DEFAULT_TUNING unless the build opts into the bench surface
-      // (GM_CLIENT_BENCH=1), which also eliminates the merge and msg.tune.
-      tuning = __GM_BENCH__ ? tuned(msg.tune) : DEFAULT_TUNING;
-      progress = new ProgressWindow(performance.now(), tuning.reportGapMs);
+      progress = new ProgressWindow(performance.now(), REPORT_GAP_MS);
       void run(msg);
       break;
     case "measure":
@@ -114,7 +131,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   let dialed: WebTransport;
   try {
     dialed = new WebTransport(withWtToken(msg.url, token), {
-      congestionControl: tuning.congestionControl,
+      congestionControl: CONGESTION_CONTROL,
     });
   } catch (err) {
     fail(true, String(err));
@@ -146,6 +163,11 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     fail(true, String(err));
     return;
   }
+  // The race resolved on `ready`, so the server accepted the CONNECT and
+  // deleted the token it carried. Reporting the spend is what keeps a later
+  // dial from replaying it; a dial that failed above never reaches here, and
+  // its token stays reusable.
+  spendWtToken(token);
   post({ type: "established" });
   if (msg.dir === "down") {
     if (msg.datagrams) {
@@ -161,7 +183,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     void uploadDatagrams();
     return;
   }
-  const block = incompressibleBlock(tuning.writeChunkBytes);
+  const block = incompressibleBlock(WRITE_CHUNK_BYTES);
   for (let i = 0; i < msg.lanes; i++) void uploadLane(block);
 }
 
@@ -187,12 +209,12 @@ async function drainLane(lane: ReadableStream<Uint8Array>): Promise<void> {
   try {
     let byob: ReadableStreamBYOBReader | null = null;
     try {
-      byob = tuning.reader === "byob" ? lane.getReader({ mode: "byob" }) : null;
+      byob = lane.getReader({ mode: "byob" });
     } catch {
       byob = null;
     }
     if (byob) {
-      let buf = new ArrayBuffer(tuning.readBufBytes);
+      let buf = new ArrayBuffer(READ_BUF_BYTES);
       for (;;) {
         const chunk = await byob.read(new Uint8Array(buf));
         if (chunk.done || stopped) return;
@@ -218,21 +240,18 @@ async function readDatagrams(): Promise<void> {
   if (!session) return;
   try {
     const reader = session.datagrams.readable.getReader();
-    // A datagram is ~1200 bytes, so counting each one reads the clock ~100k
-    // times a second. Batching the read trades sample resolution for that.
-    let pending = 0;
-    let sinceClock = 0;
+    let lastYield = performance.now();
     for (;;) {
       const { value, done } = await reader.read();
-      if (done || stopped) {
-        if (pending) countDownload(pending);
-        return;
-      }
-      pending += (value as Uint8Array).byteLength;
-      if (++sinceClock < tuning.datagramClockEvery) continue;
-      sinceClock = 0;
-      countDownload(pending);
-      pending = 0;
+      if (done || stopped) return;
+      // One clock read serves both the report window and the yield gap: a
+      // datagram is ~1200 bytes, so a second read here is another ~100k calls
+      // a second on the path being measured.
+      const now = performance.now();
+      countDownload((value as Uint8Array).byteLength, now);
+      if (now - lastYield < YIELD_GAP_MS) continue;
+      await taskTurn();
+      lastYield = performance.now();
     }
   } catch (err) {
     if (!stopped) fail(true, String(err));
@@ -248,18 +267,26 @@ async function uploadDatagrams(): Promise<void> {
   const datagrams = session.datagrams;
   try {
     const writer = datagrams.writable.getWriter();
-    const payload = new Uint8Array(datagrams.maxDatagramSize);
-    crypto.getRandomValues(payload);
+    const payload = incompressibleBlock(datagrams.maxDatagramSize);
+    let lastYield = performance.now();
     while (!stopped) {
       await writer.ready;
-      // The path MTU estimate can shrink mid-session, and an oversized datagram
-      // is dropped with a resolved promise: the queue would never fill, so
-      // `ready` would never park and this loop would never yield to the task
-      // that carries `stop`.
+      // The path MTU estimate can shrink mid-session and an oversized datagram
+      // is dropped with a resolved promise, so nothing but this clamp keeps the
+      // write on the path.
       const size = Math.min(payload.length, datagrams.maxDatagramSize);
-      if (size === 0) return;
+      // Nothing fits any more. Returning silently would leave the stage running
+      // to its full timer with zero bytes, no restart and no diagnostic.
+      if (size === 0) {
+        fail(true, "webtransport datagram size collapsed");
+        return;
+      }
       void writer.write(payload.subarray(0, size)).catch(() => {});
-      postAlive();
+      const now = performance.now();
+      postAlive(now);
+      if (now - lastYield < YIELD_GAP_MS) continue;
+      await taskTurn();
+      lastYield = performance.now();
     }
   } catch (err) {
     if (!stopped) fail(true, String(err));
@@ -267,9 +294,10 @@ async function uploadDatagrams(): Promise<void> {
 }
 
 /** Report at the fetch lanes' cadence: one aggregate for the whole session,
- *  since the main thread treats this worker as a single lane. */
-function countDownload(n: number): void {
-  postProgress(progress.add(n));
+ *  since the main thread treats this worker as a single lane. `now` is passed
+ *  in by a loop that has already read the clock. */
+function countDownload(n: number, now = performance.now()): void {
+  postProgress(progress.add(n, now));
 }
 
 function postProgress(delta: ProgressDelta | null): void {
@@ -331,22 +359,27 @@ function openProgress(
 async function readProgress(
   readable: ReadableStream<Uint8Array>,
 ): Promise<void> {
-  const end = await readProgressFeed(readable, feed, (event) =>
+  // The monotonic aggregate is per feed: a replacement feed rides a replacement
+  // session, and a session is a worker realm.
+  const end = await readProgressFeed(readable, { lastN: 0 }, (event) =>
     post({ type: "upload-progress", msg: event }),
   );
-  if (end === "complete") completed?.();
+  if (end === "complete") {
+    completed?.();
+    return;
+  }
+  // A feed ending without a terminal record is a dropped feed, not a finished
+  // upload, and it resolves rather than throwing, so the transport-break path
+  // never sees it. Recoverable for the same reason that one is: the owner
+  // restarts the session and the server re-opens the feed.
+  if (end === "eof") fail(true, "webtransport progress feed ended early");
 }
-
-/** Sends the finalizing DELETE once the lanes stop; set when upload starts. */
-let finalize: (() => Promise<void>) | null = null;
-/** Resolves the shutdown grace as soon as the terminal record lands, so the
- *  stage does not sit its full length with the lanes already silent. */
-let completed: (() => void) | null = null;
 
 /** Stop the lanes, finalize the upload, let the terminal progress record land,
  *  and ack, so the main thread can terminate this worker deterministically. */
 async function shutdown(): Promise<void> {
-  if (stopped) return;
+  if (stopping) return;
+  stopping = true;
   postProgress(progress.flush());
   stopped = true;
   if (finalize) {

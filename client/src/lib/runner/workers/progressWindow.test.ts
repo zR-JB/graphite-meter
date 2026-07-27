@@ -16,6 +16,17 @@ test("flush returns the final partial window once", () => {
   expect(progress.flush(130)).toBeNull();
 });
 
+// The consumer divides bytes by elapsed time, so a window closed at the clock
+// reading it opened at has no denominator however many bytes it holds. A lane's
+// closing flush lands in the same reading as its last chunk often enough.
+test("a window with bytes but no elapsed time is not a measurement", () => {
+  const progress = new ProgressWindow(100);
+
+  expect(progress.add(30, 150)).toEqual({ bytes: 30, elapsedMs: 50 });
+  expect(progress.add(10, 150)).toBeNull();
+  expect(progress.flush(150)).toBeNull();
+});
+
 test("reset discards bytes from the preceding measurement sequence", () => {
   const progress = new ProgressWindow(100);
 

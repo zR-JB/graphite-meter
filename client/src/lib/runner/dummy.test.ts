@@ -125,7 +125,6 @@ class MockHost implements CoreHost {
   resume(): void {
     this.resumeCount++;
   }
-  reportTransport(): void {}
   emit(e: RunnerEvent): void {
     this.events.push(e);
   }

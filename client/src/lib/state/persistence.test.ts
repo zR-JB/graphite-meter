@@ -236,6 +236,16 @@ test("legacy numeric IP family remains an expert override", () => {
   expect(loadPersisted().config.compensation.params.ipVersion).toBe(6);
 });
 
+// The merge only checks that a leaf keeps its type, so a tab name this build no
+// longer has survives it and leaves the settings panel with no tab selected.
+test("a settings tab this build does not have falls back to setup", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ settingsTab: "advanced" }),
+  );
+  expect(loadPersisted().settingsTab).toBe("setup");
+});
+
 test("savePersisted round-trips through loadPersisted", () => {
   const snapshot = defaultPersisted();
   snapshot.dockWidth = { left: 250, right: 500 };

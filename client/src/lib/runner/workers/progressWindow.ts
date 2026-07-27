@@ -1,4 +1,4 @@
-import { DEFAULT_TUNING } from "./tuning";
+import { REPORT_GAP_MS } from "./tuning";
 
 export interface ProgressDelta {
   bytes: number;
@@ -12,7 +12,7 @@ export class ProgressWindow {
   /** Deltas are batched to this cadence before crossing the thread. */
   #gapMs: number;
 
-  constructor(now = performance.now(), gapMs = DEFAULT_TUNING.reportGapMs) {
+  constructor(now = performance.now(), gapMs = REPORT_GAP_MS) {
     this.#startedAt = now;
     this.#gapMs = gapMs;
   }

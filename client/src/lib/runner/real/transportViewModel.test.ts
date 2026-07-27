@@ -113,6 +113,48 @@ test("WebTransport options disable in a browser without the API", () => {
   );
 });
 
+// The automatic card resolves through the same selector the runner does, whose
+// last resort is a WebTransport-only origin. Offering that as enabled promises a
+// path every run would refuse, and leaves no other card to switch to.
+test("the automatic throughput card refuses a WebTransport-only origin", () => {
+  const catalog = classifyTransportDiscovery(
+    [
+      {
+        baseUrl: "https://wt.example:7249",
+        transport: "webtransport" as const,
+        protocol: "http3" as const,
+      },
+    ],
+    [],
+    "https://ui.example",
+    true,
+    "h2",
+  );
+  const automatic = throughputOptionView(catalog, "auto");
+  expect(automatic.disabled).toBe(true);
+  expect(automatic.detail).toBe(
+    "WebTransport is not supported by this browser.",
+  );
+});
+
+// Nothing else advertised: the automatic card is unresolved for its own reason,
+// not for a missing browser API.
+test("an unresolved automatic throughput card still names its own reason", () => {
+  const catalog = classifyTransportDiscovery(
+    [transfer("http2", "https://a.example", "http2", true)],
+    [],
+    "https://ui.example",
+    true,
+    "h2",
+  );
+  catalog.throughput["https://a.example"].state = "browser-blocked";
+  const automatic = throughputOptionView(catalog, "auto");
+  expect(automatic.disabled).toBe(true);
+  expect(automatic.detail).toBe(
+    "No offered target matches this page origin and protocol.",
+  );
+});
+
 test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () => {
   const direct = classifyTransportDiscovery(
     [transfer("http1-clear", "http://meter:7246", "http1", false)],

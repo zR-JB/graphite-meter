@@ -19,7 +19,7 @@ import {
   type RttEstimate,
 } from "./rttEstimator";
 import { nextBackoff } from "./backoff";
-import { mintWtToken, withWtToken, type WtMint } from "./wtToken";
+import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
 
@@ -247,6 +247,11 @@ async function connectWebTransport(): Promise<void> {
   void wt.ready
     .then(
       async () => {
+        // `ready` fulfils on the CONNECT the server accepted, which is the
+        // moment it deleted the token. This bus re-dials inside its own realm,
+        // so an unreported spend would be offered to every reconnect for the
+        // whole reuse window and refused by each of them.
+        spendWtToken(token);
         writer = wt.datagrams.writable.getWriter();
         onConnected("wt");
         const reader = wt.datagrams.readable.getReader();

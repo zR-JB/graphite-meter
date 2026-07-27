@@ -1,6 +1,7 @@
-// Teardown corners of the upload meter that the RealRunner and wtStage
-// integration pins do not reach: a superseded external attach, and a discard
-// arriving while a finalizing teardown still holds the worker.
+// Corners of the upload meter that the RealRunner and wtStage integration pins
+// do not reach: a superseded external attach, a discard arriving while a
+// finalizing teardown still holds the worker, and the server-count clamp that
+// keeps two feeds for one upload id from moving the curve backwards.
 import { test, expect } from "bun:test";
 import type { CoreHost } from "../core";
 import type { FetchThroughputTarget } from "../../api/endpoints";
@@ -42,15 +43,19 @@ const target: FetchThroughputTarget = {
   },
 };
 
-function channelUnderTest(): {
+function channelUnderTest(laneState: Partial<UploadProgressLane> = {}): {
   channel: UploadProgressChannel;
   failures: string[];
+  curve: number[];
 } {
   const failures: string[] = [];
+  /** Byte delta of every frame the channel fed into the live curve. */
+  const curve: number[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
     stageSawBytes: false,
+    ...laneState,
   };
   const host = {
     failStage(_stage: string, _reason: string, message: string) {
@@ -59,7 +64,9 @@ function channelUnderTest(): {
     fail(_reason: string, message: string) {
       failures.push(message);
     },
-    ingestThroughput() {},
+    ingestThroughput(_dir: string, _rate: number, bytesDelta: number) {
+      curve.push(bytesDelta);
+    },
   } as unknown as CoreHost;
   return {
     channel: new UploadProgressChannel({
@@ -71,6 +78,7 @@ function channelUnderTest(): {
       setLaneStalled: () => {},
     }),
     failures,
+    curve,
   };
 }
 
@@ -85,6 +93,55 @@ test("attachExternal: a replaced feed is superseded, not a stage failure", async
   await channel.teardown(false);
   expect(await second).toBe("superseded");
   expect(failures).toEqual([]);
+});
+
+// A refused feed ends the attach as surely as a ready record: left pending, the
+// stage fails once for the refusal and again when the establish wait times out.
+test("accept: a refusal ends a pending external attach", async () => {
+  const { channel, failures } = channelUnderTest();
+  const attached = channel.attachExternal(() => {});
+
+  channel.accept({ type: "fatal", detail: "session closed" });
+  // Racing an already-settled sentinel reports an attach left pending as a
+  // value rather than as a whole-test timeout.
+  const outcome = await Promise.race([attached, Promise.resolve("pending")]);
+  expect(outcome).toBe("superseded");
+  expect(failures).toEqual(["session closed"]);
+});
+
+// The session worker owns the finalizing DELETE and sends it when the terminal
+// record lands. A second one from here is a DELETE against an upload id the next
+// stage may already have taken.
+test("teardown finalizes a dropped session feed, but not a completed one", async () => {
+  const dropped = channelUnderTest({ measuring: true });
+  let droppedFinalizes = 0;
+  void dropped.channel.attachExternal(() => droppedFinalizes++);
+  await dropped.channel.teardown(true);
+  expect(droppedFinalizes).toBe(1);
+
+  const { channel } = channelUnderTest({ measuring: true });
+  let finalizes = 0;
+  const attached = channel.attachExternal(() => finalizes++);
+  channel.accept({ type: "open" });
+  expect(await attached).toBe("open");
+
+  channel.accept({ type: "complete", n: 4096, t: 1_000_000_000 });
+  await channel.teardown(true);
+  expect(finalizes).toBe(0);
+});
+
+// One upload id can be reported by two feeds at once while a session feed
+// replaces an HTTP one. The server aggregate is cumulative, so the replacement's
+// first frames arrive behind the count already shown; taking them would feed the
+// curve a negative delta and then double-count the catch-up.
+test("a server count that arrives behind the last one does not move the curve", () => {
+  const { channel, curve } = channelUnderTest({ measuring: true });
+
+  channel.accept({ type: "bytes", n: 1000, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 2000, t: 2_000_000_000 });
+  channel.accept({ type: "bytes", n: 500, t: 3_000_000_000 });
+  channel.accept({ type: "bytes", n: 2600, t: 4_000_000_000 });
+  expect(curve).toEqual([1000, 0, 600]);
 });
 
 // Unreachable today (every path tears down first), but a worker left running
