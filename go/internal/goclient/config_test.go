@@ -206,6 +206,40 @@ func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
 	}
 }
 
+// Automatic selection may prefer an advertised datagram bus and then discover
+// that UDP cannot reach it. The cadence belongs to the bus Prepare finally
+// commits to, so a WebSocket fallback must retain its wider valid cadence.
+func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		origin := "http://" + r.Host
+		ws := testChannel("ws", origin, false)
+		wt := testChannel("wt", origin, false)
+		wt.Transport, wt.Protocol = wire.TransportWebTransport, "http3"
+		_ = json.NewEncoder(w).Encode(wire.Preflight{Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{testTransfer("fetch", origin, "http1", false)},
+			LatencyTargets:    []wire.LatencyTarget{ws, wt},
+		}})
+	})
+	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.Probe{ProtocolNegotiated: "http/1.1"})
+	})
+	mux.Handle("/ws/ping", echoPingHandler())
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := DefaultConfig()
+	cfg.BaseURL = srv.URL
+	cfg.PingInterval = MaxPingInterval + 5*time.Second
+	prepared, err := Prepare(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Prepare after WebTransport fallback: %v", err)
+	}
+	if got := prepared.LatencyTarget.Transport; got != wire.TransportWebSocket {
+		t.Fatalf("latency transport = %q, want WebSocket fallback", got)
+	}
+}
+
 func TestConfigNormalized(t *testing.T) {
 	base := DefaultConfig()
 

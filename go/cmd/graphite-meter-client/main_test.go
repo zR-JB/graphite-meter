@@ -75,22 +75,19 @@ func TestParsePing(t *testing.T) {
 // pinned to the WebSocket bus -- which has no idle timer -- takes the same
 // cadence rather than being refused for a constraint that cannot reach it.
 func TestParsePingBindsTheCadenceToTheSelectedBus(t *testing.T) {
-	for _, transport := range []string{"auto", wire.TransportWebTransport} {
-		got, err := parsePing("45s", transport)
-		if err == nil {
-			t.Fatalf("parsePing(\"45s\", %q) = %v, want an error naming the bound", transport, got)
-		}
-		if !strings.Contains(err.Error(), goclient.MaxPingInterval.String()) {
-			t.Errorf("error for %q = %q, want it to name the %v bound", transport, err, goclient.MaxPingInterval)
-		}
+	got, err := parsePing("45s", wire.TransportWebTransport)
+	if err == nil {
+		t.Fatalf("parsePing(\"45s\", WebTransport) = %v, want an error naming the bound", got)
+	}
+	if !strings.Contains(err.Error(), goclient.MaxPingInterval.String()) {
+		t.Errorf("WebTransport error = %q, want it to name the %v bound", err, goclient.MaxPingInterval)
 	}
 
-	got, err := parsePing("45s", wire.TransportWebSocket)
-	if err != nil {
-		t.Fatalf("parsePing(\"45s\", %q) = %v, want the cadence accepted: the WebSocket bus has no idle timer", wire.TransportWebSocket, err)
-	}
-	if got != 45*time.Second {
-		t.Errorf("parsePing(\"45s\", %q) = %v, want 45s", wire.TransportWebSocket, got)
+	for _, transport := range []string{"auto", wire.TransportWebSocket} {
+		got, err := parsePing("45s", transport)
+		if err != nil || got != 45*time.Second {
+			t.Errorf("parsePing(\"45s\", %q) = %v, %v, want deferred/accepted 45s", transport, got, err)
+		}
 	}
 }
 
@@ -1279,6 +1276,13 @@ func TestCommitEdit_PingBoundFollowsTheLatencyBus(t *testing.T) {
 	if m.edit.err == "" || !strings.Contains(m.edit.err, goclient.MaxPingInterval.String()) {
 		t.Fatalf("a %s cadence over the datagram bus gave err=%q, want one naming the %v bound", wide, m.edit.err, goclient.MaxPingInterval)
 	}
+
+	m.cfg.LatencyTransport = "auto"
+	m.edit = beginEdit(editDuration, "ping", wide)
+	m.commitEdit()
+	if m.edit.kind != editNone || m.cfg.PingInterval.String() != wide {
+		t.Fatalf("an automatic %s cadence was rejected before transport verification: kind=%v err=%q interval=%v", wide, m.edit.kind, m.edit.err, m.cfg.PingInterval)
+	}
 }
 
 func TestUpdate_StaleRunMessagesAreDropped(t *testing.T) {
@@ -1382,9 +1386,8 @@ func TestCommitEdit_Duration(t *testing.T) {
 		{"ping", "0s", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
 		{"ping", "not-a-duration", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
 		{"ping", "-5s", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
-		// Past the bound the server reaps the bus between pings, so every stage
-		// would spend part of its window redialing.
-		{"ping", "45s", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
+		// Automatic transport defers its bus-specific upper bound to Prepare.
+		{"ping", "45s", false, func(c goclient.Config) time.Duration { return c.PingInterval }},
 		{"ping", goclient.MaxPingInterval.String(), false, func(c goclient.Config) time.Duration { return c.PingInterval }},
 	}
 	for _, c := range cases {

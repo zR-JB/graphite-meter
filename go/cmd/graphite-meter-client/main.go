@@ -104,9 +104,8 @@ func transportFlags(throughput, latency string) error {
 // unusable value falls back to the medium preset, but one the datagram bus would
 // not survive is an error: the server reaps a WebTransport ping bus that has
 // gone quiet, so honouring it silently would spend every stage redialing. A run
-// pinned to the WebSocket bus is not subject to that bound, and refusing there
-// would name a constraint that cannot apply; Prepare re-checks against the bus
-// it actually selected.
+// pinned to the WebSocket bus is not subject to that bound, and automatic
+// selection defers it until Prepare verifies the bus it actually selected.
 func parsePing(raw, latencyTransport string) (time.Duration, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "instant":

@@ -562,7 +562,8 @@ func (m *model) commitDuration(raw, field string) {
 		// The ping cadence has an upper bound over the datagram bus, which the
 		// server reaps once the client stops feeding it. The bound is the
 		// client's one statement of that rule, message included; the WebSocket
-		// bus has no idle timer, so a run pinned to it is not held to it.
+		// bus has no idle timer, and automatic selection defers the decision to
+		// Prepare so an unreachable datagram bus can fall back first.
 		if field == "ping" && goclient.PingIntervalBoundApplies(m.cfg.LatencyTransport) {
 			if err := goclient.ValidatePingInterval(d); err != nil {
 				m.editRejected(err.Error())

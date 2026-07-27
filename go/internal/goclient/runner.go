@@ -264,12 +264,10 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if !needsLatency {
 		latencyTarget = nil
 	} else if latencyTarget != nil {
-		// A cadence past the bus's idle bound leaves every stage redialing a
-		// reaped bus instead of measuring, so it fails here rather than there --
-		// but only once the bus that carries the bound is the one selected. The
-		// check waits for that selection: refusing a cadence the chosen bus has
-		// no opinion on names a constraint that cannot reach the run.
-		if PingIntervalBoundApplies(latencyTarget.Transport) {
+		// An explicitly selected datagram bus is already final, so reject its
+		// invalid cadence before spending time on network verification. Automatic
+		// selection has to verify/fall back before the same decision is possible.
+		if cfg.LatencyTransport != "auto" && PingIntervalBoundApplies(latencyTarget.Transport) {
 			if err := ValidatePingInterval(cfg.PingInterval); err != nil {
 				return fail(err)
 			}
@@ -282,6 +280,14 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 				if latencyTarget, latencyErr = selectLatencyTargetOver(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets, wire.TransportWebSocket); latencyErr != nil {
 					return fail(latencyErr)
 				}
+			}
+		}
+		// The idle bound belongs only to the bus Prepare finally commits to.
+		// Automatic WebTransport may have fallen back to WebSocket above, whose
+		// connection has no corresponding cadence ceiling.
+		if cfg.LatencyTransport == "auto" && PingIntervalBoundApplies(latencyTarget.Transport) {
+			if err := ValidatePingInterval(cfg.PingInterval); err != nil {
+				return fail(err)
 			}
 		}
 		p, err := getLatencyProbe(ctx, wsClient, latencyTarget)

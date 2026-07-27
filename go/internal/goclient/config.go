@@ -98,9 +98,10 @@ func ValidatePingInterval(d time.Duration) error {
 // to nothing else: the server reaps a WebTransport ping bus it has heard nothing
 // from, and this client's pings are its only traffic. The WebSocket bus has no
 // idle timer, so a run pinned to it takes any positive cadence. Automatic
-// selection may still resolve to WebTransport, so it takes the bound.
+// selection is unresolved and must defer the bound until Prepare verifies its
+// final bus; rejecting it earlier prevents a valid WebSocket fallback.
 func PingIntervalBoundApplies(latencyTransport string) bool {
-	return latencyTransport != wire.TransportWebSocket
+	return latencyTransport == wire.TransportWebTransport
 }
 
 // ValidateThroughputTransport reports whether name is a transport this client
