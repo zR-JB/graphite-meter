@@ -154,13 +154,6 @@ export default defineConfig({
       // dev, not preview: changing a constant is then a reload, not a rebuild.
       command: "bun run dev -- --host 127.0.0.1 --port 5173",
       url: "http://127.0.0.1:5173/bench/harness.html",
-      // The tuning surface is opt-in and compiled out by default, so without
-      // this the workers ignore every `tune` message the harness sends and each
-      // cell silently measures DEFAULT_TUNING. It only covers a server this
-      // config starts: reuseExistingServer takes whatever is on the port as it
-      // was built, which is why harness.html reports the compiled-in flag and
-      // throughput.bench.pw.ts asserts on it before it measures anything.
-      env: { GM_CLIENT_BENCH: "1" },
       reuseExistingServer: true,
       timeout: 120_000,
     },

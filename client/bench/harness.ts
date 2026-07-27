@@ -19,7 +19,6 @@ import {
   type LaneUrlSpec,
 } from "../src/lib/runner/real/backendPure";
 import { uploadProgressWorker } from "../src/lib/runner/real/workerPool";
-import { tuned, type Tuning } from "../src/lib/runner/workers/tuning";
 
 /** Resolution of the within-cell rate series, which yields the stability figure. */
 const BUCKET_MS = 200;
@@ -31,11 +30,9 @@ export interface CellSpec {
   lanes: number;
   warmupMs: number;
   measureMs: number;
-  chunkDownload?: boolean;
   /** Wait for the Alt-Svc upgrade before opening lanes. Firefox reaches h3 only
    *  that way, and the TCP companion carries no transfer routes. */
   bootstrapH3?: boolean;
-  tune?: Partial<Tuning>;
 }
 
 export interface CellResult {
@@ -51,9 +48,6 @@ export interface CellResult {
   /** Longest gap between ticks. Well above BUCKET_MS means the page could not
    *  keep up, which caps what any lane count can deliver. */
   maxTickMs: number;
-  /** The constants this run actually used, so changing a default cannot make
-   *  old rows look like new ones. */
-  tuning: Tuning;
   errors: string[];
 }
 
@@ -153,7 +147,8 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     uploadPath: ROUTES.upload,
     cbSeed: `bench${Math.round(performance.now())}`,
     bytes: PER_STREAM_BYTES,
-    chunkDownload: spec.chunkDownload ?? false,
+    // The lane sweep measures the long-stream lane, which is what the app runs.
+    chunkDownload: false,
     session,
   };
 
@@ -204,7 +199,6 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
         spec.dir === "up"
           ? `${spec.origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(uploadId)}`
           : undefined,
-      tune: spec.tune,
     };
     lanes.push(sessionLane(opts, events(0)));
   } else {
@@ -219,7 +213,6 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
             credentials: "same-origin",
             chunk: urls.chunkDownload,
             debug: false,
-            tune: spec.tune,
           },
           events(i),
         ),
@@ -274,7 +267,6 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     laneBytes,
     buckets,
     maxTickMs,
-    tuning: tuned(spec.tune),
     errors,
   };
 }
@@ -282,15 +274,10 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
 declare global {
   interface Window {
     __gmBench: {
-      /** Whether this build compiled the worker tuning surface in. It is off
-       *  unless the dev server was started with GM_CLIENT_BENCH=1, and with it
-       *  off the workers discard every `tune` and run DEFAULT_TUNING, which no
-       *  cell result would show. The Playwright side asserts on it. */
-      tuningSurface: boolean;
       run(spec: CellSpec): Promise<CellResult>;
     };
   }
 }
 
-window.__gmBench = { tuningSurface: __GM_BENCH__, run: runCell };
+window.__gmBench = { run: runCell };
 document.getElementById("state")!.textContent = "ready";

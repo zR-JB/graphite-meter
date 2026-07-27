@@ -30,9 +30,6 @@ set export := true
 engine      := env("GM_CLIENT_ENGINE", "real")
 allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
 dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
-# The benchmark's tuning surface. Dev tooling is a UI surface and this is a
-# measurement one, so they are built independently.
-bench       := env("GM_CLIENT_BENCH", "0")
 
 # Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS.
 # `label` is the status-bar label and the label half of the client version
@@ -63,7 +60,7 @@ hooks:
     git config core.hooksPath .githooks
 
 # Run the same fast client gates used by CI.
-client-ci:
+client-ci: client-check-generated
     cd client && bun run format:check
     cd client && bun run check
     cd client && bun test
@@ -78,7 +75,7 @@ client-build-dev:
 # Build the client in prod profile: real-only engine, dev tooling stripped by default.
 client-build-prod:
     cd client && bun install
-    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BENCH='{{bench}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
 # Type-check the client, including Bun test files
 client-check:
@@ -101,6 +98,19 @@ auth-preview mode="hybrid" oidc_ready="true":
 client-gen-types:
     cd client && bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts
     cd client && bunx json-schema-to-typescript ../api/probe.schema.json -o src/lib/api/probe.ts
+
+# The same drift gate check-generated applies to the embedded auth assets, for
+# the schema-derived client types. It hangs off client-ci rather than
+# check-generated because the generator needs bun and client/node_modules, and
+# ci.yml calls check-generated from the Go job, which sets up neither.
+# Regenerate the schema-derived client types and fail if they drift from api/.
+client-check-generated: client-gen-types
+    #!/usr/bin/env sh
+    set -e
+    if ! git diff --quiet -- client/src/lib/api/; then
+        echo "client/src/lib/api is stale; run 'just client-gen-types' and commit the result"
+        exit 1
+    fi
 
 # --- Embedding (Go module + client, shared by both profiles) ---
 
@@ -185,17 +195,16 @@ server-test:
 client-e2e:
     cd client && bun run test:e2e
 
-# The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
-# all but go-lint, and only those matching the staged files.
-# Loopback saturation harness (issue #44): observer RTT percentiles under
-# growing loader concurrency, on kernel TCP and userspace QUIC, plus a
-# CPU-constrained pass. Measurement only; not part of ci. Unix only: the CPU
-# column reads getrusage.
+# Measurement only; not part of ci. Unix only, since the CPU column reads
+# getrusage. Loads the server over kernel TCP and again over userspace QUIC, and
+# once more with the CPU constrained.
+# Server saturation envelope (issue #44): observer RTT percentiles under growing loader concurrency.
 stress:
     cd go && go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/
 
-# Both halves of the ping-bus encoding evidence: why the message bus keeps a
-# text codec while the progress feed carries NDJSON. Excluded from CI.
+# Excluded from CI. Every benchmark decodes or encodes a PONG; the progress
+# feed's NDJSON is not measured here or anywhere.
+# Ping-bus encoding evidence, Go and TypeScript: why the bus keeps a text codec.
 bench-wire:
     cd go && go test ./internal/wire/ -run '^$' -bench 'Decode|Encode' -benchmem -benchtime=2s
     cd client && bun run src/lib/runner/real/wire.bench.ts
@@ -212,6 +221,8 @@ bench-wire:
 bench-throughput filter="" project="":
     cd client && bunx playwright test -c playwright.bench.config.ts {{ if filter != "" { "-g '" + filter + "'" } else { "" } }} {{ if project != "" { "--project=" + project } else { "" } }}
 
+# The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
+# all but go-lint, and only those matching the staged files.
 ci: check-generated client-ci server-check go-lint server-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the

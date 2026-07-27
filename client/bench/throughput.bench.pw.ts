@@ -40,8 +40,10 @@ function record(
   mkdirSync(DIR, { recursive: true });
   appendFileSync(
     `${DIR}/${project}.ndjson`,
+    // 2 dropped the per-row `tuning` table: with the tuning surface gone every
+    // row runs the shipped constants, so the column carried no information.
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       project,
       cell,
       group,
@@ -50,7 +52,6 @@ function record(
       elapsedMs: r.elapsedMs,
       laneBytes: r.laneBytes,
       maxTickMs: r.maxTickMs,
-      tuning: r.tuning,
       errors: r.errors,
     }) + "\n",
   );
@@ -61,15 +62,6 @@ async function runCell(
   spec: CellSpec,
 ): Promise<CellResult> {
   await page.goto("/bench/harness.html");
-  // playwright.bench.config.ts sets GM_CLIENT_BENCH=1, but only on a dev server
-  // it starts itself: reuseExistingServer hands back whatever is already on the
-  // port. Without the surface the workers discard every `tune` and each cell
-  // measures DEFAULT_TUNING while the row records the tuning that was asked for,
-  // so the run fails here rather than producing wrong numbers.
-  expect(
-    await page.evaluate(() => window.__gmBench.tuningSurface),
-    "the dev server on :5173 was built without GM_CLIENT_BENCH=1; restart it or let Playwright start it",
-  ).toBe(true);
   return page.evaluate((s) => window.__gmBench.run(s), spec);
 }
 
@@ -113,7 +105,6 @@ test.afterAll(() => {
         laneBytes: row.laneBytes as number[],
         buckets: [],
         maxTickMs: row.maxTickMs as number,
-        tuning: row.tuning as never,
         errors: row.errors as string[],
       },
     ]);
