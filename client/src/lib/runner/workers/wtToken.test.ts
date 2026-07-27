@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { mintWtToken, spendWtToken, withWtToken } from "./wtToken";
+import { ESTABLISH_BUDGET_MS, LANE_RESTART_BACKOFF_MS } from "../real/budgets";
 
 const MINT = { url: "https://meter.test/wt/session" };
 
@@ -186,6 +187,23 @@ test("a re-dial reuses the token the failed dial never spent", async () => {
     mint.restore();
   }
 });
+
+// The window is what bounds a dial the server accepted but the client never saw
+// resolve: the token is gone server-side and reuse would replay a dead one. It
+// is sized to expire by the time the retry runs — the establish budget the dial
+// burned plus the restart backoff — so widening it reintroduces that replay.
+test("the reuse window expires by the retry that follows a failed dial", async () => {
+  const url = "https://meter.test/window";
+  const mint = countingMint();
+  try {
+    expect((await mintWtToken({ url })).token).toBe("gmw_live");
+    await Bun.sleep(ESTABLISH_BUDGET_MS + LANE_RESTART_BACKOFF_MS + 10);
+    expect((await mintWtToken({ url })).token).toBe("gmw_live");
+    expect(mint.calls()).toBe(2);
+  } finally {
+    mint.restore();
+  }
+}, 10_000);
 
 // A CONNECT the server accepted spends the token, so the next dial must not
 // carry it: the server has already deleted it and would refuse the replay.

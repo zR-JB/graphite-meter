@@ -389,6 +389,41 @@ func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
 	t.Fatal("datagram upload never reached the server-authoritative counter")
 }
 
+// A refused datagram drain has no stream to reset and no status line, so it
+// reports nothing itself. The progress feed the same session opens is what
+// carries the refusal, and both read the id under the same owner, so they
+// cannot disagree about it.
+func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
+	base, _, dialer := wtTestServer(t)
+	sess := dialWT(t, dialer, base+"/wt/upload?datagrams=1&id=gmu_never_minted")
+	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
+	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelAccept()
+	progress, err := sess.AcceptUniStream(acceptCtx)
+	if err != nil {
+		t.Fatalf("accept progress stream: %v", err)
+	}
+	records := bufio.NewScanner(progress)
+	for records.Scan() {
+		line := strings.TrimSpace(records.Text())
+		if line == "" {
+			continue
+		}
+		var event struct{ Type, Message string }
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode record %q: %v", line, err)
+		}
+		if event.Type != "error" {
+			t.Fatalf("first record = %q, want the refusal", line)
+		}
+		if event.Message != "unknown upload id" {
+			t.Fatalf("refusal message = %q", event.Message)
+		}
+		return
+	}
+	t.Fatal("a refused datagram upload reported nothing")
+}
+
 // TestWebTransportDatagramFloodRepeats proves the flood re-runs while the
 // session lives: more than one `bytes=` total arrives.
 func TestWebTransportDatagramFloodRepeats(t *testing.T) {
