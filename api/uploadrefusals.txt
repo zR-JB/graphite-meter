@@ -1,0 +1,33 @@
+# Graphite Meter — upload refusal pin (shared across Go / TS).
+#
+# Format (one refusal per non-comment, non-blank line):
+#   <name> | <message> | <http status>
+#
+#   name    = the key every implementation uses for the refusal
+#   message = the exact text the server sends, byte for byte
+#   status  = the HTTP status the message is sent with. It applies to the
+#             request/response routes only; over a WebTransport stream there is
+#             no status line, so the message travels alone (see below).
+#
+# These strings are a wire contract, not internal diagnostics. A refused upload
+# reports its reason twice over, in two shapes that must stay in step:
+#   HTTP — /upload and /upload/progress send the message as the status text.
+#   WT   — the progress stream carries it as {"type":"error","message":"..."},
+#          which is the ONLY signal a refused WebTransport lane gets: a stream
+#          has no status line, so the client recognises the fatal by this text.
+# Reword one side and the other stops recognising the refusal while both test
+# suites stay green. That is what this file exists to prevent. Every refusal
+# test loads THIS file as its fixture:
+#   Go — go/internal/endpoint/upload_owner_test.go (uploadAccessMessage +
+#        writeUploadAccessError, i.e. both the text and the status)
+#   TS — client/src/lib/runner/workers/progressFeed.test.ts (the fatal-detail
+#        strings the progress feed surfaces)
+#
+# uploadAccessOK is the deliberate omission: it is not a refusal, carries no
+# message, and never reaches writeUploadAccessError. Its absence below is the
+# documented exception, not a missing row.
+
+invalid | unknown upload id | 400
+globalFull | upload capacity exhausted | 503
+clientFull | client upload capacity exhausted | 429
+ownerMismatch | upload id belongs to another client | 403

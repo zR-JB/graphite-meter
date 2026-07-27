@@ -72,6 +72,12 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		return transport.ErrUnsupported
 	}
 	id := r.URL.Query().Get("id")
+	// This route is request-shaped only -- the check above refuses anything with
+	// no HTTP pair -- so the request key is the whole derivation. Upload.Handle
+	// reaches it through sessionOwner because it also serves WebTransport
+	// streams, which carry no request of their own; both land on the same key for
+	// the same client, which is what keeps the feed from being refused for the
+	// very upload the lane was admitted under.
 	owner := ClientKey(r, e.trusted)
 	if r.Method == http.MethodDelete {
 		if access := e.store.finishFor(id, owner); access != uploadAccessOK {

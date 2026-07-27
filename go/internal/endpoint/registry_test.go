@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -57,6 +58,24 @@ func (e *blockingEndpoint) Handle(s transport.Session) error {
 	<-s.Context().Done()
 	close(e.unblocked)
 	return nil
+}
+
+// drainEndpoint reads the bus until it errors, the shape every bus endpoint has.
+// The read limit is enforced by the library on that read, so the endpoint only
+// has to be reading for it to apply.
+type drainEndpoint struct{}
+
+func (e *drainEndpoint) ID() string { return "drain" }
+func (e *drainEndpoint) Handle(s transport.Session) error {
+	bus, ok := s.Bus()
+	if !ok {
+		return transport.ErrUnsupported
+	}
+	for {
+		if _, err := bus.Recv(); err != nil {
+			return nil
+		}
+	}
 }
 
 func wsURL(httpURL string) string { return "ws" + strings.TrimPrefix(httpURL, "http") }
@@ -284,6 +303,66 @@ func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
 	}
 	if n := e.calls.Load(); n != 0 {
 		t.Errorf("Handle called %d times for a preflight OPTIONS, want 0", n)
+	}
+}
+
+// A named origin means the server holds session state, so the wildcard public
+// mode answers with would be a real hole: `Access-Control-Allow-Origin: *` lets
+// any page read a measurement response, and the credentials the authenticated
+// UI sends only travel under a named origin. Nothing else in the suite looks at
+// the authenticated header set.
+func TestHTTPAdapterNarrowsCORSToANamedOrigin(t *testing.T) {
+	const origin = "https://ui.example"
+	srv := httptest.NewServer(httpAdapterWithOrigin(&countingEndpoint{}, origin))
+	defer srv.Close()
+
+	res, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer res.Body.Close()
+
+	if got := res.Header.Get("Access-Control-Allow-Origin"); got != origin {
+		t.Errorf("Access-Control-Allow-Origin = %q, want %q: an authenticated origin must never answer with a wildcard", got, origin)
+	}
+	if got := res.Header.Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want %q: the UI's credentialed requests would be rejected by the browser", got, "true")
+	}
+	if got := res.Header.Get("Timing-Allow-Origin"); got != origin {
+		t.Errorf("Timing-Allow-Origin = %q, want %q", got, origin)
+	}
+	if got := res.Header.Get("Access-Control-Allow-Headers"); got == "*" {
+		t.Error("Access-Control-Allow-Headers = *, want the named set: a wildcard is ignored for credentialed requests")
+	}
+	if got := res.Header.Values("Vary"); !slices.Contains(got, "Origin") {
+		t.Errorf("Vary = %v, want it to contain Origin: a cache would serve one origin's response to another", got)
+	}
+}
+
+// An oversized frame is a peer forcing the server to buffer. Bus frames are tiny
+// text control messages, so the read limit sits far under the library default.
+func TestWSAdapterBoundsFrameSize(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("/ws", wsAdapter(context.Background(), &drainEndpoint{}))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL(srv.URL)+"/ws", nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	if err := conn.Write(ctx, websocket.MessageText, make([]byte, 4096)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelRead()
+	_, _, err = conn.Read(readCtx)
+	if got := websocket.CloseStatus(err); got != websocket.StatusMessageTooBig {
+		t.Fatalf("close status = %v (err %v), want StatusMessageTooBig: an oversized frame was buffered instead of refused", got, err)
 	}
 }
 

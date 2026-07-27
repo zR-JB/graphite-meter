@@ -9,7 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 func TestUploadCountsAndEchoes(t *testing.T) {
@@ -196,6 +200,71 @@ func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 	}
 	if got := agg.posts.Load(); got != 0 {
 		t.Errorf("posts = %d after the empty-body lane finished, want 0", got)
+	}
+}
+
+// A stream carries no status line, so a refused WebTransport upload lane can
+// only be reported through Handle's return value: its caller resets the stream
+// on it. Returning nil would leave the peer parked on flow control, sending
+// bytes nothing counts, with no refusal it can act on.
+func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
+	store := NewUploadStore()
+	for i := 0; i < maxLiveUploads; i++ {
+		if _, ok := store.getOrCreate(store.Mint()); !ok {
+			t.Fatalf("filler create %d below the cap was refused", i)
+		}
+	}
+	id := store.Mint()
+	// A non-HTTP session with no ClientOwner, so the refusal path cannot fall
+	// back to writing a status.
+	s := &uploadSession{
+		fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id},
+		src:         bytes.NewReader(make([]byte, 4096)),
+	}
+
+	err := NewUpload(nil, store).Handle(s)
+
+	if err == nil {
+		t.Fatal("a refused stream lane returned nil: the peer is never told and its bytes are never counted")
+	}
+	if want := uploadAccessMessage(uploadAccessGlobalFull); !strings.Contains(err.Error(), want) {
+		t.Fatalf("refusal = %q, want it to carry %q", err, want)
+	}
+	if _, ok := store.get(id); ok {
+		t.Error("the refused id got an aggregate anyway")
+	}
+}
+
+// deadlineRecorder is a ResponseWriter that records what
+// http.NewResponseController(w).SetReadDeadline was handed.
+type deadlineRecorder struct {
+	http.ResponseWriter
+	read time.Time
+	set  bool
+}
+
+func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
+	d.read, d.set = t, true
+	return nil
+}
+
+// A POST body that stops arriving mid-upload holds a goroutine and a 256 KiB
+// drain buffer. The streaming server sets no global ReadTimeout, so this
+// per-request deadline is the only bound on a half-open lane.
+func TestUploadBoundsAStuckBodyRead(t *testing.T) {
+	rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(make([]byte, 4096)))
+	before := time.Now()
+
+	if err := NewUpload(nil, nil).Handle(transport.NewHTTPSession(rec, req)); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+
+	if !rec.set {
+		t.Fatal("no read deadline was set: a stuck POST body would pin its goroutine and drain buffer indefinitely")
+	}
+	if got := rec.read.Sub(before); got < uploadReadTimeout || got > uploadReadTimeout+time.Minute {
+		t.Fatalf("read deadline is %v out, want about %v", got, uploadReadTimeout)
 	}
 }
 

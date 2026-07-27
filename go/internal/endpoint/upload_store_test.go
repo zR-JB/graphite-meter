@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestUploadStoreRejectsForgedID(t *testing.T) {
@@ -163,6 +165,50 @@ func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	}
 }
 
+// A WebTransport session that goes quiet is closed at the published idle bound,
+// and api/wire.md promises the client may re-dial the same upload id and keep
+// its counters. The aggregate must therefore outlive that silence: the progress
+// feed deliberately never touches it, so an idle-bound-long stall leaves the
+// aggregate looking exactly this old. Reaping it turns the reconnect into a
+// fresh zero-byte aggregate that reports only the post-reconnect bytes.
+func TestUploadStoreKeepsAggregateAcrossAWebTransportIdleBound(t *testing.T) {
+	s := NewUploadStore()
+	id := s.Mint()
+	agg, ok := s.getOrCreate(id)
+	if !ok {
+		t.Fatal("create failed")
+	}
+	const carried = 1 << 20
+	agg.recordChunk(monoNanos(), carried)
+	agg.lastTouchMono.Store(monoNanos() - int64(wire.WTIdleBound))
+
+	s.sweep(uploadIDTTL)
+
+	got, ok := s.get(id)
+	if !ok {
+		t.Fatal("aggregate reaped within the transport's own idle bound: a re-dial would restart from zero bytes")
+	}
+	if got != agg {
+		t.Fatalf("re-dial resolved to a different aggregate (%p, want %p)", got, agg)
+	}
+	if n := got.bytes.Load(); n != carried {
+		t.Fatalf("bytes = %d, want %d carried across the reconnect", n, carried)
+	}
+}
+
+// The aggregate TTL and the transport's idle bound must never be re-equalised.
+// watchSession samples at bound/2 and cancels on the second quiet tick, so a
+// stall is detected up to 1.5 bounds after the last byte -- and the client still
+// has to notice the close and dial again before the aggregate may be reaped.
+func TestUploadIDTTLOutlastsTheWebTransportIdleBound(t *testing.T) {
+	if uploadIDTTL <= wire.WTIdleBound {
+		t.Fatalf("uploadIDTTL = %v, want strictly greater than the WebTransport idle bound %v", uploadIDTTL, wire.WTIdleBound)
+	}
+	if want := 2 * wire.WTIdleBound; uploadIDTTL < want {
+		t.Fatalf("uploadIDTTL = %v, want at least %v: detecting the stall alone takes up to 1.5 idle bounds", uploadIDTTL, want)
+	}
+}
+
 func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
@@ -177,6 +223,33 @@ func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
 	s.sweep(uploadIDTTL)
 	if _, ok := s.get(id); ok {
 		t.Fatal("idle upload survived after its final post exited")
+	}
+}
+
+// A superseded feed's deferred release runs after a newer feed already took the
+// claim. Clearing the claim regardless would leave the live feed unregistered:
+// a third feed would find no holder to supersede, and the second would keep
+// streaming alongside it for the rest of the upload.
+func TestReleaseProgressLeavesALaterClaimAlone(t *testing.T) {
+	var agg uploadAgg
+	first := agg.claimProgress()
+	second := agg.claimProgress()
+	select {
+	case <-first:
+	default:
+		t.Fatal("the second claim did not supersede the first")
+	}
+
+	agg.releaseProgress(first) // the superseded feed's deferred release
+
+	third := agg.claimProgress()
+	select {
+	case <-second:
+	default:
+		t.Fatal("a stale release dropped the live claim: the third feed could not supersede the second, so both would stream")
+	}
+	if third == second {
+		t.Fatal("the third feed was handed the second's claim")
 	}
 }
 

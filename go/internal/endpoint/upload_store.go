@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // UploadStore holds per-test state shared between POST /upload lanes and the
@@ -40,7 +42,7 @@ type uploadShard struct {
 type uploadAgg struct {
 	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // mono ns of the last chunk or progress tick; the sweeper's idle clock
+	lastTouchMono  atomic.Int64 // mono ns of the last drained chunk; the sweeper's idle clock
 	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
 	postsMu        sync.Mutex
 	postsChanged   chan struct{} // closed and replaced on every change: a broadcast
@@ -66,9 +68,11 @@ func (a *uploadAgg) postsWaiter() <-chan struct{} {
 // claimProgress makes the caller the aggregate's one live feed, superseding any
 // current holder. A client that lost its transport re-dials long before the
 // dead connection's idle timeout, so the newest feed always wins. Both feeds
-// have passed the owner check, which in public mode groups by address (IPv6 by
-// /64), so a shared address can take over a feed; the unguessable minted id is
-// what actually gates the aggregate, and authenticated mode keys by session.
+// have passed the owner check, but that check is deliberately coarse: ClientKey
+// groups by authenticated SUBJECT, not by login, so the same user's second
+// device takes over the feed, and in public mode it groups by address (IPv6 by
+// /64), so a shared address does too. The unguessable minted id is what actually
+// gates the aggregate; the owner check only bounds per-client capacity.
 func (a *uploadAgg) claimProgress() chan struct{} {
 	a.progressMu.Lock()
 	defer a.progressMu.Unlock()
@@ -131,9 +135,20 @@ const (
 	// maxLiveUploadsPerClient leaves ample room for rapid abort/retry cycles while
 	// preventing one source from occupying the global aggregate map.
 	maxLiveUploadsPerClient = 32
-	// uploadIDTTL: an aggregate idle this long (no chunk or progress tick) is
-	// reaped by the sweeper after abort, tab close, or crash.
-	uploadIDTTL = 30 * time.Second
+	// uploadReconnectGrace is the budget a client gets, on top of the transport
+	// bound, to notice a bound-driven close and re-dial against the same id.
+	uploadReconnectGrace = 30 * time.Second
+	// uploadIDTTL: an aggregate idle this long (no drained chunk) is reaped by
+	// the sweeper after abort, tab close, or crash. It MUST outlast a
+	// WebTransport session's whole death: api/wire.md promises the counters
+	// carry across a bound-driven close, and watchSession samples at
+	// wire.WTIdleBound/2 and cancels on the second quiet tick, so a stalled
+	// session survives up to 1.5 bounds of silence before it is closed at all.
+	// A TTL equal to the bound would reap the aggregate first, and the re-dial
+	// would take getOrCreateForActivity's create path and report only the bytes
+	// that moved after the reconnect. The progress feed does not touch the
+	// clock, so a watching client cannot stretch this.
+	uploadIDTTL = 2*wire.WTIdleBound + uploadReconnectGrace
 	// uploadTokenTTL limits how long a minted id may create its aggregate.
 	uploadTokenTTL = 2 * time.Minute
 	// uploadSweepInterval is how often RunSweeper scans for idle aggregates.
