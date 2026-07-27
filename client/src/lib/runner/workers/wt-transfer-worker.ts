@@ -12,7 +12,6 @@ import { ESTABLISH_BUDGET_MS, PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
 import { ProgressWindow, type ProgressDelta } from "./progressWindow";
-import { taskTurn } from "./taskTurn";
 import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
 type InMsg =
@@ -60,6 +59,22 @@ const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
 
 /** Session congestion control hint. */
 const CONGESTION_CONTROL: WebTransportCongestionControl = "throughput";
+
+/** One task turn, so the queue carrying `stop` is dispatched. The port hop is
+ *  what keeps the timer off the HTML nesting clamp, which otherwise floors a
+ *  timer re-armed from a timer's own task at 4ms. Measured as a wash on
+ *  throughput — the transport buffers absorb the park — so this buys
+ *  responsiveness, not rate. */
+const taskTurn = (): Promise<void> =>
+  new Promise((resolve) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = (): void => {
+      port1.close();
+      port2.close();
+      setTimeout(resolve);
+    };
+    port2.postMessage(0);
+  });
 
 let lastAlive = 0;
 

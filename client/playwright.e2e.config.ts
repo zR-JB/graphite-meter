@@ -1,7 +1,6 @@
-// Real-transport check, run by `just client-e2e-live`. The e2e suite beside it
-// serves the bundle alone, so nothing there reaches a backend: every transport
-// is stubbed or synthetic. This boots the server and moves bytes over the real
-// ones.
+// End to end: a real browser, the production lanes, and a real server. The
+// stubbed browser suite beside it (./browser) never reaches a backend, so this
+// is the only place both ends are real.
 //
 // Chromium only. QUIC ignores ignoreHTTPSErrors, and Firefox reaches h3 only
 // through a system trust anchor, which is more than a check of this size should
@@ -15,8 +14,8 @@ const ports = { h1: 7256, h1tls: 7257, h3: 7259 };
 
 /** Set by the recipe from the throwaway certificate it generates. Absent means
  *  the recipe was bypassed; failing here beats a QUIC error 40 minutes later. */
-const SPKI = process.env.GM_LIVE_SPKI;
-if (!SPKI) throw new Error("GM_LIVE_SPKI unset: run `just client-e2e-live`");
+const SPKI = process.env.GM_E2E_SPKI;
+if (!SPKI) throw new Error("GM_E2E_SPKI unset: run `just client-e2e`");
 
 export const origins = {
   "h1-clear": `http://${HOST}:${ports.h1}`,
@@ -24,7 +23,7 @@ export const origins = {
 };
 
 export default defineConfig({
-  testDir: "./e2e-live",
+  testDir: "./e2e",
   testMatch: "**/*.pw.ts",
   workers: 1,
   retries: process.env.CI ? 1 : 0,
@@ -59,8 +58,8 @@ export default defineConfig({
         GM_H1_ADDR: `${HOST}:${ports.h1}`,
         GM_H1_TLS_ADDR: `${HOST}:${ports.h1tls}`,
         GM_H3_ADDR: `${HOST}:${ports.h3}`,
-        GM_TLS_CERT: process.env.GM_LIVE_TLS_CERT ?? "",
-        GM_TLS_KEY: process.env.GM_LIVE_TLS_KEY ?? "",
+        GM_TLS_CERT: process.env.GM_E2E_TLS_CERT ?? "",
+        GM_TLS_KEY: process.env.GM_E2E_TLS_KEY ?? "",
       },
       reuseExistingServer: false,
       stdout: "pipe",

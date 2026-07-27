@@ -1,7 +1,10 @@
+// The stubbed browser suite: accessibility, panel behaviour, presentation.
+// It serves the bundle alone, so nothing here reaches a backend — every
+// transport is stubbed or synthetic. The real ones live in ./e2e.
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: "./browser",
   testMatch: "**/*.pw.ts",
   fullyParallel: false,
   workers: 1,

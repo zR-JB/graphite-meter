@@ -50,7 +50,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       tui: ${{ steps.filter.outputs.tui }}
       client: ${{ steps.filter.outputs.client }}
-      live: ${{ steps.filter.outputs.live }}
+      e2e: ${{ steps.filter.outputs.e2e }}
       smoke: ${{ steps.filter.outputs.smoke }}
     steps:
       # Checkout is needed for push events; PR events are diffed via the API.
@@ -86,7 +86,7 @@ jobs:
               - *workflow
               - "client/**"
               - "api/**"
-            live:
+            e2e:
               - *workflow
               - "go/**"
               - "client/**"
@@ -198,16 +198,16 @@ jobs:
         run: just client-ci
       - name: Install browsers
         run: bunx playwright install --with-deps chromium firefox
-      - name: Browser accessibility and compatibility
+      - name: Stubbed browser suite
         working-directory: .
-        run: just client-e2e
+        run: just client-browser
 
-  live:
-    name: Live transports
+  e2e:
+    name: End to end
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: changes
-    if: needs.changes.outputs.live == 'true'
+    if: needs.changes.outputs.e2e == 'true'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -229,10 +229,10 @@ jobs:
       - name: Install browser
         working-directory: client
         run: bunx playwright install --with-deps chromium
-      # The stubbed E2E suite never reaches a backend, so this is the only
-      # coverage the browser half of a transport has.
+      # The stubbed suite never reaches a backend, so this is the only coverage
+      # the browser half of a transport has.
       - name: Real transports against a real server
-        run: just client-e2e-live
+        run: just client-e2e
 
   smoke:
     name: Smoke

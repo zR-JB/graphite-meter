@@ -188,20 +188,19 @@ server-test:
     awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
         || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
 
-# Playwright browser tests (chromium + firefox). ci.yml calls this recipe after
-# installing the browsers. Slow (~45s), so it is not in the pre-commit hook;
-# run it explicitly or via `just ci-full`. The bundle is rebuilt by test:e2e,
-# since playwright's webServer previews dist.
-client-e2e:
-    cd client && bun run test:e2e
+# The stubbed browser suite (chromium + firefox): accessibility, panel
+# behaviour, presentation. Serves the bundle alone, so nothing here reaches a
+# backend. Slow (~45s), so it is not in the pre-commit hook. The bundle is
+# rebuilt by the script, since playwright's webServer previews dist.
+client-browser:
+    cd client && bun run test:browser
 
-# Real transports from a real browser: boots the server and drives the
-# production lanes over fetch streams and WebTransport. The e2e suite above
-# never reaches a backend, so this is the only check that the browser half of a
-# transport works. Chromium only: QUIC ignores ignoreHTTPSErrors, and Firefox
-# reaches h3 only through a system trust anchor. Needs a Go toolchain and
-# openssl; the certificate is generated per run, so nothing is a prerequisite.
-client-e2e-live:
+# End to end: boots the server and moves bytes over every real transport from
+# a real browser, through the production lanes. The only check where both ends
+# are real. Chromium only: QUIC ignores ignoreHTTPSErrors, and Firefox reaches
+# h3 only through a system trust anchor. Needs Go and openssl; the certificate
+# is generated per run, so nothing is a prerequisite.
+client-e2e:
     #!/usr/bin/env sh
     set -e
     certs=$(mktemp -d)
@@ -209,13 +208,13 @@ client-e2e-live:
     openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
       -keyout "$certs/key.pem" -out "$certs/cert.pem" -subj "/CN=127.0.0.1" \
       -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>/dev/null
-    GM_LIVE_TLS_CERT="$certs/cert.pem"
-    GM_LIVE_TLS_KEY="$certs/key.pem"
-    GM_LIVE_SPKI=$(openssl x509 -in "$certs/cert.pem" -pubkey -noout \
+    GM_E2E_TLS_CERT="$certs/cert.pem"
+    GM_E2E_TLS_KEY="$certs/key.pem"
+    GM_E2E_SPKI=$(openssl x509 -in "$certs/cert.pem" -pubkey -noout \
       | openssl pkey -pubin -outform der \
       | openssl dgst -sha256 -binary | openssl enc -base64)
-    export GM_LIVE_TLS_CERT GM_LIVE_TLS_KEY GM_LIVE_SPKI
-    cd client && bunx playwright test -c playwright.live.config.ts
+    export GM_E2E_TLS_CERT GM_E2E_TLS_KEY GM_E2E_SPKI
+    cd client && bun run test:e2e
 
 # Measurement only; not part of ci. Unix only, since the CPU column reads
 # getrusage. Loads the server over kernel TCP and again over userspace QUIC, and
@@ -250,7 +249,7 @@ ci: check-generated client-ci server-check go-lint server-test
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the
 # browser E2E, stubbed and live. The Docker smoke job and the cross-build matrix
 # stay CI-only infrastructure (a container runtime / other toolchains).
-ci-full: ci client-e2e client-e2e-live
+ci-full: ci client-browser client-e2e
 
 # --- Go native TUI client (graphite-meter-client) ---
 # No dev/prod split: it doesn't embed the Svelte client, so there's nothing to profile.

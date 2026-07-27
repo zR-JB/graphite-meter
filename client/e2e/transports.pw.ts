@@ -1,11 +1,11 @@
 // Does a real browser move bytes over each transport, against a real server?
-// Nothing else answers that: the rest of e2e never reaches a backend, and the
+// Nothing else answers that: the browser suite never reaches a backend, and the
 // worker suites mock the session.
 //
 // A contract check, not a measurement. It asserts that bytes moved and that no
 // lane reported an error — never a rate, which on a shared runner is noise.
 import { test, expect } from "@playwright/test";
-import { origins } from "../playwright.live.config";
+import { origins } from "../playwright.e2e.config";
 import type { CellSpec, CellResult } from "../bench/harness";
 
 declare global {
@@ -49,6 +49,27 @@ const cells: {
       origin: origins.h3,
       dir: "up",
       transport: "webtransport",
+      lanes: 1,
+    },
+  },
+  // The datagram loops are the one path whose rate depends on how the worker
+  // yields, so they are the reason workers/taskTurn.ts exists. Nothing else
+  // drives them against a real session.
+  {
+    name: "WebTransport datagram download",
+    spec: {
+      origin: origins.h3,
+      dir: "down",
+      transport: "webtransport-datagram",
+      lanes: 1,
+    },
+  },
+  {
+    name: "WebTransport datagram upload",
+    spec: {
+      origin: origins.h3,
+      dir: "up",
+      transport: "webtransport-datagram",
       lanes: 1,
     },
   },
