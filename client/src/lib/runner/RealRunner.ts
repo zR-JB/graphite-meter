@@ -52,7 +52,11 @@ import {
   sessionLane,
   type SessionLaneOptions,
 } from "./real/byteLane";
-import { TransferDirection, type DirectionHost } from "./real/direction";
+import {
+  TransferDirection,
+  transferStageStalled,
+  type DirectionHost,
+} from "./real/direction";
 import {
   ESTABLISH_BUDGET_MS,
   H3_PROBE_ATTEMPTS,
@@ -1114,18 +1118,20 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Combine the directions into the STAGE-level flag. They combine with AND,
-   *  so one direction hiccuping while the other moves bytes raises nothing. */
+  /** Combine the directions into the STAGE-level flag. Every required lane must
+   *  be healthy: one direction moving cannot validate its stalled sibling. */
   #reconcileStall(detail?: string): void {
-    const allStalled = Object.values(this.#lanes).every((d) => d!.stalled);
-    if (allStalled && !this.#stalled) {
+    const transferStalled = transferStageStalled(
+      Object.values(this.#lanes) as TransferDirection[],
+    );
+    if (transferStalled && !this.#stalled) {
       this.#host!.stall({
         reason: "connection-lost",
         transport: this.#activeTransport ?? undefined,
         detail,
       });
       this.#stalled = true;
-    } else if (!allStalled && this.#stalled) {
+    } else if (!transferStalled && this.#stalled) {
       this.#host!.resume();
       this.#stalled = false;
     }

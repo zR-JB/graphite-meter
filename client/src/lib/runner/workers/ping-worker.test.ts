@@ -12,7 +12,7 @@ const globals = globalThis as Record<string, unknown>;
 
 /** How a dial settles. `refuse` is a CONNECT the server never accepted, so its
  *  token is still unspent; `accept` is one the server consumed. */
-type Outcome = "accept" | "refuse";
+type Outcome = "accept" | "refuse" | "pending";
 
 const park = (): Promise<void> => new Promise(() => {});
 
@@ -82,6 +82,13 @@ class FakeSession {
       this.closed = Promise.reject(err);
       return;
     }
+    if (outcome === "pending") {
+      this.ready = park();
+      this.closed = new Promise<void>((resolve) => {
+        this.#drop = resolve;
+      });
+      return;
+    }
     this.ready = Promise.resolve();
     this.closed = new Promise<void>((resolve) => {
       this.#drop = resolve;
@@ -91,6 +98,10 @@ class FakeSession {
   /** The server closing an accepted session, which is what makes the ping bus
    *  re-dial in the realm it is already running in. */
   drop(): void {
+    this.#drop();
+  }
+
+  close(): void {
     this.#drop();
   }
 }
@@ -207,3 +218,18 @@ test("a dial the server accepted never offers its token again", async () => {
   expect(scenario.tokens()[1]).not.toBe(scenario.tokens()[0]);
   expect(scenario.mints).toBeGreaterThanOrEqual(2);
 });
+
+test("a pending dial times out and retries with the same unspent token", async () => {
+  const scenario = new Scenario("pending");
+  scenario.outcomes = ["pending", "accept"];
+  await start(scenario);
+  await Bun.sleep(3_300);
+
+  expect(scenario.dials).toHaveLength(2);
+  expect(scenario.tokens()[1]).toBe(scenario.tokens()[0]);
+  expect(scenario.mints).toBe(1);
+
+  scenario.halted = true;
+  scenario.sessions.at(-1)?.drop();
+  await Bun.sleep(250);
+}, 10_000);

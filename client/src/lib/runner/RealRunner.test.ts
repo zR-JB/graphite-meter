@@ -288,6 +288,17 @@ test("a WebTransport-only origin is auto's last resort and keeps a fetch view", 
   expect(view.routes.uploadSession).toBe(ROUTES.uploadSession);
 });
 
+test("a legacy latency target without a transport remains a WebSocket bus", () => {
+  const catalog = classifyTransportDiscovery(
+    [{ baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" }],
+    [{ baseUrl: "." }],
+    "https://meter.test",
+    true,
+  );
+
+  expect(selectLatencyTarget(catalog, "auto")?.transport).toBe("websocket");
+});
+
 test("browser protocol verification is independent of server probe evidence", () => {
   const h1 = transfer("http1-tls", "https://meter", "http1", true);
   const h2 = transfer("http2", "https://meter", "http2", true);

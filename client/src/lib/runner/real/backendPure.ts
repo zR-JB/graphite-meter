@@ -138,7 +138,12 @@ export function classifyTransportDiscovery(
   throughputEndpoints: (
     ThroughputEndpoint | FetchThroughputTarget | WebTransportThroughputTarget
   )[],
-  latencyEndpoints: (LatencyEndpoint | LatencyTarget)[],
+  latencyEndpoints: (
+    | (Omit<LatencyEndpoint, "transport"> & {
+        transport?: LatencyEndpoint["transport"];
+      })
+    | LatencyTarget
+  )[],
   pageOrigin: string,
   pageSecure: boolean,
   pageProtocol?: string,
@@ -205,7 +210,9 @@ export function classifyTransportDiscovery(
 
   const latency: TransportDiscovery["latency"] = {};
   for (const endpoint of latencyEndpoints) {
-    const mechanism: string = endpoint.transport;
+    // An absent mechanism is the original wire contract's WebSocket bus. Keep
+    // accepting it during rolling upgrades, as throughput does above.
+    const mechanism: string = endpoint.transport ?? "websocket";
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (latency[origin] ??= { state: stateOf(origin), targets: [] });

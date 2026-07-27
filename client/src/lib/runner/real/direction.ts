@@ -55,6 +55,13 @@ export interface DirectionOptions {
   host: DirectionHost;
 }
 
+/** Whether the combined transfer stage is stalled by its required directions. */
+export function transferStageStalled(
+  directions: Iterable<Pick<TransferDirection, "stalled">>,
+): boolean {
+  return Array.from(directions).some((direction) => direction.stalled);
+}
+
 export class TransferDirection {
   readonly dir: FlowDirection;
   readonly stage: PhaseActivity["stage"];

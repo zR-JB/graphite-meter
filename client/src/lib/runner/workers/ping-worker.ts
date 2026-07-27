@@ -22,6 +22,7 @@ import { nextBackoff } from "./backoff";
 import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
+import { ESTABLISH_BUDGET_MS } from "../real/budgets";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
  *  reporting on for the SAME warmed socket. The bus is closed by terminating
@@ -235,39 +236,70 @@ async function connectWebTransport(): Promise<void> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  let disconnectReported = false;
+  const disconnect = (detail: string): void => {
+    if (disconnectReported) return;
+    disconnectReported = true;
+    onDisconnect(detail);
+  };
   link = {
     ready: () => writer !== null,
     // A rejected datagram write is a dropped frame; wt.closed reports the end.
     send: (msg) => void writer?.write(encoder.encode(msg)).catch(() => {}),
   };
   void wt.closed.then(
-    () => onDisconnect("webtransport closed"),
-    (err: unknown) => onDisconnect(String(err)),
+    () => disconnect("webtransport closed"),
+    (err: unknown) => disconnect(String(err)),
   );
-  void wt.ready
-    .then(
-      async () => {
-        // `ready` fulfils on the CONNECT the server accepted, which is the
-        // moment it deleted the token. This bus re-dials inside its own realm,
-        // so an unreported spend would be offered to every reconnect for the
-        // whole reuse window and refused by each of them.
-        spendWtToken(token);
-        writer = wt.datagrams.writable.getWriter();
-        onConnected("wt");
-        const reader = wt.datagrams.readable.getReader();
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) return;
-          onFrame(decoder.decode(value as AllowSharedBufferSource));
-        }
-      },
-      () => {
-        /* wt.closed rejects too and drives the reconnect */
-      },
-    )
-    .catch(() => {
-      /* a dying session rejects the read loop; wt.closed drives the reconnect */
-    });
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      wt.ready,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("webtransport session did not establish")),
+          ESTABLISH_BUDGET_MS,
+        );
+      }),
+    ]);
+  } catch (err) {
+    if (timer !== null) clearTimeout(timer);
+    try {
+      wt.close();
+    } catch {
+      /* already closing */
+    }
+    // Some implementations leave `closed` pending with a black-holed
+    // handshake, so the deadline itself must drive the retry. If close also
+    // settles it, the per-attempt latch above suppresses the echo.
+    disconnect(String(err));
+    return;
+  }
+  if (timer !== null) clearTimeout(timer);
+  // `ready` fulfils on the CONNECT the server accepted, which is the moment it
+  // deleted the token. This bus re-dials inside its own realm, so an unreported
+  // spend would replay it on every reconnect for the whole reuse window.
+  spendWtToken(token);
+  try {
+    writer = wt.datagrams.writable.getWriter();
+    onConnected("wt");
+    const reader = wt.datagrams.readable.getReader();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) {
+        disconnect("webtransport datagram stream closed");
+        return;
+      }
+      onFrame(decoder.decode(value as AllowSharedBufferSource));
+    }
+  } catch (err) {
+    try {
+      wt.close();
+    } catch {
+      /* already closing */
+    }
+    disconnect(String(err));
+  }
 }
 
 async function checkSessionThenReconnect(detail: string): Promise<void> {

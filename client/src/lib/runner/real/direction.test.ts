@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { TransferDirection, type DirectionHost } from "./direction";
+import {
+  TransferDirection,
+  transferStageStalled,
+  type DirectionHost,
+} from "./direction";
 import {
   EARLY_FAIL_BUDGET_MS,
   ESTABLISH_BUDGET_MS,
@@ -266,4 +270,13 @@ test("graceful stop aggregates a lane's final progress report", async () => {
   await direction.stop();
 
   expect(bytes.reduce((sum, delta) => sum + delta, 0)).toBe(17);
+});
+
+test("a healthy download cannot mask a stalled upload", () => {
+  expect(transferStageStalled([{ stalled: false }, { stalled: true }])).toBe(
+    true,
+  );
+  expect(transferStageStalled([{ stalled: false }, { stalled: false }])).toBe(
+    false,
+  );
 });
