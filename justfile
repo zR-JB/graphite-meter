@@ -30,6 +30,9 @@ set export := true
 engine      := env("GM_CLIENT_ENGINE", "real")
 allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
 dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
+# The benchmark's tuning surface. Dev tooling is a UI surface and this is a
+# measurement one, so they are built independently.
+bench       := env("GM_CLIENT_BENCH", "0")
 
 # Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS.
 # `label` is the status-bar label and the label half of the client version
@@ -75,7 +78,7 @@ client-build-dev:
 # Build the client in prod profile: real-only engine, dev tooling stripped by default.
 client-build-prod:
     cd client && bun install
-    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BENCH='{{bench}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
 # Type-check the client, including Bun test files
 client-check:
@@ -124,10 +127,12 @@ server-build-prod: client-build-prod _embed-client
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion={{version}}" \
       -trimpath -o graphite-meter ./cmd/graphite-meter
 
-# Check Go formatting and vet diagnostics.
+# Check Go formatting and vet diagnostics. The second vet carries the stress
+# tag so the saturation harness cannot rot outside the gate.
 server-check:
     cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
     cd go && go vet ./...
+    cd go && go vet -tags stress ./internal/server/
 
 # Regenerate the embedded auth assets and fail if they drift from source. The
 # pre-commit hook and ci.yml both call this recipe.
@@ -182,6 +187,31 @@ client-e2e:
 
 # The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
 # all but go-lint, and only those matching the staged files.
+# Loopback saturation harness (issue #44): observer RTT percentiles under
+# growing loader concurrency, on kernel TCP and userspace QUIC, plus a
+# CPU-constrained pass. Measurement only; not part of ci. Unix only: the CPU
+# column reads getrusage.
+stress:
+    cd go && go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/
+
+# Both halves of the ping-bus encoding evidence: why the message bus keeps a
+# text codec while the progress feed carries NDJSON. Excluded from CI.
+bench-wire:
+    cd go && go test ./internal/wire/ -run '^$' -bench 'Decode|Encode' -benchmem -benchtime=2s
+    cd client && bun run src/lib/runner/real/wire.bench.ts
+
+# Measurement only; not part of ci, and it takes hours. `filter` is a playwright
+# -g filter and `project` a --project passthrough; omit either and that axis is
+# not narrowed, so a bare filter still runs against every browser project. Cell
+# ids look like `h1-clear/down/lanes=2`, so one cell on one engine is:
+#   just bench-throughput 'h1-clear/down/lanes=2' chromium
+# Needs ../.dev-certs (see docs/DEVELOPMENT.md) on every run, since the config
+# starts all four listeners whatever origins were asked for, and GM_BENCH_SPKI
+# set, or the chromium project does not exist at all.
+# Browser throughput matrix against a real server, chromium and firefox.
+bench-throughput filter="" project="":
+    cd client && bunx playwright test -c playwright.bench.config.ts {{ if filter != "" { "-g '" + filter + "'" } else { "" } }} {{ if project != "" { "--project=" + project } else { "" } }}
+
 ci: check-generated client-ci server-check go-lint server-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the

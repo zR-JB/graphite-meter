@@ -28,7 +28,6 @@ var ErrUnsupported = errors.New("transport: operation not supported on this sess
 type MessageBus interface {
 	Recv() (string, error)
 	Send(msg string) error
-	Reliable() bool
 }
 
 // Session is a transport-agnostic measurement session.
@@ -46,7 +45,7 @@ type Session interface {
 	// OpenUploadSource yields the byte source to drain and count.
 	OpenUploadSource() (io.Reader, error)
 
-	// Bus yields the control-message channel, when the session has one
-	// (websocketSession only).
+	// Bus yields the control-message channel, when the session has one: the
+	// WebSocket bus, and a WebTransport session's datagram bus.
 	Bus() (MessageBus, bool)
 }

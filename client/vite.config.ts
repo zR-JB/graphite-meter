@@ -22,6 +22,9 @@ const defaultEngine: "real" | "dummy" =
 const off = (v: string | undefined) => v === "0" || v === "false";
 const allowDummy = !off(env.GM_CLIENT_ALLOW_DUMMY);
 const devTools = !off(env.GM_CLIENT_DEV_TOOLS);
+// The benchmark's tuning surface. Opt-in, unlike the knobs above: every build
+// path that forgets it must produce a bundle without the tuning message.
+const bench = env.GM_CLIENT_BENCH === "1";
 
 const buildLabel = env.GM_CLIENT_BUILD_LABEL ?? "dev";
 
@@ -149,6 +152,7 @@ export default defineConfig({
     __GM_DEFAULT_ENGINE__: JSON.stringify(defaultEngine), // "real" | "dummy"
     __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy), // bare true | false
     __GM_DEV_TOOLS__: JSON.stringify(devTools), // bare true | false
+    __GM_BENCH__: JSON.stringify(bench), // bare true | false
     __GM_BUILD_LABEL__: JSON.stringify(buildLabel), // "abc1234"
     __GM_CLIENT_VERSION__: JSON.stringify(clientVersion), // "0.0.0+abc1234"
   },

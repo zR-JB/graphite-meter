@@ -26,7 +26,7 @@ in this repository:
 | `7247/tcp` | `GM_H1_TLS_ADDR` | HTTPS UI, API, transfers, and WSS latency.                |
 | `7248/tcp` | `GM_H2_ADDR`     | HTTP/2 measurement only.                                  |
 | `7249/tcp` | `GM_H3_ADDR`     | HTTP/3 Alt-Svc bootstrap probe only.                      |
-| `7249/udp` | `GM_H3_ADDR`     | HTTP/3 QUIC measurement.                                  |
+| `7249/udp` | `GM_H3_ADDR`     | HTTP/3 QUIC measurement, plus WebTransport sessions.      |
 
 Only 7246 and 7247 serve a browser; 7248 and 7249 are strict measurement targets. The routes each
 listener owns are in [ARCHITECTURE.md](ARCHITECTURE.md#the-go-measurement-server).
@@ -92,9 +92,12 @@ GM_PUBLIC_ORIGINS=self
 | `GM_TRUSTED_PROXIES`                    | none                                   | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. List the proxy's actual CIDR — a default route (`0.0.0.0/0`, `::/0`) is rejected, since trusting every caller's headers lets any client spoof its address and dodge the rate limits. Invalid CIDRs fail startup. |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Global concurrent measurement handlers.                                          |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |
+| `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | Ceiling on how much of the measurement pool WebTransport sessions may occupy. The session routes (`/wt/download`, `/wt/upload`) hold their slot for the session duration rather than the operation duration, so capping them — at a quarter of the pool by default — keeps the request-shaped routes from being refused behind them. It is a ceiling, not a reservation: nothing holds slots open for sessions, so a pool filled by request-shaped routes (the two ping buses among them) refuses every session while none is active. Must be greater than zero, and must not exceed the global measurement limit. |
+| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `16`             | Per-login WebTransport transfer sessions, which hold a measurement slot for a whole test and so carry their own budget. Keyed per login, not per address or per user, so one device cannot starve another. The datagram ping bus is not one: it is bounded like the WebSocket bus. Several tabs share one login, so leave room. With the defaults four distinct logins or address buckets can occupy the whole session budget; that is tolerable because a refused session degrades rather than denies — discovery advertises fetch streams and WebSocket alongside, and a client falls back per role — so an operator expecting many distinct clients should lower this rather than raise the global budget. Must not exceed the per-client measurement limit, nor the global session budget one client's sessions draw from. |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `512`            | Global TCP/QUIC connections.                                                     |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Per-direct-client connections.                                                   |
-| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Maximum operation lifetime.                                                      |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Maximum lifetime of one measurement request.                                     |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | Maximum lifetime of one WebTransport session, which hosts a whole test. Must be at least the operation duration. |
 | `GM_VERBOSE`                            | `--verbose`                            | `false`          | Per-second server measurement logs.                                              |
 
 The measurement endpoints are meant to move data fast: a single `/download` streams up to
@@ -106,7 +109,10 @@ connections — otherwise an anonymous client can pull sustained traffic at your
 ## Authentication
 
 Off by default. When enabled, every UI asset, discovery request, probe, transfer, progress
-stream, and WebSocket requires a browser session or terminal grant.
+stream, WebSocket, and WebTransport session requires a browser session or terminal grant. A
+WebTransport CONNECT can send neither cookies nor headers from a browser, so the client mints a
+single-use 30-second token at `POST /wt/session` and carries it in the CONNECT URL; the native
+client sends its grant as a header. Revoking a session ends its live WebTransport sessions.
 
 | Environment                       | Flag                             | Default    | Meaning                                                              |
 | --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------------- |
@@ -244,16 +250,18 @@ inside the TUI before a run starts.
 | `--url`                    | `http://127.0.0.1:7246` | Server base URL. Nothing is dialled until it is picked in the TUI or rechecked with `v`.       |
 | `--throughput-origin`      | `auto`                  | Discovered throughput origin.                                                                  |
 | `--throughput-protocol`    | `auto`                  | `auto`, `http1`, `http2`, or `http3`; fixed native endpoints reject mismatches.                |
-| `--latency-origin`         | `auto`                  | Discovered WebSocket latency origin.                                                           |
+| `--throughput-transport`   | `auto`                  | `auto`, `fetch-stream`, or `webtransport`; automatic prefers fetch streams.                     |
+| `--latency-origin`         | `auto`                  | Discovered latency origin.                                                                     |
+| `--latency-transport`      | `auto`                  | `auto`, `websocket`, or `webtransport`; datagrams measure loss a WebSocket cannot show.         |
 | `--stages`                 | `latency,download,upload` | Comma list: `latency`/`ping`, `download`/`down`, `upload`/`up`, `bidirectional`/`bidi`.      |
 | `--warmup`                 | `800ms`                 | Per-stage warmup before measurement starts.                                                    |
 | `--latency-duration`       | `4s`                    | Latency stage window.                                                                          |
 | `--download-duration`      | `10s`                   | Download stage window.                                                                         |
 | `--upload-duration`        | `10s`                   | Upload stage window.                                                                           |
 | `--bidirectional-duration` | `10s`                   | Bidirectional stage window.                                                                    |
-| `--auto-streams`           | `6`                     | Maximum automatic HTTP/1 streams per direction. Native H2/H3 use one request per direction.    |
-| `--streams`                | `0`                     | `0` selects automatic; `1–128` forces an exact count per direction for every protocol.         |
-| `--ping`                   | `medium`                | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration.      |
+| `--auto-streams`           | `6`                     | Maximum automatic HTTP/1 streams per direction. A multiplexed connection resolves its own count per direction — H2 one download and four upload, H3 one either way — and ignores this. |
+| `--streams`                | `0`                     | `0` selects automatic; `1–128` forces an exact count per direction. WebTransport clamps a forced count to 16 per direction, the session's own ceiling. |
+| `--ping`                   | `medium`                | Ping cadence: `instant` (80ms) / `medium` (250ms) / `slow` (600ms), or a raw Go duration up to `15s` — half the server's 30-second WebTransport idle bound, past which the bus is reaped between pings. |
 | `--loaded-latency`         | `true`                  | Measure RTT while a transfer stage is running.                                                 |
 | `--insecure`               | `false`                 | Skip TLS certificate verification. Refused against an authenticated server.                    |
 | `--version`                | `false`                 | Print the client version and exit.                                                             |

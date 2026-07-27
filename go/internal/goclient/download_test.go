@@ -31,7 +31,7 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: size}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client()}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -80,7 +80,7 @@ func TestMeasureDownloadReportsBytes(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 128 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
 	start := make(chan struct{})
 	close(start)
@@ -122,7 +122,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
 	start := make(chan struct{})
 	close(start)
@@ -152,9 +152,12 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 // newAbruptCloseDownloadServer sends headers plus partial bytes over chunked
 // encoding, then aborts the handler mid-response: the connection drops
 // without a clean terminating chunk, unlike a normal completed transfer or a
-// context-cancelled one.
-func newAbruptCloseDownloadServer(partial int) *httptest.Server {
+// context-cancelled one. requests counts how often a lane reopened.
+func newAbruptCloseDownloadServer(partial int, requests *atomic.Int64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests != nil {
+			requests.Add(1)
+		}
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(make([]byte, partial))
@@ -163,22 +166,27 @@ func newAbruptCloseDownloadServer(partial int) *httptest.Server {
 	}))
 }
 
-// TestDownloadLaneStopsOnAbruptConnectionDrop checks that a server closing
-// the connection mid-response (rather than a clean EOF) makes downloadLane
-// return promptly with only the bytes actually delivered counted, instead of
-// hanging or panicking on the broken stream.
-func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
+// TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace checks that a server
+// closing the connection mid-response (rather than a clean EOF) makes
+// downloadLane reopen and keep counting delivered bytes, so a stage outliving
+// the server's request bound continues — but at a retry cadence, since a
+// hard-down server would otherwise be hot-retried by every lane at once. The
+// lane must still return promptly once the stage ends.
+func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	const partial = 64 * 1024
-	srv := newAbruptCloseDownloadServer(partial)
+	const window = 1500 * time.Millisecond
+	var requests atomic.Int64
+	srv := newAbruptCloseDownloadServer(partial, &requests)
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: partial * 4}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client()}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), window)
 	defer cancel()
 	var total atomic.Uint64
 	done := make(chan struct{})
+	start := time.Now()
 	go func() {
 		_ = r.downloadLane(ctx, srv.URL, 0, &total)
 		close(done)
@@ -186,11 +194,17 @@ func TestDownloadLaneStopsOnAbruptConnectionDrop(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("downloadLane hung after the server closed the connection abruptly mid-transfer")
+	case <-time.After(2 * time.Second):
+		t.Fatal("downloadLane did not return after the stage ended")
 	}
-	if got := total.Load(); got == 0 || got > partial {
-		t.Errorf("total = %d, want > 0 and <= %d (only the bytes sent before the abrupt drop)", got, partial)
+	if got := total.Load(); got < 2*partial {
+		t.Errorf("total = %d, want at least %d (the lane must reopen after the drop)", got, 2*partial)
+	}
+	// One request per backoff interval, plus the first: anything near the
+	// thousands an unpaced loop would issue is the regression.
+	if paced := int64(window/wtRedialBackoff) + 2; requests.Load() > paced {
+		t.Errorf("issued %d requests in %v, want at most %d: the reopen is not paced",
+			requests.Load(), time.Since(start), paced)
 	}
 }
 
@@ -199,7 +213,7 @@ func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

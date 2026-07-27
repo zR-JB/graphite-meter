@@ -81,6 +81,13 @@ func valueLine(label, value, note string) string {
 	return fmt.Sprintf("%-*s %s  %s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(note))
 }
 
+// inertValueLine is valueLine for a setting the rest of the configuration
+// ignores: the value drops to the note's tone, so the row reads as inactive
+// without moving or disappearing.
+func inertValueLine(label, value, note string) string {
+	return fmt.Sprintf("%s %s  %s", mutedStyle.Render(pad(label, labelColumn)), mutedStyle.Render(value), mutedStyle.Render(note))
+}
+
 // endpointRow is an endpoint selector line: what the configured choice is,
 // where in the cycle enter walks it sits, and where it points. Both
 // descriptions come from discovery, so the row stands still while a connection

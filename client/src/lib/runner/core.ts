@@ -17,7 +17,6 @@ import type {
   LatencyResult,
   StallInfo,
   FlowDirection,
-  TransportAttempt,
   TransportRole,
   StageFailure,
   PhaseActivity,
@@ -68,7 +67,6 @@ export interface CoreHost {
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
   resume(): void;
-  reportTransport(attempt: TransportAttempt): void;
   // Direct events bypass measurement accumulation.
   emit(e: RunnerEvent): void;
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
@@ -209,6 +207,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   /* ================= START ================= */
+  /** `prepared` is the InfraInfo an earlier probe() resolved. The app always
+   *  passes one, since validateConnections probes before it starts a run; a
+   *  caller that has not probed omits it and start resolves the selection
+   *  itself, inside the `connecting` phase so the wait stays cancellable. */
   async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
     if (this.#running || this.#prepareAbort) this.abort();
     const generation = ++this.#runGeneration;
@@ -686,13 +688,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
     this.emit({ type: "resume" });
-  }
-
-  /** Pure pass-through: negotiation lives in the backend, the core relays the
-   *  telemetry. The backend itself calls fail("transport-unavailable", …) once
-   *  every transport fails. */
-  reportTransport(attempt: TransportAttempt): void {
-    this.emit({ type: "transport", attempt });
   }
 
   /** Refresh the watchdog for a real measured sample, and auto-resume a stall:

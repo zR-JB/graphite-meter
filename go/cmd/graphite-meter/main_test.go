@@ -29,12 +29,18 @@ func TestAdmissionFlagsOverrideDefaults(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	registerFlags(fs, &cfg)
-	err := fs.Parse([]string{"-max-active-measurements", "80", "-max-active-measurements-per-client", "20", "-max-connections", "160", "-max-connections-per-client", "40", "-max-operation-duration", "2m"})
+	err := fs.Parse([]string{"-max-active-measurements", "80", "-max-active-measurements-per-client", "20", "-max-active-sessions", "24", "-max-sessions-per-client", "3", "-max-connections", "160", "-max-connections-per-client", "40", "-max-operation-duration", "2m", "-max-session-duration", "3h"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.MaxActiveMeasurements != 80 {
 		t.Fatalf("MaxActiveMeasurements = %d, want 80", cfg.MaxActiveMeasurements)
+	}
+	if cfg.MaxActiveSessions != 24 {
+		t.Fatalf("MaxActiveSessions = %d, want 24", cfg.MaxActiveSessions)
+	}
+	if cfg.MaxSessionsPerClient != 3 {
+		t.Fatalf("MaxSessionsPerClient = %d, want 3", cfg.MaxSessionsPerClient)
 	}
 	if cfg.MaxActiveMeasurementsPerClient != 20 {
 		t.Fatalf("MaxActiveMeasurementsPerClient = %d, want 20", cfg.MaxActiveMeasurementsPerClient)
@@ -47,6 +53,9 @@ func TestAdmissionFlagsOverrideDefaults(t *testing.T) {
 	}
 	if cfg.MaxOperationDuration != 2*time.Minute {
 		t.Fatalf("MaxOperationDuration = %v, want %v", cfg.MaxOperationDuration, 2*time.Minute)
+	}
+	if cfg.MaxSessionDuration != 3*time.Hour {
+		t.Fatalf("MaxSessionDuration = %v, want %v", cfg.MaxSessionDuration, 3*time.Hour)
 	}
 }
 

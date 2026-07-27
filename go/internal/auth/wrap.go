@@ -16,7 +16,9 @@ import (
 
 // Listener describes what a wrapped listener is allowed to serve. UI listeners
 // carry the login surface; measurement-only listeners refuse it outright.
-type Listener struct{ UI bool }
+// WebTransport marks the listener that mounts the session routes: only there
+// does a CONNECT reach a handler, so only there is its single-use token spent.
+type Listener struct{ UI, WebTransport bool }
 
 type principalKey struct{}
 
@@ -30,6 +32,15 @@ type Principal struct {
 	Expires                 time.Time
 	session                 *session
 	Bearer                  bool
+}
+
+// LoginID names the session this principal authenticated with, empty when it has
+// none. One subject holds several: a phone and a desktop are different logins.
+func (p Principal) LoginID() string {
+	if p.session == nil {
+		return ""
+	}
+	return p.session.id
 }
 
 // Enforce applies the authentication boundary to next. It is installed outermost
@@ -56,6 +67,10 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 		}
 		if r.Method == http.MethodOptions && isMeasurementRoute(r.URL.Path) {
 			s.corsPreflight(w, r, t.Secure)
+			return
+		}
+		if r.Method == http.MethodConnect && listener.WebTransport && isWebTransportRoute(r.URL.Path) {
+			s.serveWebTransportConnect(w, r, next, listener, t)
 			return
 		}
 		if (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/")) && (!listener.UI || !t.Canonical) {
@@ -124,7 +139,8 @@ func (s *Service) isPublicAuthRoute(method, path string) bool {
 // which no route table carries. routes_test.go asserts the enumeration.
 func isMeasurementRoute(path string) bool {
 	switch path {
-	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping":
+	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping",
+		"/wt/session", "/wt/download", "/wt/upload", "/wt/ping":
 		return true
 	}
 	return false
@@ -141,11 +157,8 @@ func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
 }
 
 func (s *Service) authenticate(r *http.Request) (Principal, bool) {
-	if raw := r.Header.Get("Authorization"); raw != "" {
-		if !strings.HasPrefix(raw, "Bearer ") {
-			return Principal{}, false
-		}
-		return s.authenticateGrant(strings.TrimPrefix(raw, "Bearer "))
+	if r.Header.Get("Authorization") != "" {
+		return s.authenticateNonAmbient(r)
 	}
 	c, err := r.Cookie(sessionCookie)
 	if err != nil {
@@ -163,6 +176,17 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 		return Principal{}, false
 	}
 	return Principal{Subject: sess.subject, Name: sess.name, Provider: sess.provider, Expires: sess.expires, session: sess}, true
+}
+
+// authenticateNonAmbient authenticates from the Authorization grant alone. A
+// browser never attaches one on its own, so this is the half of authenticate
+// that the ambient-credential origin rules do not have to cover.
+func (s *Service) authenticateNonAmbient(r *http.Request) (Principal, bool) {
+	raw := r.Header.Get("Authorization")
+	if !strings.HasPrefix(raw, "Bearer ") {
+		return Principal{}, false
+	}
+	return s.authenticateGrant(strings.TrimPrefix(raw, "Bearer "))
 }
 
 func (s *Service) authenticateGrant(raw string) (Principal, bool) {

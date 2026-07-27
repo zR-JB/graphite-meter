@@ -13,7 +13,6 @@ type Frame struct {
 	ID uint32 // PING / PONG: client-owned monotonic id, echoed verbatim
 	// Nanos is PONG's server monotonic timestamp for diagnostics/skew only.
 	Nanos uint64
-	Bytes uint64 // SIZE: requested byte count
 	Proto string // HI: "ws" | "wt"
 	Code  string // ERR: short error token
 	Text  string // ERR: human detail
@@ -79,13 +78,6 @@ func Decode(msg string) (Frame, error) {
 		}
 		return Frame{Op: OpPONG, ID: id, Nanos: nanos}, nil
 
-	case OpSIZE:
-		bytes, ok := parseU64(rest)
-		if !ok {
-			return Frame{}, badArgs("SIZE bytes")
-		}
-		return Frame{Op: OpSIZE, Bytes: bytes}, nil
-
 	case OpHI:
 		if rest == "" {
 			return Frame{}, badArgs("HI proto")
@@ -115,8 +107,6 @@ func Encode(f Frame) string {
 		return OpPING + "," + u32(f.ID)
 	case OpPONG:
 		return OpPONG + "," + u32(f.ID) + ";" + timeField + "," + u64(f.Nanos)
-	case OpSIZE:
-		return OpSIZE + "," + u64(f.Bytes)
 	case OpHI:
 		return OpHI + "," + f.Proto
 	case OpERR:

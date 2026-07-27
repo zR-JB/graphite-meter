@@ -7,12 +7,12 @@ import {
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
+import { readProgressFeed, type ProgressFeedState } from "./progressFeed";
 
 type InMsg =
   | {
       type: "start";
       url: string;
-      headers?: Record<string, string>;
       csrf?: Record<string, string>;
       credentials?: RequestCredentials;
     }
@@ -25,12 +25,6 @@ type OutMsg =
   | { type: "stall"; detail: string }
   | { type: "resume" }
   | { type: "auth-required" };
-type ProgressFrame = {
-  type: "ready" | "progress" | "complete" | "error";
-  bytes?: number;
-  nanos?: number;
-  message?: string;
-};
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (message: OutMsg): void => ctx.postMessage(message);
@@ -38,7 +32,6 @@ const RECONNECT_MIN_MS = 100;
 const RECONNECT_MAX_MS = 2000;
 
 let url = "";
-let headers: Record<string, string> = {};
 let csrf: Record<string, string> = {};
 let credentials: RequestCredentials = "same-origin";
 let controller: AbortController | null = null;
@@ -47,7 +40,7 @@ let stopped = false;
 let finishing = false;
 let stalledOut = false;
 let backoff = 0;
-let lastN = 0;
+const feed: ProgressFeedState = { lastN: 0 };
 
 export function terminalProgressStatus(status: number): boolean {
   return (status >= 400 && status < 500) || status === 503;
@@ -56,12 +49,11 @@ export function terminalProgressStatus(status: number): boolean {
 ctx.onmessage = (event: MessageEvent<InMsg>): void => {
   if (event.data.type === "start") {
     url = event.data.url;
-    headers = event.data.headers ?? {};
     csrf = event.data.csrf ?? {};
     credentials = event.data.credentials ?? "same-origin";
     stopped = false;
     finishing = false;
-    lastN = 0;
+    feed.lastN = 0;
     void run();
   } else {
     void finish();
@@ -75,7 +67,7 @@ async function run(): Promise<void> {
     try {
       const response = await fetch(url, {
         cache: "no-store",
-        headers: { ...headers, accept: "application/x-ndjson" },
+        headers: { accept: "application/x-ndjson" },
         signal: controller.signal,
         credentials,
         redirect: redirectForCredentials(credentials),
@@ -137,53 +129,18 @@ function reconnectDelay(ms: number): Promise<void> {
 }
 
 async function readEvents(body: ReadableStream<Uint8Array>): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let partialLine = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    partialLine += decoder.decode(value, { stream: !done });
-    const lines = partialLine.split("\n");
-    partialLine = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.trim() === "") continue;
-      let event: ProgressFrame;
-      try {
-        event = JSON.parse(line) as ProgressFrame;
-      } catch {
-        continue; // a truncated or non-JSON line is never a measurement
-      }
-      if (event.type === "ready") {
-        backoff = 0;
-        if (stalledOut) {
-          post({ type: "resume" });
-          stalledOut = false;
-        }
-        post({ type: "open" });
-      } else if (event.type === "progress" || event.type === "complete") {
-        const n = Number(event.bytes ?? 0);
-        const t = Number(event.nanos ?? 0);
-        if (n >= lastN) lastN = n;
-        post({
-          type: event.type === "progress" ? "bytes" : "complete",
-          n: lastN,
-          t,
-        });
-        if (event.type === "complete") {
-          teardown();
-          return;
-        }
-      } else if (event.type === "error") {
-        post({
-          type: "fatal",
-          detail: event.message || "upload progress error",
-        });
-        stopped = true;
-        return;
+  const end = await readProgressFeed(body, feed, (event) => {
+    if (event.type === "open") {
+      backoff = 0;
+      if (stalledOut) {
+        post({ type: "resume" });
+        stalledOut = false;
       }
     }
-    if (done) return;
-  }
+    post(event);
+  });
+  if (end === "complete") teardown();
+  if (end === "fatal") stopped = true;
 }
 
 /** Handle `stop`: ask the server to close the upload session. When the DELETE
@@ -197,7 +154,7 @@ async function finish(): Promise<void> {
     const response = await fetch(url, {
       method: "DELETE",
       cache: "no-store",
-      headers: { ...headers, ...csrf },
+      headers: csrf,
       credentials,
       redirect: redirectForCredentials(credentials),
     });

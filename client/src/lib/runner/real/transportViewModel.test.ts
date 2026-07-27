@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
-import { classifyTransportDiscovery, ROUTES } from "./backendPure";
+import {
+  classifyTransportDiscovery,
+  ROUTES,
+  targetOfKind,
+} from "./backendPure";
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
 
 const routes = {
@@ -80,6 +84,35 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
   ).toBe(false);
 });
 
+test("WebTransport options disable in a browser without the API", () => {
+  // bun's test environment has no WebTransport global, which is the case
+  // these views must catch before a probe fails on it.
+  const catalog = classifyTransportDiscovery(
+    [
+      transfer("http3", "https://meter:7249", "http3", true),
+      {
+        baseUrl: "https://meter:7249",
+        transport: "webtransport" as const,
+        protocol: "http3" as const,
+      },
+    ],
+    [{ baseUrl: "https://meter:7249", transport: "webtransport" as const }],
+    "https://meter:7249",
+    true,
+    "h3",
+  );
+  const wtThroughput = throughputOptionView(catalog, "https://meter:7249::wt");
+  expect(wtThroughput.disabled).toBe(true);
+  expect(wtThroughput.detail).toBe(
+    "WebTransport is not supported by this browser.",
+  );
+  const wtLatency = latencyOptionView(catalog, "https://meter:7249");
+  expect(wtLatency.disabled).toBe(true);
+  expect(wtLatency.detail).toBe(
+    "WebTransport is not supported by this browser.",
+  );
+});
+
 test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () => {
   const direct = classifyTransportDiscovery(
     [transfer("http1-clear", "http://meter:7246", "http1", false)],
@@ -106,4 +139,26 @@ test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () =
   expect(latencyOptionView(negotiated, "https://meter").detail).toBe(
     "WebSocket endpoint · https://meter",
   );
+});
+
+// An unrecognised mechanism is unvalidated JSON from a newer server. Renaming
+// it to fetch-stream would let it claim the origin and hide the target that
+// actually serves it, so classification skips it instead.
+test("an unknown transport is skipped, not renamed", () => {
+  const unknown = {
+    baseUrl: "https://meter.example",
+    protocol: "http1",
+    transport: "webtransport-v2",
+  } as unknown as FetchThroughputTarget;
+  const real = transfer("", "https://meter.example", "http3", true);
+  const discovery = classifyTransportDiscovery(
+    [unknown, real],
+    [{ baseUrl: "https://meter.example", transport: "quic-ping" } as never],
+    "https://meter.example",
+    true,
+  );
+  const entry = discovery.throughput["https://meter.example"];
+  expect(targetOfKind(entry, "fetch-stream")?.protocol).toBe("http3");
+  expect(targetOfKind(entry, "webtransport")).toBeUndefined();
+  expect(discovery.latency["https://meter.example"].targets).toEqual([]);
 });

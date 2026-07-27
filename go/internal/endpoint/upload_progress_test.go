@@ -123,11 +123,15 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	}
 }
 
-func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
+// A reconnecting client re-dials long before its dead transport's idle timeout
+// releases the old feed, so the newest feed takes the aggregate over and the
+// stale holder terminates.
+func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -136,13 +140,64 @@ func TestUploadProgressRejectsDuplicateStream(t *testing.T) {
 	}()
 	waitProgressText(t, rec, `{"type":"ready"}`)
 
-	duplicate := httptest.NewRecorder()
-	h.ServeHTTP(duplicate, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
-	if duplicate.Code != http.StatusConflict {
-		t.Fatalf("duplicate status = %d, want %d", duplicate.Code, http.StatusConflict)
+	takeover := newProgressRecorder()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	done2 := make(chan struct{})
+	go func() {
+		h.ServeHTTP(takeover, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx2))
+		close(done2)
+	}()
+	waitProgressText(t, takeover, `{"type":"ready"}`)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("superseded feed did not terminate")
 	}
-	cancel()
-	<-done
+	cancel2()
+	<-done2
+}
+
+// A superseded feed shares the terminal wait with the live one. A single-token
+// nudge would wake only one of them, so the feed that lost the race would never
+// emit its complete record.
+func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
+	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
+	agg.changePosts(1)
+	never := make(chan struct{})
+	done := make(chan bool, 2)
+	for range 2 {
+		go func() { done <- waitForUploadPosts(never, never, agg) }()
+	}
+	agg.changePosts(-1)
+	for i := range 2 {
+		select {
+		case ok := <-done:
+			if !ok {
+				t.Fatalf("waiter %d reported an abandoned feed, want the drained count", i)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("waiter %d never woke: the lane-count change reached only one waiter", i)
+		}
+	}
+}
+
+// A superseded feed must abandon the terminal wait rather than sit on it until
+// its transport dies.
+func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
+	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
+	agg.changePosts(1)
+	superseded := make(chan struct{})
+	done := make(chan bool, 1)
+	go func() { done <- waitForUploadPosts(make(chan struct{}), superseded, agg) }()
+	close(superseded)
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("superseded feed reported a drained count, want an abandoned wait")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("superseded feed stayed in the terminal wait")
+	}
 }
 
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {

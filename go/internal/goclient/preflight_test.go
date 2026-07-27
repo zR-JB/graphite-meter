@@ -31,7 +31,7 @@ func TestHTTPEndpoint(t *testing.T) {
 
 func TestSelectTarget(t *testing.T) {
 	webTransport := testTransfer("wt-http3", "https://meter:7249", "http3", true)
-	webTransport.Transport = "webtransport-streams"
+	webTransport.Transport = wire.TransportWebTransport
 	h1 := testTransfer("http1-clear", "http://meter:7246", "http1", false)
 	h2 := testTransfer("http2", "https://meter:7248", "http2", true)
 	custom := testTransfer("edge-h2", "https://edge.example", "http2", true)
@@ -42,12 +42,12 @@ func TestSelectTarget(t *testing.T) {
 		{"https://meter:7248", "http://discovery", "http2"},
 		{"https://edge.example", "http://discovery", "edge-h2"},
 	} {
-		got, err := selectTarget(Config{ThroughputTarget: tc.selection, BaseURL: tc.base}, pf)
+		got, err := selectTarget(Config{ThroughputTarget: tc.selection, BaseURL: tc.base, ThroughputTransport: wire.TransportFetchStream}, pf)
 		if err != nil || got.ID != tc.want {
 			t.Errorf("select %s = %+v, %v", tc.selection, got, err)
 		}
 	}
-	if _, err := selectTarget(Config{ThroughputTarget: "https://missing.example"}, pf); err == nil {
+	if _, err := selectTarget(Config{ThroughputTarget: "https://missing.example", ThroughputTransport: "auto"}, pf); err == nil {
 		t.Fatal("target absent from the catalog was selected")
 	}
 }
@@ -57,7 +57,7 @@ func TestSelectTargetNormalizesDefaultPort(t *testing.T) {
 		testTransfer("native-h1", "https://meter.example:443", "http1", true),
 		testTransfer("native-h2", "https://meter.example:7248", "http2", true),
 	}}}
-	got, err := selectTarget(Config{ThroughputTarget: "auto", BaseURL: "https://meter.example"}, pf)
+	got, err := selectTarget(Config{ThroughputTarget: "auto", BaseURL: "https://meter.example", ThroughputTransport: "auto"}, pf)
 	if err != nil || got.ID != "native-h1" {
 		t.Fatalf("automatic default-port target = %+v, %v", got, err)
 	}
@@ -67,11 +67,11 @@ func TestExplicitTargetsNormalizeDefaultPort(t *testing.T) {
 	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 		testTransfer("native-h1", "https://meter.example:443", "http1", true),
 	}}}
-	throughput, err := selectTarget(Config{ThroughputTarget: "https://meter.example"}, pf)
+	throughput, err := selectTarget(Config{ThroughputTarget: "https://meter.example", ThroughputTransport: "auto"}, pf)
 	if err != nil || throughput.ID != "native-h1" {
 		t.Fatalf("explicit throughput target = %+v, %v", throughput, err)
 	}
-	latency, err := selectLatencyTarget("https://meter.example", "http://discovery", []wire.LatencyTarget{
+	latency, err := selectLatencyTarget(Config{LatencyTarget: "https://meter.example", BaseURL: "http://discovery", LatencyTransport: "auto"}, []wire.LatencyTarget{
 		testChannel("native-h1", "https://meter.example:443", true),
 	})
 	if err != nil || latency.ID != "native-h1" {
@@ -92,10 +92,10 @@ func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
 		testChannel("ws-http1-clear", "http://meter:7246", false),
 		testChannel("ws-http1-tls", "https://meter:7247", true),
 	}
-	if auto, err := selectLatencyTarget("auto", "https://meter:7248", targets); err == nil || auto != nil {
+	if auto, err := selectLatencyTarget(Config{LatencyTarget: "auto", BaseURL: "https://meter:7248", LatencyTransport: "auto"}, targets); err == nil || auto != nil {
 		t.Fatalf("ambiguous automatic target = %+v, %v", auto, err)
 	}
-	explicit, err := selectLatencyTarget("http://meter:7246", "http://meter:7246", targets)
+	explicit, err := selectLatencyTarget(Config{LatencyTarget: "http://meter:7246", BaseURL: "http://meter:7246", LatencyTransport: "auto"}, targets)
 	if err != nil || explicit.ID != "ws-http1-clear" {
 		t.Fatalf("explicit target = %+v, %v", explicit, err)
 	}
@@ -107,7 +107,7 @@ func TestSelectLatencyTargetFindsLaterSameOriginInHybridCatalog(t *testing.T) {
 		testChannel("ws-http1-tls", "https://meter.example:7247", true),
 		testChannel("https://meter.example", "https://meter.example", true),
 	}
-	got, err := selectLatencyTarget("auto", "https://meter.example", targets)
+	got, err := selectLatencyTarget(Config{LatencyTarget: "auto", BaseURL: "https://meter.example", LatencyTransport: "auto"}, targets)
 	if err != nil || got.ID != "https://meter.example" {
 		t.Fatalf("automatic hybrid latency target = %+v, %v", got, err)
 	}
@@ -118,7 +118,7 @@ func TestSelectLatencyTargetNormalizesDefaultPort(t *testing.T) {
 		testChannel("native-clear", "http://meter.example:7246", false),
 		testChannel("proxy", "https://meter.example:443", true),
 	}
-	got, err := selectLatencyTarget("auto", "https://meter.example", targets)
+	got, err := selectLatencyTarget(Config{LatencyTarget: "auto", BaseURL: "https://meter.example", LatencyTransport: "auto"}, targets)
 	if err != nil || got.ID != "proxy" {
 		t.Fatalf("automatic default-port latency target = %+v, %v", got, err)
 	}

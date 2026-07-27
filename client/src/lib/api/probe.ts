@@ -13,4 +13,11 @@ export interface Probe {
   clientIpVersion: 4 | 6;
   clientIpSource: "socket" | "forwarded";
   protocolNegotiated: "http/1.1" | "h2" | "h3";
+  /**
+   * Measurement occupancy at probe time: concurrent tests contend for bandwidth and CPU, so a busy server means results may be affected.
+   */
+  load?: {
+    active: number;
+    max: number;
+  };
 }

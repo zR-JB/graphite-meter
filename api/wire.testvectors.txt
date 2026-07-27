@@ -10,17 +10,15 @@
 #   For encode: <input> is a canonical op=...;arg=... spec; <expected> is the
 #               exact on-wire string the encoder must produce.
 #
-# Opcodes and semantics are defined in api/wire.md. This file is populated in
-# Stage 4 (WebSocket latency) and Stage 5 (WebTransport); the rows below are the
-# initial happy-path + boundary set. Every implementation's wire test loads THIS
-# file as its fixture.
+# Opcodes and semantics are defined in api/wire.md. The rows below are the
+# happy-path + boundary set for every channel. Every implementation's wire test
+# loads THIS file as its fixture.
 
 # --- decode ---
 decode | READY | op=READY
 decode | PING,0 | op=PING;id=0
 decode | PING,4294967295 | op=PING;id=4294967295
 decode | PONG,5;TIME,1234 | op=PONG;id=5;nanos=1234
-decode | SIZE,10000000 | op=SIZE;bytes=10000000
 decode | HI,wt | op=HI;proto=wt
 decode | BYE | op=BYE
 decode | ERR,bad_op,unknown | op=ERR;code=bad_op;text=unknown
@@ -37,5 +35,4 @@ encode | op=PONG;id=4294967295;nanos=18446744073709551615 | PONG,4294967295;TIME
 encode | op=READY | READY
 encode | op=HI;proto=ws | HI,ws
 encode | op=BYE | BYE
-encode | op=SIZE;bytes=10000000 | SIZE,10000000
 encode | op=ERR;code=bad_op;text=unknown | ERR,bad_op,unknown

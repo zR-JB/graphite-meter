@@ -126,6 +126,7 @@ function makeConfig(
     loadedPingCadence: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
+    experimentalDatagramThroughput: false,
     transports: {
       throughputTarget: "current",
       latencyTarget: "auto",
@@ -372,6 +373,28 @@ test("target verification is a visible phase and abort prevents a late run start
 
   expect(core.phase).toBe("aborted");
   expect(backend.calls).toEqual(["abort"]);
+});
+
+// The app always hands start() a prepared selection, so this is the only cover
+// the internal probe has: the branch reads as dead from the app alone, and
+// NetworkRunner still promises it to a caller that has not probed.
+test("start without a prepared selection probes for one itself", async () => {
+  class CountingProbeBackend extends FakeBackend {
+    probes = 0;
+    override probe(): Promise<InfraInfo> {
+      this.probes++;
+      return super.probe();
+    }
+  }
+  const backend = new CountingProbeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  await core.start(makeConfig());
+
+  expect(backend.probes).toBe(1);
+  expect(events.filter((e) => e.type === "infra")).toHaveLength(1);
 });
 
 test("a prepared selection starts without probing again", async () => {

@@ -162,3 +162,50 @@ func TestTrustedProxiesMasksHostBits(t *testing.T) {
 		t.Fatalf("trusted proxies = %v, want the masked 192.168.1.0/24", c.TrustedProxies)
 	}
 }
+
+// The WebTransport session routes hold their slots for MaxSessionDuration, so
+// they get a bounded share of the measurement pool rather than the whole of it.
+func TestValidateBoundsTheSessionBudget(t *testing.T) {
+	if c := Default(); c.MaxActiveSessions != 64 || c.MaxActiveSessions*4 != c.MaxActiveMeasurements {
+		t.Fatalf("MaxActiveSessions = %d of %d, want a quarter of the pool", c.MaxActiveSessions, c.MaxActiveMeasurements)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"zero", func(c *Config) { c.MaxActiveSessions = 0 }},
+		{"negative", func(c *Config) { c.MaxActiveSessions = -1 }},
+		{"over the pool", func(c *Config) { c.MaxActiveSessions = c.MaxActiveMeasurements + 1 }},
+		{"one client takes the whole budget", func(c *Config) { c.MaxActiveSessions, c.MaxSessionsPerClient = 4, 8 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			tc.mutate(&c)
+			if err := c.Validate(); err == nil {
+				t.Fatalf("MaxActiveSessions=%d MaxSessionsPerClient=%d accepted", c.MaxActiveSessions, c.MaxSessionsPerClient)
+			}
+		})
+	}
+	// A client budget equal to the whole session budget is the boundary, not an
+	// error: one client may fill it, it just may not exceed it.
+	c := Default()
+	c.MaxActiveSessions, c.MaxSessionsPerClient = 8, 8
+	if err := c.Validate(); err != nil {
+		t.Fatalf("equal session budgets rejected: %v", err)
+	}
+}
+
+func TestLoadReadsTheSessionBudgetFromTheEnvironment(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("GM_MAX_ACTIVE_SESSIONS", "40")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxActiveSessions != 40 {
+		t.Fatalf("MaxActiveSessions = %d, want 40", c.MaxActiveSessions)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -5,30 +5,98 @@
  */
 
 import type {
+  DiscoveredTarget,
+  FlowDirection,
   PhaseActivity,
   ProtocolTarget,
   TransportDiscovery,
+  TransportKind,
   ThroughputTargetSelection,
 } from "../contract";
 import type {
   FetchThroughputTarget,
-  WebSocketLatencyTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
 } from "../../api/endpoints";
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
+import { kindsForRole } from "./transports";
 
 /** Server route paths, the TS half of a cross-language pin. Preflight advertises
- *  origins only, so Go keeps its own table (go/internal/server/listeners.go,
- *  go/internal/wire/preflight.go). Both halves assert against api/routes.txt
- *  (routes.test.ts, routes_test.go). */
+ *  origins and transports only, so Go keeps its own table
+ *  (go/internal/server/listeners.go, go/internal/wire/preflight.go). Both halves
+ *  assert against api/routes.txt (routes.test.ts, routes_test.go). */
 export const ROUTES = {
   probe: "/probe",
   download: "/download",
   upload: "/upload",
   uploadSession: "/upload/session",
   uploadProgress: "/upload/progress",
+  wtSession: "/wt/session",
   ping: "/ws/ping",
+  wtDownload: "/wt/download",
+  wtUpload: "/wt/upload",
+  wtPing: "/wt/ping",
 } as const;
+
+/** Large enough that a normal stage ends by aborting the stream, not by refetching. */
+export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
+
+/** Everything a lane URL is built from. Held here so the runner and any other
+ *  driver of the same lanes cannot disagree about the shape. */
+export interface LaneUrlSpec {
+  dir: FlowDirection;
+  /** Origin of the fetch view, which every non-session lane rides. */
+  base: string;
+  downloadPath: string;
+  uploadPath: string;
+  /** Per-run cache-buster seed, suffixed with the lane index. */
+  cbSeed: string;
+  bytes: number;
+  /** Chunked download omits the baked-in size; the worker appends its own. */
+  chunkDownload: boolean;
+  /** Set when this direction rides a session instead of fetch lanes. */
+  session?: {
+    origin: string;
+    uploadPath: string;
+    downloadPath: string;
+    datagrams: boolean;
+  } | null;
+}
+
+/** The URL lane `index` opens. A session upload carries the minted id and no
+ *  cache-buster; a session download is one URL for the whole session. */
+export function laneUrl(
+  spec: LaneUrlSpec,
+  index: number,
+  uploadId?: string,
+): string {
+  const { session } = spec;
+  if (session)
+    return `${session.origin}${session.uploadPath}?id=${encodeURIComponent(
+      uploadId ?? "",
+    )}${session.datagrams ? "&datagrams=1" : ""}`;
+  const cb = `${spec.cbSeed}-${index}`;
+  if (spec.dir === "down")
+    return spec.chunkDownload
+      ? `${spec.base}${spec.downloadPath}?cb=${cb}`
+      : `${spec.base}${spec.downloadPath}?bytes=${spec.bytes}&cb=${cb}`;
+  const id = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
+  return `${spec.base}${spec.uploadPath}?cb=${cb}${id}`;
+}
+
+/** The session URL a WebTransport download dials: the server opens the lanes,
+ *  so the count rides the query rather than the lane index. */
+export function sessionDownloadUrl(
+  session: NonNullable<LaneUrlSpec["session"]>,
+  bytes: number,
+  streams: number,
+): string {
+  const query = session.datagrams
+    ? `?bytes=${bytes}&datagrams=1`
+    : `?bytes=${bytes}&streams=${streams}`;
+  return `${session.origin}${session.downloadPath}${query}`;
+}
 
 export function protocolFromNextHop(
   nextHopProtocol?: string,
@@ -64,26 +132,66 @@ function usableFromPage(
   }
 }
 
-/** Classify the logical server catalog once for both selection and settings. */
+/** Classify the logical server catalog once for both selection and settings.
+ *  Entries are keyed by origin, carrying every mechanism it advertises. */
 export function classifyTransportDiscovery(
-  throughputEndpoints: (ThroughputEndpoint | FetchThroughputTarget)[],
-  latencyEndpoints: (LatencyEndpoint | WebSocketLatencyTarget)[],
+  throughputEndpoints: (
+    ThroughputEndpoint | FetchThroughputTarget | WebTransportThroughputTarget
+  )[],
+  latencyEndpoints: (LatencyEndpoint | LatencyTarget)[],
   pageOrigin: string,
   pageSecure: boolean,
   pageProtocol?: string,
 ): TransportDiscovery {
-  const resolve = (baseUrl: string): string =>
-    baseUrl === "." ? pageOrigin : new URL(baseUrl, pageOrigin).origin;
-  const throughputTargets = throughputEndpoints.map((endpoint) => {
-    const origin = resolve(
-      endpoint.baseUrl ?? ("origin" in endpoint ? endpoint.origin : "."),
-    );
-    return {
+  const resolve = (endpoint: { baseUrl?: string; origin?: string }): string => {
+    const baseUrl = endpoint.baseUrl ?? endpoint.origin ?? ".";
+    return baseUrl === "." ? pageOrigin : new URL(baseUrl, pageOrigin).origin;
+  };
+  const stateOf = (origin: string): "advertised" | "browser-blocked" =>
+    usableFromPage(origin, origin.startsWith("https://"), pageSecure)
+      ? "advertised"
+      : "browser-blocked";
+
+  const throughput: TransportDiscovery["throughput"] = {};
+  for (const endpoint of throughputEndpoints) {
+    // Widened because the wire value is unvalidated JSON: a mechanism this
+    // client does not know is skipped below, never renamed to one it does. An
+    // absent one is the original contract's fetch stream, which the Go decoder
+    // assumes too; dropping it would leave an older server unmeasurable.
+    const mechanism: string = endpoint.transport ?? "fetch-stream";
+    const origin = resolve(endpoint);
+    const tls = origin.startsWith("https://");
+    const entry = (throughput[origin] ??= {
+      state: stateOf(origin),
+      targets: [],
+    });
+    if (mechanism === "webtransport" || mechanism === "webtransport-datagram") {
+      const streams = mechanism === "webtransport";
+      admit(entry, {
+        ...endpoint,
+        id: selectionId(origin, mechanism),
+        origin,
+        transport: streams ? "webtransport" : "webtransport-datagram",
+        protocol: "http3",
+        tls,
+        routes: {
+          probe: ROUTES.probe,
+          wtSession: ROUTES.wtSession,
+          wtDownload: ROUTES.wtDownload,
+          wtUpload: ROUTES.wtUpload,
+          uploadSession: ROUTES.uploadSession,
+          uploadProgress: ROUTES.uploadProgress,
+        },
+      });
+      continue;
+    }
+    if (mechanism !== "fetch-stream") continue;
+    admit(entry, {
       ...endpoint,
-      id: origin,
+      id: selectionId(origin, "fetch-stream"),
       origin,
-      transport: "fetch-stream" as const,
-      tls: origin.startsWith("https://"),
+      transport: "fetch-stream",
+      tls,
       routes: {
         probe: ROUTES.probe,
         download: ROUTES.download,
@@ -91,49 +199,45 @@ export function classifyTransportDiscovery(
         uploadSession: ROUTES.uploadSession,
         uploadProgress: ROUTES.uploadProgress,
       },
-    };
-  });
-  const latencyTargets = latencyEndpoints.map((endpoint) => {
-    const origin = resolve(
-      endpoint.baseUrl ?? ("origin" in endpoint ? endpoint.origin : "."),
-    );
-    return {
-      ...endpoint,
-      id: origin,
-      origin,
-      transport: "websocket" as const,
-      protocol: "http1" as const,
-      tls: origin.startsWith("https://"),
-      routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-    };
-  });
-  const throughput: TransportDiscovery["throughput"] = {};
-  for (const target of throughputTargets) {
-    // One entry per origin. A target naming its protocol outranks a negotiated
-    // one: selection can only act on a named protocol.
-    const current = throughput[target.origin]?.target;
-    if (current && current.protocol !== "negotiated") continue;
-    throughput[target.origin] = {
-      state: usableFromPage(target.origin, target.tls, pageSecure)
-        ? "advertised"
-        : "browser-blocked",
-      target,
-    };
+    });
   }
-  const latency = Object.fromEntries(
-    latencyTargets.map((target) => {
-      const id = target.origin;
-      return [
-        id,
-        {
-          state: usableFromPage(target.origin, target.tls, pageSecure)
-            ? ("advertised" as const)
-            : ("browser-blocked" as const),
-          target,
+  sortTargets(throughput, kindsForRole("throughput"));
+
+  const latency: TransportDiscovery["latency"] = {};
+  for (const endpoint of latencyEndpoints) {
+    const mechanism: string = endpoint.transport;
+    const origin = resolve(endpoint);
+    const tls = origin.startsWith("https://");
+    const entry = (latency[origin] ??= { state: stateOf(origin), targets: [] });
+    if (mechanism === "webtransport") {
+      admit(entry, {
+        ...endpoint,
+        id: selectionId(origin, "webtransport"),
+        origin,
+        transport: "webtransport",
+        protocol: "http3",
+        tls,
+        routes: {
+          probe: ROUTES.probe,
+          wtSession: ROUTES.wtSession,
+          wtPing: ROUTES.wtPing,
         },
-      ];
-    }),
-  );
+      });
+      continue;
+    }
+    if (mechanism !== "websocket") continue;
+    admit(entry, {
+      ...endpoint,
+      id: selectionId(origin, "websocket"),
+      origin,
+      transport: "websocket",
+      protocol: "http1",
+      tls,
+      routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+    });
+  }
+  sortTargets(latency, kindsForRole("latency"));
+
   return {
     generation: "",
     engineVersion: "",
@@ -147,23 +251,135 @@ export function classifyTransportDiscovery(
   };
 }
 
-/** Resolve one bulk transfer path. Target ids distinguish clear and TLS H1;
- *  protocol evidence disambiguates multiple targets sharing an origin. */
+/** The persisted name of one mechanism on one origin. Built here and matched
+ *  whole everywhere else: nothing else may take an id apart. */
+function selectionId(origin: string, kind: TransportKind): string {
+  switch (kind) {
+    case "fetch-stream":
+    case "websocket":
+      return origin;
+    case "webtransport":
+      return `${origin}::wt`;
+    case "webtransport-datagram":
+      return `${origin}::wtdg`;
+  }
+}
+
+/** Add a mechanism to its origin. A target naming its protocol outranks a
+ *  negotiated one: selection can only act on a named protocol. */
+function admit<T extends { transport: TransportKind; protocol?: string }>(
+  entry: DiscoveredTarget<T>,
+  target: T,
+): void {
+  const at = entry.targets.findIndex((x) => x.transport === target.transport);
+  if (at === -1) entry.targets.push(target);
+  else if (entry.targets[at].protocol === "negotiated")
+    entry.targets[at] = target;
+}
+
+function sortTargets<T extends { transport: TransportKind }>(
+  byOrigin: Record<string, DiscoveredTarget<T>>,
+  order: TransportKind[],
+): void {
+  for (const entry of Object.values(byOrigin))
+    entry.targets.sort(
+      (a, b) => order.indexOf(a.transport) - order.indexOf(b.transport),
+    );
+}
+
+/** The view one origin advertises for a mechanism. */
+export function targetOfKind<T extends { transport: TransportKind }>(
+  entry: DiscoveredTarget<T> | undefined,
+  kind: TransportKind,
+): T | undefined {
+  return entry?.targets.find((target) => target.transport === kind);
+}
+
+/** Find what a selection names, and the origin carrying it, whatever that
+ *  origin's state. Ids are matched, never parsed. */
+export function locateTarget<T extends { id: string }>(
+  byOrigin: Record<string, DiscoveredTarget<T>>,
+  id: string,
+): { entry: DiscoveredTarget<T>; target: T } | null {
+  for (const entry of Object.values(byOrigin))
+    for (const target of entry.targets)
+      if (target.id === id) return { entry, target };
+  return null;
+}
+
+/** What a selection resolves to, or null when its origin is not advertised. */
+function advertisedById<T extends { id: string }>(
+  byOrigin: Record<string, DiscoveredTarget<T>>,
+  id: string,
+): T | null {
+  const found = locateTarget(byOrigin, id);
+  return found?.entry.state === "advertised" ? found.target : null;
+}
+
+/** Resolve one bulk transfer path. A selection names one mechanism on one
+ *  origin; automatic states its own preference below. */
 export function selectThroughputTarget(
   discovery: TransportDiscovery,
   selection: ThroughputTargetSelection,
-): FetchThroughputTarget | null {
-  if (selection !== "current" && selection !== "auto") {
-    const entry = discovery.throughput[selection];
-    return entry?.state === "advertised" ? (entry.target ?? null) : null;
-  }
-  const advertised = Object.values(discovery.throughput)
-    .filter((entry) => entry.state === "advertised" && entry.target)
-    .map((entry) => entry.target!);
-  return (
-    advertised.find((target) => target.origin === discovery.pageOrigin) ??
-    (advertised.length === 1 ? advertised[0] : null)
+): FetchThroughputTarget | WebTransportThroughputTarget | null {
+  if (selection !== "current" && selection !== "auto")
+    return advertisedById(discovery.throughput, selection);
+  const advertised = Object.values(discovery.throughput).filter(
+    (entry) => entry.state === "advertised",
   );
+  // Automatic leads with fetch streams, which still win raw rate over TCP, so a
+  // session is the explicit choice.
+  const fetch = advertised
+    .map((entry) => targetOfKind(entry, "fetch-stream"))
+    .filter((target) => !!target);
+  const preferred =
+    fetch.find((target) => target.origin === discovery.pageOrigin) ??
+    (fetch.length === 1 ? fetch[0] : null);
+  if (preferred) return preferred;
+  // A WebTransport-only origin is the last resort.
+  const wtOnly = advertised.filter(
+    (entry) =>
+      !targetOfKind(entry, "fetch-stream") &&
+      targetOfKind(entry, "webtransport"),
+  );
+  return wtOnly.length === 1 ? targetOfKind(wtOnly[0], "webtransport")! : null;
+}
+
+/** The fetch view of the origin a WebTransport target sits on: its advertised
+ *  fetch target, else HTTP routes synthesised from the session one. Probe
+ *  evidence and the upload id are HTTP whichever mechanism moves the bytes. */
+export function fetchViewOfOrigin(
+  discovery: TransportDiscovery,
+  target: WebTransportThroughputTarget,
+): FetchThroughputTarget {
+  const advertised = targetOfKind(
+    discovery.throughput[target.origin],
+    "fetch-stream",
+  );
+  return (
+    (advertised as FetchThroughputTarget) ?? fetchViewOfWebTransport(target)
+  );
+}
+
+/** The fetch-stream view of a WebTransport-only origin: its HTTP routes serve
+ *  probe, upload minting, and the fetch fallback lanes. */
+export function fetchViewOfWebTransport(
+  target: WebTransportThroughputTarget,
+): FetchThroughputTarget {
+  return {
+    id: target.origin,
+    origin: target.origin,
+    transport: "fetch-stream",
+    protocol: "http3",
+    tls: target.tls,
+    routes: {
+      probe: ROUTES.probe,
+      download: ROUTES.download,
+      upload: ROUTES.upload,
+      uploadSession: ROUTES.uploadSession,
+      uploadProgress: ROUTES.uploadProgress,
+    },
+  };
 }
 
 export function browserProtocolMatchesTarget(
@@ -178,27 +394,46 @@ export function browserProtocolMatchesTarget(
 }
 
 export function throughputTargetKey(
-  target: FetchThroughputTarget | null,
+  target: FetchThroughputTarget | WebTransportThroughputTarget | null,
 ): string {
   return target ? `${target.id}\n${target.origin}` : "";
 }
 
-/** Select latency independently. Auto follows page security, not throughput. */
+/** Select latency independently of throughput. `webTransport` is what this
+ *  client can actually drive, which gates the datagram bus. */
 export function selectLatencyTarget(
   discovery: TransportDiscovery,
   selection: "auto" | string,
-): WebSocketLatencyTarget | null {
+  webTransport = false,
+): LatencyTarget | null {
+  const runnable = (target?: LatencyTarget): boolean =>
+    !!target && (webTransport || target.transport !== "webtransport");
   if (selection !== "auto") {
+    const named = advertisedById(discovery.latency, selection);
+    if (named) return runnable(named) ? named : null;
+    // A plain origin also names one that advertises no WebSocket bus at all.
     const entry = discovery.latency[selection];
-    return entry?.state === "advertised" ? (entry.target ?? null) : null;
+    if (entry?.state !== "advertised") return null;
+    const usable = entry.targets.filter(runnable);
+    return usable.length === 1 ? usable[0] : null;
   }
-  const advertised = Object.values(discovery.latency)
-    .filter((entry) => entry.state === "advertised" && entry.target)
-    .map((entry) => entry.target!);
-  return (
-    advertised.find((target) => target.origin === discovery.pageOrigin) ??
-    (advertised.length === 1 ? advertised[0] : null)
+  const advertised = Object.values(discovery.latency).filter(
+    (entry) => entry.state === "advertised",
   );
+  // Each bus resolves by the same rule: the page's own origin, else the only
+  // candidate. Guessing between several origins is what an explicit selection
+  // is for, on either bus.
+  const only = (kind: TransportKind): LatencyTarget | null => {
+    const usable = advertised
+      .map((entry) => targetOfKind(entry, kind))
+      .filter(runnable) as LatencyTarget[];
+    return (
+      usable.find((target) => target.origin === discovery.pageOrigin) ??
+      (usable.length === 1 ? usable[0] : null)
+    );
+  };
+  // Automatic prefers the datagram bus, whose losses are real packet loss.
+  return only("webtransport") ?? only("websocket");
 }
 
 /** Map an http(s) origin to its ws(s) equivalent for the latency bus. Anything
@@ -209,13 +444,6 @@ export function httpToWs(origin: string): string {
   if (origin.startsWith("http://"))
     return "ws://" + origin.slice("http://".length);
   return origin;
-}
-
-/** Median of a non-empty number list (used for the pre-test ping). */
-export function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 /** Whether a stage runs a ping channel: the idle latency stage, or a transfer

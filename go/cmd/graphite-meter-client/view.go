@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // shellMargin is shellStyle's horizontal margin.
@@ -238,20 +239,29 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
+	// A WebTransport session resolves its own lane count, so this ceiling is not
+	// read on that transport. The row is dimmed rather than dropped: it applies
+	// again the moment the transport changes, and a moving row loses the reader.
+	autoMax := valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction")
+	if m.cfg.ThroughputTransport == wire.TransportWebTransport {
+		autoMax = inertValueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "unused over WebTransport")
+	}
 	rows := []string{
 		endpointRow("Throughput endpoint", m.cfg.ThroughputTarget, m.throughputChoices()),
-		endpointRow("Latency endpoint", m.cfg.LatencyTarget, m.latencyChoices()),
+		valueLine("Throughput transport", m.cfg.ThroughputTransport, "fetch stream or WebTransport"),
 		valueLine("Throughput protocol", m.cfg.ThroughputProtocol, "negotiated only"),
-		valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction"),
-		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol), "0 = automatic"),
+		endpointRow("Latency endpoint", m.cfg.LatencyTarget, m.latencyChoices()),
+		valueLine("Latency transport", m.cfg.LatencyTransport, "WebSocket or WebTransport"),
+		autoMax,
+		valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol, m.cfg.ThroughputTransport), "0 = automatic"),
 		toggleLine("Skip TLS verify", m.cfg.InsecureSkipTLSVerify, "unsafe"),
 		warnStyle.Render("Reset to defaults"),
 	}
 	if m.edit.field == "auto-streams" {
-		rows[3] = valueLine("Auto H1 max", m.edit.input.View(), "editing") + m.editError()
+		rows[5] = valueLine("Auto H1 max", m.edit.input.View(), "editing") + m.editError()
 	}
 	if m.edit.field == "streams" {
-		rows[4] = valueLine("Streams", m.edit.input.View(), "editing") + m.editError()
+		rows[6] = valueLine("Streams", m.edit.input.View(), "editing") + m.editError()
 	}
 	return m.listWithTitle("Connections", rows, w)
 }
@@ -429,8 +439,8 @@ func (m model) summaryView(w int) string {
 		field("Stage", mark+valueStyle.Render(emptyDash(m.stage))+mutedStyle.Render(" / "+emptyDash(m.status))),
 		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
 		field("Throughput", valueStyle.Render(emptyDash(m.target)+" · "+emptyDash(m.throughputProtocol))),
-		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · websocket · "+emptyDash(m.latencyProtocol))),
-		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.target))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
+		field("Latency", valueStyle.Render(emptyDash(m.latencyTarget)+" · "+emptyDash(m.latencyTransport)+" · "+emptyDash(m.latencyProtocol))),
+		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
 		"",
 	}
 	lines = append(lines, m.timelineView(w)...)

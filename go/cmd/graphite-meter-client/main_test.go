@@ -54,13 +54,31 @@ func TestParsePing(t *testing.T) {
 		{"zero falls back", "0s", 250 * time.Millisecond},
 		{"negative falls back", "-10s", 250 * time.Millisecond},
 		{"unparseable falls back", "bogus", 250 * time.Millisecond},
+		{"the bound itself passes", goclient.MaxPingInterval.String(), goclient.MaxPingInterval},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := parsePing(c.raw); got != c.want {
+			got, err := parsePing(c.raw)
+			if err != nil {
+				t.Fatalf("parsePing(%q): %v", c.raw, err)
+			}
+			if got != c.want {
 				t.Errorf("parsePing(%q) = %v, want %v", c.raw, got, c.want)
 			}
 		})
+	}
+}
+
+// A cadence past the bus's idle bound produces one datagram and then silence,
+// which the server reaps: the flag is refused rather than left to churn through
+// a redial in every stage.
+func TestParsePingRejectsACadencePastTheIdleBound(t *testing.T) {
+	got, err := parsePing("45s")
+	if err == nil {
+		t.Fatalf("parsePing(\"45s\") = %v, want an error naming the bound", got)
+	}
+	if !strings.Contains(err.Error(), goclient.MaxPingInterval.String()) {
+		t.Errorf("error = %q, want it to name the %v bound", err, goclient.MaxPingInterval)
 	}
 }
 
@@ -388,7 +406,7 @@ func TestNetworkEndpointPickerDeduplicatesEquivalentOrigins(t *testing.T) {
 		t.Fatalf("third throughput target = %q, want %q", got, want)
 	}
 
-	m.row = 1
+	m.row = 3
 	updated, _ = m.activate()
 	m = updated.(model)
 	if got, want := m.cfg.LatencyTarget, "http://meter.example:80"; got != want {
@@ -440,7 +458,7 @@ func TestRowCount(t *testing.T) {
 		{sectionServers, len(serverPresets) + 1},
 		{sectionRunSetup, 5},
 		{sectionTiming, 6},
-		{sectionConnections, 7},
+		{sectionConnections, 9},
 		{sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -555,7 +573,7 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 		rows    int
 	}{
 		{"servers", sectionServers, len(serverPresets) + 1},
-		{"network", sectionConnections, 7},
+		{"network", sectionConnections, 9},
 		{"run (single row)", sectionRun, 1},
 	}
 	for _, c := range cases {
@@ -900,7 +918,7 @@ func TestActivate_TimingStartsEdit(t *testing.T) {
 func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
-	for row, field := range map[int]string{3: "auto-streams", 4: "streams"} {
+	for row, field := range map[int]string{5: "auto-streams", 6: "streams"} {
 		m.row = row
 		next, _ := m.activate()
 		edited := next.(model)
@@ -910,10 +928,45 @@ func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
 	}
 }
 
+// A WebTransport session resolves its own lane count, so the automatic HTTP/1
+// ceiling says it is unused rather than reading like a setting that applies.
+func TestNetworkView_AutoH1MaxIsMarkedUnusedOverWebTransport(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.cfg.ThroughputTransport = wire.TransportFetchStream
+	plain := ansiPattern.ReplaceAllString(m.networkView(80), "")
+	if !strings.Contains(plain, "Auto H1 max") || strings.Contains(plain, "unused over WebTransport") {
+		t.Errorf("fetch-stream rows carry the WebTransport annotation:\n%s", plain)
+	}
+
+	m.cfg.ThroughputTransport = wire.TransportWebTransport
+	if plain = ansiPattern.ReplaceAllString(m.networkView(80), ""); !strings.Contains(plain, "unused over WebTransport") {
+		t.Errorf("the ceiling row is not annotated over WebTransport:\n%s", plain)
+	}
+}
+
+func TestActivate_NetworkTransportSettings(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionConnections
+
+	m.row = 1
+	next, _ := m.activate()
+	m = next.(model)
+	if got := m.cfg.ThroughputTransport; got != wire.TransportFetchStream {
+		t.Fatalf("throughput transport = %q, want %q", got, wire.TransportFetchStream)
+	}
+
+	m.row = 4
+	next, _ = m.activate()
+	m = next.(model)
+	if got := m.cfg.LatencyTransport; got != wire.TransportWebSocket {
+		t.Fatalf("latency transport = %q, want %q", got, wire.TransportWebSocket)
+	}
+}
+
 func TestActivate_NetworkTLSToggle(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
-	m.row = 5
+	m.row = 7
 	before := m.cfg.InsecureSkipTLSVerify
 	next, _ := m.activate()
 	m = next.(model)
@@ -927,7 +980,7 @@ func TestActivate_NetworkReset(t *testing.T) {
 	m.cfg.TransferStreams.Forced = 99
 	m.cfg.BaseURL = "http://changed.example"
 	m.section = sectionConnections
-	m.row = 6
+	m.row = 8
 	next, _ := m.activate()
 	m = next.(model)
 	want := goclient.DefaultConfig()
@@ -1223,6 +1276,10 @@ func TestCommitEdit_Duration(t *testing.T) {
 		{"ping", "0s", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
 		{"ping", "not-a-duration", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
 		{"ping", "-5s", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
+		// Past the bound the server reaps the bus between pings, so every stage
+		// would spend part of its window redialing.
+		{"ping", "45s", true, func(c goclient.Config) time.Duration { return c.PingInterval }},
+		{"ping", goclient.MaxPingInterval.String(), false, func(c goclient.Config) time.Duration { return c.PingInterval }},
 	}
 	for _, c := range cases {
 		t.Run(c.field+"_"+c.value, func(t *testing.T) {
@@ -2491,5 +2548,18 @@ func TestRenderRunFrame(t *testing.T) {
 		if !strings.Contains(frame, want) {
 			t.Errorf("run frame missing %q", want)
 		}
+	}
+}
+
+// The run screen holds the negotiated evidence ("h2"), which is what the stream
+// label has to resolve: an automatic multiplexed run opens a different number of
+// lanes per direction, so one number — or a bare "Automatic" — describes nothing.
+func TestRunViewNamesThePerDirectionLaneCount(t *testing.T) {
+	m := populatedRunModel(140)
+	m.throughputProtocol = "h2"
+	m.throughputTransport = wire.TransportFetchStream
+	view := ansiPattern.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, "Automatic · 1 download / 4 upload") {
+		t.Errorf("run view does not name the per-direction lane count:\n%s", view)
 	}
 }

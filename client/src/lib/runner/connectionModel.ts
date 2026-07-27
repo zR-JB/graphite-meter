@@ -1,15 +1,19 @@
 import type {
   ConnectionRole,
+  DiscoveredTarget,
   InfraInfo,
   ProtocolTarget,
   RunnerConfig,
+  RunnerError,
   TransportDiscovery,
 } from "./contract";
 import type {
   FetchThroughputTarget,
-  WebSocketLatencyTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
 } from "../api/endpoints";
 import {
+  locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
 } from "./real/backendPure";
@@ -35,7 +39,8 @@ export interface ConnectionValidation {
 export interface ConnectionPresentation {
   role: ConnectionRole;
   selection: string;
-  target: FetchThroughputTarget | WebSocketLatencyTarget | null;
+  target:
+    FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null;
   availability: "advertised" | "browser-blocked" | "not-advertised";
   validation: ConnectionValidationState;
   label: string;
@@ -53,6 +58,15 @@ export interface ConnectionPresentation {
 
 export const CONNECTION_FRESH_MS = 30_000;
 export const CONNECTION_ROLES: ConnectionRole[] = ["throughput", "latency"];
+
+/** Failures that leave the path's reachability unknown: connectivity latches
+ *  offline and the cached probe is dropped so both roles are re-checked. */
+export const CONNECTION_FAILURE_REASONS = new Set<RunnerError["reason"]>([
+  "connection-lost",
+  "timeout",
+  "preflight-failed",
+  "transport-unavailable",
+]);
 
 export function connectionSelection(
   config: RunnerConfig,
@@ -80,10 +94,16 @@ function selectTarget(
   discovery: TransportDiscovery,
   role: ConnectionRole,
   selection: string,
-): FetchThroughputTarget | WebSocketLatencyTarget | null {
+): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
+  // The panel must resolve what the runner resolves, so it applies the same
+  // browser-capability gate rather than the parameter's off default.
   return role === "throughput"
     ? selectThroughputTarget(discovery, selection)
-    : selectLatencyTarget(discovery, selection);
+    : selectLatencyTarget(
+        discovery,
+        selection,
+        typeof WebTransport !== "undefined",
+      );
 }
 
 export function validationRoles(
@@ -151,10 +171,22 @@ export function connectionRoleKey(
 ): string {
   const selection = connectionSelection(config, role);
   const target = discovery ? selectTarget(discovery, role, selection) : null;
-  const identity = target ? JSON.stringify(target) : selection;
-  return role === "throughput"
-    ? identity
-    : JSON.stringify({ identity, needed: latencyPathNeeded(config) });
+  return target ? JSON.stringify(target) : selection;
+}
+
+/** Whether a role has to be checked now: one the run never opens does not, and
+ *  one already verified against the same target does not either. This is what
+ *  keeps a stage toggle from re-checking a path that has not changed. */
+export function roleNeedsValidation(
+  config: RunnerConfig,
+  validation: ConnectionValidation,
+  role: ConnectionRole,
+  discovery?: TransportDiscovery | null,
+): boolean {
+  if (role === "latency" && !latencyPathNeeded(config)) return false;
+  const status = validation[role];
+  if (status.state !== "verified") return true;
+  return status.identity !== connectionRoleKey(config, role, discovery);
 }
 
 function availability(
@@ -163,9 +195,19 @@ function availability(
   selection: string,
 ): ConnectionPresentation["availability"] {
   // "current"/"auto" have no entry of their own: they resolve to whichever
-  // advertised target the selector picks.
-  if (selection !== "current" && selection !== "auto")
-    return discovery[role][selection]?.state ?? "not-advertised";
+  // advertised target the selector picks. Any other selection names one
+  // mechanism and shares the state of the origin carrying it.
+  if (selection !== "current" && selection !== "auto") {
+    const byOrigin: Record<
+      string,
+      DiscoveredTarget<{ id: string }>
+    > = discovery[role];
+    return (
+      locateTarget(byOrigin, selection)?.entry.state ??
+      byOrigin[selection]?.state ??
+      "not-advertised"
+    );
+  }
   return selectTarget(discovery, role, selection)
     ? "advertised"
     : "not-advertised";
@@ -242,4 +284,19 @@ export function presentConnections(
     };
   };
   return { throughput: make("throughput"), latency: make("latency") };
+}
+
+/** The one state a panel covering both roles reports: the worst across the
+ *  roles the run opens. A failure must not read as a check still in flight. */
+export function panelReadiness(
+  connections: Record<ConnectionRole, ConnectionPresentation>,
+  latencyEnabled: boolean,
+): ConnectionValidationState {
+  const states = [
+    connections.throughput.validation,
+    ...(latencyEnabled ? [connections.latency.validation] : []),
+  ];
+  for (const state of ["checking", "failed", "stale"] as const)
+    if (states.includes(state)) return state;
+  return "verified";
 }

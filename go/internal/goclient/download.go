@@ -10,24 +10,57 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
-	path := r.routes().Download
-	base, err := r.endpoint(path)
-	if err != nil {
-		return Result{}, err
+// laneRetryPause paces a transfer lane's reopen after a fault, reporting false
+// once the stage ends. Every reconnect path shares this cadence so a hard-down
+// server cannot be hot-retried by every lane at once.
+func laneRetryPause(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(wtRedialBackoff):
+		return true
 	}
+}
+
+func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
 	var total atomic.Uint64
-	lanes := r.startLanes(ctx, func(laneCtx context.Context, lane int) error {
-		return r.downloadLane(laneCtx, base, lane, &total)
-	})
+	var lane func(context.Context, int) error
+	if r.targetTransport() == wire.TransportWebTransport {
+		// One session hosts every lane, re-dialed when it outlives the server's
+		// session bound; each lane opens its own stream on the live session.
+		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
+			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
+		}, nil)
+		if err != nil {
+			return Result{}, err
+		}
+		defer host.close()
+		lane = func(laneCtx context.Context, _ int) error {
+			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
+				return r.downloadLaneWT(lctx, sess, &total)
+			})
+		}
+	} else {
+		base, err := r.endpoint(r.routes().Download)
+		if err != nil {
+			return Result{}, err
+		}
+		lane = func(laneCtx context.Context, i int) error {
+			return r.downloadLane(laneCtx, base, i, &total)
+		}
+	}
+	streams := r.streams.of(Down)
+	lanes := r.startLanes(ctx, streams, lane)
 	defer lanes.cancel()
 	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
 	}
 	measureCtx, cancel := context.WithTimeout(ctx, duration)
-	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, r.streams, lanes.errs)
+	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, streams, lanes.errs)
 	cancel()
 	lanes.stop()
 	return stats.result(stage, Down, false), err
@@ -51,7 +84,10 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			if ctx.Err() != nil {
+			// A refused dial must not spin: pace the reopen like every other
+			// reconnect path, so a dead server costs a retry cadence rather
+			// than a core per lane.
+			if !laneRetryPause(ctx) {
 				return nil
 			}
 			continue
@@ -67,11 +103,14 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 				total.Add(uint64(n))
 			}
 			if readErr != nil {
+				// A stream dropped mid-body reopens like any finished request:
+				// the gap is a measured pause, not a stage failure. A drop
+				// before EOF is a fault, so the reopen is paced.
 				_ = res.Body.Close()
-				if errors.Is(readErr, io.EOF) {
-					break
+				if !errors.Is(readErr, io.EOF) && !laneRetryPause(ctx) {
+					return nil
 				}
-				return readErr
+				break
 			}
 			if ctx.Err() != nil {
 				_ = res.Body.Close()

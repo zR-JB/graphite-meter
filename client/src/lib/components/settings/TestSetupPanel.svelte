@@ -1,12 +1,15 @@
 <script lang="ts">
-  import { store, DURATION_PRESETS } from "../../state/store.svelte";
+  import { store } from "../../state/store.svelte";
+  import { DURATION_PRESETS } from "../../state/defaults";
   import type { ProtocolTarget, RunnerConfig } from "../../runner/contract";
   import type {
     FetchThroughputTarget,
-    WebSocketLatencyTarget,
+    LatencyTarget,
+    WebTransportThroughputTarget,
   } from "../../api/endpoints";
   import { applyLiveRunConfig } from "../../runner/engine.svelte";
   import { describeTarget } from "../../runner/real/targetPresentation";
+  import { panelReadiness } from "../../runner/connectionModel";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import CompensationEditor from "./CompensationEditor.svelte";
@@ -18,37 +21,49 @@
   let { running = false }: Props = $props();
 
   function targetOption(
-    target: FetchThroughputTarget | WebSocketLatencyTarget,
+    target:
+      FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
     observedProtocol?: ProtocolTarget,
   ) {
     return {
-      value: target.origin,
+      value: target.id,
       label: describeTarget(store.transportDiscovery!, target, observedProtocol)
         .label,
     };
   }
+  // The caution belongs to the selection, not the toggle: turning the toggle
+  // off keeps a selected datagram card, so it must keep its warning too.
+  const datagramSelected = $derived(
+    store.connections.throughput.target?.transport === "webtransport-datagram",
+  );
+  // One card per mechanism an origin advertises. The datagram path is the one
+  // gated on its setting, and stays visible while it is the current selection.
   const throughputTargets = $derived([
     { value: "auto", label: "Automatic" },
     ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
       (entry) =>
-        entry.target
-          ? [
-              // The observed protocol only describes the path actually in use.
-              targetOption(
-                entry.target,
-                store.connections.throughput.target?.origin ===
-                  entry.target.origin
-                  ? store.connections.throughput.observedProtocol
-                  : undefined,
-              ),
-            ]
-          : [],
+        entry.targets
+          .filter(
+            (target) =>
+              target.transport !== "webtransport-datagram" ||
+              store.config.experimentalDatagramThroughput ||
+              store.config.transports.throughputTarget === target.id,
+          )
+          .map((target) =>
+            // The observed protocol only describes the path actually in use.
+            targetOption(
+              target,
+              store.connections.throughput.target?.id === target.id
+                ? store.connections.throughput.observedProtocol
+                : undefined,
+            ),
+          ),
     ),
   ]);
   const latencyTargets = $derived([
     { value: "auto", label: "Automatic" },
-    ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
-      (entry) => (entry.target ? [targetOption(entry.target)] : []),
+    ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap((entry) =>
+      entry.targets.map((target) => targetOption(target)),
     ),
   ]);
 
@@ -147,11 +162,15 @@
       );
   }
 
-  const ready = $derived(
-    store.connections.throughput.validation === "verified" &&
-      (!store.latencyEnabled ||
-        store.connections.latency.validation === "verified"),
+  const readiness = $derived(
+    panelReadiness(store.connections, store.latencyEnabled),
   );
+  const READINESS_LABEL = {
+    verified: "Ready",
+    checking: "Checking paths",
+    failed: "Path failed",
+    stale: "Recheck needed",
+  } as const;
 </script>
 
 <div class="setup-grid">
@@ -160,8 +179,8 @@
   <section class="panel wide primary">
     <div class="section-heading">
       <h3>Connection paths</h3>
-      <span class="readiness-badge" class:ready aria-live="polite">
-        {ready ? "Ready" : "Checking paths"}
+      <span class="readiness-badge" data-state={readiness} aria-live="polite">
+        {READINESS_LABEL[readiness]}
       </span>
     </div>
     <p class="intro">
@@ -433,8 +452,29 @@
       label="Chunked download (experimental)"
     />
     <p class="hint">
-      Uses adaptive chunks instead of one long request per lane.
+      Uses adaptive chunks instead of one long request per lane. Slower, but
+      bounds browser memory: Firefox holds roughly one byte per byte downloaded
+      across a single long request.
     </p>
+    <Switch
+      bind:checked={store.config.experimentalDatagramThroughput}
+      disabled={running}
+      label="Datagram throughput (experimental)"
+    />
+    <p class="hint">
+      Adds the WebTransport datagram card to the connection picker: transfers
+      over unreliable datagrams, so the rate is what arrives rather than what a
+      stream redelivers.
+    </p>
+    {#if store.config.experimentalDatagramThroughput || datagramSelected}
+      <p class="caution">
+        <strong>Loss diagnostic, not a speed test.</strong> Nothing is retransmitted
+        here, so missing goodput is real packet loss — that is what this mode measures.
+        Its rate is not comparable to the stream card: browsers hand over one datagram
+        per call, and on a fast link that cost, rather than the connection, is what
+        bounds the upload direction.
+      </p>
+    {/if}
   </section>
 </div>
 
@@ -499,9 +539,13 @@
     font-size: 9px;
     font-weight: 750;
   }
-  .readiness-badge.ready {
+  .readiness-badge[data-state="verified"] {
     background: var(--ok-soft);
     color: var(--ok);
+  }
+  .readiness-badge[data-state="failed"] {
+    background: var(--err-soft);
+    color: var(--err);
   }
   .intro {
     margin: 0;
@@ -587,6 +631,20 @@
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 1.55;
+  }
+  .caution {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--warn-soft);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.55;
+  }
+  .caution strong {
+    color: var(--warn);
   }
   .duration-fields {
     display: grid;

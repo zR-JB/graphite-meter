@@ -61,7 +61,6 @@ func TestWebSocketSession(t *testing.T) {
 			srvErrs <- fmt.Errorf("Bus() returned a nil bus")
 			return
 		}
-		check(bus.Reliable(), "Reliable() = false, want true")
 
 		msg, err := bus.Recv()
 		if err != nil {

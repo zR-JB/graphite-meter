@@ -5,6 +5,7 @@ import type {
 } from "../api/endpoints";
 import type { InfraInfo, RunnerConfig } from "./contract";
 import {
+  roleNeedsValidation,
   connectionKey,
   connectionDraftKey,
   connectionDraftRoleKey,
@@ -13,6 +14,8 @@ import {
   verifiedRolesForProbe,
   presentConnections,
   type ConnectionValidation,
+  panelReadiness,
+  type ConnectionValidationState,
 } from "./connectionModel";
 import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 
@@ -59,6 +62,7 @@ function config(): RunnerConfig {
     loadedPingCadence: "medium",
     transferStreams: { mode: "auto", count: 6 },
     experimentalChunkedDownload: false,
+    experimentalDatagramThroughput: false,
     transports: { throughputTarget: "auto", latencyTarget: "auto" },
     compensation: {
       profile: "lan",
@@ -183,7 +187,7 @@ test("native H1 latency summary states its deterministic HTTP version", () => {
 test("verified negotiated throughput presents the observed browser protocol", () => {
   const cfg = config();
   const discovery = fixture();
-  discovery.throughput[throughput.origin].target!.protocol = "negotiated";
+  discovery.throughput[throughput.origin].targets[0].protocol = "negotiated";
   const validation: ConnectionValidation = {
     throughput: { selection: "auto", state: "verified", verifiedAt: 2 },
     latency: { selection: "auto", state: "stale" },
@@ -281,7 +285,7 @@ test("draft invalidation ignores discovery and observed protocol changes", () =>
   const roleKey = connectionDraftRoleKey(cfg, "throughput");
   const key = connectionDraftKey(cfg);
 
-  discovery.throughput[throughput.origin].target!.protocol = "http2";
+  discovery.throughput[throughput.origin].targets[0].protocol = "http2";
   expect(connectionDraftRoleKey(cfg, "throughput")).toBe(roleKey);
   expect(connectionDraftKey(cfg)).toBe(key);
 
@@ -307,6 +311,41 @@ test("probe failure and stale evidence remain retryable presentation states", ()
   expect(model.throughput.validation).toBe("failed");
   expect(model.throughput.message).toBe("probe timed out");
   expect(model.latency.validation).toBe("stale");
+});
+
+test("a ::wt selection shares its origin's availability", () => {
+  const cfg = config();
+  cfg.transports.throughputTarget = "https://meter.test::wt";
+  const discovery = Object.assign(
+    classifyTransportDiscovery(
+      [
+        throughput,
+        {
+          baseUrl: "https://meter.test",
+          transport: "webtransport" as const,
+          protocol: "http3" as const,
+        },
+      ],
+      [latency],
+      "https://meter.test",
+      true,
+      "h2",
+    ),
+    {
+      generation: "generation-a",
+      engineVersion: "test",
+      server: { name: "meter" },
+      fetchedAt: 1,
+    },
+  );
+  const validation: ConnectionValidation = {
+    throughput: { selection: "https://meter.test::wt", state: "checking" },
+    latency: { selection: "auto", state: "checking" },
+  };
+
+  const model = presentConnections(cfg, discovery, validation, null);
+  expect(model.throughput.availability).toBe("advertised");
+  expect(model.throughput.target?.transport).toBe("webtransport");
 });
 
 test("validation retries only the changed role and carries an aborted stale role", () => {
@@ -336,4 +375,79 @@ test("a generation refresh verifies every role checked by the broadened probe", 
   expect(verifiedRolesForProbe(["latency"], "same", "same")).toEqual([
     "latency",
   ]);
+});
+
+// Toggling a stage is not a path change. A verified role stays verified, a
+// latency path the run never opens is not checked at all, and only a role that
+// resolves somewhere new or lost its verdict is worth a probe.
+test("a stage toggle does not re-check a path that has not changed", () => {
+  const cfg = config();
+  const discovery = fixture();
+  const verified: ConnectionValidation = {
+    throughput: {
+      selection: "auto",
+      state: "verified",
+      identity: connectionRoleKey(cfg, "throughput", discovery),
+    },
+    latency: {
+      selection: "auto",
+      state: "verified",
+      identity: connectionRoleKey(cfg, "latency", discovery),
+    },
+  };
+
+  // Latency on and verified: nothing to learn.
+  expect(roleNeedsValidation(cfg, verified, "latency", discovery)).toBe(false);
+  expect(roleNeedsValidation(cfg, verified, "throughput", discovery)).toBe(
+    false,
+  );
+
+  // Latency off: the run never opens it, so it is not checked.
+  const off = config();
+  off.stages.latency = false;
+  off.stages.download = true;
+  off.skipLoadedLatencyWhenStageOff = true;
+  expect(roleNeedsValidation(off, verified, "latency", discovery)).toBe(false);
+
+  // Identity is the resolved target, not the selection string: naming the
+  // origin that auto already picked resolves to the same place and is not
+  // re-checked, while a selection that resolves elsewhere is.
+  const named = config();
+  named.transports.latencyTarget = latency.origin;
+  expect(roleNeedsValidation(named, verified, "latency", discovery)).toBe(
+    false,
+  );
+  const moved = config();
+  moved.transports.latencyTarget = "https://elsewhere.test";
+  expect(roleNeedsValidation(moved, verified, "latency", discovery)).toBe(true);
+
+  // So is one whose verdict is gone.
+  const lost: ConnectionValidation = {
+    ...verified,
+    throughput: { selection: "auto", state: "stale" },
+  };
+  expect(roleNeedsValidation(cfg, lost, "throughput", discovery)).toBe(true);
+});
+
+// The panel badge reported ready-or-not, so a failed path was indistinguishable
+// from a check still running and a refused transport read as permanently
+// checking. Each state has to name itself.
+test("the panel names a failure rather than reading as a check", () => {
+  const present = (
+    throughput: ConnectionValidationState,
+    latency: ConnectionValidationState,
+  ) =>
+    ({
+      throughput: { validation: throughput },
+      latency: { validation: latency },
+    }) as unknown as Parameters<typeof panelReadiness>[0];
+
+  expect(panelReadiness(present("verified", "verified"), true)).toBe(
+    "verified",
+  );
+  expect(panelReadiness(present("failed", "verified"), true)).toBe("failed");
+  expect(panelReadiness(present("verified", "stale"), true)).toBe("stale");
+  expect(panelReadiness(present("checking", "failed"), true)).toBe("checking");
+  // A latency path the run never opens cannot hold the panel back.
+  expect(panelReadiness(present("verified", "failed"), false)).toBe("verified");
 });

@@ -1,0 +1,372 @@
+/* ============================================================
+ * The Graphite Meter: WebTransport transfer worker
+ * ============================================================
+ * One worker per direction, owning the session and every lane stream on it.
+ * A WebTransport object cannot be transferred and a transferred stream still
+ * pumps its chunks through the owning realm, so lanes cannot be split across
+ * workers the way fetch lanes are.
+ *
+ * Streams carry raw bytes end to end; the session URL carries every parameter.
+ * The server opens the download lanes and the upload progress feed, so this
+ * worker reads incoming streams for both and only opens the upload lanes.
+ * ============================================================ */
+
+import { mintWtToken, withWtToken, type WtMint } from "./wtToken";
+import { ESTABLISH_BUDGET_MS, PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
+import { incompressibleBlock } from "./payload";
+import {
+  readProgressFeed,
+  type ProgressEvent,
+  type ProgressFeedState,
+} from "./progressFeed";
+import { ProgressWindow, type ProgressDelta } from "./progressWindow";
+import { tuned, DEFAULT_TUNING, type Tuning } from "./tuning";
+
+type InMsg =
+  | {
+      type: "start";
+      url: string;
+      dir: "down" | "up";
+      lanes: number;
+      datagrams: boolean;
+      mint?: WtMint;
+      progressUrl?: string;
+      headers?: Record<string, string>;
+      credentials?: RequestCredentials;
+      tune?: Partial<Tuning>;
+    }
+  | { type: "measure"; seq: number }
+  | { type: "stop" };
+
+type OutMsg =
+  | { type: "established" }
+  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
+  | { type: "alive" }
+  | { type: "error"; recoverable: boolean; detail: string }
+  | { type: "upload-progress"; msg: ProgressEvent }
+  | { type: "auth-required" }
+  | { type: "stopped" };
+
+const ctx = self as unknown as DedicatedWorkerGlobalScope;
+const post = (m: OutMsg): void => ctx.postMessage(m);
+
+/** Upload alive cadence toward the main thread. A datagram loop iterates per
+ *  packet, so an unthrottled alive would jank the thread latency is measured on. */
+const ALIVE_GAP_MS = 250;
+
+let lastAlive = 0;
+/** Survives a session restart: a replacement feed reports the same aggregate,
+ *  so it must not report fewer bytes than its predecessor already did. */
+const feed: ProgressFeedState = { lastN: 0 };
+
+function postAlive(): void {
+  const now = performance.now();
+  if (now - lastAlive < ALIVE_GAP_MS) return;
+  lastAlive = now;
+  post({ type: "alive" });
+}
+
+let session: WebTransport | null = null;
+let stopped = false;
+/** Latches the first failure of this session, so its echoes stay silent. */
+let failed = false;
+let measureSeq = 0;
+let tuning = tuned();
+let progress = new ProgressWindow(0, tuning.reportGapMs);
+
+ctx.onmessage = (e: MessageEvent<InMsg>): void => {
+  const msg = e.data;
+  switch (msg.type) {
+    case "start":
+      stopped = false;
+      failed = false;
+      // Folded to DEFAULT_TUNING unless the build opts into the bench surface
+      // (GM_CLIENT_BENCH=1), which also eliminates the merge and msg.tune.
+      tuning = __GM_BENCH__ ? tuned(msg.tune) : DEFAULT_TUNING;
+      progress = new ProgressWindow(performance.now(), tuning.reportGapMs);
+      void run(msg);
+      break;
+    case "measure":
+      measureSeq = msg.seq;
+      progress.reset();
+      break;
+    case "stop":
+      void shutdown();
+      break;
+  }
+};
+
+async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
+  const minted = await mintWtToken(msg.mint);
+  if (stopped) return;
+  // An authenticated dial cannot proceed without a token. The refusal already
+  // says whether the login session is gone, so a retry needs no second request.
+  if (msg.mint && minted.token === "") {
+    if (minted.authRequired) {
+      post({ type: "auth-required" });
+      stopped = true;
+      return;
+    }
+    fail(true, "webtransport token mint failed");
+    return;
+  }
+  const token = minted.token;
+  let dialed: WebTransport;
+  try {
+    dialed = new WebTransport(withWtToken(msg.url, token), {
+      congestionControl: tuning.congestionControl,
+    });
+  } catch (err) {
+    fail(true, String(err));
+    return;
+  }
+  session = dialed;
+  // `closed` resolves on a graceful close and rejects on an abrupt one, and the
+  // server always closes gracefully, so both arms end this session's work. A
+  // stop has already latched `stopped`, which keeps the report silent.
+  const closed = (): void => fail(true, "webtransport session closed");
+  void dialed.closed.then(closed, closed);
+  try {
+    await Promise.race([
+      dialed.ready,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("webtransport session did not establish")),
+          ESTABLISH_BUDGET_MS,
+        ),
+      ),
+    ]);
+  } catch (err) {
+    // A dial still in flight would otherwise outlive this worker's report.
+    try {
+      dialed.close();
+    } catch {
+      /* already closing */
+    }
+    fail(true, String(err));
+    return;
+  }
+  post({ type: "established" });
+  if (msg.dir === "down") {
+    if (msg.datagrams) {
+      void readDatagrams();
+      return;
+    }
+    void acceptDownloadStreams();
+    return;
+  }
+  // The feed is read first, so the server is already reporting when bytes start.
+  if (!openProgress(msg.progressUrl, msg.headers, msg.credentials)) return;
+  if (msg.datagrams) {
+    void uploadDatagrams();
+    return;
+  }
+  const block = incompressibleBlock(tuning.writeChunkBytes);
+  for (let i = 0; i < msg.lanes; i++) void uploadLane(block);
+}
+
+/** Drain every server-opened stream: each is one sized lane request, replaced
+ *  by the server when exhausted, so the accept loop runs for the whole stage. */
+async function acceptDownloadStreams(): Promise<void> {
+  if (!session) return;
+  const incoming = session.incomingUnidirectionalStreams.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await incoming.read();
+      if (done || stopped) return;
+      void drainLane(value as ReadableStream<Uint8Array>);
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** The reused BYOB buffer is the read-side ceiling at multi-Gbit/s: a default
+ *  reader allocates per chunk, and one worker drains every lane of the session. */
+async function drainLane(lane: ReadableStream<Uint8Array>): Promise<void> {
+  try {
+    let byob: ReadableStreamBYOBReader | null = null;
+    try {
+      byob = tuning.reader === "byob" ? lane.getReader({ mode: "byob" }) : null;
+    } catch {
+      byob = null;
+    }
+    if (byob) {
+      let buf = new ArrayBuffer(tuning.readBufBytes);
+      for (;;) {
+        const chunk = await byob.read(new Uint8Array(buf));
+        if (chunk.done || stopped) return;
+        if (chunk.value.byteLength) countDownload(chunk.value.byteLength);
+        // read() detaches the buffer and hands back the same backing store.
+        buf = chunk.value.buffer as ArrayBuffer;
+      }
+    }
+    const reader = lane.getReader();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done || stopped) return;
+      countDownload(value.byteLength);
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** Experimental: the query asked for the request as datagrams; count what
+ *  lands. Loss shows up as missing goodput, since nothing is retransmitted. */
+async function readDatagrams(): Promise<void> {
+  if (!session) return;
+  try {
+    const reader = session.datagrams.readable.getReader();
+    // A datagram is ~1200 bytes, so counting each one reads the clock ~100k
+    // times a second. Batching the read trades sample resolution for that.
+    let pending = 0;
+    let sinceClock = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done || stopped) {
+        if (pending) countDownload(pending);
+        return;
+      }
+      pending += (value as Uint8Array).byteLength;
+      if (++sinceClock < tuning.datagramClockEvery) continue;
+      sinceClock = 0;
+      countDownload(pending);
+      pending = 0;
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** Experimental: flood path-MTU-sized datagrams. The server counts what arrives
+ *  and the progress feed reports it, as with the stream lanes. `ready` is the
+ *  backpressure gate; the write itself is not awaited, so the queue stays at
+ *  the transport's own high-water mark without a promise round trip per packet. */
+async function uploadDatagrams(): Promise<void> {
+  if (!session) return;
+  const datagrams = session.datagrams;
+  try {
+    const writer = datagrams.writable.getWriter();
+    const payload = new Uint8Array(datagrams.maxDatagramSize);
+    crypto.getRandomValues(payload);
+    while (!stopped) {
+      await writer.ready;
+      // The path MTU estimate can shrink mid-session, and an oversized datagram
+      // is dropped with a resolved promise: the queue would never fill, so
+      // `ready` would never park and this loop would never yield to the task
+      // that carries `stop`.
+      const size = Math.min(payload.length, datagrams.maxDatagramSize);
+      if (size === 0) return;
+      void writer.write(payload.subarray(0, size)).catch(() => {});
+      postAlive();
+    }
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** Report at the fetch lanes' cadence: one aggregate for the whole session,
+ *  since the main thread treats this worker as a single lane. */
+function countDownload(n: number): void {
+  postProgress(progress.add(n));
+}
+
+function postProgress(delta: ProgressDelta | null): void {
+  if (delta) post({ type: "progress", ...delta, seq: measureSeq });
+}
+
+/** One upload lane: a unidirectional stream written for the whole stage. The
+ *  writer's backpressure is the pacing loop, so no sizing is needed. */
+async function uploadLane(block: Uint8Array<ArrayBuffer>): Promise<void> {
+  if (!session) return;
+  try {
+    const writer = (await session.createUnidirectionalStream()).getWriter();
+    while (!stopped) {
+      await writer.ready;
+      await writer.write(block);
+      postAlive();
+    }
+    await writer.close();
+  } catch (err) {
+    if (!stopped) fail(true, String(err));
+  }
+}
+
+/** Read the one stream the server opens on an upload session as the progress
+ *  feed and relay its records. */
+function openProgress(
+  progressUrl?: string,
+  headers?: Record<string, string>,
+  credentials?: RequestCredentials,
+): boolean {
+  if (!session || !progressUrl) {
+    fail(false, "upload progress route missing");
+    return false;
+  }
+  const incoming = session.incomingUnidirectionalStreams.getReader();
+  void incoming
+    .read()
+    .then(({ value, done }) => {
+      if (done || !value) throw new Error("no progress stream");
+      return readProgress(value as ReadableStream);
+    })
+    .catch((err: unknown) => {
+      // A transport-level break is the session dying: recoverable, the owner
+      // restarts the session and the server re-opens the feed. Only an error
+      // record inside the feed is a protocol refusal, posted by readProgress.
+      if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
+    });
+  finalize = async (): Promise<void> => {
+    await fetch(progressUrl, {
+      method: "DELETE",
+      cache: "no-store",
+      headers,
+      credentials,
+    }).catch(() => {});
+  };
+  return true;
+}
+
+async function readProgress(
+  readable: ReadableStream<Uint8Array>,
+): Promise<void> {
+  const end = await readProgressFeed(readable, feed, (event) =>
+    post({ type: "upload-progress", msg: event }),
+  );
+  if (end === "complete") completed?.();
+}
+
+/** Sends the finalizing DELETE once the lanes stop; set when upload starts. */
+let finalize: (() => Promise<void>) | null = null;
+/** Resolves the shutdown grace as soon as the terminal record lands, so the
+ *  stage does not sit its full length with the lanes already silent. */
+let completed: (() => void) | null = null;
+
+/** Stop the lanes, finalize the upload, let the terminal progress record land,
+ *  and ack, so the main thread can terminate this worker deterministically. */
+async function shutdown(): Promise<void> {
+  if (stopped) return;
+  postProgress(progress.flush());
+  stopped = true;
+  if (finalize) {
+    await finalize();
+    await new Promise<void>((resolve) => {
+      completed = resolve;
+      setTimeout(resolve, PROGRESS_FINAL_GRACE_MS);
+    });
+    completed = null;
+  }
+  session?.close();
+  session = null;
+  post({ type: "stopped" });
+}
+
+/** One session death reaches every lane reader, the accept loop and the
+ *  session's close promise. They describe one incident, so only the first is
+ *  reported; the owner restarts the session either way. */
+function fail(recoverable: boolean, detail: string): void {
+  if (stopped || failed) return;
+  failed = true;
+  post({ type: "error", recoverable, detail });
+}

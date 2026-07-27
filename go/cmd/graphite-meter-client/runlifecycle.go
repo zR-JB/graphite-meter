@@ -325,6 +325,7 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.server = ""
 	m.target, m.latencyTarget = "", ""
 	m.throughputProtocol, m.latencyProtocol = "", ""
+	m.throughputTransport, m.latencyTransport = "", ""
 	m.err = nil
 	m.complete = false
 	m.cancelPrompt = false
@@ -350,6 +351,8 @@ func (m *model) apply(e goclient.Event) {
 			}
 			m.latencyTarget = e.LatencyTarget
 			m.throughputProtocol = e.ThroughputProtocol
+			m.throughputTransport = e.ThroughputTransport
+			m.latencyTransport = e.LatencyTransport
 			m.latencyProtocol = e.LatencyProtocol
 			observed := ""
 			if e.Probe != nil {

@@ -13,20 +13,18 @@ export const Op = {
   READY: "READY",
   PING: "PING",
   PONG: "PONG",
-  SIZE: "SIZE",
   BYE: "BYE",
   ERR: "ERR",
 } as const;
 
-/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` and
- *  `bytes` are uint64 and MUST be `bigint`: 18446744073709551615 exceeds
- *  Number.MAX_SAFE_INTEGER and still has to round-trip byte-exact. */
+/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` is a
+ *  uint64 held as its digits: it exceeds Number.MAX_SAFE_INTEGER, has to
+ *  round-trip byte-exact, and no consumer reads it. */
 export type Frame =
   | { op: "READY" }
   | { op: "BYE" }
   | { op: "PING"; id: number }
-  | { op: "PONG"; id: number; nanos: bigint }
-  | { op: "SIZE"; bytes: bigint }
+  | { op: "PONG"; id: number; nanos: string }
   | { op: "HI"; proto: string }
   | { op: "ERR"; code: string; text: string };
 
@@ -46,31 +44,42 @@ export class DecodeError extends Error {
   }
 }
 
-const MAX_U32 = 4294967295n;
-const MAX_U64 = 18446744073709551615n;
+const MAX_U32 = 4294967295;
+/** uint64 max as digits. Same-length digit strings compare lexicographically
+ *  the way they compare numerically, which is how the bound is checked without
+ *  building a BigInt to compare against. */
+const MAX_U64_DIGITS = "18446744073709551615";
 
-/** Parse a bare unsigned decimal integer the same way Go's strconv.ParseUint
- *  does: digits only, non-empty, no sign or whitespace. Returns null on reject.
- *  A plain char-code scan keeps the framing parse allocation-free. */
-function parseUint(s: string): bigint | null {
-  if (s.length === 0) return null;
+/** Digits only, non-empty, no sign or whitespace: what Go's strconv.ParseUint
+ *  accepts. A char-code scan, so validation allocates nothing. */
+function digitsOnly(s: string): boolean {
+  if (s.length === 0) return false;
   for (let i = 0; i < s.length; i++) {
     const ch = s.charCodeAt(i);
-    if (ch < 48 || ch > 57) return null; // not 0-9
+    if (ch < 48 || ch > 57) return false;
   }
-  return BigInt(s);
+  return true;
 }
 
+/** A uint32 is under Number.MAX_SAFE_INTEGER, so it parses exactly as a Number.
+ *  Ten digits cannot overflow the check. */
 function u32(s: string, field: string): number {
-  const v = parseUint(s);
-  if (v === null || v > MAX_U32) throw new DecodeError(ErrBadArgs, field);
-  return Number(v);
+  if (!digitsOnly(s) || s.length > 10) throw new DecodeError(ErrBadArgs, field);
+  const v = Number(s);
+  if (v > MAX_U32) throw new DecodeError(ErrBadArgs, field);
+  return v;
 }
 
-function u64(s: string, field: string): bigint {
-  const v = parseUint(s);
-  if (v === null || v > MAX_U64) throw new DecodeError(ErrBadArgs, field);
-  return v;
+/** A uint64 is kept as its digits: it exceeds Number.MAX_SAFE_INTEGER, and
+ *  every consumer either re-emits it verbatim or does not read it at all. */
+function u64Digits(s: string, field: string): string {
+  if (
+    !digitsOnly(s) ||
+    s.length > MAX_U64_DIGITS.length ||
+    (s.length === MAX_U64_DIGITS.length && s > MAX_U64_DIGITS)
+  )
+    throw new DecodeError(ErrBadArgs, field);
+  return s;
 }
 
 /** Parse one on-wire message into a Frame. Throws DecodeError(bad_op) on an
@@ -98,12 +107,9 @@ export function decode(msg: string): Frame {
       const timeComma = tail.indexOf(",");
       if (timeComma === -1 || tail.slice(0, timeComma) !== "TIME")
         throw new DecodeError(ErrBadArgs, "PONG TIME");
-      const nanos = u64(tail.slice(timeComma + 1), "PONG nanos");
+      const nanos = u64Digits(tail.slice(timeComma + 1), "PONG nanos");
       return { op: "PONG", id, nanos };
     }
-
-    case Op.SIZE:
-      return { op: "SIZE", bytes: u64(rest, "SIZE bytes") };
 
     case Op.HI:
       if (rest === "") throw new DecodeError(ErrBadArgs, "HI proto");
@@ -133,8 +139,6 @@ export function encode(f: Frame): string {
       return `${Op.PING},${f.id}`;
     case "PONG":
       return `${Op.PONG},${f.id};TIME,${f.nanos}`;
-    case "SIZE":
-      return `${Op.SIZE},${f.bytes}`;
     case "HI":
       return `${Op.HI},${f.proto}`;
     case "ERR":

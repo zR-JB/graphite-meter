@@ -21,8 +21,7 @@ type Ping struct{}
 // NewPing builds the latency endpoint.
 func NewPing() *Ping { return &Ping{} }
 
-func (p *Ping) ID() string                 { return "latency" }
-func (p *Ping) Capabilities() Capabilities { return Capabilities{WebSocket: true} }
+func (p *Ping) ID() string { return "latency" }
 
 // Handle runs the echo loop on the session's message bus: Recv → decode → reply.
 // A read error ends the loop quietly: a client disconnect is normal, not a

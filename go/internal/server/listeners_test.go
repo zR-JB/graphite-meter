@@ -14,6 +14,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type observedBody struct {
@@ -191,6 +192,16 @@ func TestPublicH3Port(t *testing.T) {
 	cfg.NativePublic.H3 = "https://meter.example"
 	if got := publicH3Port(&cfg); got != "443" {
 		t.Fatalf("default TLS port = %q, want %q", got, "443")
+	}
+}
+
+func TestH3QUICConfigCarriesTheSupportedTransferEnvelope(t *testing.T) {
+	cfg := h3QUICConfig()
+	if want := int64(257); cfg.MaxIncomingStreams != want {
+		t.Fatalf("incoming request streams = %d, want %d (128 download + 128 upload + progress)", cfg.MaxIncomingStreams, want)
+	}
+	if want := int64(3 + wire.WTMaxStreams); cfg.MaxIncomingUniStreams != want {
+		t.Fatalf("incoming unidirectional streams = %d, want %d", cfg.MaxIncomingUniStreams, want)
 	}
 }
 

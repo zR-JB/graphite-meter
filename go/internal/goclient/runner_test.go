@@ -80,8 +80,8 @@ func TestLaneStaggerStep(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := &runner{cfg: Config{Warmup: c.warmup}, streams: c.streams, idleRTT: c.idleRTT}
-			if got := r.laneStaggerStep(); got != c.want {
+			r := &runner{cfg: Config{Warmup: c.warmup}, idleRTT: c.idleRTT}
+			if got := r.laneStaggerStep(c.streams); got != c.want {
 				t.Errorf("laneStaggerStep() = %v, want %v", got, c.want)
 			}
 		})
@@ -615,6 +615,79 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	}
 }
 
+// TestTransferStagesOpenTheirOwnDirectionsLanes checks each direction opens the
+// lane count it resolved rather than one count shared by both, which is what an
+// automatic multiplexed policy asks for: h2 runs one download lane and four
+// upload lanes.
+func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
+	var uploaded atomic.Uint64
+	var mu sync.Mutex
+	lanes := map[Direction]map[string]bool{Down: {}, Up: {}}
+	note := func(dir Direction, r *http.Request) {
+		mu.Lock()
+		lanes[dir][r.URL.Query().Get("lane")] = true
+		mu.Unlock()
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		note(Down, r)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(make([]byte, 16*1024))
+	})
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "lane-count"})
+	})
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
+		note(Up, r)
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Body.Read(buf)
+			if n > 0 {
+				uploaded.Add(uint64(n))
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	mountFakeProgress(mux, &uploaded, time.Now())
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := Config{BaseURL: srv.URL, DownloadBytesPerStream: 16 * 1024}.normalized()
+	reported := map[Direction]int{}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 4}, http: srv.Client(), emit: func(e Event) {
+		if e.Kind != EventThroughput {
+			return
+		}
+		mu.Lock()
+		reported[e.Direction] = e.Throughput.StreamCount
+		mu.Unlock()
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, captureWindow); err != nil {
+		t.Fatalf("runTransferStage: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, c := range []struct {
+		dir  Direction
+		want int
+	}{{Down, 1}, {Up, 4}} {
+		if got := len(lanes[c.dir]); got != c.want {
+			t.Errorf("%s opened %d lanes, want %d", c.dir, got, c.want)
+		}
+		if got := reported[c.dir]; got != c.want {
+			t.Errorf("%s reported StreamCount %d, want %d", c.dir, got, c.want)
+		}
+	}
+}
+
 // TestRunTransferStageFanInErrorCancelsSiblingLane checks that when one lane
 // of a transfer stage fails, its sibling, still actively transferring, is
 // cancelled promptly rather than left running until its own duration expires.
@@ -640,7 +713,7 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: 1, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

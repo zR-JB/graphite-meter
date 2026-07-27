@@ -200,33 +200,37 @@ export class DummyBackend implements RunnerBackend {
         throughput: {
           [throughputId]: {
             state: "advertised",
-            target: {
-              id: throughputId,
-              origin: pageOrigin,
-              transport: "fetch-stream",
-              protocol: "http1",
-              tls: secure,
-              routes: {
-                probe: ROUTES.probe,
-                download: ROUTES.download,
-                upload: ROUTES.upload,
-                uploadSession: ROUTES.uploadSession,
-                uploadProgress: ROUTES.uploadProgress,
+            targets: [
+              {
+                id: throughputId,
+                origin: pageOrigin,
+                transport: "fetch-stream",
+                protocol: "http1",
+                tls: secure,
+                routes: {
+                  probe: ROUTES.probe,
+                  download: ROUTES.download,
+                  upload: ROUTES.upload,
+                  uploadSession: ROUTES.uploadSession,
+                  uploadProgress: ROUTES.uploadProgress,
+                },
               },
-            },
+            ],
           },
         },
         latency: {
           [latencyId]: {
             state: "advertised",
-            target: {
-              id: latencyId,
-              origin: pageOrigin,
-              transport: "websocket",
-              protocol: "http1",
-              tls: secure,
-              routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-            },
+            targets: [
+              {
+                id: latencyId,
+                origin: pageOrigin,
+                transport: "websocket",
+                protocol: "http1",
+                tls: secure,
+                routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+              },
+            ],
           },
         },
       },
@@ -268,6 +272,7 @@ export class DummyBackend implements RunnerBackend {
       selectedThroughputTarget: throughputId,
       selectedThroughputProtocol: "http1",
       selectedLatencyTarget: latencyId,
+      selectedThroughputTransport: "fetch-stream",
       selectedLatencyTransport: "websocket",
       latencyProtocolNegotiated: "http/1.1",
       firstHopProtocol: "http/1.1",
@@ -283,8 +288,8 @@ export class DummyBackend implements RunnerBackend {
     return {
       name: "dummy",
       version: BUILD.clientVersion,
-      latencyTransports: ["webtransport-datagrams", "websocket"],
-      throughputTransports: ["webtransport-streams", "fetch-streams"],
+      latencyTransports: ["webtransport", "websocket"],
+      throughputTransports: ["webtransport", "fetch-stream"],
     };
   }
 

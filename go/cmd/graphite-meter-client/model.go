@@ -225,16 +225,21 @@ type model struct {
 	server                              string
 	target, latencyTarget               string
 	throughputProtocol, latencyProtocol string
-	err                                 error
-	complete                            bool
-	prepared                            *goclient.PreparedConnection
-	discovery                           *wire.Preflight
-	prepareSeq                          int
-	prepareStatus                       string
-	prepareStep                         prepareStep
-	prepareError                        string
-	auth                                *goclient.PendingAuthorization
-	authSince                           time.Time
+	// The transports the run committed to: the stream label names what a session
+	// delivers rather than what was requested, and the latency line names the
+	// bus, since loss means different things on each.
+	throughputTransport, latencyTransport string
+
+	err           error
+	complete      bool
+	prepared      *goclient.PreparedConnection
+	discovery     *wire.Preflight
+	prepareSeq    int
+	prepareStatus string
+	prepareStep   prepareStep
+	prepareError  string
+	auth          *goclient.PendingAuthorization
+	authSince     time.Time
 	// authOpened records that the approval page was sent to the browser. Until
 	// it is set, enter is the key that sends it; afterwards enter goes back to
 	// the row it belongs to.
@@ -554,6 +559,12 @@ func (m *model) commitDuration(raw, field string) {
 			m.editRejected(s.zeroError)
 			return
 		}
+		// The ping cadence has an upper bound too: the server reaps a
+		// WebTransport ping bus the client has stopped feeding.
+		if field == "ping" && d > goclient.MaxPingInterval {
+			m.editRejected(fmt.Sprintf("Ping interval must be at most %v, half the server's WebTransport idle bound.", goclient.MaxPingInterval))
+			return
+		}
 		*s.ptr = d
 	}
 	m.editAccepted("Timing updated.")
@@ -619,21 +630,32 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 			m.cfg.ThroughputTarget = nextEndpoint(m.cfg.ThroughputTarget, m.throughputChoices())
 			m.notice = "Throughput endpoint updated."
 		case 1:
-			m.cfg.LatencyTarget = nextEndpoint(m.cfg.LatencyTarget, m.latencyChoices())
-			m.notice = "Latency endpoint updated."
+			m.cfg.ThroughputTransport = nextChoice(m.cfg.ThroughputTransport, []string{"auto", wire.TransportFetchStream, wire.TransportWebTransport})
+			m.notice = "Throughput transport updated."
 		case 2:
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
 			m.notice = "Throughput protocol updated."
 		case 3:
+			m.cfg.LatencyTarget = nextEndpoint(m.cfg.LatencyTarget, m.latencyChoices())
+			m.notice = "Latency endpoint updated."
+		case 4:
+			m.cfg.LatencyTransport = nextChoice(m.cfg.LatencyTransport, []string{"auto", wire.TransportWebSocket, wire.TransportWebTransport})
+			m.notice = "Latency transport updated."
+		case 5:
 			m.edit = beginEdit(editInt, "auto-streams", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax))
 			m.notice = "Editing maximum automatic HTTP/1 streams. Use 1 through 128."
-		case 4:
+			// The editor still opens: the value is kept for the transports that
+			// read it, so it stays settable while WebTransport is selected.
+			if m.cfg.ThroughputTransport == wire.TransportWebTransport {
+				m.notice += " WebTransport ignores it."
+			}
+		case 6:
 			m.edit = beginEdit(editInt, "streams", fmt.Sprintf("%d", m.cfg.TransferStreams.Forced))
 			m.notice = "Editing streams per direction. Use 0 for automatic or 1 through 128 to force."
-		case 5:
+		case 7:
 			m.cfg.InsecureSkipTLSVerify = !m.cfg.InsecureSkipTLSVerify
 			m.notice = "TLS verification setting updated."
-		case 6:
+		case 8:
 			m.cfg = goclient.DefaultConfig()
 			m.notice = "Configuration reset to defaults."
 		}
@@ -652,7 +674,7 @@ func (m model) rowCount() int {
 	case sectionTiming:
 		return 6
 	case sectionConnections:
-		return 7
+		return 9
 	case sectionRun:
 		return 1
 	default:

@@ -21,8 +21,7 @@ import (
 // mounting several endpoints can tell which one answered a given path.
 type echoEndpoint struct{ id string }
 
-func (e *echoEndpoint) ID() string                 { return e.id }
-func (e *echoEndpoint) Capabilities() Capabilities { return Capabilities{} }
+func (e *echoEndpoint) ID() string { return e.id }
 func (e *echoEndpoint) Handle(s transport.Session) error {
 	if w, _, ok := s.HTTP(); ok {
 		_, _ = w.Write([]byte(e.id)) // test double: a failed write shows up as a body mismatch
@@ -41,8 +40,7 @@ type countingEndpoint struct {
 	err   error
 }
 
-func (e *countingEndpoint) ID() string                 { return "counting" }
-func (e *countingEndpoint) Capabilities() Capabilities { return Capabilities{} }
+func (e *countingEndpoint) ID() string { return "counting" }
 func (e *countingEndpoint) Handle(s transport.Session) error {
 	e.calls.Add(1)
 	return e.err
@@ -54,8 +52,7 @@ type blockingEndpoint struct {
 	unblocked chan struct{}
 }
 
-func (e *blockingEndpoint) ID() string                 { return "blocking" }
-func (e *blockingEndpoint) Capabilities() Capabilities { return Capabilities{} }
+func (e *blockingEndpoint) ID() string { return "blocking" }
 func (e *blockingEndpoint) Handle(s transport.Session) error {
 	<-s.Context().Done()
 	close(e.unblocked)

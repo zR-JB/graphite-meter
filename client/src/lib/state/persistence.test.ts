@@ -1,5 +1,5 @@
-// Persistence tests use an in-memory localStorage and a mocked store default so
-// load/merge behavior can be checked without the Svelte runtime.
+// Persistence tests use an in-memory localStorage and a mocked config default so
+// load/merge behavior is pinned to this fixture rather than the shipped values.
 import { test, expect, mock, beforeEach } from "bun:test";
 import type { RunnerConfig } from "../runner/contract";
 
@@ -17,6 +17,7 @@ const FAKE_CONFIG: RunnerConfig = {
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 6 },
   experimentalChunkedDownload: false,
+  experimentalDatagramThroughput: false,
   transports: { throughputTarget: "auto", latencyTarget: "auto" },
   compensation: {
     profile: "lan",
@@ -43,7 +44,7 @@ const FAKE_CONFIG: RunnerConfig = {
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
-mock.module("./store.svelte", () => ({ DEFAULT_CONFIG: FAKE_CONFIG }));
+mock.module("./defaults", () => ({ DEFAULT_CONFIG: FAKE_CONFIG }));
 
 class MemoryStorage {
   private map = new Map<string, string>();

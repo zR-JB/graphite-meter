@@ -1,6 +1,7 @@
 import type {
   FetchThroughputTarget,
-  WebSocketLatencyTarget,
+  LatencyTarget,
+  WebTransportThroughputTarget,
 } from "../../api/endpoints";
 import type { ProtocolTarget, TransportDiscovery } from "../contract";
 import { httpProtocolLabel } from "../protocol";
@@ -19,13 +20,38 @@ export interface TargetPresentation {
  *  version the ping socket rides is unknown here. */
 export function describeTarget(
   discovery: TransportDiscovery,
-  target: FetchThroughputTarget | WebSocketLatencyTarget,
+  target: FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
   observedProtocol?: ProtocolTarget,
 ): TargetPresentation {
   const security = target.tls ? "TLS" : "clear";
+  if (target.transport === "webtransport-datagram") {
+    return {
+      label: `WebTransport datagrams · ${security}`,
+      summary: `WebTransport datagrams · ${httpProtocolLabel("http3")} · ${security}`,
+      advertisedDetail: `Experimental unreliable-datagram flood over ${httpProtocolLabel("http3")} · ${target.origin}`,
+    };
+  }
+  if (target.transport === "webtransport") {
+    const mechanism = `WebTransport · ${httpProtocolLabel("http3")}`;
+    // The throughput role rides QUIC streams; the latency role rides datagrams.
+    if ("wtDownload" in target.routes) {
+      return {
+        label: `${mechanism} · ${security}`,
+        summary: `WebTransport streams · ${httpProtocolLabel("http3")} · ${security}`,
+        advertisedDetail: `QUIC stream session over ${httpProtocolLabel("http3")} · ${target.origin}`,
+      };
+    }
+    return {
+      label: `${mechanism} · ${security}`,
+      summary: `${mechanism} datagrams · ${security}`,
+      advertisedDetail: `Datagram bus over ${httpProtocolLabel("http3")} · ${target.origin}`,
+    };
+  }
   if (target.transport === "websocket") {
     const nativeH1 =
-      discovery.throughput[target.origin]?.target?.protocol === "http1";
+      discovery.throughput[target.origin]?.targets.find(
+        (sibling) => sibling.transport === "fetch-stream",
+      )?.protocol === "http1";
     const mechanism = nativeH1
       ? `WebSocket · ${httpProtocolLabel("http1")}`
       : "WebSocket";

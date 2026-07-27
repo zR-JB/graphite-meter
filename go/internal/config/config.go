@@ -74,23 +74,34 @@ type Config struct {
 	TrustedProxies                            []netip.Prefix
 	MaxActiveMeasurements                     int
 	MaxActiveMeasurementsPerClient            int
+	MaxActiveSessions                         int
+	MaxSessionsPerClient                      int
 	MaxConnections                            int
 	MaxConnectionsPerClient                   int
 	MaxOperationDuration                      time.Duration
+	MaxSessionDuration                        time.Duration
 	Auth                                      AuthConfig
 }
 
 // Default returns the configuration used when nothing is set in the
 // environment: one cleartext HTTP/1.1 listener, with every enabled native
-// endpoint advertised.
+// endpoint advertised. MaxActiveSessions is a ceiling on how much of the
+// measurement pool sessions may occupy, a quarter of it: a session route holds
+// its slot for MaxSessionDuration rather than MaxOperationDuration, so the slot
+// is slow to come back, and the request-shaped routes must not end up queued
+// behind sessions that hold theirs for hours. It reserves nothing in return --
+// a pool filled by request-shaped routes refuses sessions with the session
+// budget untouched.
 func Default() Config {
 	return Config{
 		Native:           NativeListeners{H1: ":7246"},
 		AdvertisedNative: map[string]bool{}, AdvertiseAllNative: true,
 		ServerName: "graphite-meter", EngineVersion: EngineVersion,
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
+		MaxActiveSessions: 64, MaxSessionsPerClient: 16,
 		MaxConnections: 512, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
+		MaxSessionDuration:   2 * time.Hour,
 		Auth:                 AuthConfig{Mode: "off", OIDCProviderName: "Authelia"},
 	}
 }
@@ -151,15 +162,23 @@ func Load() (Config, error) {
 		dst  *int
 	}{
 		{"GM_MAX_ACTIVE_MEASUREMENTS", &c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", &c.MaxActiveMeasurementsPerClient},
+		{"GM_MAX_ACTIVE_SESSIONS", &c.MaxActiveSessions}, {"GM_MAX_SESSIONS_PER_CLIENT", &c.MaxSessionsPerClient},
 		{"GM_MAX_CONNECTIONS", &c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", &c.MaxConnectionsPerClient},
 	} {
 		if *env.dst, err = envInt(env.name, *env.dst); err != nil {
 			return Config{}, err
 		}
 	}
-	if v := os.Getenv("GM_MAX_OPERATION_DURATION"); v != "" {
-		if c.MaxOperationDuration, err = time.ParseDuration(v); err != nil {
-			return Config{}, fmt.Errorf("GM_MAX_OPERATION_DURATION: %w", err)
+	for _, env := range []struct {
+		name string
+		dst  *time.Duration
+	}{
+		{"GM_MAX_OPERATION_DURATION", &c.MaxOperationDuration}, {"GM_MAX_SESSION_DURATION", &c.MaxSessionDuration},
+	} {
+		if v := os.Getenv(env.name); v != "" {
+			if *env.dst, err = time.ParseDuration(v); err != nil {
+				return Config{}, fmt.Errorf("%s: %w", env.name, err)
+			}
 		}
 	}
 	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
@@ -302,7 +321,7 @@ func (c Config) validateLimits() error {
 	for _, limit := range []struct {
 		name  string
 		value int
-	}{{"GM_MAX_ACTIVE_MEASUREMENTS", c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", c.MaxActiveMeasurementsPerClient}, {"GM_MAX_CONNECTIONS", c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", c.MaxConnectionsPerClient}} {
+	}{{"GM_MAX_ACTIVE_MEASUREMENTS", c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", c.MaxActiveMeasurementsPerClient}, {"GM_MAX_ACTIVE_SESSIONS", c.MaxActiveSessions}, {"GM_MAX_SESSIONS_PER_CLIENT", c.MaxSessionsPerClient}, {"GM_MAX_CONNECTIONS", c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", c.MaxConnectionsPerClient}} {
 		if limit.value <= 0 {
 			return fmt.Errorf("%s must be greater than zero", limit.name)
 		}
@@ -310,11 +329,25 @@ func (c Config) validateLimits() error {
 	if c.MaxActiveMeasurementsPerClient > c.MaxActiveMeasurements {
 		return fmt.Errorf("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS")
 	}
+	// The session budget is a share of the global pool, not an extension of it.
+	if c.MaxActiveSessions > c.MaxActiveMeasurements {
+		return fmt.Errorf("GM_MAX_ACTIVE_SESSIONS must not exceed GM_MAX_ACTIVE_MEASUREMENTS")
+	}
+	if c.MaxSessionsPerClient > c.MaxActiveMeasurementsPerClient {
+		return fmt.Errorf("GM_MAX_SESSIONS_PER_CLIENT must not exceed GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT")
+	}
+	// One client must not be able to take the whole session budget.
+	if c.MaxSessionsPerClient > c.MaxActiveSessions {
+		return fmt.Errorf("GM_MAX_SESSIONS_PER_CLIENT must not exceed GM_MAX_ACTIVE_SESSIONS")
+	}
 	if c.MaxConnectionsPerClient > c.MaxConnections {
 		return fmt.Errorf("GM_MAX_CONNECTIONS_PER_CLIENT must not exceed GM_MAX_CONNECTIONS")
 	}
 	if c.MaxOperationDuration <= 0 {
 		return fmt.Errorf("GM_MAX_OPERATION_DURATION must be greater than zero")
+	}
+	if c.MaxSessionDuration < c.MaxOperationDuration {
+		return fmt.Errorf("GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION")
 	}
 	return nil
 }

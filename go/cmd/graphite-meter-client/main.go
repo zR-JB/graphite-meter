@@ -21,7 +21,9 @@ func main() {
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "server base URL")
 	flag.StringVar(&cfg.ThroughputTarget, "throughput-origin", cfg.ThroughputTarget, "throughput origin from discovery, or auto")
 	flag.StringVar(&cfg.ThroughputProtocol, "throughput-protocol", cfg.ThroughputProtocol, "protocol for a negotiated throughput origin: auto, http1, http2, or http3")
-	flag.StringVar(&cfg.LatencyTarget, "latency-origin", cfg.LatencyTarget, "WebSocket latency origin from discovery, or auto")
+	flag.StringVar(&cfg.ThroughputTransport, "throughput-transport", cfg.ThroughputTransport, "throughput transport: auto, fetch-stream, or webtransport")
+	flag.StringVar(&cfg.LatencyTarget, "latency-origin", cfg.LatencyTarget, "latency origin from discovery, or auto")
+	flag.StringVar(&cfg.LatencyTransport, "latency-transport", cfg.LatencyTransport, "latency transport: auto, websocket, or webtransport")
 	flag.StringVar(&stages, "stages", "latency,download,upload", "comma-separated stages: latency,download,upload,bidirectional")
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
 	flag.DurationVar(&cfg.LatencyDuration, "latency-duration", cfg.LatencyDuration, "latency measurement duration")
@@ -30,7 +32,7 @@ func main() {
 	flag.DurationVar(&cfg.BidirectionalDuration, "bidirectional-duration", cfg.BidirectionalDuration, "bidirectional measurement duration")
 	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum automatic HTTP/1 streams per direction")
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force streams per active direction (0 = automatic)")
-	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration")
+	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration up to "+goclient.MaxPingInterval.String())
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
@@ -42,7 +44,12 @@ func main() {
 	}
 
 	cfg.Stages = parseStages(stages)
-	cfg.PingInterval = parsePing(ping)
+	interval, err := parsePing(ping)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graphite-meter-client: -ping: %v\n", err)
+		os.Exit(2)
+	}
+	cfg.PingInterval = interval
 
 	// No mouse reporting: the terminal keeps its own selection, so the screen
 	// stays copyable with the mouse or with a keyboard selection.
@@ -76,19 +83,26 @@ func parseStages(raw string) goclient.StageSet {
 	return s
 }
 
-func parsePing(raw string) time.Duration {
+// parsePing resolves the cadence flag. An unusable value falls back to the
+// medium preset, but one the latency bus would not survive is an error: the
+// server reaps a ping bus that has gone quiet, so honouring it silently would
+// spend every stage redialing.
+func parsePing(raw string) (time.Duration, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "instant":
-		return 80 * time.Millisecond
+		return 80 * time.Millisecond, nil
 	case "slow":
-		return 600 * time.Millisecond
+		return 600 * time.Millisecond, nil
 	case "medium", "":
-		return 250 * time.Millisecond
+		return 250 * time.Millisecond, nil
 	default:
 		d, err := time.ParseDuration(raw)
 		if err != nil || d <= 0 {
-			return 250 * time.Millisecond
+			return 250 * time.Millisecond, nil
 		}
-		return d
+		if err := goclient.ValidatePingInterval(d); err != nil {
+			return 0, err
+		}
+		return d, nil
 	}
 }

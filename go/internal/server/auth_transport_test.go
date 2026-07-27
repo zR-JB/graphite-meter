@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -70,10 +72,23 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
 
-	h3Mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, http.NotFoundHandler(), authn)
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: authn.Enforce(h3Mux, auth.Listener{})}
-	go h3.Serve(h3PC)
-	t.Cleanup(func() { _ = h3.Close(); _ = h3PC.Close() })
+	// Mirrors assembleH3: the session routes ride the same listener behind the
+	// same boundary, so the CONNECT credential is exercised where it is served.
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig()}
+	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(authn)}
+	webtransport.ConfigureHTTP3Server(h3)
+	h3Mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true, wt: wt}, http.NotFoundHandler(), authn)
+	h3.Handler = authn.Enforce(h3Mux, auth.Listener{WebTransport: true})
+	// Served through the WebTransport server, as assembleH3 does: it is what
+	// demultiplexes a session's streams and datagrams off the QUIC connection,
+	// and it serves the plain HTTP/3 requests on it too.
+	quicTransport := &quic.Transport{Conn: h3PC}
+	quicLn, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = serveWebTransport(ctx, wt, quicLn) }()
+	t.Cleanup(func() { _ = wt.Close(); _ = quicLn.Close(); _ = quicTransport.Close() })
 
 	uiProtocols := &http.Protocols{}
 	uiProtocols.SetHTTP1(true)

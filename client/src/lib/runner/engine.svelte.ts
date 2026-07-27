@@ -14,7 +14,6 @@ import type {
   LiveRunConfig,
   NetworkRunner,
   RunnerAnomaly,
-  RunnerError,
   RunnerEvent,
 } from "./contract";
 import { RunnerCore } from "./core";
@@ -28,11 +27,13 @@ import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
 import {
+  CONNECTION_FAILURE_REASONS,
   CONNECTION_FRESH_MS,
   CONNECTION_ROLES,
   type ConnectionValidationState,
   connectionDraftKey,
   connectionDraftRoleKey,
+  roleNeedsValidation,
   connectionKey,
   connectionRoleKey,
   connectionSelection,
@@ -69,16 +70,30 @@ if (typeof window !== "undefined") {
           connectionDraftRoleKey(store.config, role) !==
           lastDraftRoleKeys[role],
       );
+      // Every role with something to learn from a probe, not only the ones the
+      // draft moved: a role left unverified by an earlier failure is still owed one.
+      const needed = CONNECTION_ROLES.filter((role) =>
+        roleNeedsValidation(
+          store.config,
+          store.connectionValidation,
+          role,
+          store.transportDiscovery,
+        ),
+      );
       const running = store.isRunning;
       if (!booted) return;
       if (changed.length) {
-        if (changed.includes("latency")) store.idleLatency = [];
+        // Only a latency path that both moved and needs re-checking invalidates
+        // its samples. A stage toggle must not blank the sparkline.
+        if (changed.includes("latency") && needed.includes("latency"))
+          store.idleLatency = [];
         for (const role of changed)
           lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
+        if (!needed.length) return;
         pendingValidation = true;
         if (running) {
           markValidation(
-            changed,
+            changed.filter((role) => needed.includes(role)),
             "stale",
             "Draft changed; validation resumes after this run.",
           );
@@ -92,7 +107,7 @@ if (typeof window !== "undefined") {
           // A rejection is already recorded as a "failed" role by markValidation.
           void validateConnections(
             false,
-            changed.length === 1 ? changed[0] : undefined,
+            needed.length === 1 ? needed[0] : undefined,
           ).catch(() => {}),
       );
     });
@@ -274,15 +289,6 @@ export async function validateConnections(
   }
 }
 
-/** Failures that leave the path's reachability unknown. The cached probe is
- *  untrustworthy once one lands, so it is dropped and both roles re-checked. */
-const PATH_INVALIDATING_REASONS = new Set<RunnerError["reason"]>([
-  "connection-lost",
-  "timeout",
-  "preflight-failed",
-  "transport-unavailable",
-]);
-
 function ingestRunnerEvent(event: RunnerEvent) {
   if (
     event.type === "transportDiscovery" &&
@@ -300,7 +306,7 @@ function ingestRunnerEvent(event: RunnerEvent) {
   }
   if (
     event.type === "error" &&
-    PATH_INVALIDATING_REASONS.has(event.error.reason)
+    CONNECTION_FAILURE_REASONS.has(event.error.reason)
   ) {
     prepared = null;
     markValidation(
@@ -344,6 +350,9 @@ export async function bootRunner() {
     lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
+  // A tab opened in the background gets no visibilitychange, so seed the flag
+  // from the current state instead of assuming the page is visible.
+  refreshAfterVisibility();
   // A rejection is already recorded as a "failed" role by markValidation.
   await validateConnections().catch(() => {});
 }

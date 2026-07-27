@@ -21,6 +21,7 @@ import type {
   StageFailure,
 } from "../runner/contract";
 import {
+  CONNECTION_FAILURE_REASONS,
   presentConnections,
   type ConnectionPresentation,
   type ConnectionValidation,
@@ -44,6 +45,7 @@ import {
   latestOneWayThroughputForPhase,
   latestBidirectionalLanes,
 } from "./stageGuards";
+import { DEFAULT_CONFIG } from "./defaults";
 import {
   loadPersisted,
   savePersisted,
@@ -63,13 +65,6 @@ const TERMINAL_PHASES: readonly Phase[] = [
   "aborted",
   "error",
 ];
-const CONNECTION_FAILURE_REASONS: readonly RunnerError["reason"][] = [
-  "connection-lost",
-  "timeout",
-  "preflight-failed",
-  "transport-unavailable",
-];
-
 export interface LatencyLane {
   key: StageKey;
   min: number | null;
@@ -83,74 +78,6 @@ export interface LatencyLane {
   count: number;
   active: boolean;
 }
-
-export const DEFAULT_CONFIG: RunnerConfig = {
-  stages: { latency: true, download: true, upload: true, bidirectional: false },
-  skipLoadedLatencyWhenStageOff: true,
-  duration: {
-    warmupMs: 800,
-    latencyMs: 4000,
-    downloadMs: 10000,
-    uploadMs: 10000,
-    bidirectionalMs: 10000,
-  },
-  pingCadence: "reply-driven",
-  loadedPingCadence: "medium",
-  transferStreams: { mode: "auto", count: 6 },
-  experimentalChunkedDownload: false,
-  transports: {
-    throughputTarget: "auto",
-    latencyTarget: "auto",
-  },
-  compensation: {
-    profile: "lan",
-    transport: "auto",
-    params: {
-      mtuBytes: 1500,
-      ipVersion: "auto",
-      vlanTagged: false,
-      tcpOptionsMinBytes: 0,
-      tcpOptionsMaxBytes: 12,
-      encapsulationBytes: 0,
-      quicConnIdMinBytes: 0,
-      quicConnIdMaxBytes: 20,
-    },
-  },
-  adaptive: {
-    enabled: true,
-    minCoverageRatio: 0.52,
-    stabilityThreshold: 0.86,
-    maxPhaseReductionRatio: 0.5,
-    minLatencySamples: 8,
-    minTransferSamples: 12,
-    glideMs: 1100,
-  },
-  visualization: { throughputMaxBytesPerSec: "auto" },
-};
-
-export const DURATION_PRESETS = {
-  short: {
-    warmupMs: 600,
-    latencyMs: 2500,
-    downloadMs: 5000,
-    uploadMs: 5000,
-    bidirectionalMs: 5000,
-  },
-  medium: {
-    warmupMs: 800,
-    latencyMs: 4000,
-    downloadMs: 10000,
-    uploadMs: 10000,
-    bidirectionalMs: 10000,
-  },
-  long: {
-    warmupMs: 1200,
-    latencyMs: 6000,
-    downloadMs: 20000,
-    uploadMs: 20000,
-    bidirectionalMs: 20000,
-  },
-} as const;
 
 const MAX_SAMPLES = 1200;
 const MAX_IDLE_SAMPLES = 60;
@@ -231,8 +158,7 @@ class AppStore {
     this.theme = persisted.theme;
     this.showWireEstimates = persisted.showWireEstimates;
     this.dockWidth = persisted.dockWidth;
-    this.settingsTab =
-      persisted.settingsTab === "developer" ? "developer" : "setup";
+    this.settingsTab = persisted.settingsTab;
     this.debugLogging = persisted.debugLogging;
   }
 
@@ -551,7 +477,7 @@ class AppStore {
         // A terminal error resolves any in-flight stall, so the idle/error view
         // is not stuck in "measuring=false".
         this.#clearStall();
-        if (CONNECTION_FAILURE_REASONS.includes(event.error.reason)) {
+        if (CONNECTION_FAILURE_REASONS.has(event.error.reason)) {
           this.connectivity = "offline";
         }
         const partial = event.error.partial;

@@ -46,6 +46,40 @@ export function fmtMs(ms: number): string {
   return `${ms.toFixed(0)} ms`;
 }
 
+/** A 1 Hz window over a byte counter, for the verbose per-lane logs. `add`
+ *  returns the window's formatted fields once a second has passed and null
+ *  until then, so a caller only formats what it logs. */
+export class DebugWindow {
+  #windowBytes = 0;
+  #total = 0;
+  #startedAt = 0;
+
+  reset(now = performance.now()): void {
+    this.#windowBytes = 0;
+    this.#total = 0;
+    this.#startedAt = now;
+  }
+
+  add(
+    bytes: number,
+    now = performance.now(),
+  ): { rate: string; window: string; total: string; dt: string } | null {
+    this.#windowBytes += bytes;
+    this.#total += bytes;
+    const dt = now - this.#startedAt;
+    if (dt < 1000) return null;
+    const fields = {
+      rate: fmtRate(this.#windowBytes / (dt / 1000)),
+      window: fmtBytes(this.#windowBytes),
+      total: fmtBytes(this.#total),
+      dt: fmtMs(dt),
+    };
+    this.#windowBytes = 0;
+    this.#startedAt = now;
+    return fields;
+  }
+}
+
 function scale(value: number, units: string[]): [string, string] {
   let v = value;
   let i = 0;

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type uploadSessionResponse struct {
@@ -24,20 +26,63 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	if err != nil {
 		return Result{}, err
 	}
-	progress, err := r.openUploadProgress(ctx, id)
-	if err != nil {
-		return Result{}, err
-	}
-	defer progress.close()
-
 	bodyBlock := make([]byte, 1024*1024)
 	if _, err := rand.Read(bodyBlock); err != nil {
 		return Result{}, err
 	}
 
-	lanes := r.startLanes(ctx, func(laneCtx context.Context, lane int) error {
-		return r.uploadLane(laneCtx, id, lane, bodyBlock)
-	})
+	progressURL, err := r.endpoint(r.routes().UploadProgress)
+	if err != nil {
+		return Result{}, err
+	}
+	progressURL = withUploadID(progressURL, id)
+
+	var progress *uploadProgress
+	var lane func(context.Context, int) error
+	if r.targetTransport() == wire.TransportWebTransport {
+		// The lanes and their counter share one session, so progress reports the
+		// connection actually under test. A replacement session re-attaches the
+		// same feed: the server keeps one aggregate per id, so the counters and
+		// the measurement baseline carry across.
+		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
+			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
+		}, func(establishCtx context.Context, sess *wtSession) error {
+			str, err := acceptUploadProgressWT(establishCtx, sess)
+			if err != nil {
+				return err
+			}
+			if progress == nil {
+				progress, err = r.readUploadProgress(ctx, wtProgressStream{str}, progressURL)
+				return err
+			}
+			progress.attach(wtProgressStream{str})
+			return nil
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		defer host.close()
+		// A feed can end while its session lives: the server reaps an idle
+		// aggregate, or refuses after ready. HTTP re-attaches to the same
+		// aggregate, so the counter survives either.
+		go r.reattachUploadProgress(progress, progressURL)
+		lane = func(laneCtx context.Context, _ int) error {
+			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
+				return r.uploadLaneWT(lctx, sess, bodyBlock)
+			})
+		}
+	} else {
+		if progress, err = r.openUploadProgress(ctx, progressURL); err != nil {
+			return Result{}, err
+		}
+		lane = func(laneCtx context.Context, i int) error {
+			return r.uploadLane(laneCtx, id, i, bodyBlock)
+		}
+	}
+	defer progress.close()
+
+	streams := r.streams.of(Up)
+	lanes := r.startLanes(ctx, streams, lane)
 	defer lanes.cancel()
 	if err := lanes.waitStart(ctx, start); err != nil {
 		return Result{}, err
@@ -45,9 +90,8 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	if !progress.waitNext(ctx, progress.seq.Load()) {
 		return Result{}, fmt.Errorf("upload progress did not advance")
 	}
-	baselineN := progress.n.Load()
-	baselineT := progress.t.Load()
-	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, r.streams, duration, baselineN, baselineT, lanes.errs)
+	baselineN, baselineT := progress.counters()
+	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, streams, duration, baselineN, baselineT, lanes.errs)
 	lanes.stop()
 	progress.bye()
 	return stats.result(stage, Up, true), sampleErr
@@ -103,7 +147,8 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			if ctx.Err() != nil {
+			// A refused POST paces its retry, like every other reconnect path.
+			if !laneRetryPause(ctx) {
 				return nil
 			}
 			continue
@@ -174,17 +219,65 @@ func (b *cyclingBody) Close() error { return nil }
 var _ io.ReadCloser = (*cyclingBody)(nil)
 
 type uploadProgress struct {
-	cancel  context.CancelFunc
-	body    io.ReadCloser
-	client  *http.Client
-	url     string
-	done    chan struct{}
-	ready   chan error
-	n       atomic.Uint64
-	t       atomic.Uint64
-	seq     atomic.Uint64
-	changed chan struct{}
-	once    sync.Once
+	ctx       context.Context // read lifetime; re-attachments stop with it
+	cancel    context.CancelFunc
+	client    *http.Client
+	url       string
+	mu        sync.Mutex // guards body and done across re-attachments
+	body      io.ReadCloser
+	done      chan struct{}
+	ready     chan error
+	readySent atomic.Bool
+	count     atomic.Pointer[uploadCount]
+	seq       atomic.Uint64
+	changed   chan struct{}
+	once      sync.Once
+}
+
+// uploadCount is the server's counter pair. It is replaced as one value so a
+// reader never pairs one record's byte total with another's active time.
+type uploadCount struct{ bytes, nanos uint64 }
+
+// counters reports the server's byte total and active nanoseconds, zero before
+// the first record.
+func (p *uploadProgress) counters() (bytes, nanos uint64) {
+	if held := p.count.Load(); held != nil {
+		return held.bytes, held.nanos
+	}
+	return 0, 0
+}
+
+// advance publishes a counter pair no older than the one held, reporting
+// whether it did. Two readers can be draining the same aggregate at once -- the
+// HTTP re-attach and a replacement session's re-attached stream -- and a
+// replaced reader can still deliver a record it had already buffered. A check
+// followed by a store lets the older of two interleaved records land last and
+// walk the count backwards; the swap is one CAS on the pair, so the byte total
+// cannot regress and neither value can be split from the other.
+//
+// The active time can still regress, on a record carrying more bytes and fewer
+// nanoseconds: the server reads the byte total and then the clock as two
+// separate operations, so two feeds can pair them differently, and the guard
+// only rejects a lower byte total or an equal one with a lower time. Bytes alone
+// would not even give that much -- the server repeats the byte total on its
+// terminal `complete` record, so a buffered record from a superseded feed
+// carries the same total with a shorter active time, which is what the
+// equal-bytes half of the guard rejects. What protects the reported figure is
+// the window sampleServerUpload installs, which takes the maximum of these
+// counters and the highest pair the sampler has seen, so a short time here
+// cannot shrink the denominator; the residue is one scheduling gap against the
+// server's 100 ms tick.
+func (p *uploadProgress) advance(bytes, nanos uint64) bool {
+	next := &uploadCount{bytes: bytes, nanos: nanos}
+	for {
+		held := p.count.Load()
+		if held != nil && (bytes < held.bytes || (bytes == held.bytes && nanos < held.nanos)) {
+			return false
+		}
+		if p.count.CompareAndSwap(held, next) {
+			return true
+		}
+	}
 }
 
 type uploadProgressEvent struct {
@@ -194,77 +287,81 @@ type uploadProgressEvent struct {
 	Message string `json:"message"`
 }
 
-func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProgress, error) {
-	base, err := r.endpoint(r.routes().UploadProgress)
-	if err != nil {
-		return nil, err
-	}
+// withUploadID appends the id to a progress URL, the address the DELETE that
+// finalizes an upload is sent to whatever transport carried the bytes.
+func withUploadID(base, id string) string {
 	u, err := url.Parse(base)
 	if err != nil {
-		return nil, err
+		return base
 	}
 	q := u.Query()
 	q.Set("id", id)
 	u.RawQuery = q.Encode()
-	readCtx, cancel := context.WithCancel(ctx)
-	req, err := http.NewRequestWithContext(readCtx, http.MethodGet, u.String(), nil)
+	return u.String()
+}
+
+func (r *runner) openUploadProgress(ctx context.Context, target string) (*uploadProgress, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/x-ndjson")
 	res, err := r.http.Do(req)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
-		cancel()
 		defer res.Body.Close()
 		return nil, unexpectedStatus(res)
 	}
-	p := &uploadProgress{cancel: cancel, body: res.Body, client: r.http, url: u.String(), done: make(chan struct{}), ready: make(chan error, 1), changed: make(chan struct{}, 1)}
-	go func() {
-		defer close(p.done)
-		scanner := bufio.NewScanner(res.Body)
-		ready := false
-		for scanner.Scan() {
-			if len(scanner.Bytes()) == 0 {
-				continue
-			}
-			var event uploadProgressEvent
-			if json.Unmarshal(scanner.Bytes(), &event) != nil {
-				continue
-			}
-			switch event.Type {
-			case "ready":
-				if !ready {
-					ready = true
-					p.ready <- nil
-				}
-			case "progress", "complete":
-				p.n.Store(event.Bytes)
-				p.t.Store(event.Nanos)
-				p.seq.Add(1)
-				select {
-				case p.changed <- struct{}{}:
-				default:
-				}
-			case "error":
-				if !ready {
-					p.ready <- fmt.Errorf("upload progress: %s", event.Message)
-				}
+	p, err := r.readUploadProgress(ctx, res.Body, target)
+	if err != nil {
+		return nil, err
+	}
+	go r.reattachUploadProgress(p, target)
+	return p, nil
+}
+
+// reattachUploadProgress keeps the fetch feed alive across the server's
+// request bound: when the GET dies with the stage still running, a fresh GET
+// resumes the same aggregate, as the browser's progress worker does.
+func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-p.currentDone():
+		}
+		for p.ctx.Err() == nil {
+			req, err := http.NewRequestWithContext(p.ctx, http.MethodGet, target, nil)
+			if err != nil {
 				return
 			}
-		}
-		if !ready {
-			if err := scanner.Err(); err != nil {
-				p.ready <- fmt.Errorf("upload progress read: %w", err)
-			} else {
-				p.ready <- fmt.Errorf("upload progress closed before ready")
+			req.Header.Set("Accept", "application/x-ndjson")
+			res, err := r.http.Do(req)
+			if err == nil && res.StatusCode == http.StatusOK {
+				p.attach(res.Body)
+				break
+			}
+			if res != nil {
+				_ = res.Body.Close()
+			}
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(wtRedialBackoff):
 			}
 		}
-	}()
+	}
+}
+
+// readUploadProgress consumes the NDJSON feed from body, whichever transport
+// carries it, and finalizes over HTTP at deleteURL.
+func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, deleteURL string) (*uploadProgress, error) {
+	readCtx, cancel := context.WithCancel(ctx)
+	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	context.AfterFunc(readCtx, p.closeBody)
+	p.attach(body)
 	select {
 	case err := <-p.ready:
 		if err != nil {
@@ -278,12 +375,82 @@ func (r *runner) openUploadProgress(ctx context.Context, id string) (*uploadProg
 	return p, nil
 }
 
+// attach replaces the feed's byte source with a stream from a replacement
+// session. The server keeps one aggregate per id and the newest feed takes it
+// over, so the counters and the measurement baseline carry across. A feed
+// already closed takes no new reader: close() has run its one-shot cancel and
+// would otherwise block forever on a reader installed behind it.
+func (p *uploadProgress) attach(body io.ReadCloser) {
+	done := make(chan struct{})
+	p.mu.Lock()
+	if p.ctx.Err() != nil {
+		p.mu.Unlock()
+		_ = body.Close()
+		return
+	}
+	old := p.body
+	p.body = body
+	p.done = done
+	p.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	go p.read(body, done)
+}
+
+// signalReady delivers the first feed's ready-or-refused verdict exactly once;
+// later attachments repeat the handshake records to an already-running stage.
+func (p *uploadProgress) signalReady(err error) {
+	if p.readySent.CompareAndSwap(false, true) {
+		p.ready <- err
+	}
+}
+
+func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
+	defer close(done)
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		if len(scanner.Bytes()) == 0 {
+			continue
+		}
+		var event uploadProgressEvent
+		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			continue
+		}
+		switch event.Type {
+		case "ready":
+			p.signalReady(nil)
+		case "progress", "complete":
+			// The server's count only moves forward, whichever reader delivers it.
+			if !p.advance(event.Bytes, event.Nanos) {
+				continue
+			}
+			p.seq.Add(1)
+			select {
+			case p.changed <- struct{}{}:
+			default:
+			}
+		case "error":
+			p.signalReady(fmt.Errorf("upload progress: %s", event.Message))
+			return
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		p.signalReady(fmt.Errorf("upload progress read: %w", err))
+	} else {
+		p.signalReady(fmt.Errorf("upload progress closed before ready"))
+	}
+}
+
+// waitNext blocks until the server's counter advances past `after`. One feed
+// ending is not the end of the report: a replacement session re-attaches to the
+// same aggregate, so only this channel's own cancellation is terminal.
 func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	for p.seq.Load() <= after {
 		select {
 		case <-ctx.Done():
 			return false
-		case <-p.done:
+		case <-p.ctx.Done():
 			return p.seq.Load() > after
 		case <-p.changed:
 		}
@@ -291,11 +458,29 @@ func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	return true
 }
 
+func (p *uploadProgress) currentDone() chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.done
+}
+
+func (p *uploadProgress) closeBody() {
+	p.mu.Lock()
+	body := p.body
+	p.mu.Unlock()
+	if body != nil {
+		_ = body.Close()
+	}
+}
+
 func (p *uploadProgress) close() {
 	p.once.Do(func() {
 		p.cancel()
-		_ = p.body.Close()
-		<-p.done
+		p.closeBody()
+		// nil when the feed was cancelled before its first reader was installed.
+		if done := p.currentDone(); done != nil {
+			<-done
+		}
 	})
 }
 
@@ -309,7 +494,7 @@ func (p *uploadProgress) bye() {
 		}
 	}
 	select {
-	case <-p.done:
+	case <-p.currentDone():
 	case <-ctx.Done():
 	}
 	p.close()
@@ -323,14 +508,18 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 		duration: duration,
 		laneErr:  laneErr,
 		window: func(stats *rateStats) {
-			n, elapsed := p.n.Load(), p.t.Load()
+			// lastN/lastT are the highest pair this loop has sampled, and the
+			// sampler only ever moves them forward. Taking the larger of the two
+			// keeps the final window off a record that arrived out of order,
+			// which would otherwise shrink the elapsed time and inflate the rate.
+			n, elapsed := p.counters()
+			n, elapsed = max(n, lastN), max(elapsed, lastT)
 			if n >= baselineN && elapsed >= baselineT {
 				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT)) //nosec G115 -- guarded elapsed >= baselineT; diff fits int64
 			}
 		},
 		sample: func(now time.Time, stats *rateStats) {
-			n := p.n.Load()
-			active := p.t.Load()
+			n, active := p.counters()
 			if n <= lastN || active <= lastT {
 				return
 			}
