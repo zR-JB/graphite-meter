@@ -213,8 +213,12 @@ export class LatencyChannel {
       case "resume":
         this.#deps.resume();
         break;
-      case "open":
       case "ready":
+        // READY is the peer's protocol acknowledgement. Warmup pongs stay in
+        // the worker, so waiting for a measured sample can outlive warmup.
+        this.#clearEstablishTimer();
+        break;
+      case "open":
         break;
     }
   }

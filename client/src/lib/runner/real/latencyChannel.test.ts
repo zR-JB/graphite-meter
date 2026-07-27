@@ -2,7 +2,7 @@
 // aborts a probe and starts the next one without awaiting it, so two waits can
 // exist over one worker.
 import { test, expect } from "bun:test";
-import { IdleKeepalive } from "./latencyChannel";
+import { IdleKeepalive, LatencyChannel } from "./latencyChannel";
 import type { CoreHost } from "../core";
 import type { LatencyTarget } from "../../api/endpoints";
 
@@ -57,5 +57,47 @@ test("a superseded readiness wait does not silence the newer one", async () => {
     keepalive.stop();
   } finally {
     globalThis.Worker = realWorker;
+  }
+});
+
+test("READY cancels the stage channel's warmup establishment deadline", () => {
+  const realWorker = globalThis.Worker;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let deadline: (() => void) | null = null;
+  let deadlineActive = false;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  globalThis.setTimeout = ((handler: TimerHandler) => {
+    deadline = handler as () => void;
+    deadlineActive = true;
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = (() => {
+    deadlineActive = false;
+  }) as typeof clearTimeout;
+  try {
+    const failures: string[] = [];
+    const channel = new LatencyChannel({
+      host: () =>
+        ({
+          config: { pingCadence: "medium", loadedPingCadence: "medium" },
+          failStage: (_stage: string, _reason: string, detail: string) =>
+            failures.push(detail),
+        }) as unknown as CoreHost,
+      target: () => target,
+      stall: (detail) => failures.push(detail),
+      resume() {},
+    });
+
+    channel.prime("websocket", true);
+    FakeWorker.last!.emit({ type: "ready" });
+    if (deadlineActive) (deadline as (() => void) | null)?.();
+
+    expect(failures).toEqual([]);
+    channel.teardown();
+  } finally {
+    globalThis.Worker = realWorker;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
   }
 });
