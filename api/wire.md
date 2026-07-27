@@ -42,13 +42,18 @@ content it defines. Streams are raw bytes end to end.
 | Route | Query | Streams | Datagrams |
 |---|---|---|---|
 | `/wt/ping` | `token=` | none | the message bus above, one frame per datagram |
-| `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives |
-| `/wt/upload` | `id=&datagrams=&token=` | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is reset rather than served. The server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes |
+| `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
+| `/wt/upload` | `id=&datagrams=&token=` | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is reset rather than served. The server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained |
 
 `streams=` is **clamped, never rejected**: a missing, non-numeric, or sub-1 value is read as 1, and
 a value above 16 is read as 16. `/wt/upload` enforces the same ceiling from the receiving side —
 the 17th concurrent client stream is reset without an error frame, since a byte stream carries no
 channel to report one on.
+
+`datagrams=` is **presence-based**: the bare `datagrams=` spelled above is the request, and so is
+any value the server cannot read. A spelling of zero or false — `0`, `false`, `off`, `no`, matched
+case-insensitively with surrounding whitespace ignored — is a request for **no** datagrams and is
+served none, the same rule `bytes=0` follows.
 
 Under authentication a CONNECT must present a credential before the upgrade: a single-use,
 short-lived, session-linked token minted by `POST /wt/session` and carried as `?token=` (a browser
@@ -60,13 +65,15 @@ The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /up
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
 records as `GET /upload/progress`.
 
-A session ends on the finalizing DELETE, on its own `GM_MAX_SESSION_DURATION` bound, when the peer
-closes it, or on either of two server-side inactivity bounds: a transfer session that carries no
-bytes and no datagrams for about **30 seconds** is closed (a server-generated progress heartbeat is
-not traffic), and an establish-only `/wt/download?bytes=0` session — which serves nothing, so its
-answer is the handshake — is closed after a **30-second linger**. A client MUST treat a
-bound-driven close as a reconnect rather than a stage failure, and re-dial against the same upload
-`id`: the server keeps one aggregate per id, so the counters carry across.
+A session ends on its own `GM_MAX_SESSION_DURATION` bound, when the peer closes it — which a client
+does once the finalizing DELETE has returned — or on either of two server-side inactivity bounds: a
+transfer session that carries nothing the **peer** sent for about **30 seconds** is closed (a
+server-generated progress heartbeat is not traffic, and neither is a server-generated datagram
+flood, so a `/wt/download?datagrams=` session the peer never speaks on closes on the same bound),
+and an establish-only `/wt/download?bytes=0` session — which serves nothing, so its answer is the
+handshake — is closed after a **30-second linger**. A client MUST treat a bound-driven close as a
+reconnect rather than a stage failure, and re-dial against the same upload `id`: the server keeps
+one aggregate per id, so the counters carry across.
 
 **Discovery compatibility.** `transport` is a required field on both target lists. A client that
 predates it reads every target as its own default (`fetch-stream` / `websocket`), which on an

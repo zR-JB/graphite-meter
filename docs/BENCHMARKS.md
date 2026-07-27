@@ -2,10 +2,11 @@
 
 **What a browser can move, what it costs the server, and what each measured tuning knob is worth.**
 Two passes, July 2026, on the `feat/webtransport` branch. The raw NDJSON rows are not kept in the
-repository: the tables below are the surviving statistics, and the harness under `client/bench/`
-re-takes any matrix cell, given the environment variables in [Reproduction](#reproduction) — the
-request-streaming row needs `GM_BENCH_UPLOAD_BODY`, and every screening figure was taken outside
-the matrix and has no cell to re-run.
+repository: the tables below are the surviving statistics. **The campaign is closed and the knob
+sweeps have been removed with it.** The harness under `client/bench/` keeps only the lane sweep —
+the one finding that changed a shipped default, and the one to revisit when a new protocol lands —
+so every figure below that names a `tuning.ts` field is a historical measurement with no cell left
+to re-run. Re-taking one means restoring the sweep and the override plumbing it drove.
 
 Pass one ran on an 8-core VM with 7 GB of RAM; pass two on an 8-core/16-thread x86 desktop with
 30 GiB, recent Linux, `performance` governor, and enlarged TCP buffers (`tcp_rmem 4096 131072
@@ -167,16 +168,19 @@ one, and Firefox tops out between 6.5 and 14.5 Gbit/s.
 
 ## Knob verdicts and shipped defaults
 
-**Every verdict in this table is Chromium, h1 clear, loopback, n=5.** The worker tuning surface is
-`client/src/lib/runner/workers/tuning.ts`, and every row named after one of its fields ships its
-`DEFAULT_TUNING` value. The rows marked † are not `tuning.ts` knobs: the lane counts live in
-`client/src/lib/state/defaults.ts` and `real/streamPolicy.ts`, chunked download is a user setting
-in `state/defaults.ts`, and request streaming has no shipped setting at all — its cells exist only
-behind `GM_BENCH_UPLOAD_BODY`.
+**Every verdict in this table is Chromium, h1 clear, loopback, n=5.** Every row is the value the
+client ships. The constants themselves are no longer overridable and no longer live in one table:
+`readBufBytes` and `reportGapMs` are `READ_BUF_BYTES`/`REPORT_GAP_MS` in
+`client/src/lib/runner/workers/tuning.ts`, read by the fetch download lane and the WebTransport
+session lane alike; the upload constants are module constants in `workers/upload-worker.ts` and the
+session ones in `workers/wt-transfer-worker.ts`. The rows marked † were never worker constants: the
+lane counts live in `client/src/lib/state/defaults.ts` and `real/streamPolicy.ts`, and chunked
+download is a user setting in `state/defaults.ts`. Request streaming shipped no setting at all —
+its `uploadBody: "stream"` path has since been deleted, since nothing but the sweep could reach it.
 
 | Knob                   | Default       | Swept                        | Effect     | Verdict                    |
 | ---------------------- | ------------- | ---------------------------- | ---------- | -------------------------- |
-| `uploadBody`           | `blob`        | blob vs arrayBuffer          | **−98.9%** | **real**, largest measured |
+| `uploadBody`           | `blob`        | blob vs arrayBuffer          | **+98.9%** | **real**, largest measured |
 | `uploadTotalPoolBytes` | 256 MiB       | 16 → 64 MiB                  | **+29.7%** | **real**                   |
 | `reader`               | `byob`        | byob vs default, matrix cell | **+15.4%** | **real**                   |
 | `uploadTotalPoolBytes` | 256 MiB       | 64 → 256 MiB                 | **+10.9%** | **real**                   |
@@ -190,6 +194,9 @@ behind `GM_BENCH_UPLOAD_BODY`.
 | `targetPostMs`         | 500 ms        | 250 → 2000                   | 1.6%       | null                       |
 | `uploadDrain`          | `arrayBuffer` | arrayBuffer vs cancel        | 0.2%       | null                       |
 | `uploadTotalPoolBytes` | 256 MiB       | 256 → 1024 MiB               | **0.0%**   | null                       |
+
+**Effect** is the first swept arm against the second, or the low end against the high end where the
+sweep is ordered.
 
 `minPostBytes`, `writeChunkBytes`, `congestionControl` and `datagramClockEvery` are **unmeasured,
 not null**. Sweeps are one-knob-at-a-time coordinate descent against a fixed baseline, so a jointly
@@ -209,15 +216,15 @@ artefact, not the transport, produced pass one's lane-count verdicts.
 ### Shipped defaults
 
 The values this change ships. **Every row is the browser client's unless it names the native
-client.** The worker tuning surface, the upload reservoir, chunked download and the connection
-budget exist only in the browser and have no native counterpart. The h2/h3 per-direction counts and
+client.** The worker measurement constants, the upload reservoir, chunked download and the
+connection budget exist only in the browser and have no native counterpart. The h2/h3 per-direction counts and
 the one-stream-per-direction WebTransport rule are the same table in both clients
 (`client/src/lib/runner/real/streamPolicy.ts`, `go/internal/goclient/config.go`).
 
 | Setting                      | Value                                    | Why                                                                                                                          |
 | ---------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Automatic H1 stream ceiling, browser | **4** (was 6)                    | 5 was an arithmetic accident of the 6-connection budget split; 4 sits on the measured plateau for h1 clear and h1 TLS under loss. 2 is the loopback optimum and stays available as an explicit setting. |
-| Automatic H1 stream ceiling, native client | **6**, unchanged           | The two differ because lane count is a loss-resilience mechanism whose plateau under loss is flat from 2 to 6, so nothing forces a choice within that range, and each client's optimum is then set by its own ceiling: the browser's is its internal byte transfer (~49 Gbit/s sustained), which 4 lanes already reaches, while the native client has none and scales 71.71 → 362.59 Gbit/s down from 1 to 8 lanes. The 6-connection budget split is browser-only. |
+| Automatic H1 stream ceiling, browser | **4** (was 6)                    | 5 was an arithmetic accident of the 6-connection budget split; 4 is a measured point on the plateau for h1 clear and h1 TLS under loss. 2 is the loopback optimum and stays available as an explicit setting. |
+| Automatic H1 stream ceiling, native client | **6**, unchanged           | The two differ because lane count is a loss-resilience mechanism whose plateau under loss was flat from 2 to 6 on h1 clear, the one origin carrying the full lane sweep (h1 TLS was swept at 1, 2, 4 and 8), so nothing in that range forces a choice, and each client's optimum is then set by its own ceiling: the browser's is its internal byte transfer, which 2 lanes already saturates and 4 does not exceed, while the native client has none and scales 71.71 → 362.59 Gbit/s down from 1 to 8 lanes on loopback. Above 4 the browser only loses lanes to its own connection budget. The native figures are loopback peaks, not loss-rig measurements: they establish that the client has no internal ceiling of its own, not that 6 lanes is its optimum under loss. The 6-connection budget split is browser-only. |
 | h2 upload streams            | **4**                                    | +10.1% from 1 to 4 lanes under loss, disjoint IQRs; loopback agrees independently.                                            |
 | h3 upload streams            | **1**                                    | −9.3% over the same range under loss, disjoint IQRs; loopback agrees. One constant cannot serve both protocols.               |
 | Multiplexed download streams | **1**                                    | h3 download declines monotonically with lanes, so 1 is its measured optimum. h2 download is flat across 1 to 4 within noise, so 1 is taken as the cheapest point, not as a measured optimum — no h2 lane conclusion is drawn from this data (see [Limitations](#limitations-and-open-questions)). |
@@ -281,12 +288,10 @@ for every run**, including an h1-clear-only one: the config starts all four list
 `GM_TLS_CERT`/`GM_TLS_KEY` at that pair unconditionally, and the server refuses to start when it
 cannot load them. Generate them as [DEVELOPMENT.md](DEVELOPMENT.md) describes.
 
-The dev server must be built with `GM_CLIENT_BENCH=1` now that the tuning surface is opt-in —
-`playwright.bench.config.ts` sets it when it starts the server, and `harness.html` reports whether
-the surface is actually compiled in, which the throughput test asserts before its first cell so a
-reused server built without the variable fails rather than measuring `DEFAULT_TUNING`. Every other
-knob is env-only. A project whose prerequisite variable is unset is dropped rather than guessed at,
-so Playwright rejects `--project=<name>` by name instead of measuring nothing.
+The harness runs against an ordinary dev server: with the knob sweeps gone it sends no measurement
+overrides, so there is nothing to compile in and no build flag to remember. Everything below is
+env-only. A project whose prerequisite variable is unset is dropped rather than guessed at, so
+Playwright rejects `--project=<name>` by name instead of measuring nothing.
 
 | Variable                | Read by                     | Effect                                                                                     |
 | ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------ |
@@ -302,8 +307,6 @@ so Playwright rejects `--project=<name>` by name instead of measuring nothing.
 | `GM_BENCH_WARMUP_MS`    | `matrix.ts`                  | Warmup discarded before each cell's window. Default 3000, which every figure here used.    |
 | `GM_BENCH_MEASURE_MS`   | `matrix.ts`                  | Measured window per cell. Default 8000, which every figure here used.                      |
 | `GM_BENCH_SEED`         | `matrix.ts`                  | Seed for the per-round cell permutation. Default 1; changing it reorders cells, not the set. |
-| `GM_BENCH_UPLOAD_BODY`  | `matrix.ts`                  | Adds the streamed-request-body cells. **Without it the request-streaming row cannot be re-taken at all**, on any origin. |
-| `GM_BENCH_APP`          | `parity.bench.pw.ts`         | Origin the app-parity test drives. Default `http://127.0.0.1:7246`, the server's own.      |
 
 ```sh
 # Full matrix, one engine. ALWAYS pass --project: without it every engine runs,
@@ -339,7 +342,9 @@ envelope described in [ARCHITECTURE.md](ARCHITECTURE.md#saturation-envelope-just
   until the **server** reports h3 negotiated; `nextHopProtocol` is masked cross-origin. Chromium's
   `--origin-to-force-quic-on` masks that whole bootstrap problem, so verify it on Firefox.
 - A parity run compares whatever the server actually serves. Rebuild and re-embed the client first;
-  a bare `go build` serves the stale bundle.
+  a bare `go build` serves the stale bundle. (The parity test itself is gone: it printed a slice of
+  page text and asserted it was non-empty, so it never read the harness number it claimed to check.
+  The −1.6% above was taken by hand.)
 - `wt-datagram` download once hung a browser to death — the only browser death of the campaign.
 
 ## Limitations and open questions

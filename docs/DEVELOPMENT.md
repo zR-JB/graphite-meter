@@ -57,15 +57,16 @@ Recipes starting with `_` are private helper steps, not meant to be run directly
 | `just client-watch`      | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend.                                                                      |
 | `just client-check`      | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`).                                                                   |
 | `just client-test`       | `bun test` — pure-`.ts`-logic unit tests (no component rendering).                                                                                               |
-| `just client-ci`         | Runs the fast client CI gates: Prettier check, semantic type check, and Bun tests.                                                                               |
+| `just client-ci`         | Runs the fast client CI gates: the schema-type drift check, Prettier check, semantic type check, and Bun tests.                                                  |
 | `just client-e2e`        | `bun run test:e2e` — rebuilds the bundle, then runs the Playwright browser tests in Chromium and Firefox. Slow (~45s), so it is outside `just ci`.               |
 | `just client-gen-types`  | Regenerates TypeScript discovery and probe types from both JSON schemas.                                                                                         |
+| `just client-check-generated` | Regenerates those types and fails if they drift from `api/*.schema.json`. Hangs off `client-ci` rather than `check-generated`: the generator needs bun and `client/node_modules`, and `ci.yml` calls `check-generated` from the Go job, which sets up neither. |
 | `just auth-preview`      | Serves the real server-rendered login page on `127.0.0.1:4174`; `mode=` and `oidc_ready=` pick the variant.                                                      |
 | `just server-build-dev`  | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
 | `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy.                                                        |
 | `just server-check`      | Checks Go formatting, `go vet ./...`, and `go vet -tags stress ./internal/server/` so the saturation harness cannot rot outside the gate.                        |
 | `just server-test`       | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test — then fails if total statement coverage is below the **75% floor**.       |
-| `just check-generated`   | Regenerates the embedded auth assets and fails if `go/internal/auth/assets_generated.go` drifts from source. Called by both the pre-commit hook and `ci.yml`.    |
+| `just check-generated`   | Regenerates the embedded auth assets and fails if `go/internal/auth/assets_generated.go` drifts from source. Called by both the pre-commit hook and `ci.yml`. Covers the auth assets only; the schema-derived client types are gated by `client-check-generated`. |
 | `just go-lint`           | Pinned `staticcheck` and `govulncheck` over the Go module. `ci.yml` calls this exact recipe; the pre-commit hook is the one gate that skips it.                  |
 | `just ci`                | The fast local gate, in order: `check-generated`, `client-ci`, `server-check`, `go-lint`, `server-test`. Same recipes `ci.yml` runs.                             |
 | `just ci-full`           | `ci` plus `client-e2e`. The Docker smoke job and the cross-build matrix stay CI-only (they need a container runtime or other toolchains).                        |
@@ -132,7 +133,6 @@ the bundler: Bun's bundler transpiles TypeScript, but semantic type checking is 
 | `GM_CLIENT_DEV_TOOLS`   | `0` / `1`        | `1`                                   | `0`                                     | Compile in the whole Developer settings tab (including debug logging).                                                                                                                                                                                                    |
 | `GM_CLIENT_BUILD_LABEL` | string           | `dev`                                 | git short hash                          | Text shown after `build` in the status bar. Also the label half of the client version `<package.json semver>+<label>`, which is shown in the Endpoint info drawer, written to `dist/version.json`, and sent to the server on preflight as `?client=web&client_version=…`. |
 | `GM_CLIENT_VALIDATE`    | `0` / `1`        | image build arg only                  | image build arg only                    | `1` runs `bun run build` (type check + bundle) inside the Dockerfile; `0` runs `build:bundle` alone. CI smoke and release image builds pass `0` because the same commit already passed the client check/test job.                                                         |
-| `GM_CLIENT_BENCH`       | `0` / `1`        | `0`                                   | `0`                                     | Compile in the workers' tuning-message surface, which lets the benchmark harness override measurement constants at runtime. Opt-in for `client/bench/` only; production builds must leave it unset.                                                                       |
 
 At runtime, when the dummy runner is compiled in, `?engine=dummy` on the URL (or a previously
 persisted choice in `localStorage`) switches to it; this check itself compiles away in a
@@ -192,8 +192,8 @@ certificates for deployed servers; mkcert is development-only.
 
 `client/bench/` drives the production workers against a real server and appends one NDJSON row per
 run; `rig.sh` in the same directory puts the server in a network namespace behind a shaped `veth`
-pair. Neither is part of CI: they take hours and measure the machine rather than the code. The dev
-server it drives must be built with `GM_CLIENT_BENCH=1`, which `playwright.bench.config.ts` sets.
+pair. Neither is part of CI: they take hours and measure the machine rather than the code. It runs
+against an ordinary dev server, which `playwright.bench.config.ts` starts.
 
 ```sh
 cd client

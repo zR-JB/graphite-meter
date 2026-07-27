@@ -67,10 +67,11 @@ disabled to prevent POST replay.
 | `:7249/udp` | HTTP/3                 | H3 probe, transfers, upload progress, and WebTransport sessions.                                    |
 | `:7249/tcp` | HTTP/1.1 TLS bootstrap | Alt-Svc bootstrap probe only; no UI, discovery, transfers, progress, or WebSockets.                 |
 
-Discovery separates `capabilities.throughput` from `capabilities.latency`. Each entry is only a
-base URL plus, for throughput, `http1`, `http2`, `http3`, or `negotiated`. Stable API routes and
-scheme-derived facts are not duplicated in discovery. A run freezes one endpoint for each role
-and verifies each endpoint independently. Their probes are separate connections and can therefore select different IPv4/IPv6 paths;
+Discovery separates `capabilities.throughput` from `capabilities.latency`. Each entry is a base URL
+plus the transport that reaches it, and for throughput the protocol: `http1`, `http2`, `http3`, or
+`negotiated`. Stable API routes and scheme-derived facts are not duplicated in discovery. A run
+freezes one endpoint for each role and verifies each endpoint independently. Their probes are
+separate connections and can therefore select different IPv4/IPv6 paths;
 the UI reports both instead of presenting the latency probe as a throughput fallback. The browser
 always fetches `/preflight` from the page origin; it never reconstructs target ports locally,
 and every subsequent HTTP, WebSocket, or WebTransport URL comes from that discovery document.
@@ -169,10 +170,11 @@ Progress heartbeats do not extend aggregate TTL.
 
 A WebTransport session holds one slot for a whole test rather than one request, so it draws on a
 separate 16-per-client budget: without one, a client's request allowance could be held for the
-session lifetime, which is orders of magnitude longer. That budget is keyed per login where a
-request budget is keyed per address, so sessions held on one device cannot starve the same user's
-others. Admitting a session therefore spends two global counters — a slot in the measurement pool
-and a slot in the 64-slot session budget carved out of it — plus its per-client session bucket.
+session lifetime, which is orders of magnitude longer. Under authentication that budget is keyed by
+login where a request budget is keyed by subject, so sessions held on one device cannot starve the
+same user's others; with authentication off both fall back to the address key. Admitting a session
+therefore spends two global counters — a slot in the measurement pool and a slot in the 64-slot
+session budget carved out of it — plus its per-client session bucket.
 Without that carve-out a handful of clients' sessions would hold the whole pool for hours, and
 every request-shaped route would be refused behind them. The carve-out is a ceiling, not a
 reservation: it caps what sessions may occupy and holds nothing open for them, so a pool filled by
@@ -184,13 +186,16 @@ WebSocket alongside, and a client falls back per role, where an unbounded sessio
 every route instead. An operator expecting many distinct clients should lower
 `GM_MAX_SESSIONS_PER_CLIENT`. Within a session each direction carries at most 16 lanes — the server
 clamps the download lanes it opens and resets an upload lane offered past the ceiling — so one
-admitted session cannot fan out without bound.
+admitted session cannot fan out without bound. A session's lane count costs no additional admission,
+which is what makes a sixteen-lane ceiling safe to publish.
 
-A session is also bounded by its own traffic: about 30 seconds with no bytes and no datagrams closes
-it. A transfer session always has bytes moving while it is real, so silence means the peer is gone
-without having said so, which a terminated worker, a reloaded page and a dropped network all look
-like. The slot returns without the client's help. The server-generated progress heartbeat
-deliberately does not count as traffic; only bytes the peer sent keep a session alive.
+A session is also bounded by its own traffic: a transfer session that carries nothing the **peer**
+sent for about 30 seconds is closed. A transfer session always has bytes moving while it is real, so
+silence means the peer is gone without having said so, which a terminated worker, a reloaded page
+and a dropped network all look like. The slot returns without the client's help. Only what the peer
+sent counts, so neither the server-generated progress heartbeat nor a server-generated datagram
+flood keeps a session alive — a `/wt/download?datagrams=` session the peer never speaks on closes on
+the same bound. `api/wire.md` states the rule clients hold the server to.
 
 ### Lifetime bounds and long tests
 
@@ -213,15 +218,21 @@ The loopback harness (`saturation_stress_test.go`, build constraint `stress && u
 column reads `getrusage`) measures observer latency clients — one per bus, WebSocket and
 WebTransport datagrams — against growing background load:
 transfer loaders alternating download and upload (two forced lanes each) over kernel TCP or
-userspace QUIC, and reply-driven ping-chain spammers, alone and combined. Results on an 8-core dev
-box: observer RTT is
-sub-millisecond while CPU has headroom, and once transfer load saturates the cores it inflates
-roughly linearly with concurrency (p50 ≈ 5 ms at 8 loaders, ≈ 20 ms at 32; ~2.5× worse when
-confined to 2 cores) with zero loss — contamination is CPU scheduling, not queue drops, so it is
-visible in the numbers rather than silently corrupting them. Userspace QUIC moves roughly a tenth
-of kernel TCP's loopback goodput at equal CPU. `/probe` reports the admission occupancy
-(`load: {active, max}`), the endpoint panel surfaces it past half occupancy as a caution, and
-admission's `429`/`503` remains the hard refusal.
+userspace QUIC, and reply-driven ping-chain spammers, alone and combined. One run on an 8-core x86
+desktop, server and clients sharing the process, produced this shape: observer RTT stayed
+sub-millisecond while CPU had headroom and inflated roughly linearly with concurrency once the cores
+saturated — p50 ≈ 5 ms at 8 loaders and ≈ 20 ms at 32, about 2.5× that confined to 2 cores — and
+reported loss was zero in every scenario of that run, so the contamination it showed was CPU
+scheduling rather than queue drops, visible in the percentiles rather than silently corrupting them.
+QUIC loaders moved about a tenth of the TCP loaders' loopback goodput at comparable CPU. The figures
+are one machine and are not kept in the repository; `just stress` re-takes them, and the ordering
+rather than the magnitudes is what should be expected to carry. `/probe` reports the admission
+occupancy (`load: {active, max}`), the endpoint panel surfaces it past half occupancy as a caution,
+and admission's `429`/`503` remains the hard refusal.
+
+The harness is loopback-only: it prices CPU and scheduling contention, not a shaped or lossy path,
+and it records process CPU rather than scheduler or Go-runtime pressure. A bandwidth-shaped server
+envelope is unmeasured.
 
 ### Meter (`internal/endpoint/meter.go`)
 
@@ -295,6 +306,17 @@ runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model`
 `cmd/graphite-meter-client/model.go` have unit tests — also run with `just server-test` (one Go
 module covers both the server and the TUI client).
 
+The two clients share the wire protocol, the route table, and the lane tables for multiplexed and
+session transports. They are not the same measurement engine. The browser resolves its automatic
+HTTP/1 lane count out of a shared six-connection budget, so a bidirectional stage opens fewer lanes
+than a single-direction one — 2 per direction against this client's 6 — where the native client
+opens its ceiling in both directions. The browser adds adaptive early-finish, overhead compensation,
+a device-memory-tiered upload reservoir and a stall watchdog, none of which exist natively; the
+native client alone accepts `--insecure` and a raw ping duration; datagram throughput is
+browser-only. The two also compute jitter differently — consecutive-sample variation in the browser,
+deviation from the mean natively — and percentiles differ likewise, nearest-rank against
+linear-interpolated, so the two clients' latency summaries are not directly comparable.
+
 ---
 
 ## The Svelte browser client
@@ -328,11 +350,12 @@ real samples on the _same_ primed connection, `onStageEnd`). Two backends exist:
 
 ### Transports and how a path is checked
 
-Four transports are peers: `fetch-stream` and `websocket` over TCP, `webtransport` streams and
-`webtransport-datagram` over QUIC. `real/transports.ts` is the one table describing each — the role
-it can serve (`throughput`, `latency`, or both), whether the browser can drive it, whether its bytes
-ride a session, and its picker order — and a `Record<TransportKind, TransportSpec>` makes a missing
-row a build error. The WebTransport lane ceiling is not a spec field: it is a separate constant in
+Four transports are peers: `fetch-stream`, one streaming request per lane over whichever of
+HTTP/1.1, HTTP/2 or HTTP/3 the target advertises; `websocket`, the ping bus on an HTTP/1.1 Upgrade;
+and `webtransport` streams and `webtransport-datagram` over QUIC. `real/transports.ts` is the one
+table describing each — the role it can serve (`throughput`, `latency`, or both), whether the
+browser can drive it, whether its bytes ride a session, and its picker order — and a
+`Record<TransportKind, TransportSpec>` makes a missing row a build error. The WebTransport lane ceiling is not a spec field: it is a separate constant in
 the same module (`WT_MAX_LANES`, 16), re-exported through `real/streamPolicy.ts`. Adding a fifth
 transport is a row plus a `ByteLane` implementation.
 
@@ -402,6 +425,18 @@ a download or upload worker and `sessionLane` owns a WebTransport session. The p
 progress feeds have their own seams, `real/latencyChannel.ts` and `real/uploadProgress.ts`. All
 three construct their workers through `real/workerPool.ts`, and nothing above that seam references
 `Worker`.
+
+The two paths differ in worker count for a reason that is not a preference. A `WebTransport` object
+is neither serializable nor transferable, so it cannot cross a worker boundary: one worker per lane
+would mean one session per lane. Transferring the individual streams instead does not help, because
+a transferred `ReadableStream` leaves its underlying source in the owning realm and pipes chunks
+over a `MessagePort`, adding a hop rather than removing one. Keeping the session whole also makes a
+stage's admission cost independent of its lane count — a forced 16 lanes per direction spends two of
+a client's sixteen session slots, where a session per lane would spend thirty-two and could not be
+admitted at all. The concentration this creates is bounded by the transport rather than by the
+thread: payload bytes never leave the worker, and every lane shares one 50 ms delta window, so the
+session path posts fewer messages to the main thread than the fetch path does, not more. No
+benchmark cell varies worker topology, and none could without also varying the session count.
 
 ### Testing
 
