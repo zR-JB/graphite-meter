@@ -240,3 +240,20 @@ test("an unknown transport is skipped, not renamed", () => {
   expect(targetOfKind(entry, "webtransport")).toBeUndefined();
   expect(discovery.latency["https://meter.example"].targets).toEqual([]);
 });
+
+// An h3-only deployment advertises a datagram bus and no WebSocket. Telling a
+// browser without the API that the server offered nothing sends the reader
+// after the wrong problem — the same split the explicit cards already make.
+test("the automatic latency card names the browser gap, not the server", () => {
+  const catalog = classifyTransportDiscovery(
+    [],
+    [{ baseUrl: "https://meter:7249", transport: "webtransport" as const }],
+    "https://meter:7249",
+    true,
+    "h3",
+  );
+  expect(latencyOptionView(catalog, "auto").detail).toBe(NO_API);
+  onAnInsecurePage(() =>
+    expect(latencyOptionView(catalog, "auto").detail).toBe(INSECURE_PAGE),
+  );
+});

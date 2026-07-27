@@ -89,7 +89,8 @@ export function throughputOptionView(
       };
     // Automatic's last resort is a session origin: say which of the two reasons
     // left the card unresolved rather than blaming the server for both.
-    const refused = !runnable && selectThroughputTarget(discovery, selection);
+    const refused =
+      !runnable && selectThroughputTarget(discovery, selection, true);
     return {
       disabled: true,
       detail: refused
@@ -114,25 +115,29 @@ export function latencyOptionView(
   selection: string,
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
-  if (selection === "auto") {
-    const target = selectLatencyTarget(
-      discovery,
-      selection,
-      typeof WebTransport !== "undefined",
-    );
-    return target
-      ? {
-          disabled: false,
-          detail: automaticDetail(target, discovery, "latency"),
-        }
-      : {
-          disabled: true,
-          detail: `${discovery.pageSecure ? "Secure" : "Clear"} WebSocket target is not offered in /preflight.`,
-        };
-  }
   // Resolve exactly what the runner resolves, so a card never offers a bus the
   // run would refuse.
   const runnable = typeof WebTransport !== "undefined";
+  if (selection === "auto") {
+    const target = selectLatencyTarget(discovery, selection, runnable);
+    if (target)
+      return {
+        disabled: false,
+        detail: automaticDetail(target, discovery, "latency"),
+      };
+    // An h3-only deployment advertises a datagram bus and no WebSocket, so
+    // blaming the server here tells a browser without the API that nothing was
+    // offered. Re-resolve with the gate open to tell the two apart. Passed
+    // explicitly: the two selectors default it opposite ways.
+    const refused =
+      !runnable && selectLatencyTarget(discovery, selection, true);
+    return {
+      disabled: true,
+      detail: refused
+        ? noBrowserWebTransport()
+        : `${discovery.pageSecure ? "Secure" : "Clear"} WebSocket target is not offered in /preflight.`,
+    };
+  }
   const target = selectLatencyTarget(discovery, selection, runnable);
   if (target)
     return {

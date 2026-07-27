@@ -379,7 +379,10 @@ export class IdleKeepalive {
               { role: "latency" },
             ),
           ),
-        ESTABLISH_BUDGET_MS,
+        // The worker's own establish deadline plus its mint sit inside this
+        // one, so without the margin the owner always fires first and a healthy
+        // slow bus is degraded before it can report ready.
+        PING_ESTABLISH_TIMEOUT_MS,
       );
       this.#probeReady = { finish };
       signal?.addEventListener("abort", aborted, { once: true });
