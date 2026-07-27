@@ -63,6 +63,9 @@ jobs:
           filters: |
             workflow: &workflow
               - ".github/workflows/ci.yml"
+              # The justfile is the executable definition of every substantive
+              # job below. A recipe-only change must exercise those jobs too.
+              - "justfile"
             go:
               - *workflow
               - "go/**"

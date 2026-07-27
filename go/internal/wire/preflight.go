@@ -46,9 +46,10 @@ const (
 // the session actually carries.
 const WTMaxStreams = 16
 
-// WTIdleBound is the published inactivity bound on a WebTransport session, per
-// api/wire.md: one that carries nothing the peer sent for this long is closed.
-// The server enforces it and a client paces its traffic under it, so it lives
+// WTIdleBound is the published inactivity target for a WebTransport session,
+// per api/wire.md. The server samples at half-bound intervals, so it closes a
+// session carrying no peer traffic after about this long and no later than
+// roughly 1.5x this value. Clients pace traffic under the target, so it lives
 // here rather than server-side where the two could disagree.
 const WTIdleBound = 30 * time.Second
 
@@ -159,9 +160,10 @@ type Probe struct {
 	Load               *ProbeLoad `json:"load,omitempty"`
 }
 
-// ProbeLoad is the server's measurement occupancy at probe time: concurrent
-// tests contend for bandwidth and CPU, so a busy server means results may be
-// affected. Admission still refuses outright overload with 429/503.
+// ProbeLoad is measurement-handler occupancy at probe time. Active is the
+// number of admission-wrapped handlers holding slots; Max is the configured
+// handler ceiling. One test can hold more than one handler. Admission still
+// refuses outright overload with 429/503.
 type ProbeLoad struct {
 	Active int `json:"active"`
 	Max    int `json:"max"`

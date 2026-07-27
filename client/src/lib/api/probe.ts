@@ -14,7 +14,7 @@ export interface Probe {
   clientIpSource: "socket" | "forwarded";
   protocolNegotiated: "http/1.1" | "h2" | "h3";
   /**
-   * Measurement occupancy at probe time: concurrent tests contend for bandwidth and CPU, so a busy server means results may be affected.
+   * Measurement-handler occupancy at probe time: active is the number of admission-wrapped handlers holding slots, and max is the configured handler ceiling.
    */
   load?: {
     active: number;
