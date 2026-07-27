@@ -6,6 +6,7 @@ import {
 } from "./direction";
 import {
   EARLY_FAIL_BUDGET_MS,
+  DIRECTION_PROGRESS_WINDOW_MS,
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
@@ -279,4 +280,79 @@ test("a healthy download cannot mask a stalled upload", () => {
   expect(transferStageStalled([{ stalled: false }, { stalled: false }])).toBe(
     false,
   );
+});
+
+test("a silently pending measured direction stalls independently", () => {
+  withClock((clock) => {
+    const record: Recorded = { skips: [], fails: [], starts: [] };
+    const states: boolean[] = [];
+    let direction!: TransferDirection;
+    const host = fakeHost(record, clock);
+    host.stallChanged = () => states.push(direction.stalled);
+    direction = new TransferDirection({
+      dir: "up",
+      stage: "bidirectional",
+      laneCount: 1,
+      warmupMs: 0,
+      host,
+      lane: (_i, _events) => ({
+        start() {},
+        measure() {},
+        stop: () => Promise.resolve(),
+        discard() {},
+      }),
+    });
+
+    direction.spawn(["https://meter.test/wt/upload"]);
+    direction.measure();
+    clock.advance(DIRECTION_PROGRESS_WINDOW_MS + 1);
+
+    expect(states).toEqual([true]);
+    direction.noteMeasuredProgress(0);
+    expect(states).toEqual([true]);
+
+    // A slow direction recovers on its own first receiver-counted byte and
+    // stays healthy while bytes remain inside the window.
+    direction.noteMeasuredProgress(1);
+    expect(states).toEqual([true, false]);
+    clock.advance(DIRECTION_PROGRESS_WINDOW_MS - 1);
+    expect(states).toEqual([true, false]);
+    clock.advance(2);
+    expect(states).toEqual([true, false, true]);
+    direction.noteMeasuredProgress(1);
+    expect(states).toEqual([true, false, true, false]);
+
+    void direction.stop();
+    clock.advance(DIRECTION_PROGRESS_WINDOW_MS * 2);
+    expect(states).toEqual([true, false, true, false]);
+  });
+});
+
+test("discard cancels a pending direction watchdog", () => {
+  withClock((clock) => {
+    const record: Recorded = { skips: [], fails: [], starts: [] };
+    const states: boolean[] = [];
+    let direction!: TransferDirection;
+    const host = fakeHost(record, clock);
+    host.stallChanged = () => states.push(direction.stalled);
+    direction = new TransferDirection({
+      dir: "up",
+      stage: "upload",
+      laneCount: 1,
+      warmupMs: 0,
+      host,
+      lane: () => ({
+        start() {},
+        measure() {},
+        stop: () => Promise.resolve(),
+        discard() {},
+      }),
+    });
+    direction.spawn(["https://meter.test/wt/upload"]);
+    direction.measure();
+    direction.discard();
+    clock.advance(DIRECTION_PROGRESS_WINDOW_MS * 2);
+
+    expect(states).toEqual([]);
+  });
 });

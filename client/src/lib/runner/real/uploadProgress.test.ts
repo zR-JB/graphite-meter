@@ -51,11 +51,13 @@ function channelUnderTest(
   failures: string[];
   curve: number[];
   liveness: boolean[];
+  progress: number[];
 } {
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
   const curve: number[] = [];
   const liveness: boolean[] = [];
+  const progress: number[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
@@ -89,11 +91,13 @@ function channelUnderTest(
       lane: () => lane,
       transferActive: () => true,
       discardTransfer: () => {},
+      noteLaneProgress: (bytes) => progress.push(bytes),
       setLaneStalled: () => {},
     }),
     failures,
     curve,
     liveness,
+    progress,
   };
 }
 
@@ -160,7 +164,7 @@ test("a server count that arrives behind the last one does not move the curve", 
 });
 
 test("upload recovery bytes stay accounted without resuming a stalled sibling", () => {
-  const { channel, curve, liveness } = channelUnderTest(
+  const { channel, curve, liveness, progress } = channelUnderTest(
     { measuring: true },
     false,
   );
@@ -170,6 +174,7 @@ test("upload recovery bytes stay accounted without resuming a stalled sibling", 
 
   expect(curve).toEqual([150]);
   expect(liveness).toEqual([false]);
+  expect(progress).toEqual([150]);
 });
 
 // Unreachable today (every path tears down first), but a worker left running

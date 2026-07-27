@@ -126,6 +126,7 @@ export class RealBackend implements RunnerBackend {
     lane: () => this.#lanes.up,
     transferActive: () => this.#transferActive,
     discardTransfer: () => this.#discardTransfer(),
+    noteLaneProgress: (bytes) => this.#lanes.up?.noteMeasuredProgress(bytes),
     setLaneStalled: (stalled, detail) =>
       this.#lanes.up?.setStalled(stalled, detail),
   });

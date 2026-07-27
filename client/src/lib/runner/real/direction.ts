@@ -8,6 +8,7 @@ import { laneStaggerMs } from "./backendPure";
 import type { ByteLane, LaneEvents, WtProgressRelay } from "./byteLane";
 import {
   EARLY_FAIL_BUDGET_MS,
+  DIRECTION_PROGRESS_WINDOW_MS,
   LANE_MAX_RESTARTS,
   LANE_RESTART_BACKOFF_MS,
 } from "./budgets";
@@ -104,6 +105,9 @@ export class TransferDirection {
   #live = true;
   /** True while graceful lane shutdown can still deliver its final bytes. */
   #stopping = false;
+  /** Per-direction measured-byte watchdog. Upload writer completions do not
+   *  touch it; only receiver-authoritative progress does. */
+  #progressTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: DirectionOptions) {
     this.dir = opts.dir;
@@ -151,6 +155,7 @@ export class TransferDirection {
    *  re-spawning throws away the warmed congestion window. */
   measure(): void {
     this.measuring = true;
+    this.#armProgressWatchdog();
     const aggregation = this.#aggregation;
     if (aggregation) {
       aggregation.pendingLaneBytes = Array(this.laneCount).fill(0);
@@ -179,6 +184,24 @@ export class TransferDirection {
     this.#deps.stallChanged(detail);
   }
 
+  /** One positive measured byte delta for this direction. Re-arms its own
+   *  silence bound and recovers only this direction's stalled edge. */
+  noteMeasuredProgress(bytes: number): void {
+    if (bytes <= 0 || !this.measuring || !this.#live || this.#stopping) return;
+    this.stageSawBytes = true;
+    this.#armProgressWatchdog();
+    if (this.stalled) this.setStalled(false);
+  }
+
+  #armProgressWatchdog(): void {
+    if (this.#progressTimer !== null) clearTimeout(this.#progressTimer);
+    this.#progressTimer = setTimeout(() => {
+      this.#progressTimer = null;
+      if (!this.measuring || !this.#live || this.#stopping) return;
+      this.setStalled(true, `${this.dir} direction carried no data`);
+    }, DIRECTION_PROGRESS_WINDOW_MS);
+  }
+
   /** Flush the partial cadence window, then stop the lanes gracefully: a
    *  session lane finalizes the upload before it is terminated. */
   stop(): Promise<void> {
@@ -196,6 +219,8 @@ export class TransferDirection {
    *  cadence window first; a discard has no sample to report. */
   #release(flush: boolean): Promise<void> {
     this.#stopping = true;
+    if (this.#progressTimer !== null) clearTimeout(this.#progressTimer);
+    this.#progressTimer = null;
     const aggregation = this.#aggregation;
     if (flush && this.measuring && aggregation) this.#aggregate(aggregation);
     if (aggregation?.timer != null) clearInterval(aggregation.timer);
@@ -297,7 +322,7 @@ export class TransferDirection {
     )
       return;
     this.#retry[i] = 0; // a real send proves this lane is alive
-    this.stageSawBytes = true;
+    this.noteMeasuredProgress(bytes);
     const aggregation = this.#aggregation;
     if (!aggregation) return;
     aggregation.pendingLaneBytes[i] =
@@ -306,7 +331,6 @@ export class TransferDirection {
       (aggregation.pendingLaneElapsedSec[i] ?? 0) +
       (elapsedMs ?? THROUGHPUT_CADENCE_MS) / 1000;
     if (this.#stopping) this.#aggregate(aggregation);
-    if (this.stalled) this.setStalled(false);
   }
 
   /** A completed unit of work with no byte count, which upload lanes report. */

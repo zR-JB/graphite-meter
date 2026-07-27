@@ -42,6 +42,8 @@ export interface UploadProgressDeps {
   transferActive: () => boolean;
   discardTransfer: () => void;
   setLaneStalled: (stalled: boolean, detail?: string) => void;
+  /** Positive receiver-authoritative bytes for the upload direction. */
+  noteLaneProgress?: (bytes: number) => void;
 }
 
 export class UploadProgressChannel {
@@ -316,7 +318,8 @@ export class UploadProgressChannel {
       );
     }
     if (delta > 0) {
-      this.#deps.setLaneStalled(false);
+      if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(delta);
+      else this.#deps.setLaneStalled(false);
     }
     if (msg.type === "complete") {
       this.#completed = true;

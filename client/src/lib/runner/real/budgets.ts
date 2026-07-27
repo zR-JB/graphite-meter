@@ -18,6 +18,10 @@ export const LANE_RESTART_BACKOFF_MS = 300;
  *  reach it together. */
 export const EARLY_FAIL_BUDGET_MS = 5000;
 
+/** A measured direction silent this long stalls independently. A sibling's
+ * bytes cannot prove it healthy; a later positive byte resumes it cleanly. */
+export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
+
 /** Absolute restart bound for a lane that keeps dropping after it once ran. */
 export const LANE_MAX_RESTARTS = 40;
 
