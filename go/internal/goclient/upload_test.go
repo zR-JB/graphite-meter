@@ -489,7 +489,7 @@ func TestSampleServerUploadWindowHoldsTheHighestPair(t *testing.T) {
 // only means a replacement session is about to re-attach.
 func newWaitNextProgress() (*uploadProgress, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1)}, cancel
+	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1), errs: make(chan error, 1)}, cancel
 }
 
 func TestUploadProgressWaitNext(t *testing.T) {
@@ -723,5 +723,38 @@ func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 	}
 	if bytes, _ := progress.counters(); bytes != 0 {
 		t.Errorf("the late reader's records reached the counter (%d bytes)", bytes)
+	}
+}
+
+// Losing the authoritative feed after one positive record cannot turn that
+// prefix into the result for the whole requested window. Reattachment gets a
+// bounded chance; permanent refusal is a stage error.
+func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
+	progress, cancel := newWaitNextProgress()
+	defer cancel()
+	progress.count.Store(&uploadCount{bytes: 200, nanos: uint64(2 * time.Second)})
+	close(progress.done)
+
+	r := &runner{cfg: DefaultConfig(), http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header: http.Header{
+				"Graphite-Meter-Auth":     {"required"},
+				"Graphite-Meter-Auth-URL": {"/auth/start"},
+			},
+			Body: io.NopCloser(strings.NewReader("")), Request: req,
+		}, nil
+	})}, emit: func(Event) {}}
+	go r.reattachUploadProgress(progress, "http://progress.invalid/upload/progress")
+	stats, err := r.sampleServerUpload(context.Background(), "upload", progress, 1, 3*time.Second, 100, uint64(time.Second), make(chan error))
+	if err == nil {
+		err = windowCarriedBytes(context.Background(), "upload", Up, stats)
+	}
+	if err == nil {
+		t.Fatalf("dead progress feed published stale prefix: %+v", stats)
+	}
+	var authErr *AuthRequiredError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("permanent auth refusal = %v, want AuthRequiredError", err)
 	}
 }

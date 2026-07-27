@@ -118,13 +118,13 @@ func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 	started := time.Now()
-	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) error {
+	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
 		select {
 		case <-laneCtx.Done():
-			return laneCtx.Err()
+			return false, laneCtx.Err()
 		case <-time.After(wtRedialBackoff + 50*time.Millisecond):
 		}
-		return errors.New("session closed by the server")
+		return false, errors.New("session closed by the server")
 	})
 
 	if err == nil {
@@ -161,14 +161,14 @@ func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
 	const failure = wtRedialBackoff + 20*time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) error {
+	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
 		entries.Add(1)
 		select {
 		case <-laneCtx.Done():
-			return laneCtx.Err()
+			return false, laneCtx.Err()
 		case <-time.After(failure):
 		}
-		return errors.New("stream reset")
+		return false, errors.New("stream reset")
 	})
 
 	if err == nil {
@@ -184,7 +184,7 @@ func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
 
 // TestRunWTLaneFastFailureCeiling pins both halves of the retry policy: how many
 // back-to-back instant failures a lane absorbs before it reports one, and that a
-// lane which ran before it failed is never reported at all. The live-session
+// lane which carried bytes before it failed resets the bound. The live-session
 // rows pin the other half -- one lane's stream error is that lane's to retry,
 // and re-dialling the shared session for it stops every sibling lane
 // mid-transfer.
@@ -197,8 +197,8 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 	if wtLaneMaxFastFailures != 5 {
 		t.Fatalf("wtLaneMaxFastFailures = %d, want 5", wtLaneMaxFastFailures)
 	}
-	// slowFailure outlasts one backoff, which is what marks a lane as having
-	// made progress before it died.
+	// slowFailure outlasts one backoff, exercising the time-window half rather
+	// than the fast-failure count. Progress is an independent explicit outcome.
 	const slowFailure = wtRedialBackoff + 20*time.Millisecond
 	cases := []struct {
 		name string
@@ -206,6 +206,7 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 		// stage ends.
 		failures    int
 		pause       time.Duration
+		progress    bool
 		alive       bool
 		budget      time.Duration
 		wantErr     bool
@@ -223,8 +224,8 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 			wantErr: true, wantEntries: int64(wtLaneMaxFastFailures), wantDials: int64(wtLaneMaxFastFailures) - 1,
 		},
 		{
-			name:     "a lane that ran before it failed is never reported",
-			failures: 4 * wtLaneMaxFastFailures, pause: slowFailure, budget: 3 * slowFailure,
+			name:     "a lane that carried bytes before it failed is never reported",
+			failures: 4 * wtLaneMaxFastFailures, pause: slowFailure, progress: true, budget: 3 * slowFailure,
 			wantErr: false, wantEntries: -1, wantDials: -1,
 		},
 		{
@@ -270,20 +271,20 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), c.budget)
 			defer cancel()
-			err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) error {
+			err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
 				n := entries.Add(1)
 				if c.pause > 0 {
 					select {
 					case <-laneCtx.Done():
-						return laneCtx.Err()
+						return false, laneCtx.Err()
 					case <-time.After(c.pause):
 					}
 				}
 				if n <= int64(c.failures) {
-					return errors.New("stream reset")
+					return c.progress, errors.New("stream reset")
 				}
 				<-laneCtx.Done()
-				return nil
+				return false, nil
 			})
 
 			if got := err != nil; got != c.wantErr {
@@ -435,10 +436,10 @@ func TestRunWTLaneReportsACancelledStageAsAStop(t *testing.T) {
 	entered := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) error {
+		done <- runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
 			close(entered)
 			<-laneCtx.Done()
-			return laneCtx.Err()
+			return false, laneCtx.Err()
 		})
 	}()
 
@@ -512,5 +513,74 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 				t.Fatalf("Prepare error = %v, want one containing %q", err, c.want)
 			}
 		})
+	}
+}
+
+// A lane invocation's age is not evidence that it transferred. In particular,
+// an accept/open/write can block for a whole progress window and then fail
+// without carrying one byte; repeating that schedule must not reset the bound.
+func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
+	host := &wtStageSession{sess: liveWTSession()}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*wtLaneProgressWindow+300*time.Millisecond)
+	defer cancel()
+	entries := 0
+	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
+		entries++
+		select {
+		case <-laneCtx.Done():
+			return false, laneCtx.Err()
+		case <-time.After(wtLaneProgressWindow + 50*time.Millisecond):
+			return false, errors.New("stream failed before carrying a byte")
+		}
+	})
+	if err == nil {
+		t.Fatalf("%d consecutive >= progress-window failures returned nil at the stage deadline", entries)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("zero-byte failures were bounded only by stage cancellation: %v", err)
+	}
+}
+
+func TestRunWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
+	host := &wtStageSession{sess: liveWTSession()}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	entries := 0
+	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
+		entries++
+		pause := 10 * time.Millisecond
+		if entries%2 == 0 {
+			pause = wtRedialBackoff + 100*time.Millisecond
+		}
+		select {
+		case <-laneCtx.Done():
+			return false, laneCtx.Err()
+		case <-time.After(pause):
+			return false, errors.New("stream failed before carrying a byte")
+		}
+	})
+	if err == nil || ctx.Err() != nil {
+		t.Fatalf("mixed zero-byte failures returned %v after %d entries (ctx=%v)", err, entries, ctx.Err())
+	}
+}
+
+func TestRunWTLaneRealProgressResetsFailureBounds(t *testing.T) {
+	host := &wtStageSession{sess: liveWTSession()}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	entries := 0
+	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
+		entries++
+		if entries <= 2*wtLaneMaxFastFailures {
+			return true, errors.New("stream reset after carrying bytes")
+		}
+		<-laneCtx.Done()
+		return false, laneCtx.Err()
+	})
+	if err != nil {
+		t.Fatalf("progressing lane reported %v after %d entries", err, entries)
+	}
+	if entries != 2*wtLaneMaxFastFailures+1 {
+		t.Fatalf("lane entered %d times, want %d", entries, 2*wtLaneMaxFastFailures+1)
 	}
 }

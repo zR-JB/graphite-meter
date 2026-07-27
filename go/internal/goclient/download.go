@@ -54,7 +54,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 		}
 		defer host.close()
 		lane = func(laneCtx context.Context, _ int) error {
-			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
+			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
 				return r.downloadLaneWT(lctx, sess, &total)
 			})
 		}

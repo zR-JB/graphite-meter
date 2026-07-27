@@ -67,7 +67,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		// aggregate, so the counter survives either.
 		go r.reattachUploadProgress(progress, progressURL)
 		lane = func(laneCtx context.Context, _ int) error {
-			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) error {
+			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
 				return r.uploadLaneWT(lctx, sess, bodyBlock)
 			})
 		}
@@ -234,6 +234,7 @@ type uploadProgress struct {
 	count     atomic.Pointer[uploadCount]
 	seq       atomic.Uint64
 	changed   chan struct{}
+	errs      chan error
 	once      sync.Once
 }
 
@@ -325,44 +326,129 @@ func (r *runner) openUploadProgress(ctx context.Context, target string) (*upload
 	return p, nil
 }
 
+// cancelReadCloser keeps a successful reattach request alive until its body is
+// replaced or the stage ends. Failed or timed-out attempts cancel immediately.
+type cancelReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelReadCloser) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+type progressOpenResult struct {
+	res *http.Response
+	err error
+}
+
+// openUploadProgressWithin opens one replacement without tying a successful
+// body's lifetime to the recovery deadline. The request owns a cancel context;
+// the deadline only chooses how long to wait for headers, and the adopted body
+// carries cancellation until Close.
+func (r *runner) openUploadProgressWithin(stageCtx, recoveryCtx context.Context, target string) (io.ReadCloser, error) {
+	attemptCtx, cancelAttempt := context.WithCancel(stageCtx)
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, target, nil)
+	if err != nil {
+		cancelAttempt()
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/x-ndjson")
+	opened := make(chan progressOpenResult, 1)
+	go func() {
+		res, err := r.http.Do(req)
+		opened <- progressOpenResult{res: res, err: err}
+	}()
+	select {
+	case got := <-opened:
+		if got.err != nil {
+			cancelAttempt()
+			return nil, got.err
+		}
+		if got.res.StatusCode != http.StatusOK {
+			err := unexpectedStatus(got.res)
+			_ = got.res.Body.Close()
+			cancelAttempt()
+			return nil, err
+		}
+		return &cancelReadCloser{ReadCloser: got.res.Body, cancel: cancelAttempt}, nil
+	case <-recoveryCtx.Done():
+		cancelAttempt()
+		got := <-opened
+		if got.res != nil {
+			_ = got.res.Body.Close()
+		}
+		return nil, recoveryCtx.Err()
+	}
+}
+
 // reattachUploadProgress keeps the fetch feed alive across the server's
 // request bound: when the GET dies with the stage still running, a fresh GET
 // resumes the same aggregate, as the browser's progress worker does.
 func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 	opened := time.Now()
 	for {
+		ended := p.currentDone()
 		select {
 		case <-p.ctx.Done():
 			return
-		case <-p.currentDone():
+		case <-ended:
 		}
+		// A replacement session may have attached its stream while this goroutine
+		// was waking on the superseded reader. It already recovered the feed; do
+		// not replace it with a redundant HTTP request.
+		if p.currentDone() != ended {
+			opened = time.Now()
+			continue
+		}
+		recoveryCtx, cancelRecovery := context.WithTimeout(p.ctx, wtSessionRedialWindow)
 		// A feed that ended as fast as it opened is making no progress, and a
 		// server closing every one of them instantly would otherwise be hot-
 		// retried for the whole stage. One that ran first reopens without a
 		// pause, so a rollover at the server's request bound costs no records.
-		if time.Since(opened) < wtRedialBackoff && !laneRetryPause(p.ctx) {
+		if time.Since(opened) < wtRedialBackoff && !laneRetryPause(recoveryCtx) && p.ctx.Err() != nil {
+			cancelRecovery()
 			return
 		}
-		for p.ctx.Err() == nil {
-			req, err := http.NewRequestWithContext(p.ctx, http.MethodGet, target, nil)
-			if err != nil {
-				return
-			}
-			req.Header.Set("Accept", "application/x-ndjson")
-			res, err := r.http.Do(req)
-			if err == nil && res.StatusCode == http.StatusOK {
-				opened = time.Now()
-				p.attach(res.Body)
+		var lastErr error
+		for recoveryCtx.Err() == nil {
+			if p.currentDone() != ended {
+				cancelRecovery()
 				break
 			}
-			if res != nil {
-				_ = res.Body.Close()
+			body, err := r.openUploadProgressWithin(p.ctx, recoveryCtx, target)
+			if err == nil {
+				if p.currentDone() != ended {
+					_ = body.Close()
+					cancelRecovery()
+					break
+				}
+				opened = time.Now()
+				p.attach(body)
+				cancelRecovery()
+				break
 			}
+			lastErr = err
 			select {
 			case <-p.ctx.Done():
+				cancelRecovery()
 				return
+			case <-recoveryCtx.Done():
 			case <-time.After(wtRedialBackoff):
 			}
+		}
+		cancelRecovery()
+		if recoveryCtx.Err() != nil && p.ctx.Err() == nil && p.currentDone() == ended {
+			if lastErr == nil {
+				lastErr = recoveryCtx.Err()
+			}
+			select {
+			case p.errs <- fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, lastErr):
+			default:
+			}
+			return
 		}
 	}
 }
@@ -371,7 +457,7 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 // carries it, and finalizes over HTTP at deleteURL.
 func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, deleteURL string) (*uploadProgress, error) {
 	readCtx, cancel := context.WithCancel(ctx)
-	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1), errs: make(chan error, 1)}
 	context.AfterFunc(readCtx, p.closeBody)
 	p.attach(body)
 	select {
@@ -519,6 +605,7 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 	return rateLoop{
 		duration: duration,
 		laneErr:  laneErr,
+		stageErr: p.errs,
 		window: func(stats *rateStats) {
 			// lastN/lastT are the highest pair this loop has sampled, and the
 			// sampler only ever moves them forward. Taking the larger of the two

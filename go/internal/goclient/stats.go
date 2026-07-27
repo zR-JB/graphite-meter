@@ -73,6 +73,7 @@ type rateLoop struct {
 	// measurement, for callers whose ctx carries the window as its deadline.
 	cancelEndsWindow bool
 	laneErr          <-chan error
+	stageErr         <-chan error
 	// sample folds one tick of the rate source into stats and emits it.
 	sample func(now time.Time, stats *rateStats)
 	// window records the measured byte and time totals at the end of the run.
@@ -101,6 +102,9 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 			l.window(&stats)
 			return stats, nil
 		case err := <-l.laneErr:
+			l.window(&stats)
+			return stats, err
+		case err := <-l.stageErr:
 			l.window(&stats)
 			return stats, err
 		case now := <-ticker.C:

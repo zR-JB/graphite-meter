@@ -268,54 +268,55 @@ func (w *wtStageSession) close() {
 // must fail the stage rather than be re-dialed for the whole measurement window.
 const wtLaneMaxFastFailures = 5
 
-// wtLaneProgressWindow bounds a lane whose failures are slower than the backoff,
-// which the count above cannot see. A lane run at least this long is a stretch
-// the stage was measuring over and clears the bound; a lane that goes this long
-// without one has carried nothing while the measured window's clock kept
-// running, and reporting that as a stop publishes the shortfall as a rate. It is
-// wtSessionRedialWindow because it answers that same question: a run too short
-// to have been worth waiting out a lost session for is too short to be progress.
+// wtLaneProgressWindow bounds consecutive failed lane attempts that report no
+// successful I/O. Their individual durations do not prove progress: an open,
+// accept, read, or write can block for the whole window and still fail before a
+// byte moves. It is wtSessionRedialWindow because both answer the same question:
+// how long the measured clock may run while this lane carries nothing.
 const wtLaneProgressWindow = wtSessionRedialWindow
 
 // runWTLane keeps one lane alive across session replacements: run the lane on
 // the current session, and when it dies with the stage still running, redial
 // and continue.
-func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) error) error {
+func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) (bool, error)) error {
 	fastFailures := 0
 	var failingSince time.Time
 	for ctx.Err() == nil {
 		sess, gen := host.current()
 		started := time.Now()
-		err := lane(ctx, sess)
+		progressed, err := lane(ctx, sess)
 		if err == nil || ctx.Err() != nil {
 			return nil
 		}
-		// A session that ran before it died reconnects without a pause; one
-		// that died as fast as it dialled is paced, and is making no progress.
-		if time.Since(started) >= wtRedialBackoff {
+		// Only successful I/O proves a lane was measuring. How long an open,
+		// accept, read, or write blocked before failing says nothing about whether
+		// it carried a byte. Real progress clears both failure bounds; a lane that
+		// stays healthy never returns here and therefore needs no elapsed-time
+		// proxy.
+		if progressed {
 			fastFailures = 0
-			// The two bounds partition the failures between them by how long the
-			// lane ran, so neither can pre-empt the other: this branch owns every
-			// failure the count above cannot see.
-			if time.Since(started) >= wtLaneProgressWindow {
-				failingSince = time.Time{}
-			} else {
+			failingSince = time.Time{}
+		} else {
+			// A session that ran before it died reconnects without a pause; one
+			// that died as fast as it dialled is paced, and is making no progress.
+			if time.Since(started) >= wtRedialBackoff {
+				fastFailures = 0
 				if failingSince.IsZero() {
 					failingSince = started
 				}
-				// Whatever the session's liveness: a live session this lane cannot
-				// carry a byte on is the same shortfall as no session at all, and
-				// the window it is reported over runs either way.
+				// Whatever the attempt duration or session liveness, a lane that
+				// cannot carry a byte is the same measured shortfall. This catches
+				// one long failed operation as well as a mixed run of shorter ones.
 				if time.Since(failingSince) >= wtLaneProgressWindow {
 					return err
 				}
-			}
-		} else {
-			if fastFailures++; fastFailures >= wtLaneMaxFastFailures {
-				return err
-			}
-			if !laneRetryPause(ctx) {
-				return nil
+			} else {
+				if fastFailures++; fastFailures >= wtLaneMaxFastFailures {
+					return err
+				}
+				if !laneRetryPause(ctx) {
+					return nil
+				}
 			}
 		}
 		// A lane's own stream failing is not a lost session: the siblings sharing
@@ -351,18 +352,20 @@ func (r *runner) wtDownloadQuery() url.Values {
 // the same accept loop, so a replaced stream lands on whichever lane is free.
 // It returns an error when the session dies with the stage still running, the
 // signal runWTLane redials on.
-func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64) error {
+func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64) (bool, error) {
 	buf := make([]byte, 1024*1024)
+	progressed := false
 	for ctx.Err() == nil {
 		str, err := sess.AcceptUniStream(ctx)
 		if err != nil {
-			return laneStopError(ctx, err)
+			return progressed, laneStopError(ctx, err)
 		}
 		stopOnCancel := transport.UnblockReadsOnDone(ctx, str)
 		stopOnGone := transport.UnblockReadsOnDone(sess.Context(), str)
 		for {
 			n, readErr := str.Read(buf)
 			if n > 0 {
+				progressed = true
 				total.Add(uint64(n))
 			}
 			if readErr != nil {
@@ -372,31 +375,36 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 		stopOnCancel()
 		stopOnGone()
 		if sess.Context().Err() != nil {
-			return laneStopError(ctx, sess.Context().Err())
+			return progressed, laneStopError(ctx, sess.Context().Err())
 		}
 	}
-	return nil
+	return progressed, nil
 }
 
 // uploadLaneWT writes the cycling block on one unidirectional stream while the
 // session lives: the stream's own flow control paces it. A dead session
 // surfaces as an error, the signal runWTLane redials on.
-func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte) error {
+func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte) (bool, error) {
 	str, err := sess.OpenUniStreamSync(ctx)
 	if err != nil {
-		return laneStopError(ctx, err)
+		return false, laneStopError(ctx, err)
 	}
 	defer str.Close() //nolint:errcheck // the stage is over either way
 	defer transport.UnblockWritesOnDone(ctx, str)()
 	defer transport.UnblockWritesOnDone(sess.Context(), str)()
 	// The block is already the payload: a lane with no length limit writes it
 	// unchanged, so there is nothing for a cycling body to assemble.
+	progressed := false
 	for ctx.Err() == nil {
-		if _, err := str.Write(block); err != nil {
-			return laneStopError(ctx, err)
+		n, err := str.Write(block)
+		if n > 0 {
+			progressed = true
+		}
+		if err != nil {
+			return progressed, laneStopError(ctx, err)
 		}
 	}
-	return nil
+	return progressed, nil
 }
 
 // acceptUploadProgressWT reads the one stream the server opens on an upload
