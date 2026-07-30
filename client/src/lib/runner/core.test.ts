@@ -689,7 +689,11 @@ test("adaptive early-finish arms and completes the run well before the nominal d
 
   // A perfectly flat feed drives the confidence score to 1 (no variance, no
   // slope), well above the 0.9 threshold, once enough samples are in.
-  for (let i = 0; i < 10; i++) core.ingestThroughput("down", 1000, 100, 0.1);
+  // Keep the stability feed flat, but make the first exact byte interval low.
+  // Stability opens on the second sample, so final-plateau reduction excludes
+  // the first interval while the whole-phase descriptor retains it.
+  for (let i = 0; i < 10; i++)
+    core.ingestThroughput("down", 1000, i === 0 ? 1 : 100, 0.1);
 
   advance(10); // this tick's confidence check arms the glide
   wallAdvanced += 10;
@@ -701,6 +705,41 @@ test("adaptive early-finish arms and completes the run well before the nominal d
   expect(core.phase).toBe("complete");
   // The run finishes in ~120ms of wall time, nowhere near the 2000ms budget.
   expect(wallAdvanced).toBeLessThan(cfg.duration.downloadMs / 2);
+  const complete = events.find((event) => event.type === "complete");
+  expect(complete).toBeDefined();
+  if (complete?.type === "complete") {
+    expect(complete.result.download?.method).toBe("stable-window");
+    expect(complete.result.download?.reportedBytesPerSec).toBeCloseTo(1000, 6);
+    expect(complete.result.download?.fullAverageBytesPerSec).toBeCloseTo(
+      901,
+      6,
+    );
+  }
+});
+
+test("adaptive completion off publishes the whole phase even when it ends stable", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+
+  const cfg = makeConfig({
+    duration: { downloadMs: 500 },
+    adaptive: { enabled: false },
+  });
+  await core.start(cfg);
+  for (let i = 0; i < 10; i++)
+    core.ingestThroughput("down", 1000, i === 0 ? 1 : 100, 0.1);
+  advance(500);
+
+  const complete = events.find((event) => event.type === "complete");
+  expect(complete).toBeDefined();
+  if (complete?.type === "complete") {
+    const result = complete.result.download!;
+    expect(result.method).toBe("full-average");
+    expect(result.reportedBytesPerSec).toBeCloseTo(901, 6);
+    expect(result.reportedBytesPerSec).toBe(result.fullAverageBytesPerSec);
+  }
 });
 
 test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the phase runs to its nominal end", async () => {

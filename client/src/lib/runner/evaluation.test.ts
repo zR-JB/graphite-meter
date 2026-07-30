@@ -2,10 +2,10 @@ import { test, expect } from "bun:test";
 import { RunAccumulator } from "./evaluation";
 import type { AdaptiveDurationConfig } from "./contract";
 
-// Regression coverage: once early stopping arms for a phase, the headline must
-// be the mean of the ENTIRE early-stopping phase (arm → end) when stability
-// holds throughout, else the mean of the ENTIRE measurement phase (start → end).
-// Never the trailing contiguous stable run, a misleading subset of both.
+// Regression coverage for issue #84: adaptive throughput reports the final
+// contiguous stable plateau. Earlier plateaus are discarded after a stability
+// break; an unstable ending, or adaptive completion being off, uses the full
+// measured phase instead.
 
 const adaptive: AdaptiveDurationConfig = {
   enabled: true,
@@ -30,47 +30,7 @@ function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-test("early stop reports the entire uninterrupted early-completion window", () => {
-  const accum = new RunAccumulator();
-  accum.reset();
-
-  const samples: number[] = [];
-  // Noisy ramp: keeps the confidence score well under threshold, so no
-  // stable run latches yet.
-  for (let i = 0; i < 60; i++) {
-    const v = 100 + i * (800 / 59);
-    samples.push(v);
-    push(accum, v);
-  }
-  // Flat plateau: score converges to 1 once the confidence window (last 48
-  // samples) is pure plateau, latching a stable run well ahead of the arm.
-  for (let i = 0; i < 90; i++) {
-    samples.push(1000);
-    push(accum, 1000);
-  }
-  // Early stop arms here: coverage/threshold gates satisfied mid-plateau, the
-  // same as core.ts's #maybeArmGlide calling this the instant shouldExitPhase
-  // first returns true.
-  accum.noteEarlyStop("download");
-  const armIndex = samples.length;
-  // Stays perfectly stable for the rest of the early-stopping phase.
-  for (let i = 0; i < 10; i++) {
-    samples.push(1000);
-    push(accum, 1000);
-  }
-
-  const result = accum.throughputResult("download");
-
-  expect(armIndex).toBeGreaterThan(0);
-  expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(
-    mean(samples.slice(armIndex - 1)),
-    6,
-  );
-  expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(samples), 6);
-});
-
-test("early stop destabilizes after arming → averages the entire measurement phase", () => {
+test("adaptive throughput reports the final plateau after stability recovers", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
@@ -84,30 +44,54 @@ test("early stop destabilizes after arming → averages the entire measurement p
     samples.push(1000);
     push(accum, 1000);
   }
-  accum.noteEarlyStop("download");
-  // Stability breaks during the early-stopping period...
+  // Break the first plateau, then settle at a higher rate. The old reducer
+  // remained anchored near the first plateau's glide-arm sample.
   for (let i = 0; i < 20; i++) {
     const v = i % 2 === 0 ? 100 : 2000;
     samples.push(v);
     push(accum, v);
   }
-  // ...and fully recovers on a NEW stable run by the phase end. The regression
-  // case: a naive "still stable at finish" check reports only that run's 3000.
   for (let i = 0; i < 100; i++) {
     samples.push(3000);
     push(accum, 3000);
   }
 
-  const result = accum.throughputResult("download");
+  const result = accum.throughputResult("download", true);
+
+  expect(result.method).toBe("stable-window");
+  expect(result.meanBytesPerSec).toBeCloseTo(3000, 6);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(samples), 6);
+  expect(result.meanBytesPerSec).not.toBeCloseTo(1000, 0);
+});
+
+test("an unstable ending falls back to the entire measurement phase", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  const samples: number[] = [];
+  for (let i = 0; i < 60; i++) {
+    const v = 100 + i * (800 / 59);
+    samples.push(v);
+    push(accum, v);
+  }
+  for (let i = 0; i < 90; i++) {
+    samples.push(1000);
+    push(accum, 1000);
+  }
+  for (let i = 0; i < 20; i++) {
+    const v = i % 2 === 0 ? 100 : 2000;
+    samples.push(v);
+    push(accum, v);
+  }
+
+  const result = accum.throughputResult("download", true);
 
   expect(result.method).toBe("full-average");
   expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
   expect(result.meanBytesPerSec).toBeCloseTo(result.fullAverageBytesPerSec, 6);
-  // Must NOT be the trailing-run-only figure.
-  expect(result.meanBytesPerSec).not.toBeCloseTo(3000, 0);
 });
 
-test("a trailing stable run does not hide the earlier ramp", () => {
+test("adaptive completion off always reports the entire measurement phase", () => {
   const accum = new RunAccumulator();
   accum.reset();
 
@@ -121,9 +105,7 @@ test("a trailing stable run does not hide the earlier ramp", () => {
     samples.push(1000);
     push(accum, 1000);
   }
-  // Early stop never arms; the ramp must still remain in the result.
-
-  const result = accum.throughputResult("download");
+  const result = accum.throughputResult("download", false);
 
   expect(result.method).toBe("full-average");
   expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
@@ -139,9 +121,24 @@ test("transfer headline weights samples by represented time", () => {
   accum.pushThroughput("upload", "up", 100, 10, 0.1);
   accum.pushThroughput("upload", "up", 10, 10, 1);
 
-  const result = accum.throughputResult("upload");
+  const result = accum.throughputResult("upload", false);
   expect(result.fullAverageBytesPerSec).toBeCloseTo(20 / 1.1, 6);
   expect(result.fullAverageBytesPerSec).not.toBeCloseTo(55, 6);
+});
+
+test("the final stable plateau is also weighted by represented time", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  accum.pushThroughput("download", "down", 1000, 100, 0.1);
+  accum.trackStableRun("download", 1, adaptive);
+  accum.pushThroughput("download", "down", 100, 100, 1);
+  accum.trackStableRun("download", 1, adaptive);
+
+  const result = accum.throughputResult("download", true);
+  expect(result.method).toBe("stable-window");
+  expect(result.meanBytesPerSec).toBeCloseTo(200 / 1.1, 6);
+  expect(result.meanBytesPerSec).not.toBeCloseTo(550, 6);
 });
 
 test("bidirectional: down and up lanes reduce independently", () => {
@@ -153,7 +150,7 @@ test("bidirectional: down and up lanes reduce independently", () => {
     accum.pushThroughput("bidirectional", "up", 300, 300, 1, true);
   }
 
-  const result = accum.bidirectionalResult();
+  const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(500, 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(300, 6);
   expect(result.down.serverAuthoritative).toBeUndefined();
@@ -173,7 +170,7 @@ test("bidirectional: interleaved arrival order doesn't cross-contaminate the lan
     accum.pushThroughput("bidirectional", "down", downs[i], downs[i], 1);
   }
 
-  const result = accum.bidirectionalResult();
+  const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(mean(downs), 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(mean(ups), 6);
 });
@@ -188,10 +185,40 @@ test("bidirectional: one lane still empty (staggered start) reports the other co
     accum.pushThroughput("bidirectional", "down", 700, 700, 1);
   }
 
-  const result = accum.bidirectionalResult();
+  const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(700, 6);
   expect(result.up.fullAverageBytesPerSec).toBe(0);
   expect(result.up.totalBytes).toBe(0);
+});
+
+test("bidirectional final plateau aligns each interleaved lane to shared stability", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  const pushBidi = (dir: "down" | "up", value: number, score: number): void => {
+    accum.pushThroughput("bidirectional", dir, value, value, 1);
+    accum.trackStableRun("bidirectional", score, adaptive);
+  };
+
+  // First low plateau.
+  pushBidi("down", 100, 1);
+  pushBidi("up", 50, 1);
+  pushBidi("down", 100, 1);
+  pushBidi("up", 50, 1);
+  // Shared stability breaks on interleaved lane reports.
+  pushBidi("down", 10, 0);
+  pushBidi("up", 5, 0);
+  // Re-entry happens on upload. Sequence tags keep the preceding unstable
+  // download sample out until download reports inside the new plateau.
+  pushBidi("up", 300, 1);
+  pushBidi("down", 500, 1);
+  pushBidi("up", 300, 1);
+  pushBidi("down", 500, 1);
+
+  const result = accum.bidirectionalResult(true);
+  expect(result.down.method).toBe("stable-window");
+  expect(result.up.method).toBe("stable-window");
+  expect(result.down.meanBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.up.meanBytesPerSec).toBeCloseTo(300, 6);
 });
 
 test("bidirectional: shared stability degrades when either lane alone turns erratic", () => {

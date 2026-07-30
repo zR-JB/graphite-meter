@@ -214,8 +214,9 @@ export interface RunResult {
   durationMs: number;
 }
 
-/** How a headline is derived. A stable window begins when adaptive completion
- *  arms and is used only if stability holds until the phase ends. */
+/** How a headline is derived. Throughput uses its final contiguous stable
+ *  plateau when adaptive completion is enabled; otherwise it uses the full
+ *  measured phase. Latency retains its adaptive arm-to-end median window. */
 export type ResultMethod = "stable-window" | "full-average";
 
 export interface ThroughputResult {
