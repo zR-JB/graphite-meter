@@ -828,9 +828,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#glideStartReal = performance.now();
     this.#glideFromMeasured = elapsed;
     this.#glideTargetMeasured = seg.end;
-    // Latch the sample index where early stopping arms, so result reduction can
-    // tell a fully stable phase from one destabilizing after (evaluation.ts).
-    this.#accum.noteEarlyStop(seg.phase);
+    // Latency retains its arm-to-end median window. Throughput reduction reads
+    // the final stable plateau and therefore needs no glide-arm bookkeeping.
+    if (seg.phase === "latency") this.#accum.noteLatencyEarlyStop();
   }
 
   /** Drive the measured-time clock along the armed glide's eased curve. */
@@ -883,14 +883,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const cfg = this.#cfg!;
     if (this.#stageFailures.has(phase as TransportRole)) return; // skipped, no result
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
-      this.#dlResult = this.#accum.throughputResult("download");
+      this.#dlResult = this.#accum.throughputResult(
+        "download",
+        cfg.adaptive.enabled,
+      );
       this.emit({
         type: "stageResult",
         stage: "download",
         result: this.#dlResult,
       });
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
-      this.#ulResult = this.#accum.throughputResult("upload");
+      this.#ulResult = this.#accum.throughputResult(
+        "upload",
+        cfg.adaptive.enabled,
+      );
       this.emit({
         type: "stageResult",
         stage: "upload",
@@ -918,7 +924,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const actualMs = Math.max(0, performance.now() - this.#t0);
       const bidirectional =
         cfg.stages.bidirectional && !this.#stageFailures.has("bidirectional")
-          ? this.#accum.bidirectionalResult()
+          ? this.#accum.bidirectionalResult(cfg.adaptive.enabled)
           : null;
       const result = {
         download: this.#dlResult,
