@@ -346,9 +346,18 @@ accounting. Latency follows the same single-path rule: every raw outcome stays i
 while the UI receives deadline-closed, phase-aligned 200ms median/P95/max/loss buckets. Each bucket
 also retains scalar first/last and consecutive-delta evidence, so rolling connectivity jitter stays
 exact without retaining a second raw history or inventing a delta across a phase/stall continuity
-break. Gauge and chart share one robust recent latency scale; chart lines are straight, render the
-first closed bucket as a point, and break at phase, loss, stall, and gap boundaries rather than adding
-another smoothing curve.
+break. The ping worker stamps every success and declared loss with its monotonic observation time;
+`latencyChannel.ts` translates that cross-realm coordinate once, and `RunnerCore` accepts only the
+resulting required `LatencyObservation`. Worker batching and main-thread delivery delay therefore do
+not collapse outcomes or make old evidence look new.
+
+Gauge and live chart share one robust recent latency scale with shrink dwell. A terminal chart spans
+the whole run and recomputes the same robust domain from the whole bucket history, so the last live
+window is never applied retroactively to older phases. Isolated tails remain explicit clipping
+markers. Chart lines are straight, render the first closed bucket as a point, and break at phase,
+loss, stall, and gap boundaries rather than adding another smoothing curve. The one live stability
+snapshot that gates adaptive completion also drives the compact result pip for latency, one-way
+transfer, and combined bidirectional phases; the UI never manufactures a second confidence state.
 
 Wire-rate presentation is likewise centralized. The store independently models each measured
 direction from canonical goodput and sums those lane estimates for bidirectional stages;
@@ -455,15 +464,15 @@ the primary summary.
 
 ### Web Workers
 
-| Worker                      | Role                                                                                                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                     |
-| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                                  |
-| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                            |
-| `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss algorithm, off the main thread.                                                      |
-| `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE. |
-| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                        |
-| `payload.ts`                | Shared helper (not a worker): the memoised incompressible source block both upload paths write.                                                           |
+| Worker                      | Role                                                                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                                     |
+| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                                                  |
+| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                                            |
+| `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss/timestamp algorithm off the main thread; batched outcomes retain their individual observation times. |
+| `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE.                 |
+| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                                        |
+| `payload.ts`                | Shared helper (not a worker): the memoised incompressible source block both upload paths write.                                                                           |
 
 Byte lanes reach workers through `real/byteLane.ts`: a transfer direction drives lanes as
 `start`/`measure`/`stop`/`discard` and never learns which transport is underneath; `fetchLane` wraps
