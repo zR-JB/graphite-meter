@@ -108,8 +108,8 @@ export interface AdaptiveDurationConfig {
 /** Coarse band of the 0..1 stability score, surfaced as the result-card pip. */
 export type StabilityBand = "low" | "medium" | "high";
 
-/** Live stability snapshot for a measured phase: the single signal the pip, the
- *  early-finish glide, and the result selection all read. */
+/** Live stability snapshot for a measured phase: the single signal the pip,
+ *  revocable early-finish confirmation, and result selection all read. */
 export interface StabilitySnapshot {
   phase: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
   score: number; // stability score 0..1 (adaptive.ts)

@@ -144,7 +144,7 @@ export class DummyBackend implements RunnerBackend {
   #rand: () => number;
   #host: CoreHost | null = null;
 
-  // Wall-time gates prevent adaptive glides from emitting sample bursts.
+  // Wall-time gates keep synthetic callback cadence independent of run timing.
   #lastThroughputAt = -Infinity;
   #lastPingAt = -Infinity;
   #sampleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -391,8 +391,8 @@ export class DummyBackend implements RunnerBackend {
     // nothing until measurement begins, like a real backend at onStageMeasure.
     if (!measuring) return;
 
-    // Throughput on the stage's transfer lanes. The cadence gates on REAL time:
-    // measured time races ahead during an early-finish glide.
+    // Throughput on the stage's transfer lanes. Cadence gates on real time so
+    // live schedule edits cannot bunch callbacks together.
     if (
       activity.transfer.length > 0 &&
       realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
@@ -556,7 +556,7 @@ export class DummyBackend implements RunnerBackend {
     const host = this.#host;
     if (!host || !host.config || host.phase === "idle") return;
 
-    // Connection drops use wall time so adaptive timeline glides cannot shorten them.
+    // Connection drops use wall time so schedule edits cannot shorten them.
     if (a.kind === "connection-drop") {
       const durationMs =
         a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;

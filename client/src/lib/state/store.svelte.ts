@@ -27,6 +27,7 @@ import {
   type ConnectionValidation,
 } from "../runner/connectionModel";
 import {
+  combineCompensationEstimates,
   estimateLiveCompensation,
   estimateResultCompensation,
   type CompensationEstimate,
@@ -317,40 +318,74 @@ class AppStore {
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
 
-  // The store remains bytes/sec-native. UI conversion happens at the edge via
-  // toUnit(), which keeps compensation and scale math in one raw domain.
-  liveCompensation = $derived<CompensationEstimate>(
-    estimateLiveCompensation(
-      this.liveTransferBytesPerSec,
+  #estimateLiveWire(
+    bytesPerSec: number,
+    phase: "download" | "upload",
+  ): CompensationEstimate {
+    return estimateLiveCompensation(
+      bytesPerSec,
       this.config.compensation,
-      this.phase === "upload" ? "upload" : "download",
+      phase,
       this.runConnections.throughput.browserProtocol,
       this.runConnections.throughput.target?.tls,
       this.runConnections.throughput.clientIpVersion,
+    );
+  }
+
+  #estimateResultWire(
+    result: ThroughputResult | null,
+    phase: "download" | "upload",
+  ): CompensationEstimate {
+    return estimateResultCompensation(
+      result,
+      phase,
+      this.config.compensation,
+      this.runConnections.throughput.browserProtocol,
+      this.runConnections.throughput.target?.tls,
+      this.runConnections.throughput.clientIpVersion,
+    );
+  }
+
+  // The store remains bytes/sec-native. UI conversion happens at the edge via
+  // toUnit(), which keeps compensation and scale math in one raw domain.
+  liveCompensation = $derived<CompensationEstimate>(
+    this.#estimateLiveWire(
+      this.phase === "download" || this.phase === "upload"
+        ? this.liveTransferBytesPerSec
+        : 0,
+      this.phase === "upload" ? "upload" : "download",
     ),
   );
 
   downloadCompensation = $derived<CompensationEstimate>(
-    estimateResultCompensation(
-      this.stageResults.download,
-      "download",
-      this.config.compensation,
-      this.runConnections.throughput.browserProtocol,
-      this.runConnections.throughput.target?.tls,
-      this.runConnections.throughput.clientIpVersion,
-    ),
+    this.#estimateResultWire(this.stageResults.download, "download"),
   );
 
   uploadCompensation = $derived<CompensationEstimate>(
-    estimateResultCompensation(
-      this.stageResults.upload,
-      "upload",
-      this.config.compensation,
-      this.runConnections.throughput.browserProtocol,
-      this.runConnections.throughput.target?.tls,
-      this.runConnections.throughput.clientIpVersion,
-    ),
+    this.#estimateResultWire(this.stageResults.upload, "upload"),
   );
+
+  liveBidirectionalCompensation = $derived.by<CompensationEstimate>(() => {
+    const lanes = this.liveBidirectional ?? { down: 0, up: 0 };
+    return combineCompensationEstimates([
+      this.#estimateLiveWire(lanes.down, "download"),
+      this.#estimateLiveWire(lanes.up, "upload"),
+    ]);
+  });
+
+  bidirectionalCompensation = $derived.by<CompensationEstimate>(() => {
+    const result = this.result?.bidirectional;
+    return combineCompensationEstimates([
+      this.#estimateResultWire(result?.down ?? null, "download"),
+      this.#estimateResultWire(result?.up ?? null, "upload"),
+    ]);
+  });
+
+  finalCompensation = $derived.by<CompensationEstimate>(() => {
+    if (this.result?.bidirectional) return this.bidirectionalCompensation;
+    if (this.stageResults.upload) return this.uploadCompensation;
+    return this.downloadCompensation;
+  });
 
   #peakBytesPerSec = $derived.by(() => {
     let peak = 0;

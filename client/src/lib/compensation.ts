@@ -34,6 +34,58 @@ export interface CompensationEstimate {
   available: boolean;
 }
 
+/** Combine independently modeled directions without re-estimating their
+ * canonical goodput. This keeps bidirectional wire occupancy equal to the sum
+ * of its lanes even when their measured rates differ. */
+export function combineCompensationEstimates(
+  estimates: readonly CompensationEstimate[],
+): CompensationEstimate {
+  const active = estimates.filter(
+    (estimate) => estimate.measuredBytesPerSec > 0,
+  );
+  const representative = active[0] ?? estimates[0];
+  const measuredBytesPerSec = estimates.reduce(
+    (sum, estimate) => sum + estimate.measuredBytesPerSec,
+    0,
+  );
+  const estimatedBytesPerSec = estimates.reduce(
+    (sum, estimate) => sum + estimate.estimatedBytesPerSec,
+    0,
+  );
+  const confidenceRank: Record<CompensationConfidence, number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
+  const confidence = active.reduce<CompensationConfidence>(
+    (lowest, estimate) =>
+      confidenceRank[estimate.confidence] > confidenceRank[lowest]
+        ? estimate.confidence
+        : lowest,
+    "high",
+  );
+
+  return {
+    measuredBytesPerSec,
+    estimatedBytesPerSec,
+    lowerBytesPerSec: estimates.reduce(
+      (sum, estimate) => sum + estimate.lowerBytesPerSec,
+      0,
+    ),
+    upperBytesPerSec: estimates.reduce(
+      (sum, estimate) => sum + estimate.upperBytesPerSec,
+      0,
+    ),
+    totalMultiplier:
+      measuredBytesPerSec > 0 ? estimatedBytesPerSec / measuredBytesPerSec : 1,
+    confidence,
+    factors: representative?.factors ?? [],
+    transport: representative?.transport ?? "http1-clear",
+    assumptions: representative?.assumptions ?? [],
+    available: estimates.every((estimate) => estimate.available),
+  };
+}
+
 const WIRE = {
   ethernetBytes: 38, // 14 MAC + 4 FCS + 8 preamble/SFD + 12 inter-frame gap
   vlanBytes: 4,

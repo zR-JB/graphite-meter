@@ -5,6 +5,11 @@
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
+  import type { CompensationEstimate } from "../compensation";
+  import {
+    presentWireEstimate,
+    type WirePresentation,
+  } from "../wirePresentation";
 
   interface Props {
     compact?: boolean;
@@ -19,11 +24,7 @@
       const live = store.liveCompensation;
       return {
         measuredBytesPerSec: live.measuredBytesPerSec,
-        estimatedBytesPerSec: live.estimatedBytesPerSec,
-        lowerBytesPerSec: live.lowerBytesPerSec,
-        upperBytesPerSec: live.upperBytesPerSec,
-        available: live.available,
-        multiplier: live.totalMultiplier,
+        compensation: live,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
@@ -37,11 +38,7 @@
         : store.uploadCompensation;
     return {
       measuredBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
-      estimatedBytesPerSec: compensation.estimatedBytesPerSec,
-      lowerBytesPerSec: compensation.lowerBytesPerSec,
-      upperBytesPerSec: compensation.upperBytesPerSec,
-      available: compensation.available,
-      multiplier: compensation.totalMultiplier,
+      compensation,
       band: stageResult?.band ?? stability?.band ?? "low",
       score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
@@ -63,6 +60,7 @@
         score: 0,
         active: true,
         has: live.down + live.up > 0,
+        compensation: store.liveBidirectionalCompensation,
       };
     }
     const result = store.result?.bidirectional;
@@ -76,6 +74,7 @@
       score: result?.down.stabilityScore ?? 0,
       active: false,
       has: !!result,
+      compensation: store.bidirectionalCompensation,
     };
   });
 
@@ -103,14 +102,6 @@
     };
   });
 
-  function lifted(multiplier: number): boolean {
-    return multiplier > 1.0005;
-  }
-
-  function pctLift(multiplier: number): string {
-    return `+${((multiplier - 1) * 100).toFixed(1)}%`;
-  }
-
   const showPing = $derived(
     store.runConfig.stages.latency && (ping.active || ping.has),
   );
@@ -130,10 +121,7 @@
 
   const showWire = $derived(store.showWireEstimates);
 
-  type CardWire =
-    | { kind: "lift"; num: string; pct: string }
-    | { kind: "flat"; text: string }
-    | null;
+  type CardWire = WirePresentation | null;
   interface CardVM {
     key: string;
     icon: string;
@@ -153,20 +141,15 @@
 
   function wireFor(m: {
     has: boolean;
-    multiplier: number;
-    estimatedBytesPerSec: number;
-    available: boolean;
+    compensation: CompensationEstimate;
   }): CardWire {
-    if (!showWire) return null;
-    if (m.has && !m.available)
-      return { kind: "flat", text: "loopback — no physical wire" };
-    if (m.has && lifted(m.multiplier))
-      return {
-        kind: "lift",
-        num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
-        pct: pctLift(m.multiplier),
-      };
-    return { kind: "flat", text: m.has ? "no overhead applied" : "" };
+    if (!showWire || !m.has) return null;
+    return presentWireEstimate(
+      m.compensation,
+      store.runConfig.compensation.profile,
+      (bytesPerSec) =>
+        `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`,
+    );
   }
 
   function transferCard(
@@ -218,7 +201,7 @@
         sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
           : undefined,
-        wire: null,
+        wire: wireFor(bidi),
       });
     if (showPing)
       out.push({
@@ -272,15 +255,12 @@
       <div class="sub">{c.sub}</div>
     {/if}
     {#if c.wire}
-      <div class="est">
-        {#if c.wire.kind === "lift"}
-          <span class="est-arrow">→</span>
-          <span class="est-num">{c.wire.num}</span>
-          <span class="est-tag" use:tooltip={JARGON.wireRate}
-            >wire {c.wire.pct}</span
-          >
-        {:else}
-          <span class="est-flat">{c.wire.text}</span>
+      <div class="est" use:tooltip={c.wire.tooltip}>
+        <span class:est-num={c.wire.kind === "estimate"} class="est-text"
+          >{c.wire.text}</span
+        >
+        {#if c.wire.kind === "estimate"}
+          <span class="est-tag">{c.wire.lift}</span>
         {/if}
       </div>
     {/if}
@@ -295,6 +275,9 @@
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
     </span>
+    {#if c.wire?.kind === "estimate"}
+      <span class="chip-wire" use:tooltip={c.wire.tooltip}>{c.wire.text}</span>
+    {/if}
   </div>
 {/snippet}
 
@@ -499,10 +482,10 @@
     font-variant-numeric: tabular-nums;
     font-size: 12px;
   }
-  .est-arrow {
+  .est-text {
     color: var(--text-soft);
   }
-  .est-num {
+  .est-text.est-num {
     font-weight: 700;
     color: var(--brand-strong);
   }
@@ -510,10 +493,6 @@
     color: var(--text-soft);
     font-size: 10px;
     letter-spacing: 0.02em;
-  }
-  .est-flat {
-    color: var(--text-soft);
-    font-size: 11px;
   }
 
   /* Guided empty-state line: a quiet invitation while there is no data. */
@@ -525,9 +504,9 @@
     color: var(--text-soft);
   }
 
-  /* Compact strip: one slim row per finished or active stage, carrying icon,
-     label, and number. Earlier stages stay visible while the next one runs.
-     No card chrome, pip, or wire-estimate line. */
+  /* Compact strip: one slim row per finished or active stage. Earlier stages
+     stay visible while the next one runs, including the same secondary wire
+     estimate model used by the gauge and full cards. */
   .result-chips {
     display: flex;
     flex-direction: column;
@@ -588,5 +567,20 @@
     font-size: 10px;
     font-weight: 700;
     color: var(--text-soft);
+  }
+  .chip-wire {
+    flex: none;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  @media (max-width: 560px) {
+    .chip-wire {
+      max-width: 38%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 </style>

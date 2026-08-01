@@ -341,6 +341,13 @@ while the UI receives phase-aligned 200ms median/P95/max/loss buckets. Gauge and
 robust recent latency scale; chart lines are straight and break at phase, loss, stall, and gap
 boundaries rather than adding another smoothing curve.
 
+Wire-rate presentation is likewise centralized. The store independently models each measured
+direction from canonical goodput and sums those lane estimates for bidirectional stages;
+`wirePresentation.ts` owns the estimate label and full assumptions tooltip used by the live gauge,
+compact cards, final cards, and completed gauge. The estimate is default-on but remains secondary:
+it never drives the headline, dial, chart, confidence, or result reducer. Loopback is explicitly
+treated as having no physical-wire estimate, and an opt-out hides only this presentation model.
+
 Each run enters a visible `connecting` phase while the selected target is probed and verified.
 Only after that succeeds does the measurement timeline start. Stage preparation may also be
 asynchronous: `RunnerCore` holds that stage at zero until `onStageBegin` resolves, then gives the

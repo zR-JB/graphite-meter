@@ -45,7 +45,7 @@ test("adaptive throughput reports the final plateau after stability recovers", (
     push(accum, 1000);
   }
   // Break the first plateau, then settle at a higher rate. The old reducer
-  // remained anchored near the first plateau's glide-arm sample.
+  // remained anchored near the first plateau's confirmation candidate.
   for (let i = 0; i < 20; i++) {
     const v = i % 2 === 0 ? 100 : 2000;
     samples.push(v);

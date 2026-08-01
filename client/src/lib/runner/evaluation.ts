@@ -85,8 +85,8 @@ export class RunAccumulator {
   #latFinalScore = 0;
   #biFinalScore = 0;
 
-  // Latency retains its existing arm-to-end median rule. Throughput result
-  // selection is independent of the glide arm and reads the final stable run.
+  // Latency uses a candidate-to-end median rule. Throughput result selection is
+  // independent of the confirmation candidate and reads the final stable run.
   #latEarlyStopStart = -1;
   #latEarlyStopCandidateStart = -1;
 
