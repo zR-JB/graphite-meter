@@ -373,17 +373,19 @@ is therefore never paired with a scale from another time domain. Isolated tails 
 clipping markers. Chart lines are
 straight, render the first closed bucket as a point, and break at phase,
 loss, stall, and gap boundaries rather than adding another smoothing curve. The one live stability
-snapshot that gates adaptive completion also drives the compact result pip for latency, one-way
-transfer, and combined bidirectional phases; the UI never manufactures a second confidence state.
+snapshot gates adaptive completion but remains a control signal while a phase is running. Compact
+results show only the measured value, so ordinary ramp-up is not presented as a premature
+low-stability verdict. Finalized stability appears once in the completed result card; the UI never
+manufactures a second confidence state.
 
-Wire-rate presentation is likewise centralized. The store independently models each measured
-direction from canonical goodput and sums those lane estimates for bidirectional stages;
-`wirePresentation.ts` owns the estimate label and full assumptions tooltip used by the live gauge,
-compact cards, final cards, and completed gauge. Every estimate carries the profile that produced
-its assumptions, so editable settings cannot make the tooltip contradict its calculation. The
-estimate is default-on but remains secondary: it never drives the headline, dial, chart, confidence,
-or result reducer. Loopback is explicitly treated as having no physical-wire estimate, and an opt-out
-hides only this presentation model.
+Wire-rate calculation is centralized in the store. It independently models each measured direction
+from canonical goodput and keeps the profile that produced its assumptions, so later settings edits
+cannot alter a completed result. The optional estimate is default-on but intentionally absent from
+the live gauge and compact stage rows: those surfaces show only canonical measured goodput. A concise
+secondary line appears once in each completed one-way result card, with the existing short wire-rate
+explanation on its tag. It never drives the headline, dial, chart, confidence, or result reducer.
+Loopback is explicitly identified as having no physical wire, and opting out hides only that final
+secondary line.
 
 Each run enters a visible `connecting` phase while the selected target is probed and verified.
 Only after that succeeds does the measurement timeline start. Stage preparation may also be

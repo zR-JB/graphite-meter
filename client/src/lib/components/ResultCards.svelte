@@ -5,11 +5,6 @@
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
-  import type { CompensationEstimate } from "../compensation";
-  import {
-    presentWireEstimate,
-    type WirePresentation,
-  } from "../wirePresentation";
 
   interface Props {
     compact?: boolean;
@@ -24,7 +19,9 @@
       const live = store.liveCompensation;
       return {
         measuredBytesPerSec: live.measuredBytesPerSec,
-        compensation: live,
+        estimatedBytesPerSec: live.estimatedBytesPerSec,
+        available: live.available,
+        multiplier: live.totalMultiplier,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
@@ -38,7 +35,9 @@
         : store.uploadCompensation;
     return {
       measuredBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
-      compensation,
+      estimatedBytesPerSec: compensation.estimatedBytesPerSec,
+      available: compensation.available,
+      multiplier: compensation.totalMultiplier,
       band: stageResult?.band ?? stability?.band ?? "low",
       score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
@@ -61,7 +60,6 @@
         score: stability?.score ?? 0,
         active: true,
         has: live.down + live.up > 0,
-        compensation: store.liveBidirectionalCompensation,
       };
     }
     const result = store.result?.bidirectional;
@@ -75,9 +73,16 @@
       score: result?.down.stabilityScore ?? 0,
       active: false,
       has: !!result,
-      compensation: store.bidirectionalCompensation,
     };
   });
+
+  function lifted(multiplier: number): boolean {
+    return multiplier > 1.0005;
+  }
+
+  function pctLift(multiplier: number): string {
+    return `+${((multiplier - 1) * 100).toFixed(1)}%`;
+  }
 
   const ping = $derived.by(() => {
     const stability = store.liveStability.latency;
@@ -122,7 +127,10 @@
 
   const showWire = $derived(store.showWireEstimates);
 
-  type CardWire = WirePresentation | null;
+  type CardWire =
+    | { kind: "lift"; num: string; pct: string }
+    | { kind: "flat"; text: string }
+    | null;
   interface CardVM {
     key: string;
     icon: string;
@@ -142,14 +150,20 @@
 
   function wireFor(m: {
     has: boolean;
-    compensation: CompensationEstimate;
+    multiplier: number;
+    estimatedBytesPerSec: number;
+    available: boolean;
   }): CardWire {
     if (!showWire || !m.has) return null;
-    return presentWireEstimate(
-      m.compensation,
-      (bytesPerSec) =>
-        `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`,
-    );
+    if (!m.available)
+      return { kind: "flat", text: "loopback — no physical wire" };
+    if (lifted(m.multiplier))
+      return {
+        kind: "lift",
+        num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
+        pct: pctLift(m.multiplier),
+      };
+    return { kind: "flat", text: "no overhead applied" };
   }
 
   function transferCard(
@@ -167,7 +181,7 @@
       term: false,
       active: model.active,
       hasVal,
-      showPip: hasVal,
+      showPip: hasVal && !model.active,
       band: model.band,
       score: model.score,
       num: hasVal ? fmtSpeed(shown) : dash,
@@ -193,7 +207,7 @@
         term: false,
         active: bidi.active,
         hasVal: bidi.has,
-        showPip: bidi.has,
+        showPip: bidi.has && !bidi.active,
         band: bidi.band,
         score: bidi.score,
         num: bidi.has ? fmtSpeed(bidiInUnit) : dash,
@@ -201,7 +215,7 @@
         sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
           : undefined,
-        wire: wireFor(bidi),
+        wire: null,
       });
     if (showPing)
       out.push({
@@ -212,7 +226,7 @@
         term: true,
         active: ping.active,
         hasVal: ping.has,
-        showPip: ping.has,
+        showPip: ping.has && !ping.active,
         band: ping.band,
         score: ping.score,
         num:
@@ -255,12 +269,15 @@
       <div class="sub">{c.sub}</div>
     {/if}
     {#if c.wire}
-      <div class="est" use:tooltip={c.wire.tooltip}>
-        <span class:est-num={c.wire.kind === "estimate"} class="est-text"
-          >{c.wire.text}</span
-        >
-        {#if c.wire.kind === "estimate"}
-          <span class="est-tag">{c.wire.lift}</span>
+      <div class="est">
+        {#if c.wire.kind === "lift"}
+          <span class="est-arrow">→</span>
+          <span class="est-num">{c.wire.num}</span>
+          <span class="est-tag" use:tooltip={JARGON.wireRate}
+            >wire {c.wire.pct}</span
+          >
+        {:else}
+          <span class="est-flat">{c.wire.text}</span>
         {/if}
       </div>
     {/if}
@@ -271,20 +288,10 @@
   <div class="result-chip" class:active={c.active}>
     <span class="ico {c.accent}">{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
-    {#if c.showPip}
-      <span
-        class="pip pip-{c.band}"
-        use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
-        >{c.band}</span
-      >
-    {/if}
     <span class="chip-val">
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
     </span>
-    {#if c.wire?.kind === "estimate"}
-      <span class="chip-wire" use:tooltip={c.wire.tooltip}>{c.wire.text}</span>
-    {/if}
   </div>
 {/snippet}
 
@@ -489,10 +496,10 @@
     font-variant-numeric: tabular-nums;
     font-size: 12px;
   }
-  .est-text {
+  .est-arrow {
     color: var(--text-soft);
   }
-  .est-text.est-num {
+  .est-num {
     font-weight: 700;
     color: var(--brand-strong);
   }
@@ -500,6 +507,10 @@
     color: var(--text-soft);
     font-size: 10px;
     letter-spacing: 0.02em;
+  }
+  .est-flat {
+    color: var(--text-soft);
+    font-size: 11px;
   }
 
   /* Guided empty-state line: a quiet invitation while there is no data. */
@@ -511,9 +522,9 @@
     color: var(--text-soft);
   }
 
-  /* Compact strip: one slim row per finished or active stage. Earlier stages
-     stay visible while the next one runs, including the same secondary wire
-     estimate model used by the gauge and full cards. */
+  /* Compact strip: one slim row per finished or active stage, carrying icon,
+     label, and number. Earlier stages stay visible while the next one runs.
+     No card chrome, confidence verdict, or wire-estimate line. */
   .result-chips {
     display: flex;
     flex-direction: column;
@@ -556,12 +567,6 @@
     font-weight: 700;
     color: var(--text-soft);
   }
-  .result-chip .pip {
-    flex: none;
-    margin-left: 0;
-    padding: 1px 5px;
-    font-size: 8px;
-  }
   .chip-val {
     flex: none;
     display: flex;
@@ -580,20 +585,5 @@
     font-size: 10px;
     font-weight: 700;
     color: var(--text-soft);
-  }
-  .chip-wire {
-    flex: none;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: 10px;
-    color: var(--text-muted);
-  }
-  @media (max-width: 560px) {
-    .chip-wire {
-      max-width: 38%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
   }
 </style>

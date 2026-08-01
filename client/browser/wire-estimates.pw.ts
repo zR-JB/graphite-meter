@@ -16,7 +16,7 @@ async function configureShortDownload(page: Page): Promise<void> {
     await settings.getByLabel(label).fill(value);
 }
 
-test("default wire estimates stay secondary across live and completed views", async ({
+test("default wire estimates stay out of live measurement and concise after completion", async ({
   page,
 }) => {
   await page.goto("/?engine=dummy");
@@ -24,17 +24,16 @@ test("default wire estimates stay secondary across live and completed views", as
   await expect(page.getByLabel("Show estimated wire rate")).toBeChecked();
 
   await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(page.locator(".gauge-wire")).toContainText("wire estimate");
-  await expect(page.locator(".result-chip .chip-wire")).toContainText(
-    "wire estimate",
-  );
+  await expect(page.locator(".gauge-value")).not.toHaveText("—");
+  await expect(page.locator(".metric-wrap")).not.toContainText(/wire/i);
+  await expect(page.locator(".result-chip")).not.toContainText(/wire/i);
+  await expect(page.locator(".result-card .est")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Run the test again" }),
   ).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator(".gauge-wire")).toContainText("wire estimate");
-  await expect(page.locator(".result-card .est")).toContainText(
-    "wire estimate",
-  );
+  const estimate = page.locator(".result-card .est");
+  await expect(estimate).toContainText("wire +");
+  await expect(estimate).not.toContainText("wire estimate");
 });
 
 test("a persisted opt-out hides only wire-estimate presentation", async ({
@@ -58,9 +57,7 @@ test("a persisted opt-out hides only wire-estimate presentation", async ({
 
   await page.getByRole("button", { name: "Start the speed test" }).click();
   await expect(page.locator(".gauge-value")).not.toHaveText("—");
-  await expect(
-    page.locator(".gauge-wire, .chip-wire, .result-card .est"),
-  ).toHaveCount(0);
+  await expect(page.locator(".result-card .est")).toHaveCount(0);
 });
 
 test("loopback reports that no physical-wire estimate exists", async ({
@@ -76,11 +73,10 @@ test("loopback reports that no physical-wire estimate exists", async ({
   await settings.getByLabel("Connection profile").selectOption("loopback");
 
   await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(page.locator(".gauge-wire, .chip-wire")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Run the test again" }),
   ).toBeVisible({ timeout: 5_000 });
   await expect(page.locator(".result-card .est")).toContainText(
-    "no physical-wire estimate",
+    "loopback — no physical wire",
   );
 });

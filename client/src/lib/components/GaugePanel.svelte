@@ -8,7 +8,6 @@
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
-  import { presentWireEstimate } from "../wirePresentation";
   import { gaugeLatencyPresentation } from "./gaugeLatency";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
@@ -100,24 +99,6 @@
       value: fmtSpeed(store.toUnit(store.liveTransferBytesPerSec)),
       unit: store.unitLabel,
     };
-  });
-
-  const wire = $derived.by(() => {
-    if (!store.showWireEstimates || completedKind === "latency") return null;
-    const estimate =
-      store.phase === "complete"
-        ? store.finalCompensation
-        : store.phase === "bidirectional"
-          ? store.liveBidirectionalCompensation
-          : store.phase === "download" || store.phase === "upload"
-            ? store.liveCompensation
-            : null;
-    if (!estimate?.available || estimate.measuredBytesPerSec <= 0) return null;
-    return presentWireEstimate(
-      estimate,
-      (bytesPerSec) =>
-        `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`,
-    );
   });
 
   const STAGE_NAME: Record<string, string> = {
@@ -279,9 +260,6 @@
       <div class="metric-wrap">
         <span class="gauge-value">{display.value}</span>
         {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
-        {#if wire?.kind === "estimate"}
-          <span class="gauge-wire" use:tooltip={wire.tooltip}>{wire.text}</span>
-        {/if}
         {#if hint || status || failNotes.length}
           <div class="gauge-notes">
             {#each failNotes as note (note)}<span class="gauge-fail"
@@ -453,18 +431,6 @@
     letter-spacing: 0.02em;
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
-  }
-  .gauge-wire {
-    margin-top: var(--space-1);
-    max-width: 82%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: clamp(10px, 3.4cqmin, 13px);
-    color: var(--text-muted);
-    pointer-events: auto;
   }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("active bidirectional results present the emitted confidence", async ({
+test("live results stay measurement-first and defer confidence verdicts", async ({
   page,
 }) => {
   await page.goto("/?engine=dummy");
@@ -23,7 +23,13 @@ test("active bidirectional results present the emitted confidence", async ({
   await page.getByRole("button", { name: "Start the speed test" }).click();
   const bidirectional = page.locator(".result-chip", { hasText: "Bi-dir" });
   await expect(bidirectional).toBeVisible();
-  await expect(bidirectional.locator(".pip")).toHaveText("high", {
-    timeout: 8_000,
-  });
+  await expect(bidirectional.locator(".pip")).toHaveCount(0);
+  await expect(bidirectional).not.toContainText(/wire/i);
+  await expect(bidirectional.locator(".chip-val .num")).not.toHaveText("—");
+
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible({ timeout: 10_000 });
+  const completed = page.locator(".result-card", { hasText: "Bi-dir" });
+  await expect(completed.locator(".pip")).toHaveText("high");
 });
