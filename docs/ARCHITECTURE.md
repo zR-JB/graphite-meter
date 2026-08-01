@@ -339,6 +339,11 @@ preset. The desired sample floor is capped by the actual phase budget after rese
 time and by the fixed confidence horizon. Latency also uses the selected fixed ping interval from the
 same cadence table as the real and dummy engines. This keeps short/medium/long tests eligible at every
 fixed cadence without weakening reply-driven evidence merely because the measured path itself is slow.
+At the warmup-to-measure boundary, the ping worker re-anchors fixed cadence and attempts one measured
+PING immediately. Pending PINGs retain their send-time warmup/measurement attribution, so a warmup
+reply arriving after that boundary cannot become measured evidence. The fixed-cadence feasibility
+policy can therefore count the synchronized boundary send instead of assuming an accidental timer
+alignment.
 
 Stall presentation is also runner-owned. The core emits the shared transition to zero consumed by
 the gauge, cards, and chart, while synthetic transition values never enter confidence or result

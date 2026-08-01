@@ -290,6 +290,8 @@ export function confidenceSampleFloor(
     // sampling delay. Do not lower its evidence target when the path yields too
     // few independent outcomes.
     if (intervalMs == null) return requested;
+    // The worker re-anchors fixed cadence and attempts a measured send at the
+    // phase boundary, so fixed-capacity math may include that first outcome.
     capacity = Math.min(
       Math.ceil(LATENCY_CONFIDENCE_WINDOW_MS / intervalMs),
       1 + Math.floor(candidateBudgetMs / intervalMs),

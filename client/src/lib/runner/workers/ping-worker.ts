@@ -96,8 +96,15 @@ let reportGapMs = 20;
 let lossK = 4;
 let lossFloorMs = 250;
 
+interface PendingPing {
+  sentAt: number;
+  /** Attribution is fixed at send time so a warmup PONG delivered after the
+   * measurement boundary cannot become measured evidence retroactively. */
+  measured: boolean;
+}
+
 // Send/pending state.
-const pending = new Map<number, number>(); // id → sendTime (performance.now())
+const pending = new Map<number, PendingPing>();
 const graveyard = new Map<number, number>(); // evicted id → sendTime (late-pong learning)
 let nextId = 0; // client-owned monotonic uint32
 let replyHeadId: number | null = null;
@@ -152,6 +159,9 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       }
       measuring = true;
       lastReportAt = 0; // report the first measured sample promptly
+      // Fixed cadence is re-anchored at the lifecycle boundary. Without this,
+      // its warmup timer phase can defer the first measured PING by intervalMs.
+      if (!replyDriven) scheduler?.restartNow();
       break;
   }
 };
@@ -352,14 +362,14 @@ function onFrame(data: unknown): void {
   }
   if (frame.op !== "PONG") return;
 
-  const sent = pending.get(frame.id);
-  if (sent !== undefined) {
+  const ping = pending.get(frame.id);
+  if (ping !== undefined) {
     pending.delete(frame.id);
-    const rtt = recv - sent;
+    const rtt = recv - ping.sentAt;
     rttEstimate = observeRtt(rttEstimate, rtt); // always: keeps the loss timeout accurate
     // Reply-driven localhost sampling can outrun the UI. Only downsample what
     // crosses the worker boundary; wire pacing and RTT timestamps stay intact.
-    if (measuring && recv - lastReportAt >= reportGapMs) {
+    if (ping.measured && recv - lastReportAt >= reportGapMs) {
       lastReportAt = recv;
       outbox.push(pingSample(rtt, false, recv));
     }
@@ -384,7 +394,7 @@ function sendPing(now: number): void {
   // The in-flight window is tiny next to 2^32, so a wrapped id cannot collide
   // with a still-pending one.
   nextId = (nextId + 1) >>> 0;
-  pending.set(id, now);
+  pending.set(id, { sentAt: now, measured: measuring });
   if (replyDriven) replyHeadId = id;
   trySend(encode({ op: "PING", id }));
 }
@@ -415,13 +425,13 @@ function sweep(): void {
   const timeout = lossTimeout(rttEstimate, lossK, lossFloorMs, LOSS_CEIL_MS);
   let evicted = false;
   let replyHeadEvicted = false;
-  for (const [id, sent] of pending) {
-    if (now - sent > timeout) {
+  for (const [id, ping] of pending) {
+    if (now - ping.sentAt > timeout) {
       pending.delete(id);
-      rememberEvicted(id, sent);
+      rememberEvicted(id, ping.sentAt);
       evicted = true;
       if (id === replyHeadId) replyHeadEvicted = true;
-      if (measuring) outbox.push(pingSample(now - sent, true, now));
+      if (ping.measured) outbox.push(pingSample(now - ping.sentAt, true, now));
     }
   }
   // A timed-out request completes one chain step. Fixed pacing still respects

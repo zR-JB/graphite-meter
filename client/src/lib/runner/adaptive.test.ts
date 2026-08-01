@@ -251,6 +251,8 @@ test("latency evidence policy keeps every fixed cadence eligible across shipped 
       const confidence = latencyConfidence(
         timed(Array(floor).fill(20), intervalMs),
       );
+      // Fixed cadence is explicitly re-anchored with a send at measurement
+      // start, so the nth ideal outcome follows (n - 1) intervals later.
       const armAt = Math.max((floor - 1) * intervalMs, durationMs * coverage);
       expect(
         shouldExitPhase({

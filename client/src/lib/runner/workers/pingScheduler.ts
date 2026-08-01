@@ -43,6 +43,17 @@ export class PingScheduler {
     this.#lastSendAt = null;
   }
 
+  /** Re-anchor a running cadence at an explicit lifecycle boundary and attempt
+   * one send immediately. Fixed measurement phases use this so warmup timer
+   * alignment cannot postpone their first eligible ping by a full interval. */
+  restartNow(): void {
+    if (!this.#running) return;
+    if (this.#timer !== null) this.clock.clearTimeout(this.#timer);
+    this.#timer = null;
+    this.#lastSendAt = null;
+    this.#trySend();
+  }
+
   /** Change cadence without resetting the last-send boundary or sending a
    * catch-up ping. */
   setInterval(intervalMs: number): void {
