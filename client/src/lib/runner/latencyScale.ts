@@ -22,6 +22,19 @@ function tierFor(target: number): number {
   );
 }
 
+function scaleForMedians(medians: readonly number[]): number {
+  const valid = medians.filter(
+    (median) => Number.isFinite(median) && median >= 0,
+  );
+  if (!valid.length) return LATENCY_SCALE_LADDER_MS[0];
+  return tierFor(percentile(valid, 95) * LATENCY_SCALE_HEADROOM);
+}
+
+/** Scale a gauge fallback that has a value but no presentation bucket yet. */
+export function latencyScaleForReading(rttMs: number): number {
+  return scaleForMedians([rttMs]);
+}
+
 /** Robust latency domain for a complete set of presentation buckets. Unlike
  * the live controller this has no recency or dwell state: terminal charts show
  * the whole run, so their domain must be derived from that same whole run.
@@ -35,8 +48,7 @@ export function latencyScaleForHistory(
       ? []
       : [bucket.medianRttMs],
   );
-  if (!medians.length) return LATENCY_SCALE_LADDER_MS[0];
-  return tierFor(percentile(medians, 95) * LATENCY_SCALE_HEADROOM);
+  return scaleForMedians(medians);
 }
 
 /** True when any visible part of a latency bucket exceeds the shared domain.

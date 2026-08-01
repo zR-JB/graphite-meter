@@ -351,10 +351,11 @@ break. The ping worker stamps every success and declared loss with its monotonic
 resulting required `LatencyObservation`. Worker batching and main-thread delivery delay therefore do
 not collapse outcomes or make old evidence look new.
 
-Gauge and live chart share one robust recent latency scale with shrink dwell. A terminal chart spans
-the whole run and recomputes the same robust domain from the whole bucket history, so the last live
-window is never applied retroactively to older phases. Isolated tails remain explicit clipping
-markers. Chart lines are straight, render the first closed bucket as a point, and break at phase,
+Gauge and live chart share one robust recent latency scale with shrink dwell. Before the first live
+bucket, the gauge derives its scale from the displayed pre-test fallback. Terminal gauge and chart
+both recompute the same robust domain from the whole bucket history, so a value is never paired with
+a scale from another time domain. Isolated tails remain explicit clipping markers. Chart lines are
+straight, render the first closed bucket as a point, and break at phase,
 loss, stall, and gap boundaries rather than adding another smoothing curve. The one live stability
 snapshot that gates adaptive completion also drives the compact result pip for latency, one-way
 transfer, and combined bidirectional phases; the UI never manufactures a second confidence state.

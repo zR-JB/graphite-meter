@@ -9,6 +9,7 @@
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
   import { presentWireEstimate } from "../wirePresentation";
+  import { gaugeLatencyPresentation } from "./gaugeLatency";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -23,13 +24,23 @@
   const EMPTY_DISPLAY = { value: "—", unit: "" };
   let completedDisplay = $state(EMPTY_DISPLAY);
   let completedKind = $state<"speed" | "latency">("speed");
+  const gaugeLatency = $derived.by(() => {
+    const metric = store.phase === "complete" ? store.finalMetric : null;
+    return gaugeLatencyPresentation({
+      phase: store.phase,
+      liveRttMs: store.liveRtt,
+      liveScaleMs: store.latencyScaleMs,
+      history: store.latency,
+      completedRttMs: metric?.kind === "latency" ? metric.ms : null,
+    });
+  });
 
   $effect(() => {
     if (store.phase === "latency") {
       completedKind = "latency";
       completedDisplay = store.liveLatencyLost
         ? { value: "lost", unit: "" }
-        : { value: fmtMs(store.liveRtt), unit: "ms" };
+        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     } else if (
       store.phase === "download" ||
       store.phase === "upload" ||
@@ -49,7 +60,7 @@
     if (!metric) return;
     if (metric.kind === "latency") {
       completedKind = "latency";
-      completedDisplay = { value: fmtMs(metric.ms), unit: "ms" };
+      completedDisplay = { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     } else {
       completedKind = "speed";
       completedDisplay = {
@@ -65,7 +76,7 @@
   );
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
-      return TICK_FRACTIONS.map((f) => fmtMs(store.latencyScaleMs * f));
+      return TICK_FRACTIONS.map((f) => fmtMs(gaugeLatency.scaleMs * f));
     const scale = store.displayScaleBytesPerSec;
     return TICK_FRACTIONS.map((f) => fmtSpeed(store.toUnit(scale * f)));
   });
@@ -75,7 +86,7 @@
     if (p === "latency")
       return store.liveLatencyLost
         ? { value: "lost", unit: "" }
-        : { value: fmtMs(store.liveRtt), unit: "ms" };
+        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     if (
       p === "idle" ||
       p === "connecting" ||
@@ -165,7 +176,8 @@
     void store.phase;
     void store.throughput.length;
     void store.latency.length;
-    void store.liveRtt;
+    void gaugeLatency.rttMs;
+    void gaugeLatency.scaleMs;
     void store.liveLatencyLost;
     void store.displayScaleBytesPerSec;
     void store.measuring;
@@ -220,9 +232,9 @@
             ? finalMetric.bytesPerSec
             : store.liveTransferBytesPerSec,
         scaleBytesPerSec: scale,
-        latencyScaleMs: store.latencyScaleMs,
+        latencyScaleMs: gaugeLatency.scaleMs,
         ticks: gaugeTicks,
-        rtt: finalMetric?.kind === "latency" ? finalMetric.ms : store.liveRtt,
+        rtt: gaugeLatency.rttMs,
         completedKind,
       };
     });
