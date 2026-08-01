@@ -236,6 +236,9 @@ export interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
   latencyTarget: () => LatencyTarget | null;
+  /** Monotonic receipt clock for idle samples. Injectable for deterministic
+   *  recency tests; worker RTTs already use their own monotonic clock. */
+  now?: () => number;
 }
 
 /** The persistent idle ping: connectivity indicator plus the preflight RTT
@@ -243,6 +246,7 @@ export interface IdleKeepaliveDeps {
  *  the same time (stopped when a run starts, restarted when it ends). */
 export class IdleKeepalive {
   #deps: IdleKeepaliveDeps;
+  #now: () => number;
   #worker: Worker | null = null;
   #active = false;
   #targetKey = "";
@@ -258,6 +262,7 @@ export class IdleKeepalive {
 
   constructor(deps: IdleKeepaliveDeps) {
     this.#deps = deps;
+    this.#now = deps.now ?? (() => performance.now());
   }
 
   /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
@@ -416,7 +421,8 @@ export class IdleKeepalive {
     }
     const host = this.#deps.host();
     switch (msg.type) {
-      case "samples":
+      case "samples": {
+        const receivedAt = this.#now();
         for (const sample of msg.samples) {
           if (this.#probeCollect && !sample.lost) {
             this.#probeCollect.rtts.push(sample.rtt);
@@ -425,7 +431,7 @@ export class IdleKeepalive {
           }
           host.emit({
             type: "latency",
-            sample: singleLatencyBucket(0, sample.rtt, sample.lost),
+            sample: singleLatencyBucket(receivedAt, sample.rtt, sample.lost),
           });
         }
         if (this.#offline) {
@@ -433,6 +439,7 @@ export class IdleKeepalive {
           host.emit({ type: "connectivity", state: "connected" });
         }
         break;
+      }
       case "stall":
         this.#offline = true;
         host.emit({ type: "connectivity", state: "offline" });

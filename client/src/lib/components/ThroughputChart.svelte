@@ -45,15 +45,6 @@
   function updateHover() {
     engine.setHover(hoverX);
     hover = engine.hoverInfo();
-    if (
-      hover &&
-      hover.bytesPerSec == null &&
-      hover.downBytesPerSec == null &&
-      hover.upBytesPerSec == null &&
-      hover.rtt == null &&
-      hover.pingCount === 0
-    )
-      hover = null;
     return PARKED;
   }
   function onLeave() {

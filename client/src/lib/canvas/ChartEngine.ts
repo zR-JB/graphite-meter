@@ -8,7 +8,11 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { sharedThroughputScale } from "../format";
-import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
+import {
+  hasHoverMeasurements,
+  interpolateConnectedAt,
+  lowerBoundAt,
+} from "./hoverInterp";
 import { presentation, type PresentationHandle } from "./presentation";
 
 export interface ChartData {
@@ -288,14 +292,7 @@ export class ChartEngine implements CanvasEngine {
       if (latencyBucket) break;
     }
     const rtt = latencyBucket?.medianRttMs ?? null;
-    if (
-      bytesPerSec == null &&
-      downBytesPerSec == null &&
-      upBytesPerSec == null &&
-      rtt == null
-    )
-      return null;
-    return {
+    const info: HoverInfo = {
       x,
       t,
       bytesPerSec,
@@ -307,6 +304,7 @@ export class ChartEngine implements CanvasEngine {
       pingCount: latencyBucket?.pingCount ?? 0,
       lossCount: latencyBucket?.lossCount ?? 0,
     };
+    return hasHoverMeasurements(info) ? info : null;
   }
 
   #resolveColors(): void {

@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { interpolateAt, interpolateConnectedAt } from "./hoverInterp";
+import {
+  hasHoverMeasurements,
+  interpolateAt,
+  interpolateConnectedAt,
+} from "./hoverInterp";
 
 const pts = [
   { t: 0, v: 0 },
@@ -79,4 +83,25 @@ test("interpolateConnectedAt refuses to invent a value across a break", () => {
       (left, right) => left.segment === right.segment,
     ),
   ).toBeNull();
+});
+
+test("loss-only latency buckets remain hoverable", () => {
+  expect(
+    hasHoverMeasurements({
+      bytesPerSec: null,
+      downBytesPerSec: null,
+      upBytesPerSec: null,
+      rtt: null,
+      pingCount: 4,
+    }),
+  ).toBe(true);
+  expect(
+    hasHoverMeasurements({
+      bytesPerSec: null,
+      downBytesPerSec: null,
+      upBytesPerSec: null,
+      rtt: null,
+      pingCount: 0,
+    }),
+  ).toBe(false);
 });

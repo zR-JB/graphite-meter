@@ -54,3 +54,21 @@ export function lowerBoundAt<T extends { t: number }>(
   }
   return lo;
 }
+
+/** A hover is meaningful when either transport rates or an observed latency
+ *  bucket exist. Loss-only buckets have no RTT value but retain ping evidence. */
+export function hasHoverMeasurements(info: {
+  bytesPerSec: number | null;
+  downBytesPerSec: number | null;
+  upBytesPerSec: number | null;
+  rtt: number | null;
+  pingCount: number;
+}): boolean {
+  return (
+    info.bytesPerSec != null ||
+    info.downBytesPerSec != null ||
+    info.upBytesPerSec != null ||
+    info.rtt != null ||
+    info.pingCount > 0
+  );
+}

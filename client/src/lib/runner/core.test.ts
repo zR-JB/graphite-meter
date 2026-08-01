@@ -482,6 +482,29 @@ test("stall counts toward the window but blocks finalization until resume", asyn
   expect(core.phase).toBe("complete");
 });
 
+test("latency presentation does not bridge a short stall", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 1_000 } }));
+
+  advance(10);
+  core.ingestLatency(10, true, false);
+  core.stall({ reason: "connection-lost", detail: "test" });
+  advance(100); // below the chart's 600 ms natural-gap threshold
+  core.resume();
+  core.ingestLatency(12, true, false);
+  advance(200);
+  core.ingestLatency(14, true, false);
+
+  const buckets = events.flatMap((event) =>
+    event.type === "latency" ? [event.sample] : [],
+  );
+  expect(buckets.length).toBeGreaterThanOrEqual(2);
+  expect(buckets[0].continuityId).not.toBe(buckets.at(-1)!.continuityId);
+});
+
 test("watchdog auto-stalls a measured phase after prolonged sample silence", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

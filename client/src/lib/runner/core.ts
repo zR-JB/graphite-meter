@@ -629,6 +629,23 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (bucket) this.emit({ type: "latency", sample: bucket });
   }
 
+  /** End every presentation series at a lifecycle boundary and seed latency's
+   *  next bucket with the same continuity generation as throughput. */
+  #breakPresentationContinuity(): void {
+    this.#flushLatencyPresentation();
+    this.#continuityId++;
+    this.#resetLatencyPresentation();
+  }
+
+  #resetLatencyPresentation(): void {
+    this.#latencyBuckets.reset(
+      this.#measuredElapsed,
+      this.#phase,
+      this.#phase !== "latency",
+      this.#continuityId,
+    );
+  }
+
   #updateStability(): boolean {
     const seg = this.#activeSeg;
     if (!seg || seg.phase === "warmup") return false;
@@ -665,8 +682,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stallPresentationStartedAt = this.#stalledSinceWall;
     this.#stallPresentationFrom = { ...this.#presentedRate };
     this.#stallInfo = info;
-    this.#flushLatencyPresentation();
-    this.#continuityId++;
+    this.#breakPresentationContinuity();
     this.#cancelEarlyCandidate();
     if (this.#activeSeg && this.#activeSeg.phase !== "warmup")
       this.#accum.resetPhaseStability(this.#activeSeg.phase);
@@ -681,7 +697,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
     this.#stallPresentationStartedAt = 0;
-    this.#continuityId++;
+    this.#breakPresentationContinuity();
     this.emit({ type: "resume" });
   }
 
@@ -823,12 +839,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#presentedRate = { down: 0, up: 0 };
     this.#continuityId++;
     this.#accum.beginPhase();
-    this.#latencyBuckets.reset(
-      this.#measuredElapsed,
-      this.#phase,
-      this.#phase !== "latency",
-      this.#continuityId,
-    );
+    this.#resetLatencyPresentation();
   }
 
   #hasRegimeCandidate(seg: Segment): boolean {

@@ -60,6 +60,46 @@ test("a superseded readiness wait does not silence the newer one", async () => {
   }
 });
 
+test("idle latency buckets use their monotonic receipt time", () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    let now = 1_250;
+    const events: Parameters<CoreHost["emit"]>[0][] = [];
+    const keepalive = new IdleKeepalive({
+      host: () =>
+        ({
+          emit(event: Parameters<CoreHost["emit"]>[0]) {
+            events.push(event);
+          },
+        }) as unknown as CoreHost,
+      throughputTarget: () => null,
+      latencyTarget: () => target,
+      now: () => now,
+    });
+
+    keepalive.start();
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [{ rtt: 12, lost: false }],
+    });
+    now = 2_500;
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [{ rtt: 0, lost: true }],
+    });
+
+    const samples = events.flatMap((event) =>
+      event.type === "latency" ? [event.sample] : [],
+    );
+    expect(samples.map((sample) => sample.endT)).toEqual([1_250, 2_500]);
+    expect(samples.map((sample) => sample.t)).toEqual([1_250, 2_500]);
+    keepalive.stop();
+  } finally {
+    globalThis.Worker = realWorker;
+  }
+});
+
 test("READY cancels the stage channel's warmup establishment deadline", () => {
   const realWorker = globalThis.Worker;
   const realSetTimeout = globalThis.setTimeout;
