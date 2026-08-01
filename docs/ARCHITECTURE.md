@@ -357,7 +357,10 @@ resulting required `LatencyObservation`. Worker batching and main-thread deliver
 not collapse outcomes or make old evidence look new. Closed presentation windows remain revisionable
 for the same bounded history the UI retains: an observation delivered behind the runner timer
 updates its original event-time bucket, and the store replaces that bucket by phase, start, and
-continuity identity instead of appending a duplicate or moving the observation forward.
+continuity identity instead of appending a duplicate or moving the observation forward. Pure tail
+appends keep the chart's phase index incremental; replacements, ordered insertions, and bounded
+history shifts increment an explicit history revision that wakes and rebuilds every indexed chart
+consumer, keeping both rendered lines and hover lookup on the same bucket objects as the store.
 
 Gauge and live chart share one robust recent latency scale with shrink dwell. Before the first live
 bucket, the gauge derives its scale from the displayed pre-test fallback. Terminal gauge and chart

@@ -96,6 +96,8 @@ class AppStore {
   #latencyScale = new LatencyScaleController();
   throughput = $state<ThroughputSample[]>([]);
   latency = $state<LatencyBucket[]>([]);
+  /** Changes only when latency history is no longer a pure tail append. */
+  latencyRevision = $state(0);
   idleLatency = $state<LatencyBucket[]>([]);
 
   phase = $state<Phase>("idle");
@@ -512,11 +514,12 @@ class AppStore {
         if (event.sample.phase === "idle") {
           upsertLatencyBucket(this.idleLatency, event.sample, MAX_IDLE_SAMPLES);
         } else {
-          upsertLatencyBucket(
+          const mutation = upsertLatencyBucket(
             this.latency,
             event.sample,
             LATENCY_PRESENTATION_HISTORY_LIMIT,
           );
+          if (mutation === "structural-change") this.latencyRevision++;
           this.latencyScaleMs = this.#latencyScale.observe(event.sample);
         }
         break;

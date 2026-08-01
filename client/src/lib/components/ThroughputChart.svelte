@@ -23,6 +23,7 @@
     void store.runSeq;
     void store.throughput.length;
     void store.latency.length;
+    void store.latencyRevision;
     void store.latencyEnabled;
     void store.displayScaleBytesPerSec; // re-arm if the shared scale / pinned ceiling shifts while parked
     void store.latencyScaleMs;
@@ -57,6 +58,7 @@
       () => ({
         throughput: store.throughput,
         latency: store.latency, // raw: the engine buckets the line, axis and hover use raw
+        latencyRevision: store.latencyRevision,
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
         phaseStartedAtMs: store.phaseStartedAtMs,

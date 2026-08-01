@@ -3,6 +3,7 @@ import {
   latencyJitterMs,
   LatencyPresentationBuckets,
   LATENCY_PRESENTATION_BUCKET_MS,
+  singleLatencyBucket,
   upsertLatencyBucket,
 } from "./latencyBuckets";
 import type { LatencyBucket } from "./contract";
@@ -89,6 +90,36 @@ test("revised buckets replace rather than duplicate visible history", () => {
   upsertLatencyBucket(history, revised);
   expect(history).toHaveLength(1);
   expect(history[0].pingCount).toBe(2);
+});
+
+test("history mutations distinguish tail appends from required reindexing", () => {
+  const history: LatencyBucket[] = [];
+  const first = singleLatencyBucket(0, 10, false, "latency");
+  const tail = singleLatencyBucket(400, 40, false, "latency");
+
+  expect(upsertLatencyBucket(history, first)).toBe("tail-append");
+  expect(upsertLatencyBucket(history, tail)).toBe("tail-append");
+  expect(
+    upsertLatencyBucket(
+      history,
+      { ...first, medianRttMs: 20 },
+      Number.POSITIVE_INFINITY,
+    ),
+  ).toBe("structural-change");
+  expect(
+    upsertLatencyBucket(
+      history,
+      singleLatencyBucket(200, 30, false, "latency"),
+      Number.POSITIVE_INFINITY,
+    ),
+  ).toBe("structural-change");
+  expect(
+    upsertLatencyBucket(
+      history,
+      singleLatencyBucket(600, 50, false, "latency"),
+      3,
+    ),
+  ).toBe("structural-change");
 });
 
 test("bucket summaries preserve exact consecutive RTT jitter", () => {

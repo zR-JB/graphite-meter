@@ -18,10 +18,14 @@ import {
   lowerBoundAt,
 } from "./hoverInterp";
 import { presentation, type PresentationHandle } from "./presentation";
+import { LatencyPhaseIndex } from "./latencyPhaseIndex";
 
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencyBucket[];
+  /** Increments when latency history changes anywhere except a pure tail
+   *  append, invalidating incremental chart indexes. */
+  latencyRevision: number;
   /** False when latency is disabled: the latency line and right axis are
    *  suppressed. */
   latencyEnabled: boolean;
@@ -169,15 +173,13 @@ export class ChartEngine implements CanvasEngine {
   #hasThroughputScale = false;
   #indexedThroughput = 0;
   #lastIndexedThroughput: ThroughputSample | undefined;
-  #indexedLatency = 0;
-  #lastIndexedLatency: LatencyBucket | undefined;
   #throughputByLane: Record<ThroughputLane, ThroughputSample[]> = {
     download: [],
     upload: [],
     bidiDown: [],
     bidiUp: [],
   };
-  #latencyByPhase = new Map<Phase, LatencyBucket[]>();
+  #latencyIndex = new LatencyPhaseIndex();
 
   #colors: ThemeColors = {
     download: "#6db0b8",
@@ -284,7 +286,7 @@ export class ChartEngine implements CanvasEngine {
       connected,
     );
     let latencyBucket: LatencyBucket | null = null;
-    for (const lane of this.#latencyByPhase.values()) {
+    for (const lane of this.#latencyIndex.values()) {
       const insertion = lowerBoundAt(lane, t);
       for (const index of [insertion, insertion - 1]) {
         const bucket = lane[index];
@@ -384,10 +386,8 @@ export class ChartEngine implements CanvasEngine {
     this.#hasThroughputScale = false;
     this.#indexedThroughput = 0;
     this.#lastIndexedThroughput = undefined;
-    this.#indexedLatency = 0;
-    this.#lastIndexedLatency = undefined;
     for (const lane of Object.values(this.#throughputByLane)) lane.length = 0;
-    this.#latencyByPhase.clear();
+    this.#latencyIndex.clear();
   }
 
   #update(): void {
@@ -705,23 +705,7 @@ export class ChartEngine implements CanvasEngine {
     this.#indexedThroughput = all.length;
     this.#lastIndexedThroughput = all.at(-1);
 
-    const latency = data.latency;
-    if (
-      latency.length < this.#indexedLatency ||
-      (latency.length === this.#indexedLatency &&
-        latency.at(-1) !== this.#lastIndexedLatency)
-    ) {
-      this.#indexedLatency = 0;
-      this.#latencyByPhase.clear();
-    }
-    for (let i = this.#indexedLatency; i < latency.length; i++) {
-      const sample = latency[i];
-      const lane = this.#latencyByPhase.get(sample.phase) ?? [];
-      if (!lane.length) this.#latencyByPhase.set(sample.phase, lane);
-      lane.push(sample);
-    }
-    this.#indexedLatency = latency.length;
-    this.#lastIndexedLatency = latency.at(-1);
+    this.#latencyIndex.update(data.latency, data.latencyRevision);
   }
 
   #throughputLanes(): {

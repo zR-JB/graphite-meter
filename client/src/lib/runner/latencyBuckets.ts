@@ -161,26 +161,38 @@ function sameLatencyWindow(a: LatencyBucket, b: LatencyBucket): boolean {
   );
 }
 
+export type LatencyHistoryMutation = "tail-append" | "structural-change";
+
 /** Insert a newly closed bucket or replace a late revision in chronological
- * order. The mutation is deliberate: Svelte's reactive arrays observe the same
- * splice/assignment operations previously used for append-only samples. */
+ * order. Return whether cached positional indexes must be rebuilt; pure tail
+ * appends remain eligible for incremental indexing. */
 export function upsertLatencyBucket(
   history: LatencyBucket[],
   bucket: LatencyBucket,
   limit = LATENCY_PRESENTATION_HISTORY_LIMIT,
-): void {
+): LatencyHistoryMutation {
+  let mutation: LatencyHistoryMutation = "tail-append";
   const existing = history.findIndex((sample) =>
     sameLatencyWindow(sample, bucket),
   );
-  if (existing >= 0) history[existing] = bucket;
-  else {
+  if (existing >= 0) {
+    history[existing] = bucket;
+    mutation = "structural-change";
+  } else {
     const following = history.findIndex(
       (sample) => sample.startT > bucket.startT,
     );
     if (following < 0) history.push(bucket);
-    else history.splice(following, 0, bucket);
+    else {
+      history.splice(following, 0, bucket);
+      mutation = "structural-change";
+    }
   }
-  while (history.length > Math.max(0, limit)) history.shift();
+  while (history.length > Math.max(0, limit)) {
+    history.shift();
+    mutation = "structural-change";
+  }
+  return mutation;
 }
 
 export function singleLatencyBucket(
