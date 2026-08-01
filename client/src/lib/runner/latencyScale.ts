@@ -65,22 +65,49 @@ export function latencyBucketExceedsScale(
 
 /** Shared robust latency domain for the gauge and chart. */
 export class LatencyScaleController {
-  #history: { endT: number; median: number }[] = [];
+  #history: {
+    startT: number;
+    endT: number;
+    phase: LatencyBucket["phase"];
+    underLoad: boolean;
+    continuityId: number;
+    median: number;
+  }[] = [];
+  #latestT = 0;
   #scaleMs = LATENCY_SCALE_LADDER_MS[0];
   #shrinkTarget = 0;
   #shrinkSince = 0;
 
   reset(): void {
     this.#history = [];
+    this.#latestT = 0;
     this.#scaleMs = LATENCY_SCALE_LADDER_MS[0];
     this.#shrinkTarget = 0;
     this.#shrinkSince = 0;
   }
 
   observe(bucket: LatencyBucket): number {
-    if (bucket.medianRttMs != null)
-      this.#history.push({ endT: bucket.endT, median: bucket.medianRttMs });
-    const latestT = bucket.endT;
+    if (bucket.medianRttMs != null) {
+      const entry = {
+        startT: bucket.startT,
+        endT: bucket.endT,
+        phase: bucket.phase,
+        underLoad: bucket.underLoad,
+        continuityId: bucket.continuityId,
+        median: bucket.medianRttMs,
+      };
+      const existing = this.#history.findIndex(
+        (sample) =>
+          sample.startT === entry.startT &&
+          sample.phase === entry.phase &&
+          sample.underLoad === entry.underLoad &&
+          sample.continuityId === entry.continuityId,
+      );
+      if (existing >= 0) this.#history[existing] = entry;
+      else this.#history.push(entry);
+    }
+    this.#latestT = Math.max(this.#latestT, bucket.endT);
+    const latestT = this.#latestT;
     this.#history = this.#history.filter(
       (entry) => entry.endT > latestT - LATENCY_SCALE_WINDOW_MS,
     );

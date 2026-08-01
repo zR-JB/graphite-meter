@@ -2,11 +2,20 @@ import type { LatencyBucket, Phase } from "./contract";
 import { median, percentile } from "./stats";
 
 export const LATENCY_PRESENTATION_BUCKET_MS = 200;
+/** Keep the same bounded history in the producer and store so a delayed worker
+ * delivery can revise any bucket the UI can still display. */
+export const LATENCY_PRESENTATION_HISTORY_LIMIT = 1_200;
+
+interface TimedRtt {
+  t: number;
+  value: number;
+  sequence: number;
+}
 
 interface PendingBucket {
   startT: number;
   endT: number;
-  rtts: number[];
+  rtts: TimedRtt[];
   pingCount: number;
   lossCount: number;
 }
@@ -16,6 +25,8 @@ export class LatencyPresentationBuckets {
   #underLoad = false;
   #continuityId = 0;
   #pending: PendingBucket | null = null;
+  #closed: PendingBucket[] = [];
+  #sequence = 0;
 
   reset(
     phaseStartT: number,
@@ -27,16 +38,30 @@ export class LatencyPresentationBuckets {
     this.#underLoad = underLoad;
     this.#continuityId = continuityId;
     this.#pending = this.#empty(phaseStartT);
+    this.#closed = [];
+    this.#sequence = 0;
   }
 
   observe(t: number, rttMs: number, lost: boolean): LatencyBucket[] {
     if (!this.#pending)
       this.reset(t, this.#phase, this.#underLoad, this.#continuityId);
     const emitted = this.closeThrough(t);
-    this.#pending!.pingCount++;
-    if (lost) this.#pending!.lossCount++;
-    else if (Number.isFinite(rttMs))
-      this.#pending!.rtts.push(Math.max(0, rttMs));
+    const pending = this.#pending!;
+    const target =
+      t >= pending.startT
+        ? pending
+        : this.#closed.findLast(
+            (bucket) => t >= bucket.startT && t < bucket.endT,
+          );
+    // The raw accumulator already owns the outcome. If delivery is older than
+    // the bounded visible history, omit it from presentation rather than lie by
+    // moving it into the current window.
+    if (!target) return emitted;
+    this.#record(target, t, rttMs, lost);
+    if (target !== pending) {
+      const revised = this.#summarize(target, target.endT);
+      if (revised) emitted.push(revised);
+    }
     return emitted;
   }
 
@@ -46,9 +71,13 @@ export class LatencyPresentationBuckets {
   closeThrough(t: number): LatencyBucket[] {
     const emitted: LatencyBucket[] = [];
     while (this.#pending && t >= this.#pending.endT) {
-      const endT = this.#pending.endT;
-      const closed = this.#emitPending(endT);
+      const pending = this.#pending;
+      const endT = pending.endT;
+      const closed = this.#summarize(pending, endT);
       if (closed) emitted.push(closed);
+      this.#closed.push(pending);
+      if (this.#closed.length > LATENCY_PRESENTATION_HISTORY_LIMIT)
+        this.#closed.shift();
       this.#pending = this.#empty(endT);
     }
     return emitted;
@@ -64,7 +93,7 @@ export class LatencyPresentationBuckets {
       this.#pending.startT,
       Math.min(this.#pending.endT, atT ?? this.#pending.endT),
     );
-    const bucket = this.#emitPending(endT);
+    const bucket = this.#summarize(this.#pending, endT);
     this.#pending = null;
     return bucket;
   }
@@ -79,23 +108,41 @@ export class LatencyPresentationBuckets {
     };
   }
 
-  #emitPending(endT: number): LatencyBucket | null {
-    const pending = this.#pending;
-    if (!pending || pending.pingCount === 0) return null;
+  #record(
+    bucket: PendingBucket,
+    t: number,
+    rttMs: number,
+    lost: boolean,
+  ): void {
+    bucket.pingCount++;
+    if (lost) bucket.lossCount++;
+    else if (Number.isFinite(rttMs))
+      bucket.rtts.push({
+        t,
+        value: Math.max(0, rttMs),
+        sequence: this.#sequence++,
+      });
+  }
+
+  #summarize(pending: PendingBucket, endT: number): LatencyBucket | null {
+    if (pending.pingCount === 0) return null;
+    const rtts = [...pending.rtts]
+      .sort((a, b) => a.t - b.t || a.sequence - b.sequence)
+      .map((sample) => sample.value);
     let rttDeltaSumMs = 0;
-    for (let i = 1; i < pending.rtts.length; i++)
-      rttDeltaSumMs += Math.abs(pending.rtts[i] - pending.rtts[i - 1]);
+    for (let i = 1; i < rtts.length; i++)
+      rttDeltaSumMs += Math.abs(rtts[i] - rtts[i - 1]);
     return {
       t: pending.startT + (endT - pending.startT) / 2,
       startT: pending.startT,
       endT,
-      medianRttMs: pending.rtts.length ? median(pending.rtts) : null,
-      p95RttMs: pending.rtts.length ? percentile(pending.rtts, 95) : null,
-      maxRttMs: pending.rtts.length ? Math.max(...pending.rtts) : null,
-      firstRttMs: pending.rtts.at(0) ?? null,
-      lastRttMs: pending.rtts.at(-1) ?? null,
+      medianRttMs: rtts.length ? median(rtts) : null,
+      p95RttMs: rtts.length ? percentile(rtts, 95) : null,
+      maxRttMs: rtts.length ? Math.max(...rtts) : null,
+      firstRttMs: rtts.at(0) ?? null,
+      lastRttMs: rtts.at(-1) ?? null,
       rttDeltaSumMs,
-      rttDeltaCount: Math.max(0, pending.rtts.length - 1),
+      rttDeltaCount: Math.max(0, rtts.length - 1),
       pingCount: pending.pingCount,
       lossCount: pending.lossCount,
       underLoad: this.#underLoad,
@@ -103,6 +150,37 @@ export class LatencyPresentationBuckets {
       continuityId: this.#continuityId,
     };
   }
+}
+
+function sameLatencyWindow(a: LatencyBucket, b: LatencyBucket): boolean {
+  return (
+    a.startT === b.startT &&
+    a.phase === b.phase &&
+    a.underLoad === b.underLoad &&
+    a.continuityId === b.continuityId
+  );
+}
+
+/** Insert a newly closed bucket or replace a late revision in chronological
+ * order. The mutation is deliberate: Svelte's reactive arrays observe the same
+ * splice/assignment operations previously used for append-only samples. */
+export function upsertLatencyBucket(
+  history: LatencyBucket[],
+  bucket: LatencyBucket,
+  limit = LATENCY_PRESENTATION_HISTORY_LIMIT,
+): void {
+  const existing = history.findIndex((sample) =>
+    sameLatencyWindow(sample, bucket),
+  );
+  if (existing >= 0) history[existing] = bucket;
+  else {
+    const following = history.findIndex(
+      (sample) => sample.startT > bucket.startT,
+    );
+    if (following < 0) history.push(bucket);
+    else history.splice(following, 0, bucket);
+  }
+  while (history.length > Math.max(0, limit)) history.shift();
 }
 
 export function singleLatencyBucket(

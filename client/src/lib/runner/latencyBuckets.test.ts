@@ -3,7 +3,9 @@ import {
   latencyJitterMs,
   LatencyPresentationBuckets,
   LATENCY_PRESENTATION_BUCKET_MS,
+  upsertLatencyBucket,
 } from "./latencyBuckets";
+import type { LatencyBucket } from "./contract";
 
 test("phase-aligned buckets retain median tail and loss summaries", () => {
   const buckets = new LatencyPresentationBuckets();
@@ -37,6 +39,56 @@ test("closed windows emit without waiting for another observation", () => {
   expect(buckets.closeThrough(199)).toEqual([]);
   expect(buckets.closeThrough(200)).toHaveLength(1);
   expect(buckets.closeThrough(200)).toEqual([]);
+});
+
+test("a late observation revises its original closed window", () => {
+  const buckets = new LatencyPresentationBuckets();
+  buckets.reset(0, "latency", false, 1);
+  buckets.observe(50, 10, false);
+  const history = buckets.closeThrough(200);
+
+  const revised = buckets.observe(150, 100, false);
+  expect(revised).toHaveLength(1);
+  expect(revised[0]).toMatchObject({
+    startT: 0,
+    endT: 200,
+    medianRttMs: 55,
+    firstRttMs: 10,
+    lastRttMs: 100,
+    rttDeltaSumMs: 90,
+    pingCount: 2,
+  });
+  upsertLatencyBucket(history, revised[0]);
+  expect(history).toEqual(revised);
+  expect(buckets.flush(400)).toBeNull();
+});
+
+test("late arrival order does not rewrite observation-time jitter", () => {
+  const buckets = new LatencyPresentationBuckets();
+  buckets.reset(0, "latency", false, 1);
+  buckets.observe(150, 100, false);
+  const history = buckets.closeThrough(200);
+  const [revised] = buckets.observe(50, 10, false);
+  upsertLatencyBucket(history, revised);
+
+  expect(history[0]).toMatchObject({
+    firstRttMs: 10,
+    lastRttMs: 100,
+    rttDeltaSumMs: 90,
+    rttDeltaCount: 1,
+  });
+});
+
+test("revised buckets replace rather than duplicate visible history", () => {
+  const initial = new LatencyPresentationBuckets();
+  initial.reset(0, "latency", false, 1);
+  initial.observe(50, 10, false);
+  const history: LatencyBucket[] = initial.closeThrough(200);
+  const [revised] = initial.observe(150, 20, false);
+
+  upsertLatencyBucket(history, revised);
+  expect(history).toHaveLength(1);
+  expect(history[0].pingCount).toBe(2);
 });
 
 test("bucket summaries preserve exact consecutive RTT jitter", () => {

@@ -349,7 +349,10 @@ exact without retaining a second raw history or inventing a delta across a phase
 break. The ping worker stamps every success and declared loss with its monotonic observation time;
 `latencyChannel.ts` translates that cross-realm coordinate once, and `RunnerCore` accepts only the
 resulting required `LatencyObservation`. Worker batching and main-thread delivery delay therefore do
-not collapse outcomes or make old evidence look new.
+not collapse outcomes or make old evidence look new. Closed presentation windows remain revisionable
+for the same bounded history the UI retains: an observation delivered behind the runner timer
+updates its original event-time bucket, and the store replaces that bucket by phase, start, and
+continuity identity instead of appending a duplicate or moving the observation forward.
 
 Gauge and live chart share one robust recent latency scale with shrink dwell. Before the first live
 bucket, the gauge derives its scale from the displayed pre-test fallback. Terminal gauge and chart

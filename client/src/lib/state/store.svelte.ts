@@ -42,7 +42,11 @@ import {
 } from "../format";
 import { buildSegments } from "../runner/schedule";
 import { LatencyScaleController } from "../runner/latencyScale";
-import { latencyJitterMs } from "../runner/latencyBuckets";
+import {
+  LATENCY_PRESENTATION_HISTORY_LIMIT,
+  latencyJitterMs,
+  upsertLatencyBucket,
+} from "../runner/latencyBuckets";
 import { weightedMean, weightedMeanAbsoluteDeviation } from "../runner/stats";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
@@ -506,13 +510,14 @@ class AppStore {
         break;
       case "latency":
         if (event.sample.phase === "idle") {
-          this.idleLatency.push(event.sample);
-          if (this.idleLatency.length > MAX_IDLE_SAMPLES)
-            this.idleLatency.shift();
+          upsertLatencyBucket(this.idleLatency, event.sample, MAX_IDLE_SAMPLES);
         } else {
-          this.latency.push(event.sample);
+          upsertLatencyBucket(
+            this.latency,
+            event.sample,
+            LATENCY_PRESENTATION_HISTORY_LIMIT,
+          );
           this.latencyScaleMs = this.#latencyScale.observe(event.sample);
-          if (this.latency.length > MAX_SAMPLES) this.latency.shift();
         }
         break;
       case "connectivity":
