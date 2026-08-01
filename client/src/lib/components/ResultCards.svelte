@@ -50,14 +50,15 @@
   const upload = $derived.by(() => transferModel("upload"));
 
   const bidi = $derived.by(() => {
+    const stability = store.liveStability.bidirectional;
     if (store.phase === "bidirectional") {
       const live = store.liveBidirectional ?? { down: 0, up: 0 };
       return {
         down: live.down,
         up: live.up,
         combined: live.down + live.up,
-        band: "low" as const,
-        score: 0,
+        band: stability?.band ?? "low",
+        score: stability?.score ?? 0,
         active: true,
         has: live.down + live.up > 0,
         compensation: store.liveBidirectionalCompensation,
@@ -192,7 +193,7 @@
         term: false,
         active: bidi.active,
         hasVal: bidi.has,
-        showPip: bidi.has && !bidi.active,
+        showPip: bidi.has,
         band: bidi.band,
         score: bidi.score,
         num: bidi.has ? fmtSpeed(bidiInUnit) : dash,
@@ -270,6 +271,13 @@
   <div class="result-chip" class:active={c.active}>
     <span class="ico {c.accent}">{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
+    {#if c.showPip}
+      <span
+        class="pip pip-{c.band}"
+        use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
+        >{c.band}</span
+      >
+    {/if}
     <span class="chip-val">
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
@@ -547,6 +555,12 @@
     font-size: var(--type-xs);
     font-weight: 700;
     color: var(--text-soft);
+  }
+  .result-chip .pip {
+    flex: none;
+    margin-left: 0;
+    padding: 1px 5px;
+    font-size: 8px;
   }
   .chip-val {
     flex: none;
