@@ -25,9 +25,14 @@ export function gaugeLatencyPresentation(
   state: GaugeLatencyState,
 ): GaugeLatencyPresentation {
   if (state.phase === "complete" && state.completedRttMs != null) {
+    const hasMeasuredMedian = state.history.some(
+      (bucket) => bucket.medianRttMs != null,
+    );
     return {
       rttMs: state.completedRttMs,
-      scaleMs: latencyScaleForHistory(state.history),
+      scaleMs: hasMeasuredMedian
+        ? latencyScaleForHistory(state.history)
+        : latencyScaleForReading(state.completedRttMs),
     };
   }
 

@@ -356,8 +356,10 @@ continuity identity instead of appending a duplicate or moving the observation f
 
 Gauge and live chart share one robust recent latency scale with shrink dwell. Before the first live
 bucket, the gauge derives its scale from the displayed pre-test fallback. Terminal gauge and chart
-both recompute the same robust domain from the whole bucket history, so a value is never paired with
-a scale from another time domain. Isolated tails remain explicit clipping markers. Chart lines are
+both recompute the same robust domain from successful whole-run bucket history; if a completed run
+has only fallback/loss evidence, the gauge instead scales that displayed fallback directly. A value
+is therefore never paired with a scale from another time domain. Isolated tails remain explicit
+clipping markers. Chart lines are
 straight, render the first closed bucket as a point, and break at phase,
 loss, stall, and gap boundaries rather than adding another smoothing curve. The one live stability
 snapshot that gates adaptive completion also drives the compact result pip for latency, one-way

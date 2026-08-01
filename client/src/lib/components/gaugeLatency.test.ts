@@ -66,3 +66,27 @@ test("completed latency uses the full-history chart domain", () => {
     }),
   ).toEqual({ rttMs: 600, scaleMs: 1_000 });
 });
+
+test("completed fallback derives its scale when history has no RTT", () => {
+  const lossOnly = {
+    ...bucket(200, 0),
+    medianRttMs: null,
+    p95RttMs: null,
+    maxRttMs: null,
+    firstRttMs: null,
+    lastRttMs: null,
+    pingCount: 1,
+    lossCount: 1,
+  };
+
+  for (const history of [[], [lossOnly]])
+    expect(
+      gaugeLatencyPresentation({
+        phase: "complete",
+        liveRttMs: 0,
+        liveScaleMs: 20,
+        history,
+        completedRttMs: 600,
+      }),
+    ).toEqual({ rttMs: 600, scaleMs: 1_000 });
+});
