@@ -1,6 +1,7 @@
 /* Owns the ping bus and the ping algorithm, off the main thread so in-worker
  * timestamps keep RTT immune to main-thread jank — which matters most under
- * load. Only computed { rtt, lost } samples cross the boundary.
+ * load. Only computed outcomes cross the boundary, carrying the worker's
+ * monotonic observation time so batching never rewrites when they happened.
  *
  * The bus is a /ws/ping WebSocket or a /wt/ping WebTransport session. Only the
  * link differs: over datagrams an evicted ping is real packet loss, over a
@@ -18,6 +19,7 @@ import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
 import { ESTABLISH_BUDGET_MS } from "../real/budgets";
+import { pingSample, type PingSample } from "./pingSample";
 
 /** Main → worker. `start` opens + warms the bus (no reporting); `measure` flips
  *  reporting on for the SAME warmed socket. The bus is closed by terminating
@@ -40,12 +42,13 @@ type InMsg =
 
 /** Worker → main. Samples downsample to reportGapMs, so a ~1 kHz chain cannot
  *  flood host.ingestLatency, then batch every ~50 ms to cut postMessage
- *  overhead. Both affect only how many samples cross the boundary: the rtt is
- *  timestamped in-worker. stall/resume bracket a reconnect window. */
+ *  overhead. Both affect only how many samples cross the boundary: RTT and
+ *  observation time remain worker-owned. stall/resume bracket a reconnect
+ *  window. */
 type OutMsg =
   | { type: "open" }
   | { type: "ready" }
-  | { type: "samples"; samples: { rtt: number; lost: boolean }[] }
+  | { type: "samples"; samples: PingSample[] }
   | { type: "stall"; detail: string }
   | { type: "resume" }
   | { type: "auth-required" };
@@ -99,7 +102,7 @@ const graveyard = new Map<number, number>(); // evicted id → sendTime (late-po
 let nextId = 0; // client-owned monotonic uint32
 let replyHeadId: number | null = null;
 let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
-let outbox: { rtt: number; lost: boolean }[] = [];
+let outbox: PingSample[] = [];
 
 // Adaptive RTT estimator (RFC 6298, ms). See rttEstimator.ts.
 let rttEstimate: RttEstimate = INITIAL_RTT_ESTIMATE;
@@ -358,7 +361,7 @@ function onFrame(data: unknown): void {
     // crosses the worker boundary; wire pacing and RTT timestamps stay intact.
     if (measuring && recv - lastReportAt >= reportGapMs) {
       lastReportAt = recv;
-      outbox.push({ rtt, lost: false });
+      outbox.push(pingSample(rtt, false, recv));
     }
     if (!replyDriven || frame.id === replyHeadId) scheduler?.complete();
     return;
@@ -418,7 +421,7 @@ function sweep(): void {
       rememberEvicted(id, sent);
       evicted = true;
       if (id === replyHeadId) replyHeadEvicted = true;
-      if (measuring) outbox.push({ rtt: now - sent, lost: true });
+      if (measuring) outbox.push(pingSample(now - sent, true, now));
     }
   }
   // A timed-out request completes one chain step. Fixed pacing still respects

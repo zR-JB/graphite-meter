@@ -172,6 +172,15 @@ export interface RunnerConfig {
 }
 
 /* ---------- Raw samples emitted DURING a run ---------- */
+/** One authoritative in-run latency outcome in the window realm's monotonic
+ * coordinate. The worker/channel boundary must translate its clock before the
+ * outcome reaches RunnerCore. */
+export interface LatencyObservation {
+  rttMs: number;
+  lost: boolean;
+  observedAtMs: number;
+}
+
 export interface ThroughputSample {
   t: number; // ms since run start (monotonic)
   bytesPerSec: number; // smoothed live rate; exact results use private byte/time observations

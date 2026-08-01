@@ -60,11 +60,10 @@ test("a superseded readiness wait does not silence the newer one", async () => {
   }
 });
 
-test("idle latency buckets use their monotonic receipt time", () => {
+test("idle latency buckets use each worker observation time", () => {
   const realWorker = globalThis.Worker;
   globalThis.Worker = FakeWorker as unknown as typeof Worker;
   try {
-    let now = 1_250;
     const events: Parameters<CoreHost["emit"]>[0][] = [];
     const keepalive = new IdleKeepalive({
       host: () =>
@@ -75,18 +74,17 @@ test("idle latency buckets use their monotonic receipt time", () => {
         }) as unknown as CoreHost,
       throughputTarget: () => null,
       latencyTarget: () => target,
-      now: () => now,
+      timeOriginMs: 10_000,
     });
 
     keepalive.start();
     FakeWorker.last!.emit({
       type: "samples",
-      samples: [{ rtt: 12, lost: false }],
+      samples: [{ rtt: 12, lost: false, observedAtEpochMs: 11_250 }],
     });
-    now = 2_500;
     FakeWorker.last!.emit({
       type: "samples",
-      samples: [{ rtt: 0, lost: true }],
+      samples: [{ rtt: 0, lost: true, observedAtEpochMs: 12_500 }],
     });
 
     const samples = events.flatMap((event) =>
@@ -95,6 +93,42 @@ test("idle latency buckets use their monotonic receipt time", () => {
     expect(samples.map((sample) => sample.endT)).toEqual([1_250, 2_500]);
     expect(samples.map((sample) => sample.t)).toEqual([1_250, 2_500]);
     keepalive.stop();
+  } finally {
+    globalThis.Worker = realWorker;
+  }
+});
+
+test("stage latency preserves distinct times from one worker batch", () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    const observations: number[] = [];
+    const channel = new LatencyChannel({
+      host: () =>
+        ({
+          config: { pingCadence: "reply-driven", loadedPingCadence: "medium" },
+          ingestLatency(observation: { observedAtMs: number }) {
+            observations.push(observation.observedAtMs);
+          },
+        }) as unknown as CoreHost,
+      target: () => target,
+      stall() {},
+      resume() {},
+      timeOriginMs: 10_000,
+    });
+
+    channel.prime("websocket", true);
+    channel.measure(false);
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [
+        { rtt: 8, lost: false, observedAtEpochMs: 10_100 },
+        { rtt: 9, lost: false, observedAtEpochMs: 10_350 },
+      ],
+    });
+
+    expect(observations).toEqual([100, 350]);
+    channel.teardown();
   } finally {
     globalThis.Worker = realWorker;
   }

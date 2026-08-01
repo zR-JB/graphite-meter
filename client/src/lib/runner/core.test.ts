@@ -491,13 +491,13 @@ test("latency presentation does not bridge a short stall", async () => {
   await core.start(makeConfig({ duration: { downloadMs: 1_000 } }));
 
   advance(10);
-  core.ingestLatency(10, true, false);
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow }, true);
   core.stall({ reason: "connection-lost", detail: "test" });
   advance(100); // below the chart's 600 ms natural-gap threshold
   core.resume();
-  core.ingestLatency(12, true, false);
+  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow }, true);
   advance(200);
-  core.ingestLatency(14, true, false);
+  core.ingestLatency({ rttMs: 14, lost: false, observedAtMs: fakeNow }, true);
 
   const buckets = events.flatMap((event) =>
     event.type === "latency" ? [event.sample] : [],
@@ -513,7 +513,7 @@ test("latency presentation closes on bucket time without a later ping", async ()
   await core.start(makeConfig({ duration: { downloadMs: 1_000 } }));
 
   advance(10);
-  core.ingestLatency(20, true, false);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, true);
   expect(events.some((event) => event.type === "latency")).toBe(false);
   advance(190);
 
@@ -523,6 +523,31 @@ test("latency presentation closes on bucket time without a later ping", async ()
     endT: LATENCY_PRESENTATION_BUCKET_MS,
     medianRttMs: 20,
   });
+});
+
+test("queued latency outcomes retain their worker observation buckets", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(
+    makeConfig({
+      stages: { latency: true, download: false },
+      duration: { latencyMs: 1_000, downloadMs: 0 },
+    }),
+  );
+
+  // Simulate one delayed main-thread delivery containing outcomes that the
+  // worker observed in two different presentation windows.
+  fakeNow = 400;
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: 100 }, false);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: 350 }, false);
+  advance(0);
+
+  const buckets = events.flatMap((event) =>
+    event.type === "latency" ? [event.sample] : [],
+  );
+  expect(buckets.map((bucket) => bucket.startT)).toEqual([0, 200]);
+  expect(buckets.map((bucket) => bucket.medianRttMs)).toEqual([10, 20]);
 });
 
 test("watchdog auto-stalls a measured phase after prolonged sample silence", async () => {
@@ -559,7 +584,10 @@ test("loaded pings do not hide a stalled transfer", async () => {
   await core.start(makeConfig({ duration: { downloadMs: 5000 } }));
 
   for (let i = 0; i < 8; i++) {
-    backend.host.ingestLatency(2, true, false);
+    backend.host.ingestLatency(
+      { rttMs: 2, lost: false, observedAtMs: fakeNow },
+      true,
+    );
     advance(250);
   }
 
@@ -744,10 +772,13 @@ test("default latency policy can confirm early at the fixed slow cadence", async
   await core.start(cfg);
 
   advance(10);
-  core.ingestLatency(20, false, false);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, false);
   for (let i = 1; i < 5; i++) {
     advance(600);
-    core.ingestLatency(20, false, false);
+    core.ingestLatency(
+      { rttMs: 20, lost: false, observedAtMs: fakeNow },
+      false,
+    );
   }
   expect(core.phase).toBe("latency");
 

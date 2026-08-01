@@ -20,6 +20,7 @@ import type {
   TransportRole,
   StageFailure,
   PhaseActivity,
+  LatencyObservation,
 } from "./contract";
 import {
   shouldExitPhase,
@@ -58,7 +59,7 @@ export interface CoreHost {
     /** Whether this sample proves every required direction is healthy. */
     provesLiveness?: boolean,
   ): void;
-  ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void;
+  ingestLatency(observation: LatencyObservation, underLoad: boolean): void;
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
   resume(): void;
@@ -605,7 +606,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
+  ingestLatency(observation: LatencyObservation, underLoad: boolean): void {
     // Only a measured phase feeds the accumulator: a stray warmup/idle ping must
     // not pollute idle-latency or bufferbloat. Probe pings use host.emit.
     const phase = this.#phase;
@@ -620,12 +621,30 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Loaded pings use another connection and cannot prove that transfer bytes
     // still move. Only the latency-only stage uses them as its liveness signal.
     if (phase === "latency") this.#noteRealSample();
-    this.#accum.pushLatency(rttMs, underLoad, lost, this.#measuredElapsed);
+    // Translate the authoritative wall observation into the measured timeline.
+    // Projection avoids assigning the runner's up-to-100 ms tick lag to the
+    // sample, while phase and receipt bounds reject stale or future timestamps.
+    const wallNow = performance.now();
+    const projectedNow =
+      this.#measuredElapsed + Math.max(0, wallNow - this.#lastRealNow);
+    const observedT = Math.max(
+      this.#activeSeg?.start ?? 0,
+      Math.min(
+        projectedNow,
+        this.#measuredElapsed + observation.observedAtMs - this.#lastRealNow,
+      ),
+    );
+    this.#accum.pushLatency(
+      observation.rttMs,
+      underLoad,
+      observation.lost,
+      observedT,
+    );
     if (phase === "latency" && this.#updateStability()) this.#tick();
     for (const bucket of this.#latencyBuckets.observe(
-      this.#measuredElapsed,
-      rttMs,
-      lost,
+      observedT,
+      observation.rttMs,
+      observation.lost,
     ))
       this.emit({
         type: "latency",

@@ -12,12 +12,7 @@ import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../latencyBuckets";
 import { fixedPingIntervalMs } from "../pingCadence";
-
-/** One measured ping the worker reports (rtt already computed in-worker). */
-interface PingSample {
-  rtt: number;
-  lost: boolean;
-}
+import { pingSampleContextTime, type PingSample } from "../workers/pingSample";
 
 /** Ping worker → channel messages. The worker owns reconnection and brackets a
  *  reconnect window with stall/resume, keeping the channel alive. */
@@ -82,6 +77,9 @@ export interface LatencyChannelDeps {
    *  with the stage-level flag the byte lanes also drive. */
   stall: (detail: string) => void;
   resume: () => void;
+  /** Window-realm performance origin. Injectable only for deterministic
+   * cross-realm timestamp tests. */
+  timeOriginMs?: number;
 }
 
 /** The stage-owned ping channel: one per stage (idle latency, then each loaded
@@ -98,9 +96,11 @@ export class LatencyChannel {
   /** The underLoad tag stamped on forwarded samples (true during a transfer
    *  stage's loaded latency). Set when measure() flips reporting on. */
   #underLoad = false;
+  #timeOriginMs: number;
 
   constructor(deps: LatencyChannelDeps) {
     this.#deps = deps;
+    this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
   }
 
   /** Open the latency (ping) channel over `kind` and warm it. The ping worker
@@ -163,9 +163,9 @@ export class LatencyChannel {
   }
 
   /** Enable reporting on the socket prime() opens, at that stage's cadence.
-   *  Samples reach host.ingestLatency(rtt, underLoad, lost). The worker computes
-   *  rtt and flags an unacked or timed-out ping `lost`. `underLoad` marks pings
-   *  running alongside a transfer (bufferbloat). */
+   *  The worker owns RTT, loss, and observation time; this channel translates
+   *  only the cross-realm clock coordinate and adds the stage's `underLoad`
+   *  attribution. */
   measure(underLoad: boolean): void {
     this.#underLoad = underLoad;
     this.#worker?.postMessage({ type: "measure" });
@@ -197,7 +197,14 @@ export class LatencyChannel {
         this.#clearEstablishTimer(); // a pong proves the channel works
         const host = this.#deps.host();
         for (const sample of msg.samples)
-          host.ingestLatency(sample.rtt, this.#underLoad, sample.lost);
+          host.ingestLatency(
+            {
+              rttMs: sample.rtt,
+              lost: sample.lost,
+              observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
+            },
+            this.#underLoad,
+          );
         break;
       }
       case "stall":
@@ -228,9 +235,9 @@ export interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
   latencyTarget: () => LatencyTarget | null;
-  /** Monotonic receipt clock for idle samples. Injectable for deterministic
-   *  recency tests; worker RTTs already use their own monotonic clock. */
-  now?: () => number;
+  /** Window-realm performance origin. Injectable only for deterministic
+   * cross-realm timestamp tests. */
+  timeOriginMs?: number;
 }
 
 /** The persistent idle ping: connectivity indicator plus the preflight RTT
@@ -238,7 +245,7 @@ export interface IdleKeepaliveDeps {
  *  the same time (stopped when a run starts, restarted when it ends). */
 export class IdleKeepalive {
   #deps: IdleKeepaliveDeps;
-  #now: () => number;
+  #timeOriginMs: number;
   #worker: Worker | null = null;
   #active = false;
   #targetKey = "";
@@ -254,7 +261,7 @@ export class IdleKeepalive {
 
   constructor(deps: IdleKeepaliveDeps) {
     this.#deps = deps;
-    this.#now = deps.now ?? (() => performance.now());
+    this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
   }
 
   /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
@@ -414,7 +421,6 @@ export class IdleKeepalive {
     const host = this.#deps.host();
     switch (msg.type) {
       case "samples": {
-        const receivedAt = this.#now();
         for (const sample of msg.samples) {
           if (this.#probeCollect && !sample.lost) {
             this.#probeCollect.rtts.push(sample.rtt);
@@ -423,7 +429,11 @@ export class IdleKeepalive {
           }
           host.emit({
             type: "latency",
-            sample: singleLatencyBucket(receivedAt, sample.rtt, sample.lost),
+            sample: singleLatencyBucket(
+              pingSampleContextTime(sample, this.#timeOriginMs),
+              sample.rtt,
+              sample.lost,
+            ),
           });
         }
         if (this.#offline) {

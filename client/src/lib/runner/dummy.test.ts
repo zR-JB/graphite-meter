@@ -116,8 +116,11 @@ class MockHost implements CoreHost {
   ): void {
     this.throughput.push({ dir, bytesPerSec, bytesDelta, durationSec });
   }
-  ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
-    this.latency.push({ rttMs, underLoad, lost });
+  ingestLatency(
+    observation: { rttMs: number; lost: boolean },
+    underLoad: boolean,
+  ): void {
+    this.latency.push({ ...observation, underLoad });
   }
   stall(info: StallInfo): void {
     this.stalls.push(info);

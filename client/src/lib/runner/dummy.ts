@@ -540,7 +540,10 @@ export class DummyBackend implements RunnerBackend {
     if (loss) lossProb = Math.max(lossProb, loss.magnitude);
     const lost = this.#rand() < lossProb;
 
-    this.#host!.ingestLatency(rtt, underLoad, lost);
+    this.#host!.ingestLatency(
+      { rttMs: rtt, lost, observedAtMs: performance.now() },
+      underLoad,
+    );
   }
 
   /* ================= LIVE ANOMALY INJECTION ================= */
