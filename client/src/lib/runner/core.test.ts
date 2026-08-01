@@ -714,6 +714,83 @@ test("adaptive early-finish arms and completes the run well before the nominal d
   }
 });
 
+test("a throughput drop during confirmation revokes early completion", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 5_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 500,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  // Four exact zero-rate control buckets invalidate the stable trace without
+  // advancing wall time far enough to trigger the stall watchdog.
+  for (let i = 0; i < 4; i++)
+    core.ingestThroughput("down", 0, 0, 0.25, false, false);
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("download");
+});
+
+test("a confirmed throughput regime change revokes early completion", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  const cfg = makeConfig({
+    duration: { downloadMs: 10_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 2_000,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 30; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+  for (let i = 0; i < 20; i++) core.ingestThroughput("down", 400, 40, 0.1);
+
+  const continuities = events.flatMap((event) =>
+    event.type === "throughput" ? [event.sample.continuityId] : [],
+  );
+  expect(new Set(continuities).size).toBeGreaterThan(1);
+  advance(1_000);
+  expect(core.phase).toBe("download");
+});
+
+test("a stall during confirmation revokes early completion", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 5_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 500,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  core.stall({ reason: "connection-lost", detail: "test" });
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("download");
+});
+
 test("adaptive completion off publishes the whole phase even when it ends stable", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
@@ -809,6 +886,33 @@ test("extending the active duration keeps the stage running to the new budget", 
   expect(core.phase).toBe("complete");
 });
 
+test("extending duration below the new coverage floor revokes confirmation", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 1_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0.5,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 200,
+    },
+  });
+  await core.start(cfg);
+  advance(600);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: { ...cfg.duration, downloadMs: 2_000 },
+    adaptive: cfg.adaptive,
+  });
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("download");
+});
+
 test("adaptive completion can be enabled after a stable stage has started", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
@@ -826,6 +930,34 @@ test("adaptive completion can be enabled after a stable stage has started", asyn
     adaptive: { ...cfg.adaptive, enabled: true },
   });
   advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("complete");
+});
+
+test("shortening confirmation is re-evaluated immediately", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 5_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 1_000,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+  advance(300);
+  expect(core.phase).toBe("download");
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: cfg.duration,
+    adaptive: { ...cfg.adaptive, confirmationMs: 200 },
+  });
 
   expect(core.phase).toBe("complete");
 });

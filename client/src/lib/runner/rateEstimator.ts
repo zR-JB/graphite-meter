@@ -48,6 +48,11 @@ function finiteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
+export function presentationWindowMs(regimeAgeMs: number): number {
+  const age = finiteNonNegative(regimeAgeMs);
+  return Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.5));
+}
+
 /** Exact bytes/time for an interval, prorating an observation at its edges. */
 function intervalRate(
   observations: PositionedObservation[],
@@ -111,7 +116,7 @@ export class GrowingRateEstimator {
     this.#evidenceMs = end;
 
     this.#recalculateRates();
-    const regimeChanged = this.#updateCandidate();
+    const regimeChanged = this.#updateCandidate(start);
     if (regimeChanged) this.#recalculateRates();
     this.#prune();
     return this.snapshot(regimeChanged);
@@ -139,10 +144,7 @@ export class GrowingRateEstimator {
 
   #recalculateRates(): void {
     const age = this.#evidenceMs - this.#regimeStartMs;
-    const windowMs = Math.min(
-      age,
-      Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.5),
-    );
+    const windowMs = presentationWindowMs(age);
     this.#presentedBytesPerSec = intervalRate(
       this.#observations,
       this.#evidenceMs - windowMs,
@@ -155,7 +157,7 @@ export class GrowingRateEstimator {
     );
   }
 
-  #updateCandidate(): boolean {
+  #updateCandidate(observationStart: number): boolean {
     const age = this.#evidenceMs - this.#regimeStartMs;
     if (!this.#candidate) {
       if (age < REGIME_BASELINE_READY_MS || this.#presentedBytesPerSec <= 0)
@@ -164,13 +166,13 @@ export class GrowingRateEstimator {
       if (ratio < REGIME_DOWNSHIFT_ENTER_RATIO) {
         this.#candidate = {
           kind: "down",
-          start: this.#evidenceMs,
+          start: observationStart,
           reference: this.#presentedBytesPerSec,
         };
       } else if (ratio > REGIME_UPSHIFT_ENTER_RATIO) {
         this.#candidate = {
           kind: "up",
-          start: this.#evidenceMs,
+          start: observationStart,
           reference: this.#presentedBytesPerSec,
         };
       }
@@ -202,9 +204,7 @@ export class GrowingRateEstimator {
 
   #prune(): void {
     const age = this.#evidenceMs - this.#regimeStartMs;
-    const presentationStart =
-      this.#evidenceMs -
-      Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.5));
+    const presentationStart = this.#evidenceMs - presentationWindowMs(age);
     const fastStart = Math.max(
       this.#regimeStartMs,
       this.#evidenceMs - REGIME_FAST_WINDOW_MS,

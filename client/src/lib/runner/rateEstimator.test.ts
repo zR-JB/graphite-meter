@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   GrowingRateEstimator,
   PRESENTATION_MIN_WINDOW_MS,
+  presentationWindowMs,
   REGIME_DOWNSHIFT_CONFIRM_MS,
   REGIME_UPSHIFT_CONFIRM_MS,
   STALL_PRESENTATION_MS,
@@ -40,6 +41,12 @@ test("window boundary prorates observations", () => {
   // At 1.2 s the window is the latest 800 ms: 200 ms at 1k + 600 ms at 2k.
   expect(estimate.presentedBytesPerSec).toBeCloseTo(1_750, 8);
   expect(PRESENTATION_MIN_WINDOW_MS).toBe(800);
+});
+
+test("an unchanged long regime presents its most recent half", () => {
+  expect(presentationWindowMs(400)).toBe(400);
+  expect(presentationWindowMs(1_200)).toBe(800);
+  expect(presentationWindowMs(10_000)).toBe(5_000);
 });
 
 test("a brief dip cancels without resetting the established regime", () => {

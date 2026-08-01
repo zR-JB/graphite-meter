@@ -40,3 +40,29 @@ test("partial flush is truthful and an all-loss bucket has no RTT", () => {
     underLoad: true,
   });
 });
+
+test("the same timed outcomes bucket identically regardless of callback grouping", () => {
+  const outcomes = [
+    { t: 20, rtt: 12, lost: false },
+    { t: 75, rtt: 14, lost: false },
+    { t: 180, rtt: 0, lost: true },
+    { t: 210, rtt: 16, lost: false },
+    { t: 390, rtt: 18, lost: false },
+    { t: 410, rtt: 20, lost: false },
+  ];
+  const collect = (groups: (typeof outcomes)[]) => {
+    const buckets = new LatencyPresentationBuckets();
+    buckets.reset(0, "latency", false, 1);
+    const emitted = groups.flatMap((group) =>
+      group.flatMap((outcome) =>
+        buckets.observe(outcome.t, outcome.rtt, outcome.lost),
+      ),
+    );
+    const tail = buckets.flush(450);
+    return tail ? [...emitted, tail] : emitted;
+  };
+
+  expect(collect(outcomes.map((outcome) => [outcome]))).toEqual(
+    collect([outcomes.slice(0, 3), outcomes.slice(3)]),
+  );
+});
