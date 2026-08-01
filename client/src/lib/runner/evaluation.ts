@@ -70,16 +70,16 @@ export class RunAccumulator {
   #phaseLatency: { tMs: number; rttMs: number | null }[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
-  // Each holds the index into its phase's sample array where the current stable
-  // run starts, or -1 while it is not stable, plus the latest stability score.
-  #dlStableStart = -1;
-  #ulStableStart = -1;
-  #latStableStart = -1;
+  // Transfer boundaries use their lane's exact evidence clock; latency uses
+  // its outcome index. Every boundary is -1 while the phase is not stable.
+  #dlStableStartMs = -1;
+  #ulStableStartMs = -1;
+  #latStableStartIndex = -1;
   // Bidi tracks ONE stable run over the combined-rate confidence window: the
   // phase has a single early-stop signal even though it reports two lanes.
-  #biStableStart = -1;
-  #biStableStartDown = -1;
-  #biStableStartUp = -1;
+  #biStable = false;
+  #biStableStartDownMs = -1;
+  #biStableStartUpMs = -1;
   #dlFinalScore = 0;
   #ulFinalScore = 0;
   #latFinalScore = 0;
@@ -103,12 +103,12 @@ export class RunAccumulator {
     this.#pingsLost = 0;
     this.#loadedPings = 0;
     this.#loadedPingsLost = 0;
-    this.#dlStableStart = -1;
-    this.#ulStableStart = -1;
-    this.#latStableStart = -1;
-    this.#biStableStart = -1;
-    this.#biStableStartDown = -1;
-    this.#biStableStartUp = -1;
+    this.#dlStableStartMs = -1;
+    this.#ulStableStartMs = -1;
+    this.#latStableStartIndex = -1;
+    this.#biStable = false;
+    this.#biStableStartDownMs = -1;
+    this.#biStableStartUpMs = -1;
     this.#dlFinalScore = 0;
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
@@ -218,19 +218,18 @@ export class RunAccumulator {
     if (phase === "upload" || phase === "bidirectional")
       this.#phaseUpBuckets.reset();
     if (phase === "latency") this.#phaseLatency = [];
-    if (phase === "download") this.#dlStableStart = -1;
-    else if (phase === "upload") this.#ulStableStart = -1;
+    if (phase === "download") this.#dlStableStartMs = -1;
+    else if (phase === "upload") this.#ulStableStartMs = -1;
     else if (phase === "bidirectional") {
-      this.#biStableStart = -1;
-      this.#biStableStartDown = -1;
-      this.#biStableStartUp = -1;
-    } else this.#latStableStart = -1;
+      this.#biStable = false;
+      this.#biStableStartDownMs = -1;
+      this.#biStableStartUpMs = -1;
+    } else this.#latStableStartIndex = -1;
   }
 
-  /** Update the per-phase trailing-stable-run index from this tick's score. The
-   *  run opens at the latest sample index and closes to -1; `isStillStable`
-   *  supplies the hysteresis. Returns the latched state, where at finish a ≥0
-   *  index means the phase is still on a stable plateau. */
+  /** Update the trailing stable run from this tick's score. Transfer lanes use
+   *  evidence-time boundaries and latency uses an outcome index;
+   *  `isStillStable` supplies the shared hysteresis. */
   trackStableRun(
     phase: StagePhase,
     score: number,
@@ -239,37 +238,36 @@ export class RunAccumulator {
     let start: number;
     if (phase === "download") {
       this.#dlFinalScore = score;
-      start = this.#dlStableStart;
+      start = this.#dlStableStartMs;
     } else if (phase === "upload") {
       this.#ulFinalScore = score;
-      start = this.#ulStableStart;
+      start = this.#ulStableStartMs;
     } else if (phase === "bidirectional") {
       this.#biFinalScore = score;
-      start = this.#biStableStart;
+      start = -1;
     } else {
       this.#latFinalScore = score;
-      start = this.#latStableStart;
+      start = this.#latStableStartIndex;
     }
-    const wasStable = start >= 0;
+    const wasStable = phase === "bidirectional" ? this.#biStable : start >= 0;
     const nowStable = isStillStable(wasStable, score, cfg);
     if (nowStable && !wasStable) {
-      start = this.#stableEvidenceStart(phase);
       if (phase === "bidirectional") {
-        this.#biStableStartDown = this.#biDown.evidenceMs;
-        this.#biStableStartUp = this.#biUp.evidenceMs;
-      }
+        this.#biStableStartDownMs = this.#latestEvidenceStart(this.#biDown);
+        this.#biStableStartUpMs = this.#latestEvidenceStart(this.#biUp);
+      } else start = this.#stableEvidenceStart(phase);
     } else if (!nowStable && wasStable) {
       start = -1;
       if (phase === "bidirectional") {
-        this.#biStableStartDown = -1;
-        this.#biStableStartUp = -1;
+        this.#biStableStartDownMs = -1;
+        this.#biStableStartUpMs = -1;
       }
     }
 
-    if (phase === "download") this.#dlStableStart = start;
-    else if (phase === "upload") this.#ulStableStart = start;
-    else if (phase === "bidirectional") this.#biStableStart = start;
-    else this.#latStableStart = start;
+    if (phase === "download") this.#dlStableStartMs = start;
+    else if (phase === "upload") this.#ulStableStartMs = start;
+    else if (phase === "bidirectional") this.#biStable = nowStable;
+    else this.#latStableStartIndex = start;
 
     return nowStable;
   }
@@ -289,11 +287,16 @@ export class RunAccumulator {
     this.#latEarlyStopCandidateStart = -1;
   }
 
-  #stableEvidenceStart(phase: StagePhase): number {
+  #stableEvidenceStart(phase: Exclude<StagePhase, "bidirectional">): number {
     if (phase === "latency") return Math.max(0, this.#idleRtts.length - 1);
-    if (phase === "download") return this.#dl.evidenceMs;
-    if (phase === "upload") return this.#ul.evidenceMs;
-    return Math.min(this.#biDown.evidenceMs, this.#biUp.evidenceMs);
+    if (phase === "download") return this.#latestEvidenceStart(this.#dl);
+    return this.#latestEvidenceStart(this.#ul);
+  }
+
+  /** Stability is evaluated after ingest. Start the result window at the
+   * observation that supplied that evidence, not at its end boundary. */
+  #latestEvidenceStart(accum: PhaseAccum): number {
+    return accum.samples.at(-1)?.evidenceStartMs ?? -1;
   }
 
   /* ================= RESULT REDUCTION ================= */
@@ -306,7 +309,7 @@ export class RunAccumulator {
     const download = phase === "download";
     return this.#reduceTransfer(
       download ? this.#dl : this.#ul,
-      download ? this.#dlStableStart : this.#ulStableStart,
+      download ? this.#dlStableStartMs : this.#ulStableStartMs,
       adaptiveEnabled,
       download ? this.#dlFinalScore : this.#ulFinalScore,
       this.#loadedLossPct(),
@@ -329,14 +332,14 @@ export class RunAccumulator {
     return {
       down: this.#reduceTransfer(
         this.#biDown,
-        this.#biStableStartDown,
+        this.#biStableStartDownMs,
         adaptiveEnabled,
         this.#biFinalScore,
         lossPct,
       ),
       up: this.#reduceTransfer(
         this.#biUp,
-        this.#biStableStartUp,
+        this.#biStableStartUpMs,
         adaptiveEnabled,
         this.#biFinalScore,
         lossPct,
@@ -431,7 +434,7 @@ export class RunAccumulator {
   /** Reduce the latency phase to its result. `idleFallbackMs` is used as the
    *  headline only when there are no usable samples at all. */
   latencyResult(cfg: RunnerConfig, idleFallbackMs: number): LatencyResult {
-    const stableStart = this.#latStableStart;
+    const stableStart = this.#latStableStartIndex;
     const earlyStopStart = this.#latEarlyStopStart;
     const finalScore = this.#latFinalScore;
     const all = this.#allRtts;

@@ -131,16 +131,31 @@ test("the final stable plateau is also weighted by represented time", () => {
   accum.reset();
 
   accum.pushThroughput("download", "down", 1000, 100, 0.1);
-  accum.trackStableRun("download", 1, adaptive);
+  accum.trackStableRun("download", 0, adaptive);
   accum.pushThroughput("download", "down", 100, 100, 1);
   accum.trackStableRun("download", 1, adaptive);
 
   const result = accum.throughputResult("download", true);
   expect(result.method).toBe("stable-window");
-  // Stability begins at an evidence boundary. The sample that establishes the
-  // latch is evidence for the decision, while subsequent exact bytes/time form
-  // the reported trailing plateau.
+  // The final observation opens stability and remains exact weighted evidence
+  // for the reported trailing plateau.
   expect(result.meanBytesPerSec).toBeCloseTo(100, 6);
+});
+
+test("stability first established on the final one-way observation remains reducible", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  accum.pushThroughput("upload", "up", 1000, 1000, 1);
+  accum.trackStableRun("upload", 0, adaptive);
+  accum.pushThroughput("upload", "up", 250, 500, 2, true);
+  accum.trackStableRun("upload", 1, adaptive);
+
+  const result = accum.throughputResult("upload", true);
+  expect(result.method).toBe("stable-window");
+  expect(result.meanBytesPerSec).toBeCloseTo(250, 6);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.serverAuthoritative).toBe(true);
 });
 
 test("bidirectional: down and up lanes reduce independently", () => {
@@ -209,12 +224,32 @@ test("bidirectional final plateau aligns each interleaved lane to shared stabili
   // Shared stability breaks on interleaved lane reports.
   pushBidi("down", 10, 0);
   pushBidi("up", 5, 0);
-  // Re-entry happens on upload. Sequence tags keep the preceding unstable
-  // download sample out until download reports inside the new plateau.
+  pushBidi("down", 500, 0);
+  // Re-entry happens on upload after both lanes have supplied fresh plateau
+  // evidence. Each lane's opening observation belongs to the stable result.
   pushBidi("up", 300, 1);
   pushBidi("down", 500, 1);
   pushBidi("up", 300, 1);
-  pushBidi("down", 500, 1);
+
+  const result = accum.bidirectionalResult(true);
+  expect(result.down.method).toBe("stable-window");
+  expect(result.up.method).toBe("stable-window");
+  expect(result.down.meanBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.up.meanBytesPerSec).toBeCloseTo(300, 6);
+});
+
+test("final bidirectional observation preserves the opening evidence in both lanes", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  const pushBidi = (dir: "down" | "up", value: number, score: number): void => {
+    accum.pushThroughput("bidirectional", dir, value, value, 1);
+    accum.trackStableRun("bidirectional", score, adaptive);
+  };
+
+  pushBidi("down", 100, 0);
+  pushBidi("up", 50, 0);
+  pushBidi("down", 500, 0);
+  pushBidi("up", 300, 1);
 
   const result = accum.bidirectionalResult(true);
   expect(result.down.method).toBe("stable-window");

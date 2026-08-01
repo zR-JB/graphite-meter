@@ -347,7 +347,10 @@ alignment.
 
 Stall presentation is also runner-owned. The core emits the shared transition to zero consumed by
 the gauge, cards, and chart, while synthetic transition values never enter confidence or result
-accounting. Latency follows the same single-path rule: every raw outcome stays in `RunAccumulator`,
+accounting. When a transfer first becomes stable, its result window begins at the exact source
+observation that supplied the opening evidence, not at that observation's end boundary; a final or
+delayed report can therefore open a non-empty stable window for both one-way and bidirectional
+lanes. Latency follows the same single-path rule: every raw outcome stays in `RunAccumulator`,
 while the UI receives deadline-closed, phase-aligned 200ms median/P95/max/loss buckets. Each bucket
 also retains scalar first/last and consecutive-delta evidence, so rolling connectivity jitter stays
 exact without retaining a second raw history or inventing a delta across a phase/stall continuity
