@@ -18,10 +18,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// wtSession is a dialed WebTransport session and the dialer that owns it.
+// wtSession is a dialed WebTransport session and the transport that owns it.
 type wtSession struct {
 	*webtransport.Session
-	dialer *webtransport.Dialer
+	transport *webtransport.Transport
 	// lifetime ends when the session does. It is the session's own context,
 	// captured at dial rather than read back through the embedded session: the
 	// retry decisions below have to hold for a session that was never dialled,
@@ -31,7 +31,7 @@ type wtSession struct {
 	closed   atomic.Bool
 }
 
-// close releases the session and the dialer that owns it, once. Whichever of
+// close releases the session and the transport that owns it, once. Whichever of
 // the stage host, the replacement dial, or the lane that found it dead gets
 // there first does the work; quic-go takes a lock on the way through, so the
 // guards also keep a session this client never dialled from panicking there.
@@ -42,8 +42,8 @@ func (s *wtSession) close() {
 	if s.Session != nil {
 		_ = s.CloseWithError(0, "")
 	}
-	if s.dialer != nil {
-		_ = s.dialer.Close()
+	if s.transport != nil {
+		_ = s.transport.Close()
 	}
 }
 
@@ -75,16 +75,16 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 		}
 		hdr = http.Header{"Authorization": {"Bearer " + token}}
 	}
-	dialer := &webtransport.Dialer{
+	wtTransport := &webtransport.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		QUICConfig:      transport.NewQUICConfig(),
 	}
-	_, sess, err := dialer.Dial(ctx, u, hdr)
+	_, sess, err := wtTransport.Dial(ctx, u, hdr)
 	if err != nil {
-		_ = dialer.Close()
+		_ = wtTransport.Close()
 		return nil, fmt.Errorf("webtransport dial %s: %w", u, err)
 	}
-	return &wtSession{Session: sess, dialer: dialer, lifetime: sess.Context()}, nil
+	return &wtSession{Session: sess, transport: wtTransport, lifetime: sess.Context()}, nil
 }
 
 // verifyLatencyWebTransport proves the datagram bus answers before a run

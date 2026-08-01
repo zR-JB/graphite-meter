@@ -26,39 +26,39 @@ import (
 )
 
 // wtTestServer boots a server with HTTP/3 and returns the WebTransport base URL,
-// the clear-H1 base URL for the HTTP half of an upload, and a session dialer.
-func wtTestServer(t *testing.T) (string, string, *testWTDialer) {
+// the clear-H1 base URL for the HTTP half of an upload, and a session transport.
+func wtTestServer(t *testing.T) (string, string, *testWTTransport) {
 	t.Helper()
 	return wtTestServerTuned(t, nil)
 }
 
 // wtTestServerTuned is wtTestServer with the config open to the caller.
-func wtTestServerTuned(t *testing.T, tune func(*config.Config)) (string, string, *testWTDialer) {
+func wtTestServerTuned(t *testing.T, tune func(*config.Config)) (string, string, *testWTTransport) {
 	t.Helper()
 	h3Base, httpBase := wtTestOrigins(t, tune)
-	return h3Base, httpBase, &testWTDialer{Dialer: insecureWTDialer(), owner: t}
+	return h3Base, httpBase, &testWTTransport{Transport: insecureWTTransport(), owner: t}
 }
 
-// testWTDialer is a session dialer whose close is armed only once a dial has
-// landed. webtransport.Dialer.Close cancels a context only the first Dial
+// testWTTransport is a session transport whose close is armed only once a dial has
+// landed. webtransport.Transport.Close cancels a context only the first Dial
 // installs, so closing one that never dialed dereferences nil -- and a panic in
 // t.Cleanup aborts the whole test binary rather than failing one test, which
 // under -shuffle=on leaves a different surviving set per seed.
-type testWTDialer struct {
-	*webtransport.Dialer
+type testWTTransport struct {
+	*webtransport.Transport
 	owner *testing.T
 	arm   sync.Once
 }
 
-// armClose ties the dialer to the test that asked for it, not to whichever
-// subtest happened to dial first: several subtests share one dialer.
-func (d *testWTDialer) armClose() {
-	d.arm.Do(func() { d.owner.Cleanup(func() { _ = d.Dialer.Close() }) })
+// armClose ties the transport to the test that asked for it, not to whichever
+// subtest happened to dial first: several subtests share one transport.
+func (d *testWTTransport) armClose() {
+	d.arm.Do(func() { d.owner.Cleanup(func() { _ = d.Transport.Close() }) })
 }
 
 // wtTestOrigins boots the same server for a test that drives it through the
 // shipped client rather than a raw session: the HTTP/3 origin and the clear-H1
-// one, no dialer.
+// one, no transport.
 func wtTestOrigins(t *testing.T, tune func(*config.Config)) (string, string) {
 	t.Helper()
 	cfg := wtTestConfig(t, tune)
@@ -87,10 +87,10 @@ func wtTestConfig(t *testing.T, tune func(*config.Config)) config.Config {
 // handler, so choosing it means building the endpoints and then assembling the
 // listeners around them -- exactly what Run does, through the same two calls,
 // with the one value set in between. Nothing test-only ships in the handlers.
-func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*config.Config)) (string, string, *testWTDialer) {
+func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*config.Config)) (string, string, *testWTTransport) {
 	t.Helper()
 	h3Base, httpBase, _ := wtShapedServer(t, tune, func(e *endpoints) { e.wtIdleBound = bound })
-	return h3Base, httpBase, &testWTDialer{Dialer: insecureWTDialer(), owner: t}
+	return h3Base, httpBase, &testWTTransport{Transport: insecureWTTransport(), owner: t}
 }
 
 // wtShapedServer is the seam described above, generalized: shape runs on the
@@ -124,24 +124,24 @@ func wtShapedServer(t *testing.T, tune func(*config.Config), shape func(*endpoin
 	return "https://" + cfg.Native.H3, httpBase, build.e
 }
 
-// insecureWTDialer dials a test listener's self-signed certificate. The caller
-// owns the dialer: most tie it to t, the stress harness to a goroutine.
-func insecureWTDialer() *webtransport.Dialer {
-	return &webtransport.Dialer{
+// insecureWTTransport dials a test listener's self-signed certificate. The caller
+// owns the wtTransport: most tie it to t, the stress harness to a goroutine.
+func insecureWTTransport() *webtransport.Transport {
+	return &webtransport.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed test certificate
 		QUICConfig:      transport.NewQUICConfig(),
 	}
 }
 
 // dialWT opens a session, retrying while the QUIC listener finishes coming up.
-func dialWT(t *testing.T, dialer *testWTDialer, url string) *webtransport.Session {
+func dialWT(t *testing.T, wtTransport *testWTTransport, url string) *webtransport.Session {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for {
-		_, sess, err := dialer.Dial(ctx, url, nil)
+		_, sess, err := wtTransport.Dial(ctx, url, nil)
 		if err == nil {
-			dialer.armClose()
+			wtTransport.armClose()
 			t.Cleanup(func() { _ = sess.CloseWithError(0, "") })
 			return sess
 		}
@@ -155,8 +155,8 @@ func dialWT(t *testing.T, dialer *testWTDialer, url string) *webtransport.Sessio
 // TestWebTransportPingEchoesOverDatagrams drives the latency bus on its
 // unreliable channel: the same wire protocol the WebSocket bus speaks.
 func TestWebTransportPingEchoesOverDatagrams(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/ping")
+	base, _, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/ping")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -196,8 +196,8 @@ func echoes(t *testing.T, ctx context.Context, sess *webtransport.Session, frame
 // TestWebTransportDownloadServesTheRequestedSize proves the CONNECT query sizes
 // the server-opened lanes, and that an exhausted lane is replaced.
 func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/download?bytes=1048576&streams=2")
+	base, _, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=1048576&streams=2")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -222,7 +222,7 @@ func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 // lane. Lanes are sized far past what the window drains and left unread, so
 // what is counted is concurrent lanes rather than their replacements.
 func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
+	base, _, wtTransport := wtTestServer(t)
 	const unread = "bytes=67108864"
 	for _, tc := range []struct {
 		query string
@@ -234,7 +234,7 @@ func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
 		{unread + "&streams=nonsense", 1},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			sess := dialWT(t, dialer, base+"/wt/download?"+tc.query)
+			sess := dialWT(t, wtTransport, base+"/wt/download?"+tc.query)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			// One accept past the expected count must find nothing.
@@ -281,8 +281,8 @@ func mintUploadID(t *testing.T, httpBase string) string {
 // reset rather than drained: each drained one holds a goroutine and a 256 KiB
 // scratch buffer for the length of the session.
 func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
-	base, httpBase, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/upload?id="+mintUploadID(t, httpBase))
+	base, httpBase, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
 
 	// Every lane writes for the same window, paced so the test moves tens of
 	// megabytes rather than everything the link will take. A drained lane keeps
@@ -334,8 +334,8 @@ func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
 // end: the server counts what arrives and reports it on the progress feed the
 // same session carries.
 func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
-	base, httpBase, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/upload?datagrams=1&id="+mintUploadID(t, httpBase))
+	base, httpBase, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id="+mintUploadID(t, httpBase))
 	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelAccept()
 	progress, err := sess.AcceptUniStream(acceptCtx)
@@ -394,8 +394,8 @@ func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
 // carries the refusal, and both read the id under the same owner, so they
 // cannot disagree about it.
 func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/upload?datagrams=1&id=gmu_never_minted")
+	base, _, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id=gmu_never_minted")
 	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
 	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelAccept()
@@ -427,8 +427,8 @@ func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
 // TestWebTransportDatagramFloodRepeats proves the flood re-runs while the
 // session lives: more than one `bytes=` total arrives.
 func TestWebTransportDatagramFloodRepeats(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/download?bytes=2000&datagrams=1")
+	base, _, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -451,8 +451,8 @@ func TestWebTransportDatagramFloodRepeats(t *testing.T) {
 // deliver the empty lane, so the accept fails either way. Each half is pinned
 // on its own here.
 func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/download?bytes=0")
+	base, _, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=0")
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -475,8 +475,8 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 // bytes would reap sessions at full throughput.
 func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	const bound = 300 * time.Millisecond
-	base, _, dialer := wtTestServerWithIdleBound(t, bound, nil)
-	sess := dialWT(t, dialer, base+"/wt/download?bytes=262144&streams=1")
+	base, _, wtTransport := wtTestServerWithIdleBound(t, bound, nil)
+	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=262144&streams=1")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -505,10 +505,10 @@ func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 // about a silent upload session looks idle to the transport, and only the
 // watchdog reclaims it. Without one it holds its slot for the session bound.
 func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
-	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
+	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
 
 	// Dial an upload session with a real id and then send nothing at all.
-	dialWT(t, dialer, base+"/wt/upload?id="+mintUploadID(t, httpBase))
+	dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
 }
@@ -519,8 +519,8 @@ func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
 // the session's flow-control window with the client parked on a write that
 // nothing will ever drain.
 func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
-	base, _, dialer := wtTestServer(t)
-	sess := dialWT(t, dialer, base+"/wt/upload?id=gmu_nosuchupload")
+	base, _, wtTransport := wtTestServer(t)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?id=gmu_nosuchupload")
 
 	openCtx, cancelOpen := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelOpen()
@@ -583,11 +583,11 @@ func waitForLoad(t *testing.T, httpBase string, want int) {
 // worker, a reloaded page and a dropped network all look like this, and before
 // the idle bound they held a slot until the session lifetime expired.
 func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
-	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
+	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
 
 	// Never accept the lane. The server fills the flow-control window and then
 	// nothing moves, which is what an abandoned session looks like from here.
-	dialWT(t, dialer, base+"/wt/download?bytes=1073741824&streams=1")
+	dialWT(t, wtTransport, base+"/wt/download?bytes=1073741824&streams=1")
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
 }
@@ -600,11 +600,11 @@ func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
 // bound and burned uplink the entire time. Only what the peer sends may keep a
 // session alive, so an abandoned flood is reclaimed on the idle bound.
 func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
-	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
+	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
 
 	// Dial the flood and never read a datagram. A terminated worker, a
 	// backgrounded tab and a hostile client all look like this from the server.
-	dialWT(t, dialer, base+"/wt/download?bytes=2000&datagrams=1")
+	dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
 }
@@ -614,11 +614,11 @@ func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
 // bound. QUIC's MaxIdleTimeout does not fire under keepalives, so a bus carrying
 // nothing looks alive to the transport and only the watchdog reclaims it.
 func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
-	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
+	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
 
 	// Dial and then send nothing. A terminated worker, a reloaded page and a
 	// dropped network all look like this from the server.
-	dialWT(t, dialer, base+routeWTPing)
+	dialWT(t, wtTransport, base+routeWTPing)
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
 }
@@ -634,7 +634,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	s := newAuthenticatedStack(t)
 
 	foreign := http.Header{"Origin": {"https://attacker.example"}}
-	res, sess, err := dialWTUntilAnswered(t, s.wtDialer(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
+	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
 	if err == nil {
 		_ = sess.CloseWithError(0, "")
 		t.Fatal("a CONNECT carrying a foreign Origin opened a session")
@@ -646,10 +646,10 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 		t.Fatalf("foreign-Origin CONNECT status=%d, want a refusal", res.StatusCode)
 	}
 
-	// The control: the same credential, the same dialer and the same header, and
+	// The control: the same credential, the same wtTransport and the same header, and
 	// only the origin canonical. Without it a refusal of everything -- a broken
 	// token, a rejected header -- would read as the origin policy working.
-	res, sess, err = dialWTUntilAnswered(t, s.wtDialer(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
+	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
 	if err != nil {
 		t.Fatalf("CONNECT from the canonical origin was refused with status=%v: %v", res, err)
 	}
@@ -659,7 +659,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 // dialWTUntilAnswered dials until the listener answers, so a QUIC listener
 // still coming up is not read as a refusal. A response means the server
 // answered: that is the outcome, whatever it says.
-func dialWTUntilAnswered(t *testing.T, d *webtransport.Dialer, target string, hdr http.Header) (*http.Response, *webtransport.Session, error) {
+func dialWTUntilAnswered(t *testing.T, d *webtransport.Transport, target string, hdr http.Header) (*http.Response, *webtransport.Session, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -675,15 +675,15 @@ func dialWTUntilAnswered(t *testing.T, d *webtransport.Dialer, target string, hd
 	}
 }
 
-// wtTestServerTuned must not arm a cleanup that closes a dialer its caller never
-// dialed: webtransport.Dialer.Close cancels a context only the first Dial
+// wtTestServerTuned must not arm a cleanup that closes a wtTransport its caller never
+// dialed: webtransport.Transport.Close cancels a context only the first Dial
 // installs, and a panic in t.Cleanup aborts the whole test binary rather than
 // one test -- under -shuffle=on, a different surviving set per seed.
-func TestWTTestServerLeavesAnUndialedDialerAlone(t *testing.T) {
+func TestWTTestServerLeavesAnUnusedTransportAlone(t *testing.T) {
 	// The assertion is what happens after this test returns: its cleanups run
-	// with the dialer still unused.
-	if base, httpBase, dialer := wtTestServerTuned(t, nil); base == "" || httpBase == "" || dialer == nil {
-		t.Fatalf("helper returned base=%q httpBase=%q dialer=%v, want a usable server", base, httpBase, dialer)
+	// with the wtTransport still unused.
+	if base, httpBase, wtTransport := wtTestServerTuned(t, nil); base == "" || httpBase == "" || wtTransport == nil {
+		t.Fatalf("helper returned base=%q httpBase=%q wtTransport=%v, want a usable server", base, httpBase, wtTransport)
 	}
 }
 
@@ -691,12 +691,12 @@ func TestWTTestServerLeavesAnUndialedDialerAlone(t *testing.T) {
 // many times it does. Abandoning a session per attempt is what a terminated
 // worker looks like, and before the idle bound the second attempt was refused.
 func TestFlappingWebTransportLaneCostsOneSlot(t *testing.T) {
-	base, httpBase, dialer := wtTestServerWithIdleBound(t, 300*time.Millisecond, func(c *config.Config) {
+	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, func(c *config.Config) {
 		c.MaxSessionsPerClient = 1
 	})
 
 	for attempt := 1; attempt <= 5; attempt++ {
-		dialWT(t, dialer, base+"/wt/download?bytes=1073741824&streams=1")
+		dialWT(t, wtTransport, base+"/wt/download?bytes=1073741824&streams=1")
 		waitForLoad(t, httpBase, 1)
 		waitForLoad(t, httpBase, 0)
 	}
@@ -707,12 +707,12 @@ func TestFlappingWebTransportLaneCostsOneSlot(t *testing.T) {
 // the server-authoritative counter rides the one stream the server opens on
 // that same session.
 func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
-	base, httpBase, dialer := wtTestServer(t)
+	base, httpBase, wtTransport := wtTestServer(t)
 
 	// The id is minted and finalized over HTTP; only the bytes ride the session.
 	client := http.DefaultClient
 	id := mintUploadID(t, httpBase)
-	sess := dialWT(t, dialer, base+"/wt/upload?id="+id)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+id)
 	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelAccept()
 	progress, err := sess.AcceptUniStream(acceptCtx)
