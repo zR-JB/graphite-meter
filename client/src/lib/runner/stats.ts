@@ -31,3 +31,36 @@ export function meanAbsDeviation(xs: number[]): number {
   for (let i = 1; i < xs.length; i++) acc += Math.abs(xs[i] - xs[i - 1]);
   return acc / (xs.length - 1);
 }
+
+export interface WeightedValue {
+  value: number;
+  weight: number;
+}
+
+/** Weighted center for bucket summaries whose observations represent different
+ *  numbers of raw outcomes. Non-positive weights carry no evidence. */
+export function weightedMean(values: WeightedValue[]): number | null {
+  let weightedTotal = 0;
+  let totalWeight = 0;
+  for (const entry of values) {
+    if (!(entry.weight > 0)) continue;
+    weightedTotal += entry.value * entry.weight;
+    totalWeight += entry.weight;
+  }
+  return totalWeight > 0 ? weightedTotal / totalWeight : null;
+}
+
+/** Mean absolute deviation using the same weights as the supplied center. */
+export function weightedMeanAbsoluteDeviation(
+  values: WeightedValue[],
+  center: number,
+): number | null {
+  let weightedDeviation = 0;
+  let totalWeight = 0;
+  for (const entry of values) {
+    if (!(entry.weight > 0)) continue;
+    weightedDeviation += Math.abs(entry.value - center) * entry.weight;
+    totalWeight += entry.weight;
+  }
+  return totalWeight > 0 ? weightedDeviation / totalWeight : null;
+}

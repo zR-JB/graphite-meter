@@ -42,6 +42,7 @@ import {
 } from "../format";
 import { buildSegments } from "../runner/schedule";
 import { LatencyScaleController } from "../runner/latencyScale";
+import { weightedMean, weightedMeanAbsoluteDeviation } from "../runner/stats";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
   latestOneWayThroughputForPhase,
@@ -593,23 +594,14 @@ class AppStore {
       const sorted = valid
         .map((sample) => sample.medianRttMs!)
         .sort((a, b) => a - b);
-      const successfulPings = valid.reduce(
-        (sum, sample) => sum + sample.pingCount - sample.lossCount,
-        0,
-      );
-      const avg = successfulPings
-        ? valid.reduce(
-            (sum, sample) =>
-              sum + sample.medianRttMs! * (sample.pingCount - sample.lossCount),
-            0,
-          ) / successfulPings
-        : null;
+      const weightedRtts = valid.map((sample) => ({
+        value: sample.medianRttMs!,
+        weight: sample.pingCount - sample.lossCount,
+      }));
+      const avg = weightedMean(weightedRtts);
       const jitter =
         avg != null && valid.length >= 2
-          ? valid.reduce(
-              (sum, sample) => sum + Math.abs(sample.medianRttMs! - avg),
-              0,
-            ) / valid.length
+          ? weightedMeanAbsoluteDeviation(weightedRtts, avg)
           : null;
       const pingCount = laneSamples.reduce(
         (sum, sample) => sum + sample.pingCount,

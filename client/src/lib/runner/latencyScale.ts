@@ -22,6 +22,18 @@ function tierFor(target: number): number {
   );
 }
 
+/** True when any visible part of a latency bucket exceeds the shared domain.
+ *  A one-ping bucket has max === median, so the median must be checked on its
+ *  own rather than treating clipping as a tail-only condition. */
+export function latencyBucketExceedsScale(
+  bucket: LatencyBucket,
+  scaleMs: number,
+): boolean {
+  return [bucket.medianRttMs, bucket.p95RttMs, bucket.maxRttMs].some(
+    (value) => value != null && value > scaleMs,
+  );
+}
+
 /** Shared robust latency domain for the gauge and chart. */
 export class LatencyScaleController {
   #history: { endT: number; median: number }[] = [];

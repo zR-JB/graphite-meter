@@ -537,11 +537,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Zero-byte samples retain time but cannot prove delivery or clear a stall.
     if (bytesDelta > 0 && provesLiveness) this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
-    const estimate = this.#rateEstimator[dir].observe({
-      bytes: bytesDelta,
-      durationMs: durationSec * 1_000,
-    });
-    this.#presentedRate[dir] = estimate.presentedBytesPerSec;
     this.#accum.pushThroughput(
       phase,
       dir,
@@ -550,6 +545,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       durationSec,
       serverAuthoritative,
     );
+    // A stalled direction may keep reporting accounting windows, and a healthy
+    // bidirectional sibling may keep moving without proving stage liveness.
+    // Preserve both in the exact reducer, but leave the presentation estimator
+    // parked so only the centralized stall transition can drive live rates.
+    if (!this.#measuring) return;
+    const estimate = this.#rateEstimator[dir].observe({
+      bytes: bytesDelta,
+      durationMs: durationSec * 1_000,
+    });
+    this.#presentedRate[dir] = estimate.presentedBytesPerSec;
     if (estimate.regimeChanged) {
       this.#continuityId++;
       this.#accum.resetPhaseStability(phase);

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { LatencyBucket } from "./contract";
 import {
+  latencyBucketExceedsScale,
   LatencyScaleController,
   LATENCY_SCALE_SHRINK_DWELL_MS,
 } from "./latencyScale";
@@ -26,6 +27,11 @@ test("scale expands from robust medians and ignores one maximum spike", () => {
   expect(scale.observe(bucket(200, 25))).toBe(40);
   expect(scale.observe(bucket(400, 25, 2_000))).toBe(40);
   expect(scale.observe(bucket(600, 90))).toBe(200);
+});
+
+test("a one-ping median above the robust scale remains marked", () => {
+  expect(latencyBucketExceedsScale(bucket(200, 100), 40)).toBe(true);
+  expect(latencyBucketExceedsScale(bucket(200, 40), 40)).toBe(false);
 });
 
 test("scale shrinks only after a full dwell and one tier at a time", () => {

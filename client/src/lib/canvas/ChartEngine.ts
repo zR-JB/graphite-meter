@@ -8,6 +8,7 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { sharedThroughputScale } from "../format";
+import { latencyBucketExceedsScale } from "../runner/latencyScale";
 import {
   hasHoverMeasurements,
   interpolateConnectedAt,
@@ -454,7 +455,8 @@ export class ChartEngine implements CanvasEngine {
   #yR(rtt: number): number {
     const plotH = this.#h - PAD_T - PAD_B;
     const span = this.#vp.rttMax - this.#vp.rttMin || 1;
-    return PAD_T + (1 - (rtt - this.#vp.rttMin) / span) * plotH;
+    const y = PAD_T + (1 - (rtt - this.#vp.rttMin) / span) * plotH;
+    return Math.max(PAD_T, Math.min(this.#h - PAD_B, y));
   }
 
   #drawScene(): void {
@@ -851,17 +853,18 @@ export class ChartEngine implements CanvasEngine {
             : this.#colors.signal;
           ctx.beginPath();
           ctx.moveTo(x, this.#yR(s.medianRttMs));
-          ctx.lineTo(x, Math.max(PAD_T, this.#yR(spike)));
+          ctx.lineTo(x, this.#yR(spike));
           ctx.stroke();
-          if (spike > this.#vp.rttMax) {
-            ctx.fillStyle = ctx.strokeStyle;
-            ctx.beginPath();
-            ctx.moveTo(x, PAD_T);
-            ctx.lineTo(x - 3, PAD_T + 5);
-            ctx.lineTo(x + 3, PAD_T + 5);
-            ctx.closePath();
-            ctx.fill();
-          }
+        }
+        if (latencyBucketExceedsScale(s, this.#vp.rttMax)) {
+          const x = this.#x(s.t);
+          ctx.fillStyle = s.underLoad ? this.#colors.warn : this.#colors.signal;
+          ctx.beginPath();
+          ctx.moveTo(x, PAD_T);
+          ctx.lineTo(x - 3, PAD_T + 5);
+          ctx.lineTo(x + 3, PAD_T + 5);
+          ctx.closePath();
+          ctx.fill();
         }
       }
       if (s.lossCount > 0) {

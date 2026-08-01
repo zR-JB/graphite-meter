@@ -640,6 +640,26 @@ test("a healthy sibling's bytes do not resume a stalled bidirectional stage", as
   expect(core.phase).toBe("error");
 });
 
+test("accounting windows cannot overwrite the shared stall presentation", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+
+  advance(10);
+  core.ingestThroughput("down", 1_000, 100, 0.1);
+  core.stall({ reason: "connection-lost" });
+  advance(400);
+
+  const before = events.filter((event) => event.type === "throughput");
+  expect(before.at(-1)?.sample.bytesPerSec).toBe(500);
+  core.ingestThroughput("down", 0, 0, 0.1, false, false);
+  const after = events.filter((event) => event.type === "throughput");
+
+  expect(after).toHaveLength(before.length);
+  expect(after.at(-1)?.sample.bytesPerSec).toBe(500);
+});
+
 test("a non-liveness throughput sample remains in the result", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
