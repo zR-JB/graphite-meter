@@ -11,7 +11,7 @@ import type {
   RunnerConfig,
   RunnerError,
   ThroughputSample,
-  LatencySample,
+  LatencyBucket,
   StabilitySnapshot,
   ThroughputResult,
   LatencyResult,
@@ -40,6 +40,7 @@ import {
   rawRateFrom,
 } from "../format";
 import { buildSegments } from "../runner/schedule";
+import { LatencyScaleController } from "../runner/latencyScale";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
   latestOneWayThroughputForPhase,
@@ -85,9 +86,10 @@ const MAX_IDLE_SAMPLES = 60;
 const UNIT_STEP_UP_HEADROOM = 1.2;
 
 class AppStore {
+  #latencyScale = new LatencyScaleController();
   throughput = $state<ThroughputSample[]>([]);
-  latency = $state<LatencySample[]>([]);
-  idleLatency = $state<LatencySample[]>([]);
+  latency = $state<LatencyBucket[]>([]);
+  idleLatency = $state<LatencyBucket[]>([]);
 
   phase = $state<Phase>("idle");
   phaseStage = $state<TransportRole | null>(null);
@@ -96,13 +98,13 @@ class AppStore {
   phaseElapsedMs = $state(0);
   phaseBudgetMs = $state(0);
   measuring = $state(true);
-  stalledSince = $state(0);
   stallInfo = $state<StallInfo | null>(null);
   liveStability = $state<{
     latency: StabilitySnapshot | null;
     download: StabilitySnapshot | null;
     upload: StabilitySnapshot | null;
-  }>({ latency: null, download: null, upload: null });
+    bidirectional: StabilitySnapshot | null;
+  }>({ latency: null, download: null, upload: null, bidirectional: null });
   runSeq = $state(0);
 
   connectivity = $state<ConnectivityState>("connected");
@@ -142,13 +144,14 @@ class AppStore {
   unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
-  showWireEstimates = $state(false);
+  showWireEstimates = $state(true);
   dockWidth = $state<{ left: number; right: number }>({
     left: 400,
     right: 400,
   });
   settingsTab = $state<SettingsTab>("setup");
   debugLogging = $state(false);
+  latencyScaleMs = $state(20);
 
   constructor() {
     const persisted = loadPersisted();
@@ -207,7 +210,7 @@ class AppStore {
     return latestBidirectionalLanes(this.throughput);
   });
 
-  pulseLatency = $derived.by<LatencySample[]>(() => {
+  pulseLatency = $derived.by<LatencyBucket[]>(() => {
     // While idle, the pulse reads the keepalive lane if available. During a run,
     // it reads measured samples so loss/jitter reflect the active test.
     if (this.isRunning) return this.latency;
@@ -215,23 +218,36 @@ class AppStore {
   });
 
   liveRtt = $derived(
-    this.pulseLatency.length
-      ? this.pulseLatency.at(-1)!.rttMs
-      : (this.infra?.preTestPingMs ?? 0),
+    this.pulseLatency.at(-1)?.medianRttMs ?? this.infra?.preTestPingMs ?? 0,
+  );
+
+  liveLatencyLost = $derived(
+    (this.pulseLatency.at(-1)?.pingCount ?? 0) > 0 &&
+      this.pulseLatency.at(-1)?.medianRttMs == null,
   );
 
   rollingLossPct = $derived.by(() => {
-    const recent = this.pulseLatency.slice(-20);
+    const latest = this.pulseLatency.at(-1)?.endT ?? 0;
+    const recent = this.pulseLatency.filter(
+      (bucket) => bucket.endT > latest - 4_000,
+    );
     if (!recent.length) return 0;
-    return (recent.filter((s) => s.lost).length / recent.length) * 100;
+    const pings = recent.reduce((sum, bucket) => sum + bucket.pingCount, 0);
+    const losses = recent.reduce((sum, bucket) => sum + bucket.lossCount, 0);
+    return pings ? (losses / pings) * 100 : 0;
   });
 
   jitterMs = $derived.by(() => {
-    const recent = this.pulseLatency.slice(-30).filter((s) => !s.lost);
+    const latest = this.pulseLatency.at(-1)?.endT ?? 0;
+    const recent = this.pulseLatency
+      .filter((bucket) => bucket.endT > latest - 4_000)
+      .flatMap((bucket) =>
+        bucket.medianRttMs == null ? [] : [bucket.medianRttMs],
+      );
     if (recent.length < 2) return 0;
     let acc = 0;
     for (let i = 1; i < recent.length; i++)
-      acc += Math.abs(recent[i].rttMs - recent[i - 1].rttMs);
+      acc += Math.abs(recent[i] - recent[i - 1]);
     return acc / (recent.length - 1);
   });
 
@@ -415,6 +431,10 @@ class AppStore {
         this.infra = event.info;
         break;
       case "phase": {
+        if (event.transition.from === "idle") {
+          this.#latencyScale.reset();
+          this.latencyScaleMs = this.#latencyScale.scaleMs;
+        }
         this.phase = event.transition.to;
         this.phaseStage = event.transition.stage;
         this.phaseStartedAtMs = event.transition.t;
@@ -432,7 +452,6 @@ class AppStore {
       case "stall":
         // Store only the presentation latch; measurement logic stays in the core.
         this.measuring = false;
-        this.stalledSince = performance.now();
         this.stallInfo = event.info;
         break;
       case "resume":
@@ -462,6 +481,7 @@ class AppStore {
             this.idleLatency.shift();
         } else {
           this.latency.push(event.sample);
+          this.latencyScaleMs = this.#latencyScale.observe(event.sample);
           if (this.latency.length > MAX_SAMPLES) this.latency.shift();
         }
         break;
@@ -494,13 +514,14 @@ class AppStore {
 
   #clearStall() {
     this.measuring = true;
-    this.stalledSince = 0;
     this.stallInfo = null;
   }
 
   reset() {
     this.throughput = [];
     this.latency = [];
+    this.#latencyScale.reset();
+    this.latencyScaleMs = this.#latencyScale.scaleMs;
     this.phase = "idle";
     this.phaseStage = null;
     this.phaseStartedAtMs = 0;
@@ -508,7 +529,12 @@ class AppStore {
     this.phaseElapsedMs = 0;
     this.phaseBudgetMs = 0;
     this.#clearStall();
-    this.liveStability = { latency: null, download: null, upload: null };
+    this.liveStability = {
+      latency: null,
+      download: null,
+      upload: null,
+      bidirectional: null,
+    };
     this.stageResults = { download: null, upload: null, latency: null };
     this.stageFailures = {};
     this.result = null;
@@ -528,30 +554,52 @@ class AppStore {
           ? s.phase === "latency"
           : s.underLoad && s.phase === key,
       );
-      const valid = laneSamples.filter((s) => !s.lost);
-      const sorted = valid.map((s) => s.rttMs).sort((a, b) => a - b);
-      const avg = valid.length
-        ? valid.reduce((sum, s) => sum + s.rttMs, 0) / valid.length
+      const valid = laneSamples.filter((sample) => sample.medianRttMs != null);
+      const sorted = valid
+        .map((sample) => sample.medianRttMs!)
+        .sort((a, b) => a - b);
+      const successfulPings = valid.reduce(
+        (sum, sample) => sum + sample.pingCount - sample.lossCount,
+        0,
+      );
+      const avg = successfulPings
+        ? valid.reduce(
+            (sum, sample) =>
+              sum + sample.medianRttMs! * (sample.pingCount - sample.lossCount),
+            0,
+          ) / successfulPings
         : null;
       const jitter =
         avg != null && valid.length >= 2
-          ? valid.reduce((sum, s) => sum + Math.abs(s.rttMs - avg), 0) /
-            valid.length
+          ? valid.reduce(
+              (sum, sample) => sum + Math.abs(sample.medianRttMs! - avg),
+              0,
+            ) / valid.length
           : null;
-      const lossRatio = laneSamples.length
-        ? laneSamples.filter((s) => s.lost).length / laneSamples.length
-        : 0;
+      const pingCount = laneSamples.reduce(
+        (sum, sample) => sum + sample.pingCount,
+        0,
+      );
+      const lossCount = laneSamples.reduce(
+        (sum, sample) => sum + sample.lossCount,
+        0,
+      );
+      const lossRatio = pingCount ? lossCount / pingCount : 0;
       return {
         key,
         min: sorted.at(0) ?? null,
-        max: sorted.at(-1) ?? null,
+        max:
+          valid.reduce(
+            (max, sample) => Math.max(max, sample.maxRttMs ?? 0),
+            0,
+          ) || null,
         p10: quantile(sorted, 0.1),
         p90: quantile(sorted, 0.9),
         average: avg,
-        current: valid.at(-1)?.rttMs ?? null,
+        current: valid.at(-1)?.medianRttMs ?? null,
         jitter,
         lossRatio,
-        count: laneSamples.length,
+        count: pingCount,
         active: this.phase === key,
       };
     }),

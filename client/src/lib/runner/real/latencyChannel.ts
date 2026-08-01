@@ -10,6 +10,7 @@ import { httpToWs, throughputTargetKey } from "./backendPure";
 import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
+import { singleLatencyBucket } from "../latencyBuckets";
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -424,13 +425,7 @@ export class IdleKeepalive {
           }
           host.emit({
             type: "latency",
-            sample: {
-              t: 0,
-              rttMs: sample.rtt,
-              underLoad: false,
-              lost: sample.lost,
-              phase: "idle",
-            },
+            sample: singleLatencyBucket(0, sample.rtt, sample.lost),
           });
         }
         if (this.#offline) {

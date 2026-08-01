@@ -78,7 +78,7 @@ const config: RunnerConfig = {
     maxPhaseReductionRatio: 0,
     minLatencySamples: 1,
     minTransferSamples: 1,
-    glideMs: 0,
+    confirmationMs: 0,
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };

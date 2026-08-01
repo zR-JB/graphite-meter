@@ -22,7 +22,7 @@
   let { bare = false }: Props = $props();
 
   const PROFILE_HELP =
-    "Latency profile: how steady your ping is, idle and under load. Each bar's shaded band is the P10–P90 range (your typical pings); the dot is the latest reading. Tighter is steadier.";
+    "Latency profile: phase-aligned bucket medians show typical responsiveness; the outer range preserves measured spikes, and loss uses every ping outcome. Tighter is steadier.";
 
   const LANE_META: Record<StageKey, { label: string; tone: string }> = {
     latency: { label: "Idle", tone: "idle" },
@@ -113,7 +113,7 @@
 <section class="card" class:bare aria-label="Latency distribution">
   <header class="card-head">
     <h3 class="term" use:tooltip={PROFILE_HELP}>Latency Profile</h3>
-    <p>Range / avg / jitter / loss</p>
+    <p>Median range / spikes / loss</p>
   </header>
 
   {#if store.stageFailures.latency}

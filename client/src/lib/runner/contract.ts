@@ -101,7 +101,7 @@ export interface AdaptiveDurationConfig {
   maxPhaseReductionRatio: number; // never cut a phase by more than this fraction
   minLatencySamples: number; // sample floor for a latency phase's early exit
   minTransferSamples: number; // sample floor for a transfer phase's early exit
-  glideMs: number; // real-time duration of the early-finish acceleration glide
+  confirmationMs: number; // stability must remain eligible for this real interval
 }
 
 /* ---------- Live measurement stability ---------- */
@@ -111,7 +111,7 @@ export type StabilityBand = "low" | "medium" | "high";
 /** Live stability snapshot for a measured phase: the single signal the pip, the
  *  early-finish glide, and the result selection all read. */
 export interface StabilitySnapshot {
-  phase: Extract<Phase, "latency" | "download" | "upload">;
+  phase: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
   score: number; // stability score 0..1 (adaptive.ts)
   band: StabilityBand;
   sampleCount: number; // usable samples in the confidence window
@@ -181,17 +181,25 @@ export interface ThroughputSample {
   // sample (like `dir`) so consumers attribute it by tag, never re-deriving the
   // phase from timestamps. The single source of truth for sample→phase.
   phase: Extract<Phase, "download" | "upload" | "bidirectional">;
+  /** Lines with different ids are intentionally discontinuous. */
+  continuityId: number;
 }
 
-export interface LatencySample {
+export interface LatencyBucket {
   t: number;
-  rttMs: number;
+  startT: number;
+  endT: number;
+  medianRttMs: number | null;
+  p95RttMs: number | null;
+  maxRttMs: number | null;
+  pingCount: number;
+  lossCount: number;
   underLoad: boolean; // true if captured during dl/ul (bufferbloat)
-  lost: boolean; // packet considered lost
   // The phase that produced this ping (like ThroughputSample.phase). Pre-test
   // probe pings carry "idle"; in-run pings carry their measured phase. Lets the
   // LatencyProfile bucket lanes by tag, never by re-derived time windows.
   phase: Phase;
+  continuityId: number;
 }
 
 export interface PhaseTransition {
@@ -412,7 +420,7 @@ export type RunnerEvent =
   | { type: "infra"; info: InfraInfo }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
-  | { type: "latency"; sample: LatencySample }
+  | { type: "latency"; sample: LatencyBucket }
   // Reserved seam: a backend MAY push an explicit connectivity state. The store
   // otherwise derives `effectiveConnectivity` from loss/jitter/measuring, so
   // this is an optional override for an engine with a better signal.

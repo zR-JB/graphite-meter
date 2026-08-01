@@ -103,20 +103,20 @@ navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/r
 
 ### Routes
 
-| Path                     | Method       | Transport                            | Purpose                                                                                                                                                                                         |
-| ------------------------ | ------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/preflight`             | GET          | UI origins, JSON                     | Logical server identity, process generation, and independent throughput and latency target catalogs. Refreshed by the bounded preparation lifecycle.                                            |
-| `/probe`                 | GET          | selected H1/H2/H3                    | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes.                                                                           |
-| `/download`              | GET          | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                           |
-| `/upload/session`        | POST         | selected throughput target, JSON     | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream.                                                                                              |
-| `/upload`                | POST         | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                      |
-| `/ws/ping`               | WS upgrade   | WebSocket                            | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                              |
-| `/wt/ping`               | CONNECT      | HTTP/3 WebTransport                  | The same echo over session datagrams, where a ping that never returns is real packet loss rather than a stalled queue.                                                                          |
+| Path                     | Method       | Transport                            | Purpose                                                                                                                                                                                                                         |
+| ------------------------ | ------------ | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/preflight`             | GET          | UI origins, JSON                     | Logical server identity, process generation, and independent throughput and latency target catalogs. Refreshed by the bounded preparation lifecycle.                                                                            |
+| `/probe`                 | GET          | selected H1/H2/H3                    | Client IP/source and server-observed protocol for the actual selected path. H3 TCP also returns `Alt-Svc` and closes.                                                                                                           |
+| `/download`              | GET          | selected fetch target, streamed body | Streams `?bytes=N` bytes (default 25 MiB, clamped to 64 GiB) sliced from the one shared random block — never regenerated per request.                                                                                           |
+| `/upload/session`        | POST         | selected throughput target, JSON     | Mints a short-lived `gmu_...` token correlating one upload stage's POST lanes and progress stream.                                                                                                                              |
+| `/upload`                | POST         | selected fetch target, streamed body | Drains and counts an uploaded body via a pooled 256 KiB buffer; with a valid `?id=`, folds every drained chunk into a shared per-id aggregate (see below).                                                                      |
+| `/ws/ping`               | WS upgrade   | WebSocket                            | Stateless `PING,<id>` → `PONG,<id>;TIME,<nanos>` echo. The server keeps zero per-ping state; RTT is computed entirely client-side.                                                                                              |
+| `/wt/ping`               | CONNECT      | HTTP/3 WebTransport                  | The same echo over session datagrams, where a ping that never returns is real packet loss rather than a stalled queue.                                                                                                          |
 | `/wt/download`           | CONNECT      | HTTP/3 WebTransport                  | The CONNECT query names everything (`bytes=&streams=&datagrams=`): the server opens the lanes, each writing `bytes` and replaced when exhausted, or floods datagrams while the session lives. `bytes=0` is the transport check. |
-| `/wt/upload`             | CONNECT      | HTTP/3 WebTransport                  | Client unidirectional streams are upload bytes (`?id=` names the upload); the server opens one stream at establishment carrying the `/upload/progress` records, so the counter rides the connection under test. |
-| `/wt/session`            | POST         | selected throughput target, JSON     | Mints the single-use 30 s token an authenticated browser CONNECT carries in its URL, since a WebTransport CONNECT can send neither cookies nor headers. Empty token when auth is off.           |
-| `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON   | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop.            |
-| `/` (anything unmatched) | GET          | H1/H1-TLS UI listeners               | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it). |
+| `/wt/upload`             | CONNECT      | HTTP/3 WebTransport                  | Client unidirectional streams are upload bytes (`?id=` names the upload); the server opens one stream at establishment carrying the `/upload/progress` records, so the counter rides the connection under test.                 |
+| `/wt/session`            | POST         | selected throughput target, JSON     | Mints the single-use 30 s token an authenticated browser CONNECT carries in its URL, since a WebTransport CONNECT can send neither cookies nor headers. Empty token when auth is off.                                           |
+| `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON   | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop.                                            |
+| `/` (anything unmatched) | GET          | H1/H1-TLS UI listeners               | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                                 |
 
 WebTransport is mounted and advertised wherever HTTP/3 is configured. Under authentication the
 boundary authenticates the extended CONNECT before any upgrade runs: native clients send their
@@ -328,10 +328,18 @@ linear-interpolated, so the two clients' latency summaries are not directly comp
 The UI (`client/src/`) is deliberately engine-agnostic: it only ever talks to `RunnerCore`
 (`src/lib/runner/core.ts`), which owns the phase timeline, a deadline scheduler, a measured clock that
 retains stalls in effective throughput while bounding recovery with a max timeout, an
-adaptive early-finish ("glide" toward the phase boundary once a stage's confidence stabilizes),
-and dual exponential-moving-average smoothing (a fast ~700ms constant for the displayed number, a
-slower ~1800ms constant for stability judgments) — both fed from the same raw samples, so the
-exact byte totals a run reports never drift from what smoothing displays.
+adaptive early-finish confirmation, and the one live-throughput presentation path. Exact byte/time
+observations independently feed a growing time-weighted display window, fixed 250ms confidence
+buckets, and the final reducer. A sustained fast-window change starts a new display regime and
+revokes stability; a brief dip does neither. Confirmation never accelerates the measured clock: it
+closes a stable stage at the real boundary and shifts only the remaining schedule.
+
+Stall presentation is also runner-owned. The core emits the shared transition to zero consumed by
+the gauge, cards, and chart, while synthetic transition values never enter confidence or result
+accounting. Latency follows the same single-path rule: every raw outcome stays in `RunAccumulator`,
+while the UI receives phase-aligned 200ms median/P95/max/loss buckets. Gauge and chart share one
+robust recent latency scale; chart lines are straight and break at phase, loss, stall, and gap
+boundaries rather than adding another smoothing curve.
 
 Each run enters a visible `connecting` phase while the selected target is probed and verified.
 Only after that succeeds does the measurement timeline start. Stage preparation may also be
@@ -429,15 +437,15 @@ the primary summary.
 
 ### Web Workers
 
-| Worker                      | Role                                                                                                                                                 |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                |
-| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                             |
-| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                       |
-| `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss algorithm, off the main thread.                                                 |
-| `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE.  |
-| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                   |
-| `payload.ts`                | Shared helper (not a worker): the memoised incompressible source block both upload paths write.                                                      |
+| Worker                      | Role                                                                                                                                                      |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                     |
+| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                                  |
+| `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                            |
+| `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss algorithm, off the main thread.                                                      |
+| `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE. |
+| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                        |
+| `payload.ts`                | Shared helper (not a worker): the memoised incompressible source block both upload paths write.                                                           |
 
 Byte lanes reach workers through `real/byteLane.ts`: a transfer direction drives lanes as
 `start`/`measure`/`stop`/`discard` and never learns which transport is underneath; `fetchLane` wraps

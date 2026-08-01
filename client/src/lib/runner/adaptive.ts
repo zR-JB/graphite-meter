@@ -28,9 +28,10 @@ const LATENCY_LOSS_K = 3.6;
  * rather than magnified by division through a tiny loopback/LAN RTT. */
 const LATENCY_JITTER_FLOOR_MS = 20;
 
-/** Only the most recent N samples feed the confidence window. Older ramp-up
- *  samples otherwise depress stability. */
-const CONFIDENCE_WINDOW = 48;
+/** Four seconds of completed 250 ms exact-rate buckets. */
+export const TRANSFER_CONFIDENCE_BUCKETS = 16;
+/** Latency outcomes are selected by timestamp, never callback count. */
+export const LATENCY_CONFIDENCE_WINDOW_MS = 4_000;
 
 /** Slope is measured as |mean(firstSegment) − mean(lastSegment)| / mean.
  *  The window is split into this many segments (first vs last third). */
@@ -111,6 +112,11 @@ export interface LatencyConfidenceScore extends Omit<
   lossRatio: number;
 }
 
+export interface TimedLatencyOutcome {
+  tMs: number;
+  rttMs: number | null;
+}
+
 /**
  * Transfer (download/upload) confidence from a window of bytes/sec values.
  * Stability falls as the plateau gets noisier (variance) or keeps drifting
@@ -119,7 +125,7 @@ export interface LatencyConfidenceScore extends Omit<
 export function transferConfidence(
   bytesPerSecValues: number[],
 ): ConfidenceScore {
-  const values = bytesPerSecValues.slice(-CONFIDENCE_WINDOW);
+  const values = bytesPerSecValues.slice(-TRANSFER_CONFIDENCE_BUCKETS);
   if (values.length < 2) {
     return {
       score: 0,
@@ -155,16 +161,21 @@ export function transferConfidence(
  * sustained jitter and packet loss still lower confidence.
  */
 export function latencyConfidence(
-  outcomes: (number | null)[],
+  outcomes: TimedLatencyOutcome[],
 ): LatencyConfidenceScore {
-  const window = outcomes.slice(-CONFIDENCE_WINDOW);
-  const values = window.filter((value): value is number => value !== null);
+  const latestT = outcomes.at(-1)?.tMs ?? 0;
+  const window = outcomes.filter(
+    (outcome) => outcome.tMs > latestT - LATENCY_CONFIDENCE_WINDOW_MS,
+  );
+  const values = window.flatMap((outcome) =>
+    outcome.rttMs == null ? [] : [outcome.rttMs],
+  );
   if (values.length < 2) {
     return {
       score: 0,
       jitterRatio: 1,
       lossRatio: 1,
-      sampleCount: values.length,
+      sampleCount: window.length,
     };
   }
 
@@ -172,7 +183,7 @@ export function latencyConfidence(
   const jitterMs = median(values.map((value) => Math.abs(value - center)));
   const jitterRatio = jitterMs / Math.max(center, LATENCY_JITTER_FLOOR_MS);
   const lossRatio = window.length
-    ? window.filter((value) => value === null).length / window.length
+    ? window.filter((outcome) => outcome.rttMs === null).length / window.length
     : 0;
 
   const score = clamp(
@@ -181,7 +192,7 @@ export function latencyConfidence(
     1,
   );
 
-  return { score, jitterRatio, lossRatio, sampleCount: values.length };
+  return { score, jitterRatio, lossRatio, sampleCount: window.length };
 }
 
 /* ---------- Early-exit predicate ---------- */

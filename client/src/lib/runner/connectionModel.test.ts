@@ -85,7 +85,7 @@ function config(): RunnerConfig {
       maxPhaseReductionRatio: 0.5,
       minLatencySamples: 8,
       minTransferSamples: 12,
-      glideMs: 1100,
+      confirmationMs: 1100,
     },
     visualization: { throughputMaxBytesPerSec: "auto" },
   };

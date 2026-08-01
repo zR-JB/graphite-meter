@@ -37,7 +37,7 @@ export function defaultPersisted(): PersistedState {
     unitBase: "base10",
     unitKind: "bits",
     theme: "auto",
-    showWireEstimates: false,
+    showWireEstimates: true,
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
     settingsTab: "setup",
     debugLogging: false,
@@ -104,6 +104,15 @@ export function loadPersisted(): PersistedState {
   // deepMergeOverDefaults walks only keys the current schema defines.
   // Legacy spellings need explicit mapping below.
   const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
+  const parsedAdaptive = isPlainObject(parsedConfig?.adaptive)
+    ? parsedConfig.adaptive
+    : null;
+  // One-way schema migration: runtime code only knows confirmationMs.
+  if (
+    parsedAdaptive?.confirmationMs === undefined &&
+    typeof parsedAdaptive?.glideMs === "number"
+  )
+    merged.config.adaptive.confirmationMs = parsedAdaptive.glideMs;
   merged.config.pingCadence = coercePingCadence(
     parsedConfig?.pingCadence,
     defaults.config.pingCadence,

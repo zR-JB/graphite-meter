@@ -14,7 +14,7 @@ const adaptive: AdaptiveDurationConfig = {
   maxPhaseReductionRatio: 1,
   minLatencySamples: 0,
   minTransferSamples: 0,
-  glideMs: 100,
+  confirmationMs: 100,
 };
 
 /** Push one download sample and drive the same trackStableRun call site
@@ -137,8 +137,10 @@ test("the final stable plateau is also weighted by represented time", () => {
 
   const result = accum.throughputResult("download", true);
   expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(200 / 1.1, 6);
-  expect(result.meanBytesPerSec).not.toBeCloseTo(550, 6);
+  // Stability begins at an evidence boundary. The sample that establishes the
+  // latch is evidence for the decision, while subsequent exact bytes/time form
+  // the reported trailing plateau.
+  expect(result.meanBytesPerSec).toBeCloseTo(100, 6);
 });
 
 test("bidirectional: down and up lanes reduce independently", () => {

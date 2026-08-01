@@ -22,6 +22,24 @@ export function interpolateAt<T extends { t: number }>(
   return pick(a) * (1 - weight) + pick(b) * weight;
 }
 
+/** Linear lookup that refuses to cross an intentional series break. */
+export function interpolateConnectedAt<T extends { t: number }>(
+  samples: T[],
+  t: number,
+  pick: (sample: T) => number,
+  connected: (left: T, right: T) => boolean,
+): number | null {
+  if (!samples.length) return null;
+  const insertion = lowerBoundAt(samples, t);
+  if (insertion < samples.length && samples[insertion].t === t)
+    return pick(samples[insertion]);
+  const left = samples[insertion - 1];
+  const right = samples[insertion];
+  if (!left || !right || !connected(left, right)) return null;
+  const weight = (t - left.t) / (right.t - left.t || 1);
+  return pick(left) * (1 - weight) + pick(right) * weight;
+}
+
 /** Index of the first sample at or after `t` (binary search). */
 export function lowerBoundAt<T extends { t: number }>(
   samples: T[],

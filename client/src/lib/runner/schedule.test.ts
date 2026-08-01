@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { buildSegments, reconfigureTimeline } from "./schedule";
+import {
+  buildSegments,
+  reconfigureTimeline,
+  truncateSegmentAt,
+} from "./schedule";
 import type { RunnerConfig } from "./contract";
 
 // A minimal but complete RunnerConfig fixture. store.svelte.ts's DEFAULT_CONFIG
@@ -43,7 +47,7 @@ const BASE_CONFIG: RunnerConfig = {
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 8,
     minTransferSamples: 12,
-    glideMs: 1100,
+    confirmationMs: 1100,
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
@@ -142,4 +146,19 @@ test("reconfigureTimeline resizes the active stage from its original start", () 
     cfg({ ...before, duration: { ...before.duration, downloadMs: 2000 } }),
   );
   expect(expired.totalMs).toBe(3000);
+});
+
+test("truncateSegmentAt closes at real elapsed and shifts the untouched tail", () => {
+  const built = buildSegments(
+    cfg({ duration: { ...BASE_CONFIG.duration, warmupMs: 0 } }),
+  );
+  const download = built.segments.find((s) => s.phase === "download")!;
+  const elapsed = download.start + 5_500;
+  const truncated = truncateSegmentAt(built.segments, download, elapsed);
+  const next = truncated.segments.find((s) => s.phase === "upload")!;
+  expect(truncated.segments.find((s) => s.phase === "download")!.end).toBe(
+    elapsed,
+  );
+  expect(next.start).toBe(elapsed);
+  expect(truncated.totalMs).toBe(built.totalMs - 4_500);
 });

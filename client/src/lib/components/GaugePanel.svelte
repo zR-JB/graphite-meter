@@ -2,10 +2,6 @@
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
-  import {
-    presentation,
-    type PresentationHandle,
-  } from "../canvas/presentation";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -20,31 +16,19 @@
   });
 
   let canvasEl = $state<HTMLCanvasElement>();
-  let stageEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
-  let decayPresentation: PresentationHandle;
 
-  const STALL_DECAY_MS = 800;
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
-  let nowWall = $state(performance.now());
-  const stallDecay = $derived.by(() => {
-    if (store.measuring || !store.stalledSince) return 1;
-    return Math.min(
-      1,
-      Math.max(0, 1 - (nowWall - store.stalledSince) / STALL_DECAY_MS),
-    );
-  });
-  const decayedBytesPerSec = $derived(
-    store.liveTransferBytesPerSec * stallDecay,
-  );
   let completedDisplay = $state(EMPTY_DISPLAY);
   let completedKind = $state<"speed" | "latency">("speed");
 
   $effect(() => {
     if (store.phase === "latency") {
       completedKind = "latency";
-      completedDisplay = { value: fmtMs(store.liveRtt), unit: "ms" };
+      completedDisplay = store.liveLatencyLost
+        ? { value: "lost", unit: "" }
+        : { value: fmtMs(store.liveRtt), unit: "ms" };
     } else if (
       store.phase === "download" ||
       store.phase === "upload" ||
@@ -52,7 +36,7 @@
     ) {
       completedKind = "speed";
       completedDisplay = {
-        value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
+        value: fmtSpeed(store.toUnit(store.liveTransferBytesPerSec)),
         unit: store.unitLabel,
       };
     }
@@ -74,33 +58,23 @@
     }
   });
 
-  const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
-
-  const latencyScaleMs = $derived.by(() => {
-    let peak = store.infra?.preTestPingMs ?? 0;
-    for (const s of store.latency)
-      if (!s.lost && s.rttMs > peak) peak = s.rttMs;
-    const target = peak * 1.1; // a touch of headroom so the peak isn't pegged
-    return (
-      LATENCY_SCALE_LADDER.find((step) => step >= target) ??
-      LATENCY_SCALE_LADDER.at(-1)!
-    );
-  });
-
   const msTicksActive = $derived(
     store.phase === "latency" ||
       (store.phase === "complete" && completedKind === "latency"),
   );
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
-      return TICK_FRACTIONS.map((f) => fmtMs(latencyScaleMs * f));
+      return TICK_FRACTIONS.map((f) => fmtMs(store.latencyScaleMs * f));
     const scale = store.displayScaleBytesPerSec;
     return TICK_FRACTIONS.map((f) => fmtSpeed(store.toUnit(scale * f)));
   });
 
   const display = $derived.by(() => {
     const p = store.phase;
-    if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
+    if (p === "latency")
+      return store.liveLatencyLost
+        ? { value: "lost", unit: "" }
+        : { value: fmtMs(store.liveRtt), unit: "ms" };
     if (
       p === "idle" ||
       p === "connecting" ||
@@ -111,7 +85,7 @@
       return EMPTY_DISPLAY;
     if (p === "complete") return completedDisplay;
     return {
-      value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
+      value: fmtSpeed(store.toUnit(store.liveTransferBytesPerSec)),
       unit: store.unitLabel,
     };
   });
@@ -173,6 +147,7 @@
     void store.throughput.length;
     void store.latency.length;
     void store.liveRtt;
+    void store.liveLatencyLost;
     void store.displayScaleBytesPerSec;
     void store.measuring;
     void store.unitBase;
@@ -180,20 +155,6 @@
     void store.unitLabel;
     engine?.wake();
   });
-
-  $effect(() => {
-    void store.measuring;
-    void store.stalledSince;
-    decayPresentation?.invalidate();
-  });
-
-  function advanceDecay(now: number) {
-    if (store.measuring || !store.stalledSince) return false;
-    nowWall = now;
-    engine?.wake();
-    const rampHasFramesLeft = now - store.stalledSince < STALL_DECAY_MS;
-    return rampHasFramesLeft;
-  }
 
   // The live region mirrors a per-frame value. Mid-phase announcements wait a
   // second apart, the time a screen reader needs to finish a sentence. Phase
@@ -238,17 +199,15 @@
         valueBytesPerSec:
           finalMetric?.kind === "speed"
             ? finalMetric.bytesPerSec
-            : decayedBytesPerSec,
+            : store.liveTransferBytesPerSec,
         scaleBytesPerSec: scale,
-        latencyScaleMs,
+        latencyScaleMs: store.latencyScaleMs,
         ticks: gaugeTicks,
         rtt: finalMetric?.kind === "latency" ? finalMetric.ms : store.liveRtt,
         completedKind,
       };
     });
     engine.attach(canvasEl!);
-    decayPresentation = presentation.register(stageEl!, advanceDecay);
-
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -261,7 +220,6 @@
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
       engine.destroy();
-      decayPresentation.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
     };
@@ -285,7 +243,7 @@
       <StageTrack />
     </div>
 
-    <div bind:this={stageEl} class="stage">
+    <div class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       <div class="metric-wrap">
         <span class="gauge-value">{display.value}</span>

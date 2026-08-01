@@ -8,6 +8,9 @@ import {
 } from "./adaptive";
 import type { AdaptiveDurationConfig } from "./contract";
 
+const timed = (values: (number | null)[], cadenceMs = 100) =>
+  values.map((rttMs, index) => ({ tMs: index * cadenceMs, rttMs }));
+
 // ---------- standardDeviation ----------
 
 test("standardDeviation: empty array is 0", () => {
@@ -55,12 +58,12 @@ test("transferConfidence: a noisy, drifting sequence is low confidence", () => {
 
 test("latencyConfidence: fewer than 2 samples signals no confidence", () => {
   expect(latencyConfidence([]).score).toBe(0);
-  expect(latencyConfidence([20]).score).toBe(0);
+  expect(latencyConfidence(timed([20])).score).toBe(0);
 });
 
 test("latencyConfidence: steady RTT with no loss is high confidence", () => {
   const values = Array(60).fill(20);
-  const conf = latencyConfidence(values);
+  const conf = latencyConfidence(timed(values));
   expect(conf.score).toBeCloseTo(1, 10);
   expect(conf.lossRatio).toBe(0);
 });
@@ -70,28 +73,28 @@ test("latencyConfidence: jittery RTT is low confidence", () => {
   for (let i = 0; i < 60; i++) {
     values.push(i % 2 === 0 ? 5 : 500);
   }
-  const conf = latencyConfidence(values);
+  const conf = latencyConfidence(timed(values));
   expect(conf.score).toBe(0);
 });
 
 test("latencyConfidence: steady RTT but heavy loss is still low confidence", () => {
-  const values = [...Array(20).fill(null), ...Array(40).fill(20)];
-  const conf = latencyConfidence(values);
+  const values = [...Array(20).fill(null), ...Array(20).fill(20)];
+  const conf = latencyConfidence(timed(values));
   expect(conf.jitterRatio).toBeCloseTo(0, 10);
-  expect(conf.lossRatio).toBeCloseTo(8 / 48, 10);
+  expect(conf.lossRatio).toBeCloseTo(0.5, 10);
   expect(conf.score).toBeLessThan(0.6);
 });
 
 test("latencyConfidence: ordinary low-latency jitter reaches high confidence", () => {
   const values = Array.from({ length: 48 }, (_, i) => 5 + (i % 3) - 1);
-  const conf = latencyConfidence(values);
+  const conf = latencyConfidence(timed(values));
   expect(conf.jitterRatio).toBeCloseTo(0.05, 10);
   expect(conf.score).toBeGreaterThan(0.86);
 });
 
 test("latencyConfidence: recovered loss ages out with the RTT window", () => {
   const values = [...Array(12).fill(null), ...Array(60).fill(20)];
-  const conf = latencyConfidence(values);
+  const conf = latencyConfidence(timed(values));
   expect(conf.lossRatio).toBe(0);
   expect(conf.score).toBe(1);
 });
@@ -108,7 +111,7 @@ function cfg(
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 5,
     minTransferSamples: 20,
-    glideMs: 100,
+    confirmationMs: 100,
     ...overrides,
   };
 }

@@ -620,7 +620,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         maxPhaseReductionRatio: 0,
         minLatencySamples: 1,
         minTransferSamples: 1,
-        glideMs: 0,
+        confirmationMs: 0,
       },
       visualization: { throughputMaxBytesPerSec: "auto" },
     };
@@ -951,7 +951,7 @@ const probeConfig = (latency: boolean): RunnerConfig => ({
     maxPhaseReductionRatio: 0,
     minLatencySamples: 1,
     minTransferSamples: 1,
-    glideMs: 0,
+    confirmationMs: 0,
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 });

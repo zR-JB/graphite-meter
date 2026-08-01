@@ -4,16 +4,16 @@
 import type {
   Phase,
   ThroughputSample,
-  LatencySample,
+  LatencyBucket,
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
-import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
-import { interpolateAt, lowerBoundAt } from "./hoverInterp";
+import { sharedThroughputScale } from "../format";
+import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
 import { presentation, type PresentationHandle } from "./presentation";
 
 export interface ChartData {
   throughput: ThroughputSample[];
-  latency: LatencySample[];
+  latency: LatencyBucket[];
   /** False when latency is disabled: the latency line and right axis are
    *  suppressed. */
   latencyEnabled: boolean;
@@ -25,6 +25,8 @@ export interface ChartData {
   /** Throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered upstream.
    *  Identical to store.displayScaleBytesPerSec so the gauge dial matches. */
   scaleBytesPerSec: number;
+  /** Shared robust latency ceiling, identical to the gauge. */
+  latencyScaleMs: number;
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
     Record<"download" | "upload" | "bidiDown" | "bidiUp", number>
@@ -46,6 +48,10 @@ export interface HoverInfo {
   downBytesPerSec: number | null;
   upBytesPerSec: number | null;
   rtt: number | null;
+  rttP95: number | null;
+  rttMax: number | null;
+  pingCount: number;
+  lossCount: number;
 }
 
 interface Viewport {
@@ -153,18 +159,17 @@ export class ChartEngine implements CanvasEngine {
   #result = false; // frozen post-run result mode
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
   #hasThroughputScale = false;
-  #p95Cache = { len: -1, tMin: 0, v: 0 };
   #indexedThroughput = 0;
   #lastIndexedThroughput: ThroughputSample | undefined;
   #indexedLatency = 0;
-  #lastIndexedLatency: LatencySample | undefined;
+  #lastIndexedLatency: LatencyBucket | undefined;
   #throughputByLane: Record<ThroughputLane, ThroughputSample[]> = {
     download: [],
     upload: [],
     bidiDown: [],
     bidiUp: [],
   };
-  #latencyByPhase = new Map<Phase, LatencySample[]>();
+  #latencyByPhase = new Map<Phase, LatencyBucket[]>();
 
   #colors: ThemeColors = {
     download: "#6db0b8",
@@ -243,24 +248,46 @@ export class ChartEngine implements CanvasEngine {
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
     this.#indexData(data);
+    const connected = (left: ThroughputSample, right: ThroughputSample) =>
+      left.continuityId === right.continuityId && right.t - left.t <= 500;
     const bytesPerSec =
-      interpolateAt(this.#throughputByLane.download, t, (s) => s.bytesPerSec) ??
-      interpolateAt(this.#throughputByLane.upload, t, (s) => s.bytesPerSec);
-    const downBytesPerSec = interpolateAt(
+      interpolateConnectedAt(
+        this.#throughputByLane.download,
+        t,
+        (s) => s.bytesPerSec,
+        connected,
+      ) ??
+      interpolateConnectedAt(
+        this.#throughputByLane.upload,
+        t,
+        (s) => s.bytesPerSec,
+        connected,
+      );
+    const downBytesPerSec = interpolateConnectedAt(
       this.#throughputByLane.bidiDown,
       t,
       (s) => s.bytesPerSec,
+      connected,
     );
-    const upBytesPerSec = interpolateAt(
+    const upBytesPerSec = interpolateConnectedAt(
       this.#throughputByLane.bidiUp,
       t,
       (s) => s.bytesPerSec,
+      connected,
     );
-    let rtt: number | null = null;
+    let latencyBucket: LatencyBucket | null = null;
     for (const lane of this.#latencyByPhase.values()) {
-      rtt = interpolateAt(lane, t, (s) => s.rttMs);
-      if (rtt != null) break;
+      const insertion = lowerBoundAt(lane, t);
+      for (const index of [insertion, insertion - 1]) {
+        const bucket = lane[index];
+        if (bucket && t >= bucket.startT && t <= bucket.endT) {
+          latencyBucket = bucket;
+          break;
+        }
+      }
+      if (latencyBucket) break;
     }
+    const rtt = latencyBucket?.medianRttMs ?? null;
     if (
       bytesPerSec == null &&
       downBytesPerSec == null &&
@@ -275,6 +302,10 @@ export class ChartEngine implements CanvasEngine {
       downBytesPerSec,
       upBytesPerSec,
       rtt,
+      rttP95: latencyBucket?.p95RttMs ?? null,
+      rttMax: latencyBucket?.maxRttMs ?? null,
+      pingCount: latencyBucket?.pingCount ?? 0,
+      lossCount: latencyBucket?.lossCount ?? 0,
     };
   }
 
@@ -349,7 +380,6 @@ export class ChartEngine implements CanvasEngine {
     this.#vpInit = false;
     this.#result = false;
     this.#hasThroughputScale = false;
-    this.#p95Cache = { len: -1, tMin: 0, v: 0 };
     this.#indexedThroughput = 0;
     this.#lastIndexedThroughput = undefined;
     this.#indexedLatency = 0;
@@ -405,41 +435,11 @@ export class ChartEngine implements CanvasEngine {
       d.scaleBytesPerSec !== sharedThroughputScale(0) ||
       d.throughput.length > 0;
 
-    let rttMin = 0;
-    let rttMax: number;
-    if (complete) {
-      const rtts: number[] = [];
-      for (const s of d.latency) if (!s.lost) rtts.push(s.rttMs);
-      const dom = niceDomain(rtts, { floor: 1 });
-      rttMin = dom.min;
-      rttMax = dom.max;
-    } else {
-      if (
-        d.latency.length !== this.#p95Cache.len ||
-        Math.abs(tMin - this.#p95Cache.tMin) > 500
-      ) {
-        this.#p95Cache = {
-          len: d.latency.length,
-          tMin,
-          v: this.#p95In(d.latency, tMin, tMax),
-        };
-      }
-      rttMax = niceCeil(Math.max(this.#p95Cache.v * 1.3, 20));
-    }
+    const rttMin = 0;
+    const rttMax = d.latencyScaleMs;
 
     this.#vp = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
     this.#vpInit = true;
-  }
-
-  #p95In(samples: LatencySample[], t0: number, t1: number): number {
-    const rtts: number[] = [];
-    const lo = lowerBoundAt(samples, t0);
-    const hi = lowerBoundAt(samples, t1);
-    for (let i = lo; i < hi; i++)
-      if (!samples[i].lost) rtts.push(samples[i].rttMs);
-    if (!rtts.length) return 0;
-    rtts.sort((a, b) => a - b);
-    return rtts[Math.min(rtts.length - 1, Math.ceil(0.95 * rtts.length) - 1)];
   }
 
   /* Coordinate maps. */
@@ -674,19 +674,6 @@ export class ChartEngine implements CanvasEngine {
     ctx.stroke();
   }
 
-  #smoothTo(
-    ctx: CanvasRenderingContext2D,
-    pts: { x: number; y: number }[],
-  ): void {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const xc = (pts[i].x + pts[i + 1].x) / 2;
-      const yc = (pts[i].y + pts[i + 1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc);
-    }
-    const last = pts[pts.length - 1];
-    ctx.lineTo(last.x, last.y);
-  }
-
   #indexData(data: ChartData): void {
     const all = data.throughput;
     if (
@@ -721,7 +708,6 @@ export class ChartEngine implements CanvasEngine {
     }
     for (let i = this.#indexedLatency; i < latency.length; i++) {
       const sample = latency[i];
-      if (sample.lost) continue;
       const lane = this.#latencyByPhase.get(sample.phase) ?? [];
       if (!lane.length) this.#latencyByPhase.set(sample.phase, lane);
       lane.push(sample);
@@ -753,7 +739,9 @@ export class ChartEngine implements CanvasEngine {
     for (const lane of this.#throughputLanes()) {
       const stroke =
         lane.area === "download" ? this.#colors.download : this.#colors.upload;
-      const pts: { x: number; y: number }[] = [];
+      const segments: { x: number; y: number }[][] = [];
+      let pts: { x: number; y: number }[] = [];
+      let previous: ThroughputSample | null = null;
       const lo = Math.max(0, lowerBoundAt(lane.samples, tMin) - 1);
       const hi = Math.min(
         lane.samples.length,
@@ -761,39 +749,67 @@ export class ChartEngine implements CanvasEngine {
       );
       for (let i = lo; i < hi; i++) {
         const s = lane.samples[i];
+        if (
+          previous &&
+          (s.continuityId !== previous.continuityId || s.t - previous.t > 500)
+        ) {
+          if (pts.length) segments.push(pts);
+          pts = [];
+        }
         pts.push({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) });
+        previous = s;
       }
-      if (pts.length < 2) continue;
+      if (pts.length) segments.push(pts);
+      for (const segment of segments) {
+        if (segment.length < 2) continue;
+        ctx.fillStyle = this.#areaGrad(ctx, lane.area);
+        ctx.beginPath();
+        ctx.moveTo(segment[0].x, bot);
+        ctx.lineTo(segment[0].x, segment[0].y);
+        for (let i = 1; i < segment.length; i++)
+          ctx.lineTo(segment[i].x, segment[i].y);
+        ctx.lineTo(segment.at(-1)!.x, bot);
+        ctx.closePath();
+        ctx.fill();
 
-      ctx.fillStyle = this.#areaGrad(ctx, lane.area);
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, bot);
-      ctx.lineTo(pts[0].x, pts[0].y);
-      this.#smoothTo(ctx, pts);
-      ctx.lineTo(pts[pts.length - 1].x, bot);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = 1.75;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      this.#smoothTo(ctx, pts);
-      ctx.stroke();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1.75;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(segment[0].x, segment[0].y);
+        for (let i = 1; i < segment.length; i++)
+          ctx.lineTo(segment[i].x, segment[i].y);
+        ctx.stroke();
+      }
     }
   }
 
-  #drawLatency(ctx: CanvasRenderingContext2D, all: LatencySample[]): void {
+  #drawLatency(ctx: CanvasRenderingContext2D, all: LatencyBucket[]): void {
     if (all.length < 2) return;
     ctx.lineWidth = 1;
     const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
-    let prevPhase: Phase | null = null;
+    let previous: LatencyBucket | null = null;
     const segment: Array<{ t: number; rttMs: number; underLoad: boolean }> = [];
     const drawSegment = (): void => {
-      if (segment.length < 2) {
+      if (segment.length === 1) {
+        ctx.fillStyle = segment[0].underLoad
+          ? this.#colors.warn
+          : this.#colors.signal;
+        ctx.beginPath();
+        ctx.arc(
+          this.#x(segment[0].t),
+          this.#yR(segment[0].rttMs),
+          1.75,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+        segment.length = 0;
+        return;
+      }
+      if (segment.length === 0) {
         segment.length = 0;
         return;
       }
@@ -808,24 +824,55 @@ export class ChartEngine implements CanvasEngine {
       ctx.lineCap = "round";
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
-      this.#smoothTo(ctx, pts);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
       ctx.stroke();
       segment.length = 0;
     };
     for (let i = lo; i < hi; i++) {
       const s = all[i];
-      if (
-        s.lost ||
-        (prevPhase !== null && s.phase !== prevPhase) ||
-        (segment.length > 0 &&
-          s.underLoad !== segment[segment.length - 1].underLoad)
-      ) {
-        drawSegment();
-        prevPhase = null;
+      const broken =
+        previous !== null &&
+        (s.phase !== previous.phase ||
+          s.underLoad !== previous.underLoad ||
+          s.continuityId !== previous.continuityId ||
+          s.startT - previous.endT > 600 ||
+          previous.lossCount > 0 ||
+          s.lossCount > 0);
+      if (broken) drawSegment();
+      if (s.medianRttMs != null) {
+        segment.push({
+          t: s.t,
+          rttMs: s.medianRttMs,
+          underLoad: s.underLoad,
+        });
+        const spike = s.maxRttMs ?? s.p95RttMs;
+        if (spike != null && spike > s.medianRttMs) {
+          const x = this.#x(s.t);
+          ctx.strokeStyle = s.underLoad
+            ? this.#colors.warn
+            : this.#colors.signal;
+          ctx.beginPath();
+          ctx.moveTo(x, this.#yR(s.medianRttMs));
+          ctx.lineTo(x, Math.max(PAD_T, this.#yR(spike)));
+          ctx.stroke();
+          if (spike > this.#vp.rttMax) {
+            ctx.fillStyle = ctx.strokeStyle;
+            ctx.beginPath();
+            ctx.moveTo(x, PAD_T);
+            ctx.lineTo(x - 3, PAD_T + 5);
+            ctx.lineTo(x + 3, PAD_T + 5);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
       }
-      if (s.lost) continue;
-      segment.push({ t: s.t, rttMs: s.rttMs, underLoad: s.underLoad });
-      prevPhase = s.phase;
+      if (s.lossCount > 0) {
+        const x = this.#x(s.t);
+        ctx.fillStyle = this.#colors.warn;
+        ctx.fillRect(x - 1.5, this.#h - PAD_B - 5, 3, 5);
+        drawSegment();
+      }
+      previous = s;
     }
     drawSegment();
   }

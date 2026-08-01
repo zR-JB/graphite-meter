@@ -12,6 +12,7 @@ import type {
 import type { CoreHost, RunnerBackend } from "./core";
 import { needsPings, ROUTES } from "./real/backendPure";
 import { BUILD } from "../buildenv";
+import { singleLatencyBucket } from "./latencyBuckets";
 
 export interface DummyOptions {
   seed?: number;
@@ -285,13 +286,7 @@ export class DummyBackend implements RunnerBackend {
         type: "latency",
         // Pre-test idle pings: phase "idle" (negative t), so the LatencyProfile's
         // idle lane (phase==="latency") excludes them while the sparkline shows them.
-        sample: {
-          t: -interval * (pings - i),
-          rttMs: rtt,
-          underLoad: false,
-          lost: false,
-          phase: "idle",
-        },
+        sample: singleLatencyBucket(-interval * (pings - i), rtt, false),
       });
     }
 

@@ -152,7 +152,7 @@ function makeConfig(
       maxPhaseReductionRatio: 1,
       minLatencySamples: 0,
       minTransferSamples: 0,
-      glideMs: 100,
+      confirmationMs: 100,
       ...overrides.adaptive,
     },
     visualization: { throughputMaxBytesPerSec: "auto" },
@@ -660,7 +660,7 @@ test("a stall that outlives max-stall escalates to a terminal failure", async ()
 });
 
 // ---------------------------------------------------------------------------
-// Adaptive early-finish glide
+// Adaptive early-finish confirmation
 // ---------------------------------------------------------------------------
 
 test("adaptive early-finish arms and completes the run well before the nominal duration on a stable feed", async () => {
@@ -676,9 +676,9 @@ test("adaptive early-finish arms and completes the run well before the nominal d
       minCoverageRatio: 0,
       stabilityThreshold: 0.9,
       maxPhaseReductionRatio: 1,
-      minTransferSamples: 5,
+      minTransferSamples: 4,
       minLatencySamples: 0,
-      glideMs: 100,
+      confirmationMs: 100,
     },
   });
   await core.start(cfg); // enters download at elapsed 0
@@ -687,23 +687,20 @@ test("adaptive early-finish arms and completes the run well before the nominal d
   advance(10);
   wallAdvanced += 10;
 
-  // A perfectly flat feed drives the confidence score to 1 (no variance, no
-  // slope), well above the 0.9 threshold, once enough samples are in.
-  // Keep the stability feed flat, but make the first exact byte interval low.
-  // Stability opens on the second sample, so final-plateau reduction excludes
-  // the first interval while the whole-phase descriptor retains it.
-  for (let i = 0; i < 10; i++)
-    core.ingestThroughput("down", 1000, i === 0 ? 1 : 100, 0.1);
+  // A perfectly flat exact feed drives the fixed 250 ms buckets to confidence
+  // 1. Keep collecting after the latch opens so the trailing exact reducer has
+  // post-latch evidence during the confirmation interval.
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1000, 100, 0.1);
 
-  advance(10); // this tick's confidence check arms the glide
+  advance(10); // confirmation remains armed while evidence stays stable
   wallAdvanced += 10;
   expect(core.phase).toBe("download");
 
-  advance(100); // == glideMs: the glide should drive measured-time to seg.end
+  advance(100); // confirmation closes at real measured time
   wallAdvanced += 100;
 
   expect(core.phase).toBe("complete");
-  // The run finishes in ~120ms of wall time, nowhere near the 2000ms budget.
+  // The run finishes in ~120ms of wall time, without fabricating the 2000ms budget.
   expect(wallAdvanced).toBeLessThan(cfg.duration.downloadMs / 2);
   const complete = events.find((event) => event.type === "complete");
   expect(complete).toBeDefined();
@@ -711,7 +708,7 @@ test("adaptive early-finish arms and completes the run well before the nominal d
     expect(complete.result.download?.method).toBe("stable-window");
     expect(complete.result.download?.reportedBytesPerSec).toBeCloseTo(1000, 6);
     expect(complete.result.download?.fullAverageBytesPerSec).toBeCloseTo(
-      901,
+      1000,
       6,
     );
   }
@@ -757,7 +754,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
       maxPhaseReductionRatio: 1,
       minTransferSamples: 5,
       minLatencySamples: 0,
-      glideMs: 50,
+      confirmationMs: 50,
     },
   });
   await core.start(cfg);
@@ -769,7 +766,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   for (let i = 0; i < N; i++) {
     advance(100);
     const raw = 100 + i * 100;
-    core.ingestThroughput("down", raw, raw, 1);
+    core.ingestThroughput("down", raw, raw * 0.1, 0.1);
     if (i < N - 1) expect(core.phase).toBe("download"); // never armed early
   }
 
@@ -817,7 +814,7 @@ test("adaptive completion can be enabled after a stable stage has started", asyn
   const core = new RunnerCore(backend);
   const cfg = makeConfig({
     duration: { downloadMs: 2000 },
-    adaptive: { enabled: false, minTransferSamples: 5 },
+    adaptive: { enabled: false, minTransferSamples: 4 },
   });
   await core.start(cfg);
   advance(400);
@@ -828,7 +825,7 @@ test("adaptive completion can be enabled after a stable stage has started", asyn
     duration: cfg.duration,
     adaptive: { ...cfg.adaptive, enabled: true },
   });
-  advance(cfg.adaptive.glideMs);
+  advance(cfg.adaptive.confirmationMs);
 
   expect(core.phase).toBe("complete");
 });
@@ -838,7 +835,7 @@ test("adaptive completion can be disabled before a stable stage arms", async () 
   const core = new RunnerCore(backend);
   const cfg = makeConfig({
     duration: { downloadMs: 2000 },
-    adaptive: { enabled: true, minTransferSamples: 5 },
+    adaptive: { enabled: true, minTransferSamples: 4 },
   });
   await core.start(cfg);
   advance(400);
@@ -849,13 +846,13 @@ test("adaptive completion can be disabled before a stable stage arms", async () 
     duration: cfg.duration,
     adaptive: { ...cfg.adaptive, enabled: false },
   });
-  advance(cfg.adaptive.glideMs * 2);
+  advance(cfg.adaptive.confirmationMs * 2);
 
   expect(core.phase).toBe("download");
 });
 
 // ---------------------------------------------------------------------------
-// Dual EMA (display vs stability) from the same raw samples
+// Exact presentation and fixed-time stability from the same observations
 // ---------------------------------------------------------------------------
 
 test("raw samples reduce at source cadence while display events stay at 10 Hz", async () => {
@@ -878,7 +875,7 @@ test("raw samples reduce at source cadence while display events stay at 10 Hz", 
   ).toBe(1000);
 });
 
-test("display (fast) and stability (slow) EMAs both derive from the same raw samples without drifting from exact totals", async () => {
+test("presentation derives from exact bytes and time, not backend instantaneous diagnostics", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -892,19 +889,13 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   const N = 12;
   const DELTA = 50;
 
-  // First sample seeds both EMA stores directly at 0 (raw=0), then a step to
-  // a constant RAW value lets the two taus visibly diverge while converging.
+  // Backend diagnostics claim 1000 B/s, while exact observations carry
+  // 50 bytes per 100 ms = 500 B/s. Presentation must use the latter.
   core.ingestThroughput("down", 0, 0, 0.1);
-  let expectedFast = 0;
-  const alphaFast = 1 - Math.exp(-DT / 700);
-  const alphaSlow = 1 - Math.exp(-DT / 1800);
-  let expectedSlow = 0;
 
   for (let i = 0; i < N; i++) {
-    fakeNow += DT; // advance the mocked clock feeding #emaStep's dt directly
+    fakeNow += DT;
     core.ingestThroughput("down", RAW, DELTA, 0.1);
-    expectedFast = expectedFast + alphaFast * (RAW - expectedFast);
-    expectedSlow = expectedSlow + alphaSlow * (RAW - expectedSlow);
   }
 
   const throughputSamples = events.filter(
@@ -913,17 +904,14 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   );
   const lastSample = throughputSamples.at(-1)!;
 
-  // Display (fast tau) matches the independently-computed fast EMA.
-  expect(lastSample.sample.bytesPerSec).toBeCloseTo(expectedFast, 6);
-  // Fast tau tracks the step closer than slow tau at the same sample index.
-  expect(lastSample.sample.bytesPerSec).toBeGreaterThan(expectedSlow);
+  expect(lastSample.sample.bytesPerSec).toBeCloseTo(500, 6);
+  expect(lastSample.sample.bytesPerSec).not.toBe(RAW);
 
   // Raw byte totals are exact and untouched by either smoothing: N steps of
   // DELTA plus the seed sample's 0 bytes.
   expect(lastSample.sample.bytesCumulative).toBe(N * DELTA);
 
-  // Finish the run and verify the headline uses exact bytes / represented time,
-  // while the slow EMA remains stability-only.
+  // Final reduction uses the same exact byte/time evidence independently.
   advance(1_000_000);
   core.resume();
   advance(20);

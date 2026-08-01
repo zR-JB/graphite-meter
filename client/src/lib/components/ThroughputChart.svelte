@@ -25,6 +25,7 @@
     void store.latency.length;
     void store.latencyEnabled;
     void store.displayScaleBytesPerSec; // re-arm if the shared scale / pinned ceiling shifts while parked
+    void store.latencyScaleMs;
     void store.stageResults.download;
     void store.stageResults.upload;
     void store.result?.bidirectional;
@@ -49,7 +50,8 @@
       hover.bytesPerSec == null &&
       hover.downBytesPerSec == null &&
       hover.upBytesPerSec == null &&
-      hover.rtt == null
+      hover.rtt == null &&
+      hover.pingCount === 0
     )
       hover = null;
     return PARKED;
@@ -69,6 +71,7 @@
         phaseStartedAtMs: store.phaseStartedAtMs,
         runSeq: store.runSeq,
         scaleBytesPerSec: store.displayScaleBytesPerSec,
+        latencyScaleMs: store.latencyScaleMs,
         resultRates: {
           download: store.stageResults.download?.reportedBytesPerSec,
           upload: store.stageResults.upload?.reportedBytesPerSec,
@@ -146,7 +149,20 @@
         {/if}
         {#if hover.rtt != null}
           <div class="chip-row">
-            <span>rtt</span><b>{fmtMs(hover.rtt)} ms</b>
+            <span>median</span><b>{fmtMs(hover.rtt)} ms</b>
+          </div>
+        {/if}
+        {#if hover.rttP95 != null}
+          <div class="chip-row">
+            <span>p95</span><b>{fmtMs(hover.rttP95)} ms</b>
+          </div>
+        {/if}
+        {#if hover.pingCount > 0}
+          <div class="chip-row">
+            <span>pings</span><b>{hover.pingCount}</b>
+          </div>
+          <div class="chip-row">
+            <span>loss</span><b>{hover.lossCount}/{hover.pingCount}</b>
           </div>
         {/if}
       </div>

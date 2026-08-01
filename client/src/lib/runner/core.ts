@@ -32,10 +32,13 @@ import {
   adaptiveWarmupMs,
   reconfigureTimeline,
   segmentAt,
+  truncateSegmentAt,
   type Segment,
 } from "./schedule";
 import { RunAccumulator } from "./evaluation";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
+import { GrowingRateEstimator } from "./rateEstimator";
+import { LatencyPresentationBuckets } from "./latencyBuckets";
 
 const RUNNER_DEADLINE_MS = 100;
 const STABILITY_CADENCE_MS = 100;
@@ -43,16 +46,6 @@ const STABILITY_CADENCE_MS = 100;
 // Stall deadlines use wall time; result accounting retains the dead-air duration.
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
 const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
-
-// Display and stability filter the same raw rate at different time constants.
-// Exact byte and duration accounting never uses either filtered value.
-const THROUGHPUT_DISPLAY_TAU_MS = 700;
-const THROUGHPUT_STABILITY_TAU_MS = 1800;
-
-type DirectionalEma = {
-  down: { v: number; t: number } | null;
-  up: { v: number; t: number } | null;
-};
 
 export interface CoreHost {
   // Rates drive presentation/stability; bytesDelta and durationSec remain authoritative.
@@ -137,25 +130,28 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     down: -Infinity,
     up: -Infinity,
   };
-  #lastLatencyDisplayAt = -Infinity;
   #bytesCumulative = 0;
 
-  // Stalls remain in measured elapsed time but block finalization and adaptive glides.
+  // Stalls remain in measured elapsed time but block adaptive confirmation.
   #measuredElapsed = 0;
   #lastRealNow = 0;
-  #glideArmedForSeg = -1; // segment index a glide is armed for, or -1
-  #glideStartReal = 0;
-  #glideFromMeasured = 0;
-  #glideTargetMeasured = 0;
+  #earlyCandidateSeg = -1;
+  #earlyCandidateStartedAt = 0;
 
   #measuring = true;
   #lastSampleWall = 0;
   #stalledSinceWall = 0;
   #stallInfo: StallInfo | null = null;
+  #stallPresentationStartedAt = 0;
+  #stallPresentationFrom: Record<FlowDirection, number> = { down: 0, up: 0 };
 
-  #displayEma: DirectionalEma = { down: null, up: null }; // fast tau
-  #stabilityEma: DirectionalEma = { down: null, up: null }; // slow tau
-  #emaPhase: Phase = "idle";
+  #rateEstimator: Record<FlowDirection, GrowingRateEstimator> = {
+    down: new GrowingRateEstimator(),
+    up: new GrowingRateEstimator(),
+  };
+  #presentedRate: Record<FlowDirection, number> = { down: 0, up: 0 };
+  #continuityId = 0;
+  #latencyBuckets = new LatencyPresentationBuckets();
   #debugThroughputLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
   #stageFailures = new Map<TransportRole, StageFailure>();
@@ -276,7 +272,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#lastStabilityAt = -Infinity;
     this.#lastThroughputDisplayAt.down = -Infinity;
     this.#lastThroughputDisplayAt.up = -Infinity;
-    this.#lastLatencyDisplayAt = -Infinity;
     this.#bytesCumulative = 0;
     this.#stageFailures.clear();
     this.#accum.reset();
@@ -285,17 +280,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#latResult = null;
     this.#measuredElapsed = 0;
     this.#lastRealNow = 0;
-    this.#glideArmedForSeg = -1;
-    this.#glideStartReal = 0;
-    this.#glideFromMeasured = 0;
-    this.#glideTargetMeasured = 0;
+    this.#earlyCandidateSeg = -1;
+    this.#earlyCandidateStartedAt = 0;
     this.#measuring = true;
     this.#lastSampleWall = 0;
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
-    this.#displayEma.down = this.#displayEma.up = null;
-    this.#stabilityEma.down = this.#stabilityEma.up = null;
-    this.#emaPhase = "idle";
+    this.#stallPresentationStartedAt = 0;
+    this.#stallPresentationFrom = { down: 0, up: 0 };
+    this.#rateEstimator.down.reset();
+    this.#rateEstimator.up.reset();
+    this.#presentedRate = { down: 0, up: 0 };
+    this.#continuityId = 0;
     this.#stagePreparing = false;
     this.#stagePreparationId++;
   }
@@ -312,6 +308,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#stagePreparing = false;
     this.#stagePreparationId++;
     const from = this.#phase;
+    this.#flushLatencyPresentation();
     this.#backend.onAbort();
     this.#phase = "aborted";
     this.emit({
@@ -353,7 +350,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     );
     this.#segments = segments;
     this.#totalMs = totalMs;
-    this.#glideArmedForSeg = -1;
     const activeAfter = segmentAt(segments, this.#measuredElapsed);
     if (
       activeBefore &&
@@ -406,8 +402,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#lastRealNow = now;
     if (this.#stagePreparing) return;
     this.#measuredElapsed += dtWall;
-    // Adaptive completion pauses during recovery; effective elapsed time does not.
-    if (this.#measuring && this.#glideArmedForSeg >= 0) this.#advanceGlide(now);
     const elapsed = this.#measuredElapsed;
 
     if (elapsed >= this.#totalMs && this.#measuring) {
@@ -418,9 +412,17 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Prolonged silence in a measured phase trips the watchdog into an
     // auto-stall; a stall outliving MAX_STALL_MS escalates to a terminal fail.
     if (this.#updateStallState(now)) return; // a max-stall fail ends the run
+    if (!this.#measuring) this.#emitStallPresentation(now);
 
     const seg = segmentAt(this.#segments, elapsed);
     if (!seg) return;
+
+    // Confirmation time advances normally even when no new source callback is
+    // due. Confidence itself changes only when exact observations arrive.
+    if (this.#earlyCandidateSeg >= 0 && this.#updateStability()) {
+      this.#tick();
+      return;
+    }
 
     // Adjacent segments always differ in phase, so one segment edge drives both
     // the UI phase event and the backend stage lifecycle.
@@ -535,81 +537,63 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Zero-byte samples retain time but cannot prove delivery or clear a stall.
     if (bytesDelta > 0 && provesLiveness) this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
-    // De-alias the rate twice from one raw sample: fast `display` for the UI,
-    // slow `stable` for the confidence accumulator. Byte totals stay exact.
-    if (this.#emaPhase !== phase) {
-      this.#displayEma.down = this.#displayEma.up = null;
-      this.#stabilityEma.down = this.#stabilityEma.up = null;
-      this.#emaPhase = phase;
-    }
-    const display = this.#emaStep(
-      this.#displayEma,
-      dir,
-      liveBytesPerSec,
-      THROUGHPUT_DISPLAY_TAU_MS,
-    );
-    const stable = this.#emaStep(
-      this.#stabilityEma,
-      dir,
-      liveBytesPerSec,
-      THROUGHPUT_STABILITY_TAU_MS,
-    );
+    const estimate = this.#rateEstimator[dir].observe({
+      bytes: bytesDelta,
+      durationMs: durationSec * 1_000,
+    });
+    this.#presentedRate[dir] = estimate.presentedBytesPerSec;
     this.#accum.pushThroughput(
       phase,
       dir,
-      stable,
+      liveBytesPerSec,
       bytesDelta,
       durationSec,
       serverAuthoritative,
     );
-    this.#updateStability();
+    if (estimate.regimeChanged) {
+      this.#continuityId++;
+      this.#accum.resetPhaseStability(phase);
+      this.#cancelEarlyCandidate();
+    }
+    if (this.#updateStability()) this.#tick();
     const now = performance.now();
     if (debugEnabled() && now - this.#debugThroughputLogAt[dir] >= 1000) {
       this.#debugThroughputLogAt[dir] = now;
-      dlog("core:throughput", `${dir} de-alias`, {
+      dlog("core:throughput", `${dir} exact windows`, {
         source: fmtRate(liveBytesPerSec),
-        display: fmtRate(display),
-        stable: fmtRate(stable),
+        presented: fmtRate(estimate.presentedBytesPerSec),
+        fast: fmtRate(estimate.fastBytesPerSec),
+        regime: estimate.regimeId,
+        candidate: estimate.candidate ?? "none",
         cumulative: fmtBytes(this.#bytesCumulative),
         t: fmtMs(this.#measuredElapsed),
       });
     }
-    if (now - this.#lastThroughputDisplayAt[dir] >= RUNNER_DEADLINE_MS) {
+    if (
+      estimate.regimeChanged ||
+      now - this.#lastThroughputDisplayAt[dir] >= RUNNER_DEADLINE_MS
+    ) {
       this.#lastThroughputDisplayAt[dir] = now;
-      this.emit({
-        type: "throughput",
-        sample: {
-          t: this.#measuredElapsed,
-          bytesPerSec: display,
-          bytesCumulative: this.#bytesCumulative,
-          dir,
-          phase,
-        },
-      });
+      this.#emitThroughputPresentation(dir, estimate.presentedBytesPerSec);
     }
   }
 
-  /** One dt-aware EMA step on a per-direction store. Seeded on the first sample,
-   *  so no startup lag. A long stall gap grows dt and drives alpha to 1, so the
-   *  first post-stall sample snaps in instead of blending with a stale value.
-   *  The caller reseeds on phase change, shared across both stores. */
-  #emaStep(
-    store: DirectionalEma,
-    dir: FlowDirection,
-    raw: number,
-    tau: number,
-  ): number {
-    const now = performance.now();
-    const prev = store[dir];
-    if (!prev) {
-      store[dir] = { v: raw, t: now };
-      return raw;
-    }
-    const dt = now - prev.t;
-    const alpha = 1 - Math.exp(-dt / tau);
-    const v = prev.v + alpha * (raw - prev.v);
-    store[dir] = { v, t: now };
-    return v;
+  #emitThroughputPresentation(dir: FlowDirection, bytesPerSec: number): void {
+    const phase = this.#phase;
+    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
+      return;
+    this.#presentedRate[dir] = bytesPerSec;
+    this.emit({
+      type: "throughput",
+      sample: {
+        t: this.#measuredElapsed,
+        bytesPerSec,
+        bytesCumulative: this.#bytesCumulative,
+        dir,
+        phase,
+        continuityId: this.#continuityId,
+      },
+    });
   }
 
   ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
@@ -627,27 +611,27 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     // Loaded pings use another connection and cannot prove that transfer bytes
     // still move. Only the latency-only stage uses them as its liveness signal.
     if (phase === "latency") this.#noteRealSample();
-    this.#accum.pushLatency(rttMs, underLoad, lost);
-    if (phase === "latency") this.#updateStability();
-    const now = performance.now();
-    if (now - this.#lastLatencyDisplayAt >= RUNNER_DEADLINE_MS) {
-      this.#lastLatencyDisplayAt = now;
+    this.#accum.pushLatency(rttMs, underLoad, lost, this.#measuredElapsed);
+    if (phase === "latency" && this.#updateStability()) this.#tick();
+    for (const bucket of this.#latencyBuckets.observe(
+      this.#measuredElapsed,
+      rttMs,
+      lost,
+    ))
       this.emit({
         type: "latency",
-        sample: {
-          t: this.#measuredElapsed,
-          rttMs,
-          underLoad,
-          lost,
-          phase: this.#phase,
-        },
+        sample: bucket,
       });
-    }
   }
 
-  #updateStability(): void {
+  #flushLatencyPresentation(): void {
+    const bucket = this.#latencyBuckets.flush(this.#measuredElapsed);
+    if (bucket) this.emit({ type: "latency", sample: bucket });
+  }
+
+  #updateStability(): boolean {
     const seg = this.#activeSeg;
-    if (!seg || seg.phase === "warmup") return;
+    if (!seg || seg.phase === "warmup") return false;
     const conf: ConfidenceScore | LatencyConfidenceScore =
       this.#accum.confidence(seg.phase);
     const stable = this.#accum.trackStableRun(
@@ -656,10 +640,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#cfg!.adaptive,
     );
     const now = performance.now();
-    if (
-      seg.phase !== "bidirectional" &&
-      now - this.#lastStabilityAt >= STABILITY_CADENCE_MS
-    ) {
+    if (now - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
       this.#lastStabilityAt = now;
       this.emit({
         type: "stability",
@@ -671,7 +652,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         },
       });
     }
-    this.#maybeArmGlide(seg, this.#measuredElapsed, conf);
+    return this.#updateEarlyCandidate(seg, this.#measuredElapsed, conf);
   }
 
   /* ================= STALL / RESUME (CoreHost) ================= */
@@ -681,7 +662,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#measuring) return;
     this.#measuring = false;
     this.#stalledSinceWall = performance.now();
+    this.#stallPresentationStartedAt = this.#stalledSinceWall;
+    this.#stallPresentationFrom = { ...this.#presentedRate };
     this.#stallInfo = info;
+    this.#flushLatencyPresentation();
+    this.#continuityId++;
+    this.#cancelEarlyCandidate();
+    if (this.#activeSeg && this.#activeSeg.phase !== "warmup")
+      this.#accum.resetPhaseStability(this.#activeSeg.phase);
+    this.#rateEstimator.down.invalidateRegime();
+    this.#rateEstimator.up.invalidateRegime();
     this.emit({ type: "stall", info });
   }
 
@@ -690,7 +680,31 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#measuring = true;
     this.#stalledSinceWall = 0;
     this.#stallInfo = null;
+    this.#stallPresentationStartedAt = 0;
+    this.#continuityId++;
     this.emit({ type: "resume" });
+  }
+
+  #emitStallPresentation(now: number): void {
+    if (!this.#stallPresentationStartedAt) return;
+    const phase = this.#phase;
+    const dirs: FlowDirection[] =
+      phase === "download"
+        ? ["down"]
+        : phase === "upload"
+          ? ["up"]
+          : phase === "bidirectional"
+            ? ["down", "up"]
+            : [];
+    const elapsed = now - this.#stallPresentationStartedAt;
+    for (const dir of dirs) {
+      const rate = GrowingRateEstimator.stallRate(
+        this.#stallPresentationFrom[dir],
+        elapsed,
+      );
+      if (rate !== this.#presentedRate[dir] || elapsed === 0)
+        this.#emitThroughputPresentation(dir, rate);
+    }
   }
 
   /** Refresh the watchdog for a real measured sample, and auto-resume a stall:
@@ -733,7 +747,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   /** Phases subject to the stall watchdog. Warmup is excluded: it primes
    *  connections without measuring. */
   #isMeasuredPhase(phase: Phase): boolean {
-    return phase === "latency" || phase === "download" || phase === "upload";
+    return (
+      phase === "latency" ||
+      phase === "download" ||
+      phase === "upload" ||
+      phase === "bidirectional"
+    );
   }
 
   failStage(
@@ -752,7 +771,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#activeSeg = null;
     }
     this.resume();
-    this.#glideArmedForSeg = -1;
+    this.#cancelEarlyCandidate();
     let end = this.#measuredElapsed;
     for (const s of this.#segments)
       if (s.activity.stage === stage && s.end > end) end = s.end;
@@ -773,6 +792,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#tickTimer = null;
     }
     this.#running = false;
+    this.#flushLatencyPresentation();
     // Cancel the backend's in-flight I/O and let it restart its idle keepalive:
     // an errored run must not leave lanes streaming.
     this.#backend.onAbort();
@@ -795,54 +815,83 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   /* ---------- phase helpers ---------- */
   #beginAdaptivePhase() {
     this.#lastStabilityAt = -Infinity;
-    this.#lastLatencyDisplayAt = -Infinity;
     this.#lastThroughputDisplayAt.down = -Infinity;
     this.#lastThroughputDisplayAt.up = -Infinity;
-    this.#glideArmedForSeg = -1; // a new phase never inherits the prior glide
+    this.#cancelEarlyCandidate();
+    this.#rateEstimator.down.reset();
+    this.#rateEstimator.up.reset();
+    this.#presentedRate = { down: 0, up: 0 };
+    this.#continuityId++;
     this.#accum.beginPhase();
+    this.#latencyBuckets.reset(
+      this.#measuredElapsed,
+      this.#phase,
+      this.#phase !== "latency",
+      this.#continuityId,
+    );
   }
 
-  /** Evaluate the adaptive early-finish predicate; arm a glide if stable. */
-  #maybeArmGlide(
+  #hasRegimeCandidate(seg: Segment): boolean {
+    if (seg.phase === "download")
+      return this.#rateEstimator.down.snapshot().candidate !== null;
+    if (seg.phase === "upload")
+      return this.#rateEstimator.up.snapshot().candidate !== null;
+    if (seg.phase === "bidirectional")
+      return (
+        this.#rateEstimator.down.snapshot().candidate !== null ||
+        this.#rateEstimator.up.snapshot().candidate !== null
+      );
+    return false;
+  }
+
+  #cancelEarlyCandidate(): void {
+    this.#earlyCandidateSeg = -1;
+    this.#earlyCandidateStartedAt = 0;
+    this.#accum.cancelLatencyEarlyStop();
+  }
+
+  /** Arm, revoke, or confirm an early finish without changing measured time. */
+  #updateEarlyCandidate(
     seg: Segment,
     elapsed: number,
     conf: ConfidenceScore | LatencyConfidenceScore,
-  ) {
+  ): boolean {
     const cfg = this.#cfg!;
-    if (!cfg.adaptive.enabled) return;
-    if (seg.phase === "warmup") return; // never called this way, but narrows seg.phase below
-    if (this.#glideArmedForSeg >= 0) return; // already gliding this phase
+    if (seg.phase === "warmup") return false;
 
     const kind: "latency" | "transfer" =
       seg.phase === "latency" ? "latency" : "transfer";
-    const exit = shouldExitPhase({
-      kind,
-      elapsedMs: elapsed - seg.start,
-      durationMs: seg.end - seg.start,
-      confidence: conf,
-      cfg: cfg.adaptive,
-    });
-    if (!exit) return;
+    const eligible =
+      this.#measuring &&
+      !this.#hasRegimeCandidate(seg) &&
+      shouldExitPhase({
+        kind,
+        elapsedMs: elapsed - seg.start,
+        durationMs: seg.end - seg.start,
+        confidence: conf,
+        cfg: cfg.adaptive,
+      });
+    if (!eligible) {
+      this.#cancelEarlyCandidate();
+      return false;
+    }
 
-    this.#glideArmedForSeg = this.#segments.indexOf(seg);
-    this.#glideStartReal = performance.now();
-    this.#glideFromMeasured = elapsed;
-    this.#glideTargetMeasured = seg.end;
-    // Latency retains its arm-to-end median window. Throughput reduction reads
-    // the final stable plateau and therefore needs no glide-arm bookkeeping.
-    if (seg.phase === "latency") this.#accum.noteLatencyEarlyStop();
-  }
+    const segIndex = this.#segments.indexOf(seg);
+    if (this.#earlyCandidateSeg !== segIndex) {
+      this.#earlyCandidateSeg = segIndex;
+      this.#earlyCandidateStartedAt = elapsed;
+      if (seg.phase === "latency") this.#accum.armLatencyEarlyStop();
+    }
+    if (elapsed - this.#earlyCandidateStartedAt < cfg.adaptive.confirmationMs)
+      return false;
 
-  /** Drive the measured-time clock along the armed glide's eased curve. */
-  #advanceGlide(now: number) {
-    const glideMs = Math.max(1, this.#cfg!.adaptive.glideMs);
-    const p = Math.min(1, Math.max(0, (now - this.#glideStartReal) / glideMs));
-    const eased = easeInOutCubic(p);
-    const target =
-      this.#glideFromMeasured +
-      (this.#glideTargetMeasured - this.#glideFromMeasured) * eased;
-    // Monotonic: a jittery tick must never rewind the marker.
-    this.#measuredElapsed = Math.max(this.#measuredElapsed, target);
+    if (seg.phase === "latency") this.#accum.confirmLatencyEarlyStop();
+    const truncated = truncateSegmentAt(this.#segments, seg, elapsed);
+    this.#segments = truncated.segments;
+    this.#totalMs = truncated.totalMs;
+    this.#earlyCandidateSeg = -1;
+    this.#earlyCandidateStartedAt = 0;
+    return true;
   }
 
   #waitForStageEnd(activity: PhaseActivity, done: () => void): boolean {
@@ -881,6 +930,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
    *  moment it ends. No-op for warmup, non-run, and already-finalized stages. */
   #finalizeStage(phase: Phase) {
     const cfg = this.#cfg!;
+    this.#flushLatencyPresentation();
     if (this.#stageFailures.has(phase as TransportRole)) return; // skipped, no result
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
       this.#dlResult = this.#accum.throughputResult(
@@ -950,10 +1000,4 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       return;
     complete();
   }
-}
-
-/* ---------- small helpers ---------- */
-/** Smooth ease-in-out cubic on [0,1]; drives the early-finish glide curve. */
-function easeInOutCubic(p: number): number {
-  return p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2;
 }

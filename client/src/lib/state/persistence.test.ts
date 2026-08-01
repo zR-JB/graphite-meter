@@ -40,7 +40,7 @@ const FAKE_CONFIG: RunnerConfig = {
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 8,
     minTransferSamples: 12,
-    glideMs: 1100,
+    confirmationMs: 1100,
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
@@ -86,6 +86,34 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(FAKE_CONFIG);
+  expect(result.showWireEstimates).toBe(true);
+});
+
+test("an explicit wire-estimate opt-out survives hydration", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ showWireEstimates: false }),
+  );
+  expect(loadPersisted().showWireEstimates).toBe(false);
+});
+
+test("legacy glide duration migrates once into confirmation duration", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ config: { adaptive: { glideMs: 725 } } }),
+  );
+  expect(loadPersisted().config.adaptive.confirmationMs).toBe(725);
+  expect(loadPersisted().config.adaptive).not.toHaveProperty("glideMs");
+});
+
+test("confirmation duration wins when both old and new fields exist", () => {
+  memoryStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      config: { adaptive: { glideMs: 725, confirmationMs: 900 } },
+    }),
+  );
+  expect(loadPersisted().config.adaptive.confirmationMs).toBe(900);
 });
 
 test("legacy ping concurrency becomes unloaded cadence with the new loaded default", () => {

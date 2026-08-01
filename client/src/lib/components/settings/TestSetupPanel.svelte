@@ -112,7 +112,7 @@
     applyLiveRunConfig();
   }
   function setAdaptiveNumber(
-    key: "minCoverageRatio" | "stabilityThreshold" | "glideMs",
+    key: "minCoverageRatio" | "stabilityThreshold" | "confirmationMs",
     event: Event,
   ) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
@@ -362,7 +362,7 @@
     <h3>Wire-rate estimates</h3>
     <Switch
       bind:checked={store.showWireEstimates}
-      label="Include wire-rate estimates in result cards"
+      label="Show estimated wire rate"
       tooltip={JARGON.wireRate}
     />
     <p class="hint">
@@ -403,13 +403,13 @@
           /></label
         >
         <label
-          ><span>Glide ms</span><input
+          ><span>Confirmation ms</span><input
             type="number"
             min="300"
             max="1500"
             step="50"
-            value={store.config.adaptive.glideMs}
-            oninput={(event) => setAdaptiveNumber("glideMs", event)}
+            value={store.config.adaptive.confirmationMs}
+            oninput={(event) => setAdaptiveNumber("confirmationMs", event)}
           /></label
         >
       </div>

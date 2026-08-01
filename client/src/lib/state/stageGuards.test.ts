@@ -30,7 +30,14 @@ function sample(
   dir: ThroughputSample["dir"],
   bytesPerSec: number,
 ): ThroughputSample {
-  return { t: 0, bytesPerSec, bytesCumulative: 0, dir, phase };
+  return {
+    t: 0,
+    bytesPerSec,
+    bytesCumulative: 0,
+    dir,
+    phase,
+    continuityId: 0,
+  };
 }
 
 test("latestBidirectionalLanes: both zero when no samples yet", () => {

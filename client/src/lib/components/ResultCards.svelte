@@ -84,6 +84,7 @@
     if (store.phase === "latency") {
       return {
         ms: store.liveRtt,
+        lost: store.liveLatencyLost,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
@@ -94,6 +95,7 @@
     const reported = stageResult?.reportedMs ?? null;
     return {
       ms: reported ?? store.liveRtt,
+      lost: false,
       band: stageResult?.band ?? stability?.band ?? "low",
       score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
@@ -230,8 +232,9 @@
         showPip: ping.has,
         band: ping.band,
         score: ping.score,
-        num: ping.has ? fmtMs(ping.ms) : dash,
-        unit: "ms",
+        num:
+          ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
+        unit: ping.active && ping.lost ? "" : "ms",
         wire: null,
       });
     return out;
