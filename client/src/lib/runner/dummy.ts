@@ -13,6 +13,7 @@ import type { CoreHost, RunnerBackend } from "./core";
 import { needsPings, ROUTES } from "./real/backendPure";
 import { BUILD } from "../buildenv";
 import { singleLatencyBucket } from "./latencyBuckets";
+import { fixedPingIntervalMs } from "./pingCadence";
 
 export interface DummyOptions {
   seed?: number;
@@ -86,14 +87,12 @@ const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
   }, // ~9.5/4.5 Mbit/s
 };
 
-const PING_INTERVAL: Record<PingCadence, number> = {
-  // The dummy has no request/reply transport; one core tick approximates the
-  // reply-driven worker's UI-visible sample stream.
-  "reply-driven": 20,
-  fast: 80,
-  medium: 250,
-  slow: 600,
-};
+/** The dummy has no request/reply transport; one core tick approximates the
+ * reply-driven worker's UI-visible sample stream. Fixed pacing stays shared
+ * with the real engine. */
+function pingIntervalMs(cadence: PingCadence): number {
+  return fixedPingIntervalMs(cadence) ?? 20;
+}
 
 const THROUGHPUT_CADENCE_MS = 100;
 
@@ -405,10 +404,9 @@ export class DummyBackend implements RunnerBackend {
 
     // Idle-stage pings, or loaded (bufferbloat) pings during a transfer stage.
     // `activity.loadedLatency` folds in the skip rule, resolved by the scheduler.
-    const pingInterval =
-      PING_INTERVAL[
-        activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence
-      ];
+    const pingInterval = pingIntervalMs(
+      activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence,
+    );
     if (needsPings(activity) && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
       this.#synthLatency(activity, elapsed, segStart, segEnd);
@@ -433,11 +431,11 @@ export class DummyBackend implements RunnerBackend {
       });
       const pingActive = needsPings(activity);
       const pingInterval = pingActive
-        ? PING_INTERVAL[
+        ? pingIntervalMs(
             activity.stage === "latency"
               ? cfg.pingCadence
-              : cfg.loadedPingCadence
-          ]
+              : cfg.loadedPingCadence,
+          )
         : Infinity;
       const next = Math.min(
         activity.transfer.length

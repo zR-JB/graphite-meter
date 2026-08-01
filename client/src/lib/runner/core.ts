@@ -886,13 +886,15 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const cfg = this.#cfg!;
     if (seg.phase === "warmup") return false;
 
-    const kind: "latency" | "transfer" =
-      seg.phase === "latency" ? "latency" : "transfer";
+    const evidencePolicy =
+      seg.phase === "latency"
+        ? ({ kind: "latency", latencyCadence: cfg.pingCadence } as const)
+        : ({ kind: "transfer" } as const);
     const eligible =
       this.#measuring &&
       !this.#hasRegimeCandidate(seg) &&
       shouldExitPhase({
-        kind,
+        ...evidencePolicy,
         elapsedMs: elapsed - seg.start,
         durationMs: seg.end - seg.start,
         confidence: conf,

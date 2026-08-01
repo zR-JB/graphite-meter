@@ -132,12 +132,22 @@ export function singleLatencyBucket(
 }
 
 /** Exact mean absolute consecutive RTT difference across summarized buckets.
- *  Losses carry no RTT and are skipped, matching the former raw-outcome view. */
+ * Losses carry no RTT and are skipped; explicit phase/stall continuity breaks
+ * never create a synthetic cross-series delta. */
 export function latencyJitterMs(buckets: readonly LatencyBucket[]): number {
   let previousRtt: number | null = null;
+  let previousBucket: LatencyBucket | null = null;
   let deltaSumMs = 0;
   let deltaCount = 0;
   for (const bucket of buckets) {
+    if (
+      previousBucket &&
+      (bucket.continuityId !== previousBucket.continuityId ||
+        bucket.phase !== previousBucket.phase ||
+        bucket.underLoad !== previousBucket.underLoad)
+    )
+      previousRtt = null;
+    previousBucket = bucket;
     if (bucket.firstRttMs == null) continue;
     if (previousRtt != null) {
       deltaSumMs += Math.abs(bucket.firstRttMs - previousRtt);

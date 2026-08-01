@@ -786,7 +786,7 @@ export class ChartEngine implements CanvasEngine {
   }
 
   #drawLatency(ctx: CanvasRenderingContext2D, all: LatencyBucket[]): void {
-    if (all.length < 2) return;
+    if (!all.length) return;
     ctx.lineWidth = 1;
     const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);

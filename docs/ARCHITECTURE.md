@@ -334,13 +334,20 @@ buckets, and the final reducer. A sustained fast-window change starts a new disp
 revokes stability; a brief dip does neither. Confirmation never accelerates the measured clock: it
 closes a stable stage at the real boundary and shifts only the remaining schedule.
 
+Adaptive evidence targets are resolved from one phase policy rather than assuming a particular test
+preset. The desired sample floor is capped by the actual phase budget after reserving confirmation
+time and by the fixed confidence horizon. Latency also uses the selected fixed ping interval from the
+same cadence table as the real and dummy engines. This keeps short/medium/long tests eligible at every
+fixed cadence without weakening reply-driven evidence merely because the measured path itself is slow.
+
 Stall presentation is also runner-owned. The core emits the shared transition to zero consumed by
 the gauge, cards, and chart, while synthetic transition values never enter confidence or result
 accounting. Latency follows the same single-path rule: every raw outcome stays in `RunAccumulator`,
 while the UI receives deadline-closed, phase-aligned 200ms median/P95/max/loss buckets. Each bucket
 also retains scalar first/last and consecutive-delta evidence, so rolling connectivity jitter stays
-exact without retaining a second raw history. Gauge and chart share one robust recent latency scale;
-chart lines are straight and break at phase, loss, stall, and gap boundaries rather than adding
+exact without retaining a second raw history or inventing a delta across a phase/stall continuity
+break. Gauge and chart share one robust recent latency scale; chart lines are straight, render the
+first closed bucket as a point, and break at phase, loss, stall, and gap boundaries rather than adding
 another smoothing curve.
 
 Wire-rate presentation is likewise centralized. The store independently models each measured

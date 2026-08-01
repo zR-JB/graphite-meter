@@ -726,6 +726,38 @@ test("a stall that outlives max-stall escalates to a terminal failure", async ()
 // Adaptive early-finish confirmation
 // ---------------------------------------------------------------------------
 
+test("default latency policy can confirm early at the fixed slow cadence", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    stages: { latency: true, download: false },
+    duration: { latencyMs: 4_000, downloadMs: 0 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0.52,
+      stabilityThreshold: 0.86,
+      maxPhaseReductionRatio: 0.5,
+      minLatencySamples: 8,
+      confirmationMs: 1_100,
+    },
+  });
+  cfg.pingCadence = "slow";
+  await core.start(cfg);
+
+  advance(10);
+  core.ingestLatency(20, false, false);
+  for (let i = 1; i < 5; i++) {
+    advance(600);
+    core.ingestLatency(20, false, false);
+  }
+  expect(core.phase).toBe("latency");
+
+  advance(1_099);
+  expect(core.phase).toBe("latency");
+  advance(1);
+  expect(core.phase).toBe("complete");
+  expect(fakeNow).toBeLessThan(cfg.duration.latencyMs);
+});
+
 test("adaptive early-finish arms and completes the run well before the nominal duration on a stable feed", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

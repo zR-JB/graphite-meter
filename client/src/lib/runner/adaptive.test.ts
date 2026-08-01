@@ -3,10 +3,13 @@ import {
   standardDeviation,
   transferConfidence,
   latencyConfidence,
+  confidenceSampleFloor,
   shouldExitPhase,
   type ExitDecisionInput,
 } from "./adaptive";
 import type { AdaptiveDurationConfig } from "./contract";
+import { DEFAULT_CONFIG, DURATION_PRESETS } from "../state/defaults";
+import { fixedPingIntervalMs } from "./pingCadence";
 
 const timed = (values: (number | null)[], cadenceMs = 100) =>
   values.map((rttMs, index) => ({ tMs: index * cadenceMs, rttMs }));
@@ -99,20 +102,6 @@ test("latencyConfidence: recovered loss ages out with the RTT window", () => {
   expect(conf.score).toBe(1);
 });
 
-test("latencyConfidence: slow cadence retains the default early-exit floor", () => {
-  const confidence = latencyConfidence(timed(Array(8).fill(20), 600));
-  expect(confidence.sampleCount).toBe(8);
-  expect(
-    shouldExitPhase({
-      kind: "latency",
-      elapsedMs: 4_200,
-      durationMs: 6_000,
-      confidence,
-      cfg: cfg({ minLatencySamples: 8 }),
-    }),
-  ).toBe(true);
-});
-
 // ---------- shouldExitPhase ----------
 
 function cfg(
@@ -130,11 +119,15 @@ function cfg(
   };
 }
 
-function input(overrides: Partial<ExitDecisionInput> = {}): ExitDecisionInput {
+type TransferExitDecision = Extract<ExitDecisionInput, { kind: "transfer" }>;
+
+function input(
+  overrides: Partial<TransferExitDecision> = {},
+): TransferExitDecision {
   return {
     kind: "transfer",
-    elapsedMs: 600,
-    durationMs: 1000,
+    elapsedMs: 6000,
+    durationMs: 10000,
     confidence: {
       score: 0.95,
       varianceRatio: 0.01,
@@ -159,7 +152,7 @@ test("shouldExitPhase: false for a degenerate (zero-duration) phase", () => {
 });
 
 test("shouldExitPhase: false below the coverage floor", () => {
-  expect(shouldExitPhase(input({ elapsedMs: 400 }))).toBe(false);
+  expect(shouldExitPhase(input({ elapsedMs: 4000 }))).toBe(false);
 });
 
 test("shouldExitPhase: false below the stability threshold", () => {
@@ -198,12 +191,12 @@ test("shouldExitPhase: coverage requirement is never below (1 - maxPhaseReductio
   const strictCfg = cfg({ minCoverageRatio: 0, maxPhaseReductionRatio: 0.3 });
   expect(
     shouldExitPhase(
-      input({ cfg: strictCfg, elapsedMs: 650, durationMs: 1000 }),
+      input({ cfg: strictCfg, elapsedMs: 6500, durationMs: 10000 }),
     ),
   ).toBe(false);
   expect(
     shouldExitPhase(
-      input({ cfg: strictCfg, elapsedMs: 750, durationMs: 1000 }),
+      input({ cfg: strictCfg, elapsedMs: 7500, durationMs: 10000 }),
     ),
   ).toBe(true);
 });
@@ -217,9 +210,105 @@ test("shouldExitPhase: the sample-count floor is picked per phase kind", () => {
   };
   // 10 samples clears the latency floor (5) but not the transfer floor (20).
   expect(
-    shouldExitPhase(input({ kind: "latency", confidence: sharedConfidence })),
+    shouldExitPhase({
+      kind: "latency",
+      latencyCadence: "reply-driven",
+      elapsedMs: 6000,
+      durationMs: 10000,
+      confidence: sharedConfidence,
+      cfg: cfg(),
+    }),
   ).toBe(true);
   expect(
     shouldExitPhase(input({ kind: "transfer", confidence: sharedConfidence })),
   ).toBe(false);
+});
+
+test("latency evidence policy keeps every fixed cadence eligible across shipped durations", () => {
+  const expected = {
+    short: { fast: 8, medium: 6, slow: 3 },
+    medium: { fast: 8, medium: 8, slow: 5 },
+    long: { fast: 8, medium: 8, slow: 7 },
+  } as const;
+  const adaptive = DEFAULT_CONFIG.adaptive;
+  const coverage = Math.max(
+    adaptive.minCoverageRatio,
+    1 - adaptive.maxPhaseReductionRatio,
+  );
+
+  for (const preset of ["short", "medium", "long"] as const) {
+    const durationMs = DURATION_PRESETS[preset].latencyMs;
+    for (const cadence of ["fast", "medium", "slow"] as const) {
+      const intervalMs = fixedPingIntervalMs(cadence)!;
+      const floor = confidenceSampleFloor({
+        kind: "latency",
+        durationMs,
+        cfg: adaptive,
+        latencyCadence: cadence,
+      });
+      expect(floor).toBe(expected[preset][cadence]);
+
+      const confidence = latencyConfidence(
+        timed(Array(floor).fill(20), intervalMs),
+      );
+      const armAt = Math.max((floor - 1) * intervalMs, durationMs * coverage);
+      expect(
+        shouldExitPhase({
+          kind: "latency",
+          elapsedMs: armAt,
+          durationMs,
+          confidence,
+          latencyCadence: cadence,
+          cfg: adaptive,
+        }),
+      ).toBe(true);
+      expect(armAt + adaptive.confirmationMs).toBeLessThan(durationMs);
+    }
+  }
+});
+
+test("reply-driven latency retains the configured evidence target", () => {
+  expect(
+    confidenceSampleFloor({
+      kind: "latency",
+      durationMs: DURATION_PRESETS.short.latencyMs,
+      cfg: DEFAULT_CONFIG.adaptive,
+      latencyCadence: "reply-driven",
+    }),
+  ).toBe(DEFAULT_CONFIG.adaptive.minLatencySamples);
+});
+
+test("feasibility never undercuts the statistical floor", () => {
+  const adaptive = DEFAULT_CONFIG.adaptive;
+  expect(
+    confidenceSampleFloor({
+      kind: "latency",
+      durationMs: 500,
+      cfg: adaptive,
+      latencyCadence: "slow",
+    }),
+  ).toBe(3);
+  expect(
+    confidenceSampleFloor({ kind: "transfer", durationMs: 500, cfg: adaptive }),
+  ).toBe(4);
+});
+
+test("transfer evidence uses the same phase-and-confirmation feasibility policy", () => {
+  const adaptive = DEFAULT_CONFIG.adaptive;
+  for (const durationMs of [
+    DURATION_PRESETS.short.downloadMs,
+    DURATION_PRESETS.medium.downloadMs,
+    DURATION_PRESETS.long.downloadMs,
+  ])
+    expect(
+      confidenceSampleFloor({ kind: "transfer", durationMs, cfg: adaptive }),
+    ).toBe(adaptive.minTransferSamples);
+
+  expect(
+    confidenceSampleFloor({
+      kind: "transfer",
+      durationMs: 4_000,
+      cfg: adaptive,
+    }),
+  ).toBe(11);
 });

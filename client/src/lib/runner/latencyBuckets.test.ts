@@ -59,6 +59,30 @@ test("bucket summaries preserve exact consecutive RTT jitter", () => {
   expect(latencyJitterMs(summary)).toBeCloseTo(270 / 7, 10);
 });
 
+test("jitter skips losses but never invents variation across continuity", () => {
+  const buckets = new LatencyPresentationBuckets();
+  buckets.reset(0, "latency", false, 1);
+  const summary = [
+    ...buckets.observe(10, 10, false),
+    ...buckets.closeThrough(200),
+    ...buckets.observe(210, 0, true),
+    ...buckets.closeThrough(400),
+    ...buckets.observe(410, 20, false),
+    ...buckets.closeThrough(600),
+  ];
+  expect(latencyJitterMs(summary)).toBe(10);
+
+  buckets.reset(600, "download", true, 2);
+  summary.push(
+    ...buckets.observe(610, 200, false),
+    ...buckets.observe(650, 220, false),
+    ...buckets.closeThrough(800),
+  );
+  // Only 10→20 and 200→220 are real consecutive differences. The explicit
+  // latency→loaded-download break contributes no synthetic 20→200 jump.
+  expect(latencyJitterMs(summary)).toBe(15);
+});
+
 test("partial flush is truthful and an all-loss bucket has no RTT", () => {
   const buckets = new LatencyPresentationBuckets();
   buckets.reset(0, "download", true, 2);

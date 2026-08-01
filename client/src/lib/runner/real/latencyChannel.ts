@@ -3,7 +3,7 @@
 // RTT timestamps; these classes own the worker's lifecycle and route its
 // samples into the core.
 import type { CoreHost } from "../core";
-import type { PingCadence, TransportKind } from "../contract";
+import type { TransportKind } from "../contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
@@ -11,6 +11,7 @@ import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../latencyBuckets";
+import { fixedPingIntervalMs } from "../pingCadence";
 
 /** One measured ping the worker reports (rtt already computed in-worker). */
 interface PingSample {
@@ -31,14 +32,6 @@ type PingOutMsg =
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
 const PING_LOSS_K = 4;
 const PING_LOSS_FLOOR_MS = 250;
-const FIXED_PING_INTERVAL: Record<
-  Exclude<PingCadence, "reply-driven">,
-  number
-> = {
-  fast: 80,
-  medium: 250,
-  slow: 600,
-};
 const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
@@ -120,12 +113,11 @@ export class LatencyChannel {
     const url = pingUrl(channel, kind);
     if (!url) throw new Error("latency target not resolved");
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
-    const replyDriven = cadence === "reply-driven";
+    const fixedIntervalMs = fixedPingIntervalMs(cadence);
+    const replyDriven = fixedIntervalMs == null;
     // Reply-driven uses this only for its loss sweep; its sends are driven by
     // PONGs and the worker's adaptive backup.
-    const intervalMs = replyDriven
-      ? PING_LOSS_FLOOR_MS
-      : FIXED_PING_INTERVAL[cadence];
+    const intervalMs = fixedIntervalMs ?? PING_LOSS_FLOOR_MS;
     // A loaded stage shares the link with the transfer, so its depth is the
     // same either way; the idle stage goes deeper unless PONGs pace the sends.
     const maxInFlight = !isLatencyStage
