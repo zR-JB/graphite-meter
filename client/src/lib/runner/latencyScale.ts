@@ -22,6 +22,23 @@ function tierFor(target: number): number {
   );
 }
 
+/** Robust latency domain for a complete set of presentation buckets. Unlike
+ * the live controller this has no recency or dwell state: terminal charts show
+ * the whole run, so their domain must be derived from that same whole run.
+ * Isolated tails remain clipping markers rather than flattening the primary
+ * median line. */
+export function latencyScaleForHistory(
+  buckets: readonly LatencyBucket[],
+): number {
+  const medians = buckets.flatMap((bucket) =>
+    bucket.medianRttMs == null || !Number.isFinite(bucket.medianRttMs)
+      ? []
+      : [bucket.medianRttMs],
+  );
+  if (!medians.length) return LATENCY_SCALE_LADDER_MS[0];
+  return tierFor(percentile(medians, 95) * LATENCY_SCALE_HEADROOM);
+}
+
 /** True when any visible part of a latency bucket exceeds the shared domain.
  *  A one-ping bucket has max === median, so the median must be checked on its
  *  own rather than treating clipping as a tail-only condition. */

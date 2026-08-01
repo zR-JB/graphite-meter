@@ -8,7 +8,10 @@ import type {
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { sharedThroughputScale } from "../format";
-import { latencyBucketExceedsScale } from "../runner/latencyScale";
+import {
+  latencyBucketExceedsScale,
+  latencyScaleForHistory,
+} from "../runner/latencyScale";
 import {
   hasHoverMeasurements,
   interpolateConnectedAt,
@@ -435,7 +438,12 @@ export class ChartEngine implements CanvasEngine {
       d.throughput.length > 0;
 
     const rttMin = 0;
-    const rttMax = d.latencyScaleMs;
+    // The shared controller is intentionally recent while measuring. Terminal
+    // mode expands the X axis to the full run, so resolve its Y domain from the
+    // same full history instead of applying the last live window retroactively.
+    const rttMax = complete
+      ? latencyScaleForHistory(d.latency)
+      : d.latencyScaleMs;
 
     this.#vp = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
     this.#vpInit = true;

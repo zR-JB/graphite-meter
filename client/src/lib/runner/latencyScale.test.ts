@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { LatencyBucket } from "./contract";
 import {
   latencyBucketExceedsScale,
+  latencyScaleForHistory,
   LatencyScaleController,
   LATENCY_SCALE_SHRINK_DWELL_MS,
 } from "./latencyScale";
@@ -50,4 +51,26 @@ test("scale shrinks only after a full dwell and one tier at a time", () => {
   expect(scale.scaleMs).toBe(200);
   scale.observe(bucket(6_200 + LATENCY_SCALE_SHRINK_DWELL_MS, 20));
   expect(scale.scaleMs).toBe(100);
+});
+
+test("terminal history retains an older sustained latency domain", () => {
+  const history = [
+    ...Array.from({ length: 20 }, (_, index) => bucket((index + 1) * 200, 300)),
+    ...Array.from({ length: 40 }, (_, index) => bucket((index + 21) * 200, 20)),
+  ];
+  const live = new LatencyScaleController();
+  for (const sample of history) live.observe(sample);
+
+  expect(live.scaleMs).toBeLessThan(300);
+  expect(latencyScaleForHistory(history)).toBe(400);
+});
+
+test("terminal history keeps an isolated tail as a clipping marker", () => {
+  const history = [
+    ...Array.from({ length: 39 }, (_, index) => bucket((index + 1) * 200, 20)),
+    bucket(8_000, 2_000),
+  ];
+
+  expect(latencyScaleForHistory(history)).toBe(40);
+  expect(latencyBucketExceedsScale(history.at(-1)!, 40)).toBe(true);
 });
