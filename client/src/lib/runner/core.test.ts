@@ -8,6 +8,7 @@ import type {
   InfraInfo,
   EngineInfo,
 } from "./contract";
+import { LATENCY_PRESENTATION_BUCKET_MS } from "./latencyBuckets";
 
 // ---------------------------------------------------------------------------
 // Fake clock + captured tick callback.
@@ -503,6 +504,25 @@ test("latency presentation does not bridge a short stall", async () => {
   );
   expect(buckets.length).toBeGreaterThanOrEqual(2);
   expect(buckets[0].continuityId).not.toBe(buckets.at(-1)!.continuityId);
+});
+
+test("latency presentation closes on bucket time without a later ping", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 1_000 } }));
+
+  advance(10);
+  core.ingestLatency(20, true, false);
+  expect(events.some((event) => event.type === "latency")).toBe(false);
+  advance(190);
+
+  const latency = events.find((event) => event.type === "latency");
+  expect(latency?.sample).toMatchObject({
+    startT: 0,
+    endT: LATENCY_PRESENTATION_BUCKET_MS,
+    medianRttMs: 20,
+  });
 });
 
 test("watchdog auto-stalls a measured phase after prolonged sample silence", async () => {

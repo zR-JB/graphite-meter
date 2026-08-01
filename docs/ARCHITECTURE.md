@@ -337,16 +337,20 @@ closes a stable stage at the real boundary and shifts only the remaining schedul
 Stall presentation is also runner-owned. The core emits the shared transition to zero consumed by
 the gauge, cards, and chart, while synthetic transition values never enter confidence or result
 accounting. Latency follows the same single-path rule: every raw outcome stays in `RunAccumulator`,
-while the UI receives phase-aligned 200ms median/P95/max/loss buckets. Gauge and chart share one
-robust recent latency scale; chart lines are straight and break at phase, loss, stall, and gap
-boundaries rather than adding another smoothing curve.
+while the UI receives deadline-closed, phase-aligned 200ms median/P95/max/loss buckets. Each bucket
+also retains scalar first/last and consecutive-delta evidence, so rolling connectivity jitter stays
+exact without retaining a second raw history. Gauge and chart share one robust recent latency scale;
+chart lines are straight and break at phase, loss, stall, and gap boundaries rather than adding
+another smoothing curve.
 
 Wire-rate presentation is likewise centralized. The store independently models each measured
 direction from canonical goodput and sums those lane estimates for bidirectional stages;
 `wirePresentation.ts` owns the estimate label and full assumptions tooltip used by the live gauge,
-compact cards, final cards, and completed gauge. The estimate is default-on but remains secondary:
-it never drives the headline, dial, chart, confidence, or result reducer. Loopback is explicitly
-treated as having no physical-wire estimate, and an opt-out hides only this presentation model.
+compact cards, final cards, and completed gauge. Every estimate carries the profile that produced
+its assumptions, so editable settings cannot make the tooltip contradict its calculation. The
+estimate is default-on but remains secondary: it never drives the headline, dial, chart, confidence,
+or result reducer. Loopback is explicitly treated as having no physical-wire estimate, and an opt-out
+hides only this presentation model.
 
 Each run enters a visible `connecting` phase while the selected target is probed and verified.
 Only after that succeeds does the measurement timeline start. Stage preparation may also be

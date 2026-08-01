@@ -42,6 +42,7 @@ import {
 } from "../format";
 import { buildSegments } from "../runner/schedule";
 import { LatencyScaleController } from "../runner/latencyScale";
+import { latencyJitterMs } from "../runner/latencyBuckets";
 import { weightedMean, weightedMeanAbsoluteDeviation } from "../runner/stats";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
@@ -241,16 +242,9 @@ class AppStore {
 
   jitterMs = $derived.by(() => {
     const latest = this.pulseLatency.at(-1)?.endT ?? 0;
-    const recent = this.pulseLatency
-      .filter((bucket) => bucket.endT > latest - 4_000)
-      .flatMap((bucket) =>
-        bucket.medianRttMs == null ? [] : [bucket.medianRttMs],
-      );
-    if (recent.length < 2) return 0;
-    let acc = 0;
-    for (let i = 1; i < recent.length; i++)
-      acc += Math.abs(recent[i] - recent[i - 1]);
-    return acc / (recent.length - 1);
+    return latencyJitterMs(
+      this.pulseLatency.filter((bucket) => bucket.endT > latest - 4_000),
+    );
   });
 
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {

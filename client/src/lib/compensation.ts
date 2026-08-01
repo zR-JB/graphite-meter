@@ -29,6 +29,8 @@ export interface CompensationEstimate {
   totalMultiplier: number;
   confidence: CompensationConfidence;
   factors: CompensationFactor[];
+  /** Provenance for the exact assumptions that produced this estimate. */
+  profile: ConnectionProfile;
   transport: CompensationTransport;
   assumptions: string[];
   available: boolean;
@@ -80,6 +82,7 @@ export function combineCompensationEstimates(
       measuredBytesPerSec > 0 ? estimatedBytesPerSec / measuredBytesPerSec : 1,
     confidence,
     factors: representative?.factors ?? [],
+    profile: representative?.profile ?? "lan",
     transport: representative?.transport ?? "http1-clear",
     assumptions: representative?.assumptions ?? [],
     available: estimates.every((estimate) => estimate.available),
@@ -164,7 +167,12 @@ export function estimateLiveCompensation(
       ? transportFromProtocol(detectedProtocol, secure)
       : config.transport;
   if (bytesPerSec <= 0 || config.profile === "loopback")
-    return identity(bytesPerSec, transport, config.profile !== "loopback");
+    return identity(
+      bytesPerSec,
+      transport,
+      config.profile,
+      config.profile !== "loopback",
+    );
 
   const raw = config.params;
   const params = {
@@ -295,6 +303,7 @@ export function estimateLiveCompensation(
     totalMultiplier: central,
     confidence: low === high ? "high" : "medium",
     factors,
+    profile: config.profile,
     transport,
     assumptions: [
       `${params.ipVersion === 6 ? "IPv6" : "IPv4"}, ${params.mtuBytes} B MTU`,
@@ -320,6 +329,7 @@ function factor(
 function identity(
   bytesPerSec: number,
   transport: CompensationTransport,
+  profile: ConnectionProfile,
   available = true,
 ): CompensationEstimate {
   return {
@@ -330,6 +340,7 @@ function identity(
     totalMultiplier: 1,
     confidence: "high",
     factors: [],
+    profile,
     transport,
     assumptions: [],
     available,

@@ -175,6 +175,7 @@ test("tunnel preset is applied once and remains configurable", () => {
     { ...preset, transport: "http1-clear" },
     "upload",
   );
+  expect(estimate.profile).toBe("tunnel");
   expect(
     estimate.factors.filter((factor) => factor.key === "encapsulation"),
   ).toHaveLength(1);

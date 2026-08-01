@@ -146,7 +146,6 @@
     if (!showWire || !m.has) return null;
     return presentWireEstimate(
       m.compensation,
-      store.runConfig.compensation.profile,
       (bytesPerSec) =>
         `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`,
     );

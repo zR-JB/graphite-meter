@@ -30,8 +30,10 @@ const LATENCY_JITTER_FLOOR_MS = 20;
 
 /** Four seconds of completed 250 ms exact-rate buckets. */
 export const TRANSFER_CONFIDENCE_BUCKETS = 16;
-/** Latency outcomes are selected by timestamp, never callback count. */
-export const LATENCY_CONFIDENCE_WINDOW_MS = 4_000;
+/** Five seconds retains the default eight-outcome floor even at the supported
+ *  600 ms cadence (seven intervals span 4.2 s). Selection remains timestamped,
+ *  never callback-count based. */
+export const LATENCY_CONFIDENCE_WINDOW_MS = 5_000;
 
 /** Slope is measured as |mean(firstSegment) − mean(lastSegment)| / mean.
  *  The window is split into this many segments (first vs last third). */

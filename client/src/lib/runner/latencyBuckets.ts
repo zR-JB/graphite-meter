@@ -32,17 +32,30 @@ export class LatencyPresentationBuckets {
   observe(t: number, rttMs: number, lost: boolean): LatencyBucket[] {
     if (!this.#pending)
       this.reset(t, this.#phase, this.#underLoad, this.#continuityId);
-    const emitted: LatencyBucket[] = [];
-    while (t >= this.#pending!.endT) {
-      const closed = this.#emitPending(this.#pending!.endT);
-      if (closed) emitted.push(closed);
-      this.#pending = this.#empty(this.#pending!.endT);
-    }
+    const emitted = this.closeThrough(t);
     this.#pending!.pingCount++;
     if (lost) this.#pending!.lossCount++;
     else if (Number.isFinite(rttMs))
       this.#pending!.rtts.push(Math.max(0, rttMs));
     return emitted;
+  }
+
+  /** Close every elapsed presentation window. The runner's master deadline
+   *  calls this even when no later ping arrives, so display cadence is owned by
+   *  bucket time rather than source cadence. */
+  closeThrough(t: number): LatencyBucket[] {
+    const emitted: LatencyBucket[] = [];
+    while (this.#pending && t >= this.#pending.endT) {
+      const endT = this.#pending.endT;
+      const closed = this.#emitPending(endT);
+      if (closed) emitted.push(closed);
+      this.#pending = this.#empty(endT);
+    }
+    return emitted;
+  }
+
+  get nextBoundaryT(): number | null {
+    return this.#pending?.endT ?? null;
   }
 
   flush(atT?: number): LatencyBucket | null {
@@ -69,6 +82,9 @@ export class LatencyPresentationBuckets {
   #emitPending(endT: number): LatencyBucket | null {
     const pending = this.#pending;
     if (!pending || pending.pingCount === 0) return null;
+    let rttDeltaSumMs = 0;
+    for (let i = 1; i < pending.rtts.length; i++)
+      rttDeltaSumMs += Math.abs(pending.rtts[i] - pending.rtts[i - 1]);
     return {
       t: pending.startT + (endT - pending.startT) / 2,
       startT: pending.startT,
@@ -76,6 +92,10 @@ export class LatencyPresentationBuckets {
       medianRttMs: pending.rtts.length ? median(pending.rtts) : null,
       p95RttMs: pending.rtts.length ? percentile(pending.rtts, 95) : null,
       maxRttMs: pending.rtts.length ? Math.max(...pending.rtts) : null,
+      firstRttMs: pending.rtts.at(0) ?? null,
+      lastRttMs: pending.rtts.at(-1) ?? null,
+      rttDeltaSumMs,
+      rttDeltaCount: Math.max(0, pending.rtts.length - 1),
       pingCount: pending.pingCount,
       lossCount: pending.lossCount,
       underLoad: this.#underLoad,
@@ -99,10 +119,33 @@ export function singleLatencyBucket(
     medianRttMs: value,
     p95RttMs: value,
     maxRttMs: value,
+    firstRttMs: value,
+    lastRttMs: value,
+    rttDeltaSumMs: 0,
+    rttDeltaCount: 0,
     pingCount: 1,
     lossCount: lost ? 1 : 0,
     underLoad: false,
     phase,
     continuityId: 0,
   };
+}
+
+/** Exact mean absolute consecutive RTT difference across summarized buckets.
+ *  Losses carry no RTT and are skipped, matching the former raw-outcome view. */
+export function latencyJitterMs(buckets: readonly LatencyBucket[]): number {
+  let previousRtt: number | null = null;
+  let deltaSumMs = 0;
+  let deltaCount = 0;
+  for (const bucket of buckets) {
+    if (bucket.firstRttMs == null) continue;
+    if (previousRtt != null) {
+      deltaSumMs += Math.abs(bucket.firstRttMs - previousRtt);
+      deltaCount++;
+    }
+    deltaSumMs += bucket.rttDeltaSumMs;
+    deltaCount += bucket.rttDeltaCount;
+    previousRtt = bucket.lastRttMs;
+  }
+  return deltaCount > 0 ? deltaSumMs / deltaCount : 0;
 }

@@ -104,7 +104,6 @@
     if (!estimate?.available || estimate.measuredBytesPerSec <= 0) return null;
     return presentWireEstimate(
       estimate,
-      store.runConfig.compensation.profile,
       (bytesPerSec) =>
         `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`,
     );

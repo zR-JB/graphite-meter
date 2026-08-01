@@ -377,6 +377,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       RUNNER_DEADLINE_MS,
       seg ? seg.end - this.#measuredElapsed : RUNNER_DEADLINE_MS,
     ];
+    const latencyBoundary = this.#latencyBuckets.nextBoundaryT;
+    if (latencyBoundary != null)
+      deadlines.push(latencyBoundary - this.#measuredElapsed);
     if (this.#isMeasuredPhase(this.#phase)) {
       deadlines.push(
         this.#measuring
@@ -403,6 +406,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#stagePreparing) return;
     this.#measuredElapsed += dtWall;
     const elapsed = this.#measuredElapsed;
+    this.#emitClosedLatencyPresentation();
 
     if (elapsed >= this.#totalMs && this.#measuring) {
       this.#finish();
@@ -632,6 +636,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #flushLatencyPresentation(): void {
     const bucket = this.#latencyBuckets.flush(this.#measuredElapsed);
     if (bucket) this.emit({ type: "latency", sample: bucket });
+  }
+
+  #emitClosedLatencyPresentation(): void {
+    for (const bucket of this.#latencyBuckets.closeThrough(
+      this.#measuredElapsed,
+    ))
+      this.emit({ type: "latency", sample: bucket });
   }
 
   /** End every presentation series at a lifecycle boundary and seed latency's

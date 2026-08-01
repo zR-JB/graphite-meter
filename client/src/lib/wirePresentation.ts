@@ -1,5 +1,4 @@
 import type { CompensationEstimate } from "./compensation";
-import type { ConnectionProfile } from "./runner/contract";
 import { compensationTransportLabel } from "./runner/protocol";
 
 export type WirePresentation =
@@ -19,7 +18,6 @@ export type WirePresentation =
  * model and exclusions. Measured goodput formatting stays with each caller. */
 export function presentWireEstimate(
   estimate: CompensationEstimate,
-  profile: ConnectionProfile,
   formatRate: (bytesPerSec: number) => string,
 ): WirePresentation {
   if (!estimate.available) {
@@ -51,7 +49,7 @@ export function presentWireEstimate(
         ? `Modeled range: ${lower}–${upper}.`
         : "No modeled range for the selected assumptions.",
       `Multiplier: ×${estimate.totalMultiplier.toFixed(4)}.`,
-      `Profile: ${profile}; transport: ${compensationTransportLabel(estimate.transport)}.`,
+      `Profile: ${estimate.profile}; transport: ${compensationTransportLabel(estimate.transport)}.`,
       `Assumptions: ${assumptions}.`,
       "Excludes ACK traffic, runtime packet behavior, retransmissions, and unmodeled link or tunnel encapsulation.",
     ].join(" "),

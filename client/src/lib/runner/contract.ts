@@ -192,6 +192,11 @@ export interface LatencyBucket {
   medianRttMs: number | null;
   p95RttMs: number | null;
   maxRttMs: number | null;
+  /** Exact consecutive-success RTT variation retained through aggregation. */
+  firstRttMs: number | null;
+  lastRttMs: number | null;
+  rttDeltaSumMs: number;
+  rttDeltaCount: number;
   pingCount: number;
   lossCount: number;
   underLoad: boolean; // true if captured during dl/ul (bufferbloat)

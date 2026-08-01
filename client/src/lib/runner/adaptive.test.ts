@@ -99,6 +99,20 @@ test("latencyConfidence: recovered loss ages out with the RTT window", () => {
   expect(conf.score).toBe(1);
 });
 
+test("latencyConfidence: slow cadence retains the default early-exit floor", () => {
+  const confidence = latencyConfidence(timed(Array(8).fill(20), 600));
+  expect(confidence.sampleCount).toBe(8);
+  expect(
+    shouldExitPhase({
+      kind: "latency",
+      elapsedMs: 4_200,
+      durationMs: 6_000,
+      confidence,
+      cfg: cfg({ minLatencySamples: 8 }),
+    }),
+  ).toBe(true);
+});
+
 // ---------- shouldExitPhase ----------
 
 function cfg(

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  latencyJitterMs,
   LatencyPresentationBuckets,
   LATENCY_PRESENTATION_BUCKET_MS,
 } from "./latencyBuckets";
@@ -18,10 +19,44 @@ test("phase-aligned buckets retain median tail and loss summaries", () => {
     medianRttMs: 55,
     p95RttMs: 100,
     maxRttMs: 100,
+    firstRttMs: 10,
+    lastRttMs: 100,
+    rttDeltaSumMs: 90,
+    rttDeltaCount: 1,
     pingCount: 3,
     lossCount: 1,
     continuityId: 7,
   });
+});
+
+test("closed windows emit without waiting for another observation", () => {
+  const buckets = new LatencyPresentationBuckets();
+  buckets.reset(0, "latency", false, 1);
+  buckets.observe(10, 20, false);
+
+  expect(buckets.closeThrough(199)).toEqual([]);
+  expect(buckets.closeThrough(200)).toHaveLength(1);
+  expect(buckets.closeThrough(200)).toEqual([]);
+});
+
+test("bucket summaries preserve exact consecutive RTT jitter", () => {
+  const buckets = new LatencyPresentationBuckets();
+  buckets.reset(0, "latency", false, 1);
+  const summary = buckets.closeThrough(0);
+  for (const [t, rtt] of [
+    [10, 10],
+    [40, 10],
+    [80, 10],
+    [120, 100],
+    [210, 10],
+    [240, 10],
+    [280, 10],
+    [320, 100],
+  ] as const)
+    summary.push(...buckets.observe(t, rtt, false));
+  summary.push(...buckets.closeThrough(400));
+
+  expect(latencyJitterMs(summary)).toBeCloseTo(270 / 7, 10);
 });
 
 test("partial flush is truthful and an all-loss bucket has no RTT", () => {
