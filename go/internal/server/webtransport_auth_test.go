@@ -46,17 +46,17 @@ func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	return out.Token
 }
 
-// wtDialer returns a dialer for the stack's HTTP/3 listener.
-func (s *authenticatedStack) wtDialer(t *testing.T) *webtransport.Dialer {
+// wtTransport returns a transport for the stack's HTTP/3 listener.
+func (s *authenticatedStack) wtTransport(t *testing.T) *webtransport.Transport {
 	t.Helper()
-	d := insecureWTDialer()
+	d := insecureWTTransport()
 	t.Cleanup(func() { _ = d.Close() })
 	return d
 }
 
 // connectPing dials the ping bus, retrying only while the listener comes up, and
 // reports the CONNECT status a refusal answered with.
-func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Dialer, query string, hdr http.Header) (*webtransport.Session, int) {
+func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport, query string, hdr http.Header) (*webtransport.Session, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -102,7 +102,7 @@ func answersPing(t *testing.T, sess *webtransport.Session) {
 
 func TestWebTransportConnectSpendsAMintedTokenOnce(t *testing.T) {
 	s := newAuthenticatedStack(t)
-	d := s.wtDialer(t)
+	d := s.wtTransport(t)
 	token := s.mintWTToken(t)
 	query := "?token=" + url.QueryEscape(token)
 
@@ -113,17 +113,17 @@ func TestWebTransportConnectSpendsAMintedTokenOnce(t *testing.T) {
 	answersPing(t, sess)
 
 	// A captured URL is worthless once its CONNECT has landed.
-	if _, status := s.connectPing(t, s.wtDialer(t), query, nil); status != http.StatusForbidden {
+	if _, status := s.connectPing(t, s.wtTransport(t), query, nil); status != http.StatusForbidden {
 		t.Errorf("replayed token status=%d, want %d", status, http.StatusForbidden)
 	}
 }
 
 func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
 	s := newAuthenticatedStack(t)
-	if _, status := s.connectPing(t, s.wtDialer(t), "", nil); status != http.StatusForbidden {
+	if _, status := s.connectPing(t, s.wtTransport(t), "", nil); status != http.StatusForbidden {
 		t.Errorf("uncredentialed CONNECT status=%d, want %d", status, http.StatusForbidden)
 	}
-	if _, status := s.connectPing(t, s.wtDialer(t), "?token=gmw_nonsense", nil); status != http.StatusForbidden {
+	if _, status := s.connectPing(t, s.wtTransport(t), "?token=gmw_nonsense", nil); status != http.StatusForbidden {
 		t.Errorf("forged token status=%d, want %d", status, http.StatusForbidden)
 	}
 }
@@ -131,7 +131,7 @@ func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
 func TestWebTransportConnectAcceptsANativeGrant(t *testing.T) {
 	s := newAuthenticatedStack(t)
 	hdr := http.Header{"Authorization": {"Bearer " + s.grant(t)}}
-	sess, status := s.connectPing(t, s.wtDialer(t), "", hdr)
+	sess, status := s.connectPing(t, s.wtTransport(t), "", hdr)
 	if status != http.StatusOK {
 		t.Fatalf("granted CONNECT status=%d, want a session", status)
 	}
@@ -140,7 +140,7 @@ func TestWebTransportConnectAcceptsANativeGrant(t *testing.T) {
 
 func TestEndingTheAuthSessionUnwindsALiveWebTransportSession(t *testing.T) {
 	s := newAuthenticatedStack(t)
-	sess, status := s.connectPing(t, s.wtDialer(t), "?token="+url.QueryEscape(s.mintWTToken(t)), nil)
+	sess, status := s.connectPing(t, s.wtTransport(t), "?token="+url.QueryEscape(s.mintWTToken(t)), nil)
 	if status != http.StatusOK {
 		t.Fatalf("minted CONNECT status=%d, want a session", status)
 	}

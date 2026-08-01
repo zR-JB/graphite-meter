@@ -368,7 +368,7 @@ func TestWTStageSessionCloseIsFinal(t *testing.T) {
 }
 
 // TestWTStageSessionClosesASessionWhoseEstablishFailed covers the leak a
-// half-built session is: it dialled, so it holds a QUIC connection and a dialer,
+// half-built session is: it dialled, so it holds a QUIC connection and a transport,
 // and the establish step is what rejected it. It has to be released before the
 // next attempt, and the next attempt has to be paced.
 func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {

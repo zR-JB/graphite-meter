@@ -258,9 +258,9 @@ func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 
 // wtPingSpam is the same chain over session datagrams.
 func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error {
-	dialer := insecureWTDialer()
-	defer dialer.Close()
-	_, sess, err := dialer.Dial(ctx, origin+routeWTPing, nil)
+	wtTransport := insecureWTTransport()
+	defer wtTransport.Close()
+	_, sess, err := wtTransport.Dial(ctx, origin+routeWTPing, nil)
 	if err != nil {
 		return err
 	}
