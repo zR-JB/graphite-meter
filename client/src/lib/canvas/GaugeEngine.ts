@@ -44,7 +44,7 @@ export class GaugeEngine implements CanvasEngine {
   #w = 0; // css px
   #h = 0;
 
-  // Resolved theme colors (re-read on theme/resize via invalidateTheme).
+  // Resolved theme colors (re-read on theme invalidation only).
   #accent = "#888";
   #track = "#23262b";
   #tick = "#4a5058";
@@ -77,7 +77,7 @@ export class GaugeEngine implements CanvasEngine {
     this.#motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     this.#reducedMotion = this.#motionQuery.matches;
     this.#motionQuery.addEventListener("change", this.#onMotionChange);
-    this.invalidateTheme(); // size backing store + resolve colors
+    this.invalidateTheme();
   }
 
   wake(): void {
@@ -99,14 +99,49 @@ export class GaugeEngine implements CanvasEngine {
 
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
-    this.#dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const rect = this.#canvas.getBoundingClientRect();
-    this.#w = Math.max(1, rect.width);
-    this.#h = Math.max(1, rect.height);
-    this.#canvas.width = Math.round(this.#w * this.#dpr);
-    this.#canvas.height = Math.round(this.#h * this.#dpr);
-    this.#ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     this.#resolveColors(this.#lastPhase ?? "idle");
+    this.#baseSig = "";
+    this.#headSig = "";
+    this.wake();
+  }
+
+  /**
+   * The component that owns CSS layout supplies the exact same dimensions used
+   * for its DOM labels. Zero-sized observations are transient (for example,
+   * hidden tabs) and deliberately retain the last valid backing store.
+   */
+  resize(cssWidth: number, cssHeight: number): void {
+    if (!this.#canvas || !this.#ctx) return;
+    if (
+      !Number.isFinite(cssWidth) ||
+      !Number.isFinite(cssHeight) ||
+      cssWidth <= 0 ||
+      cssHeight <= 0
+    )
+      return;
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const backingWidth = Math.max(1, Math.round(cssWidth * dpr));
+    const backingHeight = Math.max(1, Math.round(cssHeight * dpr));
+    if (
+      this.#w === cssWidth &&
+      this.#h === cssHeight &&
+      this.#dpr === dpr &&
+      this.#canvas.width === backingWidth &&
+      this.#canvas.height === backingHeight
+    )
+      return;
+
+    this.#w = cssWidth;
+    this.#h = cssHeight;
+    this.#dpr = dpr;
+    this.#canvas.width = backingWidth;
+    this.#canvas.height = backingHeight;
+    this.#ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Every cached sprite is device-resolution geometry. They must be rebuilt
+    // against this backing store as one resize generation.
+    this.#baseSig = "";
+    this.#headSig = "";
     this.wake();
   }
 
@@ -162,7 +197,7 @@ export class GaugeEngine implements CanvasEngine {
 
   #draw(): void {
     const ctx = this.#ctx;
-    if (!ctx) return;
+    if (!ctx || this.#w <= 0 || this.#h <= 0) return;
     ctx.clearRect(0, 0, this.#w, this.#h);
 
     const layout = this.#layout;
@@ -205,7 +240,7 @@ export class GaugeEngine implements CanvasEngine {
   #ensureBase(layout: GaugeLayout): void {
     const { x: cx, y: cy } = layout.center;
     const r = layout.radius;
-    const sig = `${this.#w}x${this.#h}@${this.#dpr}|${this.#track}|${this.#tick}`;
+    const sig = `${this.#geometrySignature(layout)}@${this.#dpr}|${this.#track}|${this.#tick}`;
     if (sig === this.#baseSig && this.#base) return;
     this.#baseSig = sig;
 
@@ -264,6 +299,25 @@ export class GaugeEngine implements CanvasEngine {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  }
+
+  #geometrySignature(layout: GaugeLayout): string {
+    return [
+      layout.width,
+      layout.height,
+      layout.center.x,
+      layout.center.y,
+      layout.radius,
+      layout.arcWidth,
+      layout.arcStart,
+      layout.arcSweep,
+      ...layout.majorTicks.flatMap((tick) => [
+        tick.from.x,
+        tick.from.y,
+        tick.to.x,
+        tick.to.y,
+      ]),
+    ].join(",");
   }
 
   #ensureHead(arcW: number): void {

@@ -277,9 +277,12 @@
       const { width, height } = entries[0].contentRect;
       if (gaugeSize.width !== width || gaugeSize.height !== height)
         gaugeSize = { width, height };
-      engine.invalidateTheme();
+      engine.resize(width, height);
     });
     resizeObserver.observe(stageEl!);
+    const { clientWidth: width, clientHeight: height } = stageEl!;
+    gaugeSize = { width, height };
+    engine.resize(width, height);
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
