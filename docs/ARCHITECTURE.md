@@ -327,7 +327,7 @@ linear-interpolated, so the two clients' latency summaries are not directly comp
 
 The UI (`client/src/`) is deliberately engine-agnostic: it only ever talks to `RunnerCore`
 (`src/lib/runner/core.ts`), which owns the phase timeline, a deadline scheduler, a measured clock that
-retains stalls in effective throughput while bounding recovery with a max timeout, an
+retains stalls in effective throughput, and the single runner-owned recovery deadline, an
 adaptive early-finish confirmation, and the one live-throughput presentation path. Exact byte/time
 observations independently feed a growing time-weighted display window, fixed 250ms confidence
 buckets, and the final reducer. A sustained fast-window change starts a new display regime and
@@ -436,10 +436,9 @@ different answers: reopen the page over https, or use another browser. `webTrans
 same module reads `isSecureContext` to tell them apart, and the path cards name the one that
 applies. Loopback is a secure context, so local development over `http://localhost` is unaffected.
 
-Every transport shares one establish budget, one restart cadence and one early-fail deadline
-(`real/budgets.ts`), so a stage that cannot carry bytes is skipped in the same time whichever
-mechanism was selected. The early fail is a deadline rather than an attempt count: a lane that
-refuses instantly and one that times out reach it together.
+Every transport shares one establish budget and restart cadence (`real/budgets.ts`). Those bounds
+limit individual attempts; `RunnerCore` alone expires a measured stage's derived recovery budget,
+so a lane that refuses instantly and one that times out cannot independently end the stage.
 
 A path is checked on: boot; an explicit Retry; a selection change resolving to a different target; a
 role the run will open that is not verified; `online`; becoming visible after 30 s hidden; a
@@ -486,7 +485,7 @@ the primary summary.
 | Worker                      | Role                                                                                                                                                                      |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                                     |
-| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload, reports only liveness.                                                                                  |
+| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload. Its local completion metadata may drive a bounded live visual hint, never upload accounting.             |
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                                            |
 | `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss/timestamp algorithm off the main thread; batched outcomes retain their individual observation times. |
 | `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE.                 |
