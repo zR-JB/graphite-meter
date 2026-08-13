@@ -101,8 +101,10 @@
     };
   });
 
+  // Below half a percent, the modeled difference is not useful result-card
+  // context. The assumptions remain available through the shared disclosure.
   function lifted(multiplier: number): boolean {
-    return multiplier > 1.0005;
+    return multiplier >= 1.005;
   }
 
   function pctLift(multiplier: number): string {
@@ -164,10 +166,7 @@
 
   const showWire = $derived(store.showWireEstimates);
 
-  type CardWire =
-    | { kind: "lift"; num: string; pct: string }
-    | { kind: "flat"; text: string }
-    | null;
+  type CardWire = { kind: "lift"; num: string; pct: string } | null;
   interface CardVM {
     key: string;
     icon: string;
@@ -203,15 +202,14 @@
     status: CardVM["status"],
   ): CardWire {
     if (!showWire || !m.has || status !== "complete") return null;
-    if (!m.available)
-      return { kind: "flat", text: "loopback — no physical wire" };
+    if (!m.available) return null;
     if (lifted(m.multiplier))
       return {
         kind: "lift",
         num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
         pct: pctLift(m.multiplier),
       };
-    return { kind: "flat", text: "no overhead applied" };
+    return null;
   }
 
   function transferCard(
@@ -336,8 +334,6 @@
           <span class="est-tag" use:tooltip={JARGON.wireRate}
             >wire {c.wire.pct}</span
           >
-        {:else}
-          <span class="est-flat">{c.wire.text}</span>
         {/if}
       </div>
     {/if}

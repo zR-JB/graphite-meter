@@ -5,7 +5,10 @@
   import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { buildSegments } from "../runner/schedule";
   import { httpProtocolLabel } from "../runner/protocol";
-  import { serverLoadSummary } from "./endpointInfo";
+  import {
+    advertisedServerCapabilities,
+    serverLoadSummary,
+  } from "./endpointInfo";
   import type { TransportKind } from "../runner/contract";
 
   type PathRole = "throughput" | "latency";
@@ -64,11 +67,20 @@
   }
 
   function capabilities(role: PathRole) {
-    const values =
-      role === "throughput"
-        ? engine?.throughputTransports
-        : engine?.latencyTransports;
-    return values?.map((value) => capability(value, role)).join(" · ") ?? "—";
+    const advertised = advertisedServerCapabilities(
+      store.transportDiscovery,
+      role,
+    );
+    if (!advertised) return "Checking server";
+    const values = advertised.transports.map((value) =>
+      capability(value, role),
+    );
+    if (!values.length) return "None advertised";
+    return `${values.join(" · ")}${
+      advertised.browserBlocked
+        ? " · some clear origins blocked by this page"
+        : ""
+    }`;
   }
 
   // The feed rides the session that carries the bytes, or its own fetch when
@@ -190,10 +202,6 @@
             </dt>
             <dd>{protocolEvidence(role)}</dd>
           </div>
-          <div>
-            <dt>Client</dt>
-            <dd>{clientEvidence(role)}</dd>
-          </div>
           {#if role === "throughput"}
             <div>
               <dt>Upload progress</dt>
@@ -241,6 +249,10 @@
           <dd>{connections.throughput.target?.origin ?? "—"}</dd>
         </div>
         <div>
+          <dt>Throughput client</dt>
+          <dd>{clientEvidence("throughput")}</dd>
+        </div>
+        <div>
           <dt>Transports</dt>
           <dd>
             {throughputTransport ?? "—"} · {latencyTransport ?? "—"}
@@ -255,6 +267,10 @@
         <div>
           <dt>Latency origin</dt>
           <dd>{connections.latency.target?.origin ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Latency client</dt>
+          <dd>{clientEvidence("latency")}</dd>
         </div>
         <div>
           <dt>Streams</dt>

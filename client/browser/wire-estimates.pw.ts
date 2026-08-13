@@ -60,9 +60,7 @@ test("a persisted opt-out hides only wire-estimate presentation", async ({
   await expect(page.locator(".result-card .est")).toHaveCount(0);
 });
 
-test("loopback reports that no physical-wire estimate exists", async ({
-  page,
-}) => {
+test("loopback omits the non-applicable wire row", async ({ page }) => {
   await page.goto("/?engine=dummy");
   await configureShortDownload(page);
   const settings = page.locator('[aria-label="Settings"]');
@@ -76,7 +74,5 @@ test("loopback reports that no physical-wire estimate exists", async ({
   await expect(
     page.getByRole("button", { name: "Run the test again" }),
   ).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator(".result-card .est")).toContainText(
-    "loopback — no physical wire",
-  );
+  await expect(page.locator(".result-card .est")).toHaveCount(0);
 });
