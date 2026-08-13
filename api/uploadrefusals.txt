@@ -12,16 +12,15 @@
 # These strings are a wire contract, not internal diagnostics. A refused upload
 # reports its reason twice over, in two shapes that must stay in step:
 #   HTTP — /upload and /upload/progress send the message as the status text.
-#   WT   — the progress stream carries it as {"type":"error","message":"..."},
-#          which is the ONLY signal a refused WebTransport lane gets: a stream
-#          has no status line, so the client recognises the fatal by this text.
-# Reword one side and the other stops recognising the refusal while both test
-# suites stay green. That is what this file exists to prevent. Every refusal
-# test loads THIS file as its fixture:
+#   WT   — the progress stream carries it as {"type":"error","code":"...",
+#          "message":"..."}. A stream has no status line, so `code` gives the
+#          client the recovery disposition without inferring it from prose.
+#   HTTP — the same code is present in X-Graphite-Upload-Refusal.
+# Every refusal test loads THIS file as its fixture:
 #   Go — go/internal/endpoint/upload_owner_test.go (uploadAccessMessage +
 #        writeUploadAccessError, i.e. both the text and the status)
-#   TS — client/src/lib/runner/workers/progressFeed.test.ts (the fatal-detail
-#        strings the progress feed surfaces)
+#   TS — client/src/lib/runner/workers/progressFeed.test.ts (the fatal records
+#        the progress feed surfaces)
 #
 # uploadAccessOK is the deliberate omission: it is not a refusal, carries no
 # message, and never reaches writeUploadAccessError. Its absence below is the

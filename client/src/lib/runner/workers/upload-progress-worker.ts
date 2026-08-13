@@ -8,6 +8,8 @@ import {
   authenticationRequired,
 } from "../../request-auth";
 import { readProgressFeed, type ProgressFeedState } from "./progressFeed";
+import { classifyUploadFailure } from "../uploadFailure";
+import type { RecoveryCause } from "../contract";
 
 type InMsg =
   | {
@@ -21,7 +23,7 @@ type OutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
-  | { type: "fatal"; detail: string }
+  | { type: "fatal"; detail: string; cause: RecoveryCause }
   | { type: "stall"; detail: string }
   | { type: "resume" }
   | { type: "auth-required" };
@@ -82,6 +84,10 @@ async function run(): Promise<void> {
           post({
             type: "fatal",
             detail: `progress returned HTTP ${response.status}`,
+            cause: classifyUploadFailure(
+              response.status,
+              response.headers.get("X-Graphite-Upload-Refusal"),
+            ),
           });
           stopped = true;
           return;

@@ -54,6 +54,23 @@ func uploadAccessMessage(access uploadAccess) string {
 	return ""
 }
 
+// uploadAccessCode is the stable machine-readable companion to the refusal
+// text. Browser recovery may rotate an upload id only for invalid; every other
+// code is a refusal of the current measurement, not a stale session.
+func uploadAccessCode(access uploadAccess) string {
+	switch access {
+	case uploadAccessInvalid:
+		return "invalid"
+	case uploadAccessGlobalFull:
+		return "globalFull"
+	case uploadAccessClientFull:
+		return "clientFull"
+	case uploadAccessOwnerMismatch:
+		return "ownerMismatch"
+	}
+	return ""
+}
+
 // sessionOwner reads the client key from an HTTP request, or from the session
 // that owns a WebTransport stream, which carries no request of its own.
 func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
@@ -67,6 +84,9 @@ func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
 }
 
 func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
+	if code := uploadAccessCode(access); code != "" {
+		w.Header().Set("X-Graphite-Upload-Refusal", code)
+	}
 	switch access {
 	case uploadAccessInvalid:
 		http.Error(w, uploadAccessMessage(access), http.StatusBadRequest)

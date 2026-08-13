@@ -345,7 +345,7 @@ func TestUploadProgressHandleStreamRefusesAnUnknownID(t *testing.T) {
 	if err := json.Unmarshal([]byte(out.String()), &event); err != nil {
 		t.Fatalf("decode %q: %v", out.String(), err)
 	}
-	if event.Type != "error" || event.Message != uploadAccessMessage(uploadAccessInvalid) {
+	if event.Type != "error" || event.Message != uploadAccessMessage(uploadAccessInvalid) || event.Code != uploadAccessCode(uploadAccessInvalid) {
 		t.Fatalf("record = %+v, want the unknown-id refusal", event)
 	}
 }

@@ -12,6 +12,7 @@ import type {
   PhaseActivity,
   TransferStreamPolicy,
   ConnectionRole,
+  RecoveryCause,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type {
@@ -127,15 +128,16 @@ export class RealBackend implements RunnerBackend {
     transferActive: () => this.#transferActive,
     discardTransfer: () => this.#discardTransfer(),
     noteLaneProgress: (bytes) => this.#lanes.up?.noteMeasuredProgress(bytes),
-    setLaneStalled: (stalled, detail) =>
-      this.#lanes.up?.setStalled(stalled, detail),
+    setLaneStalled: (stalled, detail, cause) =>
+      this.#lanes.up?.setStalled(stalled, detail, cause),
   });
 
   /** What every transfer direction of the stage is given. */
   #directionHost: DirectionHost = {
     host: () => this.#host!,
     sampleProvesStageLiveness: () => !this.#stalled,
-    stallChanged: (detail) => this.#reconcileStall(detail),
+    stallChanged: (detail, cause, direction) =>
+      this.#reconcileStall(detail, cause, direction),
     uploadProgress: (msg, generation) =>
       this.#uploadProgress.accept(msg, generation),
     beginUploadMeasure: () => this.#uploadProgress.beginMeasure(),
@@ -1135,7 +1137,11 @@ export class RealBackend implements RunnerBackend {
 
   /** Combine the directions into the STAGE-level flag. Every required lane must
    *  be healthy: one direction moving cannot validate its stalled sibling. */
-  #reconcileStall(detail?: string): void {
+  #reconcileStall(
+    detail?: string,
+    recoveryCause?: RecoveryCause,
+    direction?: FlowDirection,
+  ): void {
     const transferStalled = transferStageStalled(
       Object.values(this.#lanes) as TransferDirection[],
     );
@@ -1144,6 +1150,8 @@ export class RealBackend implements RunnerBackend {
         reason: "connection-lost",
         transport: this.#activeTransport ?? undefined,
         detail,
+        recoveryCause,
+        direction,
       });
       this.#stalled = true;
     } else if (!transferStalled && this.#stalled) {

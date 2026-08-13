@@ -1,7 +1,7 @@
 // One transfer direction: its lanes, their restarts and the byte accounting
 // that turns them into samples. A bidirectional stage runs two of them.
 import type { CoreHost } from "../core";
-import type { FlowDirection, PhaseActivity } from "../contract";
+import type { FlowDirection, PhaseActivity, RecoveryCause } from "../contract";
 import { debugEnabled, dlog, fmtRate, DebugWindow } from "../../debug";
 import { redirectToLogin } from "../../auth";
 import { laneStaggerMs } from "./backendPure";
@@ -35,7 +35,11 @@ export interface DirectionHost {
    *  bytes remain accounted while another required direction is stalled. */
   sampleProvesStageLiveness?: () => boolean;
   /** This direction's stall state flipped; the stage combines the directions. */
-  stallChanged: (detail?: string) => void;
+  stallChanged: (
+    detail?: string,
+    cause?: RecoveryCause,
+    direction?: FlowDirection,
+  ) => void;
   /** A server upload-progress record relayed by a session lane. */
   uploadProgress: (msg: WtProgressRelay, generation: number) => void;
   /** Open the upload meter's measured window. */
@@ -184,10 +188,10 @@ export class TransferDirection {
   }
 
   /** Latch this direction's own stall state and report the edge to the stage. */
-  setStalled(stalled: boolean, detail?: string): void {
+  setStalled(stalled: boolean, detail?: string, cause?: RecoveryCause): void {
     if (this.stalled === stalled) return;
     this.stalled = stalled;
-    this.#deps.stallChanged(detail);
+    this.#deps.stallChanged(detail, cause, this.dir);
   }
 
   /** One positive measured byte delta for this direction. Re-arms its own

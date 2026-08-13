@@ -52,12 +52,14 @@ function channelUnderTest(
   curve: number[];
   liveness: boolean[];
   progress: number[];
+  stalls: { detail?: string; cause?: string }[];
 } {
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
   const curve: number[] = [];
   const liveness: boolean[] = [];
   const progress: number[] = [];
+  const stalls: { detail?: string; cause?: string }[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
@@ -92,12 +94,14 @@ function channelUnderTest(
       transferActive: () => true,
       discardTransfer: () => {},
       noteLaneProgress: (bytes) => progress.push(bytes),
-      setLaneStalled: () => {},
+      setLaneStalled: (_stalled, detail, cause) =>
+        stalls.push({ detail, cause }),
     }),
     failures,
     curve,
     liveness,
     progress,
+    stalls,
   };
 }
 
@@ -132,17 +136,45 @@ test("an old upload generation cannot feed the replacement meter", async () => {
 });
 
 // A refused feed ends the attach as surely as a ready record: left pending, the
-// stage fails once for the refusal and again when the establish wait times out.
+// runner would receive both a recovery request and an establish timeout.
 test("accept: a refusal ends a pending external attach", async () => {
-  const { channel, failures } = channelUnderTest();
+  const { channel, failures } = channelUnderTest({ measuring: true });
   const attached = channel.attachExternal(() => {});
 
-  channel.accept({ type: "fatal", detail: "session closed" });
+  channel.accept({
+    type: "fatal",
+    detail: "session closed",
+    cause: "transient-connection",
+  });
   // Racing an already-settled sentinel reports an attach left pending as a
   // value rather than as a whole-test timeout.
   const outcome = await Promise.race([attached, Promise.resolve("pending")]);
   expect(outcome).toBe("superseded");
-  expect(failures).toEqual(["session closed"]);
+  expect(failures).toEqual([]);
+});
+
+test("an explicit invalid upload id starts runner-owned recovery", () => {
+  const { channel, failures, stalls } = channelUnderTest({ measuring: true });
+
+  channel.accept({
+    type: "fatal",
+    detail: "unknown upload id",
+    cause: "unknown-upload-id",
+  });
+
+  expect(failures).toEqual([]);
+  expect(stalls).toEqual([
+    { detail: "unknown upload id", cause: "unknown-upload-id" },
+  ]);
+});
+
+test("capacity and ownership refusals cannot trigger upload-id recovery", () => {
+  for (const cause of ["capacity-refusal", "owner-mismatch"] as const) {
+    const { channel, failures, stalls } = channelUnderTest({ measuring: true });
+    channel.accept({ type: "fatal", detail: cause, cause });
+    expect(failures).toEqual([cause]);
+    expect(stalls).toEqual([]);
+  }
 });
 
 // The session worker owns the finalizing DELETE and sends it when the terminal

@@ -94,6 +94,9 @@ func TestUploadRefusalsMatchPin(t *testing.T) {
 		if got := strings.TrimSpace(rec.Body.String()); got != want.message {
 			t.Errorf("%s: HTTP body = %q; pinned as %q", name, got, want.message)
 		}
+		if got := rec.Header().Get("X-Graphite-Upload-Refusal"); got != name {
+			t.Errorf("%s: refusal header = %q, want %q", name, got, name)
+		}
 	}
 	for name := range pinned {
 		if _, ok := refusals[name]; !ok {
@@ -107,6 +110,9 @@ func TestUploadRefusalsMatchPin(t *testing.T) {
 func TestUploadAccessOKCarriesNoMessage(t *testing.T) {
 	if got := uploadAccessMessage(uploadAccessOK); got != "" {
 		t.Errorf("uploadAccessMessage(uploadAccessOK) = %q, want empty", got)
+	}
+	if got := uploadAccessCode(uploadAccessOK); got != "" {
+		t.Errorf("uploadAccessCode(uploadAccessOK) = %q, want empty", got)
 	}
 }
 

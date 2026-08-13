@@ -1,7 +1,7 @@
 // The server-authoritative upload meter: the /upload/progress control channel
 // and the server byte/time counters derived from it.
 import type { CoreHost } from "../core";
-import type { PhaseActivity } from "../contract";
+import type { PhaseActivity, RecoveryCause } from "../contract";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { uploadProgressWorker, type AuthRequiredMsg } from "./workerPool";
@@ -19,7 +19,7 @@ type ProgressOutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
-  | { type: "fatal"; detail: string }
+  | { type: "fatal"; detail: string; cause: RecoveryCause }
   | { type: "stall"; detail: string }
   | { type: "resume" };
 
@@ -41,7 +41,11 @@ export interface UploadProgressDeps {
   lane: () => UploadProgressLane | undefined;
   transferActive: () => boolean;
   discardTransfer: () => void;
-  setLaneStalled: (stalled: boolean, detail?: string) => void;
+  setLaneStalled: (
+    stalled: boolean,
+    detail?: string,
+    cause?: RecoveryCause,
+  ) => void;
   /** Positive receiver-authoritative bytes for the upload direction. */
   noteLaneProgress?: (bytes: number) => void;
 }
@@ -281,13 +285,19 @@ export class UploadProgressChannel {
     if (msg.type === "fatal") {
       this.#ready?.finish(false);
       if (lane.measuring) {
-        host.fail(
-          "connection-lost",
-          `upload progress failed: ${msg.detail}`,
-          msg.detail,
-        );
+        if (
+          msg.cause === "capacity-refusal" ||
+          msg.cause === "owner-mismatch" ||
+          msg.cause === "protocol-refusal"
+        ) {
+          host.failStage(lane.stage, "protocol-error", msg.detail, "up");
+        } else {
+          // The core owns expiry. An invalid id is the one cause that later
+          // recovery may rotate; a feed opening again does not clear this edge.
+          this.#deps.setLaneStalled(true, msg.detail, msg.cause);
+        }
       } else {
-        host.failStage(lane.stage, "connection-lost", msg.detail);
+        host.failStage(lane.stage, "protocol-error", msg.detail, "up");
       }
       return;
     }

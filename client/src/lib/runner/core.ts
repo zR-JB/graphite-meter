@@ -17,6 +17,7 @@ import type {
   LatencyResult,
   StallInfo,
   FlowDirection,
+  RecoveryCause,
   TransportRole,
   StageFailure,
   PhaseActivity,
@@ -83,6 +84,7 @@ export interface CoreHost {
     stage: TransportRole,
     reason: StageFailure["reason"],
     message: string,
+    direction?: FlowDirection,
   ): void;
   readonly config: RunnerConfig | null;
   readonly phase: Phase;
@@ -117,7 +119,7 @@ export interface RunnerBackend {
   onStageRecovery?(request: {
     stage: TransportRole;
     direction?: FlowDirection;
-    cause: StageFailure["reason"];
+    cause: RecoveryCause;
     signal: AbortSignal;
   }): void | Promise<void>;
   onComplete(): void;
@@ -760,11 +762,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#rateEstimator.up.invalidateRegime();
     this.emit({ type: "stall", info });
     const stage = this.#activeSeg?.activity.stage;
-    const cause =
-      info.reason === "user-abort" ? "connection-lost" : info.reason;
+    const cause = info.recoveryCause ?? "transient-connection";
     if (stage)
       void this.#backend.onStageRecovery?.({
         stage,
+        direction: info.direction,
         cause,
         signal: this.#recoveryAbort.signal,
       });
@@ -859,9 +861,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     stage: TransportRole,
     reason: StageFailure["reason"],
     message: string,
+    direction?: FlowDirection,
   ): void {
     if (!this.#running || this.#stageFailures.has(stage)) return;
-    const failure: StageFailure = { stage, reason, message };
+    const failure: StageFailure = { stage, direction, reason, message };
     this.#stageFailures.set(stage, failure);
     // Preserve qualifying exact evidence before ending the stage. A failure
     // changes its status to partial; it does not erase a truthful result.

@@ -58,8 +58,8 @@ function refusalMessage(name: string): string {
 
 // The error record the server sends a refused lane, which is all a WebTransport
 // lane gets: no status line, so the message is the whole signal.
-function refusalRecord(message: string): string {
-  return `{"type":"error","message":${JSON.stringify(message)}}`;
+function refusalRecord(name: string, message: string): string {
+  return `{"type":"error","code":${JSON.stringify(name)},"message":${JSON.stringify(message)}}`;
 }
 
 // The server counter is authoritative, so a record that goes backwards is a
@@ -154,9 +154,13 @@ test("a terminal record ends the feed and names why", async () => {
   expect(complete.events.at(-1)).toEqual({ type: "complete", n: 42, t: 9 });
 
   const ownerMismatch = refusalMessage("ownerMismatch");
-  const refused = await read(feedOf(refusalRecord(ownerMismatch), ""));
+  const refused = await read(
+    feedOf(refusalRecord("ownerMismatch", ownerMismatch), ""),
+  );
   expect(refused.end).toBe("fatal");
-  expect(refused.events).toEqual([{ type: "fatal", detail: ownerMismatch }]);
+  expect(refused.events).toEqual([
+    { type: "fatal", detail: ownerMismatch, cause: "owner-mismatch" },
+  ]);
 });
 
 // A refused WebTransport lane gets no status line, so the message is the only
@@ -164,9 +168,22 @@ test("a terminal record ends the feed and names why", async () => {
 // as a fatal carrying that exact text, not just the owner mismatch above.
 test("every pinned upload refusal surfaces as a fatal", async () => {
   for (const [name, message] of Object.entries(refusals)) {
-    const { events, end } = await read(feedOf(refusalRecord(message), ""));
+    const { events, end } = await read(
+      feedOf(refusalRecord(name, message), ""),
+    );
     expect(end, name).toBe("fatal");
-    expect(events, name).toEqual([{ type: "fatal", detail: message }]);
+    expect(events, name).toEqual([
+      {
+        type: "fatal",
+        detail: message,
+        cause:
+          name === "invalid"
+            ? "unknown-upload-id"
+            : name === "ownerMismatch"
+              ? "owner-mismatch"
+              : "capacity-refusal",
+      },
+    ]);
   }
 });
 

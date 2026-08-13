@@ -319,9 +319,20 @@ export type TransportRole = Extract<
  *  stage's instrument (gauge for transfers, profile for latency). */
 export interface StageFailure {
   stage: TransportRole;
+  /** The affected lane when a bidirectional stage keeps its other result. */
+  direction?: FlowDirection;
   reason: Exclude<TerminationReason, "user-abort">;
   message: string;
 }
+
+/** Protocol evidence that determines how an upload stage may recover. */
+export type RecoveryCause =
+  | "transient-connection"
+  | "unknown-upload-id"
+  | "owner-mismatch"
+  | "authentication-failure"
+  | "capacity-refusal"
+  | "protocol-refusal";
 
 /* ---------- Transient link health ---------- */
 /** A NON-terminal stall: the link is quiet mid-phase and the runner starts a
@@ -332,6 +343,10 @@ export interface StallInfo {
   reason: TerminationReason;
   transport?: TransportKind; // the connection that dropped, when known
   detail?: string;
+  /** Structural transport evidence; a generic disconnect stays transient. */
+  recoveryCause?: RecoveryCause;
+  /** The lane that first established this stage-wide stall. */
+  direction?: FlowDirection;
 }
 
 /** A structured run failure, carried on the `error` event. Distinguishing a

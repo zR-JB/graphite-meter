@@ -13,6 +13,7 @@ import type {
   InfraInfo,
   EngineInfo,
   ThroughputResult,
+  RecoveryCause,
 } from "./contract";
 import { LATENCY_PRESENTATION_BUCKET_MS } from "./latencyBuckets";
 
@@ -60,6 +61,8 @@ class FakeBackend implements RunnerBackend {
   calls: string[] = [];
   recoveries: Array<{
     stage: "latency" | "download" | "upload" | "bidirectional";
+    direction?: "down" | "up";
+    cause: RecoveryCause;
     signal: AbortSignal;
   }> = [];
 
@@ -100,6 +103,8 @@ class FakeBackend implements RunnerBackend {
   }
   onStageRecovery(request: {
     stage: "latency" | "download" | "upload" | "bidirectional";
+    direction?: "down" | "up";
+    cause: RecoveryCause;
     signal: AbortSignal;
   }): void {
     this.recoveries.push(request);
@@ -798,11 +803,22 @@ test("a recovery deadline finalizes an otherwise unusable final stage", async ()
 test("the runner owns recovery request lifetime", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
-  await core.start(makeConfig());
+  await core.start(
+    makeConfig({
+      stages: { download: false, upload: true },
+      duration: { uploadMs: 1_000 },
+    }),
+  );
 
-  core.stall({ reason: "connection-lost" });
+  core.stall({
+    reason: "connection-lost",
+    recoveryCause: "unknown-upload-id",
+    direction: "up",
+  });
   expect(backend.recoveries).toHaveLength(1);
-  expect(backend.recoveries[0].stage).toBe("download");
+  expect(backend.recoveries[0].stage).toBe("upload");
+  expect(backend.recoveries[0].cause).toBe("unknown-upload-id");
+  expect(backend.recoveries[0].direction).toBe("up");
   expect(backend.recoveries[0].signal.aborted).toBe(false);
 
   core.resume();
