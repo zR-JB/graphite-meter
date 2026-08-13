@@ -21,8 +21,17 @@ test("live results stay measurement-first and defer confidence verdicts", async 
     await settings.getByLabel(label).fill(value);
 
   await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(page.locator(".gauge-value")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
   const bidirectional = page.locator(".result-chip", { hasText: "Bi-dir" });
   await expect(bidirectional).toBeVisible();
+  await expect(bidirectional.locator(".chip-val")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  await expect(bidirectional.locator(".sr-only")).toContainText("Bi-dir:");
   await expect(bidirectional.locator(".pip")).toHaveCount(0);
   await expect(bidirectional).not.toContainText(/wire/i);
   await expect(bidirectional.locator(".chip-val .num")).not.toHaveText("—");

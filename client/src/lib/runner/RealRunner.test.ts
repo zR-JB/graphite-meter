@@ -645,6 +645,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       },
       ingestLatency() {},
       recordRecoveryGap() {},
+      recordRecoveryBytes() {},
       presentationRate() {
         return 0;
       },
@@ -833,6 +834,34 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     await ending;
     expect(uploadBytes).toEqual([100, 100]);
     expect(ended).toBe(true);
+
+    // An abort may begin a new run while the old stage is still waiting for
+    // its terminal upload record. The old continuation must not clear the new
+    // lane/feed state once it resolves.
+    uploadBytes.length = 0;
+    progressWorker = null;
+    const stalePreparation = backend.onStageBegin(activity);
+    for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
+    progressWorker!.emit({ type: "open" });
+    await stalePreparation;
+    backend.onStageMeasure(activity);
+    const staleEnding = backend.onStageEnd(activity);
+    if (!staleEnding)
+      throw new Error("stale upload finalization did not return a promise");
+    backend.onAbort();
+
+    backend.onRunStart(config);
+    progressWorker = null;
+    const replacementPreparation = backend.onStageBegin(activity);
+    for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
+    progressWorker!.emit({ type: "open" });
+    await replacementPreparation;
+    backend.onStageMeasure(activity);
+    await staleEnding;
+
+    progressWorker!.emit({ type: "bytes", n: 100, t: 100_000_000 });
+    progressWorker!.emit({ type: "bytes", n: 200, t: 200_000_000 });
+    expect(uploadBytes).toEqual([100]);
     backend.onComplete();
   } finally {
     globalThis.fetch = realFetch;

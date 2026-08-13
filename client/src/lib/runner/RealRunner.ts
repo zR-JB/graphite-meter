@@ -116,6 +116,9 @@ export class RealBackend implements RunnerBackend {
   #transferActive = false;
   /** The activity whose transfer connections are currently alive. */
   #transferActivity: PhaseActivity | null = null;
+  /** Invalidates asynchronous teardown continuations when a later run or
+   * transfer stage takes ownership of the shared lane/feed fields. */
+  #transferGeneration = 0;
   /** A server may invalidate one upload id once; a second invalidation belongs
    * to the runner's expiry, not an unbounded mint loop. */
   #uploadRotationUsed = false;
@@ -751,6 +754,7 @@ export class RealBackend implements RunnerBackend {
       // Loaded latency without a transport: run the transfer without pings.
     }
     if (activity.transfer.length > 0) {
+      this.#transferGeneration++;
       this.#transferActivity = activity;
       const kind = this.#committedKind(activity.stage);
       if (!kind) {
@@ -798,7 +802,11 @@ export class RealBackend implements RunnerBackend {
       this.#transferActivity = null;
       return;
     }
-    return this.#teardownTransfer().then(() => {
+    const generation = this.#transferGeneration;
+    return this.#teardownTransfer(generation).then((released) => {
+      // Abort/new-run teardown may have handed these shared fields to a newer
+      // lifecycle while this stage waited for its terminal upload record.
+      if (!released || generation !== this.#transferGeneration) return;
       this.#latency.teardown();
       this.#stalled = false;
       this.#transferActivity = null;
@@ -1229,19 +1237,25 @@ export class RealBackend implements RunnerBackend {
 
   /** Stop every POST lane, wait for the server's terminal upload count, then
    *  release the stage state. */
-  async #teardownTransfer(): Promise<void> {
+  async #teardownTransfer(generation: number): Promise<boolean> {
     this.#clearUploadPresentation();
     // A graceful WT stop finalizes in the worker; the progress teardown then
     // has nothing left to wait on. For fetch, BYE must follow the POST lanes,
     // so the server's final count includes everything they drained.
     await Promise.all(Object.values(this.#lanes).map((d) => d!.stop()));
+    if (generation !== this.#transferGeneration) return false;
     await this.#uploadProgress.teardown(true);
+    if (generation !== this.#transferGeneration) return false;
     this.#transferActive = false;
     this.#lanes = {};
     this.#transferActivity = null;
+    return true;
   }
 
   #discardTransfer(): void {
+    // Any outstanding graceful teardown now belongs to an older lifecycle.
+    // It may still finish its local lanes, but must not alter a new run.
+    this.#transferGeneration++;
     this.#clearUploadPresentation();
     for (const direction of Object.values(this.#lanes)) direction!.discard();
     void this.#uploadProgress.teardown(false);

@@ -235,6 +235,11 @@
     return display;
   });
 
+  // The hero value may ease toward a presentation-only upload hint. Keep its
+  // visible text out of the accessibility tree; assistive technology receives
+  // the same authoritative value used by the live announcement instead.
+  const accessibleDisplay = $derived(announcementDisplay);
+
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
     download: "Download",
@@ -428,8 +433,13 @@
         </div>
       {/if}
       <div class="metric-wrap">
-        <span class="gauge-value">{display.value}</span>
-        {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
+        <span class="gauge-value" aria-hidden="true">{display.value}</span>
+        {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+            >{display.unit}</span
+          >{/if}
+        <span class="sr-only"
+          >{accessibleDisplay.value} {accessibleDisplay.unit}</span
+        >
         {#if hint || status || failNotes.length}
           <div class="gauge-notes">
             {#each failNotes as note (note)}<span class="gauge-fail"

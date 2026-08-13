@@ -366,6 +366,11 @@ export class UploadProgressChannel {
       this.#recoveryGapStartedAt = null;
       host.recordRecoveryGap("up", gapSec);
       const bytes = this.#serverBytes - previousServerBytes;
+      // This count is authoritative final-reducer evidence, but cannot be a
+      // rate sample: a replacement id has no preceding server checkpoint.
+      // Keep it out of the estimator/chart/control path while retaining every
+      // received byte in the final numerator.
+      host.recordRecoveryBytes("up", bytes);
       if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(bytes);
       else this.#deps.setLaneStalled(false);
     }

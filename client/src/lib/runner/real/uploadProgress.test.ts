@@ -56,6 +56,7 @@ function channelUnderTest(
   presentations: number[];
   stalls: { detail?: string; cause?: string }[];
   recoveryGaps: number[];
+  recoveryBytes: number[];
 } {
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
@@ -66,6 +67,7 @@ function channelUnderTest(
   const presentations: number[] = [];
   const stalls: { detail?: string; cause?: string }[] = [];
   const recoveryGaps: number[] = [];
+  const recoveryBytes: number[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
@@ -93,6 +95,9 @@ function channelUnderTest(
     recordRecoveryGap(_dir: string, seconds: number) {
       recoveryGaps.push(seconds);
     },
+    recordRecoveryBytes(_dir: string, bytes: number) {
+      recoveryBytes.push(bytes);
+    },
     presentationRate() {
       return 750;
     },
@@ -119,6 +124,7 @@ function channelUnderTest(
     presentations,
     stalls,
     recoveryGaps,
+    recoveryBytes,
   };
 }
 
@@ -255,12 +261,14 @@ test("only an advancing server checkpoint refreshes the visual bridge baseline",
 });
 
 test("the first advancing replacement checkpoint closes a rotation gap", () => {
-  const { channel, curve, progress, recoveryGaps } = channelUnderTest({
-    measuring: true,
-  });
+  const { channel, curve, progress, recoveryGaps, recoveryBytes } =
+    channelUnderTest({
+      measuring: true,
+    });
   channel.beginRecoveryGap();
   channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
   expect(recoveryGaps).toHaveLength(1);
+  expect(recoveryBytes).toEqual([100]);
   expect(progress).toEqual([100]);
   expect(curve).toEqual([]);
 
@@ -269,6 +277,7 @@ test("the first advancing replacement checkpoint closes a rotation gap", () => {
 
   expect(recoveryGaps).toHaveLength(1);
   expect(recoveryGaps[0]).toBeGreaterThanOrEqual(0);
+  expect(recoveryBytes).toEqual([100]);
   expect(curve).toEqual([150, 150]);
   expect(progress).toEqual([100, 150, 150]);
 });

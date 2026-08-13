@@ -187,6 +187,21 @@ export class RunAccumulator {
     accum.serverAuthoritative = true;
   }
 
+  /** The first count from a replacement upload id has authoritative bytes but
+   * no earlier replacement checkpoint for a rate interval. Keep those bytes
+   * in the exact final numerator; the paired recovery-gap entry supplies the
+   * represented time without creating a control or presentation sample. */
+  recordRecoveryBytes(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+    bytes: number,
+  ): void {
+    if (bytes <= 0) return;
+    const accum = this.#transferAccum(phase, dir);
+    accum.bytes += bytes;
+    accum.serverAuthoritative = true;
+  }
+
   #transferAccum(
     phase: "download" | "upload" | "bidirectional",
     dir: FlowDirection,
@@ -445,13 +460,8 @@ export class RunAccumulator {
         serverAuthoritative: accum.serverAuthoritative || undefined,
       };
     }
-    const ratio = (samples: PhaseAccum["samples"]): number => {
-      const seconds = samples.reduce((sum, s) => sum + s.seconds, 0);
-      return seconds > 0
-        ? samples.reduce((sum, s) => sum + s.bytes, 0) / seconds
-        : 0;
-    };
-    const full = ratio(accum.samples);
+    const full =
+      accum.evidenceMs > 0 ? accum.bytes / (accum.evidenceMs / 1_000) : 0;
     const stableRatio = (): { rate: number; has: boolean } => {
       if (!adaptiveEnabled || stableStart < 0) return { rate: 0, has: false };
       let bytes = 0;

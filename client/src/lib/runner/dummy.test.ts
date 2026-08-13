@@ -125,6 +125,7 @@ class MockHost implements CoreHost {
     this.latency.push({ ...observation, underLoad });
   }
   recordRecoveryGap(): void {}
+  recordRecoveryBytes(): void {}
   presentationRate(): number {
     return 0;
   }

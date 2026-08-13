@@ -210,6 +210,7 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
       },
       ingestLatency() {},
       recordRecoveryGap() {},
+      recordRecoveryBytes() {},
       presentationRate() {
         return 0;
       },

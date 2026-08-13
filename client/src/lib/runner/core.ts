@@ -76,6 +76,10 @@ export interface CoreHost {
   /** Account a rotation handoff in final byte/time reduction only. It is never
    * a source observation, presentation sample, or control/confidence input. */
   recordRecoveryGap(dir: FlowDirection, durationSec: number): void;
+  /** Account bytes first visible at a replacement upload checkpoint. Their
+   * server count is authoritative, but it has no prior checkpoint from which
+   * to derive a live rate, so it stays out of presentation and control. */
+  recordRecoveryBytes(dir: FlowDirection, bytes: number): void;
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
   resume(): void;
@@ -639,6 +643,15 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
       return;
     this.#accum.recordRecoveryGap(phase, dir, durationSec);
+  }
+
+  recordRecoveryBytes(dir: FlowDirection, bytes: number): void {
+    if (bytes <= 0) return;
+    const phase = this.#phase;
+    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
+      return;
+    this.#bytesCumulative += bytes;
+    this.#accum.recordRecoveryBytes(phase, dir, bytes);
   }
 
   presentationRate(dir: FlowDirection): number {

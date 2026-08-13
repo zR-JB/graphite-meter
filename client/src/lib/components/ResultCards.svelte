@@ -29,6 +29,7 @@
         : live.measuredBytesPerSec;
       return {
         measuredBytesPerSec,
+        authoritativeBytesPerSec: store.liveTransferBytesPerSec,
         estimatedBytesPerSec: live.estimatedBytesPerSec,
         available: live.available,
         multiplier: live.totalMultiplier,
@@ -46,6 +47,7 @@
         : store.uploadCompensation;
     return {
       measuredBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
+      authoritativeBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: compensation.estimatedBytesPerSec,
       available: compensation.available,
       multiplier: compensation.totalMultiplier,
@@ -74,6 +76,8 @@
         down: live.down,
         up: live.up,
         combined: live.down + live.up,
+        authoritativeDown: (store.liveBidirectional ?? { down: 0, up: 0 }).down,
+        authoritativeUp: (store.liveBidirectional ?? { down: 0, up: 0 }).up,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
@@ -92,6 +96,8 @@
       down: result.down?.reportedBytesPerSec ?? 0,
       up: result.up?.reportedBytesPerSec ?? 0,
       combined: result.combinedBytesPerSec,
+      authoritativeDown: result.down?.reportedBytesPerSec ?? 0,
+      authoritativeUp: result.up?.reportedBytesPerSec ?? 0,
       survivingDirection: result.survivingDirection,
       band: survivor?.band ?? result.down?.band ?? result.up?.band ?? "low",
       score:
@@ -191,6 +197,7 @@
       | "partial"
       | "failed";
     num: string; // pre-formatted, or the dash
+    accessibleNum: string;
     unit: string;
     sub?: string; // per-direction detail (bidirectional only)
     wire: CardWire;
@@ -236,6 +243,9 @@
       score: model.score,
       status: model.status,
       num: hasVal ? fmtSpeed(shown) : dash,
+      accessibleNum: hasVal
+        ? fmtSpeed(store.toUnit(model.authoritativeBytesPerSec))
+        : dash,
       unit: store.unitLabel,
       wire: wireFor(model, model.status),
     };
@@ -263,6 +273,12 @@
         score: bidi.score,
         status: bidi.status,
         num: bidi.has && bidiInUnit !== null ? fmtSpeed(bidiInUnit) : dash,
+        accessibleNum:
+          bidi.has && bidiInUnit !== null
+            ? fmtSpeed(
+                store.toUnit(bidi.authoritativeDown + bidi.authoritativeUp),
+              )
+            : dash,
         unit: store.unitLabel,
         sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
@@ -287,6 +303,8 @@
         score: ping.score,
         status: ping.status,
         num:
+          ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
+        accessibleNum:
           ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
         unit: ping.active && ping.lost ? "" : "ms",
         wire: null,
@@ -323,12 +341,17 @@
         <span class="partial">Failed</span>
       {/if}
     </header>
-    <div class="val">
+    <div class="val" aria-hidden={compact && c.active ? "true" : undefined}>
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
     </div>
+    {#if compact && c.active}
+      <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
+    {/if}
     {#if c.sub}
-      <div class="sub">{c.sub}</div>
+      <div class="sub" aria-hidden={compact && c.active ? "true" : undefined}>
+        {c.sub}
+      </div>
     {/if}
     {#if c.wire}
       <div class="est">
@@ -348,10 +371,13 @@
   <div class="result-chip" class:active={c.active}>
     <span class="ico {c.accent}">{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
-    <span class="chip-val">
+    <span class="chip-val" aria-hidden={c.active ? "true" : undefined}>
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
     </span>
+    {#if c.active}
+      <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
+    {/if}
   </div>
 {/snippet}
 

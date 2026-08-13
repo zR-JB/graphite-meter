@@ -319,6 +319,18 @@ test("a recovery gap reaches only the final byte/time reduction", () => {
   expect(accum.confidence("upload").sampleCount).toBe(controlSamples);
 });
 
+test("replacement checkpoint bytes enter only the exact final reduction", () => {
+  const accum = new RunAccumulator();
+  accum.recordRecoveryGap("upload", "up", 1);
+  accum.recordRecoveryBytes("upload", "up", 1_000);
+
+  const result = accum.partialThroughputResult("upload");
+  expect(result).not.toBeNull();
+  expect(result?.totalBytes).toBe(1_000);
+  expect(result?.fullAverageBytesPerSec).toBe(1_000);
+  expect(result?.serverAuthoritative).toBe(true);
+});
+
 test("partial latency needs named outcome and success evidence floors", () => {
   const accum = new RunAccumulator();
   accum.reset();
