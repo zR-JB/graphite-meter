@@ -20,6 +20,11 @@ import {
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
 import {
+  latencyBucketsContinuous,
+  materiallyDifferentP95,
+  nearestLatencyBucketInContinuity,
+} from "./latencyContinuity";
+import {
   chartLayout,
   type ChartLayout,
   type ChartViewport,
@@ -293,14 +298,7 @@ export class ChartEngine implements CanvasEngine {
     );
     let latencyBucket: LatencyBucket | null = null;
     for (const lane of this.#latencyIndex.values()) {
-      const insertion = lowerBoundAt(lane, t);
-      for (const index of [insertion, insertion - 1]) {
-        const bucket = lane[index];
-        if (bucket && t >= bucket.startT && t <= bucket.endT) {
-          latencyBucket = bucket;
-          break;
-        }
-      }
+      latencyBucket = nearestLatencyBucketInContinuity(lane, t);
       if (latencyBucket) break;
     }
     const rtt = latencyBucket?.medianRttMs ?? null;
@@ -311,7 +309,14 @@ export class ChartEngine implements CanvasEngine {
       downBytesPerSec,
       upBytesPerSec,
       rtt,
-      rttP95: latencyBucket?.p95RttMs ?? null,
+      rttP95:
+        latencyBucket &&
+        materiallyDifferentP95(
+          latencyBucket.medianRttMs,
+          latencyBucket.p95RttMs,
+        )
+          ? latencyBucket.p95RttMs
+          : null,
       rttMax: latencyBucket?.maxRttMs ?? null,
       pingCount: latencyBucket?.pingCount ?? 0,
       lossCount: latencyBucket?.lossCount ?? 0,
@@ -801,13 +806,7 @@ export class ChartEngine implements CanvasEngine {
     for (let i = lo; i < hi; i++) {
       const s = all[i];
       const broken =
-        previous !== null &&
-        (s.phase !== previous.phase ||
-          s.underLoad !== previous.underLoad ||
-          s.continuityId !== previous.continuityId ||
-          s.startT - previous.endT > 600 ||
-          previous.lossCount > 0 ||
-          s.lossCount > 0);
+        previous !== null && !latencyBucketsContinuous(previous, s);
       if (broken) drawSegment();
       if (s.medianRttMs != null) {
         segment.push({
@@ -841,7 +840,6 @@ export class ChartEngine implements CanvasEngine {
         const x = this.#x(s.t);
         ctx.fillStyle = this.#colors.warn;
         ctx.fillRect(x - 1.5, this.#layout.plot.bottom - 5, 3, 5);
-        drawSegment();
       }
       previous = s;
     }

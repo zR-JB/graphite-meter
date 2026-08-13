@@ -224,10 +224,7 @@
             <span>p95</span><b>{fmtMs(hover.rttP95)} ms</b>
           </div>
         {/if}
-        {#if hover.pingCount > 0}
-          <div class="chip-row">
-            <span>pings</span><b>{hover.pingCount}</b>
-          </div>
+        {#if hover.lossCount > 0}
           <div class="chip-row">
             <span>loss</span><b>{hover.lossCount}/{hover.pingCount}</b>
           </div>
