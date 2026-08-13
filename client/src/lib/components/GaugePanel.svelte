@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
+  import { gaugeLayout } from "../canvas/gaugeLayout";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -17,7 +18,9 @@
   });
 
   let canvasEl = $state<HTMLCanvasElement>();
+  let stageEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
+  let gaugeSize = $state({ width: 0, height: 0 });
 
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
@@ -79,6 +82,17 @@
     const scale = store.displayScaleBytesPerSec;
     return TICK_FRACTIONS.map((f) => fmtSpeed(store.toUnit(scale * f)));
   });
+  const layout = $derived.by(() =>
+    gaugeLayout(gaugeSize.width, gaugeSize.height, gaugeTicks.length),
+  );
+  const showGaugeTicks = $derived(
+    (store.phase === "latency" ||
+      store.phase === "download" ||
+      store.phase === "upload" ||
+      store.phase === "bidirectional" ||
+      store.phase === "complete") &&
+      gaugeTicks.length > 1,
+  );
 
   const display = $derived.by(() => {
     const p = store.phase;
@@ -165,6 +179,7 @@
     void store.unitBase;
     void store.unitKind;
     void store.unitLabel;
+    void layout;
     engine?.wake();
   });
 
@@ -214,7 +229,7 @@
             : store.liveTransferBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs: gaugeLatency.scaleMs,
-        ticks: gaugeTicks,
+        layout,
         rtt: gaugeLatency.rttMs,
         completedKind,
       };
@@ -226,8 +241,13 @@
       attributeFilter: ["data-theme"],
     });
 
-    const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
-    resizeObserver.observe(canvasEl!);
+    const resizeObserver = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      if (gaugeSize.width !== width || gaugeSize.height !== height)
+        gaugeSize = { width, height };
+      engine.invalidateTheme();
+    });
+    resizeObserver.observe(stageEl!);
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
@@ -255,8 +275,19 @@
       <StageTrack />
     </div>
 
-    <div class="stage">
+    <div bind:this={stageEl} class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+      {#if showGaugeTicks}
+        <div class="gauge-ticks" aria-hidden="true">
+          {#each layout.labelPoints as point, index (index)}
+            <span
+              class="gauge-tick"
+              style:left={`${point.x}px`}
+              style:top={`${point.y}px`}>{gaugeTicks[index]}</span
+            >
+          {/each}
+        </div>
+      {/if}
       <div class="metric-wrap">
         <span class="gauge-value">{display.value}</span>
         {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
@@ -395,6 +426,21 @@
     display: block;
     width: 100%;
     height: 100%;
+  }
+  .gauge-ticks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .gauge-tick {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--text-soft);
+    opacity: 0.5;
+    white-space: nowrap;
   }
   .metric-wrap {
     position: absolute;

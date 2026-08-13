@@ -5,13 +5,14 @@ import type { Phase } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
 import { presentation, type PresentationHandle } from "./presentation";
 import { sweepTarget, angleForFraction, interpolateSweep } from "./gaugeSweep";
+import { gaugeLayout, type GaugeLayout } from "./gaugeLayout";
 
 export interface GaugeState {
   phase: Phase;
   valueBytesPerSec: number;
   scaleBytesPerSec: number;
   latencyScaleMs: number;
-  ticks: string[];
+  layout: GaugeLayout;
   rtt: number;
   completedKind: "speed" | "latency";
 }
@@ -29,12 +30,6 @@ const PHASE_VAR: Record<Phase, string> = {
   error: "--err",
 };
 
-/* Dial geometry: a 270° arc with the opening centered at the bottom.
-   Canvas angles are clockwise from +x (3 o'clock) with y pointing down. */
-const ARC_START = Math.PI * 0.75; // 135° → lower-left (7:30)
-const ARC_SWEEP = Math.PI * 1.5; // 270° of travel, ending at lower-right
-const MAJOR_TICKS = 9;
-
 export class GaugeEngine implements CanvasEngine {
   #get: () => GaugeState;
   #canvas: HTMLCanvasElement | null = null;
@@ -51,12 +46,11 @@ export class GaugeEngine implements CanvasEngine {
   #accent = "#888";
   #track = "#23262b";
   #tick = "#4a5058";
-  #label = "#6a717a";
 
   #lastPhase: Phase | null = null;
   #sweep = 0;
   #lastFrame = 0;
-  #ticks: string[] = []; // quarter labels in the active unit
+  #layout: GaugeLayout = gaugeLayout(0, 0, 0);
 
   // Static geometry and the marker are cached at device resolution.
   #base: HTMLCanvasElement | null = null;
@@ -122,7 +116,6 @@ export class GaugeEngine implements CanvasEngine {
     this.#accent = this.#cssVar(PHASE_VAR[phase], this.#accent);
     this.#track = this.#cssVar("--surface-2", this.#track);
     this.#tick = this.#cssVar("--border-strong", this.#tick);
-    this.#label = this.#cssVar("--text-soft", this.#label);
   }
 
   #render = (now: number): boolean => {
@@ -138,7 +131,7 @@ export class GaugeEngine implements CanvasEngine {
 
   #step(now: number): boolean {
     const s = this.#get();
-    this.#ticks = s.ticks;
+    this.#layout = s.layout;
 
     if (s.phase !== this.#lastPhase) {
       this.#resolveColors(s.phase);
@@ -166,17 +159,16 @@ export class GaugeEngine implements CanvasEngine {
     if (!ctx) return;
     ctx.clearRect(0, 0, this.#w, this.#h);
 
-    const cx = this.#w / 2;
-    const cy = this.#h / 2;
-    const m = Math.min(this.#w, this.#h);
-    const r = Math.max(36, Math.min(m * 0.37, (m / 2 - 20) / 1.145));
-    const arcW = Math.max(6, r * 0.13);
+    const layout = this.#layout;
+    const { x: cx, y: cy } = layout.center;
+    const r = layout.radius;
+    const arcW = layout.arcWidth;
     const sweep = this.#sweep;
-    const valueEnd = angleForFraction(sweep, ARC_START, ARC_SWEEP);
+    const valueEnd = angleForFraction(sweep, layout.arcStart, layout.arcSweep);
 
     ctx.lineCap = "round";
 
-    this.#ensureBase(cx, cy, r, arcW);
+    this.#ensureBase(layout);
     if (this.#base) {
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0); // blit device-px sprite without the dpr scale
@@ -188,7 +180,7 @@ export class GaugeEngine implements CanvasEngine {
       ctx.strokeStyle = this.#accent;
       ctx.lineWidth = arcW;
       ctx.beginPath();
-      ctx.arc(cx, cy, r, ARC_START, valueEnd);
+      ctx.arc(cx, cy, r, layout.arcStart, valueEnd);
       ctx.stroke();
 
       const hx = cx + Math.cos(valueEnd) * r;
@@ -204,17 +196,10 @@ export class GaugeEngine implements CanvasEngine {
     }
   }
 
-  #ensureBase(cx: number, cy: number, r: number, arcW: number): void {
-    const scaleMeaningful =
-      this.#lastPhase === "download" ||
-      this.#lastPhase === "upload" ||
-      this.#lastPhase === "bidirectional" ||
-      this.#lastPhase === "complete" ||
-      this.#lastPhase === "latency";
-    const showLabels = scaleMeaningful && this.#ticks.length >= 2;
-    const sig =
-      `${this.#w}x${this.#h}@${this.#dpr}|${this.#track}|${this.#tick}|${this.#label}` +
-      `|${showLabels ? this.#ticks.join("~") : ""}`;
+  #ensureBase(layout: GaugeLayout): void {
+    const { x: cx, y: cy } = layout.center;
+    const r = layout.radius;
+    const sig = `${this.#w}x${this.#h}@${this.#dpr}|${this.#track}|${this.#tick}`;
     if (sig === this.#baseSig && this.#base) return;
     this.#baseSig = sig;
 
@@ -235,7 +220,7 @@ export class GaugeEngine implements CanvasEngine {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([2, 5]);
     ctx.beginPath();
-    ctx.arc(cx, cy, r, ARC_START, ARC_START + ARC_SWEEP);
+    ctx.arc(cx, cy, r, layout.arcStart, layout.arcStart + layout.arcSweep);
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -265,35 +250,14 @@ export class GaugeEngine implements CanvasEngine {
 
     ctx.strokeStyle = this.#tick;
     ctx.lineWidth = 1.5;
-    const tIn = r + arcW * 0.5 + 3;
-    const tOut = tIn + r * 0.08;
-    for (let i = 0; i < MAJOR_TICKS; i++) {
-      const a = ARC_START + (i / (MAJOR_TICKS - 1)) * ARC_SWEEP;
-      const ca = Math.cos(a);
-      const sa = Math.sin(a);
+    for (const tick of layout.majorTicks) {
       ctx.globalAlpha = 0.7;
       ctx.beginPath();
-      ctx.moveTo(cx + ca * tIn, cy + sa * tIn);
-      ctx.lineTo(cx + ca * tOut, cy + sa * tOut);
+      ctx.moveTo(tick.from.x, tick.from.y);
+      ctx.lineTo(tick.to.x, tick.to.y);
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
-
-    if (showLabels) {
-      ctx.font = '600 8.5px "JetBrains Mono", monospace';
-      ctx.fillStyle = this.#label;
-      ctx.globalAlpha = 0.5;
-      const lr = tOut + 7;
-      for (let j = 0; j < this.#ticks.length; j++) {
-        const a = ARC_START + (j / (this.#ticks.length - 1)) * ARC_SWEEP;
-        const ca = Math.cos(a);
-        const sa = Math.sin(a);
-        ctx.textAlign = ca < -0.25 ? "right" : ca > 0.25 ? "left" : "center";
-        ctx.textBaseline = sa < -0.25 ? "bottom" : sa > 0.25 ? "top" : "middle";
-        ctx.fillText(this.#ticks[j], cx + ca * lr, cy + sa * lr);
-      }
-      ctx.globalAlpha = 1;
-    }
   }
 
   #ensureHead(arcW: number): void {
