@@ -1,6 +1,6 @@
 // One seam for the byte lanes. A transfer direction drives lanes through this
 // interface and never learns which transport is underneath.
-import type { FlowDirection } from "../contract";
+import type { FlowDirection, RecoveryCause } from "../contract";
 import type { ProgressEvent } from "../workers/progressFeed";
 import {
   downloadWorker,
@@ -22,7 +22,7 @@ export interface LaneEvents {
   onProgress(bytes: number, elapsedMs?: number, seq?: number): void;
   /** A locally timed upload completion, usable only for visual presentation. */
   onAlive(bytes?: number, elapsedMs?: number): void;
-  onError(recoverable: boolean, detail: string): void;
+  onError(recoverable: boolean, detail: string, cause?: RecoveryCause): void;
   onUploadProgress(msg: ProgressEvent): void;
   onAuthRequired(): void;
 }
@@ -68,7 +68,12 @@ type WorkerMsg =
   | { type: "established" }
   | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
   | { type: "alive"; bytes?: number; elapsedMs?: number }
-  | { type: "error"; recoverable: boolean; detail: string }
+  | {
+      type: "error";
+      recoverable: boolean;
+      detail: string;
+      cause?: RecoveryCause;
+    }
   | { type: "upload-progress"; msg: ProgressEvent }
   | { type: "auth-required" }
   | { type: "stopped" };
@@ -93,7 +98,7 @@ export function fetchLane(
             events.onAlive(msg.bytes, msg.elapsedMs);
             break;
           case "error":
-            events.onError(msg.recoverable, msg.detail);
+            events.onError(msg.recoverable, msg.detail, msg.cause);
             break;
           case "auth-required":
             events.onAuthRequired();
@@ -148,10 +153,14 @@ export function sessionLane(
     if (establishTimer !== null) clearTimeout(establishTimer);
     establishTimer = null;
   };
-  const fail = (recoverable: boolean, detail: string): void => {
+  const fail = (
+    recoverable: boolean,
+    detail: string,
+    cause?: RecoveryCause,
+  ): void => {
     if (failed) return;
     failed = true;
-    events.onError(recoverable, detail);
+    events.onError(recoverable, detail, cause);
   };
   // Messages already queued would otherwise still deliver, past the point this
   // lane speaks for them.
@@ -173,7 +182,7 @@ export function sessionLane(
         events.onAlive();
         break;
       case "error":
-        fail(msg.recoverable, msg.detail);
+        fail(msg.recoverable, msg.detail, msg.cause);
         break;
       case "upload-progress":
         events.onUploadProgress(msg.msg);

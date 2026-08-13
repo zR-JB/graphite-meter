@@ -2,6 +2,8 @@ package endpoint
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/netip"
@@ -334,7 +336,7 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 		case lanes <- struct{}{}:
 			go func() {
 				defer func() { <-lanes }()
-				h.serveLane(ctx, str, query, owner, live)
+				h.serveLane(ctx, sess, str, query, owner, live)
 			}()
 		default:
 			str.CancelRead(0)
@@ -342,13 +344,34 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 	}
 }
 
-func (h *wtUpload) serveLane(ctx context.Context, str *webtransport.ReceiveStream, query url.Values, owner string, live *sessionActivity) {
+func (h *wtUpload) serveLane(ctx context.Context, sess *webtransport.Session, str *webtransport.ReceiveStream, query url.Values, owner string, live *sessionActivity) {
 	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live}
-	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
+	err := h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
+	var refusal *uploadRefusalError
+	if errors.As(err, &refusal) {
+		// Stream uploads have no response headers. Send a separate, structured
+		// control record so the browser can classify the refusal without parsing
+		// a transport-close string or retrying an invalid session ID.
+		h.serveRefusal(ctx, sess, refusal.access)
+	}
 	// Whatever ended the lane — a refusal, the idle bound, or a clean end — the
 	// stream is reset, so bytes this server will never read stop holding the
 	// session's flow control.
 	str.CancelRead(0)
+}
+
+func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session, access uploadAccess) {
+	str, err := sess.OpenUniStreamSync(ctx)
+	if err != nil {
+		return
+	}
+	defer str.Close()
+	defer transport.UnblockWritesOnDone(ctx, str)()
+	_ = json.NewEncoder(str).Encode(uploadProgressEvent{
+		Type:    "error",
+		Message: uploadAccessMessage(access),
+		Code:    uploadAccessCode(access),
+	})
 }
 
 // drainDatagrams counts received datagrams as upload bytes. A datagram carries

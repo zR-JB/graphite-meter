@@ -22,6 +22,8 @@ import {
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 import { incompressibleBlock } from "./payload";
+import { classifyUploadFailure } from "../uploadFailure";
+import type { RecoveryCause } from "../contract";
 
 /** `debug`/`id` drive verbose per-stream logging only. The lane is stopped by
  *  terminating the worker, so there is no shutdown message. */
@@ -39,7 +41,12 @@ type InMsg = {
  * source for measurement. `error` restarts a lane. */
 type OutMsg =
   | { type: "alive"; bytes: number; elapsedMs: number }
-  | { type: "error"; recoverable: boolean; detail: string }
+  | {
+      type: "error";
+      recoverable: boolean;
+      detail: string;
+      cause?: RecoveryCause;
+    }
   | { type: "auth-required" };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -98,17 +105,11 @@ export function uploadPoolBytes(
   return Math.max(MIN_POOL_BYTES, Math.floor(reservoir / streams));
 }
 
-/** Whether retrying the lane after a non-OK POST is worthwhile. 429 (rate
- *  limited), 413 (too large), 503 (unavailable) and 410 (gone) are terminal for
- *  this run: re-POSTing hammers a server that will not take it. Everything else,
- *  including 500 and any network or abort error, counts as transient. */
+/** Whether an HTTP status is a transient lane failure. Explicit client/protocol
+ * refusals are terminal; a generic server failure remains a same-id reconnect.
+ * Session rotation is decided separately from the server's refusal code. */
 export function recoverableStatus(status: number): boolean {
-  return !(
-    status === 429 ||
-    status === 413 ||
-    status === 503 ||
-    status === 410
-  );
+  return status === 0 || status === 408 || (status >= 500 && status !== 503);
 }
 
 /** The reused incompressible pool, built on first start. A Blob slice is a view
@@ -246,10 +247,17 @@ async function run(url: string): Promise<void> {
       }
       await drainForKeepAlive(res);
       if (!res.ok) {
+        const recoverable = recoverableStatus(res.status);
         post({
           type: "error",
-          recoverable: recoverableStatus(res.status),
+          recoverable,
           detail: `HTTP ${res.status}`,
+          cause: recoverable
+            ? undefined
+            : classifyUploadFailure(
+                res.status,
+                res.headers.get("X-Graphite-Upload-Refusal"),
+              ),
         });
         return; // RealBackend decides whether to restart this lane
       }

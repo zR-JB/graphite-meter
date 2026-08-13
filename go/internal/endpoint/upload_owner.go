@@ -71,6 +71,15 @@ func uploadAccessCode(access uploadAccess) string {
 	return ""
 }
 
+// uploadRefusalError preserves the classified refusal across transports that
+// do not have an HTTP status line. The WebTransport handler converts it into a
+// structured progress record before it resets the rejected byte stream.
+type uploadRefusalError struct{ access uploadAccess }
+
+func (e *uploadRefusalError) Error() string {
+	return "upload refused: " + uploadAccessMessage(e.access)
+}
+
 // sessionOwner reads the client key from an HTTP request, or from the session
 // that owns a WebTransport stream, which carries no request of its own.
 func sessionOwner(s transport.Session, trusted []netip.Prefix) string {

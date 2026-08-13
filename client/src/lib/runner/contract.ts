@@ -364,6 +364,10 @@ export interface RunnerError {
   partial?: {
     download: ThroughputResult | null;
     upload: ThroughputResult | null;
+    bidirectional: {
+      down: ThroughputResult | null;
+      up: ThroughputResult | null;
+    } | null;
     latency: LatencyResult | null;
   };
   /** The original thrown value, for logging (not for display). */

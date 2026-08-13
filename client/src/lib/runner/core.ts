@@ -938,6 +938,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       partial: {
         download: this.#dlResult,
         upload: this.#ulResult,
+        bidirectional: this.#biResult,
         latency: this.#latResult,
       },
       cause,

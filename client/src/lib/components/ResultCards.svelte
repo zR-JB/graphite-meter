@@ -82,7 +82,9 @@
       };
     }
     const result = bidirectionalResultPresentation(
-      store.result?.bidirectional ?? null,
+      store.result?.bidirectional ??
+        store.error?.partial?.bidirectional ??
+        null,
     );
     const survivor =
       result.survivingDirection === "down" ? result.down : result.up;

@@ -285,6 +285,32 @@ test("a failed transfer preserves qualifying evidence and continues later stages
   expect(backend.calls).toContain("begin:upload");
 });
 
+test("a terminal runner error retains previously reduced bidirectional lanes", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(
+    makeConfig({
+      stages: { download: false, bidirectional: true },
+      duration: { bidirectionalMs: 1_000 },
+    }),
+  );
+
+  // Down meets the named partial-evidence floor; up intentionally does not.
+  core.ingestThroughput("down", 1_000, 800, 0.8);
+  core.ingestThroughput("up", 1_000, 799, 0.799);
+  core.failStage("bidirectional", "connection-lost", "downstream lost", "down");
+  core.fail("internal-error", "later terminal error");
+
+  const error = events.find(
+    (event): event is Extract<RunnerEvent, { type: "error" }> =>
+      event.type === "error",
+  );
+  expect(error?.error.partial?.bidirectional?.down?.totalBytes).toBe(800);
+  expect(error?.error.partial?.bidirectional?.up).toBeNull();
+});
+
 test("throughput stays isolated across transfer warmups", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);

@@ -257,7 +257,8 @@ export class TransferDirection {
         this.#onProgress(i, bytes, elapsedMs, seq),
       onAlive: (bytes, elapsedMs) =>
         this.#onAlive(i, bytes, elapsedMs, generation),
-      onError: (recoverable, detail) => this.#onError(i, detail, recoverable),
+      onError: (recoverable, detail, cause) =>
+        this.#onError(i, detail, recoverable, cause),
       onUploadProgress: (msg) => this.#deps.uploadProgress(msg, generation),
       onAuthRequired: () => {
         this.#deps.discardTransfer();
@@ -360,9 +361,21 @@ export class TransferDirection {
 
   /** A lane failed. Recoverable (the common case: a dropped connection) → stall
    *  once, then re-open the lane so a real sample resumes it. */
-  #onError(i: number, detail: string, recoverable: boolean): void {
+  #onError(
+    i: number,
+    detail: string,
+    recoverable: boolean,
+    cause?: RecoveryCause,
+  ): void {
     // Ignore late errors after release (a stop()/terminate races the worker).
     if (!this.#live || this.#stopping) return;
+    if (cause === "unknown-upload-id" && this.measuring) {
+      // The runner owns the one allowed ID rotation. Do not schedule a same-ID
+      // lane restart after the structural refusal: its generation is about to
+      // be invalidated and replacement lanes must use only the new ID.
+      this.setStalled(true, detail, cause);
+      return;
+    }
     if (!recoverable) {
       // A refused lane is structural protocol evidence, not a transport stall.
       // Keep any qualifying evidence, end only this stage, and let later

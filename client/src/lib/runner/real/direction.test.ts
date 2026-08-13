@@ -246,6 +246,37 @@ test("a permanent lane refusal finalizes only its affected stage", () => {
   });
 });
 
+test("an explicit invalid upload id enters runner recovery without a same-id restart", () => {
+  withClock((clock) => {
+    const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
+    let refuse = (): void => {};
+    const direction = new TransferDirection({
+      dir: "up",
+      stage: "upload",
+      laneCount: 1,
+      warmupMs: 0,
+      host: fakeHost(record, clock),
+      lane: (_i, events) => ({
+        start: () => {
+          record.starts.push(clock.now());
+          refuse = () => events.onError(true, "HTTP 400", "unknown-upload-id");
+        },
+        measure: () => {},
+        stop: () => Promise.resolve(),
+        discard: () => {},
+      }),
+    });
+    direction.spawn(["https://meter.test/lane"]);
+    direction.measure();
+    refuse();
+
+    clock.advance(LANE_RESTART_BACKOFF_MS * 2);
+    expect(record.starts).toEqual([0]);
+    expect(record.skips).toEqual([]);
+    expect(record.stalls).toEqual(["HTTP 400"]);
+  });
+});
+
 // performance.now is coarsened per origin, so two reports arriving while a lane
 // stops can land in the same tick. The second window has no duration to divide
 // by, and its bytes have to survive into the next one that does.

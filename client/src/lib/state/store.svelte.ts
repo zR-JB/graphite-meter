@@ -69,7 +69,12 @@ import {
 
 const SCALE_DWELL_MS = 700;
 
-const MEASURED_STAGES = ["latency", "download", "upload"] as const;
+const MEASURED_STAGES = [
+  "latency",
+  "download",
+  "upload",
+  "bidirectional",
+] as const;
 export type StageKey = TransportRole;
 const TRANSFER_STAGES = ["download", "upload", "bidirectional"] as const;
 const TERMINAL_PHASES: readonly Phase[] = [
@@ -308,7 +313,8 @@ class AppStore {
   /** The sole result/failure/phase status for every configured instrument. */
   stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
     () => {
-      const bidi = this.result?.bidirectional;
+      const bidi =
+        this.result?.bidirectional ?? this.error?.partial?.bidirectional;
       return Object.fromEntries(
         STAGE_ORDER.map((stage) => {
           const failure = this.stageFailures[stage] != null;
