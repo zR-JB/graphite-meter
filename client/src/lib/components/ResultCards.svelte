@@ -5,6 +5,7 @@
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
+  import { bidirectionalResultPresentation } from "./bidirectionalResult";
 
   interface Props {
     compact?: boolean;
@@ -78,17 +79,24 @@
         status: presentation.status,
       };
     }
-    const result = store.result?.bidirectional;
-    const down = result?.down?.reportedBytesPerSec ?? 0;
-    const up = result?.up?.reportedBytesPerSec ?? 0;
+    const result = bidirectionalResultPresentation(
+      store.result?.bidirectional ?? null,
+    );
+    const survivor =
+      result.survivingDirection === "down" ? result.down : result.up;
     return {
-      down,
-      up,
-      combined: down + up,
-      band: result?.down?.band ?? "low",
-      score: result?.down?.stabilityScore ?? 0,
+      down: result.down?.reportedBytesPerSec ?? 0,
+      up: result.up?.reportedBytesPerSec ?? 0,
+      combined: result.combinedBytesPerSec,
+      survivingDirection: result.survivingDirection,
+      band: survivor?.band ?? result.down?.band ?? result.up?.band ?? "low",
+      score:
+        survivor?.stabilityScore ??
+        result.down?.stabilityScore ??
+        result.up?.stabilityScore ??
+        0,
       active: false,
-      has: !!result,
+      has: result.combinedBytesPerSec !== null,
       status: presentation.status,
     };
   });
@@ -150,7 +158,9 @@
 
   const downloadInUnit = $derived(store.toUnit(download.measuredBytesPerSec));
   const uploadInUnit = $derived(store.toUnit(upload.measuredBytesPerSec));
-  const bidiInUnit = $derived(store.toUnit(bidi.combined));
+  const bidiInUnit = $derived(
+    bidi.combined === null ? null : store.toUnit(bidi.combined),
+  );
 
   const showWire = $derived(store.showWireEstimates);
 
@@ -250,11 +260,15 @@
         band: bidi.band,
         score: bidi.score,
         status: bidi.status,
-        num: bidi.has ? fmtSpeed(bidiInUnit) : dash,
+        num: bidi.has && bidiInUnit !== null ? fmtSpeed(bidiInUnit) : dash,
         unit: store.unitLabel,
         sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
-          : undefined,
+          : bidi.survivingDirection === "down"
+            ? `↓ ${fmtSpeed(store.toUnit(bidi.down))} ${store.unitLabel} — upload unavailable`
+            : bidi.survivingDirection === "up"
+              ? `↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel} — download unavailable`
+              : undefined,
         wire: null,
       });
     if (showPing)
