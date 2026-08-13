@@ -599,7 +599,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
     this.#presentedRate[dir] = estimate.presentedBytesPerSec;
     if (estimate.regimeChanged) {
-      this.#continuityId++;
       this.#accum.resetPhaseStability(phase);
       this.#cancelEarlyCandidate();
     }

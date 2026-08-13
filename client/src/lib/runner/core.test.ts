@@ -941,7 +941,7 @@ test("a throughput drop during confirmation revokes early completion", async () 
   expect(core.phase).toBe("download");
 });
 
-test("a confirmed throughput regime change revokes early completion", async () => {
+test("a confirmed throughput regime change revokes early completion without breaking chart continuity", async () => {
   const core = new RunnerCore(new FakeBackend());
   const events: RunnerEvent[] = [];
   core.on((event) => events.push(event));
@@ -964,9 +964,53 @@ test("a confirmed throughput regime change revokes early completion", async () =
   const continuities = events.flatMap((event) =>
     event.type === "throughput" ? [event.sample.continuityId] : [],
   );
-  expect(new Set(continuities).size).toBeGreaterThan(1);
+  expect(new Set(continuities).size).toBe(1);
   advance(1_000);
   expect(core.phase).toBe("download");
+});
+
+test("a confirmed upward throughput regime change preserves chart continuity", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+
+  advance(10);
+  for (let i = 0; i < 30; i++) core.ingestThroughput("down", 400, 40, 0.1);
+  for (let i = 0; i < 20; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  const continuities = events.flatMap((event) =>
+    event.type === "throughput" ? [event.sample.continuityId] : [],
+  );
+  expect(new Set(continuities).size).toBe(1);
+});
+
+test("an explicit stall and resume break throughput continuity", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+
+  advance(10);
+  core.ingestThroughput("down", 1_000, 100, 0.1);
+  const before = events
+    .filter(
+      (event): event is Extract<RunnerEvent, { type: "throughput" }> =>
+        event.type === "throughput",
+    )
+    .at(-1)!.sample.continuityId;
+
+  core.stall({ reason: "connection-lost" });
+  advance(100);
+  core.ingestThroughput("down", 1_000, 100, 0.1);
+  const after = events
+    .filter(
+      (event): event is Extract<RunnerEvent, { type: "throughput" }> =>
+        event.type === "throughput",
+    )
+    .at(-1)!.sample.continuityId;
+
+  expect(after).toBeGreaterThan(before);
 });
 
 test("a stall during confirmation revokes early completion", async () => {

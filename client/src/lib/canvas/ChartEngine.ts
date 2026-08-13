@@ -17,6 +17,7 @@ import {
   interpolateConnectedAt,
   lowerBoundAt,
 } from "./hoverInterp";
+import { throughputSamplesContinuous } from "./throughputContinuity";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
 import {
@@ -269,32 +270,30 @@ export class ChartEngine implements CanvasEngine {
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
     this.#indexData(data);
-    const connected = (left: ThroughputSample, right: ThroughputSample) =>
-      left.continuityId === right.continuityId && right.t - left.t <= 500;
     const bytesPerSec =
       interpolateConnectedAt(
         this.#throughputByLane.download,
         t,
         (s) => s.bytesPerSec,
-        connected,
+        throughputSamplesContinuous,
       ) ??
       interpolateConnectedAt(
         this.#throughputByLane.upload,
         t,
         (s) => s.bytesPerSec,
-        connected,
+        throughputSamplesContinuous,
       );
     const downBytesPerSec = interpolateConnectedAt(
       this.#throughputByLane.bidiDown,
       t,
       (s) => s.bytesPerSec,
-      connected,
+      throughputSamplesContinuous,
     );
     const upBytesPerSec = interpolateConnectedAt(
       this.#throughputByLane.bidiUp,
       t,
       (s) => s.bytesPerSec,
-      connected,
+      throughputSamplesContinuous,
     );
     let latencyBucket: LatencyBucket | null = null;
     for (const lane of this.#latencyIndex.values()) {
@@ -724,10 +723,7 @@ export class ChartEngine implements CanvasEngine {
       );
       for (let i = lo; i < hi; i++) {
         const s = lane.samples[i];
-        if (
-          previous &&
-          (s.continuityId !== previous.continuityId || s.t - previous.t > 500)
-        ) {
+        if (previous && !throughputSamplesContinuous(previous, s)) {
           if (pts.length) segments.push(pts);
           pts = [];
         }
