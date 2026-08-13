@@ -129,11 +129,6 @@ export class UploadProgressChannel {
         resolve(established);
       };
       const timer = setTimeout(() => {
-        host.failStage(
-          stage,
-          "connection-lost",
-          "upload progress channel could not be established",
-        );
         finish(false);
       }, PROGRESS_ESTABLISH_TIMEOUT_MS);
       this.#ready = { finish };

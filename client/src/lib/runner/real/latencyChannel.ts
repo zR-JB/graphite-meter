@@ -90,8 +90,8 @@ export class LatencyChannel {
   #worker: Worker | null = null;
   /** True from prime to teardown. Gates late worker messages. */
   #active = false;
-  /** Armed for the idle latency stage only: fires failStage("latency") when no
-   *  pong ever arrives. Cleared by the first sample / teardown. */
+  /** Bounds one ping establishment attempt. A timeout reports a stall; the
+   * runner owns whether the latency stage eventually expires. */
   #establishTimer: ReturnType<typeof setTimeout> | null = null;
   /** The underLoad tag stamped on forwarded samples (true during a transfer
    *  stage's loaded latency). Set when measure() flips reporting on. */
@@ -135,8 +135,7 @@ export class LatencyChannel {
     this.#establishTimer = setTimeout(() => {
       this.#establishTimer = null;
       const detail = "ping connection could not be established";
-      if (isLatencyStage) host.failStage("latency", "connection-lost", detail);
-      else this.#deps.stall(detail);
+      this.#deps.stall(detail);
     }, PING_ESTABLISH_TIMEOUT_MS);
     const worker = pingWorker();
     worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>

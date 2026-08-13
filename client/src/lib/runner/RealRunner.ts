@@ -1098,17 +1098,13 @@ export class RealBackend implements RunnerBackend {
     streams: number,
     wt: WebTransportThroughputTarget | null,
   ): Promise<void> {
-    const primedLane = this.#lanes[dir];
     let id: string;
     try {
       id = await this.#mintUploadSession(base);
     } catch {
       if (!this.#liveLane(dir)) return; // aborted or torn down mid-request
-      this.#host!.failStage(
-        primedLane!.stage,
-        "protocol-error",
-        "upload session request failed",
-      );
+      // The direction's measured-byte watchdog reports this as a stall once
+      // measuring begins. Its terminal decision belongs to the runner.
       return;
     }
     const uploadLane = this.#liveLane(dir);
@@ -1143,13 +1139,7 @@ export class RealBackend implements RunnerBackend {
       // counter is already running when bytes start.
       uploadLane.newLane = (_i, events) => sessionLane(sessionOpts, events);
       uploadLane.spawn([sessionOpts.url]);
-      if ((await feed) === "timeout") {
-        this.#host!.failStage(
-          uploadLane.stage,
-          "connection-lost",
-          "upload progress channel could not be established",
-        );
-      }
+      await feed;
       return;
     }
     // The progress stream is the authoritative upload meter. Establish it ahead
