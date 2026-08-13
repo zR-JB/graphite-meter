@@ -23,7 +23,7 @@ export interface ChartLayout {
   latencyY(rttMs: number): number;
 }
 
-export const CHART_PADDING = { left: 46, right: 46, top: 12, bottom: 18 };
+export const CHART_PADDING = { left: 46, right: 46, top: 12, bottom: 24 };
 
 function niceTimeStep(target: number): number {
   const steps = [1000, 2000, 5000, 10000, 20000, 30000, 60000];

@@ -479,6 +479,25 @@
        restyles it. It sits here: a container query only styles descendants. */
     container-type: inline-size;
     container-name: viz;
+    /* Result content sits below the instrument. Its actual occupied height is
+       reserved from the shared gauge well through CSS, never through a
+       resize-observer/viewport feedback loop. */
+    --result-slot-budget: 0px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(1))) {
+    --result-slot-budget: 36px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(2))) {
+    --result-slot-budget: 72px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(3))) {
+    --result-slot-budget: 108px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(4))) {
+    --result-slot-budget: 144px;
+  }
+  .gauge-panel:has(:global(.result-card)) {
+    --result-slot-budget: 80px;
   }
   /* The instrument grid places stage-head, gauge, Engage, and the optional
      latency panel, so one breakpoint flips the whole arrangement. Its
@@ -491,7 +510,21 @@
     min-height: 0;
     /* The stacked mode has intrinsic wells and participates in document flow.
        Its size is independent of the optional latency row. */
-    --gauge-well-height: clamp(220px, 42svh, 360px);
+    /* The shared well is capped by the fixed shell, controls, rail, chart
+       floor, and their gaps. On a windowed desktop it yields before the stage
+       grows a token scrollbar; taller viewports retain the generous 42% well.
+       This remains independent of the optional latency panel. */
+    --instrument-stage-reserve: 458px;
+    --gauge-well-height: clamp(
+      220px,
+      min(
+        42svh,
+        calc(
+          100dvh - var(--instrument-stage-reserve) - var(--result-slot-budget)
+        )
+      ),
+      360px
+    );
     grid-template:
       "stagehead" auto
       "gauge" var(--gauge-well-height)

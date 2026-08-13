@@ -215,8 +215,57 @@ test("an open phone panel changes from sheet to side flyout on rotation", async 
   expect(rotated.bodyOverflow).toBe("auto");
 });
 
+async function configureThreeStageRun(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  await settings.getByRole("button", { name: "custom" }).click();
+  for (const [label, value] of [
+    ["Warmup ms", "0"],
+    ["Latency ms", "900"],
+    ["Download ms", "900"],
+    // Keep the third compact row visible long enough to observe it in both
+    // engines before the final cards replace the strip.
+    ["Upload ms", "3200"],
+  ] as const)
+    await settings.getByLabel(label).fill(value);
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+}
+
+async function expectStageFits(page: import("@playwright/test").Page) {
+  const stage = await page
+    .locator("#console > section.stage")
+    .evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+  expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
+}
+
+test("a windowed desktop fits compact and final cards without token scrolling", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/?engine=dummy");
+  await configureThreeStageRun(page);
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+
+  await expect(page.locator(".result-chip")).toHaveCount(3, {
+    timeout: 10_000,
+  });
+  await expectStageFits(page);
+
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".result-card")).toHaveCount(3);
+  await expectStageFits(page);
+});
+
 for (const viewport of [
   { width: 1024, height: 640 },
+  // A common windowed-desktop height: browser chrome must not create a
+  // token stage scrollbar that disappears only in fullscreen.
+  { width: 1024, height: 700 },
   { width: 1024, height: 768 },
   { width: 1200, height: 800 },
   { width: 1366, height: 768 },
