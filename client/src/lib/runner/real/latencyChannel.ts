@@ -73,8 +73,8 @@ function pingMint(target: LatencyTarget | null):
 export interface LatencyChannelDeps {
   host: () => CoreHost;
   target: () => LatencyTarget | null;
-  /** Stall/resume reported by the ping worker, for the coordinator to reconcile
-   *  with the stage-level flag the byte lanes also drive. */
+  /** Reconnect edges reported by the ping worker. A later ping outcome, not
+   *  socket reopening, proves recovery to the core. */
   stall: (detail: string) => void;
   resume: () => void;
   /** Window-realm performance origin. Injectable only for deterministic
@@ -204,13 +204,14 @@ export class LatencyChannel {
             },
             this.#underLoad,
           );
+        if (msg.samples.length) this.#deps.resume();
         break;
       }
       case "stall":
         this.#deps.stall(msg.detail);
         break;
       case "resume":
-        this.#deps.resume();
+        // Socket establishment alone does not restore latency evidence.
         break;
       case "ready":
         // READY is the peer's protocol acknowledgement. Warmup pongs stay in

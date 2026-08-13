@@ -75,7 +75,7 @@ export class UploadProgressChannel {
   /** Local ownership token for a server upload id/feed pair. */
   #generation = 0;
   /** Rotation handoff awaiting its first advancing replacement counter. */
-  #recoveryGapStartedAt = 0;
+  #recoveryGapStartedAt: number | null = null;
 
   get generation(): number {
     return this.#generation;
@@ -93,7 +93,7 @@ export class UploadProgressChannel {
   /** Start one reducer-only handoff interval. The interval closes only on a
    * positive replacement counter, never on feed/socket establishment. */
   beginRecoveryGap(): void {
-    if (this.#recoveryGapStartedAt === 0)
+    if (this.#recoveryGapStartedAt === null)
       this.#recoveryGapStartedAt = performance.now();
   }
 
@@ -206,7 +206,7 @@ export class UploadProgressChannel {
    *  DELETE and waits for the terminal complete record; without it the feed is
    *  simply dropped. Exactly one of the two feed kinds is ever live. */
   teardown(finalize: boolean): Promise<void> {
-    this.#recoveryGapStartedAt = 0;
+    this.#recoveryGapStartedAt = null;
     this.#external?.finish("superseded");
     this.#ready?.finish(false);
     this.#ready = null;
@@ -328,9 +328,10 @@ export class UploadProgressChannel {
     // Elapsed ns since the server's first byte for this id. Free of local
     // arrival jitter, and it retains stalls, reconnects and lane turnaround.
     const serverNs = msg.t;
-    if (msg.n > this.#serverBytes) {
-      this.#serverBytes = msg.n; // cumulative + monotonic guard
-    }
+    const previousServerBytes = this.#serverBytes;
+    if (msg.n < previousServerBytes) return; // stale feed: not time evidence
+    const advancing = msg.n > previousServerBytes;
+    if (advancing) this.#serverBytes = msg.n; // cumulative + monotonic guard
     if (!lane.measuring) return; // warmup bytes are excluded from the window
 
     if (!this.#haveBaseline) {
@@ -354,16 +355,26 @@ export class UploadProgressChannel {
         this.#deps.sampleProvesStageLiveness?.() ?? true,
       );
     }
+    // The first replacement checkpoint is a baseline for the curve, but its
+    // advancing server count still proves the upload recovered. It closes the
+    // reducer-only handoff and re-arms the direction without inventing a chart
+    // sample or a local-clock byte interval.
+    const recoveryGapStartedAt = this.#recoveryGapStartedAt;
+    const recovered = advancing && recoveryGapStartedAt !== null;
+    if (advancing && recoveryGapStartedAt !== null) {
+      const gapSec = (performance.now() - recoveryGapStartedAt) / 1_000;
+      this.#recoveryGapStartedAt = null;
+      host.recordRecoveryGap("up", gapSec);
+      const bytes = this.#serverBytes - previousServerBytes;
+      if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(bytes);
+      else this.#deps.setLaneStalled(false);
+    }
     if (delta > 0) {
       if (this.#deps.authoritativePresentation)
         this.#deps.authoritativePresentation(host.presentationRate("up"));
-      if (this.#recoveryGapStartedAt > 0) {
-        const gapSec = (performance.now() - this.#recoveryGapStartedAt) / 1_000;
-        this.#recoveryGapStartedAt = 0;
-        host.recordRecoveryGap("up", gapSec);
-      }
-      if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(delta);
-      else this.#deps.setLaneStalled(false);
+      if (!recovered && this.#deps.noteLaneProgress)
+        this.#deps.noteLaneProgress(delta);
+      else if (!recovered) this.#deps.setLaneStalled(false);
     }
     if (msg.type === "complete") {
       this.#completed = true;

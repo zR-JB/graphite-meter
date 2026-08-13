@@ -134,6 +134,40 @@ test("stage latency preserves distinct times from one worker batch", () => {
   }
 });
 
+test("a stage latency socket reopening does not itself resume recovery", () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    let resumes = 0;
+    const channel = new LatencyChannel({
+      host: () =>
+        ({
+          config: { pingCadence: "medium", loadedPingCadence: "medium" },
+          ingestLatency() {},
+        }) as unknown as CoreHost,
+      target: () => target,
+      stall() {},
+      resume() {
+        resumes++;
+      },
+    });
+
+    channel.prime("websocket", true);
+    channel.measure(false);
+    FakeWorker.last!.emit({ type: "resume" });
+
+    expect(resumes).toBe(0);
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+    });
+    expect(resumes).toBe(1);
+    channel.teardown();
+  } finally {
+    globalThis.Worker = realWorker;
+  }
+});
+
 test("READY cancels the stage channel's warmup establishment deadline", () => {
   const realWorker = globalThis.Worker;
   const realSetTimeout = globalThis.setTimeout;

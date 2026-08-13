@@ -50,6 +50,7 @@ function channelUnderTest(
   channel: UploadProgressChannel;
   failures: string[];
   curve: number[];
+  durations: number[];
   liveness: boolean[];
   progress: number[];
   presentations: number[];
@@ -59,6 +60,7 @@ function channelUnderTest(
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
   const curve: number[] = [];
+  const durations: number[] = [];
   const liveness: boolean[] = [];
   const progress: number[] = [];
   const presentations: number[] = [];
@@ -80,11 +82,12 @@ function channelUnderTest(
       _dir: string,
       _rate: number,
       bytesDelta: number,
-      _duration: number,
+      duration: number,
       _authoritative: boolean,
       provesLiveness = true,
     ) {
       curve.push(bytesDelta);
+      durations.push(duration);
       liveness.push(provesLiveness);
     },
     recordRecoveryGap(_dir: string, seconds: number) {
@@ -110,6 +113,7 @@ function channelUnderTest(
     }),
     failures,
     curve,
+    durations,
     liveness,
     progress,
     presentations,
@@ -216,13 +220,14 @@ test("teardown finalizes a dropped session feed, but not a completed one", async
 // first frames arrive behind the count already shown; taking them would feed the
 // curve a negative delta and then double-count the catch-up.
 test("a server count that arrives behind the last one does not move the curve", () => {
-  const { channel, curve } = channelUnderTest({ measuring: true });
+  const { channel, curve, durations } = channelUnderTest({ measuring: true });
 
   channel.accept({ type: "bytes", n: 1000, t: 1_000_000_000 });
   channel.accept({ type: "bytes", n: 2000, t: 2_000_000_000 });
   channel.accept({ type: "bytes", n: 500, t: 3_000_000_000 });
   channel.accept({ type: "bytes", n: 2600, t: 4_000_000_000 });
-  expect(curve).toEqual([1000, 0, 600]);
+  expect(curve).toEqual([1000, 600]);
+  expect(durations).toEqual([1, 2]);
 });
 
 test("upload recovery bytes stay accounted without resuming a stalled sibling", () => {
@@ -249,18 +254,23 @@ test("only an advancing server checkpoint refreshes the visual bridge baseline",
   expect(presentations).toEqual([750]);
 });
 
-test("a rotation gap is reduced once without a chart sample", () => {
-  const { channel, curve, recoveryGaps } = channelUnderTest({
+test("the first advancing replacement checkpoint closes a rotation gap", () => {
+  const { channel, curve, progress, recoveryGaps } = channelUnderTest({
     measuring: true,
   });
   channel.beginRecoveryGap();
   channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  expect(recoveryGaps).toHaveLength(1);
+  expect(progress).toEqual([100]);
+  expect(curve).toEqual([]);
+
   channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
   channel.accept({ type: "bytes", n: 400, t: 3_000_000_000 });
 
   expect(recoveryGaps).toHaveLength(1);
   expect(recoveryGaps[0]).toBeGreaterThanOrEqual(0);
   expect(curve).toEqual([150, 150]);
+  expect(progress).toEqual([100, 150, 150]);
 });
 
 // Unreachable today (every path tears down first), but a worker left running
