@@ -378,11 +378,11 @@
     min-height: 0;
   }
   /* The chart takes leftover height, capped so a tall viewport returns the
-     excess to the gauge. Its ResizeObserver re-rasterizes the canvas, and its
-     flex-basis is the 140px plot floor. */
+     excess to the gauge. Its outer tile needs room for the 140px plot plus
+     its own inset and border; otherwise the plot leaks beyond the recess. */
   .stage > :global(.chart) {
-    flex: 1 1 140px;
-    min-height: 0;
+    flex: 1 1 164px;
+    min-height: 164px;
     max-height: 340px;
   }
   .status {

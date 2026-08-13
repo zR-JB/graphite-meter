@@ -486,7 +486,13 @@
 <style>
   .setup-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    /* Connection choice cards inherit this exact breakpoint so the Settings
+       surface reflows as one system when its dock is manually widened. */
+    --settings-card-min: 180px;
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(min(100%, var(--settings-card-min)), 1fr)
+    );
     gap: var(--space-3);
     container-type: inline-size;
   }

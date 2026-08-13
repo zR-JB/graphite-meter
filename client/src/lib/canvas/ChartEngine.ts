@@ -292,11 +292,11 @@ export class ChartEngine implements CanvasEngine {
       (s) => s.bytesPerSec,
       throughputSamplesContinuous,
     );
-    const latencyGlyph = nearestLatencyGlyph(
-      this.#latencyIndex.values(),
-      x,
-      (bucketT) => this.#x(bucketT),
-    );
+    const latencyGlyph = data.latencyEnabled
+      ? nearestLatencyGlyph(this.#latencyIndex.values(), x, (bucketT) =>
+          this.#x(bucketT),
+        )
+      : null;
     const latencyBucket = latencyGlyph?.bucket ?? null;
     const latencyX = latencyGlyph?.x ?? null;
     const rtt = latencyBucket?.medianRttMs ?? null;

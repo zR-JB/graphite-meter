@@ -236,6 +236,7 @@
   .chart {
     display: flex;
     flex-direction: column;
+    min-height: 164px;
     padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);

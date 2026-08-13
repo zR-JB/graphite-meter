@@ -50,15 +50,18 @@ export function gaugeLayout(
     const angle = ARC_START + (index / (MAJOR_TICK_COUNT - 1)) * ARC_SWEEP;
     return { from: pointAt(angle, tickInner), to: pointAt(angle, tickOuter) };
   });
-  const labelRadius = tickOuter + 7;
   const labelPoints = Array.from(
     { length: Math.max(0, labelCount) },
     (_, index): GaugeLabelLayout => {
       const fraction = labelCount > 1 ? index / (labelCount - 1) : 0.5;
       const angle = ARC_START + fraction * ARC_SWEEP;
-      const point = pointAt(angle, labelRadius);
       const horizontal = Math.cos(angle);
       const vertical = Math.sin(angle);
+      // Flank labels extend back toward the arc because their text is
+      // outward-anchored. Give those labels extra radial clearance while the
+      // top and bottom labels retain their established optical placement.
+      const labelRadius = tickOuter + 7 + (Math.abs(horizontal) > 0.35 ? 5 : 0);
+      const point = pointAt(angle, labelRadius);
       return {
         ...point,
         angle,

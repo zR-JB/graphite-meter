@@ -123,5 +123,17 @@ for (const viewport of [
         scrollHeight: element.scrollHeight,
       }));
     expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
+    const chartContainment = await page.locator(".chart").evaluate((chart) => {
+      const plot = chart.querySelector(".plot");
+      if (!(plot instanceof HTMLElement)) throw new Error("missing chart plot");
+      const chartBox = chart.getBoundingClientRect();
+      const plotBox = plot.getBoundingClientRect();
+      return {
+        plotTop: plotBox.top - chartBox.top,
+        plotBottom: plotBox.bottom - chartBox.bottom,
+      };
+    });
+    expect(chartContainment.plotTop).toBeGreaterThanOrEqual(-1);
+    expect(chartContainment.plotBottom).toBeLessThanOrEqual(1);
   });
 }

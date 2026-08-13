@@ -113,8 +113,16 @@
   }
   .options {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+    grid-template-columns: 1fr;
     gap: 6px;
+  }
+  /* The choices sit inside a padded Settings card, so their own width reaches
+     a two-column fit after the outer Settings grid already has. Query that
+     shared container to make both reflow at the same practical dock width. */
+  @container (min-width: 366px) {
+    .options {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    }
   }
   .choice {
     position: relative;
@@ -248,10 +256,5 @@
   button:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
-  }
-  @container (max-width: 360px) {
-    .options {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

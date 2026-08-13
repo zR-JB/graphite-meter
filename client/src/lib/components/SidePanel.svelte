@@ -404,7 +404,9 @@
     overscroll-behavior: contain;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    padding-right: var(--space-2);
+    /* Overlay scrollbars sit over the scrollport in several engines. Reserve
+       a physical inset so the thumb cannot cover cards or form controls. */
+    padding-right: calc(var(--space-2) + 12px);
     scrollbar-gutter: stable;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;

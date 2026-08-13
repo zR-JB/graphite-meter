@@ -40,6 +40,31 @@ test("settings expose live controls and lock run construction inputs", async ({
   ).toBeDisabled();
 });
 
+test("connection paths stay single-column by default and reflow after a dock resize", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+
+  const columns = () =>
+    page
+      .locator('[aria-label="Settings"] .options')
+      .first()
+      .evaluate((element) => getComputedStyle(element).gridTemplateColumns);
+  expect((await columns()).trim().split(/\s+/)).toHaveLength(1);
+
+  await page.evaluate(() => {
+    localStorage.setItem(
+      "graphite-meter:v1",
+      JSON.stringify({ dockWidth: { left: 600, right: 400 } }),
+    );
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Open settings" }).click();
+  expect((await columns()).trim().split(/\s+/).length).toBeGreaterThan(1);
+});
+
 // The datagram card is gated on its experimental setting, but a card already
 // selected must not vanish under the user — and the note that its number is not
 // a speed test belongs to that selection, not to the toggle. Read linearly the

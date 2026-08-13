@@ -22,6 +22,19 @@ test("gauge layout keeps canvas arc and DOM tick anchors in one CSS-pixel model"
   });
 });
 
+test("flank labels keep more clearance than the aligned top label", () => {
+  const layout = gaugeLayout(480, 260, 5);
+  const distance = (point: { x: number; y: number }) =>
+    Math.hypot(point.x - layout.center.x, point.y - layout.center.y);
+
+  expect(distance(layout.labelPoints[1]!)).toBeGreaterThan(
+    distance(layout.labelPoints[2]!) + 4,
+  );
+  expect(distance(layout.labelPoints[3]!)).toBeGreaterThan(
+    distance(layout.labelPoints[2]!) + 4,
+  );
+});
+
 test("gauge layout has a finite fallback before its container is measured", () => {
   const layout = gaugeLayout(0, 0, 0);
   expect(layout.width).toBe(1);

@@ -14,9 +14,10 @@
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
 
-  const connections = $derived(
-    store.isRunning ? store.runConnections : store.connections,
-  );
+  // A completed result, chart, and endpoint description must identify the
+  // same run. Configuration remains editable after completion, so retain its
+  // frozen connection evidence until the next run begins.
+  const connections = $derived(store.activeConnections ?? store.connections);
   const server = $derived(
     store.transportDiscovery?.server ?? store.infra?.server,
   );

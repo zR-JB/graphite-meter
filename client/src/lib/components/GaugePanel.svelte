@@ -33,8 +33,10 @@
 
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();
+  let resultsSlotEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
   let gaugeSize = $state({ width: 0, height: 0 });
+  let resultsSlotHeight = $state(0);
   const liveRateAnimator = new LiveRateAnimator();
   let liveRateValues = $state<LiveRateValues>({
     transfer: 0,
@@ -379,6 +381,10 @@
       engine.resize(width, height);
     });
     resizeObserver.observe(stageEl!);
+    const resultsObserver = new ResizeObserver(([entry]) => {
+      resultsSlotHeight = Math.round(entry.contentRect.height);
+    });
+    resultsObserver.observe(resultsSlotEl!);
     const { clientWidth: width, clientHeight: height } = stageEl!;
     gaugeSize = { width, height };
     engine.resize(width, height);
@@ -391,11 +397,15 @@
       engine.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
+      resultsObserver.disconnect();
     };
   });
 </script>
 
-<section class="gauge-panel">
+<section
+  class="gauge-panel"
+  style:--result-slot-height={`${resultsSlotHeight}px`}
+>
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
@@ -456,7 +466,7 @@
     {/if}
   </div>
 
-  <div class="results-slot">
+  <div bind:this={resultsSlotEl} class="results-slot">
     {#if resultsView === "partial"}
       <ResultCards compact liveRates={liveRateValues} />
     {:else if resultsView === "final"}
@@ -513,10 +523,14 @@
      query moves Engage, the latency panel, and Test Stages together. */
   @container viz (min-width: 520px) {
     .instrument {
-      /* Wide, short viewports have no second vertical instrument row to use;
-         let this well contract there instead of forcing the main shell to
-         scroll. Mobile retains its stable viewport constraint above. */
-      --gauge-well-height: clamp(140px, 28svh, 320px);
+      /* Results report their measured block height through the local CSS
+         variable. That contracts this stable well by exactly the height each
+         new chip/card needs without letting optional latency content size it. */
+      --gauge-well-height: clamp(
+        120px,
+        calc(100svh - 480px - var(--result-slot-height, 0px)),
+        360px
+      );
       grid-template:
         "gauge latency" var(--gauge-well-height)
         "engage engage" auto
@@ -550,9 +564,8 @@
     container-type: size;
   }
   @container viz (min-width: 520px) {
-    .stage,
-    .latency-panel {
-      min-height: 140px;
+    .stage {
+      min-height: 120px;
     }
   }
   /* Engage's slot: RunButton centers itself (width:100%, max-width:320px,
@@ -732,31 +745,15 @@
     letter-spacing: 0;
   }
 
-  /* Results slot: empty at idle, a compact strip mid-run, the full card grid
-     once complete. The min-height reserve holds in every state, so the gauge
-     above keeps one size. 760px fits 4 cards in one row (4x181px + 3x12px
-     gap); the 600px measure used above wraps them 3-then-1. */
+  /* The instrument has an explicit well height, so result content no longer
+     needs a phantom reserve to keep it stable. Let cards occupy only their
+     real height; otherwise the empty reserve becomes a visual gulf above the
+     chart. */
   .results-slot {
+    flex: 0 0 auto;
     width: 100%;
     max-width: 760px;
     align-self: center;
-    min-height: 108px;
-  }
-  /* A short desktop has no room to reserve a terminal-result strip before a
-     result exists. Let the empty slot collapse there; populated results still
-     retain their natural height and the stage keeps its scroll fallback. */
-  @media (min-width: 760px) and (max-height: 700px) {
-    .results-slot:empty {
-      min-height: 0;
-    }
-  }
-  /* Stacked: the document scrolls, so the reserve only reads as dead space
-     between the controls and the chart. Collapsed here, results push the
-     chart down when they appear. */
-  @media (max-width: 759px) {
-    /* bp: stacked */
-    .results-slot {
-      min-height: 0;
-    }
+    min-height: 0;
   }
 </style>

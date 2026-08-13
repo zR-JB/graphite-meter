@@ -6,11 +6,14 @@
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageTrackModel } from "./stageTrack";
 
-  const STAGES: { key: StageKey; label: string; icon: string }[] = [
+  const STAGES: {
+    key: Exclude<StageKey, "bidirectional">;
+    label: string;
+    icon: string;
+  }[] = [
     { key: "latency", label: "Latency", icon: ICON.ping },
     { key: "download", label: "Download", icon: ICON.download },
     { key: "upload", label: "Upload", icon: ICON.upload },
-    { key: "bidirectional", label: "Bi-dir", icon: ICON.bidirectional },
   ];
 
   function onToggle(stage: StageKey) {
@@ -38,9 +41,23 @@
       return { ...stage, ...model, reason, failure };
     });
   });
+
+  // Bidirectional is an advanced Settings choice, not an always-present
+  // stage selector. Once disabled it must leave the rail entirely; Settings
+  // remains the sole place that can enable it again.
+  const bidiPresentation = $derived(store.stagePresentation.bidirectional);
+  const bidi = $derived(
+    store.config.stages.bidirectional
+      ? stageTrackModel({
+          selected: true,
+          locked: !store.canToggleStage("bidirectional"),
+          execution: bidiPresentation,
+        })
+      : null,
+  );
 </script>
 
-<fieldset class="stage-track quad">
+<fieldset class="stage-track" class:quad={bidi !== null}>
   <legend class="sr-only">Test stages — tap to enable or disable</legend>
   <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
        `{@html s.icon}` sink by its exact expression text. -->
@@ -91,6 +108,53 @@
       </span>
     </button>
   {/each}
+  {#if bidi}
+    <button
+      type="button"
+      class="seg seg--{bidi.state} on"
+      role="switch"
+      aria-checked="true"
+      aria-label="Bidirectional stage{store.canToggleStage('bidirectional')
+        ? ' — tap to exclude'
+        : ' (running)'}"
+      use:tooltip={bidiPresentation.failure
+        ? `Bi-dir — ${store.stageFailures.bidirectional?.message}`
+        : store.canToggleStage("bidirectional")
+          ? "Bidirectional — concurrent down + up. Tap to exclude (re-enable in Settings)."
+          : "Bidirectional — running."}
+      disabled={!store.canToggleStage("bidirectional")}
+      onclick={() => {
+        if (store.toggleStage("bidirectional")) applyLiveRunConfig();
+      }}
+    >
+      <div class="seg-bar" aria-hidden="true">
+        {#if bidi.state === "warmup"}
+          <span class="seg-fill seg-fill--warmup"></span>
+        {:else if bidi.state === "failed"}
+          <span class="seg-fill seg-fill--failed"></span>
+        {:else if bidi.state === "active" || bidi.state === "recovering" || bidi.state === "complete" || bidi.state === "partial"}
+          <span
+            class="seg-fill seg-fill--bidirectional"
+            class:is-done={bidi.state === "complete" ||
+              bidi.state === "partial"}
+            class:is-stalled={bidi.state === "recovering"}
+            style="width:{bidi.fill}%"
+          ></span>
+        {/if}
+      </div>
+      <span class="seg-row">
+        <span class="seg-main">
+          <span class="seg-ico">{@html ICON.bidirectional}</span>
+          <span class="seg-label">Bi-dir</span>
+        </span>
+        {#if bidi.tag}
+          <span class="seg-tag">{bidi.tag}</span>
+        {:else if bidi.state === "complete"}
+          <span class="seg-ico seg-check">{@html ICON.check}</span>
+        {/if}
+      </span>
+    </button>
+  {/if}
 </fieldset>
 
 <style>

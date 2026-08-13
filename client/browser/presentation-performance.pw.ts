@@ -195,6 +195,7 @@ test("completed reduced-motion views settle after theme and resize", async ({
 test("settings retains native scrolling during active presentation", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 390, height: 640 });
   await page.goto("/?engine=dummy");
   await page.getByRole("button", { name: "Start the speed test" }).click();
   await page.waitForTimeout(500);
@@ -217,10 +218,18 @@ test("settings retains native scrolling during active presentation", async ({
   await resetMetrics(page);
   const before = await chartSample(page);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.wheel(0, 600);
+  await body.evaluate((element) => element.scrollBy({ top: 600 }));
   await expect
     .poll(() => body.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
+  const scrollbarClearance = await body.evaluate((element) => {
+    const card = element.querySelector(".choice");
+    if (!(card instanceof HTMLElement)) throw new Error("missing path card");
+    return (
+      element.getBoundingClientRect().right - card.getBoundingClientRect().right
+    );
+  });
+  expect(scrollbarClearance).toBeGreaterThanOrEqual(12);
   await page.waitForTimeout(500);
   const after = await chartSample(page);
   const frameBudget = Math.ceil(((after.now - before.now) * 60) / 1000);
@@ -229,4 +238,26 @@ test("settings retains native scrolling during active presentation", async ({
   const metrics = await performanceMetrics(page);
   expect(metrics.frameP95).toBeLessThan(50);
   expect(metrics.longestTask).toBeLessThanOrEqual(100);
+});
+
+test("settings remain contained by their desktop dock", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+
+  const body = page.locator('[aria-label="Settings"] .panel-body');
+  await expect(body).toBeVisible();
+  const desktopSurface = await body.evaluate((element) => ({
+    overflowY: getComputedStyle(element).overflowY,
+    panelBottom: element.closest(".panel")?.getBoundingClientRect().bottom,
+    bodyBottom: element.getBoundingClientRect().bottom,
+    statusTop: document.querySelector(".status")?.getBoundingClientRect().top,
+  }));
+  expect(desktopSurface.overflowY).toBe("auto");
+  expect(desktopSurface.bodyBottom).toBeLessThanOrEqual(
+    desktopSurface.panelBottom! + 1,
+  );
+  expect(desktopSurface.panelBottom).toBeLessThanOrEqual(
+    desktopSurface.statusTop! + 1,
+  );
 });
