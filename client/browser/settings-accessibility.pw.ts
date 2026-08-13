@@ -54,15 +54,15 @@ test("connection paths stay single-column by default and reflow after a dock res
       .evaluate((element) => getComputedStyle(element).gridTemplateColumns);
   expect((await columns()).trim().split(/\s+/)).toHaveLength(1);
 
-  await page.evaluate(() => {
-    localStorage.setItem(
-      "graphite-meter:v1",
-      JSON.stringify({ dockWidth: { left: 600, right: 400 } }),
-    );
+  const resize = page.getByRole("slider", {
+    name: "Resize Settings panel (arrow keys; Enter to reset)",
   });
-  await page.reload();
-  await page.getByRole("button", { name: "Open settings" }).click();
-  expect((await columns()).trim().split(/\s+/).length).toBeGreaterThan(1);
+  for (let step = 0; step < 4; step++) await resize.press("Shift+ArrowRight");
+  // The same keyboard-resize path users take must reflow the panel's inner
+  // cards. Waiting for the container query avoids sampling an in-flight paint.
+  await expect
+    .poll(async () => (await columns()).trim().split(/\s+/).length)
+    .toBeGreaterThan(1);
 });
 
 // The datagram card is gated on its experimental setting, but a card already
