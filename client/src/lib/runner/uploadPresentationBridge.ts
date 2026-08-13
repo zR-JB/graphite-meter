@@ -1,5 +1,7 @@
 /** Presentation-only policy for an irregular authoritative upload feed. It has
  * no access to accumulators, charts, control buckets, or result reduction. */
+export const UPLOAD_PRESENTATION_HINT_MAX_AGE_MS = 250;
+
 export class UploadPresentationBridge {
   #arrivals: number[] = [];
   #lastRate = 0;
@@ -22,7 +24,7 @@ export class UploadPresentationBridge {
     const hint = this.#hint;
     if (!healthy || !hint || this.#lastRate <= 0 || this.#arrivals.length < 4)
       return null;
-    if (now - hint.at > 250) return null;
+    if (now - hint.at > UPLOAD_PRESENTATION_HINT_MAX_AGE_MS) return null;
     const gaps = this.#arrivals.slice(1).map((t, i) => t - this.#arrivals[i]);
     const ordered = [...gaps].sort((a, b) => a - b);
     const median = ordered[Math.floor(ordered.length / 2)] ?? 0;

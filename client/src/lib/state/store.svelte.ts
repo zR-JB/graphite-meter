@@ -95,6 +95,8 @@ const UNIT_STEP_UP_HEADROOM = 1.2;
 class AppStore {
   #latencyScale = new LatencyScaleController();
   throughput = $state<ThroughputSample[]>([]);
+  /** Ephemeral upload visual target. Never contributes to history or results. */
+  uploadPresentationBytesPerSec = $state<number | null>(null);
   latency = $state<LatencyBucket[]>([]);
   /** Changes only when latency history is no longer a pure tail append. */
   latencyRevision = $state(0);
@@ -217,6 +219,25 @@ class AppStore {
   liveBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
     if (this.phase !== "bidirectional") return null;
     return latestBidirectionalLanes(this.throughput);
+  });
+
+  visualTransferBytesPerSec = $derived.by(() => {
+    if (this.phase === "upload")
+      return this.uploadPresentationBytesPerSec ?? this.liveTransferBytesPerSec;
+    if (this.phase === "bidirectional") {
+      const { down, up } = latestBidirectionalLanes(this.throughput);
+      return down + (this.uploadPresentationBytesPerSec ?? up);
+    }
+    return this.liveTransferBytesPerSec;
+  });
+
+  visualBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
+    const lanes = this.liveBidirectional;
+    if (!lanes) return null;
+    return {
+      down: lanes.down,
+      up: this.uploadPresentationBytesPerSec ?? lanes.up,
+    };
   });
 
   pulseLatency = $derived.by<LatencyBucket[]>(() => {
@@ -475,6 +496,7 @@ class AppStore {
         this.phaseStage = event.transition.stage;
         this.phaseStartedAtMs = event.transition.t;
         this.phaseFraction = 0;
+        this.uploadPresentationBytesPerSec = null;
         // Stamp the wall-clock run start once, not on every warmup segment.
         if (event.transition.from === "idle") this.startEpoch = Date.now();
         break;
@@ -510,6 +532,9 @@ class AppStore {
         this.throughput.push(event.sample);
         if (this.throughput.length > MAX_SAMPLES) this.throughput.shift();
         break;
+      case "uploadPresentation":
+        this.uploadPresentationBytesPerSec = event.bytesPerSec;
+        break;
       case "latency":
         if (event.sample.phase === "idle") {
           upsertLatencyBucket(this.idleLatency, event.sample, MAX_IDLE_SAMPLES);
@@ -527,10 +552,12 @@ class AppStore {
         this.connectivity = event.state;
         break;
       case "complete":
+        this.uploadPresentationBytesPerSec = null;
         this.result = event.result;
         this.phase = "complete";
         break;
       case "error": {
+        this.uploadPresentationBytesPerSec = null;
         this.error = event.error;
         // A terminal error resolves any in-flight stall, so the idle/error view
         // is not stuck in "measuring=false".

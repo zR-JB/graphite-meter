@@ -93,6 +93,8 @@ export interface CoreHost {
   readonly phase: Phase;
   // Virtual run time, distinct from backend wall-clock deadlines.
   readonly elapsed: number;
+  /** Current authoritative estimator output for a visual-only bridge. */
+  presentationRate(dir: FlowDirection): number;
 }
 
 /** The stage-owned lifecycle the core drives per enabled stage, each call
@@ -630,6 +632,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
       return;
     this.#accum.recordRecoveryGap(phase, dir, durationSec);
+  }
+
+  presentationRate(dir: FlowDirection): number {
+    return this.#presentedRate[dir];
   }
 
   #emitThroughputPresentation(dir: FlowDirection, bytesPerSec: number): void {

@@ -209,6 +209,10 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
         throughput.push({ dir, bytes });
       },
       ingestLatency() {},
+      recordRecoveryGap() {},
+      presentationRate() {
+        return 0;
+      },
       stall() {},
       resume() {},
     } as unknown as CoreHost;

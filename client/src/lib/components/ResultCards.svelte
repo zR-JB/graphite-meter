@@ -17,15 +17,18 @@
     const stability = store.liveStability[phase];
     if (store.phase === phase) {
       const live = store.liveCompensation;
+      const measuredBytesPerSec = compact
+        ? store.visualTransferBytesPerSec
+        : live.measuredBytesPerSec;
       return {
-        measuredBytesPerSec: live.measuredBytesPerSec,
+        measuredBytesPerSec,
         estimatedBytesPerSec: live.estimatedBytesPerSec,
         available: live.available,
         multiplier: live.totalMultiplier,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
-        has: live.measuredBytesPerSec > 0,
+        has: measuredBytesPerSec > 0,
       };
     }
     const stageResult = store.stageResults[phase];
@@ -51,7 +54,9 @@
   const bidi = $derived.by(() => {
     const stability = store.liveStability.bidirectional;
     if (store.phase === "bidirectional") {
-      const live = store.liveBidirectional ?? { down: 0, up: 0 };
+      const live = (compact
+        ? store.visualBidirectional
+        : store.liveBidirectional) ?? { down: 0, up: 0 };
       return {
         down: live.down,
         up: live.up,

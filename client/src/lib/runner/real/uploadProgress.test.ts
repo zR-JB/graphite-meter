@@ -52,6 +52,7 @@ function channelUnderTest(
   curve: number[];
   liveness: boolean[];
   progress: number[];
+  presentations: number[];
   stalls: { detail?: string; cause?: string }[];
   recoveryGaps: number[];
 } {
@@ -60,6 +61,7 @@ function channelUnderTest(
   const curve: number[] = [];
   const liveness: boolean[] = [];
   const progress: number[] = [];
+  const presentations: number[] = [];
   const stalls: { detail?: string; cause?: string }[] = [];
   const recoveryGaps: number[] = [];
   const lane: UploadProgressLane = {
@@ -88,6 +90,9 @@ function channelUnderTest(
     recordRecoveryGap(_dir: string, seconds: number) {
       recoveryGaps.push(seconds);
     },
+    presentationRate() {
+      return 750;
+    },
   } as unknown as CoreHost;
   return {
     channel: new UploadProgressChannel({
@@ -98,6 +103,8 @@ function channelUnderTest(
       transferActive: () => true,
       discardTransfer: () => {},
       noteLaneProgress: (bytes) => progress.push(bytes),
+      authoritativePresentation: (bytesPerSec) =>
+        presentations.push(bytesPerSec),
       setLaneStalled: (_stalled, detail, cause) =>
         stalls.push({ detail, cause }),
     }),
@@ -105,6 +112,7 @@ function channelUnderTest(
     curve,
     liveness,
     progress,
+    presentations,
     stalls,
     recoveryGaps,
   };
@@ -229,6 +237,16 @@ test("upload recovery bytes stay accounted without resuming a stalled sibling", 
   expect(curve).toEqual([150]);
   expect(liveness).toEqual([false]);
   expect(progress).toEqual([150]);
+});
+
+test("only an advancing server checkpoint refreshes the visual bridge baseline", () => {
+  const { channel, presentations } = channelUnderTest({ measuring: true });
+
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 100, t: 2_000_000_000 });
+  channel.accept({ type: "bytes", n: 250, t: 3_000_000_000 });
+
+  expect(presentations).toEqual([750]);
 });
 
 test("a rotation gap is reduced once without a chart sample", () => {

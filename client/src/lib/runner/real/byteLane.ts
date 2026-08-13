@@ -20,8 +20,8 @@ export type { ProgressEvent as WtProgressRelay };
 /** What every lane reports, whatever carries its bytes. */
 export interface LaneEvents {
   onProgress(bytes: number, elapsedMs?: number, seq?: number): void;
-  /** A unit of work completed without a byte count, which upload lanes report. */
-  onAlive(): void;
+  /** A locally timed upload completion, usable only for visual presentation. */
+  onAlive(bytes?: number, elapsedMs?: number): void;
   onError(recoverable: boolean, detail: string): void;
   onUploadProgress(msg: ProgressEvent): void;
   onAuthRequired(): void;
@@ -67,7 +67,7 @@ export interface SessionLaneOptions {
 type WorkerMsg =
   | { type: "established" }
   | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
-  | { type: "alive" }
+  | { type: "alive"; bytes?: number; elapsedMs?: number }
   | { type: "error"; recoverable: boolean; detail: string }
   | { type: "upload-progress"; msg: ProgressEvent }
   | { type: "auth-required" }
@@ -90,7 +90,7 @@ export function fetchLane(
             events.onProgress(msg.bytes, msg.elapsedMs, msg.seq);
             break;
           case "alive":
-            events.onAlive();
+            events.onAlive(msg.bytes, msg.elapsedMs);
             break;
           case "error":
             events.onError(msg.recoverable, msg.detail);

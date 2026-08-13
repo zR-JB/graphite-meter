@@ -176,6 +176,52 @@ test("a lane that carried bytes is restarted past the skip deadline", () => {
   });
 });
 
+test("a local upload completion is a presentation hint, not measurement evidence", () => {
+  withClock((clock) => {
+    const hints: [number, number, number][] = [];
+    let ingests = 0;
+    const host = {
+      failStage() {},
+      fail() {},
+      ingestThroughput() {
+        ingests++;
+      },
+      ingestLatency() {},
+      emit() {},
+      stall() {},
+      resume() {},
+    } as unknown as CoreHost;
+    const direction = new TransferDirection({
+      dir: "up",
+      stage: "upload",
+      laneCount: 1,
+      warmupMs: 0,
+      host: {
+        host: () => host,
+        stallChanged: () => {},
+        uploadProgress: () => {},
+        uploadPresentationHint: (bytes, elapsedMs, generation) =>
+          hints.push([bytes, elapsedMs, generation]),
+        beginUploadMeasure: () => {},
+        discardTransfer: () => {},
+      },
+      lane: (_i, events) => ({
+        start: () => events.onAlive(640, 80),
+        measure: () => {},
+        stop: () => Promise.resolve(),
+        discard: () => {},
+      }),
+    });
+    direction.setUploadGeneration(7);
+    direction.spawn(["https://meter.test/upload"]);
+
+    expect(hints).toEqual([[640, 80, 7]]);
+    expect(ingests).toBe(0);
+    clock.advance(DIRECTION_PROGRESS_WINDOW_MS + 1);
+    expect(ingests).toBe(0);
+  });
+});
+
 test("a permanent lane refusal finalizes only its affected stage", () => {
   withClock((clock) => {
     const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };

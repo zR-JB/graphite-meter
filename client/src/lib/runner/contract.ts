@@ -455,6 +455,9 @@ export type RunnerEvent =
   | { type: "infra"; info: InfraInfo }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
+  /** A short-lived upload-only visual target. It is deliberately separate from
+   * throughput samples: it never enters history, hover, control, or results. */
+  | { type: "uploadPresentation"; bytesPerSec: number | null }
   | { type: "latency"; sample: LatencyBucket }
   // Reserved seam: a backend MAY push an explicit connectivity state. The store
   // otherwise derives `effectiveConnectivity` from loss/jitter/measuring, so

@@ -34,11 +34,11 @@ type InMsg = {
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
 };
-/** `alive` marks one POST the server drained, proving the lane is live. It
- *  carries no byte count: fetch has no upload-progress events, and the
- *  /upload/progress stream is the authoritative source. `error` restarts a lane. */
+/** `alive` marks one POST the server drained. Its local byte/time pair is only
+ * a bounded presentation hint; /upload/progress remains the authoritative
+ * source for measurement. `error` restarts a lane. */
 type OutMsg =
-  | { type: "alive" }
+  | { type: "alive"; bytes: number; elapsedMs: number }
   | { type: "error"; recoverable: boolean; detail: string }
   | { type: "auth-required" };
 
@@ -253,12 +253,13 @@ async function run(url: string): Promise<void> {
         });
         return; // RealBackend decides whether to restart this lane
       }
-      // The server drained a full slice: the lane is alive. No bytes travel here,
-      // /upload/progress is authoritative; this only resets the restart counter.
-      post({ type: "alive" });
+      // This is not an observation: the server progress feed owns byte/time
+      // accounting. The local pair can only smooth the live visual target.
+      const elapsedMs = performance.now() - postStart;
+      post({ type: "alive", bytes: sentBytes, elapsedMs });
       ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
         sentBytes,
-        performance.now() - postStart,
+        elapsedMs,
         rateEwma,
         sizer,
       ));

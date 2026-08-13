@@ -645,6 +645,9 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       },
       ingestLatency() {},
       recordRecoveryGap() {},
+      presentationRate() {
+        return 0;
+      },
       stall(info) {
         stalls.push(info);
       },

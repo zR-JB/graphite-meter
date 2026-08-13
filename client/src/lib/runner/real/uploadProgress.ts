@@ -47,6 +47,8 @@ export interface UploadProgressDeps {
   ) => void;
   /** Positive receiver-authoritative bytes for the upload direction. */
   noteLaneProgress?: (bytes: number) => void;
+  /** Current authoritative presentation output after an advancing checkpoint. */
+  authoritativePresentation?: (bytesPerSec: number) => void;
 }
 
 export class UploadProgressChannel {
@@ -353,6 +355,8 @@ export class UploadProgressChannel {
       );
     }
     if (delta > 0) {
+      if (this.#deps.authoritativePresentation)
+        this.#deps.authoritativePresentation(host.presentationRate("up"));
       if (this.#recoveryGapStartedAt > 0) {
         const gapSec = (performance.now() - this.#recoveryGapStartedAt) / 1_000;
         this.#recoveryGapStartedAt = 0;

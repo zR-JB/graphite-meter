@@ -65,6 +65,10 @@ import {
 } from "./real/budgets";
 import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
 import { UploadProgressChannel } from "./real/uploadProgress";
+import {
+  UploadPresentationBridge,
+  UPLOAD_PRESENTATION_HINT_MAX_AGE_MS,
+} from "./uploadPresentationBridge";
 
 export { TransportUnavailableError };
 
@@ -119,6 +123,9 @@ export class RealBackend implements RunnerBackend {
    * to the runner's expiry, not an unbounded mint loop. */
   #uploadRotationUsed = false;
   #uploadRotationInFlight = false;
+  /** A local-only visual bridge over irregular authoritative upload delivery. */
+  #uploadPresentation = new UploadPresentationBridge();
+  #uploadPresentationTimer: ReturnType<typeof setTimeout> | null = null;
   /** The STAGE-level stalled flag reported to the host, deduped so stall/resume
    *  fire once per edge. #reconcileStall or the idle ping channel latches it. */
   #stalled = false;
@@ -134,6 +141,14 @@ export class RealBackend implements RunnerBackend {
     transferActive: () => this.#transferActive,
     discardTransfer: () => this.#discardTransfer(),
     noteLaneProgress: (bytes) => this.#lanes.up?.noteMeasuredProgress(bytes),
+    authoritativePresentation: (bytesPerSec) => {
+      this.#uploadPresentation.authoritative(
+        bytesPerSec,
+        true,
+        performance.now(),
+      );
+      this.#emitUploadPresentation();
+    },
     setLaneStalled: (stalled, detail, cause) =>
       this.#lanes.up?.setStalled(stalled, detail, cause),
   });
@@ -146,6 +161,11 @@ export class RealBackend implements RunnerBackend {
       this.#reconcileStall(detail, cause, direction),
     uploadProgress: (msg, generation) =>
       this.#uploadProgress.accept(msg, generation),
+    uploadPresentationHint: (bytes, elapsedMs, generation) => {
+      if (generation !== this.#uploadProgress.generation) return;
+      this.#uploadPresentation.hint(bytes, elapsedMs, performance.now());
+      this.#emitUploadPresentation();
+    },
     beginUploadMeasure: () => this.#uploadProgress.beginMeasure(),
     discardTransfer: () => this.#discardTransfer(),
   };
@@ -704,6 +724,7 @@ export class RealBackend implements RunnerBackend {
     this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
+    this.#clearUploadPresentation();
     this.#discardTransfer(); // discard leftovers from a prior run
     this.#transferActivity = null;
     this.#uploadRotationUsed = false;
@@ -810,6 +831,7 @@ export class RealBackend implements RunnerBackend {
       return;
     this.#uploadRotationUsed = true;
     this.#uploadRotationInFlight = true;
+    this.#clearUploadPresentation();
     try {
       // The old feed and every session-lane callback become inert before the
       // old lanes are detached. A replacement can therefore never inherit an
@@ -1193,6 +1215,7 @@ export class RealBackend implements RunnerBackend {
       Object.values(this.#lanes) as TransferDirection[],
     );
     if (transferStalled && !this.#stalled) {
+      this.#clearUploadPresentation();
       this.#host!.stall({
         reason: "connection-lost",
         transport: this.#activeTransport ?? undefined,
@@ -1210,6 +1233,7 @@ export class RealBackend implements RunnerBackend {
   /** Stop every POST lane, wait for the server's terminal upload count, then
    *  release the stage state. */
   async #teardownTransfer(): Promise<void> {
+    this.#clearUploadPresentation();
     // A graceful WT stop finalizes in the worker; the progress teardown then
     // has nothing left to wait on. For fetch, BYE must follow the POST lanes,
     // so the server's final count includes everything they drained.
@@ -1221,6 +1245,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   #discardTransfer(): void {
+    this.#clearUploadPresentation();
     for (const direction of Object.values(this.#lanes)) direction!.discard();
     void this.#uploadProgress.teardown(false);
     this.#transferActive = false;
@@ -1240,6 +1265,38 @@ export class RealBackend implements RunnerBackend {
     // Resume the idle keepalive so the connectivity pill stays live instead of
     // freezing at its last-known state until the next probe or run.
     if (!this.#disposed && this.#background) this.#idle.start();
+  }
+
+  /** Emit only a temporary target for the gauge and compact live card. This
+   * path never reaches RunnerCore, so it cannot change measurements or charts. */
+  #emitUploadPresentation(): void {
+    const healthy =
+      this.#transferActive &&
+      !this.#stalled &&
+      !this.#uploadRotationInFlight &&
+      this.#lanes.up?.measuring === true;
+    const bytesPerSec = this.#uploadPresentation.target(
+      performance.now(),
+      healthy,
+    );
+    this.#host?.emit({ type: "uploadPresentation", bytesPerSec });
+    if (this.#uploadPresentationTimer)
+      clearTimeout(this.#uploadPresentationTimer);
+    this.#uploadPresentationTimer =
+      bytesPerSec === null
+        ? null
+        : setTimeout(() => {
+            this.#uploadPresentationTimer = null;
+            this.#emitUploadPresentation();
+          }, UPLOAD_PRESENTATION_HINT_MAX_AGE_MS + 1);
+  }
+
+  #clearUploadPresentation(): void {
+    if (this.#uploadPresentationTimer)
+      clearTimeout(this.#uploadPresentationTimer);
+    this.#uploadPresentationTimer = null;
+    this.#uploadPresentation.stop();
+    this.#host?.emit({ type: "uploadPresentation", bytesPerSec: null });
   }
 
   /** Suspend the idle keepalive while the page is hidden. Stopping it closes

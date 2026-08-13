@@ -50,7 +50,7 @@
     ) {
       completedKind = "speed";
       completedDisplay = {
-        value: fmtSpeed(store.toUnit(store.liveTransferBytesPerSec)),
+        value: fmtSpeed(store.toUnit(store.visualTransferBytesPerSec)),
         unit: store.unitLabel,
       };
     }
@@ -110,7 +110,7 @@
       return EMPTY_DISPLAY;
     if (p === "complete") return completedDisplay;
     return {
-      value: fmtSpeed(store.toUnit(store.liveTransferBytesPerSec)),
+      value: fmtSpeed(store.toUnit(store.visualTransferBytesPerSec)),
       unit: store.unitLabel,
     };
   });
@@ -226,7 +226,7 @@
         valueBytesPerSec:
           finalMetric?.kind === "speed"
             ? finalMetric.bytesPerSec
-            : store.liveTransferBytesPerSec,
+            : store.visualTransferBytesPerSec,
         scaleBytesPerSec: scale,
         latencyScaleMs: gaugeLatency.scaleMs,
         layout,

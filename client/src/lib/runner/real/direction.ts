@@ -41,6 +41,12 @@ export interface DirectionHost {
   ) => void;
   /** A server upload-progress record relayed by a session lane. */
   uploadProgress: (msg: WtProgressRelay, generation: number) => void;
+  /** Local upload completion metadata for an isolated visual bridge. */
+  uploadPresentationHint?: (
+    bytes: number,
+    elapsedMs: number,
+    generation: number,
+  ) => void;
   /** Open the upload meter's measured window. */
   beginUploadMeasure: () => void;
   /** Release every direction of the stage. */
@@ -248,7 +254,8 @@ export class TransferDirection {
     return {
       onProgress: (bytes, elapsedMs, seq) =>
         this.#onProgress(i, bytes, elapsedMs, seq),
-      onAlive: () => this.#onAlive(),
+      onAlive: (bytes, elapsedMs) =>
+        this.#onAlive(bytes, elapsedMs, generation),
       onError: (recoverable, detail) => this.#onError(i, detail, recoverable),
       onUploadProgress: (msg) => this.#deps.uploadProgress(msg, generation),
       onAuthRequired: () => {
@@ -332,9 +339,17 @@ export class TransferDirection {
     if (this.#stopping) this.#aggregate(aggregation);
   }
 
-  /** A completed unit of work with no byte count, which upload lanes report. */
-  #onAlive(): void {
+  /** Upload workers may report local completion timing. It is intentionally not
+   * liveness or measurement evidence; only the server feed can establish that. */
+  #onAlive(bytes?: number, elapsedMs?: number, generation?: number): void {
     if (!this.#live || this.#stopping) return;
+    if (
+      this.dir === "up" &&
+      bytes !== undefined &&
+      elapsedMs !== undefined &&
+      generation !== undefined
+    )
+      this.#deps.uploadPresentationHint?.(bytes, elapsedMs, generation);
   }
 
   /** A lane failed. Recoverable (the common case: a dropped connection) → stall
