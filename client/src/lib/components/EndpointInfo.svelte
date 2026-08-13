@@ -4,9 +4,9 @@
   import { BUILD } from "../buildenv";
   import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { buildSegments } from "../runner/schedule";
-  import { httpProtocolLabel } from "../runner/protocol";
   import {
     advertisedServerCapabilities,
+    pathEvidence,
     serverLoadSummary,
   } from "./endpointInfo";
   import type { TransportKind } from "../runner/contract";
@@ -37,17 +37,6 @@
         ? "trusted proxy"
         : "socket peer";
     return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
-  }
-
-  function protocolEvidence(role: PathRole) {
-    const connection = connections[role];
-    if (role === "latency")
-      return connection.serverProtocol
-        ? `Path check reached server over ${httpProtocolLabel(connection.serverProtocol)}`
-        : "Pending";
-    if (!connection.browserProtocol && !connection.serverProtocol)
-      return "Pending";
-    return `Browser to endpoint ${httpProtocolLabel(connection.browserProtocol)} · server received ${httpProtocolLabel(connection.serverProtocol)}`;
   }
 
   // One vocabulary throughout: TransportKind. Bare "webtransport" names the
@@ -112,8 +101,6 @@
   const throughputTransport = $derived(
     connections.throughput.target?.transport,
   );
-  const latencyTransport = $derived(connections.latency.target?.transport);
-
   // The lanes a stage opens depend on what it carries, so the run's own
   // timeline supplies the stages the count is resolved from.
   const transferStreams = $derived(
@@ -197,10 +184,14 @@
             <dd>{connection.summary}</dd>
           </div>
           <div>
-            <dt>
-              {role === "throughput" ? "Observed HTTP" : "Path check"}
-            </dt>
-            <dd>{protocolEvidence(role)}</dd>
+            <dt>Path evidence</dt>
+            <dd>
+              {pathEvidence(
+                role,
+                connection.browserProtocol,
+                connection.serverProtocol,
+              )}
+            </dd>
           </div>
           {#if role === "throughput"}
             <div>
@@ -252,12 +243,6 @@
           <dt>Throughput client</dt>
           <dd>{clientEvidence("throughput")}</dd>
         </div>
-        <div>
-          <dt>Transports</dt>
-          <dd>
-            {throughputTransport ?? "—"} · {latencyTransport ?? "—"}
-          </dd>
-        </div>
         {#if serverLoad}
           <div>
             <dt>Server load</dt>
@@ -285,9 +270,8 @@
         </div>
       </dl>
       <p class="diagnostic-note">
-        Server instance changes when the backend restarts. Browser protocol
-        describes the selected endpoint; server protocol is what its path check
-        delivered to Graphite Meter.
+        Server instance changes when the backend restarts. Path evidence names
+        browser and server observations only when that path exposes them.
       </p>
       <button type="button" onclick={copyReport}
         >{copied ? "Copied" : "Copy diagnostic report"}</button

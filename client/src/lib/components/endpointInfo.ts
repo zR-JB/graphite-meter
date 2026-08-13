@@ -3,6 +3,7 @@
 // a $derived.by in a component is reachable only from a browser.
 
 import type { TransportDiscovery, TransportKind } from "../runner/contract";
+import { httpProtocolLabel } from "../runner/protocol";
 
 /** Measurement occupancy as the server reported it at probe time. */
 export interface ServerLoad {
@@ -40,4 +41,20 @@ export function advertisedServerCapabilities(
     for (const target of entry.targets) transports.add(target.transport);
   }
   return { transports: [...transports], browserBlocked };
+}
+
+/** Protocol evidence has distinct observation points. A throughput response can
+ * expose both browser-facing and server-facing HTTP, while WebSocket and
+ * WebTransport latency paths only promise the server-side probe observation. */
+export function pathEvidence(
+  role: "throughput" | "latency",
+  browserProtocol?: string,
+  serverProtocol?: string,
+): string {
+  const evidence: string[] = [];
+  if (role === "throughput" && browserProtocol)
+    evidence.push(`Browser observed ${httpProtocolLabel(browserProtocol)}`);
+  if (serverProtocol)
+    evidence.push(`Server observed ${httpProtocolLabel(serverProtocol)}`);
+  return evidence.join(" · ") || "Pending";
 }

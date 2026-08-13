@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import type { TransportDiscovery } from "../runner/contract";
 import {
   advertisedServerCapabilities,
+  pathEvidence,
   serverLoadSummary,
 } from "./endpointInfo";
 
@@ -63,4 +64,17 @@ test("primary capabilities come from this server's discovery, not the runner", (
     browserBlocked: false,
   });
   expect(advertisedServerCapabilities(null, "latency")).toBeNull();
+});
+
+test("path evidence retains each protocol observation boundary", () => {
+  expect(pathEvidence("throughput", "h2", "http/1.1")).toBe(
+    "Browser observed HTTP/2 · Server observed HTTP/1.1",
+  );
+  expect(pathEvidence("throughput", undefined, "h3")).toBe(
+    "Server observed HTTP/3",
+  );
+  expect(pathEvidence("latency", "h2", "http/1.1")).toBe(
+    "Server observed HTTP/1.1",
+  );
+  expect(pathEvidence("latency")).toBe("Pending");
 });
