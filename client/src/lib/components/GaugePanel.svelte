@@ -511,6 +511,10 @@
      query moves Engage, the latency panel, and Test Stages together. */
   @container viz (min-width: 520px) {
     .instrument {
+      /* Wide, short viewports have no second vertical instrument row to use;
+         let this well contract there instead of forcing the main shell to
+         scroll. Mobile retains its stable viewport constraint above. */
+      --gauge-well-height: clamp(140px, 28svh, 320px);
       grid-template:
         "gauge latency" var(--gauge-well-height)
         "engage engage" auto
@@ -542,6 +546,12 @@
     /* Size container so the hero number scales with cqmin, the same smaller
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
+  }
+  @container viz (min-width: 520px) {
+    .stage,
+    .latency-panel {
+      min-height: 140px;
+    }
   }
   /* Engage's slot: RunButton centers itself (width:100%, max-width:320px,
      align-self:center), so this slot only has to be a flex row. */
@@ -704,6 +714,14 @@
     max-width: 760px;
     align-self: center;
     min-height: 108px;
+  }
+  /* A short desktop has no room to reserve a terminal-result strip before a
+     result exists. Let the empty slot collapse there; populated results still
+     retain their natural height and the stage keeps its scroll fallback. */
+  @media (min-width: 760px) and (max-height: 700px) {
+    .results-slot:empty {
+      min-height: 0;
+    }
   }
   /* Stacked: the document scrolls, so the reserve only reads as dead space
      between the controls and the chart. Collapsed here, results push the

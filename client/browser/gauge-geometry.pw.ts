@@ -62,3 +62,33 @@ for (const viewport of [
     ).toBeLessThanOrEqual(1);
   });
 }
+
+for (const viewport of [
+  { width: 1024, height: 640 },
+  { width: 1024, height: 768 },
+  { width: 1200, height: 800 },
+  { width: 1366, height: 768 },
+  { width: 1440, height: 900 },
+]) {
+  test(`desktop gauge fits the stage at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/?engine=dummy");
+    const withLatency = await gaugeBox(page, true);
+    const withoutLatency = await gaugeBox(page, false);
+    expect(
+      Math.abs(withLatency.width - withoutLatency.width),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(withLatency.height - withoutLatency.height),
+    ).toBeLessThanOrEqual(1);
+    const stage = await page
+      .locator("#console > section.stage")
+      .evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      }));
+    expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
+  });
+}

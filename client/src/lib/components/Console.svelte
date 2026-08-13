@@ -375,12 +375,14 @@
      chart, so the stage column overflows and scrolls instead. */
   .stage > :global(.gauge-panel) {
     flex: 3 1 auto;
+    min-height: 0;
   }
   /* The chart takes leftover height, capped so a tall viewport returns the
      excess to the gauge. Its ResizeObserver re-rasterizes the canvas, and its
      flex-basis is the 140px plot floor. */
   .stage > :global(.chart) {
-    flex: 1 0 auto;
+    flex: 1 1 140px;
+    min-height: 0;
     max-height: 340px;
   }
   .status {
