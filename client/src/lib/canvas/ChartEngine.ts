@@ -20,11 +20,7 @@ import {
 import { throughputSamplesContinuous } from "./throughputContinuity";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
-import {
-  latencyBucketsContinuous,
-  materiallyDifferentP95,
-  nearestLatencyBucketInContinuity,
-} from "./latencyContinuity";
+import { nearestLatencyGlyph } from "./latencyGlyph";
 import {
   chartLayout,
   type ChartLayout,
@@ -65,9 +61,9 @@ export interface HoverInfo {
   /** Bidirectional's two concurrent lanes; null outside that phase. */
   downBytesPerSec: number | null;
   upBytesPerSec: number | null;
+  /** The real bucket glyph selected near the pointer, never an interpolated RTT. */
+  latencyX: number | null;
   rtt: number | null;
-  rttP95: number | null;
-  rttMax: number | null;
   pingCount: number;
   lossCount: number;
 }
@@ -295,11 +291,13 @@ export class ChartEngine implements CanvasEngine {
       (s) => s.bytesPerSec,
       throughputSamplesContinuous,
     );
-    let latencyBucket: LatencyBucket | null = null;
-    for (const lane of this.#latencyIndex.values()) {
-      latencyBucket = nearestLatencyBucketInContinuity(lane, t);
-      if (latencyBucket) break;
-    }
+    const latencyGlyph = nearestLatencyGlyph(
+      this.#latencyIndex.values(),
+      x,
+      (bucketT) => this.#x(bucketT),
+    );
+    const latencyBucket = latencyGlyph?.bucket ?? null;
+    const latencyX = latencyGlyph?.x ?? null;
     const rtt = latencyBucket?.medianRttMs ?? null;
     const info: HoverInfo = {
       x,
@@ -307,16 +305,8 @@ export class ChartEngine implements CanvasEngine {
       bytesPerSec,
       downBytesPerSec,
       upBytesPerSec,
+      latencyX,
       rtt,
-      rttP95:
-        latencyBucket &&
-        materiallyDifferentP95(
-          latencyBucket.medianRttMs,
-          latencyBucket.p95RttMs,
-        )
-          ? latencyBucket.p95RttMs
-          : null,
-      rttMax: latencyBucket?.maxRttMs ?? null,
       pingCount: latencyBucket?.pingCount ?? 0,
       lossCount: latencyBucket?.lossCount ?? 0,
     };
@@ -761,69 +751,26 @@ export class ChartEngine implements CanvasEngine {
     ctx.lineWidth = 1;
     const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
-    let previous: LatencyBucket | null = null;
-    const segment: Array<{ t: number; rttMs: number; underLoad: boolean }> = [];
-    const drawSegment = (): void => {
-      if (segment.length === 1) {
-        ctx.fillStyle = segment[0].underLoad
-          ? this.#colors.warn
-          : this.#colors.signal;
-        ctx.beginPath();
-        ctx.arc(
-          this.#x(segment[0].t),
-          this.#yR(segment[0].rttMs),
-          1.75,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-        segment.length = 0;
-        return;
-      }
-      if (segment.length === 0) {
-        segment.length = 0;
-        return;
-      }
-      const pts = segment.map((p) => ({
-        x: this.#x(p.t),
-        y: this.#yR(p.rttMs),
-      }));
-      ctx.strokeStyle = segment[0].underLoad
-        ? this.#colors.warn
-        : this.#colors.signal;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.stroke();
-      segment.length = 0;
-    };
     for (let i = lo; i < hi; i++) {
       const s = all[i];
-      const broken =
-        previous !== null && !latencyBucketsContinuous(previous, s);
-      if (broken) drawSegment();
+      const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
       if (s.medianRttMs != null) {
-        segment.push({
-          t: s.t,
-          rttMs: s.medianRttMs,
-          underLoad: s.underLoad,
-        });
+        const x = this.#x(s.t);
+        const medianY = this.#yR(s.medianRttMs);
         const spike = s.maxRttMs ?? s.p95RttMs;
         if (spike != null && spike > s.medianRttMs) {
-          const x = this.#x(s.t);
-          ctx.strokeStyle = s.underLoad
-            ? this.#colors.warn
-            : this.#colors.signal;
+          ctx.strokeStyle = color;
           ctx.beginPath();
-          ctx.moveTo(x, this.#yR(s.medianRttMs));
+          ctx.moveTo(x, medianY);
           ctx.lineTo(x, this.#yR(spike));
           ctx.stroke();
         }
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, medianY, 2.25, 0, Math.PI * 2);
+        ctx.fill();
         if (latencyBucketExceedsScale(s, this.#vp.rttMax)) {
-          const x = this.#x(s.t);
-          ctx.fillStyle = s.underLoad ? this.#colors.warn : this.#colors.signal;
+          ctx.fillStyle = color;
           ctx.beginPath();
           ctx.moveTo(x, this.#layout.plot.top);
           ctx.lineTo(x - 3, this.#layout.plot.top + 5);
@@ -837,9 +784,7 @@ export class ChartEngine implements CanvasEngine {
         ctx.fillStyle = this.#colors.warn;
         ctx.fillRect(x - 1.5, this.#layout.plot.bottom - 5, 3, 5);
       }
-      previous = s;
     }
-    drawSegment();
   }
 
   #drawHover(ctx: CanvasRenderingContext2D): void {
@@ -873,6 +818,11 @@ export class ChartEngine implements CanvasEngine {
       dot(this.#yL(info.downBytesPerSec), this.#colors.download);
     if (info.upBytesPerSec != null)
       dot(this.#yL(info.upBytesPerSec), this.#colors.upload);
-    if (info.rtt != null) dot(this.#yR(info.rtt), this.#colors.warn);
+    if (info.rtt != null && info.latencyX != null) {
+      ctx.fillStyle = this.#colors.warn;
+      ctx.beginPath();
+      ctx.arc(info.latencyX, this.#yR(info.rtt), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

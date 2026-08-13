@@ -71,7 +71,7 @@
     engine = new ChartEngine(
       () => ({
         throughput: store.throughput,
-        latency: store.latency, // raw: the engine buckets the line, axis and hover use raw
+        latency: store.latency, // raw event-time buckets drive glyphs, axes, and hover
         latencyRevision: store.latencyRevision,
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
@@ -217,11 +217,6 @@
         {#if hover.rtt != null}
           <div class="chip-row">
             <span>median</span><b>{fmtMs(hover.rtt)} ms</b>
-          </div>
-        {/if}
-        {#if hover.rttP95 != null}
-          <div class="chip-row">
-            <span>p95</span><b>{fmtMs(hover.rttP95)} ms</b>
           </div>
         {/if}
         {#if hover.lossCount > 0}
