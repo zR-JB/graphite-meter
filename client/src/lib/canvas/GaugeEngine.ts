@@ -9,6 +9,8 @@ import { gaugeLayout, type GaugeLayout } from "./gaugeLayout";
 
 export interface GaugeState {
   phase: Phase;
+  /** Failed stages with no retained result show the dial base without a head. */
+  showValue?: boolean;
   valueBytesPerSec: number;
   scaleBytesPerSec: number;
   latencyScaleMs: number;
@@ -49,6 +51,7 @@ export class GaugeEngine implements CanvasEngine {
 
   #lastPhase: Phase | null = null;
   #sweep = 0;
+  #showValue = true;
   #lastFrame = 0;
   #layout: GaugeLayout = gaugeLayout(0, 0, 0);
 
@@ -132,6 +135,7 @@ export class GaugeEngine implements CanvasEngine {
   #step(now: number): boolean {
     const s = this.#get();
     this.#layout = s.layout;
+    this.#showValue = s.showValue ?? true;
 
     if (s.phase !== this.#lastPhase) {
       this.#resolveColors(s.phase);
@@ -176,7 +180,7 @@ export class GaugeEngine implements CanvasEngine {
       ctx.restore();
     }
 
-    if (sweep > 0.002) {
+    if (this.#showValue && sweep > 0.002) {
       ctx.strokeStyle = this.#accent;
       ctx.lineWidth = arcW;
       ctx.beginPath();

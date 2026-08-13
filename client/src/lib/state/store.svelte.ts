@@ -53,6 +53,11 @@ import {
   latestOneWayThroughputForPhase,
   latestBidirectionalLanes,
 } from "./stageGuards";
+import {
+  deriveStagePresentation,
+  STAGE_ORDER,
+  type StagePresentation,
+} from "./stagePresentation";
 import { DEFAULT_CONFIG } from "./defaults";
 import {
   loadPersisted,
@@ -74,7 +79,7 @@ const TERMINAL_PHASES: readonly Phase[] = [
   "error",
 ];
 export interface LatencyLane {
-  key: StageKey;
+  key: TransportRole;
   min: number | null;
   max: number | null;
   p10: number | null;
@@ -296,6 +301,36 @@ class AppStore {
 
   transferFailures = $derived.by<StageFailure[]>(() =>
     TRANSFER_STAGES.flatMap((stage) => this.stageFailures[stage] ?? []),
+  );
+
+  /** The sole result/failure/phase status for every configured instrument. */
+  stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
+    () => {
+      const bidi = this.result?.bidirectional;
+      return Object.fromEntries(
+        STAGE_ORDER.map((stage) => {
+          const failure = this.stageFailures[stage] != null;
+          const hasUsableResult =
+            stage === "bidirectional"
+              ? failure
+                ? !!(bidi?.down || bidi?.up)
+                : !!(bidi?.down && bidi?.up)
+              : this.stageResults[stage] != null;
+          return [
+            stage,
+            deriveStagePresentation(stage, {
+              configured: this.runConfig.stages[stage],
+              phase: this.phase,
+              phaseStage: this.phaseStage,
+              phaseFraction: this.phaseFraction,
+              measuring: this.measuring,
+              hasUsableResult,
+              hasFailure: failure,
+            }),
+          ];
+        }),
+      ) as Record<TransportRole, StagePresentation>;
+    },
   );
 
   activeStages = $derived.by<StageKey[]>(() =>
@@ -611,7 +646,7 @@ class AppStore {
   }
 
   latencyLanes = $derived.by<LatencyLane[]>(() =>
-    MEASURED_STAGES.map((key) => {
+    STAGE_ORDER.map((key) => {
       // Bucket by the sample's stamped phase. Pre-test pings are phase "idle",
       // so they never contaminate the measured latency lane.
       const laneSamples = this.latency.filter((s) =>
@@ -656,7 +691,9 @@ class AppStore {
         jitter,
         lossRatio,
         count: pingCount,
-        active: this.phase === key,
+        active:
+          this.stagePresentation[key].status === "active" ||
+          this.stagePresentation[key].status === "recovering",
       };
     }),
   );

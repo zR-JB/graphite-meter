@@ -5,12 +5,7 @@
   import { applyLiveRunConfig } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
-  import {
-    stageIndex,
-    segmentState,
-    bidirectionalState,
-    lockReason,
-  } from "./stageTrack";
+  import { segmentState, lockReason } from "./stageTrack";
 
   const STAGES: { key: StageKey; label: string; icon: string }[] = [
     { key: "latency", label: "Latency", icon: ICON.ping },
@@ -23,22 +18,17 @@
   }
 
   const segments = $derived.by(() => {
-    const currentIndex = stageIndex(store.phaseStage);
     return STAGES.map((stage) => {
-      const enabled = store.config.stages[stage.key];
-      const failure = store.stageFailures[stage.key];
+      const presentation = store.stagePresentation[stage.key];
+      const enabled = presentation.configured;
+      const failure = presentation.failure
+        ? store.stageFailures[stage.key]
+        : undefined;
       const locked = !store.canToggleStage(stage.key);
-      const { state, fill } = segmentState(
-        store.phase,
-        store.phaseFraction,
-        stage.key,
-        enabled,
-        !!failure,
-        currentIndex,
-      );
+      const { state, fill } = segmentState(presentation);
       const reason = enabled
         ? failure
-          ? "failed"
+          ? presentation.status
           : lockReason(!locked, store.phase, store.phaseStage, stage.key, state)
         : store.phase !== "idle"
           ? "skipped"
@@ -47,14 +37,9 @@
     });
   });
 
+  const bidiPresentation = $derived(store.stagePresentation.bidirectional);
   const bidi = $derived(
-    bidirectionalState(
-      store.phase,
-      store.phaseFraction,
-      store.phaseStage,
-      store.config.stages.bidirectional,
-      !!store.stageFailures.bidirectional,
-    ),
+    bidiPresentation.configured ? segmentState(bidiPresentation) : null,
   );
 
   const segmentCount = $derived(segments.length + (bidi ? 1 : 0));
@@ -90,11 +75,11 @@
           <span class="seg-fill seg-fill--warmup"></span>
         {:else if s.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
-        {:else if s.state === "active" || s.state === "done"}
+        {:else if s.state === "active" || s.state === "recovering" || s.state === "complete" || s.state === "partial"}
           <span
             class="seg-fill seg-fill--{s.key}"
-            class:is-done={s.state === "done"}
-            class:is-stalled={s.state === "active" && !store.measuring}
+            class:is-done={s.state === "complete" || s.state === "partial"}
+            class:is-stalled={s.state === "recovering"}
             style="width:{s.fill}%"
           ></span>
         {/if}
@@ -106,7 +91,7 @@
         </span>
         {#if s.reason}
           <span class="seg-tag">{s.reason}</span>
-        {:else if s.state === "done"}
+        {:else if s.state === "complete"}
           <span class="seg-ico seg-check">{@html ICON.check}</span>
         {/if}
       </span>
@@ -121,8 +106,8 @@
       aria-label="Bidirectional stage{store.canDisableBidirectional()
         ? ' — tap to exclude'
         : ' (running)'}"
-      use:tooltip={store.stageFailures.bidirectional
-        ? `Bi-dir — ${store.stageFailures.bidirectional.message}`
+      use:tooltip={bidiPresentation.failure
+        ? `Bi-dir — ${store.stageFailures.bidirectional?.message}`
         : store.canDisableBidirectional()
           ? "Bidirectional — concurrent down + up. Tap to exclude (re-enable in Settings)."
           : "Bidirectional — running."}
@@ -136,11 +121,12 @@
           <span class="seg-fill seg-fill--warmup"></span>
         {:else if bidi.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
-        {:else if bidi.state === "active" || bidi.state === "done"}
+        {:else if bidi.state === "active" || bidi.state === "recovering" || bidi.state === "complete" || bidi.state === "partial"}
           <span
             class="seg-fill seg-fill--bidirectional"
-            class:is-done={bidi.state === "done"}
-            class:is-stalled={bidi.state === "active" && !store.measuring}
+            class:is-done={bidi.state === "complete" ||
+              bidi.state === "partial"}
+            class:is-stalled={bidi.state === "recovering"}
             style="width:{bidi.fill}%"
           ></span>
         {/if}
@@ -150,7 +136,11 @@
           <span class="seg-ico">{@html ICON.bidirectional}</span>
           <span class="seg-label">Bi-dir</span>
         </span>
-        {#if bidi.state === "done"}
+        {#if bidiPresentation.status === "partial"}
+          <span class="seg-tag">partial</span>
+        {:else if bidiPresentation.status === "failed"}
+          <span class="seg-tag">failed</span>
+        {:else if bidi.state === "complete"}
           <span class="seg-ico seg-check">{@html ICON.check}</span>
         {/if}
       </span>
@@ -350,7 +340,8 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .seg--failed .seg-tag {
+  .seg--failed .seg-tag,
+  .seg--partial .seg-tag {
     border-color: color-mix(in srgb, var(--err) 35%, var(--border-subtle));
     color: var(--err);
   }

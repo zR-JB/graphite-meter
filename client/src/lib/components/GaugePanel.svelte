@@ -16,6 +16,10 @@
     if (store.phase === "idle") return "none";
     return "partial";
   });
+  const activeStagePresentation = $derived(
+    store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
+  );
+  const unusableStage = $derived(activeStagePresentation?.status === "failed");
 
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();
@@ -86,16 +90,18 @@
     gaugeLayout(gaugeSize.width, gaugeSize.height, gaugeTicks.length),
   );
   const showGaugeTicks = $derived(
-    (store.phase === "latency" ||
-      store.phase === "download" ||
-      store.phase === "upload" ||
-      store.phase === "bidirectional" ||
-      store.phase === "complete") &&
+    !unusableStage &&
+      (store.phase === "latency" ||
+        store.phase === "download" ||
+        store.phase === "upload" ||
+        store.phase === "bidirectional" ||
+        store.phase === "complete") &&
       gaugeTicks.length > 1,
   );
 
   const display = $derived.by(() => {
     const p = store.phase;
+    if (unusableStage) return EMPTY_DISPLAY;
     if (p === "latency")
       return store.liveLatencyLost
         ? { value: "lost", unit: "" }
@@ -223,8 +229,10 @@
       const finalMetric = p === "complete" ? store.finalMetric : null;
       return {
         phase: p,
-        valueBytesPerSec:
-          finalMetric?.kind === "speed"
+        showValue: !unusableStage,
+        valueBytesPerSec: unusableStage
+          ? 0
+          : finalMetric?.kind === "speed"
             ? finalMetric.bytesPerSec
             : store.visualTransferBytesPerSec,
         scaleBytesPerSec: scale,

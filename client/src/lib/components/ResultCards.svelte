@@ -14,8 +14,12 @@
   const dash = "—";
 
   function transferModel(phase: "download" | "upload") {
+    const presentation = store.stagePresentation[phase];
     const stability = store.liveStability[phase];
-    if (store.phase === phase) {
+    if (
+      presentation.status === "active" ||
+      presentation.status === "recovering"
+    ) {
       const live = store.liveCompensation;
       const measuredBytesPerSec = compact
         ? store.visualTransferBytesPerSec
@@ -29,6 +33,7 @@
         score: stability?.score ?? 0,
         active: true,
         has: measuredBytesPerSec > 0,
+        status: presentation.status,
       };
     }
     const stageResult = store.stageResults[phase];
@@ -45,6 +50,7 @@
       score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
       has: !!stageResult,
+      status: presentation.status,
     };
   }
 
@@ -52,8 +58,12 @@
   const upload = $derived.by(() => transferModel("upload"));
 
   const bidi = $derived.by(() => {
+    const presentation = store.stagePresentation.bidirectional;
     const stability = store.liveStability.bidirectional;
-    if (store.phase === "bidirectional") {
+    if (
+      presentation.status === "active" ||
+      presentation.status === "recovering"
+    ) {
       const live = (compact
         ? store.visualBidirectional
         : store.liveBidirectional) ?? { down: 0, up: 0 };
@@ -65,6 +75,7 @@
         score: stability?.score ?? 0,
         active: true,
         has: live.down + live.up > 0,
+        status: presentation.status,
       };
     }
     const result = store.result?.bidirectional;
@@ -78,6 +89,7 @@
       score: result?.down?.stabilityScore ?? 0,
       active: false,
       has: !!result,
+      status: presentation.status,
     };
   });
 
@@ -90,8 +102,12 @@
   }
 
   const ping = $derived.by(() => {
+    const presentation = store.stagePresentation.latency;
     const stability = store.liveStability.latency;
-    if (store.phase === "latency") {
+    if (
+      presentation.status === "active" ||
+      presentation.status === "recovering"
+    ) {
       return {
         ms: store.liveRtt,
         lost: store.liveLatencyLost,
@@ -99,6 +115,7 @@
         score: stability?.score ?? 0,
         active: true,
         has: store.liveRtt > 0,
+        status: presentation.status,
       };
     }
     const stageResult = store.stageResults.latency;
@@ -110,20 +127,25 @@
       score: stageResult?.stabilityScore ?? stability?.score ?? 0,
       active: false,
       has: reported != null,
+      status: presentation.status,
     };
   });
 
   const showPing = $derived(
-    store.runConfig.stages.latency && (ping.active || ping.has),
+    store.stagePresentation.latency.status !== "disabled" &&
+      store.stagePresentation.latency.status !== "pending",
   );
   const showDownload = $derived(
-    store.runConfig.stages.download && (download.active || download.has),
+    store.stagePresentation.download.status !== "disabled" &&
+      store.stagePresentation.download.status !== "pending",
   );
   const showUpload = $derived(
-    store.runConfig.stages.upload && (upload.active || upload.has),
+    store.stagePresentation.upload.status !== "disabled" &&
+      store.stagePresentation.upload.status !== "pending",
   );
   const showBidi = $derived(
-    store.runConfig.stages.bidirectional && (bidi.active || bidi.has),
+    store.stagePresentation.bidirectional.status !== "disabled" &&
+      store.stagePresentation.bidirectional.status !== "pending",
   );
 
   const downloadInUnit = $derived(store.toUnit(download.measuredBytesPerSec));
@@ -147,19 +169,30 @@
     showPip: boolean;
     band: "low" | "medium" | "high";
     score: number;
+    status:
+      | "disabled"
+      | "pending"
+      | "active"
+      | "recovering"
+      | "complete"
+      | "partial"
+      | "failed";
     num: string; // pre-formatted, or the dash
     unit: string;
     sub?: string; // per-direction detail (bidirectional only)
     wire: CardWire;
   }
 
-  function wireFor(m: {
-    has: boolean;
-    multiplier: number;
-    estimatedBytesPerSec: number;
-    available: boolean;
-  }): CardWire {
-    if (!showWire || !m.has) return null;
+  function wireFor(
+    m: {
+      has: boolean;
+      multiplier: number;
+      estimatedBytesPerSec: number;
+      available: boolean;
+    },
+    status: CardVM["status"],
+  ): CardWire {
+    if (!showWire || !m.has || status !== "complete") return null;
     if (!m.available)
       return { kind: "flat", text: "loopback — no physical wire" };
     if (lifted(m.multiplier))
@@ -186,12 +219,13 @@
       term: false,
       active: model.active,
       hasVal,
-      showPip: hasVal && !model.active,
+      showPip: hasVal && model.status === "complete",
       band: model.band,
       score: model.score,
+      status: model.status,
       num: hasVal ? fmtSpeed(shown) : dash,
       unit: store.unitLabel,
-      wire: wireFor(model),
+      wire: wireFor(model, model.status),
     };
   }
 
@@ -212,9 +246,10 @@
         term: false,
         active: bidi.active,
         hasVal: bidi.has,
-        showPip: bidi.has && !bidi.active,
+        showPip: bidi.has && bidi.status === "complete",
         band: bidi.band,
         score: bidi.score,
+        status: bidi.status,
         num: bidi.has ? fmtSpeed(bidiInUnit) : dash,
         unit: store.unitLabel,
         sub: bidi.has
@@ -231,9 +266,10 @@
         term: true,
         active: ping.active,
         hasVal: ping.has,
-        showPip: ping.has && !ping.active,
+        showPip: ping.has && ping.status === "complete",
         band: ping.band,
         score: ping.score,
+        status: ping.status,
         num:
           ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
         unit: ping.active && ping.lost ? "" : "ms",
@@ -264,6 +300,11 @@
           use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
           >{c.band}</span
         >
+      {/if}
+      {#if c.status === "partial"}
+        <span class="partial">Partial</span>
+      {:else if c.status === "failed"}
+        <span class="partial">Failed</span>
       {/if}
     </header>
     <div class="val">
@@ -347,6 +388,15 @@
   .result-card:hover {
     transform: translateY(-1px);
     border-color: var(--border-strong);
+  }
+  .partial {
+    margin-left: auto;
+    color: var(--err);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   @media (prefers-reduced-motion: no-preference) {
