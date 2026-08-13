@@ -1113,7 +1113,7 @@ test("adaptive completion can be disabled before a stable stage arms", async () 
 // Exact presentation and fixed-time stability from the same observations
 // ---------------------------------------------------------------------------
 
-test("raw samples reduce at source cadence while display events stay at 10 Hz", async () => {
+test("raw samples reduce at source cadence while presentation snapshots are capped at about 60 ms", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -1124,7 +1124,9 @@ test("raw samples reduce at source cadence while display events stay at 10 Hz", 
     fakeNow += 20;
     core.ingestThroughput("down", 1000, 20, 0.02);
   }
-  expect(events.filter((event) => event.type === "throughput").length).toBe(10);
+  // 20 ms observations update the reducer every time; the central publication
+  // gate emits at 20, 80, …, 980 ms without synthesizing any source sample.
+  expect(events.filter((event) => event.type === "throughput").length).toBe(17);
 
   advance(1000);
   const complete = events.find((event) => event.type === "complete");

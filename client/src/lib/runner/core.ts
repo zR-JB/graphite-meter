@@ -41,7 +41,10 @@ import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { GrowingRateEstimator } from "./rateEstimator";
 import { LatencyPresentationBuckets } from "./latencyBuckets";
 
-const RUNNER_DEADLINE_MS = 100;
+// This bounds only runner publication/progress work. Authoritative sources keep
+// their own cadence; the core never creates an observation to fill this slot.
+const PRESENTATION_CADENCE_MS = 60;
+const RUNNER_DEADLINE_MS = PRESENTATION_CADENCE_MS;
 const STABILITY_CADENCE_MS = 100;
 
 // Stall deadlines use wall time; result accounting retains the dead-air duration.
@@ -581,7 +584,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
     if (
       estimate.regimeChanged ||
-      now - this.#lastThroughputDisplayAt[dir] >= RUNNER_DEADLINE_MS
+      now - this.#lastThroughputDisplayAt[dir] >= PRESENTATION_CADENCE_MS
     ) {
       this.#lastThroughputDisplayAt[dir] = now;
       this.#emitThroughputPresentation(dir, estimate.presentedBytesPerSec);
