@@ -20,7 +20,12 @@
   const activeStagePresentation = $derived(
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
   );
-  const unusableStage = $derived(activeStagePresentation?.status === "failed");
+  // A one-sided bidirectional partial retains its lane result for diagnostics,
+  // but has no truthful combined gauge value.
+  const unusableStage = $derived(
+    activeStagePresentation?.status === "failed" ||
+      (store.phase === "complete" && store.finalMetric === null),
+  );
 
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();

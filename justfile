@@ -196,10 +196,10 @@ client-browser:
     cd client && bun run test:browser
 
 # End to end: boots the server and moves bytes over every real transport from
-# a real browser, through the production lanes. The only check where both ends
-# are real. Chromium only: QUIC ignores ignoreHTTPSErrors, and Firefox reaches
-# h3 only through a system trust anchor. Needs Go and openssl; the certificate
-# is generated per run, so nothing is a prerequisite.
+# a real browser, through the production lanes. The H3 cells are Chromium-only:
+# QUIC ignores ignoreHTTPSErrors, while Firefox needs a system trust anchor.
+# H1-clear fetch cells run on both. Needs Go and openssl; the certificate is
+# generated per run, so nothing is a prerequisite.
 client-e2e:
     #!/usr/bin/env sh
     set -e

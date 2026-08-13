@@ -493,7 +493,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
         if (sameStage) {
           if (!this.#stageFailures.has(seg.activity.stage))
-            this.#backend.onStageMeasure(seg.activity);
+            this.#startStageMeasure(seg.activity);
           return;
         }
 
@@ -511,7 +511,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
                 seg.phase !== "warmup" &&
                 !this.#stageFailures.has(seg.activity.stage)
               )
-                this.#backend.onStageMeasure(seg.activity);
+                this.#startStageMeasure(seg.activity);
               this.#tick();
               this.#armTick();
             },
@@ -539,7 +539,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
           seg.phase !== "warmup" &&
           !this.#stageFailures.has(seg.activity.stage)
         )
-          this.#backend.onStageMeasure(seg.activity);
+          this.#startStageMeasure(seg.activity);
       };
 
       if (prev && !sameStage && this.#waitForStageEnd(prev.activity, enter))
@@ -559,6 +559,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       phaseBudgetMs,
       measuring: this.#measuring,
     });
+  }
+
+  /** A measured stage receives a fresh silence budget. Preparation and warmup
+   * deliberately produce no transfer evidence, so neither may inherit the
+   * previous stage's watchdog deadline. */
+  #startStageMeasure(activity: PhaseActivity): void {
+    this.#lastSampleWall = performance.now();
+    this.#backend.onStageMeasure(activity);
   }
 
   /* ================= SAMPLE INGEST (CoreHost) ================= */

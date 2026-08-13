@@ -497,6 +497,30 @@ test("asynchronous stage preparation cannot consume the warmup budget", async ()
   ]);
 });
 
+test("asynchronous preparation starts the measured silence budget", async () => {
+  let prepared!: () => void;
+  class PreparingBackend extends FakeBackend {
+    override onStageBegin(activity: PhaseActivity): Promise<void> {
+      super.onStageBegin(activity);
+      return new Promise((resolve) => (prepared = resolve));
+    }
+  }
+  const backend = new PreparingBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+  advance(2_000); // Valid connection/setup work can exceed the watchdog.
+  prepared();
+  await Promise.resolve();
+
+  advance(1_499);
+  expect(events.some((e) => e.type === "stall")).toBe(false);
+  advance(2);
+  expect(events.some((e) => e.type === "stall")).toBe(true);
+});
+
 // ---------------------------------------------------------------------------
 // Measured test-time clock: stalls count, but cannot finalize a phase
 // ---------------------------------------------------------------------------
