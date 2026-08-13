@@ -35,8 +35,9 @@
       tabindex="-1"
       use:focusTrap={true}
       onkeydown={(event) => {
+        event.stopPropagation();
         if (event.key === "Escape") {
-          event.stopPropagation();
+          event.preventDefault();
           onCancel();
         }
       }}

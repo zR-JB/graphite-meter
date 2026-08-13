@@ -192,6 +192,16 @@ test("reset settings confirms, preserves on cancel, and restores defaults", asyn
   await expect(
     dialog.getByRole("heading", { name: "Reset settings?" }),
   ).toBeVisible();
+  const themeButton = page.getByRole("button", { name: /^Theme:/ });
+  const themeBefore = await themeButton.getAttribute("aria-label");
+  expect(themeBefore).not.toBeNull();
+  const keepSettings = dialog.getByRole("button", { name: "Keep settings" });
+  await expect(keepSettings).toBeFocused();
+  await keepSettings.press("s");
+  await keepSettings.press("t");
+  await expect(settings).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await expect(themeButton).toHaveAttribute("aria-label", themeBefore!);
   const accessibility = await new AxeBuilder({ page })
     .include('[aria-label="Settings"]')
     .include('[role="alertdialog"]')
