@@ -35,6 +35,19 @@ test("flank labels keep more clearance than the aligned top label", () => {
   );
 });
 
+test("gauge labels preserve symmetric optical radial tiers", () => {
+  const layout = gaugeLayout(480, 260, 5);
+  const distance = (point: { x: number; y: number }) =>
+    Math.hypot(point.x - layout.center.x, point.y - layout.center.y);
+  const radii = layout.labelPoints.map(distance);
+
+  expect(radii[1]).toBeCloseTo(radii[3], 8);
+  expect(radii[0]).toBeCloseTo(radii[4], 8);
+  expect(radii[1]).toBeGreaterThan(radii[0]!);
+  expect(radii[0]).toBeGreaterThan(radii[2]!);
+  expect(layout.labelPoints[2]!.x).toBeCloseTo(layout.center.x, 8);
+});
+
 test("gauge layout has a finite fallback before its container is measured", () => {
   const layout = gaugeLayout(0, 0, 0);
   expect(layout.width).toBe(1);

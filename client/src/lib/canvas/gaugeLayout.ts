@@ -57,10 +57,10 @@ export function gaugeLayout(
       const angle = ARC_START + fraction * ARC_SWEEP;
       const horizontal = Math.cos(angle);
       const vertical = Math.sin(angle);
-      // Flank labels extend back toward the arc because their text is
-      // outward-anchored. Give those labels extra radial clearance while the
-      // top and bottom labels retain their established optical placement.
-      const labelRadius = tickOuter + 7 + (Math.abs(horizontal) > 0.35 ? 5 : 0);
+      const flank = Math.abs(horizontal) > 0.35;
+      const opticalOffset =
+        flank && vertical < -0.35 ? 4 : flank && vertical > 0.35 ? 2 : 0;
+      const labelRadius = tickOuter + 7 + (flank ? 5 : 0) + opticalOffset;
       const point = pointAt(angle, labelRadius);
       return {
         ...point,

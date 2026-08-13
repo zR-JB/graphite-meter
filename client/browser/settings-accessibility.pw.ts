@@ -47,22 +47,196 @@ test("connection paths stay single-column by default and reflow after a dock res
   await page.goto("/?engine=dummy");
   await page.getByRole("button", { name: "Open settings" }).click();
 
-  const columns = () =>
-    page
-      .locator('[aria-label="Settings"] .options')
-      .first()
-      .evaluate((element) => getComputedStyle(element).gridTemplateColumns);
-  expect((await columns()).trim().split(/\s+/)).toHaveLength(1);
+  const settings = page.locator('[aria-label="Settings"]');
+  const columnCount = (locator: import("@playwright/test").Locator) =>
+    locator.evaluate((element) => {
+      const columns = getComputedStyle(element).gridTemplateColumns.trim();
+      return columns ? columns.split(/\s+/).length : 0;
+    });
+  const setupGrid = settings.locator(".setup-grid");
+  const optionsGrid = settings.locator(".options").first();
+  const setupColumns = () => columnCount(setupGrid);
+  const optionColumns = () => columnCount(optionsGrid);
+  expect(await optionColumns()).toBe(1);
+  expect(await setupColumns()).toBe(1);
+  const durationTops = await settings
+    .locator(".dur-cell")
+    .evaluateAll((cells) =>
+      cells.map((cell) => cell.getBoundingClientRect().top),
+    );
+  expect(durationTops).toHaveLength(4);
+  expect(
+    Math.max(...durationTops) - Math.min(...durationTops),
+  ).toBeLessThanOrEqual(1);
+  await expect
+    .poll(async () =>
+      settings
+        .locator(".panel-body")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    )
+    .toBe(true);
 
   const resize = page.getByRole("slider", {
     name: "Resize Settings panel (arrow keys; Enter to reset)",
   });
-  for (let step = 0; step < 4; step++) await resize.press("Shift+ArrowRight");
-  // The same keyboard-resize path users take must reflow the panel's inner
-  // cards. Waiting for the container query avoids sampling an in-flight paint.
+  let setupMultiColumnStep = -1;
+  let optionsMultiColumnStep = -1;
+  for (
+    let step = 1;
+    step <= 20 && (setupMultiColumnStep < 0 || optionsMultiColumnStep < 0);
+    step++
+  ) {
+    await resize.press("ArrowRight");
+    await page.waitForTimeout(50);
+    if (setupMultiColumnStep < 0 && (await setupColumns()) > 1)
+      setupMultiColumnStep = step;
+    if (optionsMultiColumnStep < 0 && (await optionColumns()) > 1)
+      optionsMultiColumnStep = step;
+  }
+  expect(setupMultiColumnStep).toBe(optionsMultiColumnStep);
   await expect
-    .poll(async () => (await columns()).trim().split(/\s+/).length)
-    .toBeGreaterThan(1);
+    .poll(async () =>
+      settings
+        .locator(".panel-body")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    )
+    .toBe(true);
+});
+
+test("endpoint cards own responsive details without panel overflow", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Toggle endpoint info" }).click();
+  const endpoint = page.locator('[aria-label="Endpoint info"]');
+  const grid = endpoint.locator(".grid");
+  const firstRow = endpoint.locator(".card").first().locator("dl div").first();
+  const columns = (locator: ReturnType<typeof endpoint.locator>) =>
+    locator.evaluate((element) => {
+      const value = getComputedStyle(element).gridTemplateColumns.trim();
+      return value ? value.split(/\s+/).length : 0;
+    });
+  const resize = page.getByRole("slider", {
+    name: "Resize Endpoint panel (arrow keys; Enter to reset)",
+  });
+
+  await resize.press("Shift+ArrowRight");
+  await resize.press("Shift+ArrowRight");
+  await expect.poll(() => columns(firstRow)).toBe(1);
+  await expect.poll(() => columns(grid)).toBe(1);
+  await expect
+    .poll(async () =>
+      endpoint
+        .locator(".panel-body")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    )
+    .toBe(true);
+
+  await resize.press("Enter");
+  await expect.poll(() => columns(grid)).toBe(1);
+  await expect.poll(() => columns(firstRow)).toBe(2);
+  await expect
+    .poll(async () =>
+      endpoint.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    )
+    .toBe(true);
+
+  for (let step = 0; step < 4; step++) await resize.press("Shift+ArrowLeft");
+  await expect.poll(() => columns(grid)).toBeGreaterThan(1);
+  await expect(endpoint).toContainText(
+    "Fetch streams · WebTransport streams · WebTransport datagrams",
+  );
+  await expect
+    .poll(async () =>
+      endpoint.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    )
+    .toBe(true);
+
+  const accessibility = await new AxeBuilder({ page })
+    .include('[aria-label="Endpoint info"]')
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+});
+
+test("reset settings confirms, preserves on cancel, and restores defaults", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  const panelWidth = await settings.evaluate(
+    (element) => element.getBoundingClientRect().width,
+  );
+
+  await settings.getByRole("button", { name: "custom" }).click();
+  await settings.getByLabel("Warmup ms").fill("1234");
+  await settings.getByRole("button", { name: "Bytes", exact: true }).click();
+  await settings.getByRole("button", { name: "Binary", exact: true }).click();
+  await settings.getByText("Show estimated wire rate", { exact: true }).click();
+  await settings.getByText("Force exact stream count", { exact: true }).click();
+  await settings
+    .getByText("Datagram throughput (experimental)", { exact: true })
+    .click();
+
+  const reset = settings.getByRole("button", { name: "Reset settings" });
+  await reset.scrollIntoViewIfNeeded();
+  await reset.click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("heading", { name: "Reset settings?" }),
+  ).toBeVisible();
+  const accessibility = await new AxeBuilder({ page })
+    .include('[aria-label="Settings"]')
+    .include('[role="alertdialog"]')
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+
+  await dialog.getByRole("button", { name: "Keep settings" }).click();
+  await expect(settings.getByLabel("Warmup ms")).toHaveValue("1234");
+
+  await reset.click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Reset settings" })
+    .click();
+  await expect(
+    settings.getByRole("button", { name: "medium" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    settings.getByLabel("Include concurrent download + upload"),
+  ).not.toBeChecked();
+  await expect(
+    settings.getByLabel("Force exact stream count"),
+  ).not.toBeChecked();
+  await expect(
+    settings.getByRole("button", { name: "Bits", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    settings.getByRole("button", { name: "Decimal", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(settings.getByLabel("Show estimated wire rate")).toBeChecked();
+  await expect(
+    settings.getByLabel("Datagram throughput (experimental)"),
+  ).not.toBeChecked();
+  await expect(
+    settings.getByLabel("Scale throughput automatically"),
+  ).toBeChecked();
+  const finalWidth = await settings.evaluate(
+    (element) => element.getBoundingClientRect().width,
+  );
+  expect(Math.abs(finalWidth - panelWidth)).toBeLessThanOrEqual(1);
+
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(
+    settings.getByRole("button", { name: "Reset settings" }),
+  ).toBeDisabled();
 });
 
 // The datagram card is gated on its experimental setting, but a card already

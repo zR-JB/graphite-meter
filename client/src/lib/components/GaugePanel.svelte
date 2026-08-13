@@ -571,6 +571,11 @@
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
+  @media (max-width: 759px) and (orientation: portrait) {
+    .instrument {
+      --gauge-well-height: clamp(220px, 42svh, 360px);
+    }
+  }
   /* The gauge well: the deepest recess on the faceplate. */
   .stage {
     grid-area: gauge;

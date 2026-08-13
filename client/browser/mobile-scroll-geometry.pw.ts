@@ -30,20 +30,24 @@ test("portrait phone gauge height is stable across live and result content", asy
   await expect(page.locator(".result-chip")).toHaveCount(3, {
     timeout: 10_000,
   });
+  await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
   const live = await gaugeHeight(page);
   expect(Math.abs(live - idle)).toBeLessThanOrEqual(1);
 
   await expect(
     page.getByRole("button", { name: "Run the test again" }),
   ).toBeVisible({ timeout: 10_000 });
+  await page.evaluate(() => scrollTo(0, document.documentElement.scrollHeight));
   const complete = await gaugeHeight(page);
   expect(Math.abs(complete - idle)).toBeLessThanOrEqual(1);
 
   // Resetting to the short, latency-free document must not leave a trailing
   // root/body scroll area below the application's own footer.
-  await page.getByRole("button", {
-    name: "Graphite Meter — return to a fresh, blank test",
-  }).click();
+  await page
+    .getByRole("button", {
+      name: "Graphite Meter — return to a fresh, blank test",
+    })
+    .click();
   await page.getByRole("switch", { name: "Latency stage" }).click();
   const reset = await gaugeHeight(page);
   expect(Math.abs(reset - idle)).toBeLessThanOrEqual(1);

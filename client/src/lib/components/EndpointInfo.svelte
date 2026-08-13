@@ -286,11 +286,14 @@
   .infra {
     display: grid;
     gap: 14px;
-    container-type: inline-size;
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+    --endpoint-card-min: 240px;
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(min(100%, var(--endpoint-card-min)), 1fr)
+    );
     gap: var(--space-3);
   }
   .card,
@@ -308,6 +311,8 @@
     padding: var(--space-3);
     box-shadow: var(--elev-recess);
     overflow: clip;
+    container-type: inline-size;
+    container-name: endpoint-card;
   }
   .card > * {
     position: relative;
@@ -323,10 +328,17 @@
   }
   header {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
+    align-items: flex-start;
     gap: var(--space-2);
+    min-width: 0;
+  }
+  header h3 {
+    min-width: 0;
   }
   mark {
+    flex: none;
     align-self: start;
     padding: 3px 6px;
     border-radius: var(--r-full);
@@ -361,6 +373,7 @@
     grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
     gap: var(--space-3);
     align-items: baseline;
+    min-width: 0;
   }
   dt {
     color: var(--text-soft);
@@ -374,6 +387,8 @@
     font-family: var(--font-mono);
     font-size: 11px;
     overflow-wrap: anywhere;
+    word-break: normal;
+    line-height: 1.43;
   }
   .diagnostics-card {
     padding: 0;
@@ -440,7 +455,7 @@
     overflow: hidden;
     clip: rect(0, 0, 0, 0);
   }
-  @container (max-width: 300px) {
+  @container endpoint-card (max-width: 300px) {
     dl div {
       grid-template-columns: 1fr;
       gap: 2px;

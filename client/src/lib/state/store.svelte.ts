@@ -61,6 +61,7 @@ import {
 } from "./stagePresentation";
 import { DEFAULT_CONFIG } from "./defaults";
 import {
+  defaultPersisted,
   loadPersisted,
   savePersisted,
   systemThemeDefault,
@@ -650,6 +651,14 @@ class AppStore {
     this.activeConnections = null;
     this.startEpoch = 0;
     this.runSeq++;
+  }
+
+  restoreTestDisplayDefaults() {
+    const defaults = defaultPersisted();
+    this.config = structuredClone(defaults.config);
+    this.unitBase = defaults.unitBase;
+    this.unitKind = defaults.unitKind;
+    this.showWireEstimates = defaults.showWireEstimates;
   }
 
   latencyLanes = $derived.by<LatencyLane[]>(() =>

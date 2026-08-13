@@ -12,10 +12,10 @@
   import PhaseToast from "./PhaseToast.svelte";
   import ShortcutHints from "./ShortcutHints.svelte";
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engage, returnToStart } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
-  import { focusTrap } from "../actions/focusTrap";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
   import { authEnabled } from "../auth";
@@ -294,46 +294,16 @@
   <!-- Transient phase-change toast, pinned bottom-right. -->
   <PhaseToast />
 
-  {#if resetConfirmOpen}
-    <div class="confirm-backdrop">
-      <div
-        class="confirm-dialog"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="reset-confirm-title"
-        aria-describedby="reset-confirm-copy"
-        tabindex="-1"
-        use:focusTrap={true}
-        onkeydown={(e) => {
-          if (e.key === "Escape") {
-            e.stopPropagation();
-            resetConfirmOpen = false;
-          }
-        }}
-      >
-        <h2 id="reset-confirm-title">Stop the running test?</h2>
-        <p id="reset-confirm-copy">
-          Returning to a fresh test will abort the measurement in progress.
-        </p>
-        <div class="confirm-actions">
-          <button
-            class="ghost-btn"
-            type="button"
-            onclick={() => (resetConfirmOpen = false)}
-          >
-            Keep running
-          </button>
-          <button
-            class="danger-btn"
-            type="button"
-            onclick={confirmReturnToStart}
-          >
-            Stop test
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <ConfirmDialog
+    open={resetConfirmOpen}
+    id="reset-confirm"
+    title="Stop the running test?"
+    description="Returning to a fresh test will abort the measurement in progress."
+    cancelLabel="Keep running"
+    confirmLabel="Stop test"
+    onCancel={() => (resetConfirmOpen = false)}
+    onConfirm={confirmReturnToStart}
+  />
 </main>
 
 <style>
@@ -453,65 +423,13 @@
     height: 16px;
   }
 
-  .confirm-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 180;
-    display: grid;
-    place-items: center;
-    padding: var(--space-4);
-    background: color-mix(in srgb, var(--canvas) 64%, transparent);
-  }
-  .confirm-dialog {
-    width: min(360px, 100%);
-    padding: var(--space-4);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--shadow-float);
-  }
-  .confirm-dialog h2 {
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: var(--type-lg);
-    font-weight: 650;
-    letter-spacing: 0;
-  }
-  .confirm-dialog p {
-    margin: var(--space-2) 0 0;
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    line-height: 1.45;
-  }
-  .confirm-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-2);
-    margin-top: var(--space-4);
-  }
-  .danger-btn {
-    display: grid;
-    place-items: center;
-    height: 32px;
-    padding: 0 var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--err) 55%, var(--border));
-    border-radius: var(--r-chrome);
-    background: var(--err-soft);
-    color: var(--text);
-    font-size: var(--type-sm);
-    font-weight: 650;
-  }
-  .danger-btn:hover {
-    border-color: var(--err);
-  }
-
   /* Portrait phones are the single document-flow mode. Landscape phones use
      the same anchored shell and scrollable center stage as tablets, so
      rotation cannot silently swap in a bottom sheet or clip the status bar. */
   @media (max-width: 759px) and (orientation: portrait) {
     #console {
       height: auto;
-      min-height: 100dvh;
+      min-height: 100svh;
     }
     .stage {
       overflow-y: visible;

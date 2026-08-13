@@ -495,6 +495,7 @@
     );
     gap: var(--space-3);
     container-type: inline-size;
+    container-name: settings-grid;
   }
   .panel {
     display: grid;
@@ -623,6 +624,12 @@
       background var(--dur-hover) var(--ease-out),
       color var(--dur-hover) var(--ease-out);
   }
+  .seg button {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   button:hover {
     color: var(--text);
   }
@@ -664,7 +671,7 @@
   }
   .dur-summary {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 70px), 1fr));
     gap: 6px;
   }
   .dur-cell {
