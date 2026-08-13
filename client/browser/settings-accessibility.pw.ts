@@ -97,11 +97,11 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
     endpoint.getByText("Fetch stream · HTTP/1.1 · clear"),
   ).toBeVisible();
   await expect(
-    endpoint.getByText("WebTransport streams · Fetch streams"),
+    endpoint.getByText(
+      "Fetch streams · WebTransport streams · WebTransport datagrams",
+    ),
   ).toBeVisible();
-  await expect(
-    endpoint.getByText("WebTransport datagrams · WebSocket"),
-  ).toBeVisible();
+  await expect(endpoint.getByText("WebSocket", { exact: true })).toBeVisible();
   await expect(
     endpoint.getByText("Fetch stream over HTTP/1.1 · clear"),
   ).toBeVisible();
