@@ -14,10 +14,65 @@ export interface Segment {
   fill: number;
 }
 
+/**
+ * Selection belongs to the editable next-run configuration; execution belongs
+ * to the retained run. Keeping both in this model prevents a terminal rail
+ * toggle from rewriting the status of evidence that was already collected.
+ */
+export interface StageTrackModel extends Segment {
+  selected: boolean;
+  tag: string | null;
+  locked: boolean;
+  execution: StagePresentation;
+}
+
 export function segmentState(stage: StagePresentation): Segment {
   return {
     state: stage.warming ? "warmup" : stage.status,
     fill: stage.fill,
+  };
+}
+
+export function stageTrackModel(input: {
+  selected: boolean;
+  locked: boolean;
+  execution: StagePresentation;
+}): StageTrackModel {
+  const { selected, locked, execution } = input;
+  if (!selected) {
+    return {
+      selected,
+      locked,
+      execution,
+      state: "disabled",
+      fill: 0,
+      tag: "skipped",
+    };
+  }
+
+  // A stage enabled after a terminal run was not part of that execution. It is
+  // selected for the next run, but has no historical result to project.
+  if (execution.status === "disabled") {
+    return {
+      selected,
+      locked,
+      execution,
+      state: "pending",
+      fill: 0,
+      tag: "next run",
+    };
+  }
+
+  const segment = segmentState(execution);
+  return {
+    selected,
+    locked,
+    execution,
+    ...segment,
+    tag:
+      execution.status === "partial" || execution.status === "failed"
+        ? execution.status
+        : null,
   };
 }
 

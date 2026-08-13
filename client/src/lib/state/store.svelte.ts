@@ -70,7 +70,7 @@ import {
 const SCALE_DWELL_MS = 700;
 
 const MEASURED_STAGES = ["latency", "download", "upload"] as const;
-export type StageKey = (typeof MEASURED_STAGES)[number];
+export type StageKey = TransportRole;
 const TRANSFER_STAGES = ["download", "upload", "bidirectional"] as const;
 const TERMINAL_PHASES: readonly Phase[] = [
   "idle",
@@ -340,8 +340,12 @@ class AppStore {
   // Mid-run toggles may only affect future stages. The current stage is already
   // wired and past stages have produced results.
   canToggleStage(stage: StageKey): boolean {
+    if (stage === "bidirectional")
+      return canDisableBidirectionalPure(this.phase, this.isRunning);
     if (!this.isRunning) return true;
-    const currentIndex = MEASURED_STAGES.indexOf(this.phase as StageKey);
+    const currentIndex = MEASURED_STAGES.indexOf(
+      this.phase as (typeof MEASURED_STAGES)[number],
+    );
     const stageIndex = MEASURED_STAGES.indexOf(stage);
     return currentIndex >= 0 && stageIndex > currentIndex;
   }
@@ -355,19 +359,6 @@ class AppStore {
     if (currentlyEnabled && enabledCount <= 1) return false;
 
     this.config.stages[stage] = !currentlyEnabled;
-    return true;
-  }
-
-  canDisableBidirectional(): boolean {
-    // Bidirectional is outside the "at least one stage" set, so its stage-track
-    // off rule lives separately from canToggleStage().
-    return canDisableBidirectionalPure(this.phase, this.isRunning);
-  }
-
-  disableBidirectional(): boolean {
-    if (!this.config.stages.bidirectional) return false;
-    if (!this.canDisableBidirectional()) return false;
-    this.config.stages.bidirectional = false;
     return true;
   }
 
