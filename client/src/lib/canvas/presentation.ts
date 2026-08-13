@@ -1,8 +1,9 @@
-// Static canvas work is capped at 30fps: the sample feed is far slower than the
+// Static canvas work is capped at 60fps: the sample feed is far slower than the
 // display refresh, so a higher rate only costs raster work. A moving hero gauge
 // is the sole exception; it may use native frames to ease an already-derived
 // target, never to publish new measurement evidence.
-const FRAME_MS = 1000 / 30;
+export const PRESENTATION_MAX_FPS = 60;
+export const FRAME_MS = 1000 / PRESENTATION_MAX_FPS;
 
 /** Draws one frame; returns true while still animating, which keeps the clock
  *  running without a further invalidation. */

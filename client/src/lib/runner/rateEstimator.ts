@@ -5,6 +5,7 @@
  */
 
 export const PRESENTATION_MIN_WINDOW_MS = 800;
+export const PRESENTATION_WINDOW_FRACTION = 0.85;
 export const REGIME_FAST_WINDOW_MS = 750;
 export const REGIME_BASELINE_READY_MS = 2_000;
 export const REGIME_DOWNSHIFT_ENTER_RATIO = 0.75;
@@ -50,7 +51,10 @@ function finiteNonNegative(value: number): number {
 
 export function presentationWindowMs(regimeAgeMs: number): number {
   const age = finiteNonNegative(regimeAgeMs);
-  return Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.85));
+  return Math.min(
+    age,
+    Math.max(PRESENTATION_MIN_WINDOW_MS, age * PRESENTATION_WINDOW_FRACTION),
+  );
 }
 
 /** Exact bytes/time for an interval, prorating an observation at its edges. */
