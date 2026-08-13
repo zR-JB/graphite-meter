@@ -53,6 +53,7 @@ function channelUnderTest(
   liveness: boolean[];
   progress: number[];
   stalls: { detail?: string; cause?: string }[];
+  recoveryGaps: number[];
 } {
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
@@ -60,6 +61,7 @@ function channelUnderTest(
   const liveness: boolean[] = [];
   const progress: number[] = [];
   const stalls: { detail?: string; cause?: string }[] = [];
+  const recoveryGaps: number[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
@@ -84,6 +86,9 @@ function channelUnderTest(
       curve.push(bytesDelta);
       liveness.push(provesLiveness);
     },
+    recordRecoveryGap(_dir: string, seconds: number) {
+      recoveryGaps.push(seconds);
+    },
   } as unknown as CoreHost;
   return {
     channel: new UploadProgressChannel({
@@ -102,6 +107,7 @@ function channelUnderTest(
     liveness,
     progress,
     stalls,
+    recoveryGaps,
   };
 }
 
@@ -224,6 +230,20 @@ test("upload recovery bytes stay accounted without resuming a stalled sibling", 
   expect(curve).toEqual([150]);
   expect(liveness).toEqual([false]);
   expect(progress).toEqual([150]);
+});
+
+test("a rotation gap is reduced once without a chart sample", () => {
+  const { channel, curve, recoveryGaps } = channelUnderTest({
+    measuring: true,
+  });
+  channel.beginRecoveryGap();
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+  channel.accept({ type: "bytes", n: 400, t: 3_000_000_000 });
+
+  expect(recoveryGaps).toHaveLength(1);
+  expect(recoveryGaps[0]).toBeGreaterThanOrEqual(0);
+  expect(curve).toEqual([150, 150]);
 });
 
 // Unreachable today (every path tears down first), but a worker left running

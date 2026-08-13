@@ -73,6 +73,8 @@ export class UploadProgressChannel {
   #completed = false;
   /** Local ownership token for a server upload id/feed pair. */
   #generation = 0;
+  /** Rotation handoff awaiting its first advancing replacement counter. */
+  #recoveryGapStartedAt = 0;
 
   get generation(): number {
     return this.#generation;
@@ -80,6 +82,18 @@ export class UploadProgressChannel {
 
   #nextGeneration(): number {
     return ++this.#generation;
+  }
+
+  /** Reject callbacks from the current feed before its owner detaches it. */
+  invalidateGeneration(): void {
+    this.#nextGeneration();
+  }
+
+  /** Start one reducer-only handoff interval. The interval closes only on a
+   * positive replacement counter, never on feed/socket establishment. */
+  beginRecoveryGap(): void {
+    if (this.#recoveryGapStartedAt === 0)
+      this.#recoveryGapStartedAt = performance.now();
   }
 
   constructor(deps: UploadProgressDeps) {
@@ -196,6 +210,7 @@ export class UploadProgressChannel {
    *  DELETE and waits for the terminal complete record; without it the feed is
    *  simply dropped. Exactly one of the two feed kinds is ever live. */
   teardown(finalize: boolean): Promise<void> {
+    this.#recoveryGapStartedAt = 0;
     this.#external?.finish("superseded");
     this.#ready?.finish(false);
     this.#ready = null;
@@ -345,6 +360,11 @@ export class UploadProgressChannel {
       );
     }
     if (delta > 0) {
+      if (this.#recoveryGapStartedAt > 0) {
+        const gapSec = (performance.now() - this.#recoveryGapStartedAt) / 1_000;
+        this.#recoveryGapStartedAt = 0;
+        host.recordRecoveryGap("up", gapSec);
+      }
       if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(delta);
       else this.#deps.setLaneStalled(false);
     }

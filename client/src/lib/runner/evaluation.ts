@@ -144,14 +144,7 @@ export class RunAccumulator {
     serverAuthoritative = false,
   ): void {
     if (durationSec <= 0) return;
-    const accum =
-      phase === "bidirectional"
-        ? dir === "down"
-          ? this.#biDown
-          : this.#biUp
-        : phase === "download"
-          ? this.#dl
-          : this.#ul;
+    const accum = this.#transferAccum(phase, dir);
     const seconds = durationSec;
     const durationMs = seconds * 1_000;
     const bytes = Math.max(0, bytesDelta);
@@ -169,6 +162,42 @@ export class RunAccumulator {
     const buckets =
       dir === "down" ? this.#phaseDownBuckets : this.#phaseUpBuckets;
     buckets.observe(bytes, durationMs);
+  }
+
+  /** Account the time between upload IDs after their server clocks can no
+   * longer represent one continuous interval. This is deliberately absent from
+   * control buckets and presentation history: it affects only exact final
+   * byte/time reduction. */
+  recordRecoveryGap(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+    durationSec: number,
+  ): void {
+    if (durationSec <= 0) return;
+    const accum = this.#transferAccum(phase, dir);
+    const durationMs = durationSec * 1_000;
+    accum.samples.push({
+      rate: 0,
+      bytes: 0,
+      seconds: durationSec,
+      evidenceStartMs: accum.evidenceMs,
+      evidenceEndMs: accum.evidenceMs + durationMs,
+    });
+    accum.evidenceMs += durationMs;
+    accum.serverAuthoritative = true;
+  }
+
+  #transferAccum(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+  ): PhaseAccum {
+    return phase === "bidirectional"
+      ? dir === "down"
+        ? this.#biDown
+        : this.#biUp
+      : phase === "download"
+        ? this.#dl
+        : this.#ul;
   }
 
   /** Record a ping sample. Latency confidence uses unloaded RTTs + the loss

@@ -73,6 +73,9 @@ export interface CoreHost {
     provesLiveness?: boolean,
   ): void;
   ingestLatency(observation: LatencyObservation, underLoad: boolean): void;
+  /** Account a rotation handoff in final byte/time reduction only. It is never
+   * a source observation, presentation sample, or control/confidence input. */
+  recordRecoveryGap(dir: FlowDirection, durationSec: number): void;
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
   resume(): void;
@@ -619,6 +622,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#lastThroughputDisplayAt[dir] = now;
       this.#emitThroughputPresentation(dir, estimate.presentedBytesPerSec);
     }
+  }
+
+  recordRecoveryGap(dir: FlowDirection, durationSec: number): void {
+    if (durationSec <= 0) return;
+    const phase = this.#phase;
+    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
+      return;
+    this.#accum.recordRecoveryGap(phase, dir, durationSec);
   }
 
   #emitThroughputPresentation(dir: FlowDirection, bytesPerSec: number): void {

@@ -113,6 +113,12 @@ export class RealBackend implements RunnerBackend {
   /** True from the stage's first #primeTransfer to #teardownTransfer. Both
    *  directions are primed and torn down together. */
   #transferActive = false;
+  /** The activity whose transfer connections are currently alive. */
+  #transferActivity: PhaseActivity | null = null;
+  /** A server may invalidate one upload id once; a second invalidation belongs
+   * to the runner's expiry, not an unbounded mint loop. */
+  #uploadRotationUsed = false;
+  #uploadRotationInFlight = false;
   /** The STAGE-level stalled flag reported to the host, deduped so stall/resume
    *  fire once per edge. #reconcileStall or the idle ping channel latches it. */
   #stalled = false;
@@ -699,6 +705,9 @@ export class RealBackend implements RunnerBackend {
     this.#abort = new AbortController();
     this.#activeTransport = null;
     this.#discardTransfer(); // discard leftovers from a prior run
+    this.#transferActivity = null;
+    this.#uploadRotationUsed = false;
+    this.#uploadRotationInFlight = false;
     this.#stalled = false;
     // Unique-per-run cache-buster off the monotonic clock, not wall time; the
     // stream index is appended per worker.
@@ -724,6 +733,7 @@ export class RealBackend implements RunnerBackend {
       // Loaded latency without a transport: run the transfer without pings.
     }
     if (activity.transfer.length > 0) {
+      this.#transferActivity = activity;
       const kind = this.#committedKind(activity.stage);
       if (!kind) {
         this.#host!.failStage(
@@ -767,17 +777,64 @@ export class RealBackend implements RunnerBackend {
       // never refresh the core's watchdog: a healthy stage runs to the max-stall
       // timeout and its measurement is discarded.
       this.#stalled = false;
+      this.#transferActivity = null;
       return;
     }
     return this.#teardownTransfer().then(() => {
       this.#latency.teardown();
       this.#stalled = false;
+      this.#transferActivity = null;
     });
   }
 
   /** The run is complete. Close anything still open. */
   onComplete(): void {
     this.#closeAll();
+  }
+
+  async onStageRecovery(request: {
+    stage: TransportRole;
+    direction?: FlowDirection;
+    cause: RecoveryCause;
+    signal: AbortSignal;
+  }): Promise<void> {
+    if (
+      request.cause !== "unknown-upload-id" ||
+      request.direction !== "up" ||
+      this.#uploadRotationUsed ||
+      this.#uploadRotationInFlight ||
+      this.#transferActivity?.stage !== request.stage ||
+      !this.#transferActive ||
+      !this.#activeTransport
+    )
+      return;
+    this.#uploadRotationUsed = true;
+    this.#uploadRotationInFlight = true;
+    try {
+      // The old feed and every session-lane callback become inert before the
+      // old lanes are detached. A replacement can therefore never inherit an
+      // old counter or a queued relay.
+      this.#uploadProgress.invalidateGeneration();
+      this.#lanes.up?.discard();
+      await this.#uploadProgress.teardown(false);
+      if (request.signal.aborted || !this.#transferActive) return;
+      delete this.#lanes.up;
+
+      const activity = this.#transferActivity;
+      const kind = this.#activeTransport;
+      if (!activity || !kind) return;
+      this.#uploadProgress.beginRecoveryGap();
+      await this.#primeTransfer(kind, "up", activity);
+      if (request.signal.aborted) return;
+      const replacement = this.#liveLane("up");
+      if (!replacement) return;
+      // The replacement remains recovering until a positive authoritative
+      // counter flips this edge back to healthy.
+      replacement.setStalled(true, "awaiting replacement upload progress");
+      replacement.measure();
+    } finally {
+      this.#uploadRotationInFlight = false;
+    }
   }
 
   /** The user aborted. Cancel in-flight fetches/streams and close sockets. The
@@ -1170,6 +1227,7 @@ export class RealBackend implements RunnerBackend {
     await this.#uploadProgress.teardown(true);
     this.#transferActive = false;
     this.#lanes = {};
+    this.#transferActivity = null;
   }
 
   #discardTransfer(): void {
@@ -1177,6 +1235,7 @@ export class RealBackend implements RunnerBackend {
     void this.#uploadProgress.teardown(false);
     this.#transferActive = false;
     this.#lanes = {};
+    this.#transferActivity = null;
   }
 
   #closeAll(): void {

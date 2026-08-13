@@ -305,6 +305,20 @@ test("partial transfer keeps whole exact evidence only after its named floor", (
   expect(result?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
 });
 
+test("a recovery gap reaches only the final byte/time reduction", () => {
+  const accum = new RunAccumulator();
+  accum.pushThroughput("upload", "up", 1_000, 1_000, 1, true);
+  const controlSamples = accum.confidence("upload").sampleCount;
+  accum.recordRecoveryGap("upload", "up", 1);
+
+  const result = accum.partialThroughputResult("upload");
+  expect(result?.totalBytes).toBe(1_000);
+  expect(result?.fullAverageBytesPerSec).toBe(500);
+  // The gap did not add a second control observation, so a later source frame
+  // still has the same fixed-bucket result as it would without a handoff.
+  expect(accum.confidence("upload").sampleCount).toBe(controlSamples);
+});
+
 test("partial latency needs named outcome and success evidence floors", () => {
   const accum = new RunAccumulator();
   accum.reset();
