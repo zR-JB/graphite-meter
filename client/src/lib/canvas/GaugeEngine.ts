@@ -71,7 +71,9 @@ export class GaugeEngine implements CanvasEngine {
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
     this.#ctx = canvas.getContext("2d");
-    this.#presentation = presentation.register(canvas, this.#render);
+    this.#presentation = presentation.register(canvas, this.#render, {
+      nativeAnimation: true,
+    });
     this.#motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     this.#reducedMotion = this.#motionQuery.matches;
     this.#motionQuery.addEventListener("change", this.#onMotionChange);
