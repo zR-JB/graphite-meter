@@ -279,6 +279,12 @@ form[data-busy] button[type="submit"]::after {
   border-radius: var(--r-chrome);
   font-size: var(--type-md);
 }
+form + .message,
+form + .notice,
+form + .ok,
+form + .warn {
+  margin-top: 18px;
+}
 /* .message is a real failure (red); .warn a recoverable limit (orange);
    .notice an expected, neutral state (blue); .ok a successful outcome
    (green). */
