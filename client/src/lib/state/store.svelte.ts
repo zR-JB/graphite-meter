@@ -50,6 +50,7 @@ import {
 import { weightedMean, weightedMeanAbsoluteDeviation } from "../runner/stats";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
+  canToggleMeasuredStage,
   latestOneWayThroughputForPhase,
   latestBidirectionalLanes,
 } from "./stageGuards";
@@ -349,13 +350,8 @@ class AppStore {
   // wired and past stages have produced results.
   canToggleStage(stage: StageKey): boolean {
     if (stage === "bidirectional")
-      return canDisableBidirectionalPure(this.phase, this.isRunning);
-    if (!this.isRunning) return true;
-    const currentIndex = MEASURED_STAGES.indexOf(
-      this.phase as (typeof MEASURED_STAGES)[number],
-    );
-    const stageIndex = MEASURED_STAGES.indexOf(stage);
-    return currentIndex >= 0 && stageIndex > currentIndex;
+      return canDisableBidirectionalPure(this.phaseStage, this.isRunning);
+    return canToggleMeasuredStage(stage, this.isRunning, this.phaseStage);
   }
 
   toggleStage(stage: StageKey): boolean {

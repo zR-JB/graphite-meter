@@ -125,7 +125,7 @@ test("hidden and offscreen tasks redraw once when visible", () => {
   expect(environment.pending).toBe(0);
 });
 
-test("unsettled work is capped at 60 presentation frames per second", () => {
+test("unsettled work is capped at 30 presentation frames per second", () => {
   const environment = new FakeEnvironment();
   const scheduler = new PresentationScheduler(environment);
   let renders = 0;
@@ -135,8 +135,8 @@ test("unsettled work is capped at 60 presentation frames per second", () => {
   });
 
   for (let i = 0; i < 60; i++) environment.frame();
-  expect(renders).toBeLessThanOrEqual(60);
-  expect(renders).toBeGreaterThanOrEqual(58);
+  expect(renders).toBeLessThanOrEqual(30);
+  expect(renders).toBeGreaterThanOrEqual(29);
 });
 
 test("a moving hero gauge uses native frames without waking settled charts", () => {

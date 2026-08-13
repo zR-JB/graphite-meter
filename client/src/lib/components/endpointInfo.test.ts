@@ -4,6 +4,7 @@ import {
   advertisedServerCapabilities,
   pathEvidence,
   serverLoadSummary,
+  endpointPathStatus,
 } from "./endpointInfo";
 
 function discovery(): TransportDiscovery {
@@ -77,4 +78,30 @@ test("path evidence retains each protocol observation boundary", () => {
     "Server observed HTTP/1.1",
   );
   expect(pathEvidence("latency")).toBe("Pending");
+});
+
+test("endpoint path status describes verified paths by mode", () => {
+  expect(endpointPathStatus("verified", "live")).toEqual({
+    label: "Ready",
+    tone: "ready",
+  });
+  expect(endpointPathStatus("verified", "running")).toEqual({
+    label: "In use",
+    tone: "active",
+  });
+  expect(endpointPathStatus("verified", "result")).toEqual({
+    label: "Used",
+    tone: "used",
+  });
+});
+
+test("endpoint path status keeps non-verified validation truthful", () => {
+  expect(endpointPathStatus("checking", "result")).toEqual({
+    label: "Checking",
+    tone: "checking",
+  });
+  expect(endpointPathStatus("failed", "running")).toEqual({
+    label: "Failed",
+    tone: "failed",
+  });
 });

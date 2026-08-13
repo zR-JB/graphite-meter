@@ -35,6 +35,74 @@ function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
+function descriptiveStability(
+  rates: readonly number[],
+  chunkMs: readonly number[],
+): number {
+  const accum = new RunAccumulator();
+  accum.reset();
+  let traceIndex = 0;
+  for (const durationMs of chunkMs) {
+    const rate = rates[traceIndex % rates.length];
+    accum.pushThroughput(
+      "download",
+      "down",
+      rate,
+      (rate * durationMs) / 1_000,
+      durationMs / 1_000,
+    );
+    traceIndex++;
+  }
+  return accum.throughputResult("download", false).stabilityPct;
+}
+
+test("descriptive stability is invariant to callback chunking", () => {
+  const rates = [950, 1050, 950, 1050, 1050, 950, 1050, 950];
+  const wholeBuckets = Array(rates.length).fill(250);
+  const splitCallbacks = Array(rates.length * 5).fill(50);
+  const whole = descriptiveStability(rates, wholeBuckets);
+
+  const split = new RunAccumulator();
+  split.reset();
+  for (const rate of rates) {
+    for (let i = 0; i < 5; i++)
+      split.pushThroughput("download", "down", rate, rate * 0.05, 0.05);
+  }
+  expect(whole).toBeCloseTo(95, 8);
+  expect(split.throughputResult("download", false).stabilityPct).toBeCloseTo(
+    whole,
+    8,
+  );
+  expect(splitCallbacks.length).toBeGreaterThan(wholeBuckets.length);
+});
+
+test.each([
+  { cv: 5, rates: [950, 1050, 950, 1050, 1050, 950, 1050, 950], band: "high" },
+  {
+    cv: 15,
+    rates: [850, 1150, 850, 1150, 1150, 850, 1150, 850],
+    band: "medium",
+  },
+  {
+    cv: 30,
+    rates: [700, 1300, 700, 1300, 1300, 700, 1300, 700],
+    band: "low",
+  },
+])(
+  "descriptive stability reports approximately $cv% CV as the $band band",
+  ({ rates, cv, band }) => {
+    const stabilityPct = descriptiveStability(
+      rates,
+      Array(rates.length).fill(250),
+    );
+    expect(stabilityPct).toBeCloseTo(100 - cv, 5);
+    const score = stabilityPct / 100;
+    const displayBand =
+      score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
+    expect(displayBand).toBe(band);
+  },
+);
+
 test("adaptive throughput reports the final plateau after stability recovers", () => {
   const accum = new RunAccumulator();
   accum.reset();

@@ -56,14 +56,66 @@ test("terminal stage switches select the next run without erasing retained statu
   await expect(download).toHaveAttribute("aria-checked", "true");
   await expect(download).toHaveClass(/seg--complete/);
 
+  const geometry = () =>
+    page.evaluate(() =>
+      Object.assign(
+        Object.fromEntries(
+          [".stage-head", ".gauge-panel .stage", ".engage-slot", ".chart"].map(
+            (selector) => {
+              const stage = document.querySelector("#console > section.stage");
+              stage?.scrollTo(0, 0);
+              const box = document
+                .querySelector(selector)
+                ?.getBoundingClientRect();
+              if (!box || !(stage instanceof HTMLElement))
+                throw new Error(`missing ${selector}`);
+              return [
+                selector,
+                {
+                  top: box.top - stage.getBoundingClientRect().top,
+                  height: box.height,
+                },
+              ];
+            },
+          ),
+        ),
+      ),
+    );
+  const beforeToggle = await geometry();
+
   await download.click();
   await expect(download).toHaveAttribute("aria-checked", "false");
   await expect(download).toHaveClass(/seg--disabled/);
   await expect(download).toContainText("skipped");
+  const disabledGeometry = await geometry();
 
   await download.click();
   await expect(download).toHaveAttribute("aria-checked", "true");
   await expect(download).toHaveClass(/seg--complete/);
+  const restoredGeometry = await geometry();
+  for (const selector of [
+    ".stage-head",
+    ".gauge-panel .stage",
+    ".engage-slot",
+    ".chart",
+  ]) {
+    expect(
+      Math.abs(disabledGeometry[selector].top - beforeToggle[selector].top),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        disabledGeometry[selector].height - beforeToggle[selector].height,
+      ),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(restoredGeometry[selector].top - beforeToggle[selector].top),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(
+        restoredGeometry[selector].height - beforeToggle[selector].height,
+      ),
+    ).toBeLessThanOrEqual(1);
+  }
 });
 
 test("stage switches preserve the at-least-one measured-stage guard", async ({
@@ -135,6 +187,35 @@ test("future-stage selection changes immediately during an active run", async ({
     page.getByRole("button", { name: "Run the test again" }),
   ).toBeVisible();
   await expect(download).toHaveAttribute("aria-checked", "true");
+});
+
+test("warmup is owned by one stage while future stages remain toggleable", async ({
+  page,
+}) => {
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  await settings.getByRole("button", { name: "custom" }).click();
+  for (const [label, value] of [
+    ["Warmup ms", "1200"],
+    ["Latency ms", "500"],
+    ["Download ms", "500"],
+    ["Upload ms", "0"],
+  ] as const)
+    await settings.getByLabel(label).fill(value);
+
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(page.locator("#console")).toHaveAttribute(
+    "data-phase",
+    "warmup",
+  );
+  await expect(page.locator(".seg-tag", { hasText: "running" })).toHaveCount(1);
+  await expect(
+    page.getByRole("switch", { name: "Download stage" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("switch", { name: "Upload stage" }),
+  ).toBeEnabled();
 });
 
 test("three live result chips remain below the phase rail", async ({

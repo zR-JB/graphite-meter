@@ -278,11 +278,12 @@ for (const viewport of [
     await page.goto("/?engine=dummy");
     const withLatency = await gaugeBox(page, true);
     const withoutLatency = await gaugeBox(page, false);
-    expect(
-      Math.abs(withLatency.width - withoutLatency.width),
-    ).toBeLessThanOrEqual(1);
+    expect(withoutLatency.width).toBeGreaterThan(withLatency.width * 1.5);
     expect(
       Math.abs(withLatency.height - withoutLatency.height),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(withLatency.canvasHeight - withoutLatency.canvasHeight),
     ).toBeLessThanOrEqual(1);
     const stage = await page
       .locator("#console > section.stage")

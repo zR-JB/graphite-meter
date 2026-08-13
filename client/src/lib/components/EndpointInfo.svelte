@@ -8,6 +8,7 @@
     advertisedServerCapabilities,
     pathEvidence,
     serverLoadSummary,
+    endpointPathStatus,
   } from "./endpointInfo";
   import type { TransportKind } from "../runner/contract";
 
@@ -24,11 +25,9 @@
   const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
-  function statusLabel(validation: string) {
-    return validation === "verified"
-      ? "Ready"
-      : validation[0].toUpperCase() + validation.slice(1);
-  }
+  const pathMode = $derived(
+    store.isRunning ? "running" : store.activeConnections ? "result" : "live",
+  );
 
   function clientEvidence(role: PathRole) {
     const connection = connections[role];
@@ -172,12 +171,11 @@
 
     {#each PATH_ROLES as role}
       {@const connection = connections[role]}
+      {@const status = endpointPathStatus(connection.validation, pathMode)}
       <article class="card path">
         <header>
           <h3>{role} path</h3>
-          <mark data-state={connection.validation}
-            >{statusLabel(connection.validation)}</mark
-          >
+          <mark data-state={status.tone}>{status.label}</mark>
         </header>
         <dl>
           <div>
@@ -340,6 +338,18 @@
   mark[data-state="verified"] {
     background: var(--ok-soft);
     color: var(--ok);
+  }
+  mark[data-state="ready"] {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  mark[data-state="active"] {
+    background: var(--brand-soft);
+    color: var(--brand-strong);
+  }
+  mark[data-state="used"] {
+    background: var(--surface-2);
+    color: var(--text-soft);
   }
   dl {
     display: grid;

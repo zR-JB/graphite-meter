@@ -38,6 +38,7 @@
     void store.throughput.length;
     void store.latency.length;
     void store.latencyRevision;
+    void store.phaseElapsedMs;
     void store.latencyEnabled;
     void store.displayScaleBytesPerSec; // re-arm if the shared scale / pinned ceiling shifts while parked
     void store.latencyScaleMs;
@@ -76,6 +77,11 @@
         latencyEnabled: store.latencyEnabled,
         phase: store.phase,
         phaseStartedAtMs: store.phaseStartedAtMs,
+        timelineT: Math.max(
+          store.phaseStartedAtMs + store.phaseElapsedMs,
+          store.throughput.at(-1)?.t ?? 0,
+          store.latency.at(-1)?.endT ?? 0,
+        ),
         runSeq: store.runSeq,
         scaleBytesPerSec: store.displayScaleBytesPerSec,
         latencyScaleMs: store.latencyScaleMs,

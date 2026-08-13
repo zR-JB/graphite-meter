@@ -16,6 +16,17 @@
 
   const dash = "—";
 
+  function throughputDisplayStability(stabilityPct: number): {
+    score: number;
+    band: "low" | "medium" | "high";
+  } {
+    const score = Math.max(0, Math.min(1, stabilityPct / 100));
+    return {
+      score,
+      band: score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low",
+    };
+  }
+
   function transferModel(phase: "download" | "upload") {
     const presentation = store.stagePresentation[phase];
     const stability = store.liveStability[phase];
@@ -41,6 +52,9 @@
       };
     }
     const stageResult = store.stageResults[phase];
+    const displayStability = stageResult
+      ? throughputDisplayStability(stageResult.stabilityPct)
+      : null;
     const compensation =
       phase === "download"
         ? store.downloadCompensation
@@ -51,8 +65,8 @@
       estimatedBytesPerSec: compensation.estimatedBytesPerSec,
       available: compensation.available,
       multiplier: compensation.totalMultiplier,
-      band: stageResult?.band ?? stability?.band ?? "low",
-      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
+      band: displayStability?.band ?? stability?.band ?? "low",
+      score: displayStability?.score ?? stability?.score ?? 0,
       active: false,
       has: !!stageResult,
       status: presentation.status,
@@ -92,6 +106,18 @@
     );
     const survivor =
       result.survivingDirection === "down" ? result.down : result.up;
+    const downDisplay = result.down
+      ? throughputDisplayStability(result.down.stabilityPct)
+      : null;
+    const upDisplay = result.up
+      ? throughputDisplayStability(result.up.stabilityPct)
+      : null;
+    const combinedDisplay =
+      downDisplay && upDisplay
+        ? throughputDisplayStability(
+            Math.min(result.down!.stabilityPct, result.up!.stabilityPct),
+          )
+        : null;
     return {
       down: result.down?.reportedBytesPerSec ?? 0,
       up: result.up?.reportedBytesPerSec ?? 0,
@@ -99,12 +125,13 @@
       authoritativeDown: result.down?.reportedBytesPerSec ?? 0,
       authoritativeUp: result.up?.reportedBytesPerSec ?? 0,
       survivingDirection: result.survivingDirection,
-      band: survivor?.band ?? result.down?.band ?? result.up?.band ?? "low",
-      score:
-        survivor?.stabilityScore ??
-        result.down?.stabilityScore ??
-        result.up?.stabilityScore ??
-        0,
+      band:
+        combinedDisplay?.band ??
+        survivor?.band ??
+        result.down?.band ??
+        result.up?.band ??
+        "low",
+      score: combinedDisplay?.score ?? survivor?.stabilityScore ?? 0,
       active: false,
       has: result.combinedBytesPerSec !== null,
       status: presentation.status,
@@ -440,26 +467,39 @@
   }
 
   @media (prefers-reduced-motion: no-preference) {
+    .result-chip {
+      animation: quick-content-enter 110ms var(--ease-out) both;
+    }
     .result-card {
-      animation: card-enter 220ms var(--ease-out) both;
+      animation: card-enter 140ms var(--ease-out) both;
     }
     .result-card:nth-child(1) {
       animation-delay: 0ms;
     }
     .result-card:nth-child(2) {
-      animation-delay: 60ms;
+      animation-delay: 25ms;
     }
     .result-card:nth-child(3) {
-      animation-delay: 120ms;
+      animation-delay: 50ms;
     }
     .result-card:nth-child(4) {
-      animation-delay: 180ms;
+      animation-delay: 75ms;
+    }
+  }
+  @keyframes quick-content-enter {
+    from {
+      opacity: 0.65;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
   @keyframes card-enter {
     from {
       opacity: 0;
-      transform: translateY(5px);
+      transform: translateY(3px);
     }
     to {
       opacity: 1;

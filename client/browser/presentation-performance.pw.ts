@@ -232,7 +232,7 @@ test("settings retains native scrolling during active presentation", async ({
   expect(scrollbarClearance).toBeGreaterThanOrEqual(12);
   await page.waitForTimeout(500);
   const after = await chartSample(page);
-  const frameBudget = Math.ceil(((after.now - before.now) * 60) / 1000);
+  const frameBudget = Math.ceil(((after.now - before.now) * 30) / 1000);
   expect(after.frames - before.frames).toBeLessThanOrEqual(frameBudget + 2);
 
   const metrics = await performanceMetrics(page);

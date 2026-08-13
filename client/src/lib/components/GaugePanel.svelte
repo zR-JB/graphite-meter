@@ -15,6 +15,10 @@
     LiveRateAnimator,
     type LiveRateValues,
   } from "../presentation/liveRateAnimator";
+  import {
+    presentation,
+    type PresentationHandle,
+  } from "../canvas/presentation";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -41,7 +45,7 @@
     down: 0,
     up: 0,
   });
-  let liveRateFrame = 0;
+  let liveRatePresentation: PresentationHandle | null = null;
   let reducedRateMotion = false;
 
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
@@ -164,7 +168,7 @@
     };
   });
 
-  function stepLiveRates(now: number) {
+  function stepLiveRates(now: number): boolean {
     const input = liveRateInput;
     const transfer = liveRateAnimator.step(
       {
@@ -204,18 +208,12 @@
       down: down.value,
       up: up.value,
     };
-    if (transfer.active || down.active || up.active)
-      liveRateFrame = requestAnimationFrame(stepLiveRates);
-    else liveRateFrame = 0;
-  }
-
-  function wakeLiveRates() {
-    if (!liveRateFrame) liveRateFrame = requestAnimationFrame(stepLiveRates);
+    return transfer.active || down.active || up.active;
   }
 
   $effect(() => {
     void liveRateInput;
-    wakeLiveRates();
+    liveRatePresentation?.invalidate();
   });
 
   // The visible display may follow the bounded upload bridge, but a live
@@ -364,11 +362,12 @@
       };
     });
     engine.attach(canvasEl!);
+    liveRatePresentation = presentation.register(stageEl!, stepLiveRates);
     const rateMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     reducedRateMotion = rateMotion.matches;
     const onRateMotion = (event: MediaQueryListEvent) => {
       reducedRateMotion = event.matches;
-      wakeLiveRates();
+      liveRatePresentation?.invalidate();
     };
     rateMotion.addEventListener("change", onRateMotion);
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
@@ -390,8 +389,9 @@
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
-      if (liveRateFrame) cancelAnimationFrame(liveRateFrame);
       rateMotion.removeEventListener("change", onRateMotion);
+      liveRatePresentation?.destroy();
+      liveRatePresentation = null;
       liveRateAnimator.reset();
       engine.destroy();
       themeObserver.disconnect();
@@ -506,7 +506,7 @@
   .gauge-panel:has(:global(.result-chip:nth-child(4))) {
     --result-slot-budget: 144px;
   }
-  .gauge-panel:has(:global(.result-card)) {
+  .gauge-panel:has(:global(.result-cards.reserve)) {
     --result-slot-budget: 80px;
   }
   /* The instrument grid places stage-head, gauge, Engage, and the optional
@@ -561,11 +561,11 @@
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
-    /* Keep the gauge in the same dedicated column when latency is disabled.
-       A missing optional panel must not resize its CSS-pixel geometry. */
+    /* With latency disabled, let the gauge well use both wide columns while
+       retaining the same fixed height. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "gauge ." var(--gauge-well-height)
+        "gauge gauge" var(--gauge-well-height)
         "engage engage" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
@@ -593,6 +593,8 @@
     grid-area: engage;
     display: flex;
     justify-content: center;
+    height: 46px;
+    min-height: 46px;
   }
   /* Latency profile: a matching engraved well, sized identically to the gauge
      so the pair reads as one balanced instrument. Its content scrolls within
@@ -746,8 +748,9 @@
   }
   .controls-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
+    min-height: 18px;
   }
   .controls-title {
     font-size: var(--type-xs);
@@ -757,11 +760,17 @@
     color: var(--text-soft);
   }
   .eta {
+    display: inline-block;
+    min-width: 6ch;
+    text-align: right;
     font-family: var(--font-mono);
     font-size: var(--type-sm);
     font-weight: 700;
     color: var(--text-muted);
     letter-spacing: 0;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
 
   /* The instrument has an explicit well height, so result content no longer

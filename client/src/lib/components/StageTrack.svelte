@@ -180,7 +180,9 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-    min-height: 40px;
+    height: 46px;
+    min-height: 46px;
+    box-sizing: border-box;
     padding: var(--space-2) var(--space-2) var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -303,6 +305,7 @@
     align-items: center;
     gap: 7px;
     min-width: 0;
+    min-height: 18px;
   }
   .seg-main {
     display: flex;
@@ -332,11 +335,18 @@
     text-overflow: ellipsis;
   }
   .seg-check {
+    width: 18px;
+    height: 18px;
     margin-left: auto;
     color: var(--ok);
   }
 
   .seg-tag {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    line-height: 1;
     margin-left: auto;
     padding: 2px 6px;
     border: 1px solid var(--border-subtle);

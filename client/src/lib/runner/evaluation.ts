@@ -479,14 +479,20 @@ export class RunAccumulator {
     const stable = stableRatio();
     const useStableWindow = stable.has;
     const reported = useStableWindow ? stable.rate : full;
-    const variance =
-      rates.reduce((sum, rate) => sum + (rate - full) ** 2, 0) / rates.length;
-    const cv = full > 0 ? Math.sqrt(variance) / full : 0;
+    const stabilityBuckets = new FixedRateBuckets();
+    for (const sample of accum.samples) {
+      stabilityBuckets.observe(sample.bytes, sample.seconds * 1_000);
+    }
+    const stabilityConfidence = transferConfidence([...stabilityBuckets.rates]);
+    const descriptiveStability =
+      stabilityConfidence.sampleCount >= 2
+        ? Math.max(0, Math.min(1, 1 - stabilityConfidence.varianceRatio))
+        : 0;
 
     return {
       meanBytesPerSec: reported,
       peakBytesPerSec: Math.max(...rates),
-      stabilityPct: Math.max(0, Math.min(100, 100 - cv * 100)),
+      stabilityPct: descriptiveStability * 100,
       totalBytes: accum.bytes,
       reportedBytesPerSec: reported,
       fullAverageBytesPerSec: full,

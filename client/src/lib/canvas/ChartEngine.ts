@@ -27,6 +27,10 @@ import {
   type ChartViewport,
 } from "./chartLayout";
 
+const CHART_TIME_CAMERA_TAU_MS = 120;
+const CHART_TIME_CAMERA_EPSILON_MS = 4;
+const LATENCY_GLYPH_ENTER_MS = 90;
+
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencyBucket[];
@@ -39,6 +43,8 @@ export interface ChartData {
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
   phaseStartedAtMs: number;
+  /** Current runner measured timeline in ms. Presentation-only camera input. */
+  timelineT: number;
   /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
   /** Throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered upstream.
@@ -156,13 +162,19 @@ export class ChartEngine implements CanvasEngine {
 
   #vp: ChartViewport = {
     tMin: 0,
-    tMax: 6000,
+    tMax: 4000,
     bytesPerSecMax: 125_000,
     rttMin: 0,
     rttMax: 50,
   };
-  #vpInit = false;
   #layout = chartLayout(1, 1, this.#vp);
+  #targetTMax = 4_000;
+  #displayTMax = 4_000;
+  #lastCameraAt = 0;
+  #cameraInitialized = false;
+  #reducedMotion = false;
+  #motionQuery: MediaQueryList | null = null;
+  #onMotionChange: ((event: MediaQueryListEvent) => void) | null = null;
 
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
@@ -184,6 +196,8 @@ export class ChartEngine implements CanvasEngine {
     bidiUp: [],
   };
   #latencyIndex = new LatencyPhaseIndex();
+  #latencyGlyphStartedAt = new WeakMap<LatencyBucket, number>();
+  #latencyGlyphActive = false;
 
   #colors: ThemeColors = {
     download: "#6db0b8",
@@ -212,7 +226,14 @@ export class ChartEngine implements CanvasEngine {
     this.#ctx = canvas.getContext("2d");
     this.#scene = document.createElement("canvas");
     this.#sceneCtx = this.#scene.getContext("2d");
-    this.#presentation = presentation.register(canvas, this.#render);
+    this.#motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    this.#reducedMotion = this.#motionQuery.matches;
+    this.#onMotionChange = (event) => {
+      this.#reducedMotion = event.matches;
+      this.wake();
+    };
+    this.#motionQuery.addEventListener("change", this.#onMotionChange);
+    this.#presentation = presentation.register(canvas, this.render);
     this.invalidateTheme();
   }
 
@@ -222,6 +243,10 @@ export class ChartEngine implements CanvasEngine {
   }
 
   destroy(): void {
+    if (this.#motionQuery && this.#onMotionChange)
+      this.#motionQuery.removeEventListener("change", this.#onMotionChange);
+    this.#motionQuery = null;
+    this.#onMotionChange = null;
     this.#presentation?.destroy();
     this.#presentation = null;
     this.#canvas = null;
@@ -365,14 +390,26 @@ export class ChartEngine implements CanvasEngine {
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
 
-  #render = (): boolean => {
-    if (this.#sceneDirty) {
+  render = (now: number): boolean => {
+    const dataDirty = this.#sceneDirty;
+    if (dataDirty) {
       this.#update();
-      this.#drawScene();
       this.#sceneDirty = false;
     }
+    const previousDisplayTMax = this.#displayTMax;
+    const cameraMoving = this.#stepCamera(now);
+    const cameraChanged = this.#displayTMax !== previousDisplayTMax;
+    if (cameraChanged) {
+      const d = this.#get();
+      this.#vp = { ...this.#vp, tMin: 0, tMax: this.#displayTMax };
+      this.#layout = chartLayout(this.#w, this.#h, this.#vp);
+      this.#publishPresentation(d);
+    }
+    if (dataDirty || cameraMoving || this.#latencyGlyphActive) {
+      this.#latencyGlyphActive = this.#drawScene(now);
+    }
     this.#compose();
-    return false;
+    return cameraMoving || this.#latencyGlyphActive;
   };
 
   #latestT(d: ChartData): number {
@@ -384,13 +421,18 @@ export class ChartEngine implements CanvasEngine {
   #resetRunState(): void {
     this.#spans = [];
     this.#lastPhase = null;
-    this.#vpInit = false;
+    this.#targetTMax = 4_000;
+    this.#displayTMax = 4_000;
+    this.#lastCameraAt = 0;
+    this.#cameraInitialized = false;
     this.#result = false;
     this.#hasThroughputScale = false;
     this.#indexedThroughput = 0;
     this.#lastIndexedThroughput = undefined;
     for (const lane of Object.values(this.#throughputByLane)) lane.length = 0;
     this.#latencyIndex.clear();
+    this.#latencyGlyphStartedAt = new WeakMap();
+    this.#latencyGlyphActive = false;
   }
 
   #update(): void {
@@ -413,8 +455,6 @@ export class ChartEngine implements CanvasEngine {
         this.#spans[this.#spans.length - 1].t1 = phaseStart;
       this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
-
-      if (this.#vpInit) this.#vp.tMin = Math.max(this.#vp.tMin, phaseStart);
     }
 
     const latest = this.#latestT(d);
@@ -422,17 +462,10 @@ export class ChartEngine implements CanvasEngine {
       d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
     this.#result = complete;
 
-    let tMin: number;
-    let tMax: number;
-    if (complete) {
-      tMin = 0;
-      tMax = Math.max(latest * 1.02, 1000);
-    } else {
-      const span = this.#spans[this.#spans.length - 1];
-      const phaseStart = span ? span.t0 : 0;
-      tMin = phaseStart;
-      tMax = Math.max(latest + 2000, phaseStart + 4000);
-    }
+    const tMin = 0;
+    const targetTMax = complete
+      ? Math.max(latest * 1.02, 1_000)
+      : Math.max(Math.max(latest, d.timelineT) + 2_000, 4_000);
 
     const bytesPerSecMax =
       d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
@@ -448,10 +481,56 @@ export class ChartEngine implements CanvasEngine {
       ? latencyScaleForHistory(d.latency)
       : d.latencyScaleMs;
 
-    this.#vp = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
+    this.#targetTMax = targetTMax;
+    if (!this.#cameraInitialized) {
+      this.#displayTMax = this.#targetTMax;
+      this.#cameraInitialized = true;
+    }
+    this.#vp = {
+      tMin,
+      tMax: this.#displayTMax,
+      bytesPerSecMax,
+      rttMin,
+      rttMax,
+    };
     this.#layout = chartLayout(this.#w, this.#h, this.#vp);
-    this.#vpInit = true;
     this.#publishPresentation(d);
+  }
+
+  #stepCamera(now: number): boolean {
+    if (!this.#cameraInitialized) {
+      this.#displayTMax = this.#targetTMax;
+      this.#cameraInitialized = true;
+      this.#lastCameraAt = now;
+      return false;
+    }
+
+    if (this.#reducedMotion) {
+      const changed =
+        Math.abs(this.#targetTMax - this.#displayTMax) >
+        CHART_TIME_CAMERA_EPSILON_MS;
+      this.#displayTMax = this.#targetTMax;
+      this.#lastCameraAt = now;
+      return changed;
+    }
+
+    const delta = this.#targetTMax - this.#displayTMax;
+    if (Math.abs(delta) <= CHART_TIME_CAMERA_EPSILON_MS) {
+      this.#displayTMax = this.#targetTMax;
+      this.#lastCameraAt = now;
+      return false;
+    }
+
+    const dt =
+      this.#lastCameraAt > 0
+        ? Math.max(0, Math.min(100, now - this.#lastCameraAt))
+        : 0;
+    this.#lastCameraAt = now;
+
+    const alpha = dt > 0 ? 1 - Math.exp(-dt / CHART_TIME_CAMERA_TAU_MS) : 1;
+
+    this.#displayTMax += delta * alpha;
+    return true;
   }
 
   /* Coordinate maps. */
@@ -509,17 +588,20 @@ export class ChartEngine implements CanvasEngine {
     });
   }
 
-  #drawScene(): void {
+  #drawScene(now: number): boolean {
     const ctx = this.#sceneCtx;
-    if (!ctx) return;
+    if (!ctx) return false;
     const d = this.#get();
     ctx.clearRect(0, 0, this.#w, this.#h);
 
     this.#drawGrid(ctx);
     this.#drawThroughput(ctx, d.throughput);
     if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
-    if (d.latencyEnabled) this.#drawLatency(ctx, d.latency);
+    const latencyAnimating = d.latencyEnabled
+      ? this.#drawLatency(ctx, d.latency, now)
+      : false;
     this.#drawPhases(ctx);
+    return latencyAnimating;
   }
 
   #compose(): void {
@@ -750,14 +832,38 @@ export class ChartEngine implements CanvasEngine {
     }
   }
 
-  #drawLatency(ctx: CanvasRenderingContext2D, all: LatencyBucket[]): void {
-    if (!all.length) return;
+  #drawLatency(
+    ctx: CanvasRenderingContext2D,
+    all: LatencyBucket[],
+    now: number,
+  ): boolean {
+    if (!all.length) return false;
     ctx.lineWidth = 1;
+    let animating = false;
     const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
     for (let i = lo; i < hi; i++) {
       const s = all[i];
       const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
+      let alpha = 1;
+      let radiusScale = 1;
+      if (!this.#result) {
+        let startedAt = this.#latencyGlyphStartedAt.get(s);
+        if (startedAt == null) {
+          startedAt = now;
+          this.#latencyGlyphStartedAt.set(s, now);
+        }
+        const p = Math.min(
+          1,
+          Math.max(0, (now - startedAt) / LATENCY_GLYPH_ENTER_MS),
+        );
+        const eased = 1 - (1 - p) * (1 - p);
+        alpha = 0.65 + 0.35 * eased;
+        radiusScale = 0.85 + 0.15 * eased;
+        animating ||= p < 1;
+      }
+      ctx.save();
+      ctx.globalAlpha = alpha;
       if (s.medianRttMs != null) {
         const x = this.#x(s.t);
         const overflow = latencyBucketExceedsScale(s, this.#vp.rttMax);
@@ -779,7 +885,7 @@ export class ChartEngine implements CanvasEngine {
         }
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(x, medianY, 2.25, 0, Math.PI * 2);
+        ctx.arc(x, medianY, 2.25 * radiusScale, 0, Math.PI * 2);
         ctx.fill();
         if (overflowGlyph) {
           ctx.fillStyle = color;
@@ -802,7 +908,9 @@ export class ChartEngine implements CanvasEngine {
         ctx.fillStyle = this.#colors.warn;
         ctx.fillRect(x - 1.5, this.#layout.plot.bottom - 5, 3, 5);
       }
+      ctx.restore();
     }
+    return animating;
   }
 
   #drawHover(ctx: CanvasRenderingContext2D): void {

@@ -250,7 +250,8 @@ export type ResultMethod = "stable-window" | "full-average";
 export interface ThroughputResult {
   meanBytesPerSec: number; // == reportedBytesPerSec, the headline value
   peakBytesPerSec: number;
-  stabilityPct: number; // coefficient-of-variation based (0..100)
+  /** Fixed-time-bucket coefficient-of-variation descriptor (0..100). */
+  stabilityPct: number;
   totalBytes: number;
   reportedBytesPerSec: number; // effective bytes / represented time
   fullAverageBytesPerSec: number; // same effective whole-window rate

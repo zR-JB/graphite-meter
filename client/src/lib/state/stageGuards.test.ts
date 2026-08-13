@@ -1,28 +1,43 @@
 import { test, expect } from "bun:test";
 import {
   canDisableBidirectional,
+  canToggleMeasuredStage,
   latestBidirectionalLanes,
   latestOneWayThroughputForPhase,
 } from "./stageGuards";
 import type { ThroughputSample } from "../runner/contract";
 
 test("canDisableBidirectional: freely toggleable while idle", () => {
-  expect(canDisableBidirectional("idle", false)).toBe(true);
+  expect(canDisableBidirectional(null, false)).toBe(true);
 });
 
 test("canDisableBidirectional: freely toggleable after complete", () => {
-  expect(canDisableBidirectional("complete", false)).toBe(true);
+  expect(canDisableBidirectional(null, false)).toBe(true);
 });
 
 test("canDisableBidirectional: toggleable while an earlier stage is running", () => {
   expect(canDisableBidirectional("download", true)).toBe(true);
   expect(canDisableBidirectional("upload", true)).toBe(true);
   expect(canDisableBidirectional("latency", true)).toBe(true);
-  expect(canDisableBidirectional("warmup", true)).toBe(true);
+  expect(canDisableBidirectional(null, true)).toBe(true);
 });
 
 test("canDisableBidirectional: locked while the bidirectional stage itself is running", () => {
   expect(canDisableBidirectional("bidirectional", true)).toBe(false);
+});
+
+test("measured stage guards use the warmup owner", () => {
+  expect(canToggleMeasuredStage("latency", true, "latency")).toBe(false);
+  expect(canToggleMeasuredStage("download", true, "latency")).toBe(true);
+  expect(canToggleMeasuredStage("upload", true, "latency")).toBe(true);
+
+  expect(canToggleMeasuredStage("latency", true, "download")).toBe(false);
+  expect(canToggleMeasuredStage("download", true, "download")).toBe(false);
+  expect(canToggleMeasuredStage("upload", true, "download")).toBe(true);
+
+  expect(canToggleMeasuredStage("latency", true, "upload")).toBe(false);
+  expect(canToggleMeasuredStage("download", true, "upload")).toBe(false);
+  expect(canToggleMeasuredStage("upload", true, "upload")).toBe(false);
 });
 
 function sample(

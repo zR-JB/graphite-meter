@@ -150,3 +150,45 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
     .analyze();
   expect(accessibility.violations).toEqual([]);
 });
+
+test("endpoint status follows the live, running, and terminal path modes", async ({
+  page,
+}) => {
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  await settings.getByRole("button", { name: "custom" }).click();
+  for (const [label, value] of [
+    ["Warmup ms", "0"],
+    ["Latency ms", "0"],
+    ["Download ms", "600"],
+    ["Upload ms", "0"],
+  ] as const)
+    await settings.getByLabel(label).fill(value);
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+
+  await page.getByRole("button", { name: "Toggle endpoint info" }).click();
+  const endpoint = page.locator('[aria-label="Endpoint info"]');
+  const throughputPath = endpoint
+    .locator(".path")
+    .filter({ hasText: "throughput path" });
+  await expect(throughputPath.locator("mark")).toHaveText("Ready");
+
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(throughputPath.locator("mark")).toHaveText("In use");
+  const runSnapshot = await throughputPath.locator("dd").first().textContent();
+
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible({ timeout: 5_000 });
+  await expect(throughputPath.locator("mark")).toHaveText("Used");
+  await expect(throughputPath.locator("mark")).toHaveAttribute(
+    "data-state",
+    "used",
+  );
+  await expect(throughputPath.locator("dd").first()).toHaveText(runSnapshot!);
+
+  const download = page.getByRole("switch", { name: "Download stage" });
+  await download.click();
+  await expect(throughputPath.locator("dd").first()).toHaveText(runSnapshot!);
+});

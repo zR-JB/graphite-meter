@@ -4,6 +4,28 @@
 
 import type { TransportDiscovery, TransportKind } from "../runner/contract";
 import { httpProtocolLabel } from "../runner/protocol";
+import type { ConnectionValidationState } from "../runner/connectionModel";
+
+export type EndpointPathMode = "live" | "running" | "result";
+
+export function endpointPathStatus(
+  validation: ConnectionValidationState,
+  mode: EndpointPathMode,
+): {
+  label: string;
+  tone: "ready" | "active" | "used" | ConnectionValidationState;
+} {
+  if (validation === "verified") {
+    if (mode === "running") return { label: "In use", tone: "active" };
+    if (mode === "result") return { label: "Used", tone: "used" };
+    return { label: "Ready", tone: "ready" };
+  }
+
+  return {
+    label: validation[0].toUpperCase() + validation.slice(1),
+    tone: validation,
+  };
+}
 
 /** Measurement occupancy as the server reported it at probe time. */
 export interface ServerLoad {
