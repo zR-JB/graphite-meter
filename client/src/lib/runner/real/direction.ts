@@ -37,7 +37,7 @@ export interface DirectionHost {
   /** This direction's stall state flipped; the stage combines the directions. */
   stallChanged: (detail?: string) => void;
   /** A server upload-progress record relayed by a session lane. */
-  uploadProgress: (msg: WtProgressRelay) => void;
+  uploadProgress: (msg: WtProgressRelay, generation: number) => void;
   /** Open the upload meter's measured window. */
   beginUploadMeasure: () => void;
   /** Release every direction of the stage. */
@@ -107,6 +107,9 @@ export class TransferDirection {
   /** Per-direction measured-byte watchdog. Upload writer completions do not
    *  touch it; only receiver-authoritative progress does. */
   #progressTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Captured into each upload-lane callback so an old worker cannot cross a
+   * session rotation boundary after a replacement has started. */
+  #uploadGeneration = 0;
 
   constructor(opts: DirectionOptions) {
     this.dir = opts.dir;
@@ -148,6 +151,10 @@ export class TransferDirection {
         this.#startLane(i);
       }, delay);
     }
+  }
+
+  setUploadGeneration(generation: number): void {
+    this.#uploadGeneration = generation;
   }
 
   /** Begin measuring the lanes opened at prime time and NEVER reopened:
@@ -234,7 +241,7 @@ export class TransferDirection {
    *  factory, so nothing outlives the failure that closed it. */
   #startLane(i: number): void {
     if (!this.#live || this.#stopping) return;
-    const lane = this.newLane(i, this.#laneEvents(i));
+    const lane = this.newLane(i, this.#laneEvents(i, this.#uploadGeneration));
     this.#lanes[i] = lane;
     lane.start();
     // A restarted lane must resume the live measurement window: without the
@@ -243,13 +250,13 @@ export class TransferDirection {
   }
 
   /** What a lane reports, routed to the same accounting for every transport. */
-  #laneEvents(i: number): LaneEvents {
+  #laneEvents(i: number, generation: number): LaneEvents {
     return {
       onProgress: (bytes, elapsedMs, seq) =>
         this.#onProgress(i, bytes, elapsedMs, seq),
       onAlive: () => this.#onAlive(i),
       onError: (recoverable, detail) => this.#onError(i, detail, recoverable),
-      onUploadProgress: (msg) => this.#deps.uploadProgress(msg),
+      onUploadProgress: (msg) => this.#deps.uploadProgress(msg, generation),
       onAuthRequired: () => {
         this.#deps.discardTransfer();
         redirectToLogin();

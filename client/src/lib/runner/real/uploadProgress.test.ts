@@ -114,6 +114,23 @@ test("attachExternal: a replaced feed is superseded, not a stage failure", async
   expect(failures).toEqual([]);
 });
 
+test("an old upload generation cannot feed the replacement meter", async () => {
+  const { channel, curve } = channelUnderTest({ measuring: true });
+  const first = channel.attachExternal(() => {});
+  const oldGeneration = channel.generation;
+  const second = channel.attachExternal(() => {});
+
+  channel.accept({ type: "bytes", n: 9_999, t: 1_000_000_000 }, oldGeneration);
+  expect(curve).toEqual([]);
+
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+  expect(curve).toEqual([150]);
+  await channel.teardown(false);
+  expect(await first).toBe("superseded");
+  expect(await second).toBe("superseded");
+});
+
 // A refused feed ends the attach as surely as a ready record: left pending, the
 // stage fails once for the refusal and again when the establish wait times out.
 test("accept: a refusal ends a pending external attach", async () => {

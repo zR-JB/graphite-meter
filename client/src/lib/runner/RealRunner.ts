@@ -136,7 +136,8 @@ export class RealBackend implements RunnerBackend {
     host: () => this.#host!,
     sampleProvesStageLiveness: () => !this.#stalled,
     stallChanged: (detail) => this.#reconcileStall(detail),
-    uploadProgress: (msg) => this.#uploadProgress.accept(msg),
+    uploadProgress: (msg, generation) =>
+      this.#uploadProgress.accept(msg, generation),
     beginUploadMeasure: () => this.#uploadProgress.beginMeasure(),
     discardTransfer: () => this.#discardTransfer(),
   };
@@ -1069,11 +1070,7 @@ export class RealBackend implements RunnerBackend {
         headers,
         credentials,
       };
-      uploadLane.newLane = (_i, events) => sessionLane(sessionOpts, events);
-      // The session worker reads the feed before its lanes write, so the
-      // counter is already running when bytes start.
-      uploadLane.spawn([sessionOpts.url]);
-      const feed = await this.#uploadProgress.attachExternal(() => {
+      const feed = this.#uploadProgress.attachExternal(() => {
         void fetch(progressUrl, {
           method: "DELETE",
           cache: "no-store",
@@ -1082,7 +1079,12 @@ export class RealBackend implements RunnerBackend {
           credentials,
         }).catch(() => {});
       });
-      if (feed === "timeout") {
+      uploadLane.setUploadGeneration(this.#uploadProgress.generation);
+      // The session worker reads the feed before its lanes write, so the
+      // counter is already running when bytes start.
+      uploadLane.newLane = (_i, events) => sessionLane(sessionOpts, events);
+      uploadLane.spawn([sessionOpts.url]);
+      if ((await feed) === "timeout") {
         this.#host!.failStage(
           uploadLane.stage,
           "connection-lost",
@@ -1096,6 +1098,7 @@ export class RealBackend implements RunnerBackend {
     if (!(await this.#uploadProgress.prime(uploadLane.stage, id))) return;
     const progressLane = this.#liveLane(dir);
     if (!progressLane) return;
+    progressLane.setUploadGeneration(this.#uploadProgress.generation);
     progressLane.spawn(Array.from({ length: laneCount }, (_, i) => url(i, id)));
   }
 

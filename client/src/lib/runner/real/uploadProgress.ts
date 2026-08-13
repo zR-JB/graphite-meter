@@ -67,6 +67,16 @@ export class UploadProgressChannel {
   #haveBaseline = false;
   /** True once the terminal complete record landed for this stage. */
   #completed = false;
+  /** Local ownership token for a server upload id/feed pair. */
+  #generation = 0;
+
+  get generation(): number {
+    return this.#generation;
+  }
+
+  #nextGeneration(): number {
+    return ++this.#generation;
+  }
 
   constructor(deps: UploadProgressDeps) {
     this.#deps = deps;
@@ -77,6 +87,7 @@ export class UploadProgressChannel {
   prime(stage: PhaseActivity["stage"], uploadId: string): Promise<boolean> {
     this.#releaseWorker();
     this.#resetCounters();
+    const generation = this.#nextGeneration();
 
     if (!uploadId) return Promise.resolve(false);
     const host = this.#deps.host();
@@ -111,6 +122,7 @@ export class UploadProgressChannel {
       this.#ready = { finish };
     });
     worker.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
+      if (generation !== this.#generation) return;
       if (e.data.type === "open") this.#ready?.finish(true);
       this.#onMessage(e.data);
     };
@@ -138,6 +150,7 @@ export class UploadProgressChannel {
     this.#external?.finish("superseded");
     this.#resetCounters();
     this.#releaseWorker();
+    this.#nextGeneration();
     this.#finalize = finalize;
     return new Promise((resolve) => {
       const finish = (state: "open" | "timeout" | "superseded"): void => {
@@ -158,7 +171,11 @@ export class UploadProgressChannel {
    *  messages reach the main thread through the lane channel. A refusal ends
    *  the attach as surely as a ready record: leaving it pending would fail the
    *  stage once for the refusal and again when the wait times out. */
-  accept(msg: ProgressOutMsg | AuthRequiredMsg): void {
+  accept(
+    msg: ProgressOutMsg | AuthRequiredMsg,
+    generation = this.#generation,
+  ): void {
+    if (generation !== this.#generation) return;
     if (msg.type === "open") this.#external?.finish("open");
     else if (msg.type === "fatal") this.#external?.finish("superseded");
     this.#onMessage(msg);
