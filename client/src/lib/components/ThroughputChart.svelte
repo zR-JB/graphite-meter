@@ -1,17 +1,31 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
-  import { ChartEngine, type HoverInfo } from "../canvas/ChartEngine";
+  import {
+    ChartEngine,
+    type ChartLabelPhase,
+    type ChartPresentation,
+    type HoverInfo,
+  } from "../canvas/ChartEngine";
   import { fmtSpeed, fmtMs } from "../format";
   import {
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
 
+  const PHASE_LABEL: Record<ChartLabelPhase, string> = {
+    warmup: "WARM-UP",
+    latency: "PING",
+    download: "DOWNLOAD",
+    upload: "UPLOAD",
+    bidirectional: "BI-DIR",
+  } as const;
+
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
   let engine: ChartEngine;
   let hover = $state<HoverInfo | null>(null);
+  let chartPresentation = $state<ChartPresentation | null>(null);
   let hoverX: number | null = null;
   let hoverPresentation: PresentationHandle;
   // presentation keeps animating while a render returns true.
@@ -72,10 +86,7 @@
           bidiUp: store.result?.bidirectional?.up.reportedBytesPerSec,
         },
       }),
-      {
-        throughput: (bytesPerSec) => fmtSpeed(store.toUnit(bytesPerSec)),
-        latency: (rtt) => fmtMs(rtt),
-      },
+      (next) => (chartPresentation = next),
     );
     engine.attach(canvasEl!);
     hoverPresentation = presentation.register(plotEl!, updateHover);
@@ -107,6 +118,69 @@
     onmouseleave={onLeave}
   >
     <canvas bind:this={canvasEl} class="canvas"></canvas>
+
+    {#if chartPresentation}
+      {@const presentation = chartPresentation}
+      <div class="chart-labels" aria-hidden="true">
+        {#if presentation.hasThroughputScale}
+          {#each presentation.layout.axisRows as row (row.fraction)}
+            <span
+              class="axis-label axis-label-left"
+              style:left="4px"
+              style:top={`${row.y}px`}
+              >{fmtSpeed(
+                store.toUnit(
+                  presentation.layout.viewport.bytesPerSecMax *
+                    (1 - row.fraction),
+                ),
+              )}</span
+            >
+          {/each}
+        {/if}
+        {#if presentation.latencyEnabled}
+          {#each presentation.layout.axisRows as row (row.fraction)}
+            <span
+              class="axis-label axis-label-right"
+              style:left={`${presentation.layout.width - 4}px`}
+              style:top={`${row.y}px`}
+              >{fmtMs(
+                presentation.layout.viewport.rttMin +
+                  (presentation.layout.viewport.rttMax -
+                    presentation.layout.viewport.rttMin) *
+                    (1 - row.fraction),
+              )}</span
+            >
+          {/each}
+        {/if}
+        {#each presentation.layout.timeMajorTicks as tick (tick.t)}
+          <span
+            class="time-label"
+            style:left={`${tick.x}px`}
+            style:top={`${presentation.layout.height - 5}px`}
+            >{tick.t % 1000 === 0
+              ? `${tick.t / 1000}s`
+              : `${(tick.t / 1000).toFixed(1)}s`}</span
+          >
+        {/each}
+        {#each presentation.phaseLabels as label (label.phase + label.x)}
+          <span
+            class="phase-label"
+            style:left={`${label.x}px`}
+            style:top={`${label.y}px`}>{PHASE_LABEL[label.phase]}</span
+          >
+        {/each}
+        {#each presentation.phaseStats as stat (stat.x + stat.y + stat.bytesPerSec)}
+          <span
+            class="stat-label"
+            style:border-color={stat.stroke}
+            style:color={stat.stroke}
+            style:left={`${stat.x}px`}
+            style:top={`${stat.y}px`}
+            >avg {fmtSpeed(store.toUnit(stat.bytesPerSec))}</span
+          >
+        {/each}
+      </div>
+    {/if}
 
     {#if hover}
       <div
@@ -193,6 +267,48 @@
     display: block;
     width: 100%;
     height: 100%;
+  }
+  .chart-labels {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-soft);
+  }
+  .axis-label,
+  .time-label,
+  .phase-label,
+  .stat-label {
+    position: absolute;
+    white-space: nowrap;
+  }
+  .axis-label {
+    transform: translateY(-50%);
+  }
+  .axis-label-right {
+    transform: translate(-100%, -50%);
+  }
+  .time-label {
+    transform: translate(-50%, -100%);
+  }
+  .phase-label {
+    transform: translateY(-100%);
+    font-size: 9px;
+    font-weight: 700;
+    opacity: 0.62;
+  }
+  .stat-label {
+    max-width: 126px;
+    overflow: hidden;
+    padding: 2px 5px;
+    border: 1px solid color-mix(in srgb, var(--text-soft) 55%, transparent);
+    border-radius: 4px;
+    background: var(--surface-1);
+    color: var(--text-soft);
+    font-size: 9px;
+    font-weight: 700;
+    text-overflow: ellipsis;
   }
 
   .chip {

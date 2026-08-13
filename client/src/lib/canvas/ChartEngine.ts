@@ -19,6 +19,11 @@ import {
 } from "./hoverInterp";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
+import {
+  chartLayout,
+  type ChartLayout,
+  type ChartViewport,
+} from "./chartLayout";
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -45,11 +50,6 @@ export interface ChartData {
   >;
 }
 
-export interface ChartFormatters {
-  throughput: (bytesPerSec: number) => string;
-  latency: (rtt: number) => string;
-}
-
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
@@ -64,14 +64,6 @@ export interface HoverInfo {
   rttMax: number | null;
   pingCount: number;
   lossCount: number;
-}
-
-interface Viewport {
-  tMin: number;
-  tMax: number;
-  bytesPerSecMax: number;
-  rttMin: number; // latency axis floor (0 live; centered span in result mode)
-  rttMax: number;
 }
 
 /** Per-lane average overlay drawn in result mode. */
@@ -90,18 +82,33 @@ interface PhaseSpan {
 
 type ThroughputLane = "download" | "upload" | "bidiDown" | "bidiUp";
 
-const PAD_L = 46;
-const PAD_R = 46;
-const PAD_T = 12;
-const PAD_B = 18;
+export interface ChartPresentation {
+  layout: ChartLayout;
+  latencyEnabled: boolean;
+  hasThroughputScale: boolean;
+  phaseLabels: ReadonlyArray<{ phase: ChartLabelPhase; x: number; y: number }>;
+  phaseStats: ReadonlyArray<{
+    bytesPerSec: number;
+    stroke: string;
+    x: number;
+    y: number;
+  }>;
+}
 
-const PHASE_NAME: Partial<Record<Phase, string>> = {
-  warmup: "WARM-UP",
-  latency: "PING",
-  download: "DOWNLOAD",
-  upload: "UPLOAD",
-  bidirectional: "BI-DIR",
-};
+export type ChartLabelPhase = Extract<
+  Phase,
+  "warmup" | "latency" | "download" | "upload" | "bidirectional"
+>;
+
+function isChartLabelPhase(phase: Phase): phase is ChartLabelPhase {
+  return (
+    phase === "warmup" ||
+    phase === "latency" ||
+    phase === "download" ||
+    phase === "upload" ||
+    phase === "bidirectional"
+  );
+}
 
 interface ThemeColors {
   download: string;
@@ -114,7 +121,6 @@ interface ThemeColors {
   warn: string;
   grid: string;
   textSoft: string;
-  panel: string;
   brand: string;
 }
 
@@ -131,15 +137,9 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
-/** Hex (#rgb/#rrggbb) → rgba() string at the given alpha. */
-function withAlpha(hex: string, a: number): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${a})`;
-}
-
 export class ChartEngine implements CanvasEngine {
   #get: () => ChartData;
-  #fmt: ChartFormatters;
+  #onPresentation: ((presentation: ChartPresentation) => void) | null;
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
   #scene: HTMLCanvasElement | null = null;
@@ -151,7 +151,7 @@ export class ChartEngine implements CanvasEngine {
   #w = 0;
   #h = 0;
 
-  #vp: Viewport = {
+  #vp: ChartViewport = {
     tMin: 0,
     tMax: 6000,
     bytesPerSecMax: 125_000,
@@ -159,6 +159,7 @@ export class ChartEngine implements CanvasEngine {
     rttMax: 50,
   };
   #vpInit = false;
+  #layout = chartLayout(1, 1, this.#vp);
 
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
@@ -192,13 +193,15 @@ export class ChartEngine implements CanvasEngine {
     warn: "#c4a568",
     grid: "rgba(211,219,227,0.05)",
     textSoft: "#6a717a",
-    panel: "#1c1f23",
     brand: "#6db0b8",
   };
 
-  constructor(get: () => ChartData, fmt: ChartFormatters) {
+  constructor(
+    get: () => ChartData,
+    onPresentation?: (presentation: ChartPresentation) => void,
+  ) {
     this.#get = get;
-    this.#fmt = fmt;
+    this.#onPresentation = onPresentation ?? null;
   }
 
   attach(canvas: HTMLCanvasElement): void {
@@ -251,10 +254,13 @@ export class ChartEngine implements CanvasEngine {
 
   hoverInfo(): HoverInfo | null {
     if (this.#hoverX == null) return null;
-    const plotW = this.#w - PAD_L - PAD_R;
+    const plotW = this.#layout.plot.right - this.#layout.plot.left;
     if (plotW <= 0) return null;
-    const x = Math.max(PAD_L, Math.min(this.#w - PAD_R, this.#hoverX));
-    const frac = (x - PAD_L) / plotW;
+    const x = Math.max(
+      this.#layout.plot.left,
+      Math.min(this.#layout.plot.right, this.#hoverX),
+    );
+    const frac = (x - this.#layout.plot.left) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
     this.#indexData(data);
@@ -329,7 +335,6 @@ export class ChartEngine implements CanvasEngine {
       warn: g("--warn", "#c4a568"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
       textSoft: g("--text-soft", "#6a717a"),
-      panel: g("--surface-1", "#1c1f23"),
       brand: g("--brand", "#6db0b8"),
     };
     this.#invalidateGradients();
@@ -344,13 +349,13 @@ export class ChartEngine implements CanvasEngine {
     phase: "download" | "upload",
   ): CanvasGradient {
     if (this.#gradH !== this.#h) {
-      const bot = this.#h - PAD_B;
+      const bot = this.#layout.plot.bottom;
       const make = (rgb: {
         r: number;
         g: number;
         b: number;
       }): CanvasGradient => {
-        const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
+        const grad = ctx.createLinearGradient(0, this.#layout.plot.top, 0, bot);
         grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
         grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
         return grad;
@@ -446,25 +451,64 @@ export class ChartEngine implements CanvasEngine {
       : d.latencyScaleMs;
 
     this.#vp = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
+    this.#layout = chartLayout(this.#w, this.#h, this.#vp);
     this.#vpInit = true;
+    this.#publishPresentation(d);
   }
 
   /* Coordinate maps. */
   #x(t: number): number {
-    const plotW = this.#w - PAD_L - PAD_R;
-    return (
-      PAD_L + ((t - this.#vp.tMin) / (this.#vp.tMax - this.#vp.tMin)) * plotW
-    );
+    return this.#layout.x(t);
   }
   #yL(bytesPerSec: number): number {
-    const plotH = this.#h - PAD_T - PAD_B;
-    return PAD_T + (1 - bytesPerSec / this.#vp.bytesPerSecMax) * plotH;
+    return this.#layout.throughputY(bytesPerSec);
   }
   #yR(rtt: number): number {
-    const plotH = this.#h - PAD_T - PAD_B;
-    const span = this.#vp.rttMax - this.#vp.rttMin || 1;
-    const y = PAD_T + (1 - (rtt - this.#vp.rttMin) / span) * plotH;
-    return Math.max(PAD_T, Math.min(this.#h - PAD_B, y));
+    return this.#layout.latencyY(rtt);
+  }
+
+  #publishPresentation(data: ChartData): void {
+    if (!this.#onPresentation) return;
+    const { plot } = this.#layout;
+    let warmupLabelled = false;
+    const phaseLabels = this.#result
+      ? this.#spans.flatMap((span) => {
+          const x0 = Math.max(plot.left, this.#x(span.t0));
+          const x1 = Math.min(
+            plot.right,
+            this.#x(span.t1 === Infinity ? this.#vp.tMax : span.t1),
+          );
+          const width = x1 - x0 - 2;
+          const repeatWarmup = span.phase === "warmup" && warmupLabelled;
+          if (span.phase === "warmup") warmupLabelled = true;
+          return width > 56 && !repeatWarmup && isChartLabelPhase(span.phase)
+            ? [{ phase: span.phase, x: x0 + 3, y: plot.top + 9 }]
+            : [];
+        })
+      : [];
+    const phaseStats = this.#result
+      ? this.#phaseStats(data.throughput).flatMap((stat) => {
+          const x0 = Math.max(plot.left, this.#x(stat.t0));
+          const x1 = Math.min(plot.right, this.#x(stat.t1));
+          if (x1 <= x0) return [];
+          const y = this.#yL(stat.avg);
+          return [
+            {
+              bytesPerSec: stat.avg,
+              stroke: stat.stroke,
+              x: Math.min(x0 + 3, plot.right - 130),
+              y: y - 4 - 14 < plot.top ? y + 4 : y - 4 - 14,
+            },
+          ];
+        })
+      : [];
+    this.#onPresentation({
+      layout: this.#layout,
+      latencyEnabled: data.latencyEnabled,
+      hasThroughputScale: this.#hasThroughputScale,
+      phaseLabels,
+      phaseStats,
+    });
   }
 
   #drawScene(): void {
@@ -478,7 +522,6 @@ export class ChartEngine implements CanvasEngine {
     if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
     if (d.latencyEnabled) this.#drawLatency(ctx, d.latency);
     this.#drawPhases(ctx);
-    this.#drawAxesLabels(ctx, d.latencyEnabled);
   }
 
   #compose(): void {
@@ -499,7 +542,7 @@ export class ChartEngine implements CanvasEngine {
     this.#drawHover(ctx);
   }
 
-  /** Ribbon and label colour, null when the phase shows none. Warmup uses the
+  /** Ribbon colour, null when the phase shows none. Warmup uses the
    *  muted body-text grey so it recedes behind the lane colours. */
   #phaseColor(phase: Phase): string | null {
     if (phase === "warmup") return this.#colors.textSoft;
@@ -515,8 +558,8 @@ export class ChartEngine implements CanvasEngine {
     all: ThroughputSample[],
   ): void {
     for (const stat of this.#phaseStats(all)) {
-      const x0 = Math.max(PAD_L, this.#x(stat.t0));
-      const x1 = Math.min(this.#w - PAD_R, this.#x(stat.t1));
+      const x0 = Math.max(this.#layout.plot.left, this.#x(stat.t0));
+      const x1 = Math.min(this.#layout.plot.right, this.#x(stat.t1));
       if (x1 <= x0) continue;
       const yAvg = this.#yL(stat.avg);
 
@@ -530,30 +573,6 @@ export class ChartEngine implements CanvasEngine {
       ctx.lineTo(x1, Math.round(yAvg) + 0.5);
       ctx.stroke();
       ctx.restore();
-
-      const label = `avg ${this.#fmt.throughput(stat.avg)}`;
-      ctx.font = '700 9px "JetBrains Mono", monospace';
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
-      const padX = 5;
-      const chipH = 14;
-      const tw = ctx.measureText(label).width;
-      const chipW = tw + padX * 2;
-      const chipX = Math.min(x0 + 3, this.#w - PAD_R - chipW);
-      let chipY = yAvg - 4 - chipH;
-      if (chipY < PAD_T) chipY = yAvg + 4;
-      const baselineY = chipY + chipH - 4;
-
-      ctx.beginPath();
-      ctx.roundRect(chipX, chipY, chipW, chipH, 4);
-      ctx.fillStyle = this.#colors.panel;
-      ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = withAlpha(stat.stroke, 0.55);
-      ctx.stroke();
-
-      ctx.fillStyle = stat.stroke;
-      ctx.fillText(label, chipX + padX, baselineY);
     }
   }
 
@@ -589,14 +608,13 @@ export class ChartEngine implements CanvasEngine {
   }
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
-    const ry = this.#h - PAD_B + 4;
-    let warmupLabelled = false;
+    const ry = this.#layout.plot.bottom + 4;
     for (const s of this.#spans) {
       const color = this.#phaseColor(s.phase);
       if (!color) continue;
-      const x0 = Math.max(PAD_L, this.#x(s.t0));
+      const x0 = Math.max(this.#layout.plot.left, this.#x(s.t0));
       const x1 = Math.min(
-        this.#w - PAD_R,
+        this.#layout.plot.right,
         this.#x(s.t1 === Infinity ? this.#vp.tMax : s.t1),
       );
       const w = x1 - x0 - 2;
@@ -607,77 +625,37 @@ export class ChartEngine implements CanvasEngine {
       ctx.beginPath();
       ctx.roundRect(x0, ry, w, 3, 1.5);
       ctx.fill();
-
-      const isRepeatWarmup = s.phase === "warmup" && warmupLabelled;
-      if (this.#result && w > 56 && !isRepeatWarmup) {
-        ctx.globalAlpha = 0.62;
-        ctx.font = '700 9px "JetBrains Mono", monospace';
-        ctx.textAlign = "left";
-        ctx.textBaseline = "alphabetic";
-        ctx.fillText(PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
-      }
-      if (s.phase === "warmup") warmupLabelled = true;
     }
     ctx.globalAlpha = 1;
   }
 
-  /** Adaptive nice step (ms) targeting ~5 vertical divisions for any span. */
-  #niceTimeStep(target: number): number {
-    const steps = [1000, 2000, 5000, 10000, 20000, 30000, 60000];
-    for (const s of steps) if (s >= target) return s;
-    return 60000;
-  }
-
   #drawGrid(ctx: CanvasRenderingContext2D): void {
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
-    const left = PAD_L;
-    const right = this.#w - PAD_R;
-    const step = this.#niceTimeStep((this.#vp.tMax - this.#vp.tMin) / 5);
-    const startT = Math.ceil(this.#vp.tMin / step) * step;
+    const { plot } = this.#layout;
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = this.#colors.grid;
     ctx.globalAlpha = 0.55;
-    const minorStep = step / 4;
-    const minorStartT = Math.ceil(this.#vp.tMin / minorStep) * minorStep;
     ctx.beginPath();
-    for (let t = minorStartT; t <= this.#vp.tMax; t += minorStep) {
-      const x = Math.round(this.#x(t)) + 0.5;
-      if (x < left || x > right) continue;
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, bot);
+    for (const tick of this.#layout.timeMinorTicks) {
+      ctx.moveTo(tick.x, plot.top);
+      ctx.lineTo(tick.x, plot.bottom);
     }
-    for (let i = 1; i < 16; i++) {
-      if (i % 4 === 0) continue; // major line, drawn below
-      const y = Math.round(top + ((bot - top) * i) / 16) + 0.5;
-      ctx.moveTo(left, y);
-      ctx.lineTo(right, y);
+    for (const y of this.#layout.horizontalMinorLines) {
+      ctx.moveTo(plot.left, y);
+      ctx.lineTo(plot.right, y);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     ctx.strokeStyle = this.#colors.grid;
-    ctx.fillStyle = this.#colors.textSoft;
-    ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.textAlign = "center";
     ctx.beginPath();
-    for (let t = startT; t <= this.#vp.tMax; t += step) {
-      const x = Math.round(this.#x(t)) + 0.5;
-      if (x < left || x > right) continue;
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, bot);
-      const s = t / 1000;
-      ctx.fillText(
-        Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`,
-        x,
-        this.#h - 5,
-      );
+    for (const tick of this.#layout.timeMajorTicks) {
+      ctx.moveTo(tick.x, plot.top);
+      ctx.lineTo(tick.x, plot.bottom);
     }
-    for (let i = 1; i <= 3; i++) {
-      const y = Math.round(top + ((bot - top) * i) / 4) + 0.5;
-      ctx.moveTo(left, y);
-      ctx.lineTo(right, y);
+    for (const y of this.#layout.horizontalMajorLines) {
+      ctx.moveTo(plot.left, y);
+      ctx.lineTo(plot.right, y);
     }
     ctx.stroke();
   }
@@ -725,7 +703,7 @@ export class ChartEngine implements CanvasEngine {
     all: ThroughputSample[],
   ): void {
     if (!all.length) return;
-    const bot = this.#h - PAD_B;
+    const bot = this.#layout.plot.bottom;
     const tMin = this.#vp.tMin;
     const tMax = this.#vp.tMax;
     for (const lane of this.#throughputLanes()) {
@@ -852,9 +830,9 @@ export class ChartEngine implements CanvasEngine {
           const x = this.#x(s.t);
           ctx.fillStyle = s.underLoad ? this.#colors.warn : this.#colors.signal;
           ctx.beginPath();
-          ctx.moveTo(x, PAD_T);
-          ctx.lineTo(x - 3, PAD_T + 5);
-          ctx.lineTo(x + 3, PAD_T + 5);
+          ctx.moveTo(x, this.#layout.plot.top);
+          ctx.lineTo(x - 3, this.#layout.plot.top + 5);
+          ctx.lineTo(x + 3, this.#layout.plot.top + 5);
           ctx.closePath();
           ctx.fill();
         }
@@ -862,7 +840,7 @@ export class ChartEngine implements CanvasEngine {
       if (s.lossCount > 0) {
         const x = this.#x(s.t);
         ctx.fillStyle = this.#colors.warn;
-        ctx.fillRect(x - 1.5, this.#h - PAD_B - 5, 3, 5);
+        ctx.fillRect(x - 1.5, this.#layout.plot.bottom - 5, 3, 5);
         drawSegment();
       }
       previous = s;
@@ -870,37 +848,13 @@ export class ChartEngine implements CanvasEngine {
     drawSegment();
   }
 
-  #drawAxesLabels(
-    ctx: CanvasRenderingContext2D,
-    latencyEnabled: boolean,
-  ): void {
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
-    ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.fillStyle = this.#colors.textSoft;
-    // Left: throughput. Right: latency (omitted when latency is disabled).
-    for (let i = 0; i <= 2; i++) {
-      const frac = i / 2; // 0 top, 1 bottom
-      const y = top + (bot - top) * frac;
-      const bytesPerSec = this.#vp.bytesPerSecMax * (1 - frac);
-      ctx.textAlign = "left";
-      if (this.#hasThroughputScale) {
-        ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
-      }
-      if (latencyEnabled) {
-        const rtt =
-          this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
-        ctx.textAlign = "right";
-        ctx.fillText(this.#fmt.latency(rtt), this.#w - 4, y + 3);
-      }
-    }
-  }
-
   #drawHover(ctx: CanvasRenderingContext2D): void {
     if (this.#hoverX == null) return;
-    const x = Math.max(PAD_L, Math.min(this.#w - PAD_R, this.#hoverX));
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
+    const x = Math.max(
+      this.#layout.plot.left,
+      Math.min(this.#layout.plot.right, this.#hoverX),
+    );
+    const { top, bottom: bot } = this.#layout.plot;
     ctx.strokeStyle = this.#colors.brand;
     ctx.lineWidth = 1;
     const gx = Math.round(x) + 0.5;
