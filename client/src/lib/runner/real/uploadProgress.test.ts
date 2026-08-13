@@ -65,7 +65,6 @@ function channelUnderTest(
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
-    stageSawBytes: false,
     ...laneState,
   };
   const host = {

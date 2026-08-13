@@ -5,7 +5,6 @@ import {
   type DirectionHost,
 } from "./direction";
 import {
-  EARLY_FAIL_BUDGET_MS,
   DIRECTION_PROGRESS_WINDOW_MS,
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
@@ -65,6 +64,7 @@ interface Recorded {
   skips: number[];
   fails: string[];
   starts: number[];
+  stalls: string[];
 }
 
 function fakeHost(record: Recorded, clock: Clock): DirectionHost {
@@ -79,7 +79,7 @@ function fakeHost(record: Recorded, clock: Clock): DirectionHost {
   } as unknown as CoreHost;
   return {
     host: () => host,
-    stallChanged: () => {},
+    stallChanged: (detail) => record.stalls.push(detail ?? "stalled"),
     uploadProgress: () => {},
     beginUploadMeasure: () => {},
     discardTransfer: () => {},
@@ -105,16 +105,16 @@ function deadLane(
   };
 }
 
-// The skip is a deadline from prime, not an attempt count, so a transport that
-// refuses instantly and one that goes quiet for its whole establish budget are
-// skipped within the same window. Neither may skip before the budget elapses.
+// A recoverable establish failure stays with the runner-owned recovery budget.
+// The direction may retry after its bounded backoff, but cannot independently
+// skip the stage whether the failure is immediate or takes one establish bound.
 for (const [what, establishMs] of [
   ["a lane refused at once", 0],
   ["a lane that goes silent", ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS],
 ] as const) {
-  test(`${what} skips its stage on the same deadline`, () => {
+  test(`${what} never independently skips its stage`, () => {
     withClock((clock) => {
-      const record: Recorded = { skips: [], fails: [], starts: [] };
+      const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
       const direction = new TransferDirection({
         dir: "down",
         stage: "download",
@@ -124,15 +124,16 @@ for (const [what, establishMs] of [
         lane: (_i, events) => deadLane(establishMs, events, record, clock),
       });
       direction.spawn(["https://meter.test/lane"]);
-
-      clock.advance(EARLY_FAIL_BUDGET_MS);
-      expect(record.skips).toEqual([]);
+      direction.measure();
 
       clock.advance(
-        ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS + LANE_RESTART_BACKOFF_MS,
+        (ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS + LANE_RESTART_BACKOFF_MS) *
+          4,
       );
-      expect(record.skips).toHaveLength(1);
-      expect(record.skips[0]).toBeGreaterThan(EARLY_FAIL_BUDGET_MS);
+      expect(record.skips).toEqual([]);
+      expect(record.fails).toEqual([]);
+      expect(record.stalls).toHaveLength(1);
+      expect(record.starts.length).toBeGreaterThan(1);
     });
   });
 }
@@ -141,7 +142,7 @@ for (const [what, establishMs] of [
 // drop is restarted until the restart bound, whatever the stage has left to run.
 test("a lane that carried bytes is restarted past the skip deadline", () => {
   withClock((clock) => {
-    const record: Recorded = { skips: [], fails: [], starts: [] };
+    const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
     let carried = false;
     const direction = new TransferDirection({
       dir: "up",
@@ -165,13 +166,37 @@ test("a lane that carried bytes is restarted past the skip deadline", () => {
     });
     direction.spawn(["https://meter.test/lane"]);
 
-    clock.advance(EARLY_FAIL_BUDGET_MS * 4);
+    clock.advance(20_000);
     expect(record.skips).toEqual([]);
     expect(record.starts.length).toBeGreaterThan(1);
 
     clock.advance(5_000);
     expect(record.skips).toEqual([]);
     expect(record.fails).toEqual([]);
+  });
+});
+
+test("a permanent lane refusal finalizes only its affected stage", () => {
+  withClock((clock) => {
+    const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
+    const direction = new TransferDirection({
+      dir: "up",
+      stage: "bidirectional",
+      laneCount: 1,
+      warmupMs: 0,
+      host: fakeHost(record, clock),
+      lane: (_i, events) => ({
+        start: () => events.onError(false, "HTTP 429"),
+        measure: () => {},
+        stop: () => Promise.resolve(),
+        discard: () => {},
+      }),
+    });
+    direction.spawn(["https://meter.test/lane"]);
+
+    expect(record.skips).toEqual([0]);
+    expect(record.fails).toEqual([]);
+    expect(record.stalls).toEqual([]);
   });
 });
 
@@ -282,7 +307,7 @@ test("a healthy download cannot mask a stalled upload", () => {
 
 test("a silently pending measured direction stalls independently", () => {
   withClock((clock) => {
-    const record: Recorded = { skips: [], fails: [], starts: [] };
+    const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
     const states: boolean[] = [];
     let direction!: TransferDirection;
     const host = fakeHost(record, clock);
@@ -328,7 +353,7 @@ test("a silently pending measured direction stalls independently", () => {
 
 test("discard cancels a pending direction watchdog", () => {
   withClock((clock) => {
-    const record: Recorded = { skips: [], fails: [], starts: [] };
+    const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
     const states: boolean[] = [];
     let direction!: TransferDirection;
     const host = fakeHost(record, clock);

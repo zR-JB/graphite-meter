@@ -29,7 +29,6 @@ const PROGRESS_ESTABLISH_TIMEOUT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 export interface UploadProgressLane {
   stage: PhaseActivity["stage"];
   measuring: boolean;
-  stageSawBytes: boolean;
 }
 
 export interface UploadProgressDeps {
@@ -334,7 +333,6 @@ export class UploadProgressChannel {
     const serverNs = msg.t;
     if (msg.n > this.#serverBytes) {
       this.#serverBytes = msg.n; // cumulative + monotonic guard
-      lane.stageSawBytes = true;
     }
     if (!lane.measuring) return; // warmup bytes are excluded from the window
 

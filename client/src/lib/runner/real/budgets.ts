@@ -13,11 +13,6 @@ export const ESTABLISH_MARGIN_MS = 500;
 /** Pause before reopening a dropped lane, so a failing one cannot spin. */
 export const LANE_RESTART_BACKOFF_MS = 300;
 
-/** A stage carrying nothing by now is skipped rather than stalled. Measured in
- *  time, not attempts: a lane that refuses instantly and one that times out
- *  reach it together. */
-export const EARLY_FAIL_BUDGET_MS = 5000;
-
 /** A measured direction silent this long stalls independently. A sibling's
  * bytes cannot prove it healthy; a later positive byte resumes it cleanly. */
 export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
