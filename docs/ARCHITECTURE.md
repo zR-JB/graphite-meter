@@ -310,82 +310,32 @@ runner, and the per-stage transfer lanes) and the TUI's pure helpers and `model`
 `cmd/graphite-meter-client/model.go` have unit tests — also run with `just server-test` (one Go
 module covers both the server and the TUI client).
 
-The two clients share the wire protocol, the route table, and the lane tables for multiplexed and
-session transports. They are not the same measurement engine. The browser resolves its automatic
-HTTP/1 lane count out of a shared six-connection budget, so a bidirectional stage opens fewer lanes
-than a single-direction one — 2 per direction against this client's 6 — where the native client
-opens its ceiling in both directions. The browser adds adaptive early-finish, overhead compensation,
-a device-memory-tiered upload reservoir and a stall watchdog, none of which exist natively; the
-native client alone accepts `--insecure` and a raw ping duration; datagram throughput is
-browser-only. The two also compute jitter differently — consecutive-sample variation in the browser,
-deviation from the mean natively — and percentiles differ likewise, nearest-rank against
-linear-interpolated, so the two clients' latency summaries are not directly comparable.
+The clients share protocol, routes, and lane tables but not a measurement engine. Browser HTTP/1
+lanes share a six-connection budget; it alone adds adaptive finish, compensation, upload sizing, and
+stall detection. The native client alone accepts `--insecure` and a raw ping duration; datagram
+throughput is browser-only. Their jitter and percentile calculations also differ, so summaries are
+not directly comparable.
 
 ---
 
 ## The Svelte browser client
 
-The UI (`client/src/`) is deliberately engine-agnostic: it only ever talks to `RunnerCore`
-(`src/lib/runner/core.ts`), which owns the phase timeline, a deadline scheduler, a measured clock that
-retains stalls in effective throughput, and the single runner-owned recovery deadline, an
-adaptive early-finish confirmation, and the one live-throughput presentation path. Exact byte/time
-observations independently feed a growing time-weighted display window, fixed 250ms confidence
-buckets, and the final reducer. A sustained fast-window change starts a new display regime and
-revokes stability; a brief dip does neither. Confirmation never accelerates the measured clock: it
-closes a stable stage at the real boundary and shifts only the remaining schedule.
+The UI (`client/src/`) is deliberately engine-agnostic: it only talks to `RunnerCore`
+(`src/lib/runner/core.ts`). The core owns the phase timeline, measured clock, adaptive confirmation,
+and the sole stage recovery deadline. Exact byte/time observations separately feed the growing
+time-weighted presentation window, fixed confidence buckets, and final reducer; presentation and
+animation never become measurement evidence. A sustained change starts a fresh display regime and
+revokes stability; a brief dip does neither.
 
-Adaptive evidence targets are resolved from one phase policy rather than assuming a particular test
-preset. The desired sample floor is capped by the actual phase budget after reserving confirmation
-time and by the fixed confidence horizon. Latency also uses the selected fixed ping interval from the
-same cadence table as the real and dummy engines. This keeps short/medium/long tests eligible at every
-fixed cadence without weakening reply-driven evidence merely because the measured path itself is slow.
-At the warmup-to-measure boundary, the ping worker re-anchors fixed cadence and attempts one measured
-PING immediately. Pending PINGs retain their send-time warmup/measurement attribution, so a warmup
-reply arriving after that boundary cannot become measured evidence. The fixed-cadence feasibility
-policy can therefore count the synchronized boundary send instead of assuming an accidental timer
-alignment.
+Latency outcomes retain monotonic observation time through worker delivery and are summarized into
+revisionable, phase-aligned 200ms median/P95/max/loss buckets. The chart uses actual timestamps:
+throughput remains continuous until an explicit lifecycle break, while latency is rendered as sparse
+median dots, tail whiskers, and loss markers. Its hover selects only a nearby real bucket.
 
-Stall presentation is also runner-owned. The core emits the shared transition to zero consumed by
-the gauge, cards, and chart, while synthetic transition values never enter confidence or result
-accounting. When a transfer first becomes stable, its result window begins at the exact source
-observation that supplied the opening evidence, not at that observation's end boundary; a final or
-delayed report can therefore open a non-empty stable window for both one-way and bidirectional
-lanes. Latency follows the same single-path rule: every raw outcome stays in `RunAccumulator`,
-while the UI receives deadline-closed, phase-aligned 200ms median/P95/max/loss buckets. Each bucket
-also retains scalar first/last and consecutive-delta evidence, so rolling connectivity jitter stays
-exact without retaining a second raw history or inventing a delta across a phase/stall continuity
-break. The ping worker stamps every success and declared loss with its monotonic observation time;
-`latencyChannel.ts` translates that cross-realm coordinate once, and `RunnerCore` accepts only the
-resulting required `LatencyObservation`. Worker batching and main-thread delivery delay therefore do
-not collapse outcomes or make old evidence look new. Closed presentation windows remain revisionable
-for the same bounded history the UI retains: an observation delivered behind the runner timer
-updates its original event-time bucket, and the store replaces that bucket by phase, start, and
-continuity identity instead of appending a duplicate or moving the observation forward. Pure tail
-appends keep the chart's phase index incremental; replacements, ordered insertions, and bounded
-history shifts increment an explicit history revision that wakes and rebuilds every indexed chart
-consumer, keeping both rendered lines and hover lookup on the same bucket objects as the store.
-
-Gauge and live chart share one robust recent latency scale with shrink dwell. Before the first live
-bucket, the gauge derives its scale from the displayed pre-test fallback. Terminal gauge and chart
-both recompute the same robust domain from successful whole-run bucket history; if a completed run
-has only fallback/loss evidence, the gauge instead scales that displayed fallback directly. A value
-is therefore never paired with a scale from another time domain. Isolated tails remain explicit
-clipping markers. Chart lines are
-straight, render the first closed bucket as a point, and break at phase,
-loss, stall, and gap boundaries rather than adding another smoothing curve. The one live stability
-snapshot gates adaptive completion but remains a control signal while a phase is running. Compact
-results show only the measured value, so ordinary ramp-up is not presented as a premature
-low-stability verdict. Finalized stability appears once in the completed result card; the UI never
-manufactures a second confidence state.
-
-Wire-rate calculation is centralized in the store. It independently models each measured direction
-from canonical goodput and keeps the profile that produced its assumptions, so later settings edits
-cannot alter a completed result. The optional estimate is default-on but intentionally absent from
-the live gauge and compact stage rows: those surfaces show only canonical measured goodput. A concise
-secondary line appears once in each completed one-way result card, with the existing short wire-rate
-explanation on its tag. It never drives the headline, dial, chart, confidence, or result reducer.
-Loopback is explicitly identified as having no physical wire, and opting out hides only that final
-secondary line.
+Gauge and chart share their active latency scale and their terminal full-history scale. The visible
+upload bridge and gauge easing are presentation-only; advancing server bytes win immediately. Final
+results retain only canonical evidence. Optional wire estimates use the frozen completed profile,
+appear only as a meaningful secondary one-way result line, and never affect the headline or chart.
 
 Each run enters a visible `connecting` phase while the selected target is probed and verified.
 Only after that succeeds does the measurement timeline start. Stage preparation may also be
@@ -473,12 +423,9 @@ boundaries. Dev-tooling builds add diagnostics and dummy-backend anomaly control
 
 ### The Endpoint info drawer
 
-The right-side drawer reads the live connection model. Its default view shows server identity,
-the independently selected throughput and latency paths, readiness, relevant browser-facing and
-server-observed protocol evidence, client address evidence, and pre-test RTT. Raw target IDs,
-origins, routes, discovery generation, stream policy, engine capabilities, and compensation
-assumptions are available in an expandable, copyable diagnostic report rather than repeated in
-the primary summary.
+The drawer shows server identity, advertised capabilities, selected paths, readiness, protocol
+evidence, and pre-test RTT. Addresses, origins, routes, generation, stream policy, runner details,
+and compensation assumptions live in its expandable, copyable diagnostic report.
 
 ### Web Workers
 
