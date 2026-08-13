@@ -178,7 +178,7 @@ test("a lane that carried bytes is restarted past the skip deadline", () => {
 
 test("a local upload completion is a presentation hint, not measurement evidence", () => {
   withClock((clock) => {
-    const hints: [number, number, number][] = [];
+    const hints: [number, number, number, number][] = [];
     let ingests = 0;
     const host = {
       failStage() {},
@@ -200,8 +200,8 @@ test("a local upload completion is a presentation hint, not measurement evidence
         host: () => host,
         stallChanged: () => {},
         uploadProgress: () => {},
-        uploadPresentationHint: (bytes, elapsedMs, generation) =>
-          hints.push([bytes, elapsedMs, generation]),
+        uploadPresentationHint: (lane, bytes, elapsedMs, generation) =>
+          hints.push([lane, bytes, elapsedMs, generation]),
         beginUploadMeasure: () => {},
         discardTransfer: () => {},
       },
@@ -215,7 +215,7 @@ test("a local upload completion is a presentation hint, not measurement evidence
     direction.setUploadGeneration(7);
     direction.spawn(["https://meter.test/upload"]);
 
-    expect(hints).toEqual([[640, 80, 7]]);
+    expect(hints).toEqual([[0, 640, 80, 7]]);
     expect(ingests).toBe(0);
     clock.advance(DIRECTION_PROGRESS_WINDOW_MS + 1);
     expect(ingests).toBe(0);

@@ -65,10 +65,7 @@ import {
 } from "./real/budgets";
 import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
 import { UploadProgressChannel } from "./real/uploadProgress";
-import {
-  UploadPresentationBridge,
-  UPLOAD_PRESENTATION_HINT_MAX_AGE_MS,
-} from "./uploadPresentationBridge";
+import { UploadPresentationBridge } from "./uploadPresentationBridge";
 
 export { TransportUnavailableError };
 
@@ -161,9 +158,9 @@ export class RealBackend implements RunnerBackend {
       this.#reconcileStall(detail, cause, direction),
     uploadProgress: (msg, generation) =>
       this.#uploadProgress.accept(msg, generation),
-    uploadPresentationHint: (bytes, elapsedMs, generation) => {
+    uploadPresentationHint: (lane, bytes, elapsedMs, generation) => {
       if (generation !== this.#uploadProgress.generation) return;
-      this.#uploadPresentation.hint(bytes, elapsedMs, performance.now());
+      this.#uploadPresentation.hint(lane, bytes, elapsedMs, performance.now());
       this.#emitUploadPresentation();
     },
     beginUploadMeasure: () => this.#uploadProgress.beginMeasure(),
@@ -1275,20 +1272,28 @@ export class RealBackend implements RunnerBackend {
       !this.#stalled &&
       !this.#uploadRotationInFlight &&
       this.#lanes.up?.measuring === true;
+    const now = performance.now();
+    const expectedLanes = this.#lanes.up?.laneCount ?? 0;
     const bytesPerSec = this.#uploadPresentation.target(
-      performance.now(),
+      now,
       healthy,
+      expectedLanes,
     );
     this.#host?.emit({ type: "uploadPresentation", bytesPerSec });
     if (this.#uploadPresentationTimer)
       clearTimeout(this.#uploadPresentationTimer);
+    const wakeMs = this.#uploadPresentation.nextWakeMs(
+      now,
+      healthy,
+      expectedLanes,
+    );
     this.#uploadPresentationTimer =
-      bytesPerSec === null
+      wakeMs === null
         ? null
         : setTimeout(() => {
             this.#uploadPresentationTimer = null;
             this.#emitUploadPresentation();
-          }, UPLOAD_PRESENTATION_HINT_MAX_AGE_MS + 1);
+          }, wakeMs);
   }
 
   #clearUploadPresentation(): void {

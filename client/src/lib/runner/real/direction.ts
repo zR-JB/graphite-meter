@@ -43,6 +43,7 @@ export interface DirectionHost {
   uploadProgress: (msg: WtProgressRelay, generation: number) => void;
   /** Local upload completion metadata for an isolated visual bridge. */
   uploadPresentationHint?: (
+    lane: number,
     bytes: number,
     elapsedMs: number,
     generation: number,
@@ -255,7 +256,7 @@ export class TransferDirection {
       onProgress: (bytes, elapsedMs, seq) =>
         this.#onProgress(i, bytes, elapsedMs, seq),
       onAlive: (bytes, elapsedMs) =>
-        this.#onAlive(bytes, elapsedMs, generation),
+        this.#onAlive(i, bytes, elapsedMs, generation),
       onError: (recoverable, detail) => this.#onError(i, detail, recoverable),
       onUploadProgress: (msg) => this.#deps.uploadProgress(msg, generation),
       onAuthRequired: () => {
@@ -341,7 +342,12 @@ export class TransferDirection {
 
   /** Upload workers may report local completion timing. It is intentionally not
    * liveness or measurement evidence; only the server feed can establish that. */
-  #onAlive(bytes?: number, elapsedMs?: number, generation?: number): void {
+  #onAlive(
+    lane: number,
+    bytes?: number,
+    elapsedMs?: number,
+    generation?: number,
+  ): void {
     if (!this.#live || this.#stopping) return;
     if (
       this.dir === "up" &&
@@ -349,7 +355,7 @@ export class TransferDirection {
       elapsedMs !== undefined &&
       generation !== undefined
     )
-      this.#deps.uploadPresentationHint?.(bytes, elapsedMs, generation);
+      this.#deps.uploadPresentationHint?.(lane, bytes, elapsedMs, generation);
   }
 
   /** A lane failed. Recoverable (the common case: a dropped connection) → stall
