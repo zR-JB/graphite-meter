@@ -11,6 +11,10 @@
   import { tooltip } from "../actions/tooltip";
   import { gaugeLatencyPresentation } from "./gaugeLatency";
   import { authoritativeTransferAnnouncement } from "./gaugeAccessibility";
+  import {
+    LiveRateAnimator,
+    type LiveRateValues,
+  } from "../presentation/liveRateAnimator";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -31,6 +35,14 @@
   let stageEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
   let gaugeSize = $state({ width: 0, height: 0 });
+  const liveRateAnimator = new LiveRateAnimator();
+  let liveRateValues = $state<LiveRateValues>({
+    transfer: 0,
+    down: 0,
+    up: 0,
+  });
+  let liveRateFrame = 0;
+  let reducedRateMotion = false;
 
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
@@ -122,9 +134,88 @@
       return EMPTY_DISPLAY;
     if (p === "complete") return completedDisplay;
     return {
-      value: fmtSpeed(store.toUnit(store.visualTransferBytesPerSec)),
+      value: fmtSpeed(store.toUnit(liveRateValues.transfer)),
       unit: store.unitLabel,
     };
+  });
+
+  const liveRateInput = $derived.by(() => {
+    const phase = store.phase;
+    const active =
+      store.measuring &&
+      (phase === "download" || phase === "upload" || phase === "bidirectional");
+    const context = `${store.runSeq}:${phase}`;
+    const bidi = store.visualBidirectional ?? { down: 0, up: 0 };
+    return {
+      active,
+      context,
+      transfer: {
+        target: store.visualTransferBytesPerSec,
+        revision: store.presentationRateRevision.transfer,
+      },
+      down: {
+        target: bidi.down,
+        revision: store.presentationRateRevision.down,
+      },
+      up: {
+        target: bidi.up,
+        revision: store.presentationRateRevision.up,
+      },
+    };
+  });
+
+  function stepLiveRates(now: number) {
+    const input = liveRateInput;
+    const transfer = liveRateAnimator.step(
+      {
+        key: "transfer",
+        target: input.transfer.target,
+        revision: input.transfer.revision,
+        context: input.context,
+        active: input.active,
+      },
+      now,
+      reducedRateMotion,
+    );
+    const down = liveRateAnimator.step(
+      {
+        key: "down",
+        target: input.down.target,
+        revision: input.down.revision,
+        context: input.context,
+        active: input.active,
+      },
+      now,
+      reducedRateMotion,
+    );
+    const up = liveRateAnimator.step(
+      {
+        key: "up",
+        target: input.up.target,
+        revision: input.up.revision,
+        context: input.context,
+        active: input.active,
+      },
+      now,
+      reducedRateMotion,
+    );
+    liveRateValues = {
+      transfer: transfer.value,
+      down: down.value,
+      up: up.value,
+    };
+    if (transfer.active || down.active || up.active)
+      liveRateFrame = requestAnimationFrame(stepLiveRates);
+    else liveRateFrame = 0;
+  }
+
+  function wakeLiveRates() {
+    if (!liveRateFrame) liveRateFrame = requestAnimationFrame(stepLiveRates);
+  }
+
+  $effect(() => {
+    void liveRateInput;
+    wakeLiveRates();
   });
 
   // The visible display may follow the bounded upload bridge, but a live
@@ -208,6 +299,7 @@
     void store.unitBase;
     void store.unitKind;
     void store.unitLabel;
+    void liveRateValues;
     void layout;
     engine?.wake();
   });
@@ -258,7 +350,7 @@
           ? 0
           : finalMetric?.kind === "speed"
             ? finalMetric.bytesPerSec
-            : store.visualTransferBytesPerSec,
+            : liveRateValues.transfer,
         scaleBytesPerSec: scale,
         latencyScaleMs: gaugeLatency.scaleMs,
         layout,
@@ -267,6 +359,13 @@
       };
     });
     engine.attach(canvasEl!);
+    const rateMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedRateMotion = rateMotion.matches;
+    const onRateMotion = (event: MediaQueryListEvent) => {
+      reducedRateMotion = event.matches;
+      wakeLiveRates();
+    };
+    rateMotion.addEventListener("change", onRateMotion);
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -286,6 +385,9 @@
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
+      if (liveRateFrame) cancelAnimationFrame(liveRateFrame);
+      rateMotion.removeEventListener("change", onRateMotion);
+      liveRateAnimator.reset();
       engine.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
@@ -354,7 +456,7 @@
 
   <div class="results-slot">
     {#if resultsView === "partial"}
-      <ResultCards compact />
+      <ResultCards compact liveRates={liveRateValues} />
     {:else if resultsView === "final"}
       <ResultCards />
     {/if}

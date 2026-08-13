@@ -6,11 +6,13 @@
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
   import { bidirectionalResultPresentation } from "./bidirectionalResult";
+  import type { LiveRateValues } from "../presentation/liveRateAnimator";
 
   interface Props {
     compact?: boolean;
+    liveRates?: LiveRateValues;
   }
-  let { compact = false }: Props = $props();
+  let { compact = false, liveRates }: Props = $props();
 
   const dash = "—";
 
@@ -23,7 +25,7 @@
     ) {
       const live = store.liveCompensation;
       const measuredBytesPerSec = compact
-        ? store.visualTransferBytesPerSec
+        ? (liveRates?.transfer ?? store.visualTransferBytesPerSec)
         : live.measuredBytesPerSec;
       return {
         measuredBytesPerSec,
@@ -66,7 +68,7 @@
       presentation.status === "recovering"
     ) {
       const live = (compact
-        ? store.visualBidirectional
+        ? (liveRates ?? store.visualBidirectional)
         : store.liveBidirectional) ?? { down: 0, up: 0 };
       return {
         down: live.down,

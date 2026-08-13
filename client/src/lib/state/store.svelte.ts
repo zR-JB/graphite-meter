@@ -102,6 +102,8 @@ class AppStore {
   throughput = $state<ThroughputSample[]>([]);
   /** Ephemeral upload visual target. Never contributes to history or results. */
   uploadPresentationBytesPerSec = $state<number | null>(null);
+  /** Visual-target freshness only; it carries no rate or measurement evidence. */
+  presentationRateRevision = $state({ transfer: 0, down: 0, up: 0 });
   latency = $state<LatencyBucket[]>([]);
   /** Changes only when latency history is no longer a pure tail append. */
   latencyRevision = $state(0);
@@ -557,9 +559,21 @@ class AppStore {
       case "throughput":
         this.throughput.push(event.sample);
         if (this.throughput.length > MAX_SAMPLES) this.throughput.shift();
+        if (event.sample.phase === "bidirectional") {
+          this.presentationRateRevision[event.sample.dir]++;
+          this.presentationRateRevision.transfer++;
+        } else {
+          this.presentationRateRevision.transfer++;
+        }
         break;
       case "uploadPresentation":
         this.uploadPresentationBytesPerSec = event.bytesPerSec;
+        if (this.phase === "bidirectional") {
+          this.presentationRateRevision.up++;
+          this.presentationRateRevision.transfer++;
+        } else if (this.phase === "upload") {
+          this.presentationRateRevision.transfer++;
+        }
         break;
       case "latency":
         if (event.sample.phase === "idle") {
