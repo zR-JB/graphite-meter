@@ -153,24 +153,12 @@
           <dt>Location</dt>
           <dd>{server?.location ?? "Unavailable"}</dd>
         </div>
-        <div>
-          <dt>Version</dt>
-          <dd>{store.transportDiscovery?.engineVersion ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Client</dt>
-          <dd>{BUILD.clientVersion}</dd>
-        </div>
       </dl>
     </article>
 
     <article class="card">
-      <h3>Measurement engine</h3>
+      <h3>Server capabilities</h3>
       <dl>
-        <div>
-          <dt>Runner</dt>
-          <dd>{engine?.name ?? "—"} · {engine?.version ?? "—"}</dd>
-        </div>
         <div>
           <dt>Throughput</dt>
           <dd>{capabilities("throughput")}</dd>
@@ -235,6 +223,18 @@
           <dd title={store.transportDiscovery?.generation ?? undefined}>
             {serverInstance}
           </dd>
+        </div>
+        <div>
+          <dt>Server version</dt>
+          <dd>{store.transportDiscovery?.engineVersion ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Runner</dt>
+          <dd>{engine?.name ?? "—"} · {engine?.version ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Client build</dt>
+          <dd>{BUILD.clientVersion}</dd>
         </div>
         <div>
           <dt>Throughput origin</dt>
