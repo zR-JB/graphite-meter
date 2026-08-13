@@ -191,3 +191,42 @@ test("completed reduced-motion views settle after theme and resize", async ({
   await page.waitForTimeout(500);
   expect(await draws(page)).toBe(changed);
 });
+
+test("settings retains native scrolling during active presentation", async ({
+  page,
+}) => {
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await page.waitForTimeout(500);
+  await page.getByRole("button", { name: "Open settings" }).click();
+
+  const body = page.locator('[aria-label="Settings"] .panel-body');
+  await expect(body).toBeVisible();
+  expect(
+    await body.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return (
+        style.overflowY === "auto" &&
+        element.scrollHeight > element.clientHeight
+      );
+    }),
+  ).toBe(true);
+
+  const box = await body.boundingBox();
+  if (!box) throw new Error("settings body is not visible");
+  await resetMetrics(page);
+  const before = await chartSample(page);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 600);
+  await expect
+    .poll(() => body.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  await page.waitForTimeout(500);
+  const after = await chartSample(page);
+  const frameBudget = Math.ceil(((after.now - before.now) * 60) / 1000);
+  expect(after.frames - before.frames).toBeLessThanOrEqual(frameBudget + 2);
+
+  const metrics = await performanceMetrics(page);
+  expect(metrics.frameP95).toBeLessThan(50);
+  expect(metrics.longestTask).toBeLessThanOrEqual(100);
+});
