@@ -10,6 +10,7 @@
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
   import { gaugeLatencyPresentation } from "./gaugeLatency";
+  import { authoritativeTransferAnnouncement } from "./gaugeAccessibility";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -121,6 +122,23 @@
     };
   });
 
+  // The visible display may follow the bounded upload bridge, but a live
+  // announcement describes measured throughput and must remain authoritative.
+  const announcementDisplay = $derived.by(() => {
+    if (
+      store.phase === "download" ||
+      store.phase === "upload" ||
+      store.phase === "bidirectional"
+    )
+      return authoritativeTransferAnnouncement({
+        authoritativeBytesPerSec: store.liveTransferBytesPerSec,
+        visualBytesPerSec: store.visualTransferBytesPerSec,
+        toUnit: store.toUnit.bind(store),
+        unit: store.unitLabel,
+      });
+    return display;
+  });
+
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
     download: "Download",
@@ -201,7 +219,8 @@
   $effect(() => {
     const phase = store.phase;
     pendingAnnouncement =
-      statusText || `${display.value} ${display.unit}, phase ${phase}`;
+      statusText ||
+      `${announcementDisplay.value} ${announcementDisplay.unit}, phase ${phase}`;
     const commit = () => {
       announcement = pendingAnnouncement;
       lastAnnouncedAt = performance.now();
