@@ -1,5 +1,10 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { RunnerCore, type RunnerBackend, type CoreHost } from "./core";
+import {
+  RunnerCore,
+  STAGE_RECOVERY_BUDGET_MS,
+  type RunnerBackend,
+  type CoreHost,
+} from "./core";
 import type {
   RunnerConfig,
   RunnerEvent,
@@ -53,6 +58,10 @@ function advance(ms: number): void {
 class FakeBackend implements RunnerBackend {
   host!: CoreHost;
   calls: string[] = [];
+  recoveries: Array<{
+    stage: "latency" | "download" | "upload" | "bidirectional";
+    signal: AbortSignal;
+  }> = [];
 
   attach(host: CoreHost): void {
     this.host = host;
@@ -88,6 +97,12 @@ class FakeBackend implements RunnerBackend {
   }
   onStageEnd(activity: PhaseActivity): void {
     this.calls.push(`end:${activity.stage}`);
+  }
+  onStageRecovery(request: {
+    stage: "latency" | "download" | "upload" | "bidirectional";
+    signal: AbortSignal;
+  }): void {
+    this.recoveries.push(request);
   }
   onComplete(): void {
     this.calls.push("complete");
@@ -760,7 +775,7 @@ test("a non-liveness throughput sample remains in the result", async () => {
   expect(complete?.result.bidirectional?.down?.totalBytes).toBe(100);
 });
 
-test("a stall that outlives max-stall escalates to a terminal failure", async () => {
+test("a recovery deadline finalizes an otherwise unusable final stage", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -770,7 +785,7 @@ test("a stall that outlives max-stall escalates to a terminal failure", async ()
   await core.start(cfg);
 
   core.stall({ reason: "connection-lost" });
-  advance(20001); // exceeds MAX_STALL_MS (20000)
+  advance(STAGE_RECOVERY_BUDGET_MS + 1);
 
   expect(core.phase).toBe("error");
   const err = events.find((e) => e.type === "error");
@@ -778,6 +793,20 @@ test("a stall that outlives max-stall escalates to a terminal failure", async ()
   if (err?.type === "error") {
     expect(err.error.reason).toBe("connection-lost");
   }
+});
+
+test("the runner owns recovery request lifetime", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  await core.start(makeConfig());
+
+  core.stall({ reason: "connection-lost" });
+  expect(backend.recoveries).toHaveLength(1);
+  expect(backend.recoveries[0].stage).toBe("download");
+  expect(backend.recoveries[0].signal.aborted).toBe(false);
+
+  core.resume();
+  expect(backend.recoveries[0].signal.aborted).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

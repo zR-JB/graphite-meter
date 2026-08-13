@@ -324,10 +324,10 @@ export interface StageFailure {
 }
 
 /* ---------- Transient link health ---------- */
-/** A NON-terminal stall: the link is quiet mid-phase and the run waits to
- *  reconnect. Elapsed time continues, so the gap affects throughput. Not a
- *  failure: a stall outliving MAX_STALL_MS becomes a `connection-lost`
- *  RunnerError instead. */
+/** A NON-terminal stall: the link is quiet mid-phase and the runner starts a
+ * bounded recovery lifecycle. Elapsed time continues, so the gap affects
+ * throughput; expiry finalizes the affected stage rather than racing a
+ * transport-owned timer. */
 export interface StallInfo {
   reason: TerminationReason;
   transport?: TransportKind; // the connection that dropped, when known

@@ -9,7 +9,6 @@ import type { ByteLane, LaneEvents, WtProgressRelay } from "./byteLane";
 import {
   EARLY_FAIL_BUDGET_MS,
   DIRECTION_PROGRESS_WINDOW_MS,
-  LANE_MAX_RESTARTS,
   LANE_RESTART_BACKOFF_MS,
 } from "./budgets";
 
@@ -370,14 +369,6 @@ export class TransferDirection {
         this.stage,
         "connection-lost",
         `${this.dir} link connection could not be established`,
-      );
-      return;
-    }
-    if (this.#retry[i] > LANE_MAX_RESTARTS) {
-      host.fail(
-        "connection-lost",
-        `${this.dir} stream ${i} kept dropping: ${detail}`,
-        detail,
       );
       return;
     }

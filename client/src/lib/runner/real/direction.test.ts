@@ -10,7 +10,6 @@ import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
-  LANE_MAX_RESTARTS,
 } from "./budgets";
 import type { ByteLane, LaneEvents } from "./byteLane";
 import type { CoreHost } from "../core";
@@ -170,10 +169,9 @@ test("a lane that carried bytes is restarted past the skip deadline", () => {
     expect(record.skips).toEqual([]);
     expect(record.starts.length).toBeGreaterThan(1);
 
-    clock.advance(LANE_MAX_RESTARTS * (LANE_RESTART_BACKOFF_MS + 10));
+    clock.advance(5_000);
     expect(record.skips).toEqual([]);
-    expect(record.fails).toHaveLength(1);
-    expect(record.fails[0]).toContain("kept dropping");
+    expect(record.fails).toEqual([]);
   });
 });
 

@@ -40,6 +40,11 @@ import { RunAccumulator } from "./evaluation";
 import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { GrowingRateEstimator } from "./rateEstimator";
 import { LatencyPresentationBuckets } from "./latencyBuckets";
+import {
+  ESTABLISH_BUDGET_MS,
+  ESTABLISH_MARGIN_MS,
+  LANE_RESTART_BACKOFF_MS,
+} from "./real/budgets";
 
 // This bounds only runner publication/progress work. Authoritative sources keep
 // their own cadence; the core never creates an observation to fill this slot.
@@ -49,7 +54,11 @@ const STABILITY_CADENCE_MS = 100;
 
 // Stall deadlines use wall time; result accounting retains the dead-air duration.
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
-const MAX_STALL_MS = 20000; // stalled longer than this → terminal fail
+const RECOVERY_ATTEMPTS = 2;
+const RECOVERY_ATTEMPT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
+export const STAGE_RECOVERY_BUDGET_MS =
+  RECOVERY_ATTEMPTS * RECOVERY_ATTEMPT_MS +
+  (RECOVERY_ATTEMPTS - 1) * LANE_RESTART_BACKOFF_MS;
 
 export interface CoreHost {
   // Rates drive presentation/stability; bytesDelta and durationSec remain authoritative.
@@ -103,6 +112,14 @@ export interface RunnerBackend {
   // Close the stage's connections. Result reduction waits for asynchronous
   // final samples and shutdown.
   onStageEnd(activity: PhaseActivity, flush?: boolean): void | Promise<void>;
+  /** The runner owns recovery expiry. Backends may make bounded attempts only
+   * while this signal remains live; opening a transport is not recovery. */
+  onStageRecovery?(request: {
+    stage: TransportRole;
+    direction?: FlowDirection;
+    cause: StageFailure["reason"];
+    signal: AbortSignal;
+  }): void | Promise<void>;
   onComplete(): void;
   onAbort(): void;
   dispose?(): void;
@@ -145,6 +162,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #measuring = true;
   #lastSampleWall = 0;
   #stalledSinceWall = 0;
+  #recoveryDeadlineWall = 0;
+  #recoveryAbort: AbortController | null = null;
   #stallInfo: StallInfo | null = null;
   #stallPresentationStartedAt = 0;
   #stallPresentationFrom: Record<FlowDirection, number> = { down: 0, up: 0 };
@@ -294,6 +313,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#measuring = true;
     this.#lastSampleWall = 0;
     this.#stalledSinceWall = 0;
+    this.#recoveryDeadlineWall = 0;
+    this.#recoveryAbort?.abort();
+    this.#recoveryAbort = null;
     this.#stallInfo = null;
     this.#stallPresentationStartedAt = 0;
     this.#stallPresentationFrom = { down: 0, up: 0 };
@@ -311,6 +333,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#runGeneration++;
     this.#prepareAbort?.abort();
     this.#prepareAbort = null;
+    this.#recoveryAbort?.abort();
+    this.#recoveryAbort = null;
     if (this.#tickTimer) clearTimeout(this.#tickTimer);
     this.#tickTimer = null;
     this.#running = false;
@@ -393,7 +417,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       deadlines.push(
         this.#measuring
           ? this.#lastSampleWall + STALL_WATCHDOG_MS - now
-          : this.#stalledSinceWall + MAX_STALL_MS - now,
+          : this.#recoveryDeadlineWall - now,
       );
     }
     this.#tickTimer = setTimeout(
@@ -422,9 +446,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       return;
     }
 
-    // Prolonged silence in a measured phase trips the watchdog into an
-    // auto-stall; a stall outliving MAX_STALL_MS escalates to a terminal fail.
-    if (this.#updateStallState(now)) return; // a max-stall fail ends the run
+    // Prolonged silence trips the watchdog; the runner alone expires recovery.
+    if (this.#updateStallState(now)) return;
     if (!this.#measuring) this.#emitStallPresentation(now);
 
     const seg = segmentAt(this.#segments, elapsed);
@@ -722,6 +745,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#measuring) return;
     this.#measuring = false;
     this.#stalledSinceWall = performance.now();
+    this.#recoveryDeadlineWall =
+      this.#stalledSinceWall + STAGE_RECOVERY_BUDGET_MS;
+    this.#recoveryAbort?.abort();
+    this.#recoveryAbort = new AbortController();
     this.#stallPresentationStartedAt = this.#stalledSinceWall;
     this.#stallPresentationFrom = { ...this.#presentedRate };
     this.#stallInfo = info;
@@ -732,12 +759,24 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#rateEstimator.down.invalidateRegime();
     this.#rateEstimator.up.invalidateRegime();
     this.emit({ type: "stall", info });
+    const stage = this.#activeSeg?.activity.stage;
+    const cause =
+      info.reason === "user-abort" ? "connection-lost" : info.reason;
+    if (stage)
+      void this.#backend.onStageRecovery?.({
+        stage,
+        cause,
+        signal: this.#recoveryAbort.signal,
+      });
   }
 
   resume(): void {
     if (this.#measuring) return; // no-op if not stalled
     this.#measuring = true;
     this.#stalledSinceWall = 0;
+    this.#recoveryDeadlineWall = 0;
+    this.#recoveryAbort?.abort();
+    this.#recoveryAbort = null;
     this.#stallInfo = null;
     this.#stallPresentationStartedAt = 0;
     this.#breakPresentationContinuity();
@@ -774,9 +813,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#measuring) this.resume();
   }
 
-  /** Wall-clock stall bookkeeping, run every tick. Returns true iff it ends the
-   *  run (max-stall → terminal fail), so the caller bails out of the tick.
-   *  Measured time continues across the gap. */
+  /** Wall-clock stall bookkeeping. The watchdog detects silence; only the
+   * runner's derived recovery deadline may finalize the affected stage. */
   #updateStallState(now: number): boolean {
     if (this.#measuring) {
       // Watchdog only inside a measured phase: warmup primes connections and
@@ -789,15 +827,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       }
       return false;
     }
-    // Beyond MAX_STALL_MS the drop counts as unrecoverable: escalate to a
-    // terminal failure, which carries the partial results.
-    if (now - this.#stalledSinceWall > MAX_STALL_MS) {
-      // A stall never carries user-abort (that's the abort() path), but the type
-      // is the broad TerminationReason; narrow to a failure reason for fail().
+    if (now >= this.#recoveryDeadlineWall) {
       const stalled = this.#stallInfo?.reason;
-      const reason: RunnerError["reason"] =
+      const reason: StageFailure["reason"] =
         stalled && stalled !== "user-abort" ? stalled : "connection-lost";
-      this.fail(reason, "Connection lost — gave up after max-stall timeout");
+      const stage = this.#activeSeg?.activity.stage;
+      if (stage)
+        this.failStage(
+          stage,
+          reason,
+          "Connection lost — recovery deadline expired",
+        );
+      else this.fail(reason, "Connection lost — recovery deadline expired");
       return true;
     }
     return false;
