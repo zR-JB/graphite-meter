@@ -33,10 +33,8 @@
 
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();
-  let resultsSlotEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
   let gaugeSize = $state({ width: 0, height: 0 });
-  let resultsSlotHeight = $state(0);
   const liveRateAnimator = new LiveRateAnimator();
   let liveRateValues = $state<LiveRateValues>({
     transfer: 0,
@@ -381,10 +379,6 @@
       engine.resize(width, height);
     });
     resizeObserver.observe(stageEl!);
-    const resultsObserver = new ResizeObserver(([entry]) => {
-      resultsSlotHeight = Math.round(entry.contentRect.height);
-    });
-    resultsObserver.observe(resultsSlotEl!);
     const { clientWidth: width, clientHeight: height } = stageEl!;
     gaugeSize = { width, height };
     engine.resize(width, height);
@@ -397,15 +391,11 @@
       engine.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
-      resultsObserver.disconnect();
     };
   });
 </script>
 
-<section
-  class="gauge-panel"
-  style:--result-slot-height={`${resultsSlotHeight}px`}
->
+<section class="gauge-panel">
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
@@ -466,7 +456,7 @@
     {/if}
   </div>
 
-  <div bind:this={resultsSlotEl} class="results-slot">
+  <div class="results-slot">
     {#if resultsView === "partial"}
       <ResultCards compact liveRates={liveRateValues} />
     {:else if resultsView === "final"}
@@ -497,11 +487,10 @@
   .instrument {
     display: grid;
     gap: var(--space-3);
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
-    /* A stable small-viewport unit keeps browser chrome changes from feeding
-       back into canvas measurement. This is deliberately independent of the
-       optional latency row. */
+    /* The stacked mode has intrinsic wells and participates in document flow.
+       Its size is independent of the optional latency row. */
     --gauge-well-height: clamp(220px, 42svh, 360px);
     grid-template:
       "stagehead" auto
@@ -523,14 +512,6 @@
      query moves Engage, the latency panel, and Test Stages together. */
   @container viz (min-width: 520px) {
     .instrument {
-      /* Results report their measured block height through the local CSS
-         variable. That contracts this stable well by exactly the height each
-         new chip/card needs without letting optional latency content size it. */
-      --gauge-well-height: clamp(
-        120px,
-        calc(100svh - 480px - var(--result-slot-height, 0px)),
-        360px
-      );
       grid-template:
         "gauge latency" var(--gauge-well-height)
         "engage engage" auto
@@ -562,11 +543,6 @@
     /* Size container so the hero number scales with cqmin, the same smaller
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
-  }
-  @container viz (min-width: 520px) {
-    .stage {
-      min-height: 120px;
-    }
   }
   /* Engage's slot: RunButton centers itself (width:100%, max-width:320px,
      align-self:center), so this slot only has to be a flex row. */

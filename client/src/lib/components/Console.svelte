@@ -349,7 +349,9 @@
       min(var(--dock-left, 0px), 46vw)
       minmax(0, 1fr)
       min(var(--dock-right, 0px), 46vw);
-    grid-template-rows: var(--topbar-h) minmax(0, 1fr) 28px;
+    grid-template-rows:
+      var(--topbar-h) minmax(0, 1fr)
+      var(--statusbar-h);
     grid-template-areas:
       "topbar   topbar  topbar"
       "leftdock stage   rightdock"
@@ -370,11 +372,10 @@
     /* Keep stage scrolling from chaining out to the document (anchored bars). */
     overscroll-behavior: contain;
   }
-  /* Spare height splits gauge-first: 3 shares to the gauge, 1 to the chart.
-     The auto basis is a content floor: below it the gauge controls overlap the
-     chart, so the stage column overflows and scrolls instead. */
+  /* The gauge owns its mode-stable intrinsic height. Any viewport too short
+     for the complete stage scrolls this center column beneath anchored chrome. */
   .stage > :global(.gauge-panel) {
-    flex: 3 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
   }
   /* The chart takes leftover height, capped so a tall viewport returns the
@@ -504,11 +505,10 @@
     border-color: var(--err);
   }
 
-  /* A landscape phone can be wide enough for the side-by-side instrument but
-     too short for a fixed shell. In either narrow or compact-height viewports,
-     let the document scroll rather than clipping the stage below the status
-     bar. The wider layout itself remains available in landscape. */
-  @media (max-width: 759px), (max-height: 559px) {
+  /* Portrait phones are the single document-flow mode. Landscape phones use
+     the same anchored shell and scrollable center stage as tablets, so
+     rotation cannot silently swap in a bottom sheet or clip the status bar. */
+  @media (max-width: 759px) and (orientation: portrait) {
     #console {
       height: auto;
       min-height: 100dvh;

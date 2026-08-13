@@ -206,7 +206,7 @@
   .panel {
     position: fixed;
     top: var(--topbar-h);
-    bottom: 0;
+    bottom: var(--statusbar-h);
     width: var(--panel-w, min(480px, 92vw));
     z-index: 50;
     display: flex;
@@ -288,7 +288,9 @@
     display: none;
   }
 
-  @media (max-width: 759px) {
+  /* Only portrait phones use a bottom sheet. A short landscape phone remains
+     a side flyout with its own scrollport, the same model as a tablet. */
+  @media (max-width: 759px) and (orientation: portrait) {
     .panel-layer:not(.docked) .panel {
       top: auto;
       left: 0;
@@ -327,7 +329,7 @@
     border-radius: var(--r-full);
     background: var(--border-strong);
   }
-  @media (max-width: 759px) {
+  @media (max-width: 759px) and (orientation: portrait) {
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
       justify-content: center;

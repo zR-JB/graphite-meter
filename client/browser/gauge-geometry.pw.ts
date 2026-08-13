@@ -96,24 +96,123 @@ test("gauge tick labels use shared optical anchors", async ({ page }) => {
   ]);
 });
 
-test("a short landscape phone scrolls the document instead of clipping the stage", async ({
+test("a short landscape phone keeps anchored chrome and scrollable flyouts", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 844, height: 390 });
   await page.goto("/?engine=dummy");
   const scrollability = await page.evaluate(() => ({
-    contentHeight: document.documentElement.scrollHeight,
-    viewportHeight: window.innerHeight,
+    viewportWidth: window.innerWidth,
+    contentWidth: document.documentElement.scrollWidth,
     documentOverflow: getComputedStyle(document.documentElement).overflowY,
+    stageClientHeight:
+      document.querySelector("#console > .stage")?.clientHeight,
+    stageScrollHeight:
+      document.querySelector("#console > .stage")?.scrollHeight,
+    gaugeWidth: document
+      .querySelector(".gauge-panel .stage")
+      ?.getBoundingClientRect().width,
+    latencyWidth: document
+      .querySelector(".gauge-panel .latency-panel")
+      ?.getBoundingClientRect().width,
+    chartWidth: document.querySelector(".chart")?.getBoundingClientRect().width,
   }));
-  expect(scrollability.contentHeight).toBeGreaterThan(
-    scrollability.viewportHeight,
+  expect(scrollability.documentOverflow).toBe("clip");
+  expect(scrollability.stageScrollHeight).toBeGreaterThan(
+    scrollability.stageClientHeight!,
   );
-  expect(scrollability.documentOverflow).not.toBe("clip");
-  await page.evaluate(() => window.scrollTo({ top: 200 }));
+  expect(scrollability.gaugeWidth).toBeGreaterThan(300);
+  expect(scrollability.latencyWidth).toBeGreaterThan(300);
+  expect(scrollability.chartWidth).toBeGreaterThan(700);
+  expect(scrollability.contentWidth).toBeLessThanOrEqual(
+    scrollability.viewportWidth + 1,
+  );
+
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const panel = page.locator('[aria-label="Settings"]');
+  const panelSurface = await panel.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const body = element.querySelector(".panel-body");
+    const status = document.querySelector(".status")?.getBoundingClientRect();
+    return {
+      width: box.width,
+      top: box.top,
+      bottom: box.bottom,
+      statusTop: status?.top,
+      sheetHandle: getComputedStyle(element.querySelector(".sheet-handle")!)
+        .display,
+      bodyOverflow: body ? getComputedStyle(body).overflowY : null,
+    };
+  });
+  expect(panelSurface.width).toBeLessThan(844);
+  expect(panelSurface.top).toBeGreaterThanOrEqual(59);
+  expect(panelSurface.bottom).toBeLessThanOrEqual(panelSurface.statusTop! + 1);
+  expect(panelSurface.sheetHandle).toBe("none");
+  expect(panelSurface.bodyOverflow).toBe("auto");
+});
+
+test("a portrait tablet keeps settings in a contained side flyout", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+
+  const panelSurface = await page
+    .locator('[aria-label="Settings"]')
+    .evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const status = document.querySelector(".status")?.getBoundingClientRect();
+      return {
+        width: box.width,
+        top: box.top,
+        bottom: box.bottom,
+        statusTop: status?.top,
+        sheetHandle: getComputedStyle(element.querySelector(".sheet-handle")!)
+          .display,
+      };
+    });
+  expect(panelSurface.width).toBeLessThan(768);
+  expect(panelSurface.top).toBeGreaterThanOrEqual(59);
+  expect(panelSurface.bottom).toBeLessThanOrEqual(panelSurface.statusTop! + 1);
+  expect(panelSurface.sheetHandle).toBe("none");
+});
+
+test("an open phone panel changes from sheet to side flyout on rotation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const panel = page.locator('[aria-label="Settings"]');
+  await expect(panel.locator(".sheet-handle")).toBeVisible();
+
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expect(panel.locator(".sheet-handle")).toBeHidden();
+  const surface = () =>
+    panel.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const status = document.querySelector(".status")?.getBoundingClientRect();
+      return {
+        width: box.width,
+        top: box.top,
+        bottom: box.bottom,
+        statusTop: status?.top,
+        bodyOverflow: getComputedStyle(element.querySelector(".panel-body")!)
+          .overflowY,
+      };
+    });
   await expect
-    .poll(() => page.evaluate(() => window.scrollY))
-    .toBeGreaterThan(0);
+    .poll(async () => {
+      const current = await surface();
+      return current.bottom - current.statusTop!;
+    })
+    .toBeLessThanOrEqual(1);
+  const rotated = await surface();
+  expect(rotated.width).toBeLessThan(844);
+  expect(rotated.top).toBeGreaterThanOrEqual(59);
+  expect(rotated.bottom).toBeLessThanOrEqual(rotated.statusTop! + 1);
+  expect(rotated.bodyOverflow).toBe("auto");
 });
 
 for (const viewport of [
@@ -142,7 +241,9 @@ for (const viewport of [
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight,
       }));
-    expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
+    if (viewport.height === 640)
+      expect(stage.scrollHeight).toBeGreaterThan(stage.clientHeight);
+    else expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
     const chartContainment = await page.locator(".chart").evaluate((chart) => {
       const plot = chart.querySelector(".plot");
       if (!(plot instanceof HTMLElement)) throw new Error("missing chart plot");
