@@ -105,9 +105,9 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   const reducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // Wider viewports dock the panel, where a downward drag means nothing.
+  // Only portrait phones present this panel as a draggable bottom sheet.
   const isBottomSheetLayout = () =>
-    window.matchMedia("(max-width: 759px)").matches;
+    window.matchMedia("(max-width: 759px) and (orientation: portrait)").matches;
 
   function setPageLocked(locked: boolean) {
     if (locked === pageLocked) return;

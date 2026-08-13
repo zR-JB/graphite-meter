@@ -12,6 +12,8 @@ import type {
 import type { CoreHost, RunnerBackend } from "./core";
 import { needsPings, ROUTES } from "./real/backendPure";
 import { BUILD } from "../buildenv";
+import { singleLatencyBucket } from "./latencyBuckets";
+import { fixedPingIntervalMs } from "./pingCadence";
 
 export interface DummyOptions {
   seed?: number;
@@ -85,14 +87,12 @@ const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
   }, // ~9.5/4.5 Mbit/s
 };
 
-const PING_INTERVAL: Record<PingCadence, number> = {
-  // The dummy has no request/reply transport; one core tick approximates the
-  // reply-driven worker's UI-visible sample stream.
-  "reply-driven": 20,
-  fast: 80,
-  medium: 250,
-  slow: 600,
-};
+/** The dummy has no request/reply transport; one core tick approximates the
+ * reply-driven worker's UI-visible sample stream. Fixed pacing stays shared
+ * with the real engine. */
+function pingIntervalMs(cadence: PingCadence): number {
+  return fixedPingIntervalMs(cadence) ?? 20;
+}
 
 const THROUGHPUT_CADENCE_MS = 100;
 
@@ -143,7 +143,7 @@ export class DummyBackend implements RunnerBackend {
   #rand: () => number;
   #host: CoreHost | null = null;
 
-  // Wall-time gates prevent adaptive glides from emitting sample bursts.
+  // Wall-time gates keep synthetic callback cadence independent of run timing.
   #lastThroughputAt = -Infinity;
   #lastPingAt = -Infinity;
   #sampleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -285,13 +285,7 @@ export class DummyBackend implements RunnerBackend {
         type: "latency",
         // Pre-test idle pings: phase "idle" (negative t), so the LatencyProfile's
         // idle lane (phase==="latency") excludes them while the sparkline shows them.
-        sample: {
-          t: -interval * (pings - i),
-          rttMs: rtt,
-          underLoad: false,
-          lost: false,
-          phase: "idle",
-        },
+        sample: singleLatencyBucket(-interval * (pings - i), rtt, false),
       });
     }
 
@@ -396,8 +390,8 @@ export class DummyBackend implements RunnerBackend {
     // nothing until measurement begins, like a real backend at onStageMeasure.
     if (!measuring) return;
 
-    // Throughput on the stage's transfer lanes. The cadence gates on REAL time:
-    // measured time races ahead during an early-finish glide.
+    // Throughput on the stage's transfer lanes. Cadence gates on real time so
+    // live schedule edits cannot bunch callbacks together.
     if (
       activity.transfer.length > 0 &&
       realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
@@ -410,10 +404,9 @@ export class DummyBackend implements RunnerBackend {
 
     // Idle-stage pings, or loaded (bufferbloat) pings during a transfer stage.
     // `activity.loadedLatency` folds in the skip rule, resolved by the scheduler.
-    const pingInterval =
-      PING_INTERVAL[
-        activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence
-      ];
+    const pingInterval = pingIntervalMs(
+      activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence,
+    );
     if (needsPings(activity) && realNow - this.#lastPingAt >= pingInterval) {
       this.#lastPingAt = realNow;
       this.#synthLatency(activity, elapsed, segStart, segEnd);
@@ -438,11 +431,11 @@ export class DummyBackend implements RunnerBackend {
       });
       const pingActive = needsPings(activity);
       const pingInterval = pingActive
-        ? PING_INTERVAL[
+        ? pingIntervalMs(
             activity.stage === "latency"
               ? cfg.pingCadence
-              : cfg.loadedPingCadence
-          ]
+              : cfg.loadedPingCadence,
+          )
         : Infinity;
       const next = Math.min(
         activity.transfer.length
@@ -547,7 +540,10 @@ export class DummyBackend implements RunnerBackend {
     if (loss) lossProb = Math.max(lossProb, loss.magnitude);
     const lost = this.#rand() < lossProb;
 
-    this.#host!.ingestLatency(rtt, underLoad, lost);
+    this.#host!.ingestLatency(
+      { rttMs: rtt, lost, observedAtMs: performance.now() },
+      underLoad,
+    );
   }
 
   /* ================= LIVE ANOMALY INJECTION ================= */
@@ -561,7 +557,7 @@ export class DummyBackend implements RunnerBackend {
     const host = this.#host;
     if (!host || !host.config || host.phase === "idle") return;
 
-    // Connection drops use wall time so adaptive timeline glides cannot shorten them.
+    // Connection drops use wall time so schedule edits cannot shorten them.
     if (a.kind === "connection-drop") {
       const durationMs =
         a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;

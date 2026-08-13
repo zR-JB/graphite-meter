@@ -113,8 +113,15 @@
   }
   .options {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+    grid-template-columns: 1fr;
     gap: 6px;
+  }
+  /* Settings cards are 180px minimum with a 12px normal-density grid gap:
+     180 + 12 + 180 = 372px, the exact outer-grid two-column breakpoint. */
+  @container settings-grid (min-width: 372px) {
+    .options {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    }
   }
   .choice {
     position: relative;
@@ -123,6 +130,7 @@
     align-items: center;
     gap: var(--space-2);
     min-height: 52px;
+    min-width: 0;
     padding: 8px 9px;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -179,6 +187,7 @@
     color: var(--text);
     font-size: 11px;
     font-weight: 780;
+    overflow-wrap: anywhere;
   }
   .copy small {
     overflow: hidden;
@@ -188,6 +197,7 @@
     font-weight: 500;
     line-height: 1.35;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .validation {
     display: grid;
@@ -248,10 +258,5 @@
   button:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
-  }
-  @container (max-width: 360px) {
-    .options {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

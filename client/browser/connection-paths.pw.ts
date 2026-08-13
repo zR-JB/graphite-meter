@@ -108,10 +108,10 @@ test("the diagnostics rows agree with the path card above them", async ({
   await expect(
     endpoint.locator(".path").filter({ hasText: "throughput path" }),
   ).toContainText("WebTransport streams");
-  await expect(diagnosticRow(page, "Transports")).toContainText("webtransport");
-  await expect(diagnosticRow(page, "Transports")).not.toContainText(
-    "fetch-stream",
+  await expect(endpoint.locator(".path").first()).toContainText(
+    "Path evidence",
   );
+  await expect(diagnosticRow(page, "Transports")).toHaveCount(0);
   await expect(diagnosticRow(page, "Streams")).toHaveText(
     "Automatic · 1 continuous stream per direction",
   );

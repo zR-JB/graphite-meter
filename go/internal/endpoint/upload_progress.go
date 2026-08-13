@@ -42,6 +42,7 @@ type uploadProgressEvent struct {
 	Bytes   uint64 `json:"bytes,omitempty"`
 	Nanos   uint64 `json:"nanos,omitempty"`
 	Message string `json:"message,omitempty"`
+	Code    string `json:"code,omitempty"`
 }
 
 // waitForUploadPosts blocks until no POST lane is still draining into agg, so the
@@ -141,7 +142,7 @@ func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w i
 
 	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {
-		emit(uploadProgressEvent{Type: "error", Message: uploadAccessMessage(access)})
+		emit(uploadProgressEvent{Type: "error", Message: uploadAccessMessage(access), Code: uploadAccessCode(access)})
 		return
 	}
 	claim := agg.claimProgress()

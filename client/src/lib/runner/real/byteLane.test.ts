@@ -36,7 +36,7 @@ mock.module("./workerPool", () => ({
   stopWorker: (worker: FakeWorker) => worker.terminate(),
 }));
 
-const { sessionLane } = await import("./byteLane");
+const { fetchLane, sessionLane } = await import("./byteLane");
 
 const OPTS = {
   url: "https://meter/wt/download",
@@ -107,4 +107,33 @@ test("graceful stop relays the worker's final download progress", async () => {
   await stopping;
 
   expect(progress).toEqual([[17, 25, 3]]);
+});
+
+test("an upload worker's local completion metadata stays on the alive seam", () => {
+  spawned.length = 0;
+  const hints: [number | undefined, number | undefined][] = [];
+  const lane = fetchLane(
+    {
+      url: "https://meter/upload",
+      dir: "up",
+      lanes: 1,
+      index: 0,
+      credentials: "same-origin",
+      chunk: false,
+      debug: false,
+    },
+    {
+      onProgress: () => {
+        throw new Error("local upload completion must not be byte progress");
+      },
+      onAlive: (bytes, elapsedMs) => hints.push([bytes, elapsedMs]),
+      onError: () => {},
+      onUploadProgress: () => {},
+      onAuthRequired: () => {},
+    },
+  );
+  lane.start();
+  spawned[0].emit({ type: "alive", bytes: 512, elapsedMs: 40 });
+
+  expect(hints).toEqual([[512, 40]]);
 });

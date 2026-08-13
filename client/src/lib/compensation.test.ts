@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   applyConnectionProfile,
+  combineCompensationEstimates,
   estimateLiveCompensation,
   estimateResultCompensation,
   transportFromProtocol,
@@ -174,7 +175,24 @@ test("tunnel preset is applied once and remains configurable", () => {
     { ...preset, transport: "http1-clear" },
     "upload",
   );
+  expect(estimate.profile).toBe("tunnel");
   expect(
     estimate.factors.filter((factor) => factor.key === "encapsulation"),
   ).toHaveLength(1);
+});
+
+test("bidirectional compensation is the sum of independently modeled lanes", () => {
+  const down = estimateLiveCompensation(2_000_000, config(), "download");
+  const up = estimateLiveCompensation(500_000, config(), "upload");
+  const combined = combineCompensationEstimates([down, up]);
+  expect(combined.measuredBytesPerSec).toBe(2_500_000);
+  expect(combined.estimatedBytesPerSec).toBe(
+    down.estimatedBytesPerSec + up.estimatedBytesPerSec,
+  );
+  expect(combined.lowerBytesPerSec).toBe(
+    down.lowerBytesPerSec + up.lowerBytesPerSec,
+  );
+  expect(combined.upperBytesPerSec).toBe(
+    down.upperBytesPerSec + up.upperBytesPerSec,
+  );
 });

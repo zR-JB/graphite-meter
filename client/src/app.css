@@ -59,6 +59,7 @@
 
   /* Shell breakpoints are duplicated in JS/media queries; keep literals in sync. */
   --topbar-h: 60px;
+  --statusbar-h: 28px;
   --rail-w: 268px;
   --inspector-w: 380px;
   --gap: 16px;
@@ -277,13 +278,10 @@ body {
   overflow-x: clip;
 }
 
-/* Desktop shell: #console is exactly 100dvh, so the document must never
-   scroll vertically either. Clipping it leaves a stray overflowing box (or a
-   focus-reveal chasing one) able to scroll only a container inside the shell,
-   never to shift the whole UI out of view. Below the stacked breakpoint
-   the document is the intended scroller and stays untouched. */
-@media (min-width: 760px) {
-  /* bp: stacked (complement) */
+/* Preserve main's fixed shell from the tablet breakpoint upward. A landscape
+   phone uses that same anchored shell so its side panels remain flyouts; only
+   portrait phones retain main's document-scroll mode. */
+@media (min-width: 760px), (max-width: 759px) and (orientation: landscape) {
   html,
   body {
     overflow-y: clip;

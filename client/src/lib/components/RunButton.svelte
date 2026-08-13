@@ -32,13 +32,15 @@
       ? "Run the test again (Space / R)"
       : "Start the test (Space)"}
 >
-  {#if store.isRunning}
-    <span class="stop-sq"></span> ABORT
-  {:else if resolved}
-    <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
-  {:else}
-    <span class="ico">{@html ICON.bolt}</span> ENGAGE
-  {/if}
+  <span class="engage-content">
+    {#if store.isRunning}
+      <span class="stop-sq"></span> ABORT
+    {:else if resolved}
+      <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
+    {:else}
+      <span class="ico">{@html ICON.bolt}</span> ENGAGE
+    {/if}
+  </span>
 </button>
 
 <style>
@@ -55,7 +57,9 @@
     width: 100%;
     max-width: 320px;
     align-self: center;
+    height: 46px;
     min-height: 46px;
+    box-sizing: border-box;
     border-radius: var(--r-pill);
     font-family: var(--font-display);
     font-weight: 600;
@@ -100,5 +104,26 @@
   .ico :global(svg) {
     width: 18px;
     height: 18px;
+  }
+  .engage-content {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .engage-content {
+      animation: control-content-enter 100ms var(--ease-out) both;
+    }
+  }
+  @keyframes control-content-enter {
+    from {
+      opacity: 0.7;
+      transform: translateY(1px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 </style>

@@ -106,16 +106,25 @@ function openProgressFeed(
   uploadId: string,
   total: ServerTotal,
   errors: string[],
-): { worker: Worker; open: Promise<void> } {
+): { worker: Worker; open: Promise<boolean> } {
   const worker = uploadProgressWorker();
-  let resolveOpen: () => void;
-  const open = new Promise<void>((resolve) => (resolveOpen = resolve));
+  let resolveOpen!: (opened: boolean) => void;
+  const open = new Promise<boolean>((resolve) => (resolveOpen = resolve));
+  let opening = true;
   worker.onmessage = (e: MessageEvent<WtProgressRelay>): void => {
     const msg = e.data;
-    if (msg.type === "open") resolveOpen();
-    else if (msg.type === "bytes" || msg.type === "complete")
+    if (msg.type === "open") {
+      opening = false;
+      resolveOpen(true);
+    } else if (msg.type === "bytes" || msg.type === "complete")
       total.accept(msg.n);
-    else if (msg.type === "fatal") errors.push(`progress: ${msg.detail}`);
+    else if (msg.type === "fatal") {
+      errors.push(`progress: ${msg.detail}`);
+      if (opening) {
+        opening = false;
+        resolveOpen(false);
+      }
+    }
   };
   worker.postMessage({
     type: "start",
@@ -183,7 +192,21 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     spec.dir === "up" && !rides
       ? openProgressFeed(spec.origin, uploadId, total, errors)
       : null;
-  if (feed) await feed.open;
+  if (feed && !(await feed.open)) {
+    feed.worker.terminate();
+    await fetch(
+      `${spec.origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(uploadId)}`,
+      { method: "DELETE", cache: "no-store" },
+    ).catch(() => {});
+    return {
+      bytes: 0,
+      elapsedMs: 0,
+      laneBytes,
+      buckets: [],
+      maxTickMs: 0,
+      errors,
+    };
+  }
 
   const lanes: ByteLane[] = [];
   if (session) {

@@ -5,6 +5,7 @@
   import { store } from "../../state/store.svelte";
   import TestSetupPanel from "./TestSetupPanel.svelte";
   import DeveloperPanel from "./DeveloperPanel.svelte";
+  import ConfirmDialog from "../ConfirmDialog.svelte";
 
   interface Props {
     open?: boolean;
@@ -22,6 +23,15 @@
     onResize,
     onResetWidth,
   }: Props = $props();
+
+  let resetConfirmOpen = $state(false);
+  let setupResetVersion = $state(0);
+
+  function confirmSettingsReset() {
+    resetConfirmOpen = false;
+    store.restoreTestDisplayDefaults();
+    setupResetVersion++;
+  }
 
   // The active tab is store.settingsTab, persisted across reopens.
   type Tab = "setup" | "developer";
@@ -72,9 +82,29 @@
     <DeveloperPanel running={store.isRunning} />
   {:else}
     <!-- Default, and the fallback for a persisted "developer" tab in a prod build. -->
-    <TestSetupPanel running={store.isRunning} />
+    {#key setupResetVersion}
+      <TestSetupPanel running={store.isRunning} />
+    {/key}
+    <div class="settings-reset">
+      <button
+        type="button"
+        disabled={store.isRunning}
+        onclick={() => (resetConfirmOpen = true)}>Reset settings</button
+      >
+    </div>
   {/if}
 </SidePanel>
+
+<ConfirmDialog
+  open={resetConfirmOpen}
+  id="settings-reset-confirm"
+  title="Reset settings?"
+  description="Restore test and display settings to the shipped defaults? Your theme, panel layout, and existing test results will be kept."
+  cancelLabel="Keep settings"
+  confirmLabel="Reset settings"
+  onCancel={() => (resetConfirmOpen = false)}
+  onConfirm={confirmSettingsReset}
+/>
 
 <style>
   /* Recessed segmented track; the active tab lifts as a milled tile. */
@@ -118,5 +148,30 @@
     background: var(--brand-soft);
     box-shadow: var(--elev-tile);
     color: var(--brand-strong);
+  }
+  .settings-reset {
+    display: grid;
+    justify-items: start;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+  }
+  .settings-reset button {
+    min-height: 32px;
+    padding: 5px 10px;
+    border: 1px solid color-mix(in srgb, var(--err) 42%, var(--border));
+    border-radius: var(--r-chrome);
+    background: transparent;
+    color: var(--text-soft);
+    font-size: var(--type-sm);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .settings-reset button:hover:not(:disabled) {
+    border-color: var(--err);
+    color: var(--err);
+  }
+  .settings-reset button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 </style>

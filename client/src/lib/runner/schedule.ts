@@ -177,3 +177,25 @@ export function segmentAt(
 ): Segment | undefined {
   return segments.find((s) => elapsed >= s.start && elapsed < s.end);
 }
+
+/** Close the active segment at a real measured boundary and shift the untouched
+ * tail earlier by exactly the removed budget. No elapsed time is fabricated. */
+export function truncateSegmentAt(
+  segments: Segment[],
+  active: Segment,
+  elapsed: number,
+): Timeline {
+  const boundary = Math.min(active.end, Math.max(active.start, elapsed));
+  const removed = active.end - boundary;
+  const next = segments.map((segment) => {
+    if (segment === active) return { ...segment, end: boundary };
+    if (segment.start >= active.end)
+      return {
+        ...segment,
+        start: segment.start - removed,
+        end: segment.end - removed,
+      };
+    return segment;
+  });
+  return { segments: next, totalMs: next.at(-1)?.end ?? 0 };
+}

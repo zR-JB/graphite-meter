@@ -5,47 +5,71 @@
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
+  import { bidirectionalResultPresentation } from "./bidirectionalResult";
+  import type { LiveRateValues } from "../presentation/liveRateAnimator";
 
   interface Props {
     compact?: boolean;
+    liveRates?: LiveRateValues;
   }
-  let { compact = false }: Props = $props();
+  let { compact = false, liveRates }: Props = $props();
 
   const dash = "—";
 
+  function throughputDisplayStability(stabilityPct: number): {
+    score: number;
+    band: "low" | "medium" | "high";
+  } {
+    const score = Math.max(0, Math.min(1, stabilityPct / 100));
+    return {
+      score,
+      band: score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low",
+    };
+  }
+
   function transferModel(phase: "download" | "upload") {
+    const presentation = store.stagePresentation[phase];
     const stability = store.liveStability[phase];
-    if (store.phase === phase) {
+    if (
+      presentation.status === "active" ||
+      presentation.status === "recovering"
+    ) {
       const live = store.liveCompensation;
+      const measuredBytesPerSec = compact
+        ? (liveRates?.transfer ?? store.visualTransferBytesPerSec)
+        : live.measuredBytesPerSec;
       return {
-        measuredBytesPerSec: live.measuredBytesPerSec,
+        measuredBytesPerSec,
+        authoritativeBytesPerSec: store.liveTransferBytesPerSec,
         estimatedBytesPerSec: live.estimatedBytesPerSec,
-        lowerBytesPerSec: live.lowerBytesPerSec,
-        upperBytesPerSec: live.upperBytesPerSec,
         available: live.available,
         multiplier: live.totalMultiplier,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
-        has: live.measuredBytesPerSec > 0,
+        has: measuredBytesPerSec > 0,
+        status: presentation.status,
       };
     }
     const stageResult = store.stageResults[phase];
+    const displayStability = stageResult
+      ? throughputDisplayStability(stageResult.stabilityPct)
+      : null;
     const compensation =
       phase === "download"
         ? store.downloadCompensation
         : store.uploadCompensation;
     return {
       measuredBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
+      authoritativeBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
       estimatedBytesPerSec: compensation.estimatedBytesPerSec,
-      lowerBytesPerSec: compensation.lowerBytesPerSec,
-      upperBytesPerSec: compensation.upperBytesPerSec,
       available: compensation.available,
       multiplier: compensation.totalMultiplier,
-      band: stageResult?.band ?? stability?.band ?? "low",
-      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
+      band: displayStability?.band ?? stability?.band ?? "low",
+      score: displayStability?.score ?? stability?.score ?? 0,
       active: false,
       has: !!stageResult,
+      status: presentation.status,
     };
   }
 
@@ -53,85 +77,133 @@
   const upload = $derived.by(() => transferModel("upload"));
 
   const bidi = $derived.by(() => {
-    if (store.phase === "bidirectional") {
-      const live = store.liveBidirectional ?? { down: 0, up: 0 };
+    const presentation = store.stagePresentation.bidirectional;
+    const stability = store.liveStability.bidirectional;
+    if (
+      presentation.status === "active" ||
+      presentation.status === "recovering"
+    ) {
+      const live = (compact
+        ? (liveRates ?? store.visualBidirectional)
+        : store.liveBidirectional) ?? { down: 0, up: 0 };
       return {
         down: live.down,
         up: live.up,
         combined: live.down + live.up,
-        band: "low" as const,
-        score: 0,
-        active: true,
-        has: live.down + live.up > 0,
-      };
-    }
-    const result = store.result?.bidirectional;
-    const down = result?.down.reportedBytesPerSec ?? 0;
-    const up = result?.up.reportedBytesPerSec ?? 0;
-    return {
-      down,
-      up,
-      combined: down + up,
-      band: result?.down.band ?? "low",
-      score: result?.down.stabilityScore ?? 0,
-      active: false,
-      has: !!result,
-    };
-  });
-
-  const ping = $derived.by(() => {
-    const stability = store.liveStability.latency;
-    if (store.phase === "latency") {
-      return {
-        ms: store.liveRtt,
+        authoritativeDown: (store.liveBidirectional ?? { down: 0, up: 0 }).down,
+        authoritativeUp: (store.liveBidirectional ?? { down: 0, up: 0 }).up,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
-        has: store.liveRtt > 0,
+        has: live.down + live.up > 0,
+        status: presentation.status,
       };
     }
-    const stageResult = store.stageResults.latency;
-    const reported = stageResult?.reportedMs ?? null;
+    const result = bidirectionalResultPresentation(
+      store.result?.bidirectional ??
+        store.error?.partial?.bidirectional ??
+        null,
+    );
+    const survivor =
+      result.survivingDirection === "down" ? result.down : result.up;
+    const downDisplay = result.down
+      ? throughputDisplayStability(result.down.stabilityPct)
+      : null;
+    const upDisplay = result.up
+      ? throughputDisplayStability(result.up.stabilityPct)
+      : null;
+    const combinedDisplay =
+      downDisplay && upDisplay
+        ? throughputDisplayStability(
+            Math.min(result.down!.stabilityPct, result.up!.stabilityPct),
+          )
+        : null;
     return {
-      ms: reported ?? store.liveRtt,
-      band: stageResult?.band ?? stability?.band ?? "low",
-      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
+      down: result.down?.reportedBytesPerSec ?? 0,
+      up: result.up?.reportedBytesPerSec ?? 0,
+      combined: result.combinedBytesPerSec,
+      authoritativeDown: result.down?.reportedBytesPerSec ?? 0,
+      authoritativeUp: result.up?.reportedBytesPerSec ?? 0,
+      survivingDirection: result.survivingDirection,
+      band:
+        combinedDisplay?.band ??
+        survivor?.band ??
+        result.down?.band ??
+        result.up?.band ??
+        "low",
+      score: combinedDisplay?.score ?? survivor?.stabilityScore ?? 0,
       active: false,
-      has: reported != null,
+      has: result.combinedBytesPerSec !== null,
+      status: presentation.status,
     };
   });
 
+  // Below half a percent, the modeled difference is not useful result-card
+  // context. The assumptions remain available through the shared disclosure.
   function lifted(multiplier: number): boolean {
-    return multiplier > 1.0005;
+    return multiplier >= 1.005;
   }
 
   function pctLift(multiplier: number): string {
     return `+${((multiplier - 1) * 100).toFixed(1)}%`;
   }
 
+  const ping = $derived.by(() => {
+    const presentation = store.stagePresentation.latency;
+    const stability = store.liveStability.latency;
+    if (
+      presentation.status === "active" ||
+      presentation.status === "recovering"
+    ) {
+      return {
+        ms: store.liveRtt,
+        lost: store.liveLatencyLost,
+        band: stability?.band ?? "low",
+        score: stability?.score ?? 0,
+        active: true,
+        has: store.liveRtt > 0,
+        status: presentation.status,
+      };
+    }
+    const stageResult = store.stageResults.latency;
+    const reported = stageResult?.reportedMs ?? null;
+    return {
+      ms: reported ?? store.liveRtt,
+      lost: false,
+      band: stageResult?.band ?? stability?.band ?? "low",
+      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
+      active: false,
+      has: reported != null,
+      status: presentation.status,
+    };
+  });
+
   const showPing = $derived(
-    store.runConfig.stages.latency && (ping.active || ping.has),
+    store.stagePresentation.latency.status !== "disabled" &&
+      store.stagePresentation.latency.status !== "pending",
   );
   const showDownload = $derived(
-    store.runConfig.stages.download && (download.active || download.has),
+    store.stagePresentation.download.status !== "disabled" &&
+      store.stagePresentation.download.status !== "pending",
   );
   const showUpload = $derived(
-    store.runConfig.stages.upload && (upload.active || upload.has),
+    store.stagePresentation.upload.status !== "disabled" &&
+      store.stagePresentation.upload.status !== "pending",
   );
   const showBidi = $derived(
-    store.runConfig.stages.bidirectional && (bidi.active || bidi.has),
+    store.stagePresentation.bidirectional.status !== "disabled" &&
+      store.stagePresentation.bidirectional.status !== "pending",
   );
 
   const downloadInUnit = $derived(store.toUnit(download.measuredBytesPerSec));
   const uploadInUnit = $derived(store.toUnit(upload.measuredBytesPerSec));
-  const bidiInUnit = $derived(store.toUnit(bidi.combined));
+  const bidiInUnit = $derived(
+    bidi.combined === null ? null : store.toUnit(bidi.combined),
+  );
 
   const showWire = $derived(store.showWireEstimates);
 
-  type CardWire =
-    | { kind: "lift"; num: string; pct: string }
-    | { kind: "flat"; text: string }
-    | null;
+  type CardWire = { kind: "lift"; num: string; pct: string } | null;
   interface CardVM {
     key: string;
     icon: string;
@@ -143,28 +215,39 @@
     showPip: boolean;
     band: "low" | "medium" | "high";
     score: number;
+    status:
+      | "disabled"
+      | "pending"
+      | "active"
+      | "recovering"
+      | "complete"
+      | "partial"
+      | "failed";
     num: string; // pre-formatted, or the dash
+    accessibleNum: string;
     unit: string;
     sub?: string; // per-direction detail (bidirectional only)
     wire: CardWire;
   }
 
-  function wireFor(m: {
-    has: boolean;
-    multiplier: number;
-    estimatedBytesPerSec: number;
-    available: boolean;
-  }): CardWire {
-    if (!showWire) return null;
-    if (m.has && !m.available)
-      return { kind: "flat", text: "loopback — no physical wire" };
-    if (m.has && lifted(m.multiplier))
+  function wireFor(
+    m: {
+      has: boolean;
+      multiplier: number;
+      estimatedBytesPerSec: number;
+      available: boolean;
+    },
+    status: CardVM["status"],
+  ): CardWire {
+    if (!showWire || !m.has || status !== "complete") return null;
+    if (!m.available) return null;
+    if (lifted(m.multiplier))
       return {
         kind: "lift",
         num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
         pct: pctLift(m.multiplier),
       };
-    return { kind: "flat", text: m.has ? "no overhead applied" : "" };
+    return null;
   }
 
   function transferCard(
@@ -182,12 +265,16 @@
       term: false,
       active: model.active,
       hasVal,
-      showPip: hasVal,
+      showPip: hasVal && model.status === "complete",
       band: model.band,
       score: model.score,
+      status: model.status,
       num: hasVal ? fmtSpeed(shown) : dash,
+      accessibleNum: hasVal
+        ? fmtSpeed(store.toUnit(model.authoritativeBytesPerSec))
+        : dash,
       unit: store.unitLabel,
-      wire: wireFor(model),
+      wire: wireFor(model, model.status),
     };
   }
 
@@ -208,14 +295,25 @@
         term: false,
         active: bidi.active,
         hasVal: bidi.has,
-        showPip: bidi.has && !bidi.active,
+        showPip: bidi.has && bidi.status === "complete",
         band: bidi.band,
         score: bidi.score,
-        num: bidi.has ? fmtSpeed(bidiInUnit) : dash,
+        status: bidi.status,
+        num: bidi.has && bidiInUnit !== null ? fmtSpeed(bidiInUnit) : dash,
+        accessibleNum:
+          bidi.has && bidiInUnit !== null
+            ? fmtSpeed(
+                store.toUnit(bidi.authoritativeDown + bidi.authoritativeUp),
+              )
+            : dash,
         unit: store.unitLabel,
         sub: bidi.has
           ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
-          : undefined,
+          : bidi.survivingDirection === "down"
+            ? `↓ ${fmtSpeed(store.toUnit(bidi.down))} ${store.unitLabel} — upload unavailable`
+            : bidi.survivingDirection === "up"
+              ? `↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel} — download unavailable`
+              : undefined,
         wire: null,
       });
     if (showPing)
@@ -227,11 +325,15 @@
         term: true,
         active: ping.active,
         hasVal: ping.has,
-        showPip: ping.has,
+        showPip: ping.has && ping.status === "complete",
         band: ping.band,
         score: ping.score,
-        num: ping.has ? fmtMs(ping.ms) : dash,
-        unit: "ms",
+        status: ping.status,
+        num:
+          ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
+        accessibleNum:
+          ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
+        unit: ping.active && ping.lost ? "" : "ms",
         wire: null,
       });
     return out;
@@ -260,13 +362,23 @@
           >{c.band}</span
         >
       {/if}
+      {#if c.status === "partial"}
+        <span class="partial">Partial</span>
+      {:else if c.status === "failed"}
+        <span class="partial">Failed</span>
+      {/if}
     </header>
-    <div class="val">
+    <div class="val" aria-hidden={compact && c.active ? "true" : undefined}>
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
     </div>
+    {#if compact && c.active}
+      <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
+    {/if}
     {#if c.sub}
-      <div class="sub">{c.sub}</div>
+      <div class="sub" aria-hidden={compact && c.active ? "true" : undefined}>
+        {c.sub}
+      </div>
     {/if}
     {#if c.wire}
       <div class="est">
@@ -276,8 +388,6 @@
           <span class="est-tag" use:tooltip={JARGON.wireRate}
             >wire {c.wire.pct}</span
           >
-        {:else}
-          <span class="est-flat">{c.wire.text}</span>
         {/if}
       </div>
     {/if}
@@ -288,10 +398,13 @@
   <div class="result-chip" class:active={c.active}>
     <span class="ico {c.accent}">{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
-    <span class="chip-val">
+    <span class="chip-val" aria-hidden={c.active ? "true" : undefined}>
       <span class="num">{c.num}</span>
       <span class="unit">{c.unit}</span>
     </span>
+    {#if c.active}
+      <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
+    {/if}
   </div>
 {/snippet}
 
@@ -343,28 +456,50 @@
     transform: translateY(-1px);
     border-color: var(--border-strong);
   }
+  .partial {
+    margin-left: auto;
+    color: var(--err);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
 
   @media (prefers-reduced-motion: no-preference) {
+    .result-chip {
+      animation: quick-content-enter 110ms var(--ease-out) both;
+    }
     .result-card {
-      animation: card-enter 220ms var(--ease-out) both;
+      animation: card-enter 140ms var(--ease-out) both;
     }
     .result-card:nth-child(1) {
       animation-delay: 0ms;
     }
     .result-card:nth-child(2) {
-      animation-delay: 60ms;
+      animation-delay: 25ms;
     }
     .result-card:nth-child(3) {
-      animation-delay: 120ms;
+      animation-delay: 50ms;
     }
     .result-card:nth-child(4) {
-      animation-delay: 180ms;
+      animation-delay: 75ms;
+    }
+  }
+  @keyframes quick-content-enter {
+    from {
+      opacity: 0.65;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
   @keyframes card-enter {
     from {
       opacity: 0;
-      transform: translateY(5px);
+      transform: translateY(3px);
     }
     to {
       opacity: 1;
@@ -524,7 +659,7 @@
 
   /* Compact strip: one slim row per finished or active stage, carrying icon,
      label, and number. Earlier stages stay visible while the next one runs.
-     No card chrome, pip, or wire-estimate line. */
+     No card chrome, confidence verdict, or wire-estimate line. */
   .result-chips {
     display: flex;
     flex-direction: column;

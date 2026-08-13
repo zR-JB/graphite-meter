@@ -2,49 +2,73 @@
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
-  import {
-    presentation,
-    type PresentationHandle,
-  } from "../canvas/presentation";
+  import { gaugeLayout } from "../canvas/gaugeLayout";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { tooltip } from "../actions/tooltip";
+  import { gaugeLatencyPresentation } from "./gaugeLatency";
+  import { authoritativeTransferAnnouncement } from "./gaugeAccessibility";
+  import {
+    LiveRateAnimator,
+    type LiveRateValues,
+  } from "../presentation/liveRateAnimator";
+  import {
+    presentation,
+    type PresentationHandle,
+  } from "../canvas/presentation";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
     if (store.phase === "idle") return "none";
     return "partial";
   });
+  const activeStagePresentation = $derived(
+    store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
+  );
+  // A one-sided bidirectional partial retains its lane result for diagnostics,
+  // but has no truthful combined gauge value.
+  const unusableStage = $derived(
+    activeStagePresentation?.status === "failed" ||
+      (store.phase === "complete" && store.finalMetric === null),
+  );
 
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();
   let engine: GaugeEngine;
-  let decayPresentation: PresentationHandle;
+  let gaugeSize = $state({ width: 0, height: 0 });
+  const liveRateAnimator = new LiveRateAnimator();
+  let liveRateValues = $state<LiveRateValues>({
+    transfer: 0,
+    down: 0,
+    up: 0,
+  });
+  let liveRatePresentation: PresentationHandle | null = null;
+  let reducedRateMotion = false;
 
-  const STALL_DECAY_MS = 800;
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
-  let nowWall = $state(performance.now());
-  const stallDecay = $derived.by(() => {
-    if (store.measuring || !store.stalledSince) return 1;
-    return Math.min(
-      1,
-      Math.max(0, 1 - (nowWall - store.stalledSince) / STALL_DECAY_MS),
-    );
-  });
-  const decayedBytesPerSec = $derived(
-    store.liveTransferBytesPerSec * stallDecay,
-  );
   let completedDisplay = $state(EMPTY_DISPLAY);
   let completedKind = $state<"speed" | "latency">("speed");
+  const gaugeLatency = $derived.by(() => {
+    const metric = store.phase === "complete" ? store.finalMetric : null;
+    return gaugeLatencyPresentation({
+      phase: store.phase,
+      liveRttMs: store.liveRtt,
+      liveScaleMs: store.latencyScaleMs,
+      history: store.latency,
+      completedRttMs: metric?.kind === "latency" ? metric.ms : null,
+    });
+  });
 
   $effect(() => {
     if (store.phase === "latency") {
       completedKind = "latency";
-      completedDisplay = { value: fmtMs(store.liveRtt), unit: "ms" };
+      completedDisplay = store.liveLatencyLost
+        ? { value: "lost", unit: "" }
+        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     } else if (
       store.phase === "download" ||
       store.phase === "upload" ||
@@ -52,7 +76,7 @@
     ) {
       completedKind = "speed";
       completedDisplay = {
-        value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
+        value: fmtSpeed(store.toUnit(store.visualTransferBytesPerSec)),
         unit: store.unitLabel,
       };
     }
@@ -64,7 +88,7 @@
     if (!metric) return;
     if (metric.kind === "latency") {
       completedKind = "latency";
-      completedDisplay = { value: fmtMs(metric.ms), unit: "ms" };
+      completedDisplay = { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     } else {
       completedKind = "speed";
       completedDisplay = {
@@ -74,33 +98,36 @@
     }
   });
 
-  const LATENCY_SCALE_LADDER = [20, 40, 100, 200, 400, 1000, 2000, 4000];
-
-  const latencyScaleMs = $derived.by(() => {
-    let peak = store.infra?.preTestPingMs ?? 0;
-    for (const s of store.latency)
-      if (!s.lost && s.rttMs > peak) peak = s.rttMs;
-    const target = peak * 1.1; // a touch of headroom so the peak isn't pegged
-    return (
-      LATENCY_SCALE_LADDER.find((step) => step >= target) ??
-      LATENCY_SCALE_LADDER.at(-1)!
-    );
-  });
-
   const msTicksActive = $derived(
     store.phase === "latency" ||
       (store.phase === "complete" && completedKind === "latency"),
   );
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
-      return TICK_FRACTIONS.map((f) => fmtMs(latencyScaleMs * f));
+      return TICK_FRACTIONS.map((f) => fmtMs(gaugeLatency.scaleMs * f));
     const scale = store.displayScaleBytesPerSec;
     return TICK_FRACTIONS.map((f) => fmtSpeed(store.toUnit(scale * f)));
   });
+  const layout = $derived.by(() =>
+    gaugeLayout(gaugeSize.width, gaugeSize.height, gaugeTicks.length),
+  );
+  const showGaugeTicks = $derived(
+    !unusableStage &&
+      (store.phase === "latency" ||
+        store.phase === "download" ||
+        store.phase === "upload" ||
+        store.phase === "bidirectional" ||
+        store.phase === "complete") &&
+      gaugeTicks.length > 1,
+  );
 
   const display = $derived.by(() => {
     const p = store.phase;
-    if (p === "latency") return { value: fmtMs(store.liveRtt), unit: "ms" };
+    if (unusableStage) return EMPTY_DISPLAY;
+    if (p === "latency")
+      return store.liveLatencyLost
+        ? { value: "lost", unit: "" }
+        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     if (
       p === "idle" ||
       p === "connecting" ||
@@ -111,10 +138,105 @@
       return EMPTY_DISPLAY;
     if (p === "complete") return completedDisplay;
     return {
-      value: fmtSpeed(store.toUnit(decayedBytesPerSec)),
+      value: fmtSpeed(store.toUnit(liveRateValues.transfer)),
       unit: store.unitLabel,
     };
   });
+
+  const liveRateInput = $derived.by(() => {
+    const phase = store.phase;
+    const active =
+      store.measuring &&
+      (phase === "download" || phase === "upload" || phase === "bidirectional");
+    const context = `${store.runSeq}:${phase}`;
+    const bidi = store.visualBidirectional ?? { down: 0, up: 0 };
+    return {
+      active,
+      context,
+      transfer: {
+        target: store.visualTransferBytesPerSec,
+        revision: store.presentationRateRevision.transfer,
+      },
+      down: {
+        target: bidi.down,
+        revision: store.presentationRateRevision.down,
+      },
+      up: {
+        target: bidi.up,
+        revision: store.presentationRateRevision.up,
+      },
+    };
+  });
+
+  function stepLiveRates(now: number): boolean {
+    const input = liveRateInput;
+    const transfer = liveRateAnimator.step(
+      {
+        key: "transfer",
+        target: input.transfer.target,
+        revision: input.transfer.revision,
+        context: input.context,
+        active: input.active,
+      },
+      now,
+      reducedRateMotion,
+    );
+    const down = liveRateAnimator.step(
+      {
+        key: "down",
+        target: input.down.target,
+        revision: input.down.revision,
+        context: input.context,
+        active: input.active,
+      },
+      now,
+      reducedRateMotion,
+    );
+    const up = liveRateAnimator.step(
+      {
+        key: "up",
+        target: input.up.target,
+        revision: input.up.revision,
+        context: input.context,
+        active: input.active,
+      },
+      now,
+      reducedRateMotion,
+    );
+    liveRateValues = {
+      transfer: transfer.value,
+      down: down.value,
+      up: up.value,
+    };
+    return transfer.active || down.active || up.active;
+  }
+
+  $effect(() => {
+    void liveRateInput;
+    liveRatePresentation?.invalidate();
+  });
+
+  // The visible display may follow the bounded upload bridge, but a live
+  // announcement describes measured throughput and must remain authoritative.
+  const announcementDisplay = $derived.by(() => {
+    if (
+      store.phase === "download" ||
+      store.phase === "upload" ||
+      store.phase === "bidirectional"
+    )
+      return authoritativeTransferAnnouncement({
+        authoritativeBytesPerSec: store.liveTransferBytesPerSec,
+        visualBytesPerSec: store.visualTransferBytesPerSec,
+        toUnit: store.toUnit.bind(store),
+        unit: store.unitLabel,
+      });
+    return display;
+  });
+
+  // The hero value may ease toward a presentation-only upload hint. Keep its
+  // visible text out of the accessibility tree; assistive technology receives
+  // the same authoritative value used by the live announcement instead.
+  const accessibleDisplay = $derived(announcementDisplay);
 
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
@@ -172,28 +294,18 @@
     void store.phase;
     void store.throughput.length;
     void store.latency.length;
-    void store.liveRtt;
+    void gaugeLatency.rttMs;
+    void gaugeLatency.scaleMs;
+    void store.liveLatencyLost;
     void store.displayScaleBytesPerSec;
     void store.measuring;
     void store.unitBase;
     void store.unitKind;
     void store.unitLabel;
+    void liveRateValues;
+    void layout;
     engine?.wake();
   });
-
-  $effect(() => {
-    void store.measuring;
-    void store.stalledSince;
-    decayPresentation?.invalidate();
-  });
-
-  function advanceDecay(now: number) {
-    if (store.measuring || !store.stalledSince) return false;
-    nowWall = now;
-    engine?.wake();
-    const rampHasFramesLeft = now - store.stalledSince < STALL_DECAY_MS;
-    return rampHasFramesLeft;
-  }
 
   // The live region mirrors a per-frame value. Mid-phase announcements wait a
   // second apart, the time a screen reader needs to finish a sentence. Phase
@@ -207,7 +319,8 @@
   $effect(() => {
     const phase = store.phase;
     pendingAnnouncement =
-      statusText || `${display.value} ${display.unit}, phase ${phase}`;
+      statusText ||
+      `${announcementDisplay.value} ${announcementDisplay.unit}, phase ${phase}`;
     const commit = () => {
       announcement = pendingAnnouncement;
       lastAnnouncedAt = performance.now();
@@ -235,33 +348,52 @@
       const finalMetric = p === "complete" ? store.finalMetric : null;
       return {
         phase: p,
-        valueBytesPerSec:
-          finalMetric?.kind === "speed"
+        showValue: !unusableStage,
+        valueBytesPerSec: unusableStage
+          ? 0
+          : finalMetric?.kind === "speed"
             ? finalMetric.bytesPerSec
-            : decayedBytesPerSec,
+            : liveRateValues.transfer,
         scaleBytesPerSec: scale,
-        latencyScaleMs,
-        ticks: gaugeTicks,
-        rtt: finalMetric?.kind === "latency" ? finalMetric.ms : store.liveRtt,
+        latencyScaleMs: gaugeLatency.scaleMs,
+        layout,
+        rtt: gaugeLatency.rttMs,
         completedKind,
       };
     });
     engine.attach(canvasEl!);
-    decayPresentation = presentation.register(stageEl!, advanceDecay);
-
+    liveRatePresentation = presentation.register(stageEl!, stepLiveRates);
+    const rateMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedRateMotion = rateMotion.matches;
+    const onRateMotion = (event: MediaQueryListEvent) => {
+      reducedRateMotion = event.matches;
+      liveRatePresentation?.invalidate();
+    };
+    rateMotion.addEventListener("change", onRateMotion);
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
 
-    const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
-    resizeObserver.observe(canvasEl!);
+    const resizeObserver = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      if (gaugeSize.width !== width || gaugeSize.height !== height)
+        gaugeSize = { width, height };
+      engine.resize(width, height);
+    });
+    resizeObserver.observe(stageEl!);
+    const { clientWidth: width, clientHeight: height } = stageEl!;
+    gaugeSize = { width, height };
+    engine.resize(width, height);
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
+      rateMotion.removeEventListener("change", onRateMotion);
+      liveRatePresentation?.destroy();
+      liveRatePresentation = null;
+      liveRateAnimator.reset();
       engine.destroy();
-      decayPresentation.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
     };
@@ -287,9 +419,27 @@
 
     <div bind:this={stageEl} class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+      {#if showGaugeTicks}
+        <div class="gauge-ticks" aria-hidden="true">
+          {#each layout.labelPoints as point, index (index)}
+            <span
+              class="gauge-tick"
+              data-anchor-x={point.anchorX}
+              data-anchor-y={point.anchorY}
+              style:left={`${point.x}px`}
+              style:top={`${point.y}px`}>{gaugeTicks[index]}</span
+            >
+          {/each}
+        </div>
+      {/if}
       <div class="metric-wrap">
-        <span class="gauge-value">{display.value}</span>
-        {#if display.unit}<span class="gauge-unit">{display.unit}</span>{/if}
+        <span class="gauge-value" aria-hidden="true">{display.value}</span>
+        {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+            >{display.unit}</span
+          >{/if}
+        <span class="sr-only"
+          >{accessibleDisplay.value} {accessibleDisplay.unit}</span
+        >
         {#if hint || status || failNotes.length}
           <div class="gauge-notes">
             {#each failNotes as note (note)}<span class="gauge-fail"
@@ -318,7 +468,7 @@
 
   <div class="results-slot">
     {#if resultsView === "partial"}
-      <ResultCards compact />
+      <ResultCards compact liveRates={liveRateValues} />
     {:else if resultsView === "final"}
       <ResultCards />
     {/if}
@@ -339,6 +489,25 @@
        restyles it. It sits here: a container query only styles descendants. */
     container-type: inline-size;
     container-name: viz;
+    /* Result content sits below the instrument. Its actual occupied height is
+       reserved from the shared gauge well through CSS, never through a
+       resize-observer/viewport feedback loop. */
+    --result-slot-budget: 0px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(1))) {
+    --result-slot-budget: 36px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(2))) {
+    --result-slot-budget: 72px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(3))) {
+    --result-slot-budget: 108px;
+  }
+  .gauge-panel:has(:global(.result-chip:nth-child(4))) {
+    --result-slot-budget: 144px;
+  }
+  .gauge-panel:has(:global(.result-cards.reserve)) {
+    --result-slot-budget: 80px;
   }
   /* The instrument grid places stage-head, gauge, Engage, and the optional
      latency panel, so one breakpoint flips the whole arrangement. Its
@@ -347,11 +516,28 @@
   .instrument {
     display: grid;
     gap: var(--space-3);
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-height: 0;
+    /* The stacked mode has intrinsic wells and participates in document flow.
+       Its size is independent of the optional latency row. */
+    /* The shared well is capped by the fixed shell, controls, rail, chart
+       floor, and their gaps. On a windowed desktop it yields before the stage
+       grows a token scrollbar; taller viewports retain the generous 42% well.
+       This remains independent of the optional latency panel. */
+    --instrument-stage-reserve: 458px;
+    --gauge-well-height: clamp(
+      220px,
+      min(
+        42svh,
+        calc(
+          100dvh - var(--instrument-stage-reserve) - var(--result-slot-budget)
+        )
+      ),
+      360px
+    );
     grid-template:
       "stagehead" auto
-      "gauge" minmax(220px, 1fr)
+      "gauge" var(--gauge-well-height)
       "engage" auto
       "latency" auto
       / 1fr;
@@ -360,7 +546,7 @@
   .instrument:not(:has(.latency-panel)) {
     grid-template:
       "stagehead" auto
-      "gauge" minmax(220px, 1fr)
+      "gauge" var(--gauge-well-height)
       "engage" auto
       / 1fr;
   }
@@ -370,17 +556,24 @@
   @container viz (min-width: 520px) {
     .instrument {
       grid-template:
-        "gauge latency" minmax(220px, 1fr)
+        "gauge latency" var(--gauge-well-height)
         "engage engage" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
+    /* With latency disabled, let the gauge well use both wide columns while
+       retaining the same fixed height. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "gauge" minmax(220px, 1fr)
-        "engage" auto
-        "stagehead" auto
-        / 1fr;
+        "gauge gauge" var(--gauge-well-height)
+        "engage engage" auto
+        "stagehead stagehead" auto
+        / minmax(240px, 1fr) minmax(240px, 1fr);
+    }
+  }
+  @media (max-width: 759px) and (orientation: portrait) {
+    .instrument {
+      --gauge-well-height: clamp(220px, 42svh, 360px);
     }
   }
   /* The gauge well: the deepest recess on the faceplate. */
@@ -389,6 +582,7 @@
     position: relative;
     min-width: 240px;
     min-height: 220px;
+    height: 100%;
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background: var(--surface-inset);
@@ -404,6 +598,8 @@
     grid-area: engage;
     display: flex;
     justify-content: center;
+    height: 46px;
+    min-height: 46px;
   }
   /* Latency profile: a matching engraved well, sized identically to the gauge
      so the pair reads as one balanced instrument. Its content scrolls within
@@ -425,6 +621,46 @@
     display: block;
     width: 100%;
     height: 100%;
+  }
+  .gauge-ticks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .gauge-tick {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--text-soft);
+    opacity: 0.5;
+    white-space: nowrap;
+    line-height: 1;
+  }
+  .gauge-tick[data-anchor-x="start"] {
+    transform: translate(0, -50%);
+  }
+  .gauge-tick[data-anchor-x="end"] {
+    transform: translate(-100%, -50%);
+  }
+  .gauge-tick[data-anchor-y="start"] {
+    transform: translate(-50%, 0);
+  }
+  .gauge-tick[data-anchor-y="end"] {
+    transform: translate(-50%, -100%);
+  }
+  .gauge-tick[data-anchor-x="start"][data-anchor-y="start"] {
+    transform: translate(0, 0);
+  }
+  .gauge-tick[data-anchor-x="start"][data-anchor-y="end"] {
+    transform: translate(0, -100%);
+  }
+  .gauge-tick[data-anchor-x="end"][data-anchor-y="start"] {
+    transform: translate(-100%, 0);
+  }
+  .gauge-tick[data-anchor-x="end"][data-anchor-y="end"] {
+    transform: translate(-100%, -100%);
   }
   .metric-wrap {
     position: absolute;
@@ -517,8 +753,9 @@
   }
   .controls-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
+    min-height: 18px;
   }
   .controls-title {
     font-size: var(--type-xs);
@@ -528,30 +765,28 @@
     color: var(--text-soft);
   }
   .eta {
+    display: inline-block;
+    min-width: 6ch;
+    text-align: right;
     font-family: var(--font-mono);
     font-size: var(--type-sm);
     font-weight: 700;
     color: var(--text-muted);
     letter-spacing: 0;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
   }
 
-  /* Results slot: empty at idle, a compact strip mid-run, the full card grid
-     once complete. The min-height reserve holds in every state, so the gauge
-     above keeps one size. 760px fits 4 cards in one row (4x181px + 3x12px
-     gap); the 600px measure used above wraps them 3-then-1. */
+  /* The instrument has an explicit well height, so result content no longer
+     needs a phantom reserve to keep it stable. Let cards occupy only their
+     real height; otherwise the empty reserve becomes a visual gulf above the
+     chart. */
   .results-slot {
+    flex: 0 0 auto;
     width: 100%;
     max-width: 760px;
     align-self: center;
-    min-height: 108px;
-  }
-  /* Stacked: the document scrolls, so the reserve only reads as dead space
-     between the controls and the chart. Collapsed here, results push the
-     chart down when they appear. */
-  @media (max-width: 759px) {
-    /* bp: stacked */
-    .results-slot {
-      min-height: 0;
-    }
+    min-height: 0;
   }
 </style>

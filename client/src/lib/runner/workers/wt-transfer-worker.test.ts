@@ -21,7 +21,7 @@ type Out = {
   type: string;
   recoverable?: boolean;
   detail?: string;
-  msg?: { type: string; n?: number };
+  msg?: { type: string; n?: number; detail?: string; cause?: string };
 };
 
 type In =
@@ -152,6 +152,15 @@ class FakeSession {
     this.#incoming.enqueue(this.feed.readable);
     dialUrls.push(url);
     dialed.push(this);
+  }
+
+  /** A later server-opened stream models a lane refusal after the primary
+   * progress feed has already established the upload session. */
+  refusal(record: object): void {
+    const stream = new FeedStream();
+    this.#incoming.enqueue(stream.readable);
+    stream.push(record);
+    stream.close();
   }
 
   /** An upload lane whose sink never drains: a real one parks on the
@@ -328,6 +337,39 @@ test("a progress feed that ends without a terminal record is reported", async ()
       detail: "webtransport progress feed ended early",
     },
   ]);
+});
+
+test("a later upload refusal stream preserves its structural cause", async () => {
+  install();
+  const realm = await boot();
+  realm.send({
+    type: "start",
+    url: SESSION_URL,
+    dir: "up",
+    lanes: 1,
+    datagrams: false,
+    progressUrl: PROGRESS_URL,
+  });
+  await Bun.sleep(5);
+  session().feed.push({ type: "ready" });
+  session().refusal({
+    type: "error",
+    code: "invalid",
+    message: "unknown upload id",
+  });
+  await Bun.sleep(5);
+
+  expect(
+    realm.posted.filter((msg) => msg.type === "upload-progress").at(-1),
+  ).toEqual({
+    type: "upload-progress",
+    msg: {
+      type: "fatal",
+      detail: "unknown upload id",
+      cause: "unknown-upload-id",
+    },
+  });
+  expect(errors(realm)).toEqual([]);
 });
 
 // A path MTU that collapses mid-session leaves nothing to send. Ending the

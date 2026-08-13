@@ -1,18 +1,16 @@
 <script lang="ts">
-  // Stage rail: maps store/core stage state into toggleable progress segments
-  // for latency, download, upload, and optional bidirectional.
+  // Stage rail keeps editable selection separate from retained run execution.
   import { store, type StageKey } from "../state/store.svelte";
   import { applyLiveRunConfig } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
-  import {
-    stageIndex,
-    segmentState,
-    bidirectionalState,
-    lockReason,
-  } from "./stageTrack";
+  import { lockReason, stageTrackModel } from "./stageTrack";
 
-  const STAGES: { key: StageKey; label: string; icon: string }[] = [
+  const STAGES: {
+    key: Exclude<StageKey, "bidirectional">;
+    label: string;
+    icon: string;
+  }[] = [
     { key: "latency", label: "Latency", icon: ICON.ping },
     { key: "download", label: "Download", icon: ICON.download },
     { key: "upload", label: "Upload", icon: ICON.upload },
@@ -23,45 +21,43 @@
   }
 
   const segments = $derived.by(() => {
-    const currentIndex = stageIndex(store.phaseStage);
     return STAGES.map((stage) => {
-      const enabled = store.config.stages[stage.key];
-      const failure = store.stageFailures[stage.key];
+      const execution = store.stagePresentation[stage.key];
+      const selected = store.config.stages[stage.key];
+      const failure = execution.failure
+        ? store.stageFailures[stage.key]
+        : undefined;
       const locked = !store.canToggleStage(stage.key);
-      const { state, fill } = segmentState(
-        store.phase,
-        store.phaseFraction,
-        stage.key,
-        enabled,
-        !!failure,
-        currentIndex,
-      );
-      const reason = enabled
-        ? failure
-          ? "failed"
-          : lockReason(!locked, store.phase, store.phaseStage, stage.key, state)
-        : store.phase !== "idle"
-          ? "skipped"
-          : null;
-      return { ...stage, enabled, reason, locked, state, fill, failure };
+      const model = stageTrackModel({ selected, locked, execution });
+      const reason =
+        model.tag ??
+        lockReason(
+          !locked,
+          store.phase,
+          store.phaseStage,
+          stage.key,
+          model.state,
+        );
+      return { ...stage, ...model, reason, failure };
     });
   });
 
+  // Bidirectional is an advanced Settings choice, not an always-present
+  // stage selector. Once disabled it must leave the rail entirely; Settings
+  // remains the sole place that can enable it again.
+  const bidiPresentation = $derived(store.stagePresentation.bidirectional);
   const bidi = $derived(
-    bidirectionalState(
-      store.phase,
-      store.phaseFraction,
-      store.phaseStage,
-      store.config.stages.bidirectional,
-      !!store.stageFailures.bidirectional,
-    ),
+    store.config.stages.bidirectional
+      ? stageTrackModel({
+          selected: true,
+          locked: !store.canToggleStage("bidirectional"),
+          execution: bidiPresentation,
+        })
+      : null,
   );
-
-  const segmentCount = $derived(segments.length + (bidi ? 1 : 0));
-  const isQuad = $derived(segmentCount >= 4);
 </script>
 
-<fieldset class="stage-track" class:quad={isQuad}>
+<fieldset class="stage-track" class:quad={bidi !== null}>
   <legend class="sr-only">Test stages — tap to enable or disable</legend>
   <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
        `{@html s.icon}` sink by its exact expression text. -->
@@ -69,9 +65,9 @@
     <button
       type="button"
       class="seg seg--{s.state}"
-      class:on={s.enabled}
+      class:on={s.selected}
       role="switch"
-      aria-checked={s.enabled}
+      aria-checked={s.selected}
       aria-label="{s.label} stage{s.reason ? ` (${s.reason})` : ''}"
       use:tooltip={s.failure
         ? `${s.label} — ${s.failure.message}`
@@ -79,7 +75,7 @@
           ? s.reason === "skipped" && !s.locked
             ? `${s.label} — skipped, tap to include`
             : `${s.label} — ${s.reason}`
-          : s.enabled
+          : s.selected
             ? `${s.label} — tap to skip`
             : `${s.label} — tap to include`}
       disabled={s.locked}
@@ -90,11 +86,11 @@
           <span class="seg-fill seg-fill--warmup"></span>
         {:else if s.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
-        {:else if s.state === "active" || s.state === "done"}
+        {:else if s.state === "active" || s.state === "recovering" || s.state === "complete" || s.state === "partial"}
           <span
             class="seg-fill seg-fill--{s.key}"
-            class:is-done={s.state === "done"}
-            class:is-stalled={s.state === "active" && !store.measuring}
+            class:is-done={s.state === "complete" || s.state === "partial"}
+            class:is-stalled={s.state === "recovering"}
             style="width:{s.fill}%"
           ></span>
         {/if}
@@ -106,7 +102,7 @@
         </span>
         {#if s.reason}
           <span class="seg-tag">{s.reason}</span>
-        {:else if s.state === "done"}
+        {:else if s.state === "complete"}
           <span class="seg-ico seg-check">{@html ICON.check}</span>
         {/if}
       </span>
@@ -118,17 +114,17 @@
       class="seg seg--{bidi.state} on"
       role="switch"
       aria-checked="true"
-      aria-label="Bidirectional stage{store.canDisableBidirectional()
+      aria-label="Bidirectional stage{store.canToggleStage('bidirectional')
         ? ' — tap to exclude'
         : ' (running)'}"
-      use:tooltip={store.stageFailures.bidirectional
-        ? `Bi-dir — ${store.stageFailures.bidirectional.message}`
-        : store.canDisableBidirectional()
+      use:tooltip={bidiPresentation.failure
+        ? `Bi-dir — ${store.stageFailures.bidirectional?.message}`
+        : store.canToggleStage("bidirectional")
           ? "Bidirectional — concurrent down + up. Tap to exclude (re-enable in Settings)."
           : "Bidirectional — running."}
-      disabled={!store.canDisableBidirectional()}
+      disabled={!store.canToggleStage("bidirectional")}
       onclick={() => {
-        if (store.disableBidirectional()) applyLiveRunConfig();
+        if (store.toggleStage("bidirectional")) applyLiveRunConfig();
       }}
     >
       <div class="seg-bar" aria-hidden="true">
@@ -136,11 +132,12 @@
           <span class="seg-fill seg-fill--warmup"></span>
         {:else if bidi.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
-        {:else if bidi.state === "active" || bidi.state === "done"}
+        {:else if bidi.state === "active" || bidi.state === "recovering" || bidi.state === "complete" || bidi.state === "partial"}
           <span
             class="seg-fill seg-fill--bidirectional"
-            class:is-done={bidi.state === "done"}
-            class:is-stalled={bidi.state === "active" && !store.measuring}
+            class:is-done={bidi.state === "complete" ||
+              bidi.state === "partial"}
+            class:is-stalled={bidi.state === "recovering"}
             style="width:{bidi.fill}%"
           ></span>
         {/if}
@@ -150,7 +147,9 @@
           <span class="seg-ico">{@html ICON.bidirectional}</span>
           <span class="seg-label">Bi-dir</span>
         </span>
-        {#if bidi.state === "done"}
+        {#if bidi.tag}
+          <span class="seg-tag">{bidi.tag}</span>
+        {:else if bidi.state === "complete"}
           <span class="seg-ico seg-check">{@html ICON.check}</span>
         {/if}
       </span>
@@ -181,7 +180,9 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-    min-height: 40px;
+    height: 46px;
+    min-height: 46px;
+    box-sizing: border-box;
     padding: var(--space-2) var(--space-2) var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -304,6 +305,7 @@
     align-items: center;
     gap: 7px;
     min-width: 0;
+    min-height: 18px;
   }
   .seg-main {
     display: flex;
@@ -333,11 +335,18 @@
     text-overflow: ellipsis;
   }
   .seg-check {
+    width: 18px;
+    height: 18px;
     margin-left: auto;
     color: var(--ok);
   }
 
   .seg-tag {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    line-height: 1;
     margin-left: auto;
     padding: 2px 6px;
     border: 1px solid var(--border-subtle);
@@ -350,7 +359,8 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
-  .seg--failed .seg-tag {
+  .seg--failed .seg-tag,
+  .seg--partial .seg-tag {
     border-color: color-mix(in srgb, var(--err) 35%, var(--border-subtle));
     color: var(--err);
   }

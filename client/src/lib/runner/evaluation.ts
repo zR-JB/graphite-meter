@@ -24,6 +24,11 @@ import {
   type LatencyConfidenceScore,
 } from "./adaptive";
 import { median, percentile, meanAbsDeviation } from "./stats";
+import { FixedRateBuckets } from "./controlBuckets";
+
+export const MIN_PARTIAL_TRANSFER_EVIDENCE_MS = 800;
+export const MIN_PARTIAL_LATENCY_OUTCOMES = 3;
+export const MIN_PARTIAL_LATENCY_SUCCESSES = 1;
 
 /** Per-transfer-phase sample bookkeeping for the final result. */
 interface PhaseAccum {
@@ -31,24 +36,29 @@ interface PhaseAccum {
     rate: number;
     bytes: number;
     seconds: number;
-    confidenceIndex: number;
+    evidenceStartMs: number;
+    evidenceEndMs: number;
   }[];
   bytes: number;
+  evidenceMs: number;
   serverAuthoritative: boolean;
 }
 
+const emptyPhaseAccum = (): PhaseAccum => ({
+  samples: [],
+  bytes: 0,
+  evidenceMs: 0,
+  serverAuthoritative: false,
+});
+
 export class RunAccumulator {
   // ---- whole-run result bookkeeping ----
-  #dl: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
-  #ul: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
+  #dl: PhaseAccum = emptyPhaseAccum();
+  #ul: PhaseAccum = emptyPhaseAccum();
   // Bidirectional carries TWO concurrent lanes (down + up), each reduced with
   // the same throughput reducer as a normal transfer phase.
-  #biDown: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
-  #biUp: PhaseAccum = { samples: [], bytes: 0, serverAuthoritative: false };
-  // Latest per-lane rate, so each bidi push records the COMBINED (down+up) rate
-  // into the confidence window: the single stability signal for the phase.
-  #biLastDown = 0;
-  #biLastUp = 0;
+  #biDown: PhaseAccum = emptyPhaseAccum();
+  #biUp: PhaseAccum = emptyPhaseAccum();
   #idleRtts: number[] = [];
   #loadedRtts: number[] = [];
   #allRtts: number[] = [];
@@ -59,35 +69,37 @@ export class RunAccumulator {
   #loadedPingsLost = 0;
 
   // ---- per-phase confidence windows (reset each measured phase) ----
-  #phaseBytesPerSec: number[] = [];
-  #phaseLatency: (number | null)[] = [];
+  #phaseDownBuckets = new FixedRateBuckets();
+  #phaseUpBuckets = new FixedRateBuckets();
+  #phaseLatency: { tMs: number; rttMs: number | null }[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
-  // Each holds the index into its phase's sample array where the current stable
-  // run starts, or -1 while it is not stable, plus the latest stability score.
-  #dlStableStart = -1;
-  #ulStableStart = -1;
-  #latStableStart = -1;
+  // Transfer boundaries use their lane's exact evidence clock; latency uses
+  // its outcome index. Every boundary is -1 while the phase is not stable.
+  #dlStableStartMs = -1;
+  #ulStableStartMs = -1;
+  #latStableStartIndex = -1;
   // Bidi tracks ONE stable run over the combined-rate confidence window: the
   // phase has a single early-stop signal even though it reports two lanes.
-  #biStableStart = -1;
+  #biStable = false;
+  #biStableStartDownMs = -1;
+  #biStableStartUpMs = -1;
   #dlFinalScore = 0;
   #ulFinalScore = 0;
   #latFinalScore = 0;
   #biFinalScore = 0;
 
-  // Latency retains its existing arm-to-end median rule. Throughput result
-  // selection is independent of the glide arm and reads the final stable run.
+  // Latency uses a candidate-to-end median rule. Throughput result selection is
+  // independent of the confirmation candidate and reads the final stable run.
   #latEarlyStopStart = -1;
+  #latEarlyStopCandidateStart = -1;
 
   /** Reset all run state. Call at the start of each run. */
   reset(): void {
-    this.#dl = { samples: [], bytes: 0, serverAuthoritative: false };
-    this.#ul = { samples: [], bytes: 0, serverAuthoritative: false };
-    this.#biDown = { samples: [], bytes: 0, serverAuthoritative: false };
-    this.#biUp = { samples: [], bytes: 0, serverAuthoritative: false };
-    this.#biLastDown = 0;
-    this.#biLastUp = 0;
+    this.#dl = emptyPhaseAccum();
+    this.#ul = emptyPhaseAccum();
+    this.#biDown = emptyPhaseAccum();
+    this.#biUp = emptyPhaseAccum();
     this.#idleRtts = [];
     this.#loadedRtts = [];
     this.#allRtts = [];
@@ -95,26 +107,26 @@ export class RunAccumulator {
     this.#pingsLost = 0;
     this.#loadedPings = 0;
     this.#loadedPingsLost = 0;
-    this.#dlStableStart = -1;
-    this.#ulStableStart = -1;
-    this.#latStableStart = -1;
-    this.#biStableStart = -1;
+    this.#dlStableStartMs = -1;
+    this.#ulStableStartMs = -1;
+    this.#latStableStartIndex = -1;
+    this.#biStable = false;
+    this.#biStableStartDownMs = -1;
+    this.#biStableStartUpMs = -1;
     this.#dlFinalScore = 0;
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
     this.#biFinalScore = 0;
     this.#latEarlyStopStart = -1;
+    this.#latEarlyStopCandidateStart = -1;
     this.beginPhase();
   }
 
   /** Reset the per-phase confidence windows when a measured phase begins. */
   beginPhase(): void {
-    this.#phaseBytesPerSec = [];
+    this.#phaseDownBuckets.reset();
+    this.#phaseUpBuckets.reset();
     this.#phaseLatency = [];
-    // Per-lane latest only matters within the bidi phase; clear on phase entry
-    // so a fresh bidi phase doesn't combine against a stale lane value.
-    this.#biLastDown = 0;
-    this.#biLastUp = 0;
   }
 
   /* ================= SAMPLE INGEST ================= */
@@ -126,42 +138,91 @@ export class RunAccumulator {
   pushThroughput(
     phase: "download" | "upload" | "bidirectional",
     dir: FlowDirection,
-    bytesPerSec: number,
+    _bytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative = false,
   ): void {
     if (durationSec <= 0) return;
+    const accum = this.#transferAccum(phase, dir);
+    const seconds = durationSec;
+    const durationMs = seconds * 1_000;
+    const bytes = Math.max(0, bytesDelta);
     const sample = {
-      rate: bytesPerSec,
-      bytes: Math.max(0, bytesDelta),
-      seconds: durationSec,
-      // Bidi lanes have independent buffers but one interleaved confidence
-      // stream. Carry its index on each sample so a final stable window can be
-      // reduced without assuming the two lanes report in lockstep.
-      confidenceIndex: this.#phaseBytesPerSec.length,
+      rate: bytes / seconds,
+      bytes,
+      seconds,
+      evidenceStartMs: accum.evidenceMs,
+      evidenceEndMs: accum.evidenceMs + durationMs,
     };
-    if (phase === "bidirectional") {
-      const lane = dir === "down" ? this.#biDown : this.#biUp;
-      lane.samples.push(sample);
-      lane.bytes += sample.bytes;
-      lane.serverAuthoritative ||= serverAuthoritative;
-      if (dir === "down") this.#biLastDown = bytesPerSec;
-      else this.#biLastUp = bytesPerSec;
-      // One stability signal over the combined throughput (down + up).
-      this.#phaseBytesPerSec.push(this.#biLastDown + this.#biLastUp);
-      return;
-    }
-    const accum = phase === "download" ? this.#dl : this.#ul;
     accum.samples.push(sample);
     accum.bytes += sample.bytes;
+    accum.evidenceMs = sample.evidenceEndMs;
     accum.serverAuthoritative ||= serverAuthoritative;
-    this.#phaseBytesPerSec.push(bytesPerSec);
+    const buckets =
+      dir === "down" ? this.#phaseDownBuckets : this.#phaseUpBuckets;
+    buckets.observe(bytes, durationMs);
+  }
+
+  /** Account the time between upload IDs after their server clocks can no
+   * longer represent one continuous interval. This is deliberately absent from
+   * control buckets and presentation history: it affects only exact final
+   * byte/time reduction. */
+  recordRecoveryGap(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+    durationSec: number,
+  ): void {
+    if (durationSec <= 0) return;
+    const accum = this.#transferAccum(phase, dir);
+    const durationMs = durationSec * 1_000;
+    accum.samples.push({
+      rate: 0,
+      bytes: 0,
+      seconds: durationSec,
+      evidenceStartMs: accum.evidenceMs,
+      evidenceEndMs: accum.evidenceMs + durationMs,
+    });
+    accum.evidenceMs += durationMs;
+    accum.serverAuthoritative = true;
+  }
+
+  /** The first count from a replacement upload id has authoritative bytes but
+   * no earlier replacement checkpoint for a rate interval. Keep those bytes
+   * in the exact final numerator; the paired recovery-gap entry supplies the
+   * represented time without creating a control or presentation sample. */
+  recordRecoveryBytes(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+    bytes: number,
+  ): void {
+    if (bytes <= 0) return;
+    const accum = this.#transferAccum(phase, dir);
+    accum.bytes += bytes;
+    accum.serverAuthoritative = true;
+  }
+
+  #transferAccum(
+    phase: "download" | "upload" | "bidirectional",
+    dir: FlowDirection,
+  ): PhaseAccum {
+    return phase === "bidirectional"
+      ? dir === "down"
+        ? this.#biDown
+        : this.#biUp
+      : phase === "download"
+        ? this.#dl
+        : this.#ul;
   }
 
   /** Record a ping sample. Latency confidence uses unloaded RTTs + the loss
    *  count over the same window. */
-  pushLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
+  pushLatency(
+    rttMs: number,
+    underLoad: boolean,
+    lost: boolean,
+    tMs = this.#phaseLatency.at(-1)?.tMs ?? 0,
+  ): void {
     this.#pingsTotal++;
     if (underLoad) this.#loadedPings++;
     if (lost) {
@@ -172,7 +233,8 @@ export class RunAccumulator {
       if (underLoad) this.#loadedRtts.push(rttMs);
       else this.#idleRtts.push(rttMs);
     }
-    if (!underLoad) this.#phaseLatency.push(lost ? null : rttMs);
+    if (!underLoad)
+      this.#phaseLatency.push({ tMs, rttMs: lost ? null : rttMs });
   }
 
   /* ================= STABILITY ================= */
@@ -181,15 +243,41 @@ export class RunAccumulator {
    *  window: the single signal the pip, the early-finish decision, and the
    *  result selection all read. */
   confidence(phase: StagePhase): ConfidenceScore | LatencyConfidenceScore {
-    return phase === "latency"
-      ? latencyConfidence(this.#phaseLatency)
-      : transferConfidence(this.#phaseBytesPerSec);
+    if (phase === "latency") return latencyConfidence(this.#phaseLatency);
+    if (phase === "download")
+      return transferConfidence([...this.#phaseDownBuckets.rates]);
+    if (phase === "upload")
+      return transferConfidence([...this.#phaseUpBuckets.rates]);
+    const count = Math.min(
+      this.#phaseDownBuckets.completedCount,
+      this.#phaseUpBuckets.completedCount,
+    );
+    const down = this.#phaseDownBuckets.rates;
+    const up = this.#phaseUpBuckets.rates;
+    return transferConfidence(
+      Array.from({ length: count }, (_, index) => down[index] + up[index]),
+    );
   }
 
-  /** Update the per-phase trailing-stable-run index from this tick's score. The
-   *  run opens at the latest sample index and closes to -1; `isStillStable`
-   *  supplies the hysteresis. Returns the latched state, where at finish a ≥0
-   *  index means the phase is still on a stable plateau. */
+  /** A confirmed regime change or stall invalidates control history only. */
+  resetPhaseStability(phase: StagePhase): void {
+    if (phase === "download" || phase === "bidirectional")
+      this.#phaseDownBuckets.reset();
+    if (phase === "upload" || phase === "bidirectional")
+      this.#phaseUpBuckets.reset();
+    if (phase === "latency") this.#phaseLatency = [];
+    if (phase === "download") this.#dlStableStartMs = -1;
+    else if (phase === "upload") this.#ulStableStartMs = -1;
+    else if (phase === "bidirectional") {
+      this.#biStable = false;
+      this.#biStableStartDownMs = -1;
+      this.#biStableStartUpMs = -1;
+    } else this.#latStableStartIndex = -1;
+  }
+
+  /** Update the trailing stable run from this tick's score. Transfer lanes use
+   *  evidence-time boundaries and latency uses an outcome index;
+   *  `isStillStable` supplies the shared hysteresis. */
   trackStableRun(
     phase: StagePhase,
     score: number,
@@ -198,46 +286,65 @@ export class RunAccumulator {
     let start: number;
     if (phase === "download") {
       this.#dlFinalScore = score;
-      start = this.#dlStableStart;
+      start = this.#dlStableStartMs;
     } else if (phase === "upload") {
       this.#ulFinalScore = score;
-      start = this.#ulStableStart;
+      start = this.#ulStableStartMs;
     } else if (phase === "bidirectional") {
       this.#biFinalScore = score;
-      start = this.#biStableStart;
+      start = -1;
     } else {
       this.#latFinalScore = score;
-      start = this.#latStableStart;
+      start = this.#latStableStartIndex;
     }
-    const sampleCount = this.#confidenceSampleCount(phase);
-
-    const wasStable = start >= 0;
+    const wasStable = phase === "bidirectional" ? this.#biStable : start >= 0;
     const nowStable = isStillStable(wasStable, score, cfg);
-    if (nowStable && !wasStable) start = Math.max(0, sampleCount - 1);
-    else if (!nowStable && wasStable) start = -1;
+    if (nowStable && !wasStable) {
+      if (phase === "bidirectional") {
+        this.#biStableStartDownMs = this.#latestEvidenceStart(this.#biDown);
+        this.#biStableStartUpMs = this.#latestEvidenceStart(this.#biUp);
+      } else start = this.#stableEvidenceStart(phase);
+    } else if (!nowStable && wasStable) {
+      start = -1;
+      if (phase === "bidirectional") {
+        this.#biStableStartDownMs = -1;
+        this.#biStableStartUpMs = -1;
+      }
+    }
 
-    if (phase === "download") this.#dlStableStart = start;
-    else if (phase === "upload") this.#ulStableStart = start;
-    else if (phase === "bidirectional") this.#biStableStart = start;
-    else this.#latStableStart = start;
+    if (phase === "download") this.#dlStableStartMs = start;
+    else if (phase === "upload") this.#ulStableStartMs = start;
+    else if (phase === "bidirectional") this.#biStable = nowStable;
+    else this.#latStableStartIndex = start;
 
     return nowStable;
   }
 
-  /** Preserve latency's existing arm-to-end result window. Throughput result
-   *  selection deliberately does not depend on when its glide armed. */
-  noteLatencyEarlyStop(): void {
-    if (this.#latEarlyStopStart < 0) {
-      this.#latEarlyStopStart = Math.max(0, this.#idleRtts.length - 1);
-    }
+  armLatencyEarlyStop(): void {
+    if (this.#latEarlyStopCandidateStart < 0)
+      this.#latEarlyStopCandidateStart = Math.max(0, this.#idleRtts.length - 1);
   }
 
-  /** The sample count so far for a phase's confidence-window array. */
-  #confidenceSampleCount(phase: StagePhase): number {
-    if (phase === "download") return this.#dl.samples.length;
-    if (phase === "upload") return this.#ul.samples.length;
-    if (phase === "bidirectional") return this.#phaseBytesPerSec.length;
-    return this.#idleRtts.length;
+  cancelLatencyEarlyStop(): void {
+    this.#latEarlyStopCandidateStart = -1;
+  }
+
+  confirmLatencyEarlyStop(): void {
+    if (this.#latEarlyStopCandidateStart >= 0)
+      this.#latEarlyStopStart = this.#latEarlyStopCandidateStart;
+    this.#latEarlyStopCandidateStart = -1;
+  }
+
+  #stableEvidenceStart(phase: Exclude<StagePhase, "bidirectional">): number {
+    if (phase === "latency") return Math.max(0, this.#idleRtts.length - 1);
+    if (phase === "download") return this.#latestEvidenceStart(this.#dl);
+    return this.#latestEvidenceStart(this.#ul);
+  }
+
+  /** Stability is evaluated after ingest. Start the result window at the
+   * observation that supplied that evidence, not at its end boundary. */
+  #latestEvidenceStart(accum: PhaseAccum): number {
+    return accum.samples.at(-1)?.evidenceStartMs ?? -1;
   }
 
   /* ================= RESULT REDUCTION ================= */
@@ -250,11 +357,21 @@ export class RunAccumulator {
     const download = phase === "download";
     return this.#reduceTransfer(
       download ? this.#dl : this.#ul,
-      download ? this.#dlStableStart : this.#ulStableStart,
+      download ? this.#dlStableStartMs : this.#ulStableStartMs,
       adaptiveEnabled,
       download ? this.#dlFinalScore : this.#ulFinalScore,
       this.#loadedLossPct(),
     );
+  }
+
+  /** A failed transfer retains its whole authoritative evidence only after the
+   * named floor. It deliberately bypasses stable-window selection. */
+  partialThroughputResult(
+    phase: "download" | "upload",
+  ): ThroughputResult | null {
+    const accum = phase === "download" ? this.#dl : this.#ul;
+    if (accum.evidenceMs < MIN_PARTIAL_TRANSFER_EVIDENCE_MS) return null;
+    return this.#reduceTransfer(accum, -1, false, 0, this.#loadedLossPct());
   }
 
   /** Under-load ping timeout percentage over the whole run. */
@@ -273,19 +390,33 @@ export class RunAccumulator {
     return {
       down: this.#reduceTransfer(
         this.#biDown,
-        this.#biStableStart,
+        this.#biStableStartDownMs,
         adaptiveEnabled,
         this.#biFinalScore,
         lossPct,
       ),
       up: this.#reduceTransfer(
         this.#biUp,
-        this.#biStableStart,
+        this.#biStableStartUpMs,
         adaptiveEnabled,
         this.#biFinalScore,
         lossPct,
       ),
     };
+  }
+
+  /** Reduce bidirectional lanes independently for a partial stage. A caller
+   * must not turn one surviving lane into a combined headline. */
+  partialBidirectionalResult(): {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+  } {
+    const lossPct = this.#loadedLossPct();
+    const reduce = (accum: PhaseAccum): ThroughputResult | null =>
+      accum.evidenceMs >= MIN_PARTIAL_TRANSFER_EVIDENCE_MS
+        ? this.#reduceTransfer(accum, -1, false, 0, lossPct)
+        : null;
+    return { down: reduce(this.#biDown), up: reduce(this.#biUp) };
   }
 
   /** Resolve the adaptive stable window used by the latency headline. */
@@ -329,29 +460,39 @@ export class RunAccumulator {
         serverAuthoritative: accum.serverAuthoritative || undefined,
       };
     }
-    const ratio = (samples: PhaseAccum["samples"]): number => {
-      const seconds = samples.reduce((sum, s) => sum + s.seconds, 0);
-      return seconds > 0
-        ? samples.reduce((sum, s) => sum + s.bytes, 0) / seconds
-        : 0;
+    const full =
+      accum.evidenceMs > 0 ? accum.bytes / (accum.evidenceMs / 1_000) : 0;
+    const stableRatio = (): { rate: number; has: boolean } => {
+      if (!adaptiveEnabled || stableStart < 0) return { rate: 0, has: false };
+      let bytes = 0;
+      let seconds = 0;
+      for (const sample of accum.samples) {
+        const overlapStart = Math.max(stableStart, sample.evidenceStartMs);
+        const overlapMs = sample.evidenceEndMs - overlapStart;
+        if (overlapMs <= 0) continue;
+        const sampleMs = sample.evidenceEndMs - sample.evidenceStartMs;
+        bytes += sample.bytes * (overlapMs / sampleMs);
+        seconds += overlapMs / 1_000;
+      }
+      return { rate: seconds > 0 ? bytes / seconds : 0, has: seconds > 0 };
     };
-    const full = ratio(accum.samples);
-    const stableSamples =
-      adaptiveEnabled && stableStart >= 0
-        ? accum.samples.filter(
-            (sample) => sample.confidenceIndex >= stableStart,
-          )
-        : [];
-    const useStableWindow = stableSamples.length > 0;
-    const reported = useStableWindow ? ratio(stableSamples) : full;
-    const variance =
-      rates.reduce((sum, rate) => sum + (rate - full) ** 2, 0) / rates.length;
-    const cv = full > 0 ? Math.sqrt(variance) / full : 0;
+    const stable = stableRatio();
+    const useStableWindow = stable.has;
+    const reported = useStableWindow ? stable.rate : full;
+    const stabilityBuckets = new FixedRateBuckets();
+    for (const sample of accum.samples) {
+      stabilityBuckets.observe(sample.bytes, sample.seconds * 1_000);
+    }
+    const stabilityConfidence = transferConfidence([...stabilityBuckets.rates]);
+    const descriptiveStability =
+      stabilityConfidence.sampleCount >= 2
+        ? Math.max(0, Math.min(1, 1 - stabilityConfidence.varianceRatio))
+        : 0;
 
     return {
       meanBytesPerSec: reported,
       peakBytesPerSec: Math.max(...rates),
-      stabilityPct: Math.max(0, Math.min(100, 100 - cv * 100)),
+      stabilityPct: descriptiveStability * 100,
       totalBytes: accum.bytes,
       reportedBytesPerSec: reported,
       fullAverageBytesPerSec: full,
@@ -366,7 +507,7 @@ export class RunAccumulator {
   /** Reduce the latency phase to its result. `idleFallbackMs` is used as the
    *  headline only when there are no usable samples at all. */
   latencyResult(cfg: RunnerConfig, idleFallbackMs: number): LatencyResult {
-    const stableStart = this.#latStableStart;
+    const stableStart = this.#latStableStartIndex;
     const earlyStopStart = this.#latEarlyStopStart;
     const finalScore = this.#latFinalScore;
     const all = this.#allRtts;
@@ -399,15 +540,27 @@ export class RunAccumulator {
     };
   }
 
-  /** Bufferbloat grade from the idle-vs-loaded RTT delta. `idleFallbackMs` is
-   *  used only when no idle samples exist. */
-  bufferbloatGrade(idleFallbackMs: number): BufferbloatGrade {
-    const idleMs =
-      median(this.#idleRtts.length ? this.#idleRtts : this.#allRtts) ||
-      idleFallbackMs;
-    const loadedMs = this.#loadedRtts.length
-      ? median(this.#loadedRtts)
-      : idleMs;
+  /** Latency evidence is usable only when enough outcomes include a success. */
+  partialLatencyResult(
+    cfg: RunnerConfig,
+    idleFallbackMs: number,
+  ): LatencyResult | null {
+    if (
+      this.#pingsTotal < MIN_PARTIAL_LATENCY_OUTCOMES ||
+      this.#allRtts.length < MIN_PARTIAL_LATENCY_SUCCESSES
+    )
+      return null;
+    return this.latencyResult(
+      { ...cfg, adaptive: { ...cfg.adaptive, enabled: false } },
+      idleFallbackMs,
+    );
+  }
+
+  /** Bufferbloat grade from authoritative idle-vs-loaded RTT evidence. */
+  bufferbloatGrade(): BufferbloatGrade | null {
+    if (!this.#idleRtts.length || !this.#loadedRtts.length) return null;
+    const idleMs = median(this.#idleRtts);
+    const loadedMs = median(this.#loadedRtts);
     const increaseMs = Math.max(0, loadedMs - idleMs);
     let grade: BufferbloatGrade["grade"];
     if (increaseMs <= 5) grade = "A";

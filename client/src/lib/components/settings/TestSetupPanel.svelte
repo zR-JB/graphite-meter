@@ -112,7 +112,7 @@
     applyLiveRunConfig();
   }
   function setAdaptiveNumber(
-    key: "minCoverageRatio" | "stabilityThreshold" | "glideMs",
+    key: "minCoverageRatio" | "stabilityThreshold" | "confirmationMs",
     event: Event,
   ) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
@@ -362,7 +362,7 @@
     <h3>Wire-rate estimates</h3>
     <Switch
       bind:checked={store.showWireEstimates}
-      label="Include wire-rate estimates in result cards"
+      label="Show estimated wire rate"
       tooltip={JARGON.wireRate}
     />
     <p class="hint">
@@ -403,13 +403,13 @@
           /></label
         >
         <label
-          ><span>Glide ms</span><input
+          ><span>Confirmation ms</span><input
             type="number"
             min="300"
             max="1500"
             step="50"
-            value={store.config.adaptive.glideMs}
-            oninput={(event) => setAdaptiveNumber("glideMs", event)}
+            value={store.config.adaptive.confirmationMs}
+            oninput={(event) => setAdaptiveNumber("confirmationMs", event)}
           /></label
         >
       </div>
@@ -486,9 +486,16 @@
 <style>
   .setup-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    /* Connection choice cards inherit this exact breakpoint so the Settings
+       surface reflows as one system when its dock is manually widened. */
+    --settings-card-min: 180px;
+    grid-template-columns: repeat(
+      auto-fit,
+      minmax(min(100%, var(--settings-card-min)), 1fr)
+    );
     gap: var(--space-3);
     container-type: inline-size;
+    container-name: settings-grid;
   }
   .panel {
     display: grid;
@@ -617,6 +624,12 @@
       background var(--dur-hover) var(--ease-out),
       color var(--dur-hover) var(--ease-out);
   }
+  .seg button {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   button:hover {
     color: var(--text);
   }
@@ -658,7 +671,7 @@
   }
   .dur-summary {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 70px), 1fr));
     gap: 6px;
   }
   .dur-cell {

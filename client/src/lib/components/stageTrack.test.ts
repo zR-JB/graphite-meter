@@ -1,122 +1,109 @@
 import { test, expect } from "bun:test";
-import {
-  stageIndex,
-  progressFill,
-  segmentState,
-  bidirectionalState,
-  lockReason,
-} from "./stageTrack";
+import { segmentState, lockReason, stageTrackModel } from "./stageTrack";
+import type { StagePresentation } from "../state/stagePresentation";
 
-test("stageIndex: order and the null sentinel", () => {
-  expect(stageIndex("latency")).toBe(0);
-  expect(stageIndex("bidirectional")).toBe(3);
-  expect(stageIndex(null)).toBe(-1);
+const stage = (
+  overrides: Partial<StagePresentation> = {},
+): StagePresentation => ({
+  stage: "download",
+  configured: true,
+  status: "pending",
+  fill: 0,
+  warming: false,
+  failure: false,
+  hasUsableResult: false,
+  ...overrides,
 });
 
-test("progressFill: fraction to a half-rounded percentage", () => {
-  expect(progressFill(0)).toBe(0);
-  expect(progressFill(1)).toBe(100);
-  expect(progressFill(0.5)).toBe(50);
-  expect(progressFill(0.667)).toBe(66.5);
-});
-
-test("segmentState: disabled and failed short-circuit before phase", () => {
-  expect(segmentState("download", 1, "download", false, false, 1)).toEqual({
+test("segmentState projects the central stage state without re-deriving it", () => {
+  expect(segmentState(stage({ status: "disabled" }))).toEqual({
     state: "disabled",
     fill: 0,
   });
-  expect(segmentState("download", 1, "download", true, true, 1)).toEqual({
-    state: "failed",
-    fill: 0,
-  });
-});
-
-test("segmentState: complete fills every enabled segment", () => {
-  expect(segmentState("complete", 0, "latency", true, false, -1)).toEqual({
-    state: "done",
+  expect(segmentState(stage({ status: "partial", fill: 100 }))).toEqual({
+    state: "partial",
     fill: 100,
   });
-});
-
-test("segmentState: warmup marks earlier done, current warming, later pending", () => {
-  const currentIndex = stageIndex("download");
-  expect(
-    segmentState("warmup", 0, "latency", true, false, currentIndex).state,
-  ).toBe("done");
-  expect(
-    segmentState("warmup", 0, "download", true, false, currentIndex).state,
-  ).toBe("warmup");
-  expect(
-    segmentState("warmup", 0, "upload", true, false, currentIndex).state,
-  ).toBe("pending");
-});
-
-test("segmentState: running fills the active stage from the fraction", () => {
-  const currentIndex = stageIndex("download");
-  expect(
-    segmentState("download", 0.25, "latency", true, false, currentIndex),
-  ).toEqual({ state: "done", fill: 100 });
-  expect(
-    segmentState("download", 0.25, "download", true, false, currentIndex),
-  ).toEqual({ state: "active", fill: 25 });
-  expect(
-    segmentState("download", 0.25, "upload", true, false, currentIndex),
-  ).toEqual({ state: "pending", fill: 0 });
-});
-
-test("segmentState: no active stage yet leaves everything pending", () => {
-  expect(segmentState("connecting", 0, "latency", true, false, -1)).toEqual({
-    state: "pending",
+  expect(segmentState(stage({ status: "active", warming: true }))).toEqual({
+    state: "warmup",
     fill: 0,
   });
 });
 
-test("bidirectionalState: disabled yields no segment", () => {
-  expect(
-    bidirectionalState("bidirectional", 0.5, "bidirectional", false, false),
-  ).toBeNull();
-});
-
-test("bidirectionalState: failure, complete, warmup, active, pending", () => {
-  expect(
-    bidirectionalState("bidirectional", 0, "bidirectional", true, true)?.state,
-  ).toBe("failed");
-  expect(bidirectionalState("complete", 0, null, true, false)?.state).toBe(
-    "done",
-  );
-  expect(
-    bidirectionalState("warmup", 0, "bidirectional", true, false)?.state,
-  ).toBe("warmup");
-  expect(
-    bidirectionalState("bidirectional", 0.5, "bidirectional", true, false),
-  ).toEqual({ state: "active", fill: 50 });
-  expect(
-    bidirectionalState("download", 0, "download", true, false)?.state,
-  ).toBe("pending");
-});
-
-test("lockReason: freely toggleable returns null", () => {
+test("lockReason uses the central terminal and recovery state", () => {
   expect(lockReason(true, "idle", null, "download", "pending")).toBeNull();
-});
-
-test("lockReason: a finished segment reads as done", () => {
-  expect(lockReason(false, "upload", "upload", "download", "done")).toBe(
+  expect(lockReason(false, "upload", "upload", "download", "partial")).toBe(
     "done",
   );
-});
-
-test("lockReason: the running stage reads as running", () => {
-  expect(lockReason(false, "download", "download", "download", "active")).toBe(
-    "running",
-  );
-});
-
-test("lockReason: earlier stage done, later stage upcoming", () => {
-  // Current phase stage is upload; download precedes it, upload is not yet past.
-  expect(lockReason(false, "upload", "upload", "download", "pending")).toBe(
-    "done",
+  expect(lockReason(false, "upload", "upload", "upload", "recovering")).toBe(
+    "recovering",
   );
   expect(lockReason(false, "download", "download", "upload", "pending")).toBe(
     "upcoming",
   );
+});
+
+test("terminal selection can skip retained execution without rewriting it", () => {
+  const execution = stage({ status: "complete", fill: 100 });
+  expect(
+    stageTrackModel({ selected: false, locked: false, execution }),
+  ).toMatchObject({
+    selected: false,
+    state: "disabled",
+    fill: 0,
+    tag: "skipped",
+    execution,
+  });
+  expect(
+    stageTrackModel({ selected: true, locked: false, execution }),
+  ).toMatchObject({
+    selected: true,
+    state: "complete",
+    fill: 100,
+    tag: null,
+    execution,
+  });
+});
+
+test("failed and partial execution remain visible when selected after termination", () => {
+  for (const status of ["failed", "partial"] as const) {
+    expect(
+      stageTrackModel({
+        selected: true,
+        locked: false,
+        execution: stage({
+          status,
+          fill: status === "partial" ? 100 : 0,
+          failure: true,
+        }),
+      }),
+    ).toMatchObject({ state: status, tag: status });
+  }
+});
+
+test("a stage enabled after a retained run is queued only for the next run", () => {
+  expect(
+    stageTrackModel({
+      selected: true,
+      locked: false,
+      execution: stage({ configured: false, status: "disabled" }),
+    }),
+  ).toMatchObject({ state: "pending", fill: 0, tag: "next run" });
+});
+
+test("future-stage toggles project as skipped while past and current stages stay locked", () => {
+  const pending = stage({ status: "pending" });
+  expect(
+    stageTrackModel({ selected: false, locked: false, execution: pending }),
+  ).toMatchObject({
+    state: "disabled",
+    tag: "skipped",
+    locked: false,
+  });
+  expect(
+    stageTrackModel({ selected: true, locked: true, execution: pending }),
+  ).toMatchObject({
+    state: "pending",
+    locked: true,
+  });
 });

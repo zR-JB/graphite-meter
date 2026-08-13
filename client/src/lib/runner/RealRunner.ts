@@ -12,6 +12,7 @@ import type {
   PhaseActivity,
   TransferStreamPolicy,
   ConnectionRole,
+  RecoveryCause,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import type {
@@ -64,6 +65,7 @@ import {
 } from "./real/budgets";
 import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
 import { UploadProgressChannel } from "./real/uploadProgress";
+import { UploadPresentationBridge } from "./uploadPresentationBridge";
 
 export { TransportUnavailableError };
 
@@ -112,6 +114,18 @@ export class RealBackend implements RunnerBackend {
   /** True from the stage's first #primeTransfer to #teardownTransfer. Both
    *  directions are primed and torn down together. */
   #transferActive = false;
+  /** The activity whose transfer connections are currently alive. */
+  #transferActivity: PhaseActivity | null = null;
+  /** Invalidates asynchronous teardown continuations when a later run or
+   * transfer stage takes ownership of the shared lane/feed fields. */
+  #transferGeneration = 0;
+  /** A server may invalidate one upload id once; a second invalidation belongs
+   * to the runner's expiry, not an unbounded mint loop. */
+  #uploadRotationUsed = false;
+  #uploadRotationInFlight = false;
+  /** A local-only visual bridge over irregular authoritative upload delivery. */
+  #uploadPresentation = new UploadPresentationBridge();
+  #uploadPresentationTimer: ReturnType<typeof setTimeout> | null = null;
   /** The STAGE-level stalled flag reported to the host, deduped so stall/resume
    *  fire once per edge. #reconcileStall or the idle ping channel latches it. */
   #stalled = false;
@@ -127,16 +141,31 @@ export class RealBackend implements RunnerBackend {
     transferActive: () => this.#transferActive,
     discardTransfer: () => this.#discardTransfer(),
     noteLaneProgress: (bytes) => this.#lanes.up?.noteMeasuredProgress(bytes),
-    setLaneStalled: (stalled, detail) =>
-      this.#lanes.up?.setStalled(stalled, detail),
+    authoritativePresentation: (bytesPerSec) => {
+      this.#uploadPresentation.authoritative(
+        bytesPerSec,
+        true,
+        performance.now(),
+      );
+      this.#emitUploadPresentation();
+    },
+    setLaneStalled: (stalled, detail, cause) =>
+      this.#lanes.up?.setStalled(stalled, detail, cause),
   });
 
   /** What every transfer direction of the stage is given. */
   #directionHost: DirectionHost = {
     host: () => this.#host!,
     sampleProvesStageLiveness: () => !this.#stalled,
-    stallChanged: (detail) => this.#reconcileStall(detail),
-    uploadProgress: (msg) => this.#uploadProgress.accept(msg),
+    stallChanged: (detail, cause, direction) =>
+      this.#reconcileStall(detail, cause, direction),
+    uploadProgress: (msg, generation) =>
+      this.#uploadProgress.accept(msg, generation),
+    uploadPresentationHint: (lane, bytes, elapsedMs, generation) => {
+      if (generation !== this.#uploadProgress.generation) return;
+      this.#uploadPresentation.hint(lane, bytes, elapsedMs, performance.now());
+      this.#emitUploadPresentation();
+    },
     beginUploadMeasure: () => this.#uploadProgress.beginMeasure(),
     discardTransfer: () => this.#discardTransfer(),
   };
@@ -695,7 +724,11 @@ export class RealBackend implements RunnerBackend {
     this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
     this.#activeTransport = null;
+    this.#clearUploadPresentation();
     this.#discardTransfer(); // discard leftovers from a prior run
+    this.#transferActivity = null;
+    this.#uploadRotationUsed = false;
+    this.#uploadRotationInFlight = false;
     this.#stalled = false;
     // Unique-per-run cache-buster off the monotonic clock, not wall time; the
     // stream index is appended per worker.
@@ -721,6 +754,8 @@ export class RealBackend implements RunnerBackend {
       // Loaded latency without a transport: run the transfer without pings.
     }
     if (activity.transfer.length > 0) {
+      this.#transferGeneration++;
+      this.#transferActivity = activity;
       const kind = this.#committedKind(activity.stage);
       if (!kind) {
         this.#host!.failStage(
@@ -764,17 +799,69 @@ export class RealBackend implements RunnerBackend {
       // never refresh the core's watchdog: a healthy stage runs to the max-stall
       // timeout and its measurement is discarded.
       this.#stalled = false;
+      this.#transferActivity = null;
       return;
     }
-    return this.#teardownTransfer().then(() => {
+    const generation = this.#transferGeneration;
+    return this.#teardownTransfer(generation).then((released) => {
+      // Abort/new-run teardown may have handed these shared fields to a newer
+      // lifecycle while this stage waited for its terminal upload record.
+      if (!released || generation !== this.#transferGeneration) return;
       this.#latency.teardown();
       this.#stalled = false;
+      this.#transferActivity = null;
     });
   }
 
   /** The run is complete. Close anything still open. */
   onComplete(): void {
     this.#closeAll();
+  }
+
+  async onStageRecovery(request: {
+    stage: TransportRole;
+    direction?: FlowDirection;
+    cause: RecoveryCause;
+    signal: AbortSignal;
+  }): Promise<void> {
+    if (
+      request.cause !== "unknown-upload-id" ||
+      request.direction !== "up" ||
+      this.#uploadRotationUsed ||
+      this.#uploadRotationInFlight ||
+      this.#transferActivity?.stage !== request.stage ||
+      !this.#transferActive ||
+      !this.#activeTransport
+    )
+      return;
+    this.#uploadRotationUsed = true;
+    this.#uploadRotationInFlight = true;
+    this.#clearUploadPresentation();
+    try {
+      // The old feed and every session-lane callback become inert before the
+      // old lanes are detached. A replacement can therefore never inherit an
+      // old counter or a queued relay.
+      this.#uploadProgress.invalidateGeneration();
+      this.#lanes.up?.discard();
+      await this.#uploadProgress.teardown(false);
+      if (request.signal.aborted || !this.#transferActive) return;
+      delete this.#lanes.up;
+
+      const activity = this.#transferActivity;
+      const kind = this.#activeTransport;
+      if (!activity || !kind) return;
+      this.#uploadProgress.beginRecoveryGap();
+      await this.#primeTransfer(kind, "up", activity);
+      if (request.signal.aborted) return;
+      const replacement = this.#liveLane("up");
+      if (!replacement) return;
+      // The replacement remains recovering until a positive authoritative
+      // counter flips this edge back to healthy.
+      replacement.setStalled(true, "awaiting replacement upload progress");
+      replacement.measure();
+    } finally {
+      this.#uploadRotationInFlight = false;
+    }
   }
 
   /** The user aborted. Cancel in-flight fetches/streams and close sockets. The
@@ -1038,17 +1125,13 @@ export class RealBackend implements RunnerBackend {
     streams: number,
     wt: WebTransportThroughputTarget | null,
   ): Promise<void> {
-    const primedLane = this.#lanes[dir];
     let id: string;
     try {
       id = await this.#mintUploadSession(base);
     } catch {
       if (!this.#liveLane(dir)) return; // aborted or torn down mid-request
-      this.#host!.failStage(
-        primedLane!.stage,
-        "protocol-error",
-        "upload session request failed",
-      );
+      // The direction's measured-byte watchdog reports this as a stall once
+      // measuring begins. Its terminal decision belongs to the runner.
       return;
     }
     const uploadLane = this.#liveLane(dir);
@@ -1069,11 +1152,7 @@ export class RealBackend implements RunnerBackend {
         headers,
         credentials,
       };
-      uploadLane.newLane = (_i, events) => sessionLane(sessionOpts, events);
-      // The session worker reads the feed before its lanes write, so the
-      // counter is already running when bytes start.
-      uploadLane.spawn([sessionOpts.url]);
-      const feed = await this.#uploadProgress.attachExternal(() => {
+      const feed = this.#uploadProgress.attachExternal(() => {
         void fetch(progressUrl, {
           method: "DELETE",
           cache: "no-store",
@@ -1082,13 +1161,12 @@ export class RealBackend implements RunnerBackend {
           credentials,
         }).catch(() => {});
       });
-      if (feed === "timeout") {
-        this.#host!.failStage(
-          uploadLane.stage,
-          "connection-lost",
-          "upload progress channel could not be established",
-        );
-      }
+      uploadLane.setUploadGeneration(this.#uploadProgress.generation);
+      // The session worker reads the feed before its lanes write, so the
+      // counter is already running when bytes start.
+      uploadLane.newLane = (_i, events) => sessionLane(sessionOpts, events);
+      uploadLane.spawn([sessionOpts.url]);
+      await feed;
       return;
     }
     // The progress stream is the authoritative upload meter. Establish it ahead
@@ -1096,6 +1174,7 @@ export class RealBackend implements RunnerBackend {
     if (!(await this.#uploadProgress.prime(uploadLane.stage, id))) return;
     const progressLane = this.#liveLane(dir);
     if (!progressLane) return;
+    progressLane.setUploadGeneration(this.#uploadProgress.generation);
     progressLane.spawn(Array.from({ length: laneCount }, (_, i) => url(i, id)));
   }
 
@@ -1132,15 +1211,22 @@ export class RealBackend implements RunnerBackend {
 
   /** Combine the directions into the STAGE-level flag. Every required lane must
    *  be healthy: one direction moving cannot validate its stalled sibling. */
-  #reconcileStall(detail?: string): void {
+  #reconcileStall(
+    detail?: string,
+    recoveryCause?: RecoveryCause,
+    direction?: FlowDirection,
+  ): void {
     const transferStalled = transferStageStalled(
       Object.values(this.#lanes) as TransferDirection[],
     );
     if (transferStalled && !this.#stalled) {
+      this.#clearUploadPresentation();
       this.#host!.stall({
         reason: "connection-lost",
         transport: this.#activeTransport ?? undefined,
         detail,
+        recoveryCause,
+        direction,
       });
       this.#stalled = true;
     } else if (!transferStalled && this.#stalled) {
@@ -1151,21 +1237,31 @@ export class RealBackend implements RunnerBackend {
 
   /** Stop every POST lane, wait for the server's terminal upload count, then
    *  release the stage state. */
-  async #teardownTransfer(): Promise<void> {
+  async #teardownTransfer(generation: number): Promise<boolean> {
+    this.#clearUploadPresentation();
     // A graceful WT stop finalizes in the worker; the progress teardown then
     // has nothing left to wait on. For fetch, BYE must follow the POST lanes,
     // so the server's final count includes everything they drained.
     await Promise.all(Object.values(this.#lanes).map((d) => d!.stop()));
+    if (generation !== this.#transferGeneration) return false;
     await this.#uploadProgress.teardown(true);
+    if (generation !== this.#transferGeneration) return false;
     this.#transferActive = false;
     this.#lanes = {};
+    this.#transferActivity = null;
+    return true;
   }
 
   #discardTransfer(): void {
+    // Any outstanding graceful teardown now belongs to an older lifecycle.
+    // It may still finish its local lanes, but must not alter a new run.
+    this.#transferGeneration++;
+    this.#clearUploadPresentation();
     for (const direction of Object.values(this.#lanes)) direction!.discard();
     void this.#uploadProgress.teardown(false);
     this.#transferActive = false;
     this.#lanes = {};
+    this.#transferActivity = null;
   }
 
   #closeAll(): void {
@@ -1180,6 +1276,46 @@ export class RealBackend implements RunnerBackend {
     // Resume the idle keepalive so the connectivity pill stays live instead of
     // freezing at its last-known state until the next probe or run.
     if (!this.#disposed && this.#background) this.#idle.start();
+  }
+
+  /** Emit only a temporary target for the gauge and compact live card. This
+   * path never reaches RunnerCore, so it cannot change measurements or charts. */
+  #emitUploadPresentation(): void {
+    const healthy =
+      this.#transferActive &&
+      !this.#stalled &&
+      !this.#uploadRotationInFlight &&
+      this.#lanes.up?.measuring === true;
+    const now = performance.now();
+    const expectedLanes = this.#lanes.up?.laneCount ?? 0;
+    const bytesPerSec = this.#uploadPresentation.target(
+      now,
+      healthy,
+      expectedLanes,
+    );
+    this.#host?.emit({ type: "uploadPresentation", bytesPerSec });
+    if (this.#uploadPresentationTimer)
+      clearTimeout(this.#uploadPresentationTimer);
+    const wakeMs = this.#uploadPresentation.nextWakeMs(
+      now,
+      healthy,
+      expectedLanes,
+    );
+    this.#uploadPresentationTimer =
+      wakeMs === null
+        ? null
+        : setTimeout(() => {
+            this.#uploadPresentationTimer = null;
+            this.#emitUploadPresentation();
+          }, wakeMs);
+  }
+
+  #clearUploadPresentation(): void {
+    if (this.#uploadPresentationTimer)
+      clearTimeout(this.#uploadPresentationTimer);
+    this.#uploadPresentationTimer = null;
+    this.#uploadPresentation.stop();
+    this.#host?.emit({ type: "uploadPresentation", bytesPerSec: null });
   }
 
   /** Suspend the idle keepalive while the page is hidden. Stopping it closes

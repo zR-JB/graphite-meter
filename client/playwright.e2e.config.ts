@@ -2,9 +2,9 @@
 // stubbed browser suite beside it (./browser) never reaches a backend, so this
 // is the only place both ends are real.
 //
-// Chromium only. QUIC ignores ignoreHTTPSErrors, and Firefox reaches h3 only
-// through a system trust anchor, which is more than a check of this size should
-// install.
+// H3 cells are Chromium-only because QUIC ignores ignoreHTTPSErrors and Firefox
+// needs a system trust anchor. Firefox still runs the H1-clear fetch cells so
+// real upload lanes and their authoritative progress path are cross-browser.
 import { defineConfig } from "@playwright/test";
 
 const HOST = "127.0.0.1";
@@ -48,6 +48,7 @@ export default defineConfig({
         },
       },
     },
+    { name: "firefox", use: { browserName: "firefox" } },
   ],
   webServer: [
     {

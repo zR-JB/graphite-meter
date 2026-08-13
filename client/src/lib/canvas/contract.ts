@@ -4,7 +4,9 @@
 export interface CanvasEngine {
   attach(canvas: HTMLCanvasElement): void;
   wake(): void;
-  /** Re-resolve theme CSS vars + DPR on resize/theme change. */
+  /** Apply the sizing owner's CSS-pixel canvas rectangle when it owns layout. */
+  resize?(cssWidth: number, cssHeight: number): void;
+  /** Re-resolve theme CSS vars without measuring or resizing the canvas. */
   invalidateTheme(): void;
   destroy(): void;
 }

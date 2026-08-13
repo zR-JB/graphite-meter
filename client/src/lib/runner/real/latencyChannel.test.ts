@@ -60,6 +60,114 @@ test("a superseded readiness wait does not silence the newer one", async () => {
   }
 });
 
+test("idle latency buckets use each worker observation time", () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    const events: Parameters<CoreHost["emit"]>[0][] = [];
+    const keepalive = new IdleKeepalive({
+      host: () =>
+        ({
+          emit(event: Parameters<CoreHost["emit"]>[0]) {
+            events.push(event);
+          },
+        }) as unknown as CoreHost,
+      throughputTarget: () => null,
+      latencyTarget: () => target,
+      timeOriginMs: 10_000,
+    });
+
+    keepalive.start();
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [{ rtt: 12, lost: false, observedAtEpochMs: 11_250 }],
+    });
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [{ rtt: 0, lost: true, observedAtEpochMs: 12_500 }],
+    });
+
+    const samples = events.flatMap((event) =>
+      event.type === "latency" ? [event.sample] : [],
+    );
+    expect(samples.map((sample) => sample.endT)).toEqual([1_250, 2_500]);
+    expect(samples.map((sample) => sample.t)).toEqual([1_250, 2_500]);
+    keepalive.stop();
+  } finally {
+    globalThis.Worker = realWorker;
+  }
+});
+
+test("stage latency preserves distinct times from one worker batch", () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    const observations: number[] = [];
+    const channel = new LatencyChannel({
+      host: () =>
+        ({
+          config: { pingCadence: "reply-driven", loadedPingCadence: "medium" },
+          ingestLatency(observation: { observedAtMs: number }) {
+            observations.push(observation.observedAtMs);
+          },
+        }) as unknown as CoreHost,
+      target: () => target,
+      stall() {},
+      resume() {},
+      timeOriginMs: 10_000,
+    });
+
+    channel.prime("websocket", true);
+    channel.measure(false);
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [
+        { rtt: 8, lost: false, observedAtEpochMs: 10_100 },
+        { rtt: 9, lost: false, observedAtEpochMs: 10_350 },
+      ],
+    });
+
+    expect(observations).toEqual([100, 350]);
+    channel.teardown();
+  } finally {
+    globalThis.Worker = realWorker;
+  }
+});
+
+test("a stage latency socket reopening does not itself resume recovery", () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  try {
+    let resumes = 0;
+    const channel = new LatencyChannel({
+      host: () =>
+        ({
+          config: { pingCadence: "medium", loadedPingCadence: "medium" },
+          ingestLatency() {},
+        }) as unknown as CoreHost,
+      target: () => target,
+      stall() {},
+      resume() {
+        resumes++;
+      },
+    });
+
+    channel.prime("websocket", true);
+    channel.measure(false);
+    FakeWorker.last!.emit({ type: "resume" });
+
+    expect(resumes).toBe(0);
+    FakeWorker.last!.emit({
+      type: "samples",
+      samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+    });
+    expect(resumes).toBe(1);
+    channel.teardown();
+  } finally {
+    globalThis.Worker = realWorker;
+  }
+});
+
 test("READY cancels the stage channel's warmup establishment deadline", () => {
   const realWorker = globalThis.Worker;
   const realSetTimeout = globalThis.setTimeout;

@@ -1,5 +1,10 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { RunnerCore, type RunnerBackend, type CoreHost } from "./core";
+import {
+  RunnerCore,
+  STAGE_RECOVERY_BUDGET_MS,
+  type RunnerBackend,
+  type CoreHost,
+} from "./core";
 import type {
   RunnerConfig,
   RunnerEvent,
@@ -7,7 +12,10 @@ import type {
   Phase,
   InfraInfo,
   EngineInfo,
+  ThroughputResult,
+  RecoveryCause,
 } from "./contract";
+import { LATENCY_PRESENTATION_BUCKET_MS } from "./latencyBuckets";
 
 // ---------------------------------------------------------------------------
 // Fake clock + captured tick callback.
@@ -51,6 +59,12 @@ function advance(ms: number): void {
 class FakeBackend implements RunnerBackend {
   host!: CoreHost;
   calls: string[] = [];
+  recoveries: Array<{
+    stage: "latency" | "download" | "upload" | "bidirectional";
+    direction?: "down" | "up";
+    cause: RecoveryCause;
+    signal: AbortSignal;
+  }> = [];
 
   attach(host: CoreHost): void {
     this.host = host;
@@ -86,6 +100,14 @@ class FakeBackend implements RunnerBackend {
   }
   onStageEnd(activity: PhaseActivity): void {
     this.calls.push(`end:${activity.stage}`);
+  }
+  onStageRecovery(request: {
+    stage: "latency" | "download" | "upload" | "bidirectional";
+    direction?: "down" | "up";
+    cause: RecoveryCause;
+    signal: AbortSignal;
+  }): void {
+    this.recoveries.push(request);
   }
   onComplete(): void {
     this.calls.push("complete");
@@ -152,7 +174,7 @@ function makeConfig(
       maxPhaseReductionRatio: 1,
       minLatencySamples: 0,
       minTransferSamples: 0,
-      glideMs: 100,
+      confirmationMs: 100,
       ...overrides.adaptive,
     },
     visualization: { throughputMaxBytesPerSec: "auto" },
@@ -232,6 +254,61 @@ test("full run: latency then download — phase order and stage lifecycle", asyn
     expect(complete.result.download).not.toBeNull();
     expect(complete.result.latency).not.toBeNull();
   }
+});
+
+test("a failed transfer preserves qualifying evidence and continues later stages", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(
+    makeConfig({
+      stages: { download: true, upload: true },
+      duration: { downloadMs: 1_000, uploadMs: 1_000 },
+    }),
+  );
+
+  backend.host.ingestThroughput("down", 1_000, 900, 0.9);
+  backend.host.failStage("download", "connection-lost", "dropped");
+  advance(0);
+
+  const stageResult = events.find(
+    (
+      event,
+    ): event is Extract<RunnerEvent, { type: "stageResult" }> & {
+      stage: "download";
+      result: ThroughputResult;
+    } => event.type === "stageResult" && event.stage === "download",
+  );
+  expect(stageResult?.result.totalBytes).toBe(900);
+  expect(events.some((event) => event.type === "stageSkipped")).toBe(true);
+  expect(backend.calls).toContain("begin:upload");
+});
+
+test("a terminal runner error retains previously reduced bidirectional lanes", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(
+    makeConfig({
+      stages: { download: false, bidirectional: true },
+      duration: { bidirectionalMs: 1_000 },
+    }),
+  );
+
+  // Down meets the named partial-evidence floor; up intentionally does not.
+  core.ingestThroughput("down", 1_000, 800, 0.8);
+  core.ingestThroughput("up", 1_000, 799, 0.799);
+  core.failStage("bidirectional", "connection-lost", "downstream lost", "down");
+  core.fail("internal-error", "later terminal error");
+
+  const error = events.find(
+    (event): event is Extract<RunnerEvent, { type: "error" }> =>
+      event.type === "error",
+  );
+  expect(error?.error.partial?.bidirectional?.down?.totalBytes).toBe(800);
+  expect(error?.error.partial?.bidirectional?.up).toBeNull();
 });
 
 test("throughput stays isolated across transfer warmups", async () => {
@@ -446,6 +523,30 @@ test("asynchronous stage preparation cannot consume the warmup budget", async ()
   ]);
 });
 
+test("asynchronous preparation starts the measured silence budget", async () => {
+  let prepared!: () => void;
+  class PreparingBackend extends FakeBackend {
+    override onStageBegin(activity: PhaseActivity): Promise<void> {
+      super.onStageBegin(activity);
+      return new Promise((resolve) => (prepared = resolve));
+    }
+  }
+  const backend = new PreparingBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((e) => events.push(e));
+
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+  advance(2_000); // Valid connection/setup work can exceed the watchdog.
+  prepared();
+  await Promise.resolve();
+
+  advance(1_499);
+  expect(events.some((e) => e.type === "stall")).toBe(false);
+  advance(2);
+  expect(events.some((e) => e.type === "stall")).toBe(true);
+});
+
 // ---------------------------------------------------------------------------
 // Measured test-time clock: stalls count, but cannot finalize a phase
 // ---------------------------------------------------------------------------
@@ -482,6 +583,73 @@ test("stall counts toward the window but blocks finalization until resume", asyn
   expect(core.phase).toBe("complete");
 });
 
+test("latency presentation does not bridge a short stall", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 1_000 } }));
+
+  advance(10);
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow }, true);
+  core.stall({ reason: "connection-lost", detail: "test" });
+  advance(100); // below the chart's 600 ms natural-gap threshold
+  core.resume();
+  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow }, true);
+  advance(200);
+  core.ingestLatency({ rttMs: 14, lost: false, observedAtMs: fakeNow }, true);
+
+  const buckets = events.flatMap((event) =>
+    event.type === "latency" ? [event.sample] : [],
+  );
+  expect(buckets.length).toBeGreaterThanOrEqual(2);
+  expect(buckets[0].continuityId).not.toBe(buckets.at(-1)!.continuityId);
+});
+
+test("latency presentation closes on bucket time without a later ping", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 1_000 } }));
+
+  advance(10);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, true);
+  expect(events.some((event) => event.type === "latency")).toBe(false);
+  advance(190);
+
+  const latency = events.find((event) => event.type === "latency");
+  expect(latency?.sample).toMatchObject({
+    startT: 0,
+    endT: LATENCY_PRESENTATION_BUCKET_MS,
+    medianRttMs: 20,
+  });
+});
+
+test("queued latency outcomes retain their worker observation buckets", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(
+    makeConfig({
+      stages: { latency: true, download: false },
+      duration: { latencyMs: 1_000, downloadMs: 0 },
+    }),
+  );
+
+  // Simulate one delayed main-thread delivery containing outcomes that the
+  // worker observed in two different presentation windows.
+  fakeNow = 400;
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: 100 }, false);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: 350 }, false);
+  advance(0);
+
+  const buckets = events.flatMap((event) =>
+    event.type === "latency" ? [event.sample] : [],
+  );
+  expect(buckets.map((bucket) => bucket.startT)).toEqual([0, 200]);
+  expect(buckets.map((bucket) => bucket.medianRttMs)).toEqual([10, 20]);
+});
+
 test("watchdog auto-stalls a measured phase after prolonged sample silence", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
@@ -516,7 +684,10 @@ test("loaded pings do not hide a stalled transfer", async () => {
   await core.start(makeConfig({ duration: { downloadMs: 5000 } }));
 
   for (let i = 0; i < 8; i++) {
-    backend.host.ingestLatency(2, true, false);
+    backend.host.ingestLatency(
+      { rttMs: 2, lost: false, observedAtMs: fakeNow },
+      true,
+    );
     advance(250);
   }
 
@@ -617,6 +788,26 @@ test("a healthy sibling's bytes do not resume a stalled bidirectional stage", as
   expect(core.phase).toBe("error");
 });
 
+test("accounting windows cannot overwrite the shared stall presentation", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+
+  advance(10);
+  core.ingestThroughput("down", 1_000, 100, 0.1);
+  core.stall({ reason: "connection-lost" });
+  advance(400);
+
+  const before = events.filter((event) => event.type === "throughput");
+  expect(before.at(-1)?.sample.bytesPerSec).toBe(500);
+  core.ingestThroughput("down", 0, 0, 0.1, false, false);
+  const after = events.filter((event) => event.type === "throughput");
+
+  expect(after).toHaveLength(before.length);
+  expect(after.at(-1)?.sample.bytesPerSec).toBe(500);
+});
+
 test("a non-liveness throughput sample remains in the result", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
@@ -636,10 +827,10 @@ test("a non-liveness throughput sample remains in the result", async () => {
   core.resume();
   advance(100);
 
-  expect(complete?.result.bidirectional?.down.totalBytes).toBe(100);
+  expect(complete?.result.bidirectional?.down?.totalBytes).toBe(100);
 });
 
-test("a stall that outlives max-stall escalates to a terminal failure", async () => {
+test("a recovery deadline finalizes an otherwise unusable final stage", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -649,7 +840,7 @@ test("a stall that outlives max-stall escalates to a terminal failure", async ()
   await core.start(cfg);
 
   core.stall({ reason: "connection-lost" });
-  advance(20001); // exceeds MAX_STALL_MS (20000)
+  advance(STAGE_RECOVERY_BUDGET_MS + 1);
 
   expect(core.phase).toBe("error");
   const err = events.find((e) => e.type === "error");
@@ -659,9 +850,69 @@ test("a stall that outlives max-stall escalates to a terminal failure", async ()
   }
 });
 
+test("the runner owns recovery request lifetime", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  await core.start(
+    makeConfig({
+      stages: { download: false, upload: true },
+      duration: { uploadMs: 1_000 },
+    }),
+  );
+
+  core.stall({
+    reason: "connection-lost",
+    recoveryCause: "unknown-upload-id",
+    direction: "up",
+  });
+  expect(backend.recoveries).toHaveLength(1);
+  expect(backend.recoveries[0].stage).toBe("upload");
+  expect(backend.recoveries[0].cause).toBe("unknown-upload-id");
+  expect(backend.recoveries[0].direction).toBe("up");
+  expect(backend.recoveries[0].signal.aborted).toBe(false);
+
+  core.resume();
+  expect(backend.recoveries[0].signal.aborted).toBe(true);
+});
+
 // ---------------------------------------------------------------------------
-// Adaptive early-finish glide
+// Adaptive early-finish confirmation
 // ---------------------------------------------------------------------------
+
+test("default latency policy can confirm early at the fixed slow cadence", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    stages: { latency: true, download: false },
+    duration: { latencyMs: 4_000, downloadMs: 0 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0.52,
+      stabilityThreshold: 0.86,
+      maxPhaseReductionRatio: 0.5,
+      minLatencySamples: 8,
+      confirmationMs: 1_100,
+    },
+  });
+  cfg.pingCadence = "slow";
+  await core.start(cfg);
+
+  advance(10);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, false);
+  for (let i = 1; i < 5; i++) {
+    advance(600);
+    core.ingestLatency(
+      { rttMs: 20, lost: false, observedAtMs: fakeNow },
+      false,
+    );
+  }
+  expect(core.phase).toBe("latency");
+
+  advance(1_099);
+  expect(core.phase).toBe("latency");
+  advance(1);
+  expect(core.phase).toBe("complete");
+  expect(fakeNow).toBeLessThan(cfg.duration.latencyMs);
+});
 
 test("adaptive early-finish arms and completes the run well before the nominal duration on a stable feed", async () => {
   const backend = new FakeBackend();
@@ -676,9 +927,9 @@ test("adaptive early-finish arms and completes the run well before the nominal d
       minCoverageRatio: 0,
       stabilityThreshold: 0.9,
       maxPhaseReductionRatio: 1,
-      minTransferSamples: 5,
+      minTransferSamples: 4,
       minLatencySamples: 0,
-      glideMs: 100,
+      confirmationMs: 100,
     },
   });
   await core.start(cfg); // enters download at elapsed 0
@@ -687,23 +938,20 @@ test("adaptive early-finish arms and completes the run well before the nominal d
   advance(10);
   wallAdvanced += 10;
 
-  // A perfectly flat feed drives the confidence score to 1 (no variance, no
-  // slope), well above the 0.9 threshold, once enough samples are in.
-  // Keep the stability feed flat, but make the first exact byte interval low.
-  // Stability opens on the second sample, so final-plateau reduction excludes
-  // the first interval while the whole-phase descriptor retains it.
-  for (let i = 0; i < 10; i++)
-    core.ingestThroughput("down", 1000, i === 0 ? 1 : 100, 0.1);
+  // A perfectly flat exact feed drives the fixed 250 ms buckets to confidence
+  // 1. Keep collecting after the latch opens so the trailing exact reducer has
+  // post-latch evidence during the confirmation interval.
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1000, 100, 0.1);
 
-  advance(10); // this tick's confidence check arms the glide
+  advance(10); // confirmation remains armed while evidence stays stable
   wallAdvanced += 10;
   expect(core.phase).toBe("download");
 
-  advance(100); // == glideMs: the glide should drive measured-time to seg.end
+  advance(100); // confirmation closes at real measured time
   wallAdvanced += 100;
 
   expect(core.phase).toBe("complete");
-  // The run finishes in ~120ms of wall time, nowhere near the 2000ms budget.
+  // The run finishes in ~120ms of wall time, without fabricating the 2000ms budget.
   expect(wallAdvanced).toBeLessThan(cfg.duration.downloadMs / 2);
   const complete = events.find((event) => event.type === "complete");
   expect(complete).toBeDefined();
@@ -711,10 +959,131 @@ test("adaptive early-finish arms and completes the run well before the nominal d
     expect(complete.result.download?.method).toBe("stable-window");
     expect(complete.result.download?.reportedBytesPerSec).toBeCloseTo(1000, 6);
     expect(complete.result.download?.fullAverageBytesPerSec).toBeCloseTo(
-      901,
+      1000,
       6,
     );
   }
+});
+
+test("a throughput drop during confirmation revokes early completion", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 5_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 500,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  // Four exact zero-rate control buckets invalidate the stable trace without
+  // advancing wall time far enough to trigger the stall watchdog.
+  for (let i = 0; i < 4; i++)
+    core.ingestThroughput("down", 0, 0, 0.25, false, false);
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("download");
+});
+
+test("a confirmed throughput regime change revokes early completion without breaking chart continuity", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  const cfg = makeConfig({
+    duration: { downloadMs: 10_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 2_000,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 30; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+  for (let i = 0; i < 20; i++) core.ingestThroughput("down", 400, 40, 0.1);
+
+  const continuities = events.flatMap((event) =>
+    event.type === "throughput" ? [event.sample.continuityId] : [],
+  );
+  expect(new Set(continuities).size).toBe(1);
+  advance(1_000);
+  expect(core.phase).toBe("download");
+});
+
+test("a confirmed upward throughput regime change preserves chart continuity", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+
+  advance(10);
+  for (let i = 0; i < 30; i++) core.ingestThroughput("down", 400, 40, 0.1);
+  for (let i = 0; i < 20; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  const continuities = events.flatMap((event) =>
+    event.type === "throughput" ? [event.sample.continuityId] : [],
+  );
+  expect(new Set(continuities).size).toBe(1);
+});
+
+test("an explicit stall and resume break throughput continuity", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+
+  advance(10);
+  core.ingestThroughput("down", 1_000, 100, 0.1);
+  const before = events
+    .filter(
+      (event): event is Extract<RunnerEvent, { type: "throughput" }> =>
+        event.type === "throughput",
+    )
+    .at(-1)!.sample.continuityId;
+
+  core.stall({ reason: "connection-lost" });
+  advance(100);
+  core.ingestThroughput("down", 1_000, 100, 0.1);
+  const after = events
+    .filter(
+      (event): event is Extract<RunnerEvent, { type: "throughput" }> =>
+        event.type === "throughput",
+    )
+    .at(-1)!.sample.continuityId;
+
+  expect(after).toBeGreaterThan(before);
+});
+
+test("a stall during confirmation revokes early completion", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 5_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 500,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  core.stall({ reason: "connection-lost", detail: "test" });
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("download");
 });
 
 test("adaptive completion off publishes the whole phase even when it ends stable", async () => {
@@ -757,7 +1126,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
       maxPhaseReductionRatio: 1,
       minTransferSamples: 5,
       minLatencySamples: 0,
-      glideMs: 50,
+      confirmationMs: 50,
     },
   });
   await core.start(cfg);
@@ -769,7 +1138,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   for (let i = 0; i < N; i++) {
     advance(100);
     const raw = 100 + i * 100;
-    core.ingestThroughput("down", raw, raw, 1);
+    core.ingestThroughput("down", raw, raw * 0.1, 0.1);
     if (i < N - 1) expect(core.phase).toBe("download"); // never armed early
   }
 
@@ -812,12 +1181,39 @@ test("extending the active duration keeps the stage running to the new budget", 
   expect(core.phase).toBe("complete");
 });
 
+test("extending duration below the new coverage floor revokes confirmation", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 1_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0.5,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 200,
+    },
+  });
+  await core.start(cfg);
+  advance(600);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: { ...cfg.duration, downloadMs: 2_000 },
+    adaptive: cfg.adaptive,
+  });
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("download");
+});
+
 test("adaptive completion can be enabled after a stable stage has started", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const cfg = makeConfig({
     duration: { downloadMs: 2000 },
-    adaptive: { enabled: false, minTransferSamples: 5 },
+    adaptive: { enabled: false, minTransferSamples: 4 },
   });
   await core.start(cfg);
   advance(400);
@@ -828,7 +1224,35 @@ test("adaptive completion can be enabled after a stable stage has started", asyn
     duration: cfg.duration,
     adaptive: { ...cfg.adaptive, enabled: true },
   });
-  advance(cfg.adaptive.glideMs);
+  advance(cfg.adaptive.confirmationMs);
+
+  expect(core.phase).toBe("complete");
+});
+
+test("shortening confirmation is re-evaluated immediately", async () => {
+  const core = new RunnerCore(new FakeBackend());
+  const cfg = makeConfig({
+    duration: { downloadMs: 5_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 1_000,
+    },
+  });
+  await core.start(cfg);
+  advance(10);
+  for (let i = 0; i < 15; i++) core.ingestThroughput("down", 1_000, 100, 0.1);
+  advance(300);
+  expect(core.phase).toBe("download");
+
+  core.reconfigure({
+    stages: cfg.stages,
+    duration: cfg.duration,
+    adaptive: { ...cfg.adaptive, confirmationMs: 200 },
+  });
 
   expect(core.phase).toBe("complete");
 });
@@ -838,7 +1262,7 @@ test("adaptive completion can be disabled before a stable stage arms", async () 
   const core = new RunnerCore(backend);
   const cfg = makeConfig({
     duration: { downloadMs: 2000 },
-    adaptive: { enabled: true, minTransferSamples: 5 },
+    adaptive: { enabled: true, minTransferSamples: 4 },
   });
   await core.start(cfg);
   advance(400);
@@ -849,16 +1273,16 @@ test("adaptive completion can be disabled before a stable stage arms", async () 
     duration: cfg.duration,
     adaptive: { ...cfg.adaptive, enabled: false },
   });
-  advance(cfg.adaptive.glideMs * 2);
+  advance(cfg.adaptive.confirmationMs * 2);
 
   expect(core.phase).toBe("download");
 });
 
 // ---------------------------------------------------------------------------
-// Dual EMA (display vs stability) from the same raw samples
+// Exact presentation and fixed-time stability from the same observations
 // ---------------------------------------------------------------------------
 
-test("raw samples reduce at source cadence while display events stay at 10 Hz", async () => {
+test("raw samples reduce at source cadence while presentation snapshots are capped at about 60 ms", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -869,7 +1293,9 @@ test("raw samples reduce at source cadence while display events stay at 10 Hz", 
     fakeNow += 20;
     core.ingestThroughput("down", 1000, 20, 0.02);
   }
-  expect(events.filter((event) => event.type === "throughput").length).toBe(10);
+  // 20 ms observations update the reducer every time; the central publication
+  // gate emits at 20, 80, …, 980 ms without synthesizing any source sample.
+  expect(events.filter((event) => event.type === "throughput").length).toBe(17);
 
   advance(1000);
   const complete = events.find((event) => event.type === "complete");
@@ -878,7 +1304,7 @@ test("raw samples reduce at source cadence while display events stay at 10 Hz", 
   ).toBe(1000);
 });
 
-test("display (fast) and stability (slow) EMAs both derive from the same raw samples without drifting from exact totals", async () => {
+test("presentation derives from exact bytes and time, not backend instantaneous diagnostics", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
   const events: RunnerEvent[] = [];
@@ -892,19 +1318,13 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   const N = 12;
   const DELTA = 50;
 
-  // First sample seeds both EMA stores directly at 0 (raw=0), then a step to
-  // a constant RAW value lets the two taus visibly diverge while converging.
+  // Backend diagnostics claim 1000 B/s, while exact observations carry
+  // 50 bytes per 100 ms = 500 B/s. Presentation must use the latter.
   core.ingestThroughput("down", 0, 0, 0.1);
-  let expectedFast = 0;
-  const alphaFast = 1 - Math.exp(-DT / 700);
-  const alphaSlow = 1 - Math.exp(-DT / 1800);
-  let expectedSlow = 0;
 
   for (let i = 0; i < N; i++) {
-    fakeNow += DT; // advance the mocked clock feeding #emaStep's dt directly
+    fakeNow += DT;
     core.ingestThroughput("down", RAW, DELTA, 0.1);
-    expectedFast = expectedFast + alphaFast * (RAW - expectedFast);
-    expectedSlow = expectedSlow + alphaSlow * (RAW - expectedSlow);
   }
 
   const throughputSamples = events.filter(
@@ -913,17 +1333,14 @@ test("display (fast) and stability (slow) EMAs both derive from the same raw sam
   );
   const lastSample = throughputSamples.at(-1)!;
 
-  // Display (fast tau) matches the independently-computed fast EMA.
-  expect(lastSample.sample.bytesPerSec).toBeCloseTo(expectedFast, 6);
-  // Fast tau tracks the step closer than slow tau at the same sample index.
-  expect(lastSample.sample.bytesPerSec).toBeGreaterThan(expectedSlow);
+  expect(lastSample.sample.bytesPerSec).toBeCloseTo(500, 6);
+  expect(lastSample.sample.bytesPerSec).not.toBe(RAW);
 
   // Raw byte totals are exact and untouched by either smoothing: N steps of
   // DELTA plus the seed sample's 0 bytes.
   expect(lastSample.sample.bytesCumulative).toBe(N * DELTA);
 
-  // Finish the run and verify the headline uses exact bytes / represented time,
-  // while the slow EMA remains stability-only.
+  // Final reduction uses the same exact byte/time evidence independently.
   advance(1_000_000);
   core.resume();
   advance(20);

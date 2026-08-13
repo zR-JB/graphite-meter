@@ -1,7 +1,8 @@
 <script lang="ts">
   // Latency profile view: renders idle and loaded latency lanes with distribution
   // bands, current values, jitter, and loss.
-  import { store, type StageKey } from "../state/store.svelte";
+  import { store } from "../state/store.svelte";
+  import type { TransportRole } from "../runner/contract";
   import { fmtMs, niceDomain } from "../format";
   import { tooltip, JARGON } from "../actions/tooltip";
   import {
@@ -22,23 +23,24 @@
   let { bare = false }: Props = $props();
 
   const PROFILE_HELP =
-    "Latency profile: how steady your ping is, idle and under load. Each bar's shaded band is the P10–P90 range (your typical pings); the dot is the latest reading. Tighter is steadier.";
+    "Latency profile: phase-aligned bucket medians show typical responsiveness; the outer range preserves measured spikes, and loss uses every ping outcome. Tighter is steadier.";
 
-  const LANE_META: Record<StageKey, { label: string; tone: string }> = {
+  const LANE_META: Record<TransportRole, { label: string; tone: string }> = {
     latency: { label: "Idle", tone: "idle" },
     download: { label: "Loaded Down", tone: "download" },
     upload: { label: "Loaded Up", tone: "upload" },
+    bidirectional: { label: "Loaded Bi-dir", tone: "bidirectional" },
   };
 
-  const lanes = $derived(store.latencyLanes);
-
-  const enabledLanes = $derived(
-    lanes.filter((l) => store.runConfig.stages[l.key]),
+  const lanes = $derived(
+    store.latencyLanes.filter(
+      (lane) => store.stagePresentation[lane.key].configured,
+    ),
   );
 
   const domain = $derived.by(() => {
     const values: number[] = [];
-    for (const lane of enabledLanes) {
+    for (const lane of lanes) {
       if (lane.min != null) values.push(lane.min);
       if (lane.max != null) values.push(lane.max);
     }
@@ -52,7 +54,7 @@
   ]);
 
   let hover = $state<{
-    key: StageKey;
+    key: TransportRole;
     metric: MetricKey;
     anchorPct: number;
     trackWidth: number;
@@ -85,7 +87,7 @@
   const rangeWidth = (min: number | null, max: number | null) =>
     domainRangeWidth(min, max, domain);
 
-  function onStripMove(e: PointerEvent, key: StageKey) {
+  function onStripMove(e: PointerEvent, key: TransportRole) {
     const lane = lanes.find((l) => l.key === key);
     if (!lane) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -113,12 +115,14 @@
 <section class="card" class:bare aria-label="Latency distribution">
   <header class="card-head">
     <h3 class="term" use:tooltip={PROFILE_HELP}>Latency Profile</h3>
-    <p>Range / avg / jitter / loss</p>
+    <p>Median range / spikes / loss</p>
   </header>
 
-  {#if store.stageFailures.latency}
+  {#if store.stagePresentation.latency.status === "failed"}
     <p class="lane-fail" role="alert">
-      Latency skipped — {store.stageFailures.latency.message}
+      Latency skipped — {store.stagePresentation.latency.failure
+        ? store.stageFailures.latency?.message
+        : "unavailable"}
     </p>
   {/if}
 
@@ -129,7 +133,7 @@
         class="lane"
         data-tone={meta.tone}
         data-active={lane.active}
-        data-enabled={store.runConfig.stages[lane.key]}
+        data-enabled={store.stagePresentation[lane.key].configured}
       >
         <div class="lane-meta">
           <span>{meta.label}</span>
@@ -186,14 +190,7 @@
               <i class="avg-marker" style="left:{pos(lane.average)}%"></i>
             {/if}
             {#if lane.current != null}
-              <i
-                class="cur-marker"
-                use:tooltip={{
-                  text: `Latest ${fmtMs(lane.current)} ms`,
-                  instant: true,
-                }}
-                style="left:{pos(lane.current)}%"
-              ></i>
+              <i class="cur-marker" style="left:{pos(lane.current)}%"></i>
             {/if}
             {#if lane.lossRatio > 0}
               <i

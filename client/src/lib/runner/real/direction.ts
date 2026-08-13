@@ -1,15 +1,13 @@
 // One transfer direction: its lanes, their restarts and the byte accounting
 // that turns them into samples. A bidirectional stage runs two of them.
 import type { CoreHost } from "../core";
-import type { FlowDirection, PhaseActivity } from "../contract";
+import type { FlowDirection, PhaseActivity, RecoveryCause } from "../contract";
 import { debugEnabled, dlog, fmtRate, DebugWindow } from "../../debug";
 import { redirectToLogin } from "../../auth";
 import { laneStaggerMs } from "./backendPure";
 import type { ByteLane, LaneEvents, WtProgressRelay } from "./byteLane";
 import {
-  EARLY_FAIL_BUDGET_MS,
   DIRECTION_PROGRESS_WINDOW_MS,
-  LANE_MAX_RESTARTS,
   LANE_RESTART_BACKOFF_MS,
 } from "./budgets";
 
@@ -36,9 +34,20 @@ export interface DirectionHost {
    *  bytes remain accounted while another required direction is stalled. */
   sampleProvesStageLiveness?: () => boolean;
   /** This direction's stall state flipped; the stage combines the directions. */
-  stallChanged: (detail?: string) => void;
+  stallChanged: (
+    detail?: string,
+    cause?: RecoveryCause,
+    direction?: FlowDirection,
+  ) => void;
   /** A server upload-progress record relayed by a session lane. */
-  uploadProgress: (msg: WtProgressRelay) => void;
+  uploadProgress: (msg: WtProgressRelay, generation: number) => void;
+  /** Local upload completion metadata for an isolated visual bridge. */
+  uploadPresentationHint?: (
+    lane: number,
+    bytes: number,
+    elapsedMs: number,
+    generation: number,
+  ) => void;
   /** Open the upload meter's measured window. */
   beginUploadMeasure: () => void;
   /** Release every direction of the stage. */
@@ -78,17 +87,12 @@ export class TransferDirection {
   measuring = false;
   /** True while THIS direction is stalled. */
   stalled = false;
-  /** True once this direction has carried at least one byte. Gates the
-   *  never-established early fail. */
-  stageSawBytes = false;
 
   #deps: DirectionHost;
   /** Per-lane spawn delay; 0 means lanes spawn together. */
   #staggerMs: number;
   /** One lane per parallel stream, indexed by stream number. */
   #lanes: (ByteLane | null)[] = [];
-  /** Per-lane consecutive restart counter, reset on recovery. */
-  #retry: number[] = [];
   /** Per-lane stagger or restart timer: a lane is never pending both at once. */
   #timers: (ReturnType<typeof setTimeout> | null)[] = [];
   /** Client byte accounting, download only: the /upload/progress channel is
@@ -97,9 +101,6 @@ export class TransferDirection {
   /** Monotonic measurement epoch. Warmup reports carry seq=0, so late messages
    *  from an old epoch are dropped at the warmup/measure boundary. */
   #measureSeq = 0;
-  /** When this direction was primed, so the early fail is a deadline rather
-   *  than an attempt count and every transport reaches it together. */
-  #startedAt = performance.now();
   /** False once the stage released this direction, so a released lane never
    *  spawns workers no one owns. */
   #live = true;
@@ -108,6 +109,9 @@ export class TransferDirection {
   /** Per-direction measured-byte watchdog. Upload writer completions do not
    *  touch it; only receiver-authoritative progress does. */
   #progressTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Captured into each upload-lane callback so an old worker cannot cross a
+   * session rotation boundary after a replacement has started. */
+  #uploadGeneration = 0;
 
   constructor(opts: DirectionOptions) {
     this.dir = opts.dir;
@@ -151,6 +155,10 @@ export class TransferDirection {
     }
   }
 
+  setUploadGeneration(generation: number): void {
+    this.#uploadGeneration = generation;
+  }
+
   /** Begin measuring the lanes opened at prime time and NEVER reopened:
    *  re-spawning throws away the warmed congestion window. */
   measure(): void {
@@ -178,17 +186,16 @@ export class TransferDirection {
   }
 
   /** Latch this direction's own stall state and report the edge to the stage. */
-  setStalled(stalled: boolean, detail?: string): void {
+  setStalled(stalled: boolean, detail?: string, cause?: RecoveryCause): void {
     if (this.stalled === stalled) return;
     this.stalled = stalled;
-    this.#deps.stallChanged(detail);
+    this.#deps.stallChanged(detail, cause, this.dir);
   }
 
   /** One positive measured byte delta for this direction. Re-arms its own
    *  silence bound and recovers only this direction's stalled edge. */
   noteMeasuredProgress(bytes: number): void {
     if (bytes <= 0 || !this.measuring || !this.#live || this.#stopping) return;
-    this.stageSawBytes = true;
     this.#armProgressWatchdog();
     if (this.stalled) this.setStalled(false);
   }
@@ -235,7 +242,7 @@ export class TransferDirection {
    *  factory, so nothing outlives the failure that closed it. */
   #startLane(i: number): void {
     if (!this.#live || this.#stopping) return;
-    const lane = this.newLane(i, this.#laneEvents(i));
+    const lane = this.newLane(i, this.#laneEvents(i, this.#uploadGeneration));
     this.#lanes[i] = lane;
     lane.start();
     // A restarted lane must resume the live measurement window: without the
@@ -244,13 +251,15 @@ export class TransferDirection {
   }
 
   /** What a lane reports, routed to the same accounting for every transport. */
-  #laneEvents(i: number): LaneEvents {
+  #laneEvents(i: number, generation: number): LaneEvents {
     return {
       onProgress: (bytes, elapsedMs, seq) =>
         this.#onProgress(i, bytes, elapsedMs, seq),
-      onAlive: () => this.#onAlive(i),
-      onError: (recoverable, detail) => this.#onError(i, detail, recoverable),
-      onUploadProgress: (msg) => this.#deps.uploadProgress(msg),
+      onAlive: (bytes, elapsedMs) =>
+        this.#onAlive(i, bytes, elapsedMs, generation),
+      onError: (recoverable, detail, cause) =>
+        this.#onError(i, detail, recoverable, cause),
+      onUploadProgress: (msg) => this.#deps.uploadProgress(msg, generation),
       onAuthRequired: () => {
         this.#deps.discardTransfer();
         redirectToLogin();
@@ -321,7 +330,6 @@ export class TransferDirection {
       (seq === undefined || seq !== this.#measureSeq || seq <= 0)
     )
       return;
-    this.#retry[i] = 0; // a real send proves this lane is alive
     this.noteMeasuredProgress(bytes);
     const aggregation = this.#aggregation;
     if (!aggregation) return;
@@ -333,25 +341,53 @@ export class TransferDirection {
     if (this.#stopping) this.#aggregate(aggregation);
   }
 
-  /** A completed unit of work with no byte count, which upload lanes report. */
-  #onAlive(i: number): void {
+  /** Upload workers may report local completion timing. It is intentionally not
+   * liveness or measurement evidence; only the server feed can establish that. */
+  #onAlive(
+    lane: number,
+    bytes?: number,
+    elapsedMs?: number,
+    generation?: number,
+  ): void {
     if (!this.#live || this.#stopping) return;
-    this.#retry[i] = 0;
-    this.stageSawBytes = true;
+    if (
+      this.dir === "up" &&
+      bytes !== undefined &&
+      elapsedMs !== undefined &&
+      generation !== undefined
+    )
+      this.#deps.uploadPresentationHint?.(lane, bytes, elapsedMs, generation);
   }
 
   /** A lane failed. Recoverable (the common case: a dropped connection) → stall
    *  once, then re-open the lane so a real sample resumes it. */
-  #onError(i: number, detail: string, recoverable: boolean): void {
+  #onError(
+    i: number,
+    detail: string,
+    recoverable: boolean,
+    cause?: RecoveryCause,
+  ): void {
     // Ignore late errors after release (a stop()/terminate races the worker).
     if (!this.#live || this.#stopping) return;
-    const host = this.#deps.host();
+    if (cause === "unknown-upload-id" && this.measuring) {
+      // The runner owns the one allowed ID rotation. Do not schedule a same-ID
+      // lane restart after the structural refusal: its generation is about to
+      // be invalidated and replacement lanes must use only the new ID.
+      this.setStalled(true, detail, cause);
+      return;
+    }
     if (!recoverable) {
-      host.fail(
-        "connection-lost",
-        `${this.dir} stream ${i} failed: ${detail}`,
-        detail,
-      );
+      // A refused lane is structural protocol evidence, not a transport stall.
+      // Keep any qualifying evidence, end only this stage, and let later
+      // configured stages continue through the core's stage contract.
+      this.#deps
+        .host()
+        .failStage(
+          this.stage,
+          "protocol-error",
+          `${this.dir} stream ${i} failed: ${detail}`,
+          this.dir,
+        );
       return;
     }
     if (this.measuring) this.setStalled(true, detail);
@@ -359,28 +395,6 @@ export class TransferDirection {
     // spin a tight respawn loop. A session lane respawns through its owner.
     this.#lanes[i]?.discard();
     this.#lanes[i] = null;
-    this.#retry[i] = (this.#retry[i] ?? 0) + 1;
-    // Nothing carried within the budget: a lane that refuses instantly and one
-    // that times out reach this together, on any transport.
-    if (
-      !this.stageSawBytes &&
-      performance.now() - this.#startedAt > EARLY_FAIL_BUDGET_MS
-    ) {
-      host.failStage(
-        this.stage,
-        "connection-lost",
-        `${this.dir} link connection could not be established`,
-      );
-      return;
-    }
-    if (this.#retry[i] > LANE_MAX_RESTARTS) {
-      host.fail(
-        "connection-lost",
-        `${this.dir} stream ${i} kept dropping: ${detail}`,
-        detail,
-      );
-      return;
-    }
     // One pending restart per lane: an orphan timer would spawn a duplicate
     // worker into the next stage, and the lane would be counted twice.
     const pending = this.#timers[i];

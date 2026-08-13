@@ -18,7 +18,13 @@
   let canvasEl = $state<HTMLCanvasElement>();
   let canvasPresentation: PresentationHandle;
 
-  const spark = $derived(store.pulseLatency.slice(-16).map((s) => s.rttMs));
+  const spark = $derived(
+    store.pulseLatency
+      .slice(-16)
+      .flatMap((bucket) =>
+        bucket.medianRttMs == null ? [] : [bucket.medianRttMs],
+      ),
+  );
 
   let sparkColor = FALLBACK_COLOR;
   function resolveColor() {

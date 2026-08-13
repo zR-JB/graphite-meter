@@ -9,6 +9,8 @@ import type {
   Phase,
 } from "./contract";
 import type { DummyOptions, DummySampleContext } from "./dummy";
+import { transferConfidence } from "./adaptive";
+import { FixedRateBuckets } from "./controlBuckets";
 
 // dummy.ts reads BUILD.clientVersion, which buildenv.ts fills in from Vite
 // `define` tokens (__GM_*__) at bundle time. Those do not exist under plain
@@ -66,7 +68,7 @@ const BASE_CONFIG: RunnerConfig = {
     maxPhaseReductionRatio: 0.5,
     minLatencySamples: 8,
     minTransferSamples: 12,
-    glideMs: 1100,
+    confirmationMs: 1100,
   },
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
@@ -116,8 +118,16 @@ class MockHost implements CoreHost {
   ): void {
     this.throughput.push({ dir, bytesPerSec, bytesDelta, durationSec });
   }
-  ingestLatency(rttMs: number, underLoad: boolean, lost: boolean): void {
-    this.latency.push({ rttMs, underLoad, lost });
+  ingestLatency(
+    observation: { rttMs: number; lost: boolean },
+    underLoad: boolean,
+  ): void {
+    this.latency.push({ ...observation, underLoad });
+  }
+  recordRecoveryGap(): void {}
+  recordRecoveryBytes(): void {}
+  presentationRate(): number {
+    return 0;
   }
   stall(info: StallInfo): void {
     this.stalls.push(info);
@@ -135,6 +145,11 @@ class MockHost implements CoreHost {
 const DOWNLOAD_ACTIVITY: PhaseActivity = {
   stage: "download",
   transfer: ["down"],
+  loadedLatency: false,
+};
+const UPLOAD_ACTIVITY: PhaseActivity = {
+  stage: "upload",
+  transfer: ["up"],
   loadedLatency: false,
 };
 const BIDI_ACTIVITY: PhaseActivity = {
@@ -217,6 +232,33 @@ function relStd(xs: number[]): number {
   const m = mean(xs);
   const variance = mean(xs.map((x) => (x - m) ** 2));
   return Math.sqrt(variance) / m;
+}
+
+function settledTransferConfidence(
+  profile: NonNullable<DummyOptions["profile"]>,
+  seed: number,
+  direction: FlowDirection,
+) {
+  const { backend, host } = makeBackend({ profile, seed });
+  const buckets = new FixedRateBuckets();
+  let observed = 0;
+  const activity = direction === "down" ? DOWNLOAD_ACTIVITY : UPLOAD_ACTIVITY;
+  host.setPhase(activity.stage);
+  for (let t = 100; t <= 6500; t += 100) {
+    tick(backend, {
+      activity,
+      elapsed: t,
+      segStart: 0,
+      segEnd: 10000,
+      realNow: t,
+    });
+    while (observed < host.throughput.length) {
+      const sample = host.throughput[observed++];
+      if (sample.dir === direction)
+        buckets.observe(sample.bytesDelta, sample.durationSec * 1000);
+    }
+  }
+  return transferConfidence([...buckets.rates]);
 }
 
 test("unloaded and loaded stages use their independent ping cadences", () => {
@@ -317,6 +359,22 @@ test("throttled: the lowest throughput of any profile", () => {
     expect(throttledMean).toBeLessThan(means[i]);
   }
   expect(throttledMean).toBeLessThan(3e6); // ~1.19 MB/s nominal
+});
+
+test("settled dummy profiles calibrate to realistic confidence bands", () => {
+  for (const profile of ["fiber", "cable", "throttled"] as const)
+    for (let seed = 1; seed <= 8; seed++)
+      for (const direction of ["down", "up"] as const)
+        expect(
+          settledTransferConfidence(profile, seed, direction).score,
+        ).toBeGreaterThan(0.86);
+
+  for (const profile of ["lte", "satellite"] as const)
+    for (let seed = 1; seed <= 8; seed++)
+      for (const direction of ["down", "up"] as const)
+        expect(
+          settledTransferConfidence(profile, seed, direction).score,
+        ).toBeGreaterThan(0.6);
 });
 
 test("idleHintMs reflects the active profile's idle RTT ordering", () => {

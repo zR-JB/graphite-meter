@@ -1,13 +1,18 @@
 // The server-authoritative upload feed, read the same way whichever transport
 // carries it. A byte stream has no record boundaries of its own, so framing is
 // this module's job; the records themselves are NDJSON.
+import {
+  classifyUploadFailure,
+  type UploadRefusalCode,
+} from "../uploadFailure";
+import type { RecoveryCause } from "../contract";
 
 /** What one feed reports, normalised from the wire records. */
 export type ProgressEvent =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
-  | { type: "fatal"; detail: string };
+  | { type: "fatal"; detail: string; cause: RecoveryCause };
 
 /** Carried across reconnects by the caller: a replacement feed for the same
  *  upload must not report fewer bytes than its predecessor already did. */
@@ -20,6 +25,7 @@ interface ProgressRecord {
   bytes?: number;
   nanos?: number;
   message?: string;
+  code?: UploadRefusalCode;
 }
 
 /** Why a feed stopped. `eof` is the stream ending without a terminal record,
@@ -58,6 +64,7 @@ export async function readProgressFeed(
         emit({
           type: "fatal",
           detail: record.message || "upload progress error",
+          cause: classifyUploadFailure(undefined, record.code),
         });
         return "fatal";
       }

@@ -22,6 +22,8 @@ import {
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
 import { incompressibleBlock } from "./payload";
+import { classifyUploadFailure } from "../uploadFailure";
+import type { RecoveryCause } from "../contract";
 
 /** `debug`/`id` drive verbose per-stream logging only. The lane is stopped by
  *  terminating the worker, so there is no shutdown message. */
@@ -34,12 +36,17 @@ type InMsg = {
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
 };
-/** `alive` marks one POST the server drained, proving the lane is live. It
- *  carries no byte count: fetch has no upload-progress events, and the
- *  /upload/progress stream is the authoritative source. `error` restarts a lane. */
+/** `alive` marks one POST the server drained. Its local byte/time pair is only
+ * a bounded presentation hint; /upload/progress remains the authoritative
+ * source for measurement. `error` restarts a lane. */
 type OutMsg =
-  | { type: "alive" }
-  | { type: "error"; recoverable: boolean; detail: string }
+  | { type: "alive"; bytes: number; elapsedMs: number }
+  | {
+      type: "error";
+      recoverable: boolean;
+      detail: string;
+      cause?: RecoveryCause;
+    }
   | { type: "auth-required" };
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
@@ -98,17 +105,11 @@ export function uploadPoolBytes(
   return Math.max(MIN_POOL_BYTES, Math.floor(reservoir / streams));
 }
 
-/** Whether retrying the lane after a non-OK POST is worthwhile. 429 (rate
- *  limited), 413 (too large), 503 (unavailable) and 410 (gone) are terminal for
- *  this run: re-POSTing hammers a server that will not take it. Everything else,
- *  including 500 and any network or abort error, counts as transient. */
+/** Whether an HTTP status is a transient lane failure. Explicit client/protocol
+ * refusals are terminal; a generic server failure remains a same-id reconnect.
+ * Session rotation is decided separately from the server's refusal code. */
 export function recoverableStatus(status: number): boolean {
-  return !(
-    status === 429 ||
-    status === 413 ||
-    status === 503 ||
-    status === 410
-  );
+  return status === 0 || status === 408 || (status >= 500 && status !== 503);
 }
 
 /** The reused incompressible pool, built on first start. A Blob slice is a view
@@ -246,19 +247,27 @@ async function run(url: string): Promise<void> {
       }
       await drainForKeepAlive(res);
       if (!res.ok) {
+        const recoverable = recoverableStatus(res.status);
         post({
           type: "error",
-          recoverable: recoverableStatus(res.status),
+          recoverable,
           detail: `HTTP ${res.status}`,
+          cause: recoverable
+            ? undefined
+            : classifyUploadFailure(
+                res.status,
+                res.headers.get("X-Graphite-Upload-Refusal"),
+              ),
         });
         return; // RealBackend decides whether to restart this lane
       }
-      // The server drained a full slice: the lane is alive. No bytes travel here,
-      // /upload/progress is authoritative; this only resets the restart counter.
-      post({ type: "alive" });
+      // This is not an observation: the server progress feed owns byte/time
+      // accounting. The local pair can only smooth the live visual target.
+      const elapsedMs = performance.now() - postStart;
+      post({ type: "alive", bytes: sentBytes, elapsedMs });
       ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
         sentBytes,
-        performance.now() - postStart,
+        elapsedMs,
         rateEwma,
         sizer,
       ));

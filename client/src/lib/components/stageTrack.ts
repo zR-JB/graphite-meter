@@ -1,74 +1,83 @@
-// Pure stage-rail derivation, kept out of StageTrack.svelte so bun tests can
-// exercise it without the rune store. The component reads store.phase,
-// phaseFraction, phaseStage, and the toggle guards and passes them in; these
-// functions own the pending/warmup/active/done/failed decision only.
+// StageTrack projects the shared stage presentation into rail styling. It does
+// not infer result/failure status itself.
 import type { Phase, TransportRole } from "../runner/contract";
+import type {
+  StagePresentation,
+  StagePresentationStatus,
+} from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
 
-const TRACK_ORDER = ["latency", "download", "upload", "bidirectional"] as const;
-
-export type SegState =
-  "disabled" | "warmup" | "active" | "done" | "failed" | "pending";
+export type SegState = StagePresentationStatus | "warmup";
 
 export interface Segment {
   state: SegState;
   fill: number;
 }
 
-export function stageIndex(stage: TransportRole | null): number {
-  return stage ? TRACK_ORDER.indexOf(stage) : -1;
+/**
+ * Selection belongs to the editable next-run configuration; execution belongs
+ * to the retained run. Keeping both in this model prevents a terminal rail
+ * toggle from rewriting the status of evidence that was already collected.
+ */
+export interface StageTrackModel extends Segment {
+  selected: boolean;
+  tag: string | null;
+  locked: boolean;
+  execution: StagePresentation;
 }
 
-export function progressFill(phaseFraction: number): number {
-  return Math.round(phaseFraction * 200) / 2;
+export function segmentState(stage: StagePresentation): Segment {
+  return {
+    state: stage.warming ? "warmup" : stage.status,
+    fill: stage.fill,
+  };
 }
 
-// currentIndex is stageIndex(phaseStage); enabled/failed come from the store
-// config.
-export function segmentState(
-  phase: Phase,
-  phaseFraction: number,
-  stage: StageKey,
-  enabled: boolean,
-  failed: boolean,
-  currentIndex: number,
-): Segment {
-  if (!enabled) return { state: "disabled", fill: 0 };
-  if (failed) return { state: "failed", fill: 0 };
-  if (phase === "complete") return { state: "done", fill: 100 };
-  const index = TRACK_ORDER.indexOf(stage);
-  if (phase === "warmup") {
-    if (index < currentIndex) return { state: "done", fill: 100 };
-    if (index === currentIndex) return { state: "warmup", fill: 0 };
-    return { state: "pending", fill: 0 };
+export function stageTrackModel(input: {
+  selected: boolean;
+  locked: boolean;
+  execution: StagePresentation;
+}): StageTrackModel {
+  const { selected, locked, execution } = input;
+  if (!selected) {
+    return {
+      selected,
+      locked,
+      execution,
+      state: "disabled",
+      fill: 0,
+      tag: "skipped",
+    };
   }
-  if (currentIndex === -1) return { state: "pending", fill: 0 };
-  if (index < currentIndex) return { state: "done", fill: 100 };
-  if (index === currentIndex)
-    return { state: "active", fill: progressFill(phaseFraction) };
-  return { state: "pending", fill: 0 };
-}
 
-// Bidirectional is the terminal stage, so it has no "later than current" case.
-export function bidirectionalState(
-  phase: Phase,
-  phaseFraction: number,
-  phaseStage: TransportRole | null,
-  enabled: boolean,
-  failed: boolean,
-): Segment | null {
-  if (!enabled) return null;
-  if (failed) return { state: "failed", fill: 0 };
-  if (phase === "complete") return { state: "done", fill: 100 };
-  if (phase === "warmup" && phaseStage === "bidirectional")
-    return { state: "warmup", fill: 0 };
-  if (phase === "bidirectional")
-    return { state: "active", fill: progressFill(phaseFraction) };
-  return { state: "pending", fill: 0 };
+  // A stage enabled after a terminal run was not part of that execution. It is
+  // selected for the next run, but has no historical result to project.
+  if (execution.status === "disabled") {
+    return {
+      selected,
+      locked,
+      execution,
+      state: "pending",
+      fill: 0,
+      tag: "next run",
+    };
+  }
+
+  const segment = segmentState(execution);
+  return {
+    selected,
+    locked,
+    execution,
+    ...segment,
+    tag:
+      execution.status === "partial" || execution.status === "failed"
+        ? execution.status
+        : null,
+  };
 }
 
 // Why a locked segment cannot be toggled, or null when it can. canToggle is
-// store.canToggleStage(stage).
+// store.canToggleStage(stage); status comes from the central presentation model.
 export function lockReason(
   canToggle: boolean,
   phase: Phase,
@@ -77,9 +86,8 @@ export function lockReason(
   state: SegState,
 ): string | null {
   if (canToggle) return null;
-  if (state === "done") return "done";
-  if (phase === stage) return "running";
-  const currentIndex = stageIndex(phaseStage);
-  const index = TRACK_ORDER.indexOf(stage);
-  return currentIndex >= 0 && index < currentIndex ? "done" : "upcoming";
+  if (state === "complete" || state === "partial") return "done";
+  if (phaseStage === stage)
+    return state === "recovering" ? "recovering" : "running";
+  return phase === "complete" ? "done" : "upcoming";
 }

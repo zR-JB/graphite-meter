@@ -3,19 +3,16 @@
 // RTT timestamps; these classes own the worker's lifecycle and route its
 // samples into the core.
 import type { CoreHost } from "../core";
-import type { PingCadence, TransportKind } from "../contract";
+import type { TransportKind } from "../contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
 import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
-
-/** One measured ping the worker reports (rtt already computed in-worker). */
-interface PingSample {
-  rtt: number;
-  lost: boolean;
-}
+import { singleLatencyBucket } from "../latencyBuckets";
+import { fixedPingIntervalMs } from "../pingCadence";
+import { pingSampleContextTime, type PingSample } from "../workers/pingSample";
 
 /** Ping worker → channel messages. The worker owns reconnection and brackets a
  *  reconnect window with stall/resume, keeping the channel alive. */
@@ -30,14 +27,6 @@ type PingOutMsg =
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
 const PING_LOSS_K = 4;
 const PING_LOSS_FLOOR_MS = 250;
-const FIXED_PING_INTERVAL: Record<
-  Exclude<PingCadence, "reply-driven">,
-  number
-> = {
-  fast: 80,
-  medium: 250,
-  slow: 600,
-};
 const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
@@ -84,10 +73,13 @@ function pingMint(target: LatencyTarget | null):
 export interface LatencyChannelDeps {
   host: () => CoreHost;
   target: () => LatencyTarget | null;
-  /** Stall/resume reported by the ping worker, for the coordinator to reconcile
-   *  with the stage-level flag the byte lanes also drive. */
+  /** Reconnect edges reported by the ping worker. A later ping outcome, not
+   *  socket reopening, proves recovery to the core. */
   stall: (detail: string) => void;
   resume: () => void;
+  /** Window-realm performance origin. Injectable only for deterministic
+   * cross-realm timestamp tests. */
+  timeOriginMs?: number;
 }
 
 /** The stage-owned ping channel: one per stage (idle latency, then each loaded
@@ -98,15 +90,17 @@ export class LatencyChannel {
   #worker: Worker | null = null;
   /** True from prime to teardown. Gates late worker messages. */
   #active = false;
-  /** Armed for the idle latency stage only: fires failStage("latency") when no
-   *  pong ever arrives. Cleared by the first sample / teardown. */
+  /** Bounds one ping establishment attempt. A timeout reports a stall; the
+   * runner owns whether the latency stage eventually expires. */
   #establishTimer: ReturnType<typeof setTimeout> | null = null;
   /** The underLoad tag stamped on forwarded samples (true during a transfer
    *  stage's loaded latency). Set when measure() flips reporting on. */
   #underLoad = false;
+  #timeOriginMs: number;
 
   constructor(deps: LatencyChannelDeps) {
     this.#deps = deps;
+    this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
   }
 
   /** Open the latency (ping) channel over `kind` and warm it. The ping worker
@@ -119,12 +113,11 @@ export class LatencyChannel {
     const url = pingUrl(channel, kind);
     if (!url) throw new Error("latency target not resolved");
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
-    const replyDriven = cadence === "reply-driven";
+    const fixedIntervalMs = fixedPingIntervalMs(cadence);
+    const replyDriven = fixedIntervalMs == null;
     // Reply-driven uses this only for its loss sweep; its sends are driven by
     // PONGs and the worker's adaptive backup.
-    const intervalMs = replyDriven
-      ? PING_LOSS_FLOOR_MS
-      : FIXED_PING_INTERVAL[cadence];
+    const intervalMs = fixedIntervalMs ?? PING_LOSS_FLOOR_MS;
     // A loaded stage shares the link with the transfer, so its depth is the
     // same either way; the idle stage goes deeper unless PONGs pace the sends.
     const maxInFlight = !isLatencyStage
@@ -142,8 +135,7 @@ export class LatencyChannel {
     this.#establishTimer = setTimeout(() => {
       this.#establishTimer = null;
       const detail = "ping connection could not be established";
-      if (isLatencyStage) host.failStage("latency", "connection-lost", detail);
-      else this.#deps.stall(detail);
+      this.#deps.stall(detail);
     }, PING_ESTABLISH_TIMEOUT_MS);
     const worker = pingWorker();
     worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
@@ -170,9 +162,9 @@ export class LatencyChannel {
   }
 
   /** Enable reporting on the socket prime() opens, at that stage's cadence.
-   *  Samples reach host.ingestLatency(rtt, underLoad, lost). The worker computes
-   *  rtt and flags an unacked or timed-out ping `lost`. `underLoad` marks pings
-   *  running alongside a transfer (bufferbloat). */
+   *  The worker owns RTT, loss, and observation time; this channel translates
+   *  only the cross-realm clock coordinate and adds the stage's `underLoad`
+   *  attribution. */
   measure(underLoad: boolean): void {
     this.#underLoad = underLoad;
     this.#worker?.postMessage({ type: "measure" });
@@ -204,14 +196,22 @@ export class LatencyChannel {
         this.#clearEstablishTimer(); // a pong proves the channel works
         const host = this.#deps.host();
         for (const sample of msg.samples)
-          host.ingestLatency(sample.rtt, this.#underLoad, sample.lost);
+          host.ingestLatency(
+            {
+              rttMs: sample.rtt,
+              lost: sample.lost,
+              observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
+            },
+            this.#underLoad,
+          );
+        if (msg.samples.length) this.#deps.resume();
         break;
       }
       case "stall":
         this.#deps.stall(msg.detail);
         break;
       case "resume":
-        this.#deps.resume();
+        // Socket establishment alone does not restore latency evidence.
         break;
       case "ready":
         // READY is the peer's protocol acknowledgement. Warmup pongs stay in
@@ -235,6 +235,9 @@ export interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
   latencyTarget: () => LatencyTarget | null;
+  /** Window-realm performance origin. Injectable only for deterministic
+   * cross-realm timestamp tests. */
+  timeOriginMs?: number;
 }
 
 /** The persistent idle ping: connectivity indicator plus the preflight RTT
@@ -242,6 +245,7 @@ export interface IdleKeepaliveDeps {
  *  the same time (stopped when a run starts, restarted when it ends). */
 export class IdleKeepalive {
   #deps: IdleKeepaliveDeps;
+  #timeOriginMs: number;
   #worker: Worker | null = null;
   #active = false;
   #targetKey = "";
@@ -257,6 +261,7 @@ export class IdleKeepalive {
 
   constructor(deps: IdleKeepaliveDeps) {
     this.#deps = deps;
+    this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
   }
 
   /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
@@ -415,7 +420,7 @@ export class IdleKeepalive {
     }
     const host = this.#deps.host();
     switch (msg.type) {
-      case "samples":
+      case "samples": {
         for (const sample of msg.samples) {
           if (this.#probeCollect && !sample.lost) {
             this.#probeCollect.rtts.push(sample.rtt);
@@ -424,13 +429,11 @@ export class IdleKeepalive {
           }
           host.emit({
             type: "latency",
-            sample: {
-              t: 0,
-              rttMs: sample.rtt,
-              underLoad: false,
-              lost: sample.lost,
-              phase: "idle",
-            },
+            sample: singleLatencyBucket(
+              pingSampleContextTime(sample, this.#timeOriginMs),
+              sample.rtt,
+              sample.lost,
+            ),
           });
         }
         if (this.#offline) {
@@ -438,6 +441,7 @@ export class IdleKeepalive {
           host.emit({ type: "connectivity", state: "connected" });
         }
         break;
+      }
       case "stall":
         this.#offline = true;
         host.emit({ type: "connectivity", state: "offline" });

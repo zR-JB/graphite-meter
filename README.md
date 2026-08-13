@@ -26,8 +26,8 @@ up**, and the native terminal client pushes **hundreds of Gbit/s**.\*
 - **Honest numbers** — upload throughput is what the **server** received, streamed back live,
   never what the browser thinks it sent. Payloads are incompressible; stalls and reconnects
   can't inflate a result.
-- **Optional wire-rate estimates** — opt-in Ethernet accounting for IP, TCP/UDP, TLS/QUIC, and
-  HTTP framing; unobservable details are shown as a range instead of guessed.
+- **Clearly separated wire-rate estimates** — default-on Ethernet accounting for IP, TCP/UDP,
+  TLS/QUIC, and HTTP framing; a concise estimate appears only beside a completed one-way result.
 - **Stages you choose** — latency, download, upload, and a bidirectional stage that saturates
   both directions at once. Adaptive early stopping ends a stage once its result is stable.
 - **Configurable from the UI** — connection paths, durations, parallel streams, ping cadence,

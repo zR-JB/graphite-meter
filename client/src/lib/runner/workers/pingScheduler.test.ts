@@ -162,6 +162,19 @@ test("stop and reset leave no live send timer", () => {
   expect(h.socket.sent.map((send) => send.at)).toEqual([0, 1000]);
 });
 
+test("a measurement boundary restarts fixed cadence with an immediate send", () => {
+  const h = harness(600);
+  h.scheduler.start();
+  h.clock.advance(590);
+
+  h.scheduler.restartNow();
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 590]);
+  h.clock.advance(599);
+  expect(h.socket.sent).toHaveLength(2);
+  h.clock.advance(1);
+  expect(h.socket.sent.map((send) => send.at)).toEqual([0, 590, 1190]);
+});
+
 test("cadence can settle after a fast probe without an early send", () => {
   const h = harness(120);
   h.scheduler.start();

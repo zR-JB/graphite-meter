@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { interpolateAt } from "./hoverInterp";
+import {
+  hasHoverMeasurements,
+  interpolateAt,
+  interpolateConnectedAt,
+} from "./hoverInterp";
 
 const pts = [
   { t: 0, v: 0 },
@@ -64,4 +68,40 @@ test("interpolateAt: large histories use logarithmic lookup", () => {
 
   expect(value).toBe(50_000.5);
   expect(examined).toBeLessThan(24);
+});
+
+test("interpolateConnectedAt refuses to invent a value across a break", () => {
+  const samples = [
+    { t: 0, v: 10, segment: 1 },
+    { t: 10, v: 20, segment: 2 },
+  ];
+  expect(
+    interpolateConnectedAt(
+      samples,
+      5,
+      (sample) => sample.v,
+      (left, right) => left.segment === right.segment,
+    ),
+  ).toBeNull();
+});
+
+test("loss-only latency buckets remain hoverable", () => {
+  expect(
+    hasHoverMeasurements({
+      bytesPerSec: null,
+      downBytesPerSec: null,
+      upBytesPerSec: null,
+      rtt: null,
+      pingCount: 4,
+    }),
+  ).toBe(true);
+  expect(
+    hasHoverMeasurements({
+      bytesPerSec: null,
+      downBytesPerSec: null,
+      upBytesPerSec: null,
+      rtt: null,
+      pingCount: 0,
+    }),
+  ).toBe(false);
 });

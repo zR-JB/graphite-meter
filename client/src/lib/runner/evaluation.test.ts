@@ -1,6 +1,11 @@
 import { test, expect } from "bun:test";
-import { RunAccumulator } from "./evaluation";
+import {
+  MIN_PARTIAL_LATENCY_OUTCOMES,
+  MIN_PARTIAL_TRANSFER_EVIDENCE_MS,
+  RunAccumulator,
+} from "./evaluation";
 import type { AdaptiveDurationConfig } from "./contract";
+import { DEFAULT_CONFIG } from "../state/defaults";
 
 // Regression coverage for issue #84: adaptive throughput reports the final
 // contiguous stable plateau. Earlier plateaus are discarded after a stability
@@ -14,7 +19,7 @@ const adaptive: AdaptiveDurationConfig = {
   maxPhaseReductionRatio: 1,
   minLatencySamples: 0,
   minTransferSamples: 0,
-  glideMs: 100,
+  confirmationMs: 100,
 };
 
 /** Push one download sample and drive the same trackStableRun call site
@@ -29,6 +34,74 @@ function push(accum: RunAccumulator, value: number): void {
 function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
+
+function descriptiveStability(
+  rates: readonly number[],
+  chunkMs: readonly number[],
+): number {
+  const accum = new RunAccumulator();
+  accum.reset();
+  let traceIndex = 0;
+  for (const durationMs of chunkMs) {
+    const rate = rates[traceIndex % rates.length];
+    accum.pushThroughput(
+      "download",
+      "down",
+      rate,
+      (rate * durationMs) / 1_000,
+      durationMs / 1_000,
+    );
+    traceIndex++;
+  }
+  return accum.throughputResult("download", false).stabilityPct;
+}
+
+test("descriptive stability is invariant to callback chunking", () => {
+  const rates = [950, 1050, 950, 1050, 1050, 950, 1050, 950];
+  const wholeBuckets = Array(rates.length).fill(250);
+  const splitCallbacks = Array(rates.length * 5).fill(50);
+  const whole = descriptiveStability(rates, wholeBuckets);
+
+  const split = new RunAccumulator();
+  split.reset();
+  for (const rate of rates) {
+    for (let i = 0; i < 5; i++)
+      split.pushThroughput("download", "down", rate, rate * 0.05, 0.05);
+  }
+  expect(whole).toBeCloseTo(95, 8);
+  expect(split.throughputResult("download", false).stabilityPct).toBeCloseTo(
+    whole,
+    8,
+  );
+  expect(splitCallbacks.length).toBeGreaterThan(wholeBuckets.length);
+});
+
+test.each([
+  { cv: 5, rates: [950, 1050, 950, 1050, 1050, 950, 1050, 950], band: "high" },
+  {
+    cv: 15,
+    rates: [850, 1150, 850, 1150, 1150, 850, 1150, 850],
+    band: "medium",
+  },
+  {
+    cv: 30,
+    rates: [700, 1300, 700, 1300, 1300, 700, 1300, 700],
+    band: "low",
+  },
+])(
+  "descriptive stability reports approximately $cv% CV as the $band band",
+  ({ rates, cv, band }) => {
+    const stabilityPct = descriptiveStability(
+      rates,
+      Array(rates.length).fill(250),
+    );
+    expect(stabilityPct).toBeCloseTo(100 - cv, 5);
+    const score = stabilityPct / 100;
+    const displayBand =
+      score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
+    expect(displayBand).toBe(band);
+  },
+);
 
 test("adaptive throughput reports the final plateau after stability recovers", () => {
   const accum = new RunAccumulator();
@@ -45,7 +118,7 @@ test("adaptive throughput reports the final plateau after stability recovers", (
     push(accum, 1000);
   }
   // Break the first plateau, then settle at a higher rate. The old reducer
-  // remained anchored near the first plateau's glide-arm sample.
+  // remained anchored near the first plateau's confirmation candidate.
   for (let i = 0; i < 20; i++) {
     const v = i % 2 === 0 ? 100 : 2000;
     samples.push(v);
@@ -131,14 +204,31 @@ test("the final stable plateau is also weighted by represented time", () => {
   accum.reset();
 
   accum.pushThroughput("download", "down", 1000, 100, 0.1);
-  accum.trackStableRun("download", 1, adaptive);
+  accum.trackStableRun("download", 0, adaptive);
   accum.pushThroughput("download", "down", 100, 100, 1);
   accum.trackStableRun("download", 1, adaptive);
 
   const result = accum.throughputResult("download", true);
   expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(200 / 1.1, 6);
-  expect(result.meanBytesPerSec).not.toBeCloseTo(550, 6);
+  // The final observation opens stability and remains exact weighted evidence
+  // for the reported trailing plateau.
+  expect(result.meanBytesPerSec).toBeCloseTo(100, 6);
+});
+
+test("stability first established on the final one-way observation remains reducible", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+
+  accum.pushThroughput("upload", "up", 1000, 1000, 1);
+  accum.trackStableRun("upload", 0, adaptive);
+  accum.pushThroughput("upload", "up", 250, 500, 2, true);
+  accum.trackStableRun("upload", 1, adaptive);
+
+  const result = accum.throughputResult("upload", true);
+  expect(result.method).toBe("stable-window");
+  expect(result.meanBytesPerSec).toBeCloseTo(250, 6);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.serverAuthoritative).toBe(true);
 });
 
 test("bidirectional: down and up lanes reduce independently", () => {
@@ -207,12 +297,32 @@ test("bidirectional final plateau aligns each interleaved lane to shared stabili
   // Shared stability breaks on interleaved lane reports.
   pushBidi("down", 10, 0);
   pushBidi("up", 5, 0);
-  // Re-entry happens on upload. Sequence tags keep the preceding unstable
-  // download sample out until download reports inside the new plateau.
+  pushBidi("down", 500, 0);
+  // Re-entry happens on upload after both lanes have supplied fresh plateau
+  // evidence. Each lane's opening observation belongs to the stable result.
   pushBidi("up", 300, 1);
   pushBidi("down", 500, 1);
   pushBidi("up", 300, 1);
-  pushBidi("down", 500, 1);
+
+  const result = accum.bidirectionalResult(true);
+  expect(result.down.method).toBe("stable-window");
+  expect(result.up.method).toBe("stable-window");
+  expect(result.down.meanBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.up.meanBytesPerSec).toBeCloseTo(300, 6);
+});
+
+test("final bidirectional observation preserves the opening evidence in both lanes", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  const pushBidi = (dir: "down" | "up", value: number, score: number): void => {
+    accum.pushThroughput("bidirectional", dir, value, value, 1);
+    accum.trackStableRun("bidirectional", score, adaptive);
+  };
+
+  pushBidi("down", 100, 0);
+  pushBidi("up", 50, 0);
+  pushBidi("down", 500, 0);
+  pushBidi("up", 300, 1);
 
   const result = accum.bidirectionalResult(true);
   expect(result.down.method).toBe("stable-window");
@@ -242,4 +352,81 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   // The single stability window is fed by BOTH lanes' pushes: an erratic down
   // lane alone still drags the shared score down while up never wavers.
   expect(stableScore).toBeGreaterThan(erraticScore);
+});
+
+test("partial transfer keeps whole exact evidence only after its named floor", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushThroughput(
+    "download",
+    "down",
+    1_000,
+    700,
+    (MIN_PARTIAL_TRANSFER_EVIDENCE_MS - 100) / 1_000,
+  );
+  expect(accum.partialThroughputResult("download")).toBeNull();
+
+  accum.pushThroughput("download", "down", 1_000, 100, 0.1);
+  const result = accum.partialThroughputResult("download");
+  expect(result?.method).toBe("full-average");
+  expect(result?.totalBytes).toBe(800);
+  expect(result?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+});
+
+test("a recovery gap reaches only the final byte/time reduction", () => {
+  const accum = new RunAccumulator();
+  accum.pushThroughput("upload", "up", 1_000, 1_000, 1, true);
+  const controlSamples = accum.confidence("upload").sampleCount;
+  accum.recordRecoveryGap("upload", "up", 1);
+
+  const result = accum.partialThroughputResult("upload");
+  expect(result?.totalBytes).toBe(1_000);
+  expect(result?.fullAverageBytesPerSec).toBe(500);
+  // The gap did not add a second control observation, so a later source frame
+  // still has the same fixed-bucket result as it would without a handoff.
+  expect(accum.confidence("upload").sampleCount).toBe(controlSamples);
+});
+
+test("replacement checkpoint bytes enter only the exact final reduction", () => {
+  const accum = new RunAccumulator();
+  accum.recordRecoveryGap("upload", "up", 1);
+  accum.recordRecoveryBytes("upload", "up", 1_000);
+
+  const result = accum.partialThroughputResult("upload");
+  expect(result).not.toBeNull();
+  expect(result?.totalBytes).toBe(1_000);
+  expect(result?.fullAverageBytesPerSec).toBe(1_000);
+  expect(result?.serverAuthoritative).toBe(true);
+});
+
+test("partial latency needs named outcome and success evidence floors", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  for (let i = 0; i < MIN_PARTIAL_LATENCY_OUTCOMES - 1; i++)
+    accum.pushLatency(20, false, i > 0, i * 100);
+  expect(accum.partialLatencyResult(DEFAULT_CONFIG, 0)).toBeNull();
+
+  accum.pushLatency(21, false, false, 200);
+  const result = accum.partialLatencyResult(DEFAULT_CONFIG, 0);
+  expect(result?.method).toBe("full-average");
+  expect(result?.reportedMs).toBeCloseTo(20.5, 6);
+});
+
+test("partial bidirectional keeps each qualifying lane independently", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushThroughput("bidirectional", "down", 1_000, 800, 0.8);
+  accum.pushThroughput("bidirectional", "up", 1_000, 799, 0.799);
+  const result = accum.partialBidirectionalResult();
+  expect(result.down?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+  expect(result.up).toBeNull();
+});
+
+test("bufferbloat is unavailable without both idle and loaded latency evidence", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushLatency(20, false, false);
+  expect(accum.bufferbloatGrade()).toBeNull();
+  accum.pushLatency(40, true, false);
+  expect(accum.bufferbloatGrade()?.increaseMs).toBe(20);
 });

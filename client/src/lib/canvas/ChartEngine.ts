@@ -4,36 +4,58 @@
 import type {
   Phase,
   ThroughputSample,
-  LatencySample,
+  LatencyBucket,
 } from "../runner/contract";
 import type { CanvasEngine } from "./contract";
-import { niceCeil, niceDomain, sharedThroughputScale } from "../format";
-import { interpolateAt, lowerBoundAt } from "./hoverInterp";
+import { sharedThroughputScale } from "../format";
+import {
+  latencyBucketExceedsScale,
+  latencyScaleForHistory,
+} from "../runner/latencyScale";
+import {
+  hasHoverMeasurements,
+  interpolateConnectedAt,
+  lowerBoundAt,
+} from "./hoverInterp";
+import { throughputSamplesContinuous } from "./throughputContinuity";
 import { presentation, type PresentationHandle } from "./presentation";
+import { LatencyPhaseIndex } from "./latencyPhaseIndex";
+import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
+import {
+  chartLayout,
+  type ChartLayout,
+  type ChartViewport,
+} from "./chartLayout";
+
+const CHART_TIME_CAMERA_TAU_MS = 120;
+const CHART_TIME_CAMERA_EPSILON_MS = 4;
+const LATENCY_GLYPH_ENTER_MS = 90;
 
 export interface ChartData {
   throughput: ThroughputSample[];
-  latency: LatencySample[];
+  latency: LatencyBucket[];
+  /** Increments when latency history changes anywhere except a pure tail
+   *  append, invalidating incremental chart indexes. */
+  latencyRevision: number;
   /** False when latency is disabled: the latency line and right axis are
    *  suppressed. */
   latencyEnabled: boolean;
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
   phaseStartedAtMs: number;
+  /** Current runner measured timeline in ms. Presentation-only camera input. */
+  timelineT: number;
   /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
   /** Throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered upstream.
    *  Identical to store.displayScaleBytesPerSec so the gauge dial matches. */
   scaleBytesPerSec: number;
+  /** Shared robust latency ceiling, identical to the gauge. */
+  latencyScaleMs: number;
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
     Record<"download" | "upload" | "bidiDown" | "bidiUp", number>
   >;
-}
-
-export interface ChartFormatters {
-  throughput: (bytesPerSec: number) => string;
-  latency: (rtt: number) => string;
 }
 
 export interface HoverInfo {
@@ -45,15 +67,12 @@ export interface HoverInfo {
   /** Bidirectional's two concurrent lanes; null outside that phase. */
   downBytesPerSec: number | null;
   upBytesPerSec: number | null;
+  /** The real bucket glyph selected near the pointer, never an interpolated RTT. */
+  latencyX: number | null;
   rtt: number | null;
-}
-
-interface Viewport {
-  tMin: number;
-  tMax: number;
-  bytesPerSecMax: number;
-  rttMin: number; // latency axis floor (0 live; centered span in result mode)
-  rttMax: number;
+  pingCount: number;
+  lossCount: number;
+  latencyOverflow: boolean;
 }
 
 /** Per-lane average overlay drawn in result mode. */
@@ -72,18 +91,33 @@ interface PhaseSpan {
 
 type ThroughputLane = "download" | "upload" | "bidiDown" | "bidiUp";
 
-const PAD_L = 46;
-const PAD_R = 46;
-const PAD_T = 12;
-const PAD_B = 18;
+export interface ChartPresentation {
+  layout: ChartLayout;
+  latencyEnabled: boolean;
+  hasThroughputScale: boolean;
+  phaseLabels: ReadonlyArray<{ phase: ChartLabelPhase; x: number; y: number }>;
+  phaseStats: ReadonlyArray<{
+    bytesPerSec: number;
+    stroke: string;
+    x: number;
+    y: number;
+  }>;
+}
 
-const PHASE_NAME: Partial<Record<Phase, string>> = {
-  warmup: "WARM-UP",
-  latency: "PING",
-  download: "DOWNLOAD",
-  upload: "UPLOAD",
-  bidirectional: "BI-DIR",
-};
+export type ChartLabelPhase = Extract<
+  Phase,
+  "warmup" | "latency" | "download" | "upload" | "bidirectional"
+>;
+
+function isChartLabelPhase(phase: Phase): phase is ChartLabelPhase {
+  return (
+    phase === "warmup" ||
+    phase === "latency" ||
+    phase === "download" ||
+    phase === "upload" ||
+    phase === "bidirectional"
+  );
+}
 
 interface ThemeColors {
   download: string;
@@ -96,7 +130,6 @@ interface ThemeColors {
   warn: string;
   grid: string;
   textSoft: string;
-  panel: string;
   brand: string;
 }
 
@@ -113,15 +146,9 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
-/** Hex (#rgb/#rrggbb) → rgba() string at the given alpha. */
-function withAlpha(hex: string, a: number): string {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${a})`;
-}
-
 export class ChartEngine implements CanvasEngine {
   #get: () => ChartData;
-  #fmt: ChartFormatters;
+  #onPresentation: ((presentation: ChartPresentation) => void) | null;
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
   #scene: HTMLCanvasElement | null = null;
@@ -133,14 +160,21 @@ export class ChartEngine implements CanvasEngine {
   #w = 0;
   #h = 0;
 
-  #vp: Viewport = {
+  #vp: ChartViewport = {
     tMin: 0,
-    tMax: 6000,
+    tMax: 4000,
     bytesPerSecMax: 125_000,
     rttMin: 0,
     rttMax: 50,
   };
-  #vpInit = false;
+  #layout = chartLayout(1, 1, this.#vp);
+  #targetTMax = 4_000;
+  #displayTMax = 4_000;
+  #lastCameraAt = 0;
+  #cameraInitialized = false;
+  #reducedMotion = false;
+  #motionQuery: MediaQueryList | null = null;
+  #onMotionChange: ((event: MediaQueryListEvent) => void) | null = null;
 
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
@@ -153,18 +187,17 @@ export class ChartEngine implements CanvasEngine {
   #result = false; // frozen post-run result mode
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
   #hasThroughputScale = false;
-  #p95Cache = { len: -1, tMin: 0, v: 0 };
   #indexedThroughput = 0;
   #lastIndexedThroughput: ThroughputSample | undefined;
-  #indexedLatency = 0;
-  #lastIndexedLatency: LatencySample | undefined;
   #throughputByLane: Record<ThroughputLane, ThroughputSample[]> = {
     download: [],
     upload: [],
     bidiDown: [],
     bidiUp: [],
   };
-  #latencyByPhase = new Map<Phase, LatencySample[]>();
+  #latencyIndex = new LatencyPhaseIndex();
+  #latencyGlyphStartedAt = new WeakMap<LatencyBucket, number>();
+  #latencyGlyphActive = false;
 
   #colors: ThemeColors = {
     download: "#6db0b8",
@@ -177,13 +210,15 @@ export class ChartEngine implements CanvasEngine {
     warn: "#c4a568",
     grid: "rgba(211,219,227,0.05)",
     textSoft: "#6a717a",
-    panel: "#1c1f23",
     brand: "#6db0b8",
   };
 
-  constructor(get: () => ChartData, fmt: ChartFormatters) {
+  constructor(
+    get: () => ChartData,
+    onPresentation?: (presentation: ChartPresentation) => void,
+  ) {
     this.#get = get;
-    this.#fmt = fmt;
+    this.#onPresentation = onPresentation ?? null;
   }
 
   attach(canvas: HTMLCanvasElement): void {
@@ -191,7 +226,14 @@ export class ChartEngine implements CanvasEngine {
     this.#ctx = canvas.getContext("2d");
     this.#scene = document.createElement("canvas");
     this.#sceneCtx = this.#scene.getContext("2d");
-    this.#presentation = presentation.register(canvas, this.#render);
+    this.#motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    this.#reducedMotion = this.#motionQuery.matches;
+    this.#onMotionChange = (event) => {
+      this.#reducedMotion = event.matches;
+      this.wake();
+    };
+    this.#motionQuery.addEventListener("change", this.#onMotionChange);
+    this.#presentation = presentation.register(canvas, this.render);
     this.invalidateTheme();
   }
 
@@ -201,6 +243,10 @@ export class ChartEngine implements CanvasEngine {
   }
 
   destroy(): void {
+    if (this.#motionQuery && this.#onMotionChange)
+      this.#motionQuery.removeEventListener("change", this.#onMotionChange);
+    this.#motionQuery = null;
+    this.#onMotionChange = null;
     this.#presentation?.destroy();
     this.#presentation = null;
     this.#canvas = null;
@@ -236,46 +282,64 @@ export class ChartEngine implements CanvasEngine {
 
   hoverInfo(): HoverInfo | null {
     if (this.#hoverX == null) return null;
-    const plotW = this.#w - PAD_L - PAD_R;
+    const plotW = this.#layout.plot.right - this.#layout.plot.left;
     if (plotW <= 0) return null;
-    const x = Math.max(PAD_L, Math.min(this.#w - PAD_R, this.#hoverX));
-    const frac = (x - PAD_L) / plotW;
+    const x = Math.max(
+      this.#layout.plot.left,
+      Math.min(this.#layout.plot.right, this.#hoverX),
+    );
+    const frac = (x - this.#layout.plot.left) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
     const data = this.#get();
     this.#indexData(data);
     const bytesPerSec =
-      interpolateAt(this.#throughputByLane.download, t, (s) => s.bytesPerSec) ??
-      interpolateAt(this.#throughputByLane.upload, t, (s) => s.bytesPerSec);
-    const downBytesPerSec = interpolateAt(
+      interpolateConnectedAt(
+        this.#throughputByLane.download,
+        t,
+        (s) => s.bytesPerSec,
+        throughputSamplesContinuous,
+      ) ??
+      interpolateConnectedAt(
+        this.#throughputByLane.upload,
+        t,
+        (s) => s.bytesPerSec,
+        throughputSamplesContinuous,
+      );
+    const downBytesPerSec = interpolateConnectedAt(
       this.#throughputByLane.bidiDown,
       t,
       (s) => s.bytesPerSec,
+      throughputSamplesContinuous,
     );
-    const upBytesPerSec = interpolateAt(
+    const upBytesPerSec = interpolateConnectedAt(
       this.#throughputByLane.bidiUp,
       t,
       (s) => s.bytesPerSec,
+      throughputSamplesContinuous,
     );
-    let rtt: number | null = null;
-    for (const lane of this.#latencyByPhase.values()) {
-      rtt = interpolateAt(lane, t, (s) => s.rttMs);
-      if (rtt != null) break;
-    }
-    if (
-      bytesPerSec == null &&
-      downBytesPerSec == null &&
-      upBytesPerSec == null &&
-      rtt == null
-    )
-      return null;
-    return {
+    const latencyGlyph = data.latencyEnabled
+      ? nearestLatencyGlyph(this.#latencyIndex.values(), x, (bucketT) =>
+          this.#x(bucketT),
+        )
+      : null;
+    const latencyBucket = latencyGlyph?.bucket ?? null;
+    const latencyX = latencyGlyph?.x ?? null;
+    const rtt = latencyBucket?.medianRttMs ?? null;
+    const info: HoverInfo = {
       x,
       t,
       bytesPerSec,
       downBytesPerSec,
       upBytesPerSec,
+      latencyX,
       rtt,
+      pingCount: latencyBucket?.pingCount ?? 0,
+      lossCount: latencyBucket?.lossCount ?? 0,
+      latencyOverflow:
+        latencyBucket != null &&
+        latencyBucketExceedsScale(latencyBucket, this.#vp.rttMax),
     };
+    return hasHoverMeasurements(info) ? info : null;
   }
 
   #resolveColors(): void {
@@ -294,7 +358,6 @@ export class ChartEngine implements CanvasEngine {
       warn: g("--warn", "#c4a568"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
       textSoft: g("--text-soft", "#6a717a"),
-      panel: g("--surface-1", "#1c1f23"),
       brand: g("--brand", "#6db0b8"),
     };
     this.#invalidateGradients();
@@ -309,13 +372,13 @@ export class ChartEngine implements CanvasEngine {
     phase: "download" | "upload",
   ): CanvasGradient {
     if (this.#gradH !== this.#h) {
-      const bot = this.#h - PAD_B;
+      const bot = this.#layout.plot.bottom;
       const make = (rgb: {
         r: number;
         g: number;
         b: number;
       }): CanvasGradient => {
-        const grad = ctx.createLinearGradient(0, PAD_T, 0, bot);
+        const grad = ctx.createLinearGradient(0, this.#layout.plot.top, 0, bot);
         grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
         grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
         return grad;
@@ -327,14 +390,26 @@ export class ChartEngine implements CanvasEngine {
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
 
-  #render = (): boolean => {
-    if (this.#sceneDirty) {
+  render = (now: number): boolean => {
+    const dataDirty = this.#sceneDirty;
+    if (dataDirty) {
       this.#update();
-      this.#drawScene();
       this.#sceneDirty = false;
     }
+    const previousDisplayTMax = this.#displayTMax;
+    const cameraMoving = this.#stepCamera(now);
+    const cameraChanged = this.#displayTMax !== previousDisplayTMax;
+    if (cameraChanged) {
+      const d = this.#get();
+      this.#vp = { ...this.#vp, tMin: 0, tMax: this.#displayTMax };
+      this.#layout = chartLayout(this.#w, this.#h, this.#vp);
+      this.#publishPresentation(d);
+    }
+    if (dataDirty || cameraMoving || this.#latencyGlyphActive) {
+      this.#latencyGlyphActive = this.#drawScene(now);
+    }
     this.#compose();
-    return false;
+    return cameraMoving || this.#latencyGlyphActive;
   };
 
   #latestT(d: ChartData): number {
@@ -346,16 +421,18 @@ export class ChartEngine implements CanvasEngine {
   #resetRunState(): void {
     this.#spans = [];
     this.#lastPhase = null;
-    this.#vpInit = false;
+    this.#targetTMax = 4_000;
+    this.#displayTMax = 4_000;
+    this.#lastCameraAt = 0;
+    this.#cameraInitialized = false;
     this.#result = false;
     this.#hasThroughputScale = false;
-    this.#p95Cache = { len: -1, tMin: 0, v: 0 };
     this.#indexedThroughput = 0;
     this.#lastIndexedThroughput = undefined;
-    this.#indexedLatency = 0;
-    this.#lastIndexedLatency = undefined;
     for (const lane of Object.values(this.#throughputByLane)) lane.length = 0;
-    this.#latencyByPhase.clear();
+    this.#latencyIndex.clear();
+    this.#latencyGlyphStartedAt = new WeakMap();
+    this.#latencyGlyphActive = false;
   }
 
   #update(): void {
@@ -378,8 +455,6 @@ export class ChartEngine implements CanvasEngine {
         this.#spans[this.#spans.length - 1].t1 = phaseStart;
       this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
-
-      if (this.#vpInit) this.#vp.tMin = Math.max(this.#vp.tMin, phaseStart);
     }
 
     const latest = this.#latestT(d);
@@ -387,17 +462,10 @@ export class ChartEngine implements CanvasEngine {
       d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
     this.#result = complete;
 
-    let tMin: number;
-    let tMax: number;
-    if (complete) {
-      tMin = 0;
-      tMax = Math.max(latest * 1.02, 1000);
-    } else {
-      const span = this.#spans[this.#spans.length - 1];
-      const phaseStart = span ? span.t0 : 0;
-      tMin = phaseStart;
-      tMax = Math.max(latest + 2000, phaseStart + 4000);
-    }
+    const tMin = 0;
+    const targetTMax = complete
+      ? Math.max(latest * 1.02, 1_000)
+      : Math.max(Math.max(latest, d.timelineT) + 2_000, 4_000);
 
     const bytesPerSecMax =
       d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
@@ -405,72 +473,135 @@ export class ChartEngine implements CanvasEngine {
       d.scaleBytesPerSec !== sharedThroughputScale(0) ||
       d.throughput.length > 0;
 
-    let rttMin = 0;
-    let rttMax: number;
-    if (complete) {
-      const rtts: number[] = [];
-      for (const s of d.latency) if (!s.lost) rtts.push(s.rttMs);
-      const dom = niceDomain(rtts, { floor: 1 });
-      rttMin = dom.min;
-      rttMax = dom.max;
-    } else {
-      if (
-        d.latency.length !== this.#p95Cache.len ||
-        Math.abs(tMin - this.#p95Cache.tMin) > 500
-      ) {
-        this.#p95Cache = {
-          len: d.latency.length,
-          tMin,
-          v: this.#p95In(d.latency, tMin, tMax),
-        };
-      }
-      rttMax = niceCeil(Math.max(this.#p95Cache.v * 1.3, 20));
-    }
+    const rttMin = 0;
+    // The shared controller is intentionally recent while measuring. Terminal
+    // mode expands the X axis to the full run, so resolve its Y domain from the
+    // same full history instead of applying the last live window retroactively.
+    const rttMax = complete
+      ? latencyScaleForHistory(d.latency)
+      : d.latencyScaleMs;
 
-    this.#vp = { tMin, tMax, bytesPerSecMax, rttMin, rttMax };
-    this.#vpInit = true;
+    this.#targetTMax = targetTMax;
+    if (!this.#cameraInitialized) {
+      this.#displayTMax = this.#targetTMax;
+      this.#cameraInitialized = true;
+    }
+    this.#vp = {
+      tMin,
+      tMax: this.#displayTMax,
+      bytesPerSecMax,
+      rttMin,
+      rttMax,
+    };
+    this.#layout = chartLayout(this.#w, this.#h, this.#vp);
+    this.#publishPresentation(d);
   }
 
-  #p95In(samples: LatencySample[], t0: number, t1: number): number {
-    const rtts: number[] = [];
-    const lo = lowerBoundAt(samples, t0);
-    const hi = lowerBoundAt(samples, t1);
-    for (let i = lo; i < hi; i++)
-      if (!samples[i].lost) rtts.push(samples[i].rttMs);
-    if (!rtts.length) return 0;
-    rtts.sort((a, b) => a - b);
-    return rtts[Math.min(rtts.length - 1, Math.ceil(0.95 * rtts.length) - 1)];
+  #stepCamera(now: number): boolean {
+    if (!this.#cameraInitialized) {
+      this.#displayTMax = this.#targetTMax;
+      this.#cameraInitialized = true;
+      this.#lastCameraAt = now;
+      return false;
+    }
+
+    if (this.#reducedMotion) {
+      const changed =
+        Math.abs(this.#targetTMax - this.#displayTMax) >
+        CHART_TIME_CAMERA_EPSILON_MS;
+      this.#displayTMax = this.#targetTMax;
+      this.#lastCameraAt = now;
+      return changed;
+    }
+
+    const delta = this.#targetTMax - this.#displayTMax;
+    if (Math.abs(delta) <= CHART_TIME_CAMERA_EPSILON_MS) {
+      this.#displayTMax = this.#targetTMax;
+      this.#lastCameraAt = now;
+      return false;
+    }
+
+    const dt =
+      this.#lastCameraAt > 0
+        ? Math.max(0, Math.min(100, now - this.#lastCameraAt))
+        : 0;
+    this.#lastCameraAt = now;
+
+    const alpha = dt > 0 ? 1 - Math.exp(-dt / CHART_TIME_CAMERA_TAU_MS) : 1;
+
+    this.#displayTMax += delta * alpha;
+    return true;
   }
 
   /* Coordinate maps. */
   #x(t: number): number {
-    const plotW = this.#w - PAD_L - PAD_R;
-    return (
-      PAD_L + ((t - this.#vp.tMin) / (this.#vp.tMax - this.#vp.tMin)) * plotW
-    );
+    return this.#layout.x(t);
   }
   #yL(bytesPerSec: number): number {
-    const plotH = this.#h - PAD_T - PAD_B;
-    return PAD_T + (1 - bytesPerSec / this.#vp.bytesPerSecMax) * plotH;
+    return this.#layout.throughputY(bytesPerSec);
   }
   #yR(rtt: number): number {
-    const plotH = this.#h - PAD_T - PAD_B;
-    const span = this.#vp.rttMax - this.#vp.rttMin || 1;
-    return PAD_T + (1 - (rtt - this.#vp.rttMin) / span) * plotH;
+    return this.#layout.latencyY(rtt);
   }
 
-  #drawScene(): void {
+  #publishPresentation(data: ChartData): void {
+    if (!this.#onPresentation) return;
+    const { plot } = this.#layout;
+    let warmupLabelled = false;
+    const phaseLabels = this.#result
+      ? this.#spans.flatMap((span) => {
+          const x0 = Math.max(plot.left, this.#x(span.t0));
+          const x1 = Math.min(
+            plot.right,
+            this.#x(span.t1 === Infinity ? this.#vp.tMax : span.t1),
+          );
+          const width = x1 - x0 - 2;
+          const repeatWarmup = span.phase === "warmup" && warmupLabelled;
+          if (span.phase === "warmup") warmupLabelled = true;
+          return width > 56 && !repeatWarmup && isChartLabelPhase(span.phase)
+            ? [{ phase: span.phase, x: x0 + 3, y: plot.top + 9 }]
+            : [];
+        })
+      : [];
+    const phaseStats = this.#result
+      ? this.#phaseStats(data.throughput).flatMap((stat) => {
+          const x0 = Math.max(plot.left, this.#x(stat.t0));
+          const x1 = Math.min(plot.right, this.#x(stat.t1));
+          if (x1 <= x0) return [];
+          const y = this.#yL(stat.avg);
+          return [
+            {
+              bytesPerSec: stat.avg,
+              stroke: stat.stroke,
+              x: Math.min(x0 + 3, plot.right - 130),
+              y: y - 4 - 14 < plot.top ? y + 4 : y - 4 - 14,
+            },
+          ];
+        })
+      : [];
+    this.#onPresentation({
+      layout: this.#layout,
+      latencyEnabled: data.latencyEnabled,
+      hasThroughputScale: this.#hasThroughputScale,
+      phaseLabels,
+      phaseStats,
+    });
+  }
+
+  #drawScene(now: number): boolean {
     const ctx = this.#sceneCtx;
-    if (!ctx) return;
+    if (!ctx) return false;
     const d = this.#get();
     ctx.clearRect(0, 0, this.#w, this.#h);
 
     this.#drawGrid(ctx);
     this.#drawThroughput(ctx, d.throughput);
     if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
-    if (d.latencyEnabled) this.#drawLatency(ctx, d.latency);
+    const latencyAnimating = d.latencyEnabled
+      ? this.#drawLatency(ctx, d.latency, now)
+      : false;
     this.#drawPhases(ctx);
-    this.#drawAxesLabels(ctx, d.latencyEnabled);
+    return latencyAnimating;
   }
 
   #compose(): void {
@@ -491,7 +622,7 @@ export class ChartEngine implements CanvasEngine {
     this.#drawHover(ctx);
   }
 
-  /** Ribbon and label colour, null when the phase shows none. Warmup uses the
+  /** Ribbon colour, null when the phase shows none. Warmup uses the
    *  muted body-text grey so it recedes behind the lane colours. */
   #phaseColor(phase: Phase): string | null {
     if (phase === "warmup") return this.#colors.textSoft;
@@ -507,8 +638,8 @@ export class ChartEngine implements CanvasEngine {
     all: ThroughputSample[],
   ): void {
     for (const stat of this.#phaseStats(all)) {
-      const x0 = Math.max(PAD_L, this.#x(stat.t0));
-      const x1 = Math.min(this.#w - PAD_R, this.#x(stat.t1));
+      const x0 = Math.max(this.#layout.plot.left, this.#x(stat.t0));
+      const x1 = Math.min(this.#layout.plot.right, this.#x(stat.t1));
       if (x1 <= x0) continue;
       const yAvg = this.#yL(stat.avg);
 
@@ -522,30 +653,6 @@ export class ChartEngine implements CanvasEngine {
       ctx.lineTo(x1, Math.round(yAvg) + 0.5);
       ctx.stroke();
       ctx.restore();
-
-      const label = `avg ${this.#fmt.throughput(stat.avg)}`;
-      ctx.font = '700 9px "JetBrains Mono", monospace';
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
-      const padX = 5;
-      const chipH = 14;
-      const tw = ctx.measureText(label).width;
-      const chipW = tw + padX * 2;
-      const chipX = Math.min(x0 + 3, this.#w - PAD_R - chipW);
-      let chipY = yAvg - 4 - chipH;
-      if (chipY < PAD_T) chipY = yAvg + 4;
-      const baselineY = chipY + chipH - 4;
-
-      ctx.beginPath();
-      ctx.roundRect(chipX, chipY, chipW, chipH, 4);
-      ctx.fillStyle = this.#colors.panel;
-      ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = withAlpha(stat.stroke, 0.55);
-      ctx.stroke();
-
-      ctx.fillStyle = stat.stroke;
-      ctx.fillText(label, chipX + padX, baselineY);
     }
   }
 
@@ -581,14 +688,13 @@ export class ChartEngine implements CanvasEngine {
   }
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
-    const ry = this.#h - PAD_B + 4;
-    let warmupLabelled = false;
+    const ry = this.#layout.phaseRailY;
     for (const s of this.#spans) {
       const color = this.#phaseColor(s.phase);
       if (!color) continue;
-      const x0 = Math.max(PAD_L, this.#x(s.t0));
+      const x0 = Math.max(this.#layout.plot.left, this.#x(s.t0));
       const x1 = Math.min(
-        this.#w - PAD_R,
+        this.#layout.plot.right,
         this.#x(s.t1 === Infinity ? this.#vp.tMax : s.t1),
       );
       const w = x1 - x0 - 2;
@@ -599,92 +705,39 @@ export class ChartEngine implements CanvasEngine {
       ctx.beginPath();
       ctx.roundRect(x0, ry, w, 3, 1.5);
       ctx.fill();
-
-      const isRepeatWarmup = s.phase === "warmup" && warmupLabelled;
-      if (this.#result && w > 56 && !isRepeatWarmup) {
-        ctx.globalAlpha = 0.62;
-        ctx.font = '700 9px "JetBrains Mono", monospace';
-        ctx.textAlign = "left";
-        ctx.textBaseline = "alphabetic";
-        ctx.fillText(PHASE_NAME[s.phase] ?? "", x0 + 3, PAD_T + 9);
-      }
-      if (s.phase === "warmup") warmupLabelled = true;
     }
     ctx.globalAlpha = 1;
   }
 
-  /** Adaptive nice step (ms) targeting ~5 vertical divisions for any span. */
-  #niceTimeStep(target: number): number {
-    const steps = [1000, 2000, 5000, 10000, 20000, 30000, 60000];
-    for (const s of steps) if (s >= target) return s;
-    return 60000;
-  }
-
   #drawGrid(ctx: CanvasRenderingContext2D): void {
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
-    const left = PAD_L;
-    const right = this.#w - PAD_R;
-    const step = this.#niceTimeStep((this.#vp.tMax - this.#vp.tMin) / 5);
-    const startT = Math.ceil(this.#vp.tMin / step) * step;
+    const { plot } = this.#layout;
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = this.#colors.grid;
     ctx.globalAlpha = 0.55;
-    const minorStep = step / 4;
-    const minorStartT = Math.ceil(this.#vp.tMin / minorStep) * minorStep;
     ctx.beginPath();
-    for (let t = minorStartT; t <= this.#vp.tMax; t += minorStep) {
-      const x = Math.round(this.#x(t)) + 0.5;
-      if (x < left || x > right) continue;
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, bot);
+    for (const tick of this.#layout.timeMinorTicks) {
+      ctx.moveTo(tick.x, plot.top);
+      ctx.lineTo(tick.x, plot.bottom);
     }
-    for (let i = 1; i < 16; i++) {
-      if (i % 4 === 0) continue; // major line, drawn below
-      const y = Math.round(top + ((bot - top) * i) / 16) + 0.5;
-      ctx.moveTo(left, y);
-      ctx.lineTo(right, y);
+    for (const y of this.#layout.horizontalMinorLines) {
+      ctx.moveTo(plot.left, y);
+      ctx.lineTo(plot.right, y);
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     ctx.strokeStyle = this.#colors.grid;
-    ctx.fillStyle = this.#colors.textSoft;
-    ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.textAlign = "center";
     ctx.beginPath();
-    for (let t = startT; t <= this.#vp.tMax; t += step) {
-      const x = Math.round(this.#x(t)) + 0.5;
-      if (x < left || x > right) continue;
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, bot);
-      const s = t / 1000;
-      ctx.fillText(
-        Number.isInteger(s) ? `${s}s` : `${s.toFixed(1)}s`,
-        x,
-        this.#h - 5,
-      );
+    for (const tick of this.#layout.timeMajorTicks) {
+      ctx.moveTo(tick.x, plot.top);
+      ctx.lineTo(tick.x, plot.bottom);
     }
-    for (let i = 1; i <= 3; i++) {
-      const y = Math.round(top + ((bot - top) * i) / 4) + 0.5;
-      ctx.moveTo(left, y);
-      ctx.lineTo(right, y);
+    for (const y of this.#layout.horizontalMajorLines) {
+      ctx.moveTo(plot.left, y);
+      ctx.lineTo(plot.right, y);
     }
     ctx.stroke();
-  }
-
-  #smoothTo(
-    ctx: CanvasRenderingContext2D,
-    pts: { x: number; y: number }[],
-  ): void {
-    for (let i = 0; i < pts.length - 1; i++) {
-      const xc = (pts[i].x + pts[i + 1].x) / 2;
-      const yc = (pts[i].y + pts[i + 1].y) / 2;
-      ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc);
-    }
-    const last = pts[pts.length - 1];
-    ctx.lineTo(last.x, last.y);
   }
 
   #indexData(data: ChartData): void {
@@ -710,24 +763,7 @@ export class ChartEngine implements CanvasEngine {
     this.#indexedThroughput = all.length;
     this.#lastIndexedThroughput = all.at(-1);
 
-    const latency = data.latency;
-    if (
-      latency.length < this.#indexedLatency ||
-      (latency.length === this.#indexedLatency &&
-        latency.at(-1) !== this.#lastIndexedLatency)
-    ) {
-      this.#indexedLatency = 0;
-      this.#latencyByPhase.clear();
-    }
-    for (let i = this.#indexedLatency; i < latency.length; i++) {
-      const sample = latency[i];
-      if (sample.lost) continue;
-      const lane = this.#latencyByPhase.get(sample.phase) ?? [];
-      if (!lane.length) this.#latencyByPhase.set(sample.phase, lane);
-      lane.push(sample);
-    }
-    this.#indexedLatency = latency.length;
-    this.#lastIndexedLatency = latency.at(-1);
+    this.#latencyIndex.update(data.latency, data.latencyRevision);
   }
 
   #throughputLanes(): {
@@ -747,13 +783,15 @@ export class ChartEngine implements CanvasEngine {
     all: ThroughputSample[],
   ): void {
     if (!all.length) return;
-    const bot = this.#h - PAD_B;
+    const bot = this.#layout.plot.bottom;
     const tMin = this.#vp.tMin;
     const tMax = this.#vp.tMax;
     for (const lane of this.#throughputLanes()) {
       const stroke =
         lane.area === "download" ? this.#colors.download : this.#colors.upload;
-      const pts: { x: number; y: number }[] = [];
+      const segments: { x: number; y: number }[][] = [];
+      let pts: { x: number; y: number }[] = [];
+      let previous: ThroughputSample | null = null;
       const lo = Math.max(0, lowerBoundAt(lane.samples, tMin) - 1);
       const hi = Math.min(
         lane.samples.length,
@@ -761,106 +799,127 @@ export class ChartEngine implements CanvasEngine {
       );
       for (let i = lo; i < hi; i++) {
         const s = lane.samples[i];
+        if (previous && !throughputSamplesContinuous(previous, s)) {
+          if (pts.length) segments.push(pts);
+          pts = [];
+        }
         pts.push({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) });
+        previous = s;
       }
-      if (pts.length < 2) continue;
+      if (pts.length) segments.push(pts);
+      for (const segment of segments) {
+        if (segment.length < 2) continue;
+        ctx.fillStyle = this.#areaGrad(ctx, lane.area);
+        ctx.beginPath();
+        ctx.moveTo(segment[0].x, bot);
+        ctx.lineTo(segment[0].x, segment[0].y);
+        for (let i = 1; i < segment.length; i++)
+          ctx.lineTo(segment[i].x, segment[i].y);
+        ctx.lineTo(segment.at(-1)!.x, bot);
+        ctx.closePath();
+        ctx.fill();
 
-      ctx.fillStyle = this.#areaGrad(ctx, lane.area);
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, bot);
-      ctx.lineTo(pts[0].x, pts[0].y);
-      this.#smoothTo(ctx, pts);
-      ctx.lineTo(pts[pts.length - 1].x, bot);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = 1.75;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      this.#smoothTo(ctx, pts);
-      ctx.stroke();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1.75;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(segment[0].x, segment[0].y);
+        for (let i = 1; i < segment.length; i++)
+          ctx.lineTo(segment[i].x, segment[i].y);
+        ctx.stroke();
+      }
     }
   }
 
-  #drawLatency(ctx: CanvasRenderingContext2D, all: LatencySample[]): void {
-    if (all.length < 2) return;
+  #drawLatency(
+    ctx: CanvasRenderingContext2D,
+    all: LatencyBucket[],
+    now: number,
+  ): boolean {
+    if (!all.length) return false;
     ctx.lineWidth = 1;
+    let animating = false;
     const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
-    let prevPhase: Phase | null = null;
-    const segment: Array<{ t: number; rttMs: number; underLoad: boolean }> = [];
-    const drawSegment = (): void => {
-      if (segment.length < 2) {
-        segment.length = 0;
-        return;
-      }
-      const pts = segment.map((p) => ({
-        x: this.#x(p.t),
-        y: this.#yR(p.rttMs),
-      }));
-      ctx.strokeStyle = segment[0].underLoad
-        ? this.#colors.warn
-        : this.#colors.signal;
-      ctx.lineJoin = "round";
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      this.#smoothTo(ctx, pts);
-      ctx.stroke();
-      segment.length = 0;
-    };
     for (let i = lo; i < hi; i++) {
       const s = all[i];
-      if (
-        s.lost ||
-        (prevPhase !== null && s.phase !== prevPhase) ||
-        (segment.length > 0 &&
-          s.underLoad !== segment[segment.length - 1].underLoad)
-      ) {
-        drawSegment();
-        prevPhase = null;
+      const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
+      let alpha = 1;
+      let radiusScale = 1;
+      if (!this.#result) {
+        let startedAt = this.#latencyGlyphStartedAt.get(s);
+        if (startedAt == null) {
+          startedAt = now;
+          this.#latencyGlyphStartedAt.set(s, now);
+        }
+        const p = Math.min(
+          1,
+          Math.max(0, (now - startedAt) / LATENCY_GLYPH_ENTER_MS),
+        );
+        const eased = 1 - (1 - p) * (1 - p);
+        alpha = 0.65 + 0.35 * eased;
+        radiusScale = 0.85 + 0.15 * eased;
+        animating ||= p < 1;
       }
-      if (s.lost) continue;
-      segment.push({ t: s.t, rttMs: s.rttMs, underLoad: s.underLoad });
-      prevPhase = s.phase;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      if (s.medianRttMs != null) {
+        const x = this.#x(s.t);
+        const overflow = latencyBucketExceedsScale(s, this.#vp.rttMax);
+        const clippedMedian = s.medianRttMs >= this.#vp.rttMax;
+        const overflowGlyph = overflow
+          ? latencyOverflowGlyph(this.#layout.plot.top)
+          : null;
+        const medianY =
+          clippedMedian && overflowGlyph
+            ? overflowGlyph.dot.y
+            : this.#yR(s.medianRttMs);
+        const spike = s.maxRttMs ?? s.p95RttMs;
+        if (spike != null && spike > s.medianRttMs && !clippedMedian) {
+          ctx.strokeStyle = color;
+          ctx.beginPath();
+          ctx.moveTo(x, medianY);
+          ctx.lineTo(x, this.#yR(spike));
+          ctx.stroke();
+        }
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, medianY, 2.25 * radiusScale, 0, Math.PI * 2);
+        ctx.fill();
+        if (overflowGlyph) {
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.moveTo(x, overflowGlyph.arrow.tipY);
+          ctx.lineTo(
+            x - overflowGlyph.arrow.halfWidth,
+            overflowGlyph.arrow.baseY,
+          );
+          ctx.lineTo(
+            x + overflowGlyph.arrow.halfWidth,
+            overflowGlyph.arrow.baseY,
+          );
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+      if (s.lossCount > 0) {
+        const x = this.#x(s.t);
+        ctx.fillStyle = this.#colors.warn;
+        ctx.fillRect(x - 1.5, this.#layout.plot.bottom - 5, 3, 5);
+      }
+      ctx.restore();
     }
-    drawSegment();
-  }
-
-  #drawAxesLabels(
-    ctx: CanvasRenderingContext2D,
-    latencyEnabled: boolean,
-  ): void {
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
-    ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.fillStyle = this.#colors.textSoft;
-    // Left: throughput. Right: latency (omitted when latency is disabled).
-    for (let i = 0; i <= 2; i++) {
-      const frac = i / 2; // 0 top, 1 bottom
-      const y = top + (bot - top) * frac;
-      const bytesPerSec = this.#vp.bytesPerSecMax * (1 - frac);
-      ctx.textAlign = "left";
-      if (this.#hasThroughputScale) {
-        ctx.fillText(this.#fmt.throughput(bytesPerSec), 4, y + 3);
-      }
-      if (latencyEnabled) {
-        const rtt =
-          this.#vp.rttMin + (this.#vp.rttMax - this.#vp.rttMin) * (1 - frac);
-        ctx.textAlign = "right";
-        ctx.fillText(this.#fmt.latency(rtt), this.#w - 4, y + 3);
-      }
-    }
+    return animating;
   }
 
   #drawHover(ctx: CanvasRenderingContext2D): void {
     if (this.#hoverX == null) return;
-    const x = Math.max(PAD_L, Math.min(this.#w - PAD_R, this.#hoverX));
-    const top = PAD_T;
-    const bot = this.#h - PAD_B;
+    const x = Math.max(
+      this.#layout.plot.left,
+      Math.min(this.#layout.plot.right, this.#hoverX),
+    );
+    const { top, bottom: bot } = this.#layout.plot;
     ctx.strokeStyle = this.#colors.brand;
     ctx.lineWidth = 1;
     const gx = Math.round(x) + 0.5;
@@ -885,6 +944,18 @@ export class ChartEngine implements CanvasEngine {
       dot(this.#yL(info.downBytesPerSec), this.#colors.download);
     if (info.upBytesPerSec != null)
       dot(this.#yL(info.upBytesPerSec), this.#colors.upload);
-    if (info.rtt != null) dot(this.#yR(info.rtt), this.#colors.warn);
+    if (info.rtt != null && info.latencyX != null) {
+      ctx.fillStyle = this.#colors.warn;
+      ctx.beginPath();
+      const overflowGlyph = info.latencyOverflow
+        ? latencyOverflowGlyph(this.#layout.plot.top)
+        : null;
+      const latencyY =
+        overflowGlyph && info.rtt >= this.#vp.rttMax
+          ? overflowGlyph.dot.y
+          : this.#yR(info.rtt);
+      ctx.arc(info.latencyX, latencyY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

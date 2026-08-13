@@ -36,16 +36,20 @@ test("uploadPoolBytes: an unknown device gets a bounded reservoir", () => {
   expect(uploadPoolBytes(128)).toBe(2 * 1024 * 1024);
 });
 
-test("recoverableStatus: terminal statuses (429/413/503/410) are not recoverable", () => {
+test("recoverableStatus: explicit client and protocol refusals are terminal", () => {
+  expect(recoverableStatus(400)).toBe(false);
+  expect(recoverableStatus(401)).toBe(false);
+  expect(recoverableStatus(403)).toBe(false);
+  expect(recoverableStatus(404)).toBe(false);
   expect(recoverableStatus(429)).toBe(false);
   expect(recoverableStatus(413)).toBe(false);
   expect(recoverableStatus(503)).toBe(false);
   expect(recoverableStatus(410)).toBe(false);
 });
 
-test("recoverableStatus: everything else (incl. 500) is treated transient", () => {
+test("recoverableStatus: network, timeout, and generic server failures retry", () => {
+  expect(recoverableStatus(0)).toBe(true);
+  expect(recoverableStatus(408)).toBe(true);
   expect(recoverableStatus(500)).toBe(true);
   expect(recoverableStatus(502)).toBe(true);
-  expect(recoverableStatus(404)).toBe(true);
-  expect(recoverableStatus(0)).toBe(true);
 });

@@ -19,7 +19,8 @@
       <p>
         Verbose, component-tagged console diagnostics — per-stream raw
         throughput (<code>dl-worker#n</code> / <code>ul-worker#n</code>), the
-        aggregated pool rate, and the de-aliasing EMA. Pair with the server's
+        aggregated pool rate, and the transfer-size tuning EWMA. Pair with the
+        server's
         <code>-verbose</code> flag to compare client- and server-side rates against
         the kernel interface.
       </p>

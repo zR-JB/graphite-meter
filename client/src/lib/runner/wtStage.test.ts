@@ -135,7 +135,7 @@ function baseConfig(): RunnerConfig {
       maxPhaseReductionRatio: 0,
       minLatencySamples: 1,
       minTransferSamples: 1,
-      glideMs: 0,
+      confirmationMs: 0,
     },
     visualization: { throughputMaxBytesPerSec: "auto" },
   };
@@ -209,6 +209,11 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
         throughput.push({ dir, bytes });
       },
       ingestLatency() {},
+      recordRecoveryGap() {},
+      recordRecoveryBytes() {},
+      presentationRate() {
+        return 0;
+      },
       stall() {},
       resume() {},
     } as unknown as CoreHost;

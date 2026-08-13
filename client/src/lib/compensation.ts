@@ -29,9 +29,64 @@ export interface CompensationEstimate {
   totalMultiplier: number;
   confidence: CompensationConfidence;
   factors: CompensationFactor[];
+  /** Provenance for the exact assumptions that produced this estimate. */
+  profile: ConnectionProfile;
   transport: CompensationTransport;
   assumptions: string[];
   available: boolean;
+}
+
+/** Combine independently modeled directions without re-estimating their
+ * canonical goodput. This keeps bidirectional wire occupancy equal to the sum
+ * of its lanes even when their measured rates differ. */
+export function combineCompensationEstimates(
+  estimates: readonly CompensationEstimate[],
+): CompensationEstimate {
+  const active = estimates.filter(
+    (estimate) => estimate.measuredBytesPerSec > 0,
+  );
+  const representative = active[0] ?? estimates[0];
+  const measuredBytesPerSec = estimates.reduce(
+    (sum, estimate) => sum + estimate.measuredBytesPerSec,
+    0,
+  );
+  const estimatedBytesPerSec = estimates.reduce(
+    (sum, estimate) => sum + estimate.estimatedBytesPerSec,
+    0,
+  );
+  const confidenceRank: Record<CompensationConfidence, number> = {
+    high: 0,
+    medium: 1,
+    low: 2,
+  };
+  const confidence = active.reduce<CompensationConfidence>(
+    (lowest, estimate) =>
+      confidenceRank[estimate.confidence] > confidenceRank[lowest]
+        ? estimate.confidence
+        : lowest,
+    "high",
+  );
+
+  return {
+    measuredBytesPerSec,
+    estimatedBytesPerSec,
+    lowerBytesPerSec: estimates.reduce(
+      (sum, estimate) => sum + estimate.lowerBytesPerSec,
+      0,
+    ),
+    upperBytesPerSec: estimates.reduce(
+      (sum, estimate) => sum + estimate.upperBytesPerSec,
+      0,
+    ),
+    totalMultiplier:
+      measuredBytesPerSec > 0 ? estimatedBytesPerSec / measuredBytesPerSec : 1,
+    confidence,
+    factors: representative?.factors ?? [],
+    profile: representative?.profile ?? "lan",
+    transport: representative?.transport ?? "http1-clear",
+    assumptions: representative?.assumptions ?? [],
+    available: estimates.every((estimate) => estimate.available),
+  };
 }
 
 const WIRE = {
@@ -112,7 +167,12 @@ export function estimateLiveCompensation(
       ? transportFromProtocol(detectedProtocol, secure)
       : config.transport;
   if (bytesPerSec <= 0 || config.profile === "loopback")
-    return identity(bytesPerSec, transport, config.profile !== "loopback");
+    return identity(
+      bytesPerSec,
+      transport,
+      config.profile,
+      config.profile !== "loopback",
+    );
 
   const raw = config.params;
   const params = {
@@ -243,6 +303,7 @@ export function estimateLiveCompensation(
     totalMultiplier: central,
     confidence: low === high ? "high" : "medium",
     factors,
+    profile: config.profile,
     transport,
     assumptions: [
       `${params.ipVersion === 6 ? "IPv6" : "IPv4"}, ${params.mtuBytes} B MTU`,
@@ -268,6 +329,7 @@ function factor(
 function identity(
   bytesPerSec: number,
   transport: CompensationTransport,
+  profile: ConnectionProfile,
   available = true,
 ): CompensationEstimate {
   return {
@@ -278,6 +340,7 @@ function identity(
     totalMultiplier: 1,
     confidence: "high",
     factors: [],
+    profile,
     transport,
     assumptions: [],
     available,

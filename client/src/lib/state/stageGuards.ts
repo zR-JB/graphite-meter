@@ -1,15 +1,30 @@
 // Pure helpers, outside the rune-based store so bun tests can import them
 // without the Svelte runtime.
-import type { Phase, ThroughputSample } from "../runner/contract";
+import type { ThroughputSample, TransportRole } from "../runner/contract";
+
+const MEASURED_STAGE_ORDER = ["latency", "download", "upload"] as const;
+
+export function canToggleMeasuredStage(
+  stage: "latency" | "download" | "upload",
+  isRunning: boolean,
+  phaseStage: TransportRole | null,
+): boolean {
+  if (!isRunning) return true;
+
+  const currentIndex = MEASURED_STAGE_ORDER.indexOf(
+    phaseStage as (typeof MEASURED_STAGE_ORDER)[number],
+  );
+  const stageIndex = MEASURED_STAGE_ORDER.indexOf(stage);
+
+  return currentIndex >= 0 && stageIndex > currentIndex;
+}
 
 export function canDisableBidirectional(
-  phase: Phase,
+  phaseStage: TransportRole | null,
   isRunning: boolean,
 ): boolean {
-  // Bidirectional runs last. It can be removed until its own phase has started;
-  // re-enabling is a Settings-only action.
   if (!isRunning) return true;
-  return phase !== "bidirectional";
+  return phaseStage !== "bidirectional";
 }
 
 // A sample tagged with another phase must not leak into this phase's gauge.

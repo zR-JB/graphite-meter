@@ -13,7 +13,8 @@
     "check:client": "svelte-check --tsconfig ./tsconfig.check.json",
     "check:node": "tsc --noEmit -p ./tsconfig.node.json",
     "test": "bun test",
-    "test:browser": "bun run build:bundle && playwright test -c playwright.browser.config.ts",
+    "build:browser": "bun -e \"process.env.GM_CLIENT_ENGINE='real'; process.env.GM_CLIENT_ALLOW_DUMMY='1'; process.env.GM_CLIENT_DEV_TOOLS='1'; process.env.GM_CLIENT_BUILD_LABEL='browser-test'; const result = Bun.spawnSync(['bun', 'run', 'build:bundle'], { cwd: '.', stdout: 'inherit', stderr: 'inherit' }); process.exit(result.exitCode);\"",
+    "test:browser": "bun run build:browser && playwright test -c playwright.browser.config.ts",
     "test:e2e": "playwright test -c playwright.e2e.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

@@ -329,8 +329,7 @@ async function uploadLane(block: Uint8Array<ArrayBuffer>): Promise<void> {
   }
 }
 
-/** Read the one stream the server opens on an upload session as the progress
- *  feed and relay its records. */
+/** Read the server's progress feed and any later refusal control stream. */
 function openProgress(
   progressUrl?: string,
   headers?: Record<string, string>,
@@ -340,19 +339,7 @@ function openProgress(
     fail(false, "upload progress route missing");
     return false;
   }
-  const incoming = session.incomingUnidirectionalStreams.getReader();
-  void incoming
-    .read()
-    .then(({ value, done }) => {
-      if (done || !value) throw new Error("no progress stream");
-      return readProgress(value as ReadableStream);
-    })
-    .catch((err: unknown) => {
-      // A transport-level break is the session dying: recoverable, the owner
-      // restarts the session and the server re-opens the feed. Only an error
-      // record inside the feed is a protocol refusal, posted by readProgress.
-      if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
-    });
+  void readProgressStreams(session.incomingUnidirectionalStreams.getReader());
   finalize = async (): Promise<void> => {
     await fetch(progressUrl, {
       method: "DELETE",
@@ -362,6 +349,31 @@ function openProgress(
     }).catch(() => {});
   };
   return true;
+}
+
+async function readProgressStreams(
+  incoming: ReadableStreamDefaultReader<unknown>,
+): Promise<void> {
+  try {
+    let opened = false;
+    for (;;) {
+      const { value, done } = await incoming.read();
+      if (done || !value) {
+        if (!opened && !stopped) throw new Error("no progress stream");
+        return;
+      }
+      opened = true;
+      // The primary feed remains open through the stage. Keep accepting later
+      // server-opened control streams concurrently so an explicit lane refusal
+      // reaches the authoritative recovery classifier immediately.
+      void readProgress(value as ReadableStream);
+    }
+  } catch (err) {
+    // A transport-level break is the session dying: recoverable, the owner
+    // restarts the session and the server re-opens the feed. An error record
+    // inside a stream is relayed by readProgress as structural evidence.
+    if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
+  }
 }
 
 async function readProgress(

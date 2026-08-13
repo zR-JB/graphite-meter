@@ -224,11 +224,11 @@ jobs:
       - name: Install
         working-directory: client
         run: bun install --frozen-lockfile
-      # Chromium alone: QUIC ignores ignoreHTTPSErrors, and Firefox reaches h3
-      # only through a system trust anchor.
-      - name: Install browser
+      # H3 remains Chromium-only: QUIC ignores ignoreHTTPSErrors and Firefox
+      # needs a system trust anchor. The H1-clear upload path runs on both.
+      - name: Install browsers
         working-directory: client
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps chromium firefox
       # The stubbed suite never reaches a backend, so this is the only coverage
       # the browser half of a transport has.
       - name: Real transports against a real server

@@ -1,7 +1,7 @@
 // The server-authoritative upload meter: the /upload/progress control channel
 // and the server byte/time counters derived from it.
 import type { CoreHost } from "../core";
-import type { PhaseActivity } from "../contract";
+import type { PhaseActivity, RecoveryCause } from "../contract";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { uploadProgressWorker, type AuthRequiredMsg } from "./workerPool";
@@ -19,7 +19,7 @@ type ProgressOutMsg =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
-  | { type: "fatal"; detail: string }
+  | { type: "fatal"; detail: string; cause: RecoveryCause }
   | { type: "stall"; detail: string }
   | { type: "resume" };
 
@@ -29,7 +29,6 @@ const PROGRESS_ESTABLISH_TIMEOUT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 export interface UploadProgressLane {
   stage: PhaseActivity["stage"];
   measuring: boolean;
-  stageSawBytes: boolean;
 }
 
 export interface UploadProgressDeps {
@@ -41,9 +40,15 @@ export interface UploadProgressDeps {
   lane: () => UploadProgressLane | undefined;
   transferActive: () => boolean;
   discardTransfer: () => void;
-  setLaneStalled: (stalled: boolean, detail?: string) => void;
+  setLaneStalled: (
+    stalled: boolean,
+    detail?: string,
+    cause?: RecoveryCause,
+  ) => void;
   /** Positive receiver-authoritative bytes for the upload direction. */
   noteLaneProgress?: (bytes: number) => void;
+  /** Current authoritative presentation output after an advancing checkpoint. */
+  authoritativePresentation?: (bytesPerSec: number) => void;
 }
 
 export class UploadProgressChannel {
@@ -67,6 +72,30 @@ export class UploadProgressChannel {
   #haveBaseline = false;
   /** True once the terminal complete record landed for this stage. */
   #completed = false;
+  /** Local ownership token for a server upload id/feed pair. */
+  #generation = 0;
+  /** Rotation handoff awaiting its first advancing replacement counter. */
+  #recoveryGapStartedAt: number | null = null;
+
+  get generation(): number {
+    return this.#generation;
+  }
+
+  #nextGeneration(): number {
+    return ++this.#generation;
+  }
+
+  /** Reject callbacks from the current feed before its owner detaches it. */
+  invalidateGeneration(): void {
+    this.#nextGeneration();
+  }
+
+  /** Start one reducer-only handoff interval. The interval closes only on a
+   * positive replacement counter, never on feed/socket establishment. */
+  beginRecoveryGap(): void {
+    if (this.#recoveryGapStartedAt === null)
+      this.#recoveryGapStartedAt = performance.now();
+  }
 
   constructor(deps: UploadProgressDeps) {
     this.#deps = deps;
@@ -77,6 +106,7 @@ export class UploadProgressChannel {
   prime(stage: PhaseActivity["stage"], uploadId: string): Promise<boolean> {
     this.#releaseWorker();
     this.#resetCounters();
+    const generation = this.#nextGeneration();
 
     if (!uploadId) return Promise.resolve(false);
     const host = this.#deps.host();
@@ -101,16 +131,12 @@ export class UploadProgressChannel {
         resolve(established);
       };
       const timer = setTimeout(() => {
-        host.failStage(
-          stage,
-          "connection-lost",
-          "upload progress channel could not be established",
-        );
         finish(false);
       }, PROGRESS_ESTABLISH_TIMEOUT_MS);
       this.#ready = { finish };
     });
     worker.onmessage = (e: MessageEvent<ProgressOutMsg>): void => {
+      if (generation !== this.#generation) return;
       if (e.data.type === "open") this.#ready?.finish(true);
       this.#onMessage(e.data);
     };
@@ -138,6 +164,7 @@ export class UploadProgressChannel {
     this.#external?.finish("superseded");
     this.#resetCounters();
     this.#releaseWorker();
+    this.#nextGeneration();
     this.#finalize = finalize;
     return new Promise((resolve) => {
       const finish = (state: "open" | "timeout" | "superseded"): void => {
@@ -158,7 +185,11 @@ export class UploadProgressChannel {
    *  messages reach the main thread through the lane channel. A refusal ends
    *  the attach as surely as a ready record: leaving it pending would fail the
    *  stage once for the refusal and again when the wait times out. */
-  accept(msg: ProgressOutMsg | AuthRequiredMsg): void {
+  accept(
+    msg: ProgressOutMsg | AuthRequiredMsg,
+    generation = this.#generation,
+  ): void {
+    if (generation !== this.#generation) return;
     if (msg.type === "open") this.#external?.finish("open");
     else if (msg.type === "fatal") this.#external?.finish("superseded");
     this.#onMessage(msg);
@@ -175,6 +206,7 @@ export class UploadProgressChannel {
    *  DELETE and waits for the terminal complete record; without it the feed is
    *  simply dropped. Exactly one of the two feed kinds is ever live. */
   teardown(finalize: boolean): Promise<void> {
+    this.#recoveryGapStartedAt = null;
     this.#external?.finish("superseded");
     this.#ready?.finish(false);
     this.#ready = null;
@@ -264,13 +296,19 @@ export class UploadProgressChannel {
     if (msg.type === "fatal") {
       this.#ready?.finish(false);
       if (lane.measuring) {
-        host.fail(
-          "connection-lost",
-          `upload progress failed: ${msg.detail}`,
-          msg.detail,
-        );
+        if (
+          msg.cause === "capacity-refusal" ||
+          msg.cause === "owner-mismatch" ||
+          msg.cause === "protocol-refusal"
+        ) {
+          host.failStage(lane.stage, "protocol-error", msg.detail, "up");
+        } else {
+          // The core owns expiry. An invalid id is the one cause that later
+          // recovery may rotate; a feed opening again does not clear this edge.
+          this.#deps.setLaneStalled(true, msg.detail, msg.cause);
+        }
       } else {
-        host.failStage(lane.stage, "connection-lost", msg.detail);
+        host.failStage(lane.stage, "protocol-error", msg.detail, "up");
       }
       return;
     }
@@ -290,10 +328,10 @@ export class UploadProgressChannel {
     // Elapsed ns since the server's first byte for this id. Free of local
     // arrival jitter, and it retains stalls, reconnects and lane turnaround.
     const serverNs = msg.t;
-    if (msg.n > this.#serverBytes) {
-      this.#serverBytes = msg.n; // cumulative + monotonic guard
-      lane.stageSawBytes = true;
-    }
+    const previousServerBytes = this.#serverBytes;
+    if (msg.n < previousServerBytes) return; // stale feed: not time evidence
+    const advancing = msg.n > previousServerBytes;
+    if (advancing) this.#serverBytes = msg.n; // cumulative + monotonic guard
     if (!lane.measuring) return; // warmup bytes are excluded from the window
 
     if (!this.#haveBaseline) {
@@ -317,9 +355,31 @@ export class UploadProgressChannel {
         this.#deps.sampleProvesStageLiveness?.() ?? true,
       );
     }
-    if (delta > 0) {
-      if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(delta);
+    // The first replacement checkpoint is a baseline for the curve, but its
+    // advancing server count still proves the upload recovered. It closes the
+    // reducer-only handoff and re-arms the direction without inventing a chart
+    // sample or a local-clock byte interval.
+    const recoveryGapStartedAt = this.#recoveryGapStartedAt;
+    const recovered = advancing && recoveryGapStartedAt !== null;
+    if (advancing && recoveryGapStartedAt !== null) {
+      const gapSec = (performance.now() - recoveryGapStartedAt) / 1_000;
+      this.#recoveryGapStartedAt = null;
+      host.recordRecoveryGap("up", gapSec);
+      const bytes = this.#serverBytes - previousServerBytes;
+      // This count is authoritative final-reducer evidence, but cannot be a
+      // rate sample: a replacement id has no preceding server checkpoint.
+      // Keep it out of the estimator/chart/control path while retaining every
+      // received byte in the final numerator.
+      host.recordRecoveryBytes("up", bytes);
+      if (this.#deps.noteLaneProgress) this.#deps.noteLaneProgress(bytes);
       else this.#deps.setLaneStalled(false);
+    }
+    if (delta > 0) {
+      if (this.#deps.authoritativePresentation)
+        this.#deps.authoritativePresentation(host.presentationRate("up"));
+      if (!recovered && this.#deps.noteLaneProgress)
+        this.#deps.noteLaneProgress(delta);
+      else if (!recovered) this.#deps.setLaneStalled(false);
     }
     if (msg.type === "complete") {
       this.#completed = true;

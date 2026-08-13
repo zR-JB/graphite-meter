@@ -50,18 +50,27 @@ function channelUnderTest(
   channel: UploadProgressChannel;
   failures: string[];
   curve: number[];
+  durations: number[];
   liveness: boolean[];
   progress: number[];
+  presentations: number[];
+  stalls: { detail?: string; cause?: string }[];
+  recoveryGaps: number[];
+  recoveryBytes: number[];
 } {
   const failures: string[] = [];
   /** Byte delta of every frame the channel fed into the live curve. */
   const curve: number[] = [];
+  const durations: number[] = [];
   const liveness: boolean[] = [];
   const progress: number[] = [];
+  const presentations: number[] = [];
+  const stalls: { detail?: string; cause?: string }[] = [];
+  const recoveryGaps: number[] = [];
+  const recoveryBytes: number[] = [];
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
-    stageSawBytes: false,
     ...laneState,
   };
   const host = {
@@ -75,12 +84,22 @@ function channelUnderTest(
       _dir: string,
       _rate: number,
       bytesDelta: number,
-      _duration: number,
+      duration: number,
       _authoritative: boolean,
       provesLiveness = true,
     ) {
       curve.push(bytesDelta);
+      durations.push(duration);
       liveness.push(provesLiveness);
+    },
+    recordRecoveryGap(_dir: string, seconds: number) {
+      recoveryGaps.push(seconds);
+    },
+    recordRecoveryBytes(_dir: string, bytes: number) {
+      recoveryBytes.push(bytes);
+    },
+    presentationRate() {
+      return 750;
     },
   } as unknown as CoreHost;
   return {
@@ -92,12 +111,20 @@ function channelUnderTest(
       transferActive: () => true,
       discardTransfer: () => {},
       noteLaneProgress: (bytes) => progress.push(bytes),
-      setLaneStalled: () => {},
+      authoritativePresentation: (bytesPerSec) =>
+        presentations.push(bytesPerSec),
+      setLaneStalled: (_stalled, detail, cause) =>
+        stalls.push({ detail, cause }),
     }),
     failures,
     curve,
+    durations,
     liveness,
     progress,
+    presentations,
+    stalls,
+    recoveryGaps,
+    recoveryBytes,
   };
 }
 
@@ -114,18 +141,63 @@ test("attachExternal: a replaced feed is superseded, not a stage failure", async
   expect(failures).toEqual([]);
 });
 
+test("an old upload generation cannot feed the replacement meter", async () => {
+  const { channel, curve } = channelUnderTest({ measuring: true });
+  const first = channel.attachExternal(() => {});
+  const oldGeneration = channel.generation;
+  const second = channel.attachExternal(() => {});
+
+  channel.accept({ type: "bytes", n: 9_999, t: 1_000_000_000 }, oldGeneration);
+  expect(curve).toEqual([]);
+
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+  expect(curve).toEqual([150]);
+  await channel.teardown(false);
+  expect(await first).toBe("superseded");
+  expect(await second).toBe("superseded");
+});
+
 // A refused feed ends the attach as surely as a ready record: left pending, the
-// stage fails once for the refusal and again when the establish wait times out.
+// runner would receive both a recovery request and an establish timeout.
 test("accept: a refusal ends a pending external attach", async () => {
-  const { channel, failures } = channelUnderTest();
+  const { channel, failures } = channelUnderTest({ measuring: true });
   const attached = channel.attachExternal(() => {});
 
-  channel.accept({ type: "fatal", detail: "session closed" });
+  channel.accept({
+    type: "fatal",
+    detail: "session closed",
+    cause: "transient-connection",
+  });
   // Racing an already-settled sentinel reports an attach left pending as a
   // value rather than as a whole-test timeout.
   const outcome = await Promise.race([attached, Promise.resolve("pending")]);
   expect(outcome).toBe("superseded");
-  expect(failures).toEqual(["session closed"]);
+  expect(failures).toEqual([]);
+});
+
+test("an explicit invalid upload id starts runner-owned recovery", () => {
+  const { channel, failures, stalls } = channelUnderTest({ measuring: true });
+
+  channel.accept({
+    type: "fatal",
+    detail: "unknown upload id",
+    cause: "unknown-upload-id",
+  });
+
+  expect(failures).toEqual([]);
+  expect(stalls).toEqual([
+    { detail: "unknown upload id", cause: "unknown-upload-id" },
+  ]);
+});
+
+test("capacity and ownership refusals cannot trigger upload-id recovery", () => {
+  for (const cause of ["capacity-refusal", "owner-mismatch"] as const) {
+    const { channel, failures, stalls } = channelUnderTest({ measuring: true });
+    channel.accept({ type: "fatal", detail: cause, cause });
+    expect(failures).toEqual([cause]);
+    expect(stalls).toEqual([]);
+  }
 });
 
 // The session worker owns the finalizing DELETE and sends it when the terminal
@@ -154,13 +226,14 @@ test("teardown finalizes a dropped session feed, but not a completed one", async
 // first frames arrive behind the count already shown; taking them would feed the
 // curve a negative delta and then double-count the catch-up.
 test("a server count that arrives behind the last one does not move the curve", () => {
-  const { channel, curve } = channelUnderTest({ measuring: true });
+  const { channel, curve, durations } = channelUnderTest({ measuring: true });
 
   channel.accept({ type: "bytes", n: 1000, t: 1_000_000_000 });
   channel.accept({ type: "bytes", n: 2000, t: 2_000_000_000 });
   channel.accept({ type: "bytes", n: 500, t: 3_000_000_000 });
   channel.accept({ type: "bytes", n: 2600, t: 4_000_000_000 });
-  expect(curve).toEqual([1000, 0, 600]);
+  expect(curve).toEqual([1000, 600]);
+  expect(durations).toEqual([1, 2]);
 });
 
 test("upload recovery bytes stay accounted without resuming a stalled sibling", () => {
@@ -175,6 +248,38 @@ test("upload recovery bytes stay accounted without resuming a stalled sibling", 
   expect(curve).toEqual([150]);
   expect(liveness).toEqual([false]);
   expect(progress).toEqual([150]);
+});
+
+test("only an advancing server checkpoint refreshes the visual bridge baseline", () => {
+  const { channel, presentations } = channelUnderTest({ measuring: true });
+
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  channel.accept({ type: "bytes", n: 100, t: 2_000_000_000 });
+  channel.accept({ type: "bytes", n: 250, t: 3_000_000_000 });
+
+  expect(presentations).toEqual([750]);
+});
+
+test("the first advancing replacement checkpoint closes a rotation gap", () => {
+  const { channel, curve, progress, recoveryGaps, recoveryBytes } =
+    channelUnderTest({
+      measuring: true,
+    });
+  channel.beginRecoveryGap();
+  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  expect(recoveryGaps).toHaveLength(1);
+  expect(recoveryBytes).toEqual([100]);
+  expect(progress).toEqual([100]);
+  expect(curve).toEqual([]);
+
+  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+  channel.accept({ type: "bytes", n: 400, t: 3_000_000_000 });
+
+  expect(recoveryGaps).toHaveLength(1);
+  expect(recoveryGaps[0]).toBeGreaterThanOrEqual(0);
+  expect(recoveryBytes).toEqual([100]);
+  expect(curve).toEqual([150, 150]);
+  expect(progress).toEqual([100, 150, 150]);
 });
 
 // Unreachable today (every path tears down first), but a worker left running
