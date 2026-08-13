@@ -48,14 +48,14 @@ test("transferConfidence: a flat plateau is high confidence", () => {
   expect(conf.slopeRatio).toBeCloseTo(0, 10);
 });
 
-test("transferConfidence: realistic stable and wireless plateaus are not punished", () => {
+test("transferConfidence: stationary low-noise and stationary high-noise plateaus are not punished", () => {
   const stableNoise = [0, 0.03, -0.02, 0.04, -0.03, 0.01, -0.01, 0.02];
-  const wirelessNoise = [0, 0.09, -0.08, 0.12, -0.1, 0.04, -0.03, 0.07];
+  const highNoise = [0, 0.09, -0.08, 0.12, -0.1, 0.04, -0.03, 0.07];
   const trace = (noise: number[]) =>
     Array.from({ length: 16 }, (_, i) => 1_000 * (1 + noise[i % noise.length]));
 
   expect(transferConfidence(trace(stableNoise)).score).toBeGreaterThan(0.86);
-  expect(transferConfidence(trace(wirelessNoise)).score).toBeGreaterThan(0.6);
+  expect(transferConfidence(trace(highNoise)).score).toBeGreaterThan(0.6);
 });
 
 test("transferConfidence: a noisy, drifting sequence is low confidence", () => {

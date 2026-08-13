@@ -50,7 +50,7 @@ function finiteNonNegative(value: number): number {
 
 export function presentationWindowMs(regimeAgeMs: number): number {
   const age = finiteNonNegative(regimeAgeMs);
-  return Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.5));
+  return Math.min(age, Math.max(PRESENTATION_MIN_WINDOW_MS, age * 0.85));
 }
 
 /** Exact bytes/time for an interval, prorating an observation at its edges. */
