@@ -377,9 +377,13 @@
     gap: var(--space-3);
     flex: 1 1 auto;
     min-height: 0;
+    /* A stable small-viewport unit keeps browser chrome changes from feeding
+       back into canvas measurement. This is deliberately independent of the
+       optional latency row. */
+    --gauge-well-height: clamp(220px, 42svh, 360px);
     grid-template:
       "stagehead" auto
-      "gauge" minmax(220px, 1fr)
+      "gauge" var(--gauge-well-height)
       "engage" auto
       "latency" auto
       / 1fr;
@@ -388,7 +392,7 @@
   .instrument:not(:has(.latency-panel)) {
     grid-template:
       "stagehead" auto
-      "gauge" minmax(220px, 1fr)
+      "gauge" var(--gauge-well-height)
       "engage" auto
       / 1fr;
   }
@@ -398,17 +402,19 @@
   @container viz (min-width: 520px) {
     .instrument {
       grid-template:
-        "gauge latency" minmax(220px, 1fr)
+        "gauge latency" var(--gauge-well-height)
         "engage engage" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
+    /* Keep the gauge in the same dedicated column when latency is disabled.
+       A missing optional panel must not resize its CSS-pixel geometry. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
-        "gauge" minmax(220px, 1fr)
-        "engage" auto
-        "stagehead" auto
-        / 1fr;
+        "gauge ." var(--gauge-well-height)
+        "engage engage" auto
+        "stagehead stagehead" auto
+        / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
   /* The gauge well: the deepest recess on the faceplate. */
@@ -417,6 +423,7 @@
     position: relative;
     min-width: 240px;
     min-height: 220px;
+    height: 100%;
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background: var(--surface-inset);
