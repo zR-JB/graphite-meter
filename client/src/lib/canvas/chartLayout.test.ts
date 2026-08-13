@@ -12,6 +12,9 @@ const viewport = {
 test("chart layout shares CSS-pixel plot geometry across paths and DOM anchors", () => {
   const layout = chartLayout(600, 240, viewport);
   expect(layout.plot).toEqual({ left: 46, right: 554, top: 12, bottom: 222 });
+  expect(layout.phaseRailY).toBe(226);
+  expect(layout.timeLabelY).toBe(239);
+  expect(layout.timeLabelY).toBeGreaterThan(layout.phaseRailY + 3);
   expect(layout.x(0)).toBe(layout.plot.left);
   expect(layout.x(10_000)).toBe(layout.plot.right);
   expect(layout.throughputY(1_000)).toBe(layout.plot.top);

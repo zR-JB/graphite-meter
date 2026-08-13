@@ -96,6 +96,26 @@ test("gauge tick labels use shared optical anchors", async ({ page }) => {
   ]);
 });
 
+test("a short landscape phone scrolls the document instead of clipping the stage", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await page.goto("/?engine=dummy");
+  const scrollability = await page.evaluate(() => ({
+    contentHeight: document.documentElement.scrollHeight,
+    viewportHeight: window.innerHeight,
+    documentOverflow: getComputedStyle(document.documentElement).overflowY,
+  }));
+  expect(scrollability.contentHeight).toBeGreaterThan(
+    scrollability.viewportHeight,
+  );
+  expect(scrollability.documentOverflow).not.toBe("clip");
+  await page.evaluate(() => window.scrollTo({ top: 200 }));
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY))
+    .toBeGreaterThan(0);
+});
+
 for (const viewport of [
   { width: 1024, height: 640 },
   { width: 1024, height: 768 },

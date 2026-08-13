@@ -156,7 +156,7 @@
           <span
             class="time-label"
             style:left={`${tick.x}px`}
-            style:top={`${presentation.layout.height - 5}px`}
+            style:top={`${presentation.layout.timeLabelY}px`}
             >{tick.t % 1000 === 0
               ? `${tick.t / 1000}s`
               : `${(tick.t / 1000).toFixed(1)}s`}</span

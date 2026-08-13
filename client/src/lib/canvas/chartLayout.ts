@@ -10,6 +10,8 @@ export interface ChartLayout {
   width: number;
   height: number;
   plot: { left: number; right: number; top: number; bottom: number };
+  phaseRailY: number;
+  timeLabelY: number;
   viewport: ChartViewport;
   timeMinorTicks: ReadonlyArray<{ t: number; x: number }>;
   timeMajorTicks: ReadonlyArray<{ t: number; x: number }>;
@@ -95,6 +97,11 @@ export function chartLayout(
     width: safeWidth,
     height: safeHeight,
     plot,
+    // The colored stage rail sits immediately below the data plot. Time
+    // labels start below that rail, so canvas and DOM never compete for the
+    // same CSS pixels at the x axis.
+    phaseRailY: plot.bottom + 4,
+    timeLabelY: safeHeight - 1,
     viewport,
     timeMinorTicks: timeTicks(minorStep),
     timeMajorTicks: timeTicks(majorStep),

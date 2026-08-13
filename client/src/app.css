@@ -277,12 +277,11 @@ body {
   overflow-x: clip;
 }
 
-/* Desktop shell: #console is exactly 100dvh, so the document must never
-   scroll vertically either. Clipping it leaves a stray overflowing box (or a
-   focus-reveal chasing one) able to scroll only a container inside the shell,
-   never to shift the whole UI out of view. Below the stacked breakpoint
-   the document is the intended scroller and stays untouched. */
-@media (min-width: 760px) {
+/* A wide, adequately tall shell is exactly 100dvh, so the document must not
+   scroll vertically either. A short landscape phone can be wide enough for
+   the instrument's side-by-side layout without being tall enough to contain
+   it: there the document is intentionally the scroller. */
+@media (min-width: 760px) and (min-height: 560px) {
   /* bp: stacked (complement) */
   html,
   body {

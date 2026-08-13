@@ -504,11 +504,11 @@
     border-color: var(--err);
   }
 
-  /* Under 760px the document scrolls, not the stage. An overscroll-containing
-     stage swallows wheel and touch gestures over its middle. Visible overflow
-     returns them to the page. */
-  @media (max-width: 759px) {
-    /* bp: stacked */
+  /* A landscape phone can be wide enough for the side-by-side instrument but
+     too short for a fixed shell. In either narrow or compact-height viewports,
+     let the document scroll rather than clipping the stage below the status
+     bar. The wider layout itself remains available in landscape. */
+  @media (max-width: 759px), (max-height: 559px) {
     #console {
       height: auto;
       min-height: 100dvh;

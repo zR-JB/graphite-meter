@@ -606,7 +606,7 @@ export class ChartEngine implements CanvasEngine {
   }
 
   #drawPhases(ctx: CanvasRenderingContext2D): void {
-    const ry = this.#layout.plot.bottom + 4;
+    const ry = this.#layout.phaseRailY;
     for (const s of this.#spans) {
       const color = this.#phaseColor(s.phase);
       if (!color) continue;
