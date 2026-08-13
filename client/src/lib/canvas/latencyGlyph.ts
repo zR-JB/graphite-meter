@@ -5,6 +5,28 @@ export interface LatencyGlyphHover {
   x: number;
 }
 
+export interface LatencyOverflowGlyph {
+  arrow: {
+    tipY: number;
+    baseY: number;
+    halfWidth: number;
+  };
+  dot: { y: number; radius: number };
+}
+
+/** CSS-pixel composition for a clipped latency observation. The dot's top is
+ * deliberately separated from the arrow base, so a clipped median does not
+ * masquerade as part of the overflow marker. */
+export function latencyOverflowGlyph(plotTop: number): LatencyOverflowGlyph {
+  const radius = 2.25;
+  const tipY = plotTop + 1.5;
+  const baseY = tipY + 5;
+  return {
+    arrow: { tipY, baseY, halfWidth: 3.5 },
+    dot: { y: baseY + 2 + radius, radius },
+  };
+}
+
 /** Selects only a real latency or loss glyph near the pointer. Unlike a line
  * chart, sparse RTT buckets never imply a value between observations. */
 export function nearestLatencyGlyph(

@@ -20,7 +20,7 @@ import {
 import { throughputSamplesContinuous } from "./throughputContinuity";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
-import { nearestLatencyGlyph } from "./latencyGlyph";
+import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
 import {
   chartLayout,
   type ChartLayout,
@@ -66,6 +66,7 @@ export interface HoverInfo {
   rtt: number | null;
   pingCount: number;
   lossCount: number;
+  latencyOverflow: boolean;
 }
 
 /** Per-lane average overlay drawn in result mode. */
@@ -309,6 +310,9 @@ export class ChartEngine implements CanvasEngine {
       rtt,
       pingCount: latencyBucket?.pingCount ?? 0,
       lossCount: latencyBucket?.lossCount ?? 0,
+      latencyOverflow:
+        latencyBucket != null &&
+        latencyBucketExceedsScale(latencyBucket, this.#vp.rttMax),
     };
     return hasHoverMeasurements(info) ? info : null;
   }
@@ -756,9 +760,17 @@ export class ChartEngine implements CanvasEngine {
       const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
       if (s.medianRttMs != null) {
         const x = this.#x(s.t);
-        const medianY = this.#yR(s.medianRttMs);
+        const overflow = latencyBucketExceedsScale(s, this.#vp.rttMax);
+        const clippedMedian = s.medianRttMs >= this.#vp.rttMax;
+        const overflowGlyph = overflow
+          ? latencyOverflowGlyph(this.#layout.plot.top)
+          : null;
+        const medianY =
+          clippedMedian && overflowGlyph
+            ? overflowGlyph.dot.y
+            : this.#yR(s.medianRttMs);
         const spike = s.maxRttMs ?? s.p95RttMs;
-        if (spike != null && spike > s.medianRttMs) {
+        if (spike != null && spike > s.medianRttMs && !clippedMedian) {
           ctx.strokeStyle = color;
           ctx.beginPath();
           ctx.moveTo(x, medianY);
@@ -769,12 +781,18 @@ export class ChartEngine implements CanvasEngine {
         ctx.beginPath();
         ctx.arc(x, medianY, 2.25, 0, Math.PI * 2);
         ctx.fill();
-        if (latencyBucketExceedsScale(s, this.#vp.rttMax)) {
+        if (overflowGlyph) {
           ctx.fillStyle = color;
           ctx.beginPath();
-          ctx.moveTo(x, this.#layout.plot.top);
-          ctx.lineTo(x - 3, this.#layout.plot.top + 5);
-          ctx.lineTo(x + 3, this.#layout.plot.top + 5);
+          ctx.moveTo(x, overflowGlyph.arrow.tipY);
+          ctx.lineTo(
+            x - overflowGlyph.arrow.halfWidth,
+            overflowGlyph.arrow.baseY,
+          );
+          ctx.lineTo(
+            x + overflowGlyph.arrow.halfWidth,
+            overflowGlyph.arrow.baseY,
+          );
           ctx.closePath();
           ctx.fill();
         }
@@ -821,7 +839,14 @@ export class ChartEngine implements CanvasEngine {
     if (info.rtt != null && info.latencyX != null) {
       ctx.fillStyle = this.#colors.warn;
       ctx.beginPath();
-      ctx.arc(info.latencyX, this.#yR(info.rtt), 2.5, 0, Math.PI * 2);
+      const overflowGlyph = info.latencyOverflow
+        ? latencyOverflowGlyph(this.#layout.plot.top)
+        : null;
+      const latencyY =
+        overflowGlyph && info.rtt >= this.#vp.rttMax
+          ? overflowGlyph.dot.y
+          : this.#yR(info.rtt);
+      ctx.arc(info.latencyX, latencyY, 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
   }

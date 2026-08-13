@@ -7,6 +7,12 @@ export interface GaugePoint {
   y: number;
 }
 
+export interface GaugeLabelLayout extends GaugePoint {
+  angle: number;
+  anchorX: "start" | "center" | "end";
+  anchorY: "start" | "center" | "end";
+}
+
 export interface GaugeLayout {
   width: number;
   height: number;
@@ -16,7 +22,7 @@ export interface GaugeLayout {
   arcStart: number;
   arcSweep: number;
   majorTicks: ReadonlyArray<{ from: GaugePoint; to: GaugePoint }>;
-  labelPoints: ReadonlyArray<GaugePoint>;
+  labelPoints: ReadonlyArray<GaugeLabelLayout>;
 }
 
 /** One CSS-pixel geometry model for the gauge canvas and DOM tick labels. */
@@ -47,9 +53,23 @@ export function gaugeLayout(
   const labelRadius = tickOuter + 7;
   const labelPoints = Array.from(
     { length: Math.max(0, labelCount) },
-    (_, index) => {
+    (_, index): GaugeLabelLayout => {
       const fraction = labelCount > 1 ? index / (labelCount - 1) : 0.5;
-      return pointAt(ARC_START + fraction * ARC_SWEEP, labelRadius);
+      const angle = ARC_START + fraction * ARC_SWEEP;
+      const point = pointAt(angle, labelRadius);
+      const horizontal = Math.cos(angle);
+      const vertical = Math.sin(angle);
+      return {
+        ...point,
+        angle,
+        // Labels on the outer flanks grow inward; labels above or below the
+        // arc grow away from it. The threshold leaves diagonal labels centered
+        // until their optical relationship is unambiguous.
+        anchorX:
+          horizontal < -0.35 ? "start" : horizontal > 0.35 ? "end" : "center",
+        anchorY:
+          vertical < -0.35 ? "end" : vertical > 0.35 ? "start" : "center",
+      };
     },
   );
 

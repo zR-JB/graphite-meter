@@ -8,6 +8,18 @@ test("gauge layout keeps canvas arc and DOM tick anchors in one CSS-pixel model"
   expect(layout.labelPoints).toHaveLength(5);
   expect(layout.labelPoints[0].x).toBeLessThan(layout.center.x);
   expect(layout.labelPoints.at(-1)!.x).toBeGreaterThan(layout.center.x);
+  expect(layout.labelPoints[0]).toMatchObject({
+    anchorX: "start",
+    anchorY: "start",
+  });
+  expect(layout.labelPoints[2]).toMatchObject({
+    anchorX: "center",
+    anchorY: "end",
+  });
+  expect(layout.labelPoints.at(-1)).toMatchObject({
+    anchorX: "end",
+    anchorY: "start",
+  });
 });
 
 test("gauge layout has a finite fallback before its container is measured", () => {

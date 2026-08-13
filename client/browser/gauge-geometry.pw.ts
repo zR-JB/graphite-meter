@@ -63,6 +63,39 @@ for (const viewport of [
   });
 }
 
+test("gauge tick labels use shared optical anchors", async ({ page }) => {
+  await page.goto("/?engine=dummy");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  await settings.getByRole("button", { name: "custom" }).click();
+  for (const [label, value] of [
+    ["Warmup ms", "0"],
+    ["Latency ms", "1600"],
+    ["Download ms", "0"],
+    ["Upload ms", "0"],
+  ] as const)
+    await settings.getByLabel(label).fill(value);
+
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(page.locator("#console")).toHaveAttribute(
+    "data-phase",
+    "latency",
+  );
+  const anchors = await page.locator(".gauge-tick").evaluateAll((ticks) =>
+    ticks.map((tick) => ({
+      x: tick.getAttribute("data-anchor-x"),
+      y: tick.getAttribute("data-anchor-y"),
+    })),
+  );
+  expect(anchors).toEqual([
+    { x: "start", y: "start" },
+    { x: "start", y: "end" },
+    { x: "center", y: "end" },
+    { x: "end", y: "end" },
+    { x: "end", y: "start" },
+  ]);
+});
+
 for (const viewport of [
   { width: 1024, height: 640 },
   { width: 1024, height: 768 },

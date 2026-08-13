@@ -419,6 +419,8 @@
           {#each layout.labelPoints as point, index (index)}
             <span
               class="gauge-tick"
+              data-anchor-x={point.anchorX}
+              data-anchor-y={point.anchorY}
               style:left={`${point.x}px`}
               style:top={`${point.y}px`}>{gaugeTicks[index]}</span
             >
@@ -595,6 +597,31 @@
     color: var(--text-soft);
     opacity: 0.5;
     white-space: nowrap;
+    line-height: 1;
+  }
+  .gauge-tick[data-anchor-x="start"] {
+    transform: translate(0, -50%);
+  }
+  .gauge-tick[data-anchor-x="end"] {
+    transform: translate(-100%, -50%);
+  }
+  .gauge-tick[data-anchor-y="start"] {
+    transform: translate(-50%, 0);
+  }
+  .gauge-tick[data-anchor-y="end"] {
+    transform: translate(-50%, -100%);
+  }
+  .gauge-tick[data-anchor-x="start"][data-anchor-y="start"] {
+    transform: translate(0, 0);
+  }
+  .gauge-tick[data-anchor-x="start"][data-anchor-y="end"] {
+    transform: translate(0, -100%);
+  }
+  .gauge-tick[data-anchor-x="end"][data-anchor-y="start"] {
+    transform: translate(-100%, 0);
+  }
+  .gauge-tick[data-anchor-x="end"][data-anchor-y="end"] {
+    transform: translate(-100%, -100%);
   }
   .metric-wrap {
     position: absolute;

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { LatencyBucket } from "../runner/contract";
-import { nearestLatencyGlyph } from "./latencyGlyph";
+import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
 
 function bucket(
   t: number,
@@ -41,4 +41,13 @@ test("a nearby loss glyph remains hoverable without a fabricated RTT", () => {
   const hit = nearestLatencyGlyph([[loss]], 40, (t) => t / 10);
   expect(hit?.bucket).toBe(loss);
   expect(hit?.bucket.medianRttMs).toBeNull();
+});
+
+test("an overflow arrow and its clipped dot retain a visible CSS-pixel gap", () => {
+  const glyph = latencyOverflowGlyph(12);
+  expect(glyph.arrow.tipY).toBeGreaterThan(12);
+  expect(glyph.arrow.baseY).toBeGreaterThan(glyph.arrow.tipY);
+  expect(
+    glyph.dot.y - glyph.dot.radius - glyph.arrow.baseY,
+  ).toBeGreaterThanOrEqual(2);
 });
