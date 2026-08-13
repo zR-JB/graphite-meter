@@ -89,7 +89,15 @@ test("bidirectional stays a Settings-only optional stage", async ({ page }) => {
   await page.getByRole("button", { name: "Open settings" }).click();
   const settings = page.locator('[aria-label="Settings"]');
   const include = settings.getByLabel("Include concurrent download + upload");
-  await include.check();
+  // Switch keeps its native checkbox visually hidden; activate its visible
+  // label, which is the pointer path users take and still updates the
+  // labelled checkbox for keyboard/screen-reader semantics.
+  await settings
+    .locator("label.switch", {
+      hasText: "Include concurrent download + upload",
+    })
+    .click();
+  await expect(include).toBeChecked();
   await expect(bidi).toBeVisible();
 
   await bidi.click();
