@@ -7,6 +7,7 @@ import type {
   Phase,
   InfraInfo,
   EngineInfo,
+  ThroughputResult,
 } from "./contract";
 import { LATENCY_PRESENTATION_BUCKET_MS } from "./latencyBuckets";
 
@@ -233,6 +234,35 @@ test("full run: latency then download — phase order and stage lifecycle", asyn
     expect(complete.result.download).not.toBeNull();
     expect(complete.result.latency).not.toBeNull();
   }
+});
+
+test("a failed transfer preserves qualifying evidence and continues later stages", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  await core.start(
+    makeConfig({
+      stages: { download: true, upload: true },
+      duration: { downloadMs: 1_000, uploadMs: 1_000 },
+    }),
+  );
+
+  backend.host.ingestThroughput("down", 1_000, 900, 0.9);
+  backend.host.failStage("download", "connection-lost", "dropped");
+  advance(0);
+
+  const stageResult = events.find(
+    (
+      event,
+    ): event is Extract<RunnerEvent, { type: "stageResult" }> & {
+      stage: "download";
+      result: ThroughputResult;
+    } => event.type === "stageResult" && event.stage === "download",
+  );
+  expect(stageResult?.result.totalBytes).toBe(900);
+  expect(events.some((event) => event.type === "stageSkipped")).toBe(true);
+  expect(backend.calls).toContain("begin:upload");
 });
 
 test("throughput stays isolated across transfer warmups", async () => {
@@ -727,7 +757,7 @@ test("a non-liveness throughput sample remains in the result", async () => {
   core.resume();
   advance(100);
 
-  expect(complete?.result.bidirectional?.down.totalBytes).toBe(100);
+  expect(complete?.result.bidirectional?.down?.totalBytes).toBe(100);
 });
 
 test("a stall that outlives max-stall escalates to a terminal failure", async () => {

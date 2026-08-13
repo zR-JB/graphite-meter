@@ -229,9 +229,15 @@ export interface RunResult {
   upload: ThroughputResult | null;
   /** The bidirectional phase's two concurrent lanes, or null when the stage is
    *  off. Each lane reuses the same throughput reducer as download/upload. */
-  bidirectional: { down: ThroughputResult; up: ThroughputResult } | null;
-  latency: LatencyResult;
-  bufferbloat: BufferbloatGrade;
+  bidirectional: {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+  } | null;
+  latency: LatencyResult | null;
+  /** Unavailable unless both idle and loaded latency evidence exist. */
+  bufferbloat: BufferbloatGrade | null;
+  /** A usable result plus an entry here is a partial stage. */
+  stageFailures: Partial<Record<TransportRole, StageFailure>>;
   startedAt: number; // epoch ms
   durationMs: number;
 }

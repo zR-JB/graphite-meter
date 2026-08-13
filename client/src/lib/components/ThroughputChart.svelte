@@ -82,8 +82,8 @@
         resultRates: {
           download: store.stageResults.download?.reportedBytesPerSec,
           upload: store.stageResults.upload?.reportedBytesPerSec,
-          bidiDown: store.result?.bidirectional?.down.reportedBytesPerSec,
-          bidiUp: store.result?.bidirectional?.up.reportedBytesPerSec,
+          bidiDown: store.result?.bidirectional?.down?.reportedBytesPerSec,
+          bidiUp: store.result?.bidirectional?.up?.reportedBytesPerSec,
         },
       }),
       (next) => (chartPresentation = next),

@@ -1,6 +1,11 @@
 import { test, expect } from "bun:test";
-import { RunAccumulator } from "./evaluation";
+import {
+  MIN_PARTIAL_LATENCY_OUTCOMES,
+  MIN_PARTIAL_TRANSFER_EVIDENCE_MS,
+  RunAccumulator,
+} from "./evaluation";
 import type { AdaptiveDurationConfig } from "./contract";
+import { DEFAULT_CONFIG } from "../state/defaults";
 
 // Regression coverage for issue #84: adaptive throughput reports the final
 // contiguous stable plateau. Earlier plateaus are discarded after a stability
@@ -279,4 +284,55 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   // The single stability window is fed by BOTH lanes' pushes: an erratic down
   // lane alone still drags the shared score down while up never wavers.
   expect(stableScore).toBeGreaterThan(erraticScore);
+});
+
+test("partial transfer keeps whole exact evidence only after its named floor", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushThroughput(
+    "download",
+    "down",
+    1_000,
+    700,
+    (MIN_PARTIAL_TRANSFER_EVIDENCE_MS - 100) / 1_000,
+  );
+  expect(accum.partialThroughputResult("download")).toBeNull();
+
+  accum.pushThroughput("download", "down", 1_000, 100, 0.1);
+  const result = accum.partialThroughputResult("download");
+  expect(result?.method).toBe("full-average");
+  expect(result?.totalBytes).toBe(800);
+  expect(result?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+});
+
+test("partial latency needs named outcome and success evidence floors", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  for (let i = 0; i < MIN_PARTIAL_LATENCY_OUTCOMES - 1; i++)
+    accum.pushLatency(20, false, i > 0, i * 100);
+  expect(accum.partialLatencyResult(DEFAULT_CONFIG, 0)).toBeNull();
+
+  accum.pushLatency(21, false, false, 200);
+  const result = accum.partialLatencyResult(DEFAULT_CONFIG, 0);
+  expect(result?.method).toBe("full-average");
+  expect(result?.reportedMs).toBeCloseTo(20.5, 6);
+});
+
+test("partial bidirectional keeps each qualifying lane independently", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushThroughput("bidirectional", "down", 1_000, 800, 0.8);
+  accum.pushThroughput("bidirectional", "up", 1_000, 799, 0.799);
+  const result = accum.partialBidirectionalResult();
+  expect(result.down?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
+  expect(result.up).toBeNull();
+});
+
+test("bufferbloat is unavailable without both idle and loaded latency evidence", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  accum.pushLatency(20, false, false);
+  expect(accum.bufferbloatGrade()).toBeNull();
+  accum.pushLatency(40, true, false);
+  expect(accum.bufferbloatGrade()?.increaseMs).toBe(20);
 });

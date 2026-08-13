@@ -26,6 +26,10 @@ import {
 import { median, percentile, meanAbsDeviation } from "./stats";
 import { FixedRateBuckets } from "./controlBuckets";
 
+export const MIN_PARTIAL_TRANSFER_EVIDENCE_MS = 800;
+export const MIN_PARTIAL_LATENCY_OUTCOMES = 3;
+export const MIN_PARTIAL_LATENCY_SUCCESSES = 1;
+
 /** Per-transfer-phase sample bookkeeping for the final result. */
 interface PhaseAccum {
   samples: {
@@ -316,6 +320,16 @@ export class RunAccumulator {
     );
   }
 
+  /** A failed transfer retains its whole authoritative evidence only after the
+   * named floor. It deliberately bypasses stable-window selection. */
+  partialThroughputResult(
+    phase: "download" | "upload",
+  ): ThroughputResult | null {
+    const accum = phase === "download" ? this.#dl : this.#ul;
+    if (accum.evidenceMs < MIN_PARTIAL_TRANSFER_EVIDENCE_MS) return null;
+    return this.#reduceTransfer(accum, -1, false, 0, this.#loadedLossPct());
+  }
+
   /** Under-load ping timeout percentage over the whole run. */
   #loadedLossPct(): number {
     return this.#loadedPings
@@ -345,6 +359,20 @@ export class RunAccumulator {
         lossPct,
       ),
     };
+  }
+
+  /** Reduce bidirectional lanes independently for a partial stage. A caller
+   * must not turn one surviving lane into a combined headline. */
+  partialBidirectionalResult(): {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+  } {
+    const lossPct = this.#loadedLossPct();
+    const reduce = (accum: PhaseAccum): ThroughputResult | null =>
+      accum.evidenceMs >= MIN_PARTIAL_TRANSFER_EVIDENCE_MS
+        ? this.#reduceTransfer(accum, -1, false, 0, lossPct)
+        : null;
+    return { down: reduce(this.#biDown), up: reduce(this.#biUp) };
   }
 
   /** Resolve the adaptive stable window used by the latency headline. */
@@ -467,15 +495,27 @@ export class RunAccumulator {
     };
   }
 
-  /** Bufferbloat grade from the idle-vs-loaded RTT delta. `idleFallbackMs` is
-   *  used only when no idle samples exist. */
-  bufferbloatGrade(idleFallbackMs: number): BufferbloatGrade {
-    const idleMs =
-      median(this.#idleRtts.length ? this.#idleRtts : this.#allRtts) ||
-      idleFallbackMs;
-    const loadedMs = this.#loadedRtts.length
-      ? median(this.#loadedRtts)
-      : idleMs;
+  /** Latency evidence is usable only when enough outcomes include a success. */
+  partialLatencyResult(
+    cfg: RunnerConfig,
+    idleFallbackMs: number,
+  ): LatencyResult | null {
+    if (
+      this.#pingsTotal < MIN_PARTIAL_LATENCY_OUTCOMES ||
+      this.#allRtts.length < MIN_PARTIAL_LATENCY_SUCCESSES
+    )
+      return null;
+    return this.latencyResult(
+      { ...cfg, adaptive: { ...cfg.adaptive, enabled: false } },
+      idleFallbackMs,
+    );
+  }
+
+  /** Bufferbloat grade from authoritative idle-vs-loaded RTT evidence. */
+  bufferbloatGrade(): BufferbloatGrade | null {
+    if (!this.#idleRtts.length || !this.#loadedRtts.length) return null;
+    const idleMs = median(this.#idleRtts);
+    const loadedMs = median(this.#loadedRtts);
     const increaseMs = Math.max(0, loadedMs - idleMs);
     let grade: BufferbloatGrade["grade"];
     if (increaseMs <= 5) grade = "A";

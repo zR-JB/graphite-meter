@@ -164,6 +164,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #dlResult: ThroughputResult | null = null;
   #ulResult: ThroughputResult | null = null;
   #latResult: LatencyResult | null = null;
+  #biResult: {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+  } | null = null;
 
   constructor(backend: RunnerBackend) {
     this.#backend = backend;
@@ -282,6 +286,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#dlResult = null;
     this.#ulResult = null;
     this.#latResult = null;
+    this.#biResult = null;
     this.#measuredElapsed = 0;
     this.#lastRealNow = 0;
     this.#earlyCandidateSeg = -1;
@@ -817,6 +822,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#running || this.#stageFailures.has(stage)) return;
     const failure: StageFailure = { stage, reason, message };
     this.#stageFailures.set(stage, failure);
+    // Preserve qualifying exact evidence before ending the stage. A failure
+    // changes its status to partial; it does not erase a truthful result.
+    this.#finalizeStage(stage);
 
     // Close the stage's I/O and jump measured-time past its remaining timeline
     // so the next tick lands on the following stage (or the finish).
@@ -833,7 +841,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.emit({ type: "stageSkipped", failure });
 
     // Nothing measured and nothing left to run → the whole run fails.
-    const anyResult = this.#dlResult ?? this.#ulResult ?? this.#latResult;
+    const anyResult =
+      this.#dlResult ??
+      this.#ulResult ??
+      this.#latResult ??
+      this.#biResult?.down ??
+      this.#biResult?.up;
     if (!anyResult && !segmentAt(this.#segments, this.#measuredElapsed)) {
       this.fail(reason, message);
     }
@@ -982,34 +995,43 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #finalizeStage(phase: Phase) {
     const cfg = this.#cfg!;
     this.#flushLatencyPresentation();
-    if (this.#stageFailures.has(phase as TransportRole)) return; // skipped, no result
+    const failed = this.#stageFailures.has(phase as TransportRole);
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
-      this.#dlResult = this.#accum.throughputResult(
-        "download",
-        cfg.adaptive.enabled,
-      );
-      this.emit({
-        type: "stageResult",
-        stage: "download",
-        result: this.#dlResult,
-      });
+      this.#dlResult = failed
+        ? this.#accum.partialThroughputResult("download")
+        : this.#accum.throughputResult("download", cfg.adaptive.enabled);
+      if (this.#dlResult)
+        this.emit({
+          type: "stageResult",
+          stage: "download",
+          result: this.#dlResult,
+        });
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
-      this.#ulResult = this.#accum.throughputResult(
-        "upload",
-        cfg.adaptive.enabled,
-      );
-      this.emit({
-        type: "stageResult",
-        stage: "upload",
-        result: this.#ulResult,
-      });
+      this.#ulResult = failed
+        ? this.#accum.partialThroughputResult("upload")
+        : this.#accum.throughputResult("upload", cfg.adaptive.enabled);
+      if (this.#ulResult)
+        this.emit({
+          type: "stageResult",
+          stage: "upload",
+          result: this.#ulResult,
+        });
     } else if (phase === "latency" && cfg.stages.latency && !this.#latResult) {
-      this.#latResult = this.#accum.latencyResult(cfg, this.#idleHint());
-      this.emit({
-        type: "stageResult",
-        stage: "latency",
-        result: this.#latResult,
-      });
+      this.#latResult = failed
+        ? this.#accum.partialLatencyResult(cfg, this.#idleHint())
+        : this.#accum.latencyResult(cfg, this.#idleHint());
+      if (this.#latResult)
+        this.emit({
+          type: "stageResult",
+          stage: "latency",
+          result: this.#latResult,
+        });
+    } else if (
+      phase === "bidirectional" &&
+      cfg.stages.bidirectional &&
+      failed
+    ) {
+      this.#biResult ??= this.#accum.partialBidirectionalResult();
     }
   }
 
@@ -1023,17 +1045,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const cfg = this.#cfg!;
       this.#finalizeStage(this.#lastEmittedPhase);
       const actualMs = Math.max(0, performance.now() - this.#t0);
-      const bidirectional =
-        cfg.stages.bidirectional && !this.#stageFailures.has("bidirectional")
-          ? this.#accum.bidirectionalResult(cfg.adaptive.enabled)
-          : null;
+      const bidirectional = cfg.stages.bidirectional
+        ? this.#stageFailures.has("bidirectional")
+          ? (this.#biResult ?? this.#accum.partialBidirectionalResult())
+          : this.#accum.bidirectionalResult(cfg.adaptive.enabled)
+        : null;
       const result = {
         download: this.#dlResult,
         upload: this.#ulResult,
         bidirectional,
-        latency:
-          this.#latResult ?? this.#accum.latencyResult(cfg, this.#idleHint()),
-        bufferbloat: this.#accum.bufferbloatGrade(this.#idleHint()),
+        latency: this.#latResult,
+        bufferbloat: this.#accum.bufferbloatGrade(),
+        stageFailures: Object.fromEntries(this.#stageFailures),
         startedAt: Date.now() - actualMs,
         durationMs: actualMs,
       };

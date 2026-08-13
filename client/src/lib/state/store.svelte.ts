@@ -183,7 +183,7 @@ class AppStore {
   >(() => {
     const results = this.stageResults;
     const bidirectional = this.result?.bidirectional;
-    if (bidirectional)
+    if (bidirectional?.down && bidirectional.up)
       return {
         kind: "speed",
         bytesPerSec:

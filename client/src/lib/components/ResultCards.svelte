@@ -63,14 +63,14 @@
       };
     }
     const result = store.result?.bidirectional;
-    const down = result?.down.reportedBytesPerSec ?? 0;
-    const up = result?.up.reportedBytesPerSec ?? 0;
+    const down = result?.down?.reportedBytesPerSec ?? 0;
+    const up = result?.up?.reportedBytesPerSec ?? 0;
     return {
       down,
       up,
       combined: down + up,
-      band: result?.down.band ?? "low",
-      score: result?.down.stabilityScore ?? 0,
+      band: result?.down?.band ?? "low",
+      score: result?.down?.stabilityScore ?? 0,
       active: false,
       has: !!result,
     };
