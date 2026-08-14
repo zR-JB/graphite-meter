@@ -129,7 +129,7 @@
             <h3 id="third-party-title">Third-party software</h3>
             {#each data.components as component (component.ecosystem + component.name + component.version)}
               <article class="component">
-                <details>
+                <details open={true}>
                   <summary>{componentTitle(component)}</summary>
                   <dl>
                     <div>
@@ -186,6 +186,7 @@
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--shadow-float);
+    overflow: hidden;
   }
   .legal-head {
     position: sticky;
@@ -196,9 +197,10 @@
     justify-content: space-between;
     gap: var(--space-3);
     flex: 0 0 auto;
-    padding: var(--space-4);
+    padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border);
     background: var(--surface-1);
+    box-shadow: var(--elev-tile);
   }
   .legal-head h2,
   .legal-body h3 {
@@ -207,55 +209,101 @@
   }
   .legal-head h2 {
     font-size: var(--type-lg);
+    font-weight: 650;
+    letter-spacing: var(--track-tight);
   }
   .legal-body {
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: var(--space-4);
-    line-height: 1.45;
+    padding: var(--space-5);
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    line-height: 1.55;
   }
   .legal-body section + section {
-    margin-top: var(--space-6);
+    margin-top: var(--space-5);
   }
   .legal-body h3 {
-    font-size: var(--type-md);
+    color: var(--brand-strong);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .project-legal {
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-recess);
+  }
+  .project-legal p {
+    margin: var(--space-2) 0 0;
   }
   .copyright {
-    margin: var(--space-1) 0;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
   }
   .legal-links {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-4);
+    gap: var(--space-2) var(--space-4);
+    padding-top: var(--space-1);
   }
   .legal-links a,
   .component a {
-    color: var(--brand);
+    color: var(--brand-strong);
+    text-underline-offset: 2px;
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  .legal-links a:hover,
+  .component a:hover {
+    color: var(--text);
   }
   .component {
-    padding-top: var(--space-2);
+    margin-top: var(--space-2);
   }
   .component details {
-    border-top: 1px solid var(--border);
-    padding-top: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    background: var(--surface-2);
+    box-shadow: var(--elev-tile);
   }
   .component summary {
     cursor: pointer;
+    padding: var(--space-2) var(--space-3);
+    color: var(--text);
     font-family: var(--font-display);
     font-size: var(--type-sm);
     font-weight: 650;
+    letter-spacing: -0.01em;
+    transition: background var(--dur-hover) var(--ease-out);
+  }
+  .component summary:hover {
+    background: var(--surface-3);
+  }
+  .component summary::marker {
+    color: var(--brand);
   }
   .component dl {
-    margin: var(--space-2) 0 0;
+    margin: 0;
+    padding: var(--space-2) var(--space-3) var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
   }
   .component dl div {
     display: grid;
-    grid-template-columns: minmax(120px, 0.3fr) 1fr;
-    gap: var(--space-2);
+    grid-template-columns: minmax(190px, 0.34fr) minmax(0, 1fr);
+    gap: var(--space-3);
+    padding: 2px 0;
   }
   .component dt {
     color: var(--text-soft);
+    white-space: nowrap;
   }
   .component dd {
     margin: 0;
@@ -273,9 +321,22 @@
     padding: 0 var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-tile);
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    font-weight: 650;
+    cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      background var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  .close-btn:hover,
+  .retry-btn:hover {
+    border-color: var(--border-strong);
     background: var(--surface-2);
     color: var(--text);
-    font-weight: 650;
   }
   .close-btn:focus-visible,
   .retry-btn:focus-visible,
@@ -299,6 +360,9 @@
       max-height: 90svh;
     }
     .legal-body {
+      padding: var(--space-3);
+    }
+    .project-legal {
       padding: var(--space-3);
     }
     .component dl div {

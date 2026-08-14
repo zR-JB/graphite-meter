@@ -36,6 +36,11 @@ test("Endpoint Info opens the accessible generated legal modal", async ({
   ).toHaveAttribute("href", "legal/THIRD_PARTY_NOTICES.txt");
   await expect(dialog).toContainText("github.com/coder/websocket");
   await expect(dialog).toContainText("svelte (npm)");
+  await expect(dialog.locator(".component details").first()).toHaveAttribute(
+    "open",
+    "",
+  );
+  await expect(dialog.locator(".component details:not([open])")).toHaveCount(0);
 
   const body = dialog.locator(".legal-body");
   expect(
