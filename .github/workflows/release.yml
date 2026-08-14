@@ -197,6 +197,7 @@ jobs:
           go: 'true'
           bun: 'true'
           client-deps: 'true'
+          bun-cache: 'false'
       - id: versions
         name: Read repository toolchain versions
         shell: bash
@@ -330,6 +331,7 @@ jobs:
           go: 'true'
           bun: 'true'
           client-deps: 'true'
+          bun-cache: 'false'
       - name: Generate release legal outputs
         run: just legal-generate
       - name: Build native release artifacts

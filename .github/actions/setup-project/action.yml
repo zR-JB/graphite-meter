@@ -13,6 +13,10 @@ inputs:
     description: Restore the Bun cache and install client dependencies
     required: false
     default: 'false'
+  bun-cache:
+    description: Restore the shared Bun package cache (disable for guarded release checkouts)
+    required: false
+    default: 'true'
   tools:
     description: Prepare the pinned staticcheck, govulncheck, and Gitleaks tools
     required: false
@@ -54,7 +58,7 @@ runs:
         bun --version
         bun --revision
     - name: Cache Bun packages
-      if: inputs.client-deps == 'true'
+      if: inputs.client-deps == 'true' && inputs.bun-cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
