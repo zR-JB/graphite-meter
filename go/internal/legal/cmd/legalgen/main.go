@@ -537,18 +537,12 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 }
 
 func goToolchainComponent(repo string) (legal.Component, error) {
-	root, err := goRoot()
+	// The checked-in snapshots are the canonical legal material. GOROOT is an
+	// installation-dependent input and may contain distro or local-build
+	// formatting differences that are unrelated to the reviewed Go release.
+	files, err := legal.ReadRootLegalFiles(filepath.Join(repo, "legal", "toolchains", "go"))
 	if err != nil {
-		return legal.Component{}, err
-	}
-	files, err := legal.ReadRootLegalFiles(root)
-	if err != nil {
-		// Some distro-packaged Go installations omit distribution-level files from
-		// GOROOT. The checked-in exact upstream snapshots remain offline input.
-		files, err = legal.ReadRootLegalFiles(filepath.Join(repo, "legal", "toolchains", "go"))
-		if err != nil {
-			return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
-		}
+		return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
 	}
 	version := legalGoVersion(commandOutput("go", "env", "GOVERSION"))
 	return componentFromFiles("go-toolchain", "Go standard library", version, "https://go.dev/", files), nil
@@ -559,10 +553,6 @@ func legalGoVersion(raw string) string {
 		return match[1]
 	}
 	return raw
-}
-
-func goRoot() (string, error) {
-	return commandOutput("go", "env", "GOROOT"), nil
 }
 
 func commandOutput(name string, args ...string) string {

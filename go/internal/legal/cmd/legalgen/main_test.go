@@ -56,6 +56,36 @@ func TestLegalGoVersionNormalizesToolchainSuffixes(t *testing.T) {
 	}
 }
 
+func TestGoToolchainComponentIgnoresGOROOTFormatting(t *testing.T) {
+	repo := t.TempDir()
+	toolchainDir := filepath.Join(repo, "legal", "toolchains", "go")
+	if err := os.MkdirAll(toolchainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeGOROOT := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeGOROOT, "PATENTS"), []byte("local GOROOT formatting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOROOT", fakeGOROOT)
+	if err := os.WriteFile(filepath.Join(toolchainDir, "LICENSE"), []byte("Redistribution and use in source and binary forms\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolchainDir, "PATENTS"), []byte("canonical patents snapshot\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := goToolchainComponent(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(component.LegalTexts) != 1 || component.LegalTexts[0].Name != "LICENSE" {
+		t.Fatalf("canonical legal files = %#v", component.LegalTexts)
+	}
+	if len(component.Notices) != 1 || component.Notices[0].Name != "PATENTS" || component.Notices[0].Text != "canonical patents snapshot\n" {
+		t.Fatalf("canonical notices = %#v", component.Notices)
+	}
+}
+
 func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, "project"), 0o755); err != nil {

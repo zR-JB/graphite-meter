@@ -249,22 +249,54 @@ func ValidateReview(c Component, reviews []Review) error {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: modification status changed for %s", c.Name)
 	}
 	currentFiles := append(append([]LegalFile{}, c.LegalTexts...), c.Notices...)
-	if !sameFiles(Fingerprint(currentFiles), Fingerprint(r.LegalFiles)) {
-		return fmt.Errorf("LEGAL REVIEW REQUIRED: legal fingerprint changed for %s", c.Name)
+	if name, expected, actual, changed := fingerprintMismatch(currentFiles, r.LegalFiles); changed {
+		return fmt.Errorf("LEGAL REVIEW REQUIRED: legal fingerprint changed for %s:\n  %s\n  expected: %s\n  actual:   %s", c.Name, name, expected, actual)
 	}
 	return nil
 }
 
-func sameFiles(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for name, hash := range a {
-		if b[name] != hash {
-			return false
+func fingerprintMismatch(current, reviewed []LegalFile) (name, expected, actual string, changed bool) {
+	currentFingerprint := Fingerprint(current)
+	reviewedFingerprint := Fingerprint(reviewed)
+	names := make(map[string]struct{}, len(currentFingerprint)+len(reviewedFingerprint))
+	displayNames := make(map[string]string, len(currentFingerprint)+len(reviewedFingerprint))
+	for _, file := range current {
+		key := strings.ToLower(file.Name)
+		if _, ok := displayNames[key]; !ok {
+			displayNames[key] = file.Name
 		}
 	}
-	return true
+	for _, file := range reviewed {
+		key := strings.ToLower(file.Name)
+		if _, ok := displayNames[key]; !ok {
+			displayNames[key] = file.Name
+		}
+	}
+	for name := range currentFingerprint {
+		names[name] = struct{}{}
+	}
+	for name := range reviewedFingerprint {
+		names[name] = struct{}{}
+	}
+	orderedNames := make([]string, 0, len(names))
+	for name := range names {
+		orderedNames = append(orderedNames, name)
+	}
+	sort.Strings(orderedNames)
+	for _, name := range orderedNames {
+		expectedHash, expectedOK := reviewedFingerprint[name]
+		actualHash, actualOK := currentFingerprint[name]
+		if !expectedOK || !actualOK || expectedHash != actualHash {
+			if !expectedOK {
+				expectedHash = "<missing>"
+			}
+			if !actualOK {
+				actualHash = "<missing>"
+			}
+			return displayNames[name], expectedHash, actualHash, true
+		}
+	}
+	return "", "", "", false
 }
 
 func RunGoList(repo, target, goos, goarch string) ([]GoPackage, error) {

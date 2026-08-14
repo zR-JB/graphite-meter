@@ -85,9 +85,11 @@ func TestValidateReviewRequiresIdentityAndCompleteFingerprint(t *testing.T) {
 	if err := ValidateReview(component, []Review{review}); err != nil {
 		t.Fatalf("version-only update rejected: %v", err)
 	}
-	component.LegalTexts[0].SHA256 = SHA256([]byte("changed"))
-	if err := ValidateReview(component, []Review{review}); err == nil || !strings.Contains(err.Error(), "fingerprint") {
-		t.Fatalf("changed fingerprint was not rejected: %v", err)
+	changedHash := SHA256([]byte("changed"))
+	component.LegalTexts[0].SHA256 = changedHash
+	err := ValidateReview(component, []Review{review})
+	if err == nil || !strings.Contains(err.Error(), "fingerprint") || !strings.Contains(err.Error(), "LICENSE") || !strings.Contains(err.Error(), SHA256([]byte("MIT"))) || !strings.Contains(err.Error(), changedHash) {
+		t.Fatalf("changed fingerprint diagnostic = %v", err)
 	}
 }
 
