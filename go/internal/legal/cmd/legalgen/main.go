@@ -396,10 +396,6 @@ func discoverGo(repo string, reviews []legal.Review) ([]legal.Component, []legal
 		if err != nil {
 			return nil, nil, err
 		}
-		if standard {
-			// The toolchain legal material is added once to each shipped Go scope.
-			component = component
-		}
 		if parts[0] == "server" {
 			server = append(server, component)
 		} else {
@@ -478,7 +474,7 @@ func goToolchainComponent(repo string) (legal.Component, error) {
 		// GOROOT. The checked-in exact upstream snapshots remain offline input.
 		files, err = legal.ReadLegalFiles(filepath.Join(repo, "legal", "toolchains", "go"))
 		if err != nil {
-			return legal.Component{}, fmt.Errorf("Go toolchain legal material unavailable: %w", err)
+			return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
 		}
 	}
 	version := commandOutput("go", "env", "GOVERSION")

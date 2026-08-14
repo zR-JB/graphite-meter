@@ -223,19 +223,6 @@ func sameFiles(a, b map[string]string) bool {
 	return true
 }
 
-func sourceFor(name string, upstream string) string {
-	if upstream != "" {
-		return upstream
-	}
-	if strings.HasPrefix(name, "github.com/") || strings.HasPrefix(name, "gitlab.com/") {
-		parts := strings.Split(name, "/")
-		if len(parts) >= 3 {
-			return "https://" + strings.Join(parts[:3], "/")
-		}
-	}
-	return ""
-}
-
 func RunGoList(repo, target, goos, goarch string) ([]GoPackage, error) {
 	cmd := exec.Command("go", "list", "-deps", "-json", target)
 	cmd.Dir = filepath.Join(repo, "go")
