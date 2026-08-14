@@ -70,7 +70,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	serverGo, tuiGo, err := discoverGo(repo, reviews)
+	serverGo, tuiGo, err := discoverGo(repo, reviews, provenance)
 	if err != nil {
 		fatal(err)
 	}
@@ -193,7 +193,7 @@ func sourceBundle(repo string, project legal.Project, version string, server, tu
 		if rel == ".git" || strings.HasPrefix(filepath.ToSlash(rel), ".git/") {
 			return false
 		}
-		for _, excluded := range []string{"node_modules", "dist", "test-results", "go/dist", ".dev-certs"} {
+		for _, excluded := range []string{"node_modules", "dist", "test-results", "go/dist", "go/cover.out", ".dev-certs"} {
 			slashRel := filepath.ToSlash(rel)
 			if rel == excluded || strings.HasPrefix(slashRel, excluded+"/") || strings.Contains(slashRel, "/"+excluded+"/") {
 				return false
@@ -348,7 +348,7 @@ func repositoryRoot(explicit string) (string, error) {
 	}
 }
 
-func discoverGo(repo string, reviews []legal.Review) ([]legal.Component, []legal.Component, error) {
+func discoverGo(repo string, reviews []legal.Review, provenance []legal.Provenance) ([]legal.Component, []legal.Component, error) {
 	type target struct {
 		name, goos, goarch string
 	}
@@ -385,6 +385,9 @@ func discoverGo(repo string, reviews []legal.Review) ([]legal.Component, []legal
 				if dir == "" {
 					return nil, nil, fmt.Errorf("local or custom Go replacement has no resolved directory: %s", path)
 				}
+				if !hasGoReplacementProvenance(provenance, path, version, target.name) {
+					return nil, nil, fmt.Errorf("local or custom Go replacement requires provenance: %s", path)
+				}
 			}
 			modules[target.name+"\x00"+path] = struct{ path, version, dir string }{path, version, dir}
 		}
@@ -411,6 +414,21 @@ func discoverGo(repo string, reviews []legal.Review) ([]legal.Component, []legal
 		tui = append(tui, toolchain)
 	}
 	return sortComponents(server), sortComponents(tui), nil
+}
+
+func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope string) bool {
+	for _, entry := range entries {
+		if entry.Ecosystem != "go" || entry.Name != name || entry.Version == "" {
+			continue
+		}
+		if !contains(entry.ArtifactScopes, scope) && !(scope == "server" && contains(entry.ArtifactScopes, "server/browser")) {
+			continue
+		}
+		if version == "" || entry.Version == version {
+			return true
+		}
+	}
+	return false
 }
 
 func goComponent(name, version, dir string, reviews []legal.Review) (legal.Component, error) {

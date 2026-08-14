@@ -52,7 +52,10 @@ RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:b
 # ---------------------------------------------------------------------------
 # Stage: server — build the Go binary with the client embedded.
 # ---------------------------------------------------------------------------
-FROM docker.io/library/golang:1.26 AS server
+# Pin the patch release used by CI and the checked-in Go legal snapshot. The
+# floating 1.26 tag can lag the go.mod minimum and fail before the image's
+# legal files are even staged.
+FROM docker.io/library/golang:1.26.6 AS server
 ARG VERSION
 WORKDIR /src/go
 # Module graph first for caching.

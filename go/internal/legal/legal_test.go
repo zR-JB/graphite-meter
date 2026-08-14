@@ -81,3 +81,35 @@ func TestValidateReviewRejectsUnknownAndUnresolvedLicenses(t *testing.T) {
 		t.Fatalf("pending custom license result = %v", err)
 	}
 }
+
+func TestValidateReviewRejectsNewNoticeAndChangedModification(t *testing.T) {
+	license := LegalFile{Name: "LICENSE", SHA256: SHA256([]byte("MIT")), Kind: "license"}
+	base := Component{
+		Name: "example", Ecosystem: "go", DeclaredLicenseExpression: "MIT",
+		SelectedLicenseExpression: "MIT", LegalTexts: []LegalFile{license},
+	}
+	review := Review{
+		Name: "example", Ecosystem: "go", DeclaredLicenseExpression: "MIT",
+		SelectedLicenseExpression: "MIT", LegalFiles: []LegalFile{license}, ReviewDecision: "approved",
+	}
+	withNotice := base
+	withNotice.Notices = []LegalFile{{Name: "NOTICE", SHA256: SHA256([]byte("notice")), Kind: "notice"}}
+	if err := ValidateReview(withNotice, []Review{review}); err == nil || !strings.Contains(err.Error(), "fingerprint") {
+		t.Fatalf("new NOTICE was not rejected: %v", err)
+	}
+	modified := base
+	modified.Modified = true
+	if err := ValidateReview(modified, []Review{review}); err == nil || !strings.Contains(err.Error(), "modification") {
+		t.Fatalf("changed modification status was not rejected: %v", err)
+	}
+}
+
+func TestReadLegalFilesFailsWithoutCandidate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("not a license"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadLegalFiles(dir); err == nil || !strings.Contains(err.Error(), "no legal candidate") {
+		t.Fatalf("missing legal material result = %v", err)
+	}
+}
