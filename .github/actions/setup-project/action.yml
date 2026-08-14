@@ -78,12 +78,12 @@ runs:
     - name: Prepare pinned staticcheck
       if: inputs.staticcheck == 'true'
       shell: bash
-      run: just _install-tools staticcheck=true govulncheck=false gitleaks=false
+      run: just _install-tools true false false
     - name: Prepare pinned govulncheck
       if: inputs.govulncheck == 'true'
       shell: bash
-      run: just _install-tools staticcheck=false govulncheck=true gitleaks=false
+      run: just _install-tools false true false
     - name: Prepare pinned Gitleaks
       if: inputs.gitleaks == 'true'
       shell: bash
-      run: just _install-tools staticcheck=false govulncheck=false gitleaks=true
+      run: just _install-tools false false true
