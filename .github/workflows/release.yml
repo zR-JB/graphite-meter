@@ -81,7 +81,7 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
-      - uses: ${{ github.repository }}/.github/actions/setup-project@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: zR-JB/graphite-meter/.github/actions/setup-project@f93944ad191f8a55e74f49b2de92ed1a1747692a
         with:
           go: 'true'
           bun: 'true'
