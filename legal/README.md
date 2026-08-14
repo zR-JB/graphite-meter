@@ -33,6 +33,9 @@ For an independent deterministic audit manifest of discovered components:
 just legal-review audit
 ```
 
+The private generator modes and packaging helpers are not part of the normal
+developer interface. Use `just --list` for the current public command list.
+
 Inspect the exact upstream revision and its legal files, then add a reviewed
 record to `reviewed-components.json`, regenerate, and run CI. New components
 are never approved by matching a familiar license template. `legal-check`,

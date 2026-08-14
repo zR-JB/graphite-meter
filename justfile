@@ -13,11 +13,13 @@
 # the server — same shape both ways, only the profile differs. Anything with a
 # leading underscore is a private helper step, not meant to be run directly.
 
-# Default shell for Linux/macOS
+# Default shell for Linux/macOS.
+[unix]
 set shell := ["sh", "-c"]
 
-# Fallback shell used automatically only when running on Windows (Requires PowerShell 7+)
-set windows-shell := ["pwsh", "-NoProfile", "-Command"]
+# PowerShell shell used on Windows (PowerShell 7+).
+[windows]
+set shell := ["pwsh", "-NoProfile", "-Command"]
 
 # CRITICAL: Automatically exports all just variables as environment variables
 # to the underlying shell. This eliminates inline "KEY=VALUE command" breaking on Windows.
@@ -110,7 +112,7 @@ doctor:
     [ "$actual_just" = "$expected_just" ] || { echo "doctor: Just version mismatch" >&2; fail=1; }
     [ "$docker_go" = "${expected_go#go}" ] || { echo "doctor: Docker Go builder disagrees with go.mod" >&2; fail=1; }
     [ "$docker_bun" = "$expected_bun" ] || { echo "doctor: Docker Bun fallback disagrees with .bun-version" >&2; fail=1; }
-    hardcoded=$(rg -n '^[[:space:]]*(go-version|bun-version):' .github/workflows 2>/dev/null || true)
+    hardcoded=$(grep -RInE --include='*.yml' --include='*.yaml' '^[[:space:]]*(go-version|bun-version):' .github/workflows 2>/dev/null || true)
     if [ -n "$hardcoded" ]; then
         echo "doctor: hard-coded CI toolchain declarations found outside setup-project:" >&2
         echo "$hardcoded" >&2
@@ -120,22 +122,29 @@ doctor:
     if [ -x "$gitleaks_path" ]; then
         echo "Gitleaks: $($gitleaks_path version 2>/dev/null || echo installed)"
     else
-        echo "Gitleaks: missing (run just setup)"
-        fail=1
+        echo "Gitleaks: missing (run just setup; required by pre-commit)"
     fi
     exit "$fail"
 
 [private]
-_install-tools:
+_install-tools staticcheck="true" govulncheck="true" gitleaks="true":
     #!/usr/bin/env sh
     set -eu
-    mkdir -p "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}" "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}" "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}"
-    test -x "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" || GOBIN="$PWD/{{ tools_dir }}/staticcheck-{{ staticcheck_version }}" go install honnef.co/go/tools/cmd/staticcheck@{{ staticcheck_version }}
-    test -x "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" || GOBIN="$PWD/{{ tools_dir }}/govulncheck-{{ govulncheck_version }}" go install golang.org/x/vuln/cmd/govulncheck@{{ govulncheck_version }}
-    test -x "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" || GOBIN="$PWD/{{ tools_dir }}/gitleaks-{{ gitleaks_version }}" go install github.com/zricethezav/gitleaks/v8@{{ gitleaks_version }}
-    "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" -version
-    "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" -version
-    "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" version
+    if [ "{{ staticcheck }}" = true ]; then
+        mkdir -p "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}"
+        test -x "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" || GOBIN="$PWD/{{ tools_dir }}/staticcheck-{{ staticcheck_version }}" go install honnef.co/go/tools/cmd/staticcheck@{{ staticcheck_version }}
+        "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" -version
+    fi
+    if [ "{{ govulncheck }}" = true ]; then
+        mkdir -p "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}"
+        test -x "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" || GOBIN="$PWD/{{ tools_dir }}/govulncheck-{{ govulncheck_version }}" go install golang.org/x/vuln/cmd/govulncheck@{{ govulncheck_version }}
+        "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" -version
+    fi
+    if [ "{{ gitleaks }}" = true ]; then
+        mkdir -p "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}"
+        test -x "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" || GOBIN="$PWD/{{ tools_dir }}/gitleaks-{{ gitleaks_version }}" go install github.com/zricethezav/gitleaks/v8@{{ gitleaks_version }}
+        "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" version
+    fi
 
 [private]
 _pre-commit:
@@ -162,13 +171,18 @@ _pre-commit:
         echo "pre-commit: refusing staged PEM certificate or private-key material" >&2
         exit 1
     fi
-    for file in $staged; do
-        bytes=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
-        if [ "$bytes" -gt 1048576 ]; then
-            echo "pre-commit: staged file exceeds 1 MiB: $file" >&2
-            exit 1
-        fi
-    done
+    if ! git diff --cached --name-only --diff-filter=ACMR -z |
+        xargs -0 -r -n1 sh -c '
+            file=$1
+            bytes=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
+            if [ "$bytes" -gt 1048576 ]; then
+                echo "pre-commit: staged file exceeds 1 MiB: $file" >&2
+                exit 1
+            fi
+        ' sh
+    then
+        exit 1
+    fi
     gitleaks="{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks"
     if [ ! -x "$gitleaks" ]; then
         echo "pre-commit: pinned Gitleaks is missing; run just setup" >&2
@@ -186,7 +200,7 @@ _pre-commit:
     if printf '%s\n' "$staged" | grep -q '^client/'; then
         just client-ci
     fi
-    if printf '%s\n' "$staged" | grep -qE '^(go/|client/|legal/|container/|scripts/package-tui\.sh$|LICENSE$|COPYRIGHT$)'; then
+    if printf '%s\n' "$staged" | grep -qE '^(go/|client/|legal/|container/|scripts/(package-tui\.sh|tui-targets\.txt)$|LICENSE$|COPYRIGHT$)'; then
         just legal-check
     fi
 
@@ -472,15 +486,26 @@ release-check: legal-check
     set -eu
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    VERSION=development LEGAL_SOURCE_OUT="$tmp/source.tar.gz" just _legal-source-bundle
-    test -s "$tmp/source.tar.gz"
     (cd go && go test ./internal/legal/...)
-    ./scripts/package-tui.sh development linux amd64 "$tmp/tui"
-    archive=$(find "$tmp/tui" -type f -name '*.tar.gz' -print -quit)
-    test -n "$archive"
-    tar -tzf "$archive" | grep -Fx 'graphite-meter-client_development_linux_amd64/LICENSE'
-    tar -tzf "$archive" | grep -Fx 'graphite-meter-client_development_linux_amd64/THIRD_PARTY_NOTICES.txt'
-    tar -xOzf "$archive" graphite-meter-client_development_linux_amd64/THIRD_PARTY_NOTICES.txt | grep -F 'THIRD-PARTY SOFTWARE NOTICES'
+    RELEASE_DIST="$tmp/dist" VERSION=development just release-artifacts development
+    (cd "$tmp/dist" && sha256sum -c checksums.txt)
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        goos=${target%/*}
+        goarch=${target#*/}
+        archive_base="graphite-meter-client_development_${goos}_${goarch}"
+        case "$goos" in
+            windows) archive="$tmp/dist/$archive_base.zip"; unzip -l "$archive" | grep -F "$archive_base/THIRD_PARTY_NOTICES.txt" ;;
+            *) archive="$tmp/dist/$archive_base.tar.gz"; tar -tzf "$archive" | grep -Fx "$archive_base/THIRD_PARTY_NOTICES.txt" ;;
+        esac
+        test -s "$archive"
+    done < scripts/tui-targets.txt
+    test -s "$tmp/dist/graphite-meter_development_corresponding-source.tar.gz"
+
+# Build exact production client and Go server artifacts for release validation.
+[group('release')]
+release-build version="development":
+    VERSION="{{ version }}" GM_CLIENT_BUILD_LABEL=prod just server-build-prod
 
 # Build all stable release artifacts into go/dist without publishing them.
 # Build all versioned release artifacts and their checksums.
@@ -488,10 +513,11 @@ release-check: legal-check
 release-artifacts version="development":
     #!/usr/bin/env sh
     set -eu
-    dist=go/dist
+    dist=${RELEASE_DIST:-go/dist}
+    case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
     mkdir -p "$dist"
     find "$dist" -maxdepth 1 -type f -delete
-    VERSION="{{ version }}" just _legal-source-bundle
+    VERSION="{{ version }}" LEGAL_SOURCE_OUT="$dist/graphite-meter_{{ version }}_corresponding-source.tar.gz" just _legal-source-bundle
     while IFS= read -r target; do
         [ -n "$target" ] || continue
         goos=${target%/*}

@@ -31,6 +31,8 @@ jobs:
       security: ${{ steps.filter.outputs.security }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Reject certificates and private keys
         shell: bash
         run: |
@@ -83,9 +85,7 @@ jobs:
               - "client/**"
             tui:
               - *workflow
-              - "go/cmd/graphite-meter-client/**"
-              - "go/internal/goclient/**"
-              - "go/internal/wire/**"
+              - "go/**"
               - "scripts/tui-targets.txt"
               - "scripts/package-tui.sh"
             integration:
@@ -100,6 +100,11 @@ jobs:
               - "client/**"
               - "go/**"
               - "container/**"
+              - "legal/**"
+              - "LICENSE"
+              - "COPYRIGHT"
+              - "scripts/verify-container.sh"
+              - ".bun-version"
             release:
               - *workflow
               - "api/**"
@@ -124,12 +129,14 @@ jobs:
     if: needs.plan.outputs.core == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           go: 'true'
           bun: 'true'
           client-deps: 'true'
-          tools: 'true'
+          staticcheck: 'true'
       - name: Fast repository gates
         run: just check
 
@@ -141,6 +148,8 @@ jobs:
     if: needs.plan.outputs.go == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           go: 'true'
@@ -159,6 +168,8 @@ jobs:
         project: [chromium, firefox]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           bun: 'true'
@@ -176,6 +187,8 @@ jobs:
     if: needs.plan.outputs.tui == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           go: 'true'
@@ -190,6 +203,8 @@ jobs:
     if: needs.plan.outputs.integration == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           go: 'true'
@@ -208,6 +223,8 @@ jobs:
     if: needs.plan.outputs.smoke == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - id: versions
         name: Read repository toolchain versions
         shell: bash
@@ -246,6 +263,8 @@ jobs:
     if: needs.plan.outputs.release == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           go: 'true'
@@ -262,18 +281,46 @@ jobs:
     if: needs.plan.outputs.security == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-project
         with:
           go: 'true'
-          tools: 'true'
+          govulncheck: 'true'
       - name: Vulnerability scan
         run: just security
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify pinned Gitleaks image
+        env:
+          GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          GITLEAKS_VERSION: v8.30.1
+        run: |
+          set -euo pipefail
+          test "$(tr -d '[:space:]' < .gitleaks-version)" = "$GITLEAKS_VERSION"
+          docker run --rm "$GITLEAKS_IMAGE" version | grep -Fx 'v8.30.1'
+      - name: Scan repository for secrets
+        env:
+          GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" "$GITLEAKS_IMAGE" \
+            detect --source=/repo --no-banner --redact --exit-code 1
 
   gate:
     name: Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [plan, core, go, browser, tui, integration, smoke, release, security]
+    needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
     steps:
       - name: Require all selected checks to pass
         env:
@@ -286,9 +333,10 @@ jobs:
           SMOKE: ${{ needs.smoke.result }}
           RELEASE: ${{ needs.release.result }}
           SECURITY: ${{ needs.security.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
         run: |
           set -eu
-          for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY"; do
+          for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
             case "$result" in
               success|skipped) ;;
               *) echo "CI gate failed: $result" >&2; exit 1 ;;

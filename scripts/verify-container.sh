@@ -7,12 +7,18 @@ tmp=$(mktemp -d)
 status=1
 expected_version=${GM_VERIFY_VERSION:-0.0.0-ci+local}
 expected_label=${GM_VERIFY_LABEL:-local}
-if command -v docker >/dev/null 2>&1; then
+if [ -n "${CONTAINER_ENGINE:-}" ]; then
+    engine=$CONTAINER_ENGINE
+elif command -v docker >/dev/null 2>&1; then
     engine=docker
 elif command -v podman >/dev/null 2>&1; then
     engine=podman
 else
-    echo "container verification requires Docker or Podman" >&2
+    echo "container verification requires Docker or Podman; set CONTAINER_ENGINE explicitly if needed" >&2
+    exit 2
+fi
+if ! command -v "$engine" >/dev/null 2>&1; then
+    echo "container verification engine '$engine' was not found" >&2
     exit 2
 fi
 

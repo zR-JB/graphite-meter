@@ -17,8 +17,16 @@ inputs:
     description: Restore the shared Bun package cache (disable for guarded release checkouts)
     required: false
     default: 'true'
-  tools:
-    description: Prepare the pinned staticcheck, govulncheck, and Gitleaks tools
+  staticcheck:
+    description: Prepare the pinned staticcheck tool
+    required: false
+    default: 'false'
+  govulncheck:
+    description: Prepare the pinned govulncheck tool
+    required: false
+    default: 'false'
+  gitleaks:
+    description: Prepare the pinned Gitleaks tool
     required: false
     default: 'false'
 runs:
@@ -62,13 +70,20 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
-        key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}
-        restore-keys: bun-${{ runner.os }}-
+        key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}-${{ hashFiles('.bun-version') }}
     - name: Install client dependencies
       if: inputs.client-deps == 'true'
       shell: bash
       run: cd client && bun install --frozen-lockfile
-    - name: Prepare pinned project tools
-      if: inputs.tools == 'true'
+    - name: Prepare pinned staticcheck
+      if: inputs.staticcheck == 'true'
       shell: bash
-      run: just _install-tools
+      run: just _install-tools staticcheck=true govulncheck=false gitleaks=false
+    - name: Prepare pinned govulncheck
+      if: inputs.govulncheck == 'true'
+      shell: bash
+      run: just _install-tools staticcheck=false govulncheck=true gitleaks=false
+    - name: Prepare pinned Gitleaks
+      if: inputs.gitleaks == 'true'
+      shell: bash
+      run: just _install-tools staticcheck=false govulncheck=false gitleaks=true

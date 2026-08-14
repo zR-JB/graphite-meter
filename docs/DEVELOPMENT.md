@@ -8,7 +8,7 @@ image, see the [README quick start](../README.md#quick-start).
 - **Go** — use the exact toolchain declared by `go/go.mod`.
 - **Bun** — use the channel/version declared by `.bun-version`.
 - **[`just`](https://github.com/casey/just)** — use the version declared by `.just-version`.
-- **Docker and Playwright browsers** — required for the complete `just ci` workflow.
+- **Docker or Podman and Playwright browsers** — required for the complete `just ci` workflow.
 
 ## Clone
 
@@ -65,8 +65,10 @@ just ci
 `check` is the fast deterministic developer gate after setup. `ci` is the
 complete local CI-equivalent workflow: race and coverage tests, both browser
 projects, real E2E, TUI cross-builds, release checks, container smoke, and the
-networked security scan. `just ci` therefore requires Docker, installed
-Playwright browsers, and network access for vulnerability advisories.
+networked security scan. `just ci` therefore requires Docker or Podman,
+installed Playwright browsers, and network access for vulnerability advisories.
+CI prepares only the executable analysis tool needed by each job; it does not
+promote `.tools` binaries from pull-request runs into a shared cache.
 
 The Bun unit suite remains on plain `bun test` for correctness. The measured
 canary evaluation found that randomized execution exposes existing global and
@@ -81,6 +83,60 @@ The authoritative command reference is always:
 ```sh
 just --list
 ```
+
+## Release operations
+
+Release publishing is driven only by trusted commits on `main`. Before the
+first release after a merge, wait for the exact main commit's `Gate` and
+`CodeQL` checks, then run the **Release** workflow's `workflow_dispatch` dry
+run with a test version. The dry run builds and verifies the OCI archive and
+all native artifacts without publishing anything.
+
+After that validation succeeds, tags are the only release input:
+
+```sh
+git switch main
+git pull --ff-only
+git tag -a v0.3.0-rc.0 -m "v0.3.0-rc.0"
+git push origin v0.3.0-rc.0
+
+git tag -a v0.3.0 -m "v0.3.0"
+git push origin v0.3.0
+```
+
+Prerelease tags publish only their exact image tag. Stable tags publish the
+exact image, the series tag, `latest`, and the GitHub Release with native TUI
+archives, checksums, and corresponding source. Do not use a PAT, manually log
+into GHCR, upload release artifacts, or construct a GitHub Release by hand.
+The `ghcr-release` environment must be configured by the repository owner
+before the first real release; it is an approval/policy hook, not a place for
+GHCR credentials.
+
+To publish a prerelease image from an open same-repository PR, wait for that
+PR's exact `Gate` and `CodeQL` checks, then run **Publish PR prerelease** with
+the PR number, exact head SHA, and an alpha/beta/RC tag. The trusted request
+job validates the PR and creates a one-use `gm-prerelease-<run-id>` label. The
+repository owner must apply that generated label to the PR; that genuine
+`pull_request:labeled` event starts the low-trust candidate build. The
+candidate has no secrets or package-write permission. A trusted job validates
+its inert OCI artifact before the isolated publisher writes only the exact
+versioned GHCR prerelease tag. This path creates no Git tag, GitHub Release,
+`latest`, or series alias, and the temporary label is removed automatically.
+
+## Required GitHub repository settings
+
+The repository owner must configure these settings manually; tracked files do
+not claim to enforce them:
+
+- require the `Gate` status on `main`;
+- protect CodeQL high-or-higher findings;
+- require zero human approvals while there is one maintainer;
+- set the default Actions token to read-only;
+- require full-SHA-pinned Actions and maintain a selected-action allowlist;
+- enable Secret Scanning and Push Protection;
+- configure the `ghcr-release` environment;
+- protect release tags and decide whether release immutability is enabled;
+- keep administrative bypass intentionally limited to the owner.
 
 ## Exceptional maintenance
 
