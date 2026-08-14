@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin } from "vite";
+import { writeFileSync } from "node:fs";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 import pkg from "./package.json";
@@ -44,6 +45,26 @@ const versionFile = (): Plugin => ({
       fileName: "version.json",
       source: JSON.stringify({ version: clientVersion, label: buildLabel }),
     });
+  },
+});
+
+// The legal pipeline must describe code that is actually emitted, not every
+// package installed for tests or build tooling. When requested, Rollup's
+// emitted chunk module maps are written as a sorted, deterministic list. The
+// scan build uses a temporary outDir, so it cannot disturb normal dist output.
+const legalScan = (): Plugin => ({
+  name: "gm-legal-scan",
+  generateBundle(_options, bundle) {
+    const output = env.GM_LEGAL_SCAN_OUT;
+    if (!output) return;
+    const modules = new Set<string>();
+    for (const artifact of Object.values(bundle)) {
+      if (artifact.type !== "chunk") continue;
+      for (const moduleId of Object.keys(artifact.modules)) {
+        modules.add(moduleId);
+      }
+    }
+    writeFileSync(output, `${JSON.stringify([...modules].sort())}\n`, "utf8");
   },
 });
 
@@ -144,7 +165,10 @@ const minifyHtml = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [svelte(), tailwindcss(), versionFile(), minifyHtml()],
+  plugins: [svelte(), tailwindcss(), versionFile(), minifyHtml(), legalScan()],
+  build: {
+    outDir: env.GM_LEGAL_SCAN_DIR ?? "dist",
+  },
   define: {
     __GM_DEFAULT_ENGINE__: JSON.stringify(defaultEngine), // "real" | "dummy"
     __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy), // bare true | false

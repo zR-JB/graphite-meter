@@ -77,6 +77,37 @@ client-build-prod:
     cd client && bun install
     bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
+# Discover the production browser closure in a temporary Vite output tree and
+# run the single offline legal generator. The scan build always consumes the
+# checked-in about.json from the previous generation, avoiding a circular
+# dependency between the bundle and its legal data.
+_legal-run mode="check":
+    #!/usr/bin/env sh
+    set -eu
+    scan=$(mktemp)
+    out=$(mktemp -d)
+    trap 'rm -f "$scan"; rm -rf "$out"' EXIT
+    cd client
+    if [ "${GM_LEGAL_REFRESH_LOCK:-0}" = "1" ]; then bun install; else bun install --frozen-lockfile; fi
+    GM_LEGAL_SCAN_OUT="$scan" GM_LEGAL_SCAN_DIR="$out" bun run build:bundle -- --outDir "$out"
+    cd ..
+    cd go
+    VERSION='{{version}}' GM_LEGAL_SCAN_MODULES="$scan" go run ./internal/legal/cmd/legalgen -mode '{{mode}}' -repo ..
+
+legal-generate:
+    just _legal-run generate
+
+legal-check:
+    just _legal-run check
+
+legal-review-template:
+    just _legal-run review-template
+
+legal-source-bundle:
+    just _legal-run source-bundle
+
+legal: legal-check
+
 # Type-check the client, including Bun test files
 client-check:
     cd client && bun run check
@@ -244,7 +275,7 @@ bench-throughput filter="" project="":
 
 # The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
 # all but go-lint, and only those matching the staged files.
-ci: check-generated client-ci server-check go-lint server-test
+ci: check-generated client-ci server-check go-lint server-test legal-check
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the
 # browser E2E, stubbed and live. The Docker smoke job and the cross-build matrix

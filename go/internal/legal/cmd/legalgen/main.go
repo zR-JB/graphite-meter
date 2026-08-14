@@ -63,7 +63,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	serverGo, tuiGo, err := discoverGo(repo)
+	serverGo, tuiGo, err := discoverGo(repo, reviews)
 	if err != nil {
 		fatal(err)
 	}
@@ -170,7 +170,7 @@ func repositoryRoot(explicit string) (string, error) {
 	}
 }
 
-func discoverGo(repo string) ([]legal.Component, []legal.Component, error) {
+func discoverGo(repo string, reviews []legal.Review) ([]legal.Component, []legal.Component, error) {
 	type target struct {
 		name, goos, goarch string
 	}
@@ -214,7 +214,7 @@ func discoverGo(repo string) ([]legal.Component, []legal.Component, error) {
 	var server, tui []legal.Component
 	for key, module := range modules {
 		parts := strings.SplitN(key, "\x00", 2)
-		component, err := goComponent(module.path, module.version, module.dir)
+		component, err := goComponent(module.path, module.version, module.dir, reviews)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -239,12 +239,54 @@ func discoverGo(repo string) ([]legal.Component, []legal.Component, error) {
 	return sortComponents(server), sortComponents(tui), nil
 }
 
-func goComponent(name, version, dir string) (legal.Component, error) {
+func goComponent(name, version, dir string, reviews []legal.Review) (legal.Component, error) {
 	files, err := legal.ReadLegalFiles(dir)
 	if err != nil {
-		return legal.Component{}, fmt.Errorf("Go module %s: %w", name, err)
+		files, err = reviewedLegalFiles(dir, "go", name, reviews)
+		if err != nil {
+			// Review-template mode needs to report the unresolved component rather
+			// than hiding it behind discovery failure. Normal mode still fails
+			// closed because UNKNOWN has no valid review basis.
+			return legal.Component{Name: name, Version: version, Ecosystem: "go", Source: legalSource(name, ""), DeclaredLicenseExpression: "UNKNOWN", SelectedLicenseExpression: "UNKNOWN"}, nil
+		}
 	}
-	return componentFromFiles("go", name, version, legalSource(name, ""), files), nil
+	component := componentFromFiles("go", name, version, legalSource(name, ""), files)
+	for _, review := range reviews {
+		if review.Ecosystem == "go" && review.Name == name {
+			component.DeclaredLicenseExpression = review.DeclaredLicenseExpression
+			component.SelectedLicenseExpression = review.SelectedLicenseExpression
+			break
+		}
+	}
+	return component, nil
+}
+
+func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]legal.LegalFile, error) {
+	var review *legal.Review
+	for i := range reviews {
+		if reviews[i].Ecosystem == ecosystem && reviews[i].Name == name {
+			review = &reviews[i]
+			break
+		}
+	}
+	if review == nil || len(review.LegalFiles) == 0 {
+		return nil, errors.New("no explicit reviewed legal-file override")
+	}
+	files := make([]legal.LegalFile, 0, len(review.LegalFiles))
+	for _, expected := range review.LegalFiles {
+		path := filepath.Join(dir, filepath.FromSlash(expected.Name))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		file := expected
+		file.Text = string(data)
+		if file.Kind == "" {
+			file.Kind = "license"
+		}
+		files = append(files, file)
+	}
+	return files, nil
 }
 
 func goToolchainComponent(repo string) (legal.Component, error) {
@@ -314,6 +356,8 @@ func inferLicense(files []legal.LegalFile) string {
 			return "Apache-2.0"
 		case strings.Contains(text, "MIT LICENSE"), strings.Contains(text, "PERMISSION IS HEREBY GRANTED, FREE OF CHARGE"):
 			return "MIT"
+		case strings.Contains(text, "PERMISSION TO USE, COPY, MODIFY, AND DISTRIBUTE"):
+			return "ISC"
 		case strings.Contains(text, "ISC LICENSE"):
 			return "ISC"
 		case strings.Contains(text, "BSD 3-CLAUSE"), strings.Contains(text, "REDISTRIBUTION AND USE IN SOURCE AND BINARY FORMS"):

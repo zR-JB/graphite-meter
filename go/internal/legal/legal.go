@@ -204,7 +204,8 @@ func ValidateReview(c Component, reviews []Review) error {
 	if c.Modified != r.Modified {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: modification status changed for %s", c.Name)
 	}
-	if !sameFiles(Fingerprint(c.LegalTexts), Fingerprint(r.LegalFiles)) {
+	currentFiles := append(append([]LegalFile{}, c.LegalTexts...), c.Notices...)
+	if !sameFiles(Fingerprint(currentFiles), Fingerprint(r.LegalFiles)) {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: legal fingerprint changed for %s", c.Name)
 	}
 	return nil
