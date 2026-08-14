@@ -20,6 +20,16 @@ just ci
 If the component's complete legal-file fingerprint is unchanged, the existing
 review is reusable and only the generated version changes.
 
+For an independent, deterministic audit manifest of every currently discovered
+component, run:
+
+```bash
+just legal-review-audit
+```
+
+This reports the exact artifact scope, upstream metadata, legal-file hashes, and
+whether the current review record matches. It never approves or edits a review.
+
 ## New dependency or changed legal files
 
 ```bash
@@ -43,6 +53,7 @@ Do not edit these by hand:
 - `COPYRIGHT`
 - `legal/generated/**`
 - `client/public/legal/**`
+- `go/internal/legal/assets/**`
 
 The generator also creates release `SOURCE.txt` material from the same project
 metadata and reviewed component set.

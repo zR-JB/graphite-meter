@@ -113,6 +113,9 @@ legal-review-audit:
 legal-source-bundle:
     just _legal-run source-bundle
 
+legal-source-bundle-test:
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; VERSION=development LEGAL_SOURCE_OUT="$tmp/source.tar.gz" just _legal-run source-bundle; tar -tzf "$tmp/source.tar.gz" | grep -Fx 'graphite-meter_development_corresponding-source/project/LICENSE'; tar -tzf "$tmp/source.tar.gz" | grep -Fx 'graphite-meter_development_corresponding-source/LEGAL_INVENTORY.json'; tar -tzf "$tmp/source.tar.gz" | grep -q '/third_party/go/'; tar -tzf "$tmp/source.tar.gz" | grep -q '/third_party/npm/'; if tar -tzf "$tmp/source.tar.gz" | grep -q '.dev-certs'; then echo 'development certificates leaked into source bundle' >&2; exit 1; fi
+
 legal: legal-check
 
 tui-package-test:
@@ -290,7 +293,7 @@ bench-throughput filter="" project="":
 
 # The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
 # all but go-lint, and only those matching the staged files.
-ci: check-generated client-ci server-check go-lint server-test legal-check tui-package-test tui-legal-test
+ci: check-generated client-ci server-check go-lint server-test legal-check tui-package-test tui-legal-test legal-source-bundle-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the
 # browser E2E, stubbed and live. The Docker smoke job and the cross-build matrix

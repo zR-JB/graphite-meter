@@ -1,16 +1,21 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/legal"
 )
@@ -42,6 +47,7 @@ func main() {
 	repoFlag := flag.String("repo", "", "repository root")
 	browserScan := flag.String("browser-scan", "", "JSON file emitted by the production browser scan")
 	version := flag.String("version", os.Getenv("VERSION"), "release version")
+	out := flag.String("out", os.Getenv("LEGAL_SOURCE_OUT"), "corresponding-source archive output path")
 	flag.Parse()
 
 	repo, err := repositoryRoot(*repoFlag)
@@ -102,7 +108,7 @@ func main() {
 	} {
 		for _, c := range set.components {
 			if err := legal.ValidateReview(c, reviews); err != nil {
-				if *mode == "review-template" {
+				if *mode == "review-template" || *mode == "review-audit" {
 					continue
 				}
 				fatal(fmt.Errorf("%s: %w", set.name, err))
@@ -115,6 +121,12 @@ func main() {
 	}
 	if *mode == "review-audit" {
 		printReviewAudit(server, tui, container, reviews)
+		return
+	}
+	if *mode == "source-bundle" {
+		if err := sourceBundle(repo, project, *version, server, tui, container, provenance, *out); err != nil {
+			fatal(err)
+		}
 		return
 	}
 
@@ -153,6 +165,167 @@ func main() {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+func sourceBundle(repo string, project legal.Project, version string, server, tui, container []legal.Component, provenance []legal.Provenance, output string) error {
+	if output == "" {
+		output = filepath.Join(repo, "go", "dist", fmt.Sprintf("graphite-meter_%s_corresponding-source.tar.gz", version))
+	}
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		return err
+	}
+	archiveRoot := fmt.Sprintf("graphite-meter_%s_corresponding-source", version)
+	file, err := os.Create(output)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	zipper := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(zipper)
+	closeArchive := func() error {
+		if err := tarWriter.Close(); err != nil {
+			return err
+		}
+		return zipper.Close()
+	}
+	if err := addTree(tarWriter, repo, archiveRoot+"/project", func(path string, info os.FileInfo) bool {
+		rel, _ := filepath.Rel(repo, path)
+		if rel == ".git" || strings.HasPrefix(filepath.ToSlash(rel), ".git/") {
+			return false
+		}
+		for _, excluded := range []string{"node_modules", "dist", "test-results", "go/dist", ".dev-certs"} {
+			slashRel := filepath.ToSlash(rel)
+			if rel == excluded || strings.HasPrefix(slashRel, excluded+"/") || strings.Contains(slashRel, "/"+excluded+"/") {
+				return false
+			}
+		}
+		return true
+	}); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, component := range append(append(server, tui...), container...) {
+		if component.Ecosystem != "go" || component.Name == "Go standard library" || seen[component.Name+"\x00"+component.Version] {
+			continue
+		}
+		seen[component.Name+"\x00"+component.Version] = true
+		dir, err := moduleDirectory(repo, component.Name, component.Version)
+		if err != nil {
+			return err
+		}
+		if err := addTree(tarWriter, dir, archiveRoot+"/third_party/go/"+safeName(component.Name+"@"+component.Version), func(path string, info os.FileInfo) bool { return true }); err != nil {
+			return err
+		}
+	}
+	for _, component := range server {
+		if component.Ecosystem != "npm" || seen[component.Name+"\x00"+component.Version] {
+			continue
+		}
+		seen[component.Name+"\x00"+component.Version] = true
+		dir := filepath.Join(repo, "client", "node_modules", filepath.FromSlash(component.Name))
+		if _, err := os.Stat(dir); err != nil {
+			return fmt.Errorf("browser source component %s: %w", component.Name, err)
+		}
+		if err := addTree(tarWriter, dir, archiveRoot+"/third_party/npm/"+safeName(component.Name+"@"+component.Version), func(path string, info os.FileInfo) bool { return true }); err != nil {
+			return err
+		}
+	}
+	for _, entry := range provenance {
+		base := archiveRoot + "/third_party/manual/" + safeName(entry.Name)
+		for _, local := range append(append([]string{}, entry.LocalPaths...), legalFilePaths(entry.LocalLegalFiles)...) {
+			path := local
+			if filepath.IsAbs(path) {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(repo, path)); err != nil {
+				continue
+			}
+			if err := addTree(tarWriter, filepath.Join(repo, path), base+"/"+filepath.Base(path), func(string, os.FileInfo) bool { return true }); err != nil {
+				return err
+			}
+		}
+	}
+	legalInventory := map[string]any{"server": server, "tui": tui, "container": container}
+	data, err := json.MarshalIndent(legalInventory, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := addBytes(tarWriter, archiveRoot+"/LEGAL_INVENTORY.json", append(data, '\n')); err != nil {
+		return err
+	}
+	readme := fmt.Sprintf("Graphite Meter corresponding source for %s.\n\nProject source and the runtime dependency sources used by the generated legal inventories are included.\n", version)
+	if err := addBytes(tarWriter, archiveRoot+"/README.txt", []byte(readme)); err != nil {
+		return err
+	}
+	return closeArchive()
+}
+
+func legalFilePaths(files []legal.LegalFile) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Name)
+	}
+	return paths
+}
+
+func moduleDirectory(repo, name, version string) (string, error) {
+	cmd := exec.Command("go", "list", "-m", "-json", name)
+	cmd.Dir = filepath.Join(repo, "go")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("locate source for %s@%s: %w", name, version, err)
+	}
+	var module struct{ Path, Version, Dir string }
+	if err := json.Unmarshal(out, &module); err != nil {
+		return "", err
+	}
+	if module.Version != version || module.Dir == "" {
+		return "", fmt.Errorf("source version mismatch for %s: got %s, want %s", name, module.Version, version)
+	}
+	return module.Dir, nil
+}
+
+func safeName(value string) string {
+	return strings.NewReplacer("/", "_", "\\", "_", "@", "_at_").Replace(value)
+}
+
+func addTree(writer *tar.Writer, root, destination string, include func(string, os.FileInfo) bool) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !include(path, info) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name := destination
+		if rel != "." {
+			name = filepath.Join(destination, rel)
+		}
+		return addBytes(writer, filepath.ToSlash(name), data)
+	})
+}
+
+func addBytes(writer *tar.Writer, name string, data []byte) error {
+	header := &tar.Header{Name: filepath.ToSlash(name), Mode: 0o644, Size: int64(len(data)), Uid: 0, Gid: 0, ModTime: time.Time{}}
+	if err := writer.WriteHeader(header); err != nil {
+		return err
+	}
+	_, err := io.Copy(writer, bytes.NewReader(data))
+	return err
 }
 
 func repositoryRoot(explicit string) (string, error) {

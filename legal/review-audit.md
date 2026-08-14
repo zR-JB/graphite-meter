@@ -1,6 +1,6 @@
 # Independent reviewed-components audit
 
-Audit date: 2026-08-14. This is an independent read-only audit of all 37
+Audit date: 2026-08-14. This is an independent read-only audit of all 40
 entries in `legal/reviewed-components.json`.
 
 Method: every recorded legal-file SHA-256 was compared with the exact
@@ -11,7 +11,7 @@ identifiers were cross-checked against SPDX (`MIT`, `ISC`, `BSD-3-Clause`, and
 present. `go-localereader` intentionally uses its upstream README because
 that package places its MIT grant there.
 
-Result: all 37 entries are **confirmed**. None is changed or unresolved, and
+Result: all 40 entries are **confirmed**. None is changed or unresolved, and
 there are no recommended edits to `legal/reviewed-components.json`. The
 recorded local fingerprints matched byte-for-byte.
 
@@ -57,6 +57,9 @@ recommended edit. `none` means the existing fail-closed record is correct.
 - confirmed — `golang.org/x/text` — `v0.40.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/text/+/refs/tags/v0.40.0/LICENSE) and [PATENTS](https://go.googlesource.com/text/+/refs/tags/v0.40.0/PATENTS) — none
 - confirmed — Go standard library — `go1.26.6-X:nodwarf5` — BSD-3-Clause — [Go LICENSE](https://go.dev/LICENSE) and [Go PATENTS](https://go.dev/PATENTS) — none
 - confirmed — `svelte` — `5.56.8` — MIT — [LICENSE.md at tag](https://github.com/sveltejs/svelte/tree/svelte%405.56.8/LICENSE.md) — none
+- confirmed — `Instrument Sans` — `2022 webfont` — OFL-1.1 — [upstream repository](https://github.com/Instrument/instrument-sans), local `legal/manual/fonts/OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
+- confirmed — `Spline Sans Mono` — `1.002 webfont` — OFL-1.1 — [upstream repository](https://github.com/SorkinType/SplineSansMono), local `legal/manual/fonts/OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
+- confirmed — `ca-certificates` — `builder package` — LicenseRef-Debian-ca-certificates-bundle — [Debian upstream](https://salsa.debian.org/debian/ca-certificates), builder copies `/usr/share/doc/ca-certificates/copyright` from the CA-bundle image — none
 
 This confirms the current state only. A future version, upstream legal-file
 change, declared-license change, or local fingerprint mismatch must remain

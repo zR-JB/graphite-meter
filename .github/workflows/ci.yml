@@ -52,6 +52,7 @@ jobs:
       client: ${{ steps.filter.outputs.client }}
       e2e: ${{ steps.filter.outputs.e2e }}
       smoke: ${{ steps.filter.outputs.smoke }}
+      legal: ${{ steps.filter.outputs.legal }}
     steps:
       # Checkout is needed for push events; PR events are diffed via the API.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,6 +98,15 @@ jobs:
               - "client/**"
               - "api/**"
               - "container/**"
+            legal:
+              - *workflow
+              - "legal/**"
+              - "LICENSE"
+              - "COPYRIGHT"
+              - "go/**"
+              - "client/**"
+              - "container/**"
+              - ".github/workflows/release.yml"
 
   go:
     name: Go
@@ -135,6 +145,33 @@ jobs:
         run: just check-generated
       - name: Test and coverage floor (just server-test)
         run: just server-test
+
+  legal:
+    name: Legal
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.legal == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: '1.4.0-canary.1'
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - name: Install exact client dependencies
+        working-directory: client
+        run: bun install --frozen-lockfile
+      - name: Offline legal discovery and drift check
+        run: just legal-check
+      - name: TUI archive and embedded legal checks
+        run: just tui-package-test tui-legal-test
+      - name: Corresponding source archive checks
+        run: just legal-source-bundle-test
 
   goclient-cross-build:
     name: TUI cross-build (${{ matrix.goos }}/${{ matrix.goarch }})
@@ -260,12 +297,26 @@ jobs:
             VERSION=0.0.0-ci
             GM_CLIENT_BUILD_LABEL=ci-${{ github.sha }}
             GM_CLIENT_VALIDATE=0
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=0.0.0-ci
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Run container
         run: docker run -d --name gm -p 7246:7246 graphite-meter:smoke
       - name: Verify outbound TLS trust store
         run: docker export gm | tar -tf - | grep -qx 'etc/ssl/certs/ca-certificates.crt'
+      - name: Verify legal files and OCI license label
+        run: |
+          set -euo pipefail
+          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/LICENSE'
+          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/COPYRIGHT'
+          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt'
+          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/SOURCE.txt'
+          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/ca-certificates/COPYRIGHT'
+          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' graphite-meter:smoke)" = 'AGPL-3.0-or-later'
       - name: Wait for ready
         run: |
           for i in $(seq 1 30); do

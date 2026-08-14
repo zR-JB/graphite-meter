@@ -805,7 +805,7 @@
     "selectedLicenseExpression": "OFL-1.1",
     "legalFiles": [
       {
-        "name": "legal/manual/fonts/OFL-1.1.txt",
+        "name": "OFL-1.1.txt",
         "sha256": "dabc4ec489d815411646bb98f736511dcae1f0e38eec6529310f221121141e94"
       }
     ],
@@ -823,7 +823,7 @@
     "selectedLicenseExpression": "OFL-1.1",
     "legalFiles": [
       {
-        "name": "legal/manual/fonts/OFL-1.1.txt",
+        "name": "OFL-1.1.txt",
         "sha256": "dabc4ec489d815411646bb98f736511dcae1f0e38eec6529310f221121141e94"
       }
     ],
@@ -841,7 +841,7 @@
     "selectedLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
     "legalFiles": [
       {
-        "name": "legal/manual/ca-certificates/README.txt",
+        "name": "README.txt",
         "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"
       }
     ],
