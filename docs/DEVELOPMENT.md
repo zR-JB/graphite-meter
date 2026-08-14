@@ -5,10 +5,10 @@ image, see the [README quick start](../README.md#quick-start).
 
 ## Prerequisites
 
-- **Go 1.26+** — the measurement server and native TUI client.
-- **Bun 1.4+** — the client toolchain.
-- **[`just`](https://github.com/casey/just)** — every workflow in this repo goes through the
-  `justfile`. Run `just` with no arguments to list every recipe.
+- **Go** — use the exact toolchain declared by `go/go.mod`.
+- **Bun** — use the channel/version declared by `.bun-version`.
+- **[`just`](https://github.com/casey/just)** — use the version declared by `.just-version`.
+- **Docker and Playwright browsers** — required for the complete `just ci` workflow.
 
 ## Clone
 
@@ -36,47 +36,64 @@ exercise the real production browser bundle, and `just ci` to run the local vali
 For an installed deployment, use the published container commands in the
 [README](../README.md#quick-start) or build a persistent binary with `just server-build-prod`.
 
-## Naming
+## Setup
 
-Recipes follow `<component>-<verb>`: `build` produces an artifact and stops there (a `client/dist`
-or a Go binary); `run` executes something already built; `test` runs a component's tests. `dev`
-and `prod` are the two config profiles a `-dev`/`-prod`-suffixed recipe can target. The two
-recipes with no component prefix, `dev` and `prod`, are the top-level entrypoints described above.
-Recipes starting with `_` are private helper steps, not meant to be run directly.
+```sh
+just setup
+just doctor
+```
 
-## Just command reference
+`setup` performs the frozen Bun install, downloads Go modules, prepares the
+pinned development tools, and enables `.githooks`. Network access is expected
+for setup. `doctor` is mutation-free and reports toolchain drift.
 
-| Recipe                   | What it does                                                                                                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `just` (no args)         | Lists every recipe.                                                                                                                                              |
-| `just hooks`             | Points git at `.githooks` (one-time per clone); the pre-commit hook mirrors the CI gates.                                                                        |
-| `just dev`               | Builds + embeds the dev-profile client, then `go run`s the server on `:7246`.                                                                                    |
-| `just prod`              | Builds + embeds the prod-profile client, then `go run`s the version-stamped server on `:7246`.                                                                   |
-| `just client-build-dev`  | `bun install` + `bun run build` -> `client/dist`, dev profile (Vite's own defaults: dummy engine + dev tools included).                                          |
-| `just client-build-prod` | Same, but real-only engine and dev tooling stripped by default — accepts the `GM_CLIENT_*` knobs inline (see below).                                             |
-| `just client-watch`      | Vite dev server only — hot reload, no Go server, no embedding, no live measurement backend.                                                                      |
-| `just client-check`      | Type-checks the client, including Bun test files (`svelte-check`) and the Vite config (`tsc`).                                                                   |
-| `just client-test`       | `bun test` — pure-`.ts`-logic unit tests (no component rendering).                                                                                               |
-| `just client-ci`         | Runs the fast client CI gates: the schema-type drift check, Prettier check, semantic type check, and Bun tests.                                                  |
-| `just client-browser`    | The stubbed browser suite in Chromium and Firefox: accessibility, panel behaviour, presentation. Serves the bundle alone, so nothing here reaches a backend. Slow (~45s), so it is outside `just ci`.               |
-| `just client-e2e`        | End to end: boots the measurement server and moves bytes over every real transport from Chromium, through the production lanes. The only check where both ends are real. Needs Go and openssl; the certificate is generated per run. ~6s.               |
-| `just client-gen-types`  | Regenerates TypeScript discovery and probe types from both JSON schemas.                                                                                         |
-| `just client-check-generated` | Regenerates those types and fails if they drift from `api/*.schema.json`. Hangs off `client-ci` rather than `check-generated`: the generator needs bun and `client/node_modules`, and `ci.yml` calls `check-generated` from the Go job, which sets up neither. |
-| `just auth-preview`      | Serves the real server-rendered login page on `127.0.0.1:4174`; `mode=` and `oidc_ready=` pick the variant.                                                      |
-| `just server-build-dev`  | Builds + embeds the dev-profile client, then builds `go/graphite-meter` as a persisted, stripped (`-s -w -trimpath`) binary — no version stamp, nothing runs it. |
-| `just server-build-prod` | Same, prod profile, plus the ldflags version stamp — the shippable binary for a manual/non-Docker deploy.                                                        |
-| `just server-check`      | Checks Go formatting, `go vet ./...`, and `go vet -tags stress ./internal/server/` so the saturation harness cannot rot outside the gate.                        |
-| `just server-test`       | `go test -race -shuffle=on ./...` — includes the `/preflight` schema-conformance test — then fails if total statement coverage is below the **75% floor**.       |
-| `just check-generated`   | Regenerates the embedded auth assets and fails if `go/internal/auth/assets_generated.go` drifts from source. Called by both the pre-commit hook and `ci.yml`. Covers the auth assets only; the schema-derived client types are gated by `client-check-generated`. |
-| `just go-lint`           | Pinned `staticcheck` and `govulncheck` over the Go module. `ci.yml` calls this exact recipe; the pre-commit hook is the one gate that skips it.                  |
-| `just ci`                | The fast local gate, in order: `check-generated`, `client-ci`, `server-check`, `go-lint`, `server-test`. Same recipes `ci.yml` runs.                             |
-| `just ci-full`           | `ci` plus `client-browser` and `client-e2e`. The Docker smoke job and the cross-build matrix stay CI-only (they need a container runtime or other toolchains).                        |
-| `just goclient-build`    | Builds only `go/graphite-meter-client` — does not touch the Svelte client.                                                                                       |
-| `just goclient-run`      | `go run`s the native TUI client against a running server.                                                                                                        |
-| `just container-build`   | `docker build -f container/Dockerfile -t graphite-meter:latest .`                                                                                                |
-| `just stress`            | Server saturation envelope: observer RTT under growing loader concurrency. Measurement only, never in CI.                                                        |
-| `just bench-wire`        | Both halves of the ping-bus encoding evidence, Go and TypeScript. Excluded from CI.                                                                              |
-| `just bench-throughput`  | Browser throughput matrix against a real server; takes an optional Playwright `-g` filter and an optional project, e.g. `just bench-throughput 'h1-clear/down/lanes=2' chromium`. Hours long, never in CI — see [BENCHMARKS.md](BENCHMARKS.md). |
+## Develop
+
+```sh
+just dev
+just prod
+just client-watch
+```
+
+## Validate
+
+```sh
+just check
+just ci
+```
+
+`check` is the fast deterministic developer gate after setup. `ci` is the
+complete local CI-equivalent workflow: race and coverage tests, both browser
+projects, real E2E, TUI cross-builds, release checks, container smoke, and the
+networked security scan. `just ci` therefore requires Docker, installed
+Playwright browsers, and network access for vulnerability advisories.
+
+The Bun unit suite remains on plain `bun test` for correctness. The measured
+canary evaluation found that randomized execution exposes existing global and
+module-mock ordering dependencies, while full `bun test --parallel` runs hang.
+Timing-aware serial shards do not skip files, but their setup overhead is not a
+useful critical-path improvement while the suite is already covered by the
+parallel browser jobs. Do not enable Bun shards or parallel mode without a new
+isolation fix and benchmark.
+
+The authoritative command reference is always:
+
+```sh
+just --list
+```
+
+## Exceptional maintenance
+
+```sh
+just legal-generate
+just legal-review template
+just release-check
+```
+
+Use `legal-generate` only after an approved legal/dependency change. The
+review command is for new or changed legal facts; `release-check` validates
+distributable artifacts without publishing them. Private underscore-prefixed
+recipes are implementation details and are not part of the developer API.
 
 ## Browser ping-cadence capture
 

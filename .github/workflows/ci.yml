@@ -13,15 +13,22 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Path filtering happens per-job (via the `changes` job) rather than with a
-# workflow-level `paths:` filter, for two reasons: skipped jobs still report a
-# status so required PR checks can't hang, and release.yml relies on a CI run
-# existing for every push to main.
+# Plan is deliberately the only path-sensitive job. Every substantive check
+# remains visible to branch protection through Gate, including when skipped.
 jobs:
-  certificate-safety:
-    name: No committed TLS material
+  plan:
+    name: Plan and repository safety
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      go: ${{ steps.filter.outputs.go }}
+      browser: ${{ steps.filter.outputs.browser }}
+      tui: ${{ steps.filter.outputs.tui }}
+      integration: ${{ steps.filter.outputs.integration }}
+      smoke: ${{ steps.filter.outputs.smoke }}
+      release: ${{ steps.filter.outputs.release }}
+      security: ${{ steps.filter.outputs.security }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reject certificates and private keys
@@ -41,249 +48,170 @@ jobs:
             printf '%s\n' "$pem"
             exit 1
           fi
-
-  changes:
-    name: Detect changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      go: ${{ steps.filter.outputs.go }}
-      tui: ${{ steps.filter.outputs.tui }}
-      client: ${{ steps.filter.outputs.client }}
-      e2e: ${{ steps.filter.outputs.e2e }}
-      smoke: ${{ steps.filter.outputs.smoke }}
-      legal: ${{ steps.filter.outputs.legal }}
-    steps:
-      # Checkout is needed for push events; PR events are diffed via the API.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          # api/ holds the wire test-vector corpus read by both go and client
-          # tests. The tui filter is the TUI binary's actual dependency
-          # closure (go list -deps ./cmd/graphite-meter-client).
           filters: |
             workflow: &workflow
-              - ".github/workflows/ci.yml"
-              # The justfile is the executable definition of every substantive
-              # job below. A recipe-only change must exercise those jobs too.
+              - ".github/workflows/**"
+              - ".github/actions/**"
               - "justfile"
-            go:
-              - *workflow
-              - "go/**"
-              - "api/**"
-              # The login surface is authored here and generated into
-              # internal/auth/assets_generated.go, so the Go job owns the
-              # drift check for it.
-              - "client/src/auth/**"
-            tui:
-              - *workflow
+              - ".bun-version"
+              - ".just-version"
+              - ".gitleaks-version"
               - "go/go.mod"
               - "go/go.sum"
-              - "go/cmd/graphite-meter-client/**"
-              - "go/internal/goclient/**"
-              - "go/internal/wire/**"
-              - "scripts/package-tui.sh"
-            client:
+            core:
               - *workflow
-              - "client/**"
+              - ".githooks/**"
               - "api/**"
-            e2e:
-              - *workflow
+              - "client/**"
               - "go/**"
-              - "client/**"
-              - "api/**"
-            smoke:
-              - *workflow
-              - "go/**"
-              - "client/**"
-              - "api/**"
-              - "container/**"
-            legal:
-              - *workflow
               - "legal/**"
               - "LICENSE"
               - "COPYRIGHT"
-              - "go/**"
-              - "client/**"
+              - "scripts/**"
               - "container/**"
+            go:
+              - *workflow
+              - "api/**"
+              - "go/**"
+              - "client/src/auth/**"
+            browser:
+              - *workflow
+              - "api/**"
+              - "client/**"
+            tui:
+              - *workflow
+              - "go/cmd/graphite-meter-client/**"
+              - "go/internal/goclient/**"
+              - "go/internal/wire/**"
+              - "scripts/tui-targets.txt"
               - "scripts/package-tui.sh"
-              - "scripts/tui-package-test.sh"
-              - "scripts/legal-source-bundle-test.sh"
-              - ".github/workflows/release.yml"
+            integration:
+              - *workflow
+              - "api/**"
+              - "client/**"
+              - "go/**"
+              - "container/**"
+            smoke:
+              - *workflow
+              - "api/**"
+              - "client/**"
+              - "go/**"
+              - "container/**"
+            release:
+              - *workflow
+              - "api/**"
+              - "client/**"
+              - "go/**"
+              - "legal/**"
+              - "container/**"
+              - "scripts/**"
+              - "LICENSE"
+              - "COPYRIGHT"
+            security:
+              - *workflow
+              - "go/go.mod"
+              - "go/go.sum"
+              - "go/**"
 
-  go:
-    name: Go
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      # Cache the compiled lint tools so go-lint does not rebuild staticcheck and
-      # govulncheck on every run. Their install path carries the pinned version,
-      # so a restored cache can never satisfy a bumped tool.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/go/bin/gm-lint
-          key: go-lint-tools-${{ hashFiles('justfile') }}
-          restore-keys: go-lint-tools-
-      # These recipes are the single source of truth for the Go checks; `just
-      # ci` runs the same ones locally, so the two cannot drift.
-      - name: Format and vet (just server-check)
-        run: just server-check
-      - name: Static analysis and vulnerabilities (just go-lint)
-        run: just go-lint
-      # The login surface is authored in client/src/auth and compiled into
-      # assets_generated.go. Nothing at build time reads the source files, so
-      # an edit that is never regenerated ships the old page silently — and
-      # the CSP style hash is derived from the generated CSS, so a drifted
-      # stylesheet is a blank login page, not a cosmetic difference.
-      - name: Generated auth assets match their source
-        run: just check-generated
-      - name: Test and coverage floor (just server-test)
-        run: just server-test
-
-  legal:
-    name: Legal
+  core:
+    name: Core checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: changes
-    if: needs.changes.outputs.legal == 'true'
+    needs: plan
+    if: needs.plan.outputs.core == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-project
         with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      - name: Install exact client dependencies
-        working-directory: client
-        run: bun install --frozen-lockfile
-      - name: Offline legal discovery and drift check
-        run: just legal-check
-      - name: TUI archive and embedded legal checks
-        run: just tui-package-test tui-legal-test
-      - name: Corresponding source archive checks
-        run: just legal-source-bundle-test
+          go: 'true'
+          bun: 'true'
+          client-deps: 'true'
+          tools: 'true'
+      - name: Fast repository gates
+        run: just check
 
-  goclient-cross-build:
-    name: TUI cross-build (${{ matrix.goos }}/${{ matrix.goarch }})
+  go:
+    name: Go race and coverage
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: changes
-    if: needs.changes.outputs.tui == 'true'
+    timeout-minutes: 15
+    needs: plan
+    if: needs.plan.outputs.go == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-project
+        with:
+          go: 'true'
+      - name: Race tests and coverage floor
+        run: just server-test
+
+  browser:
+    name: Browser (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: plan
+    if: needs.plan.outputs.browser == 'true'
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
+        project: [chromium, firefox]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-project
         with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      # Catches cross-compile breaks (e.g. an accidental cgo/platform-specific
-      # import) on every PR instead of only at release-tag time.
-      - name: Build
-        working-directory: go
-        env:
-          CGO_ENABLED: 0
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: go build -trimpath -o /dev/null ./cmd/graphite-meter-client
-
-  client:
-    name: Client
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: changes
-    if: needs.changes.outputs.client == 'true'
-    defaults:
-      run:
-        working-directory: client
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
-      - name: Install
-        run: bun install --frozen-lockfile
-      # `just client-ci` (prettier + type check + unit tests) is the same recipe
-      # `just ci` runs locally, so the two cannot drift. E2E stays CI-only.
-      - name: Format, type check, unit tests (just client-ci)
-        working-directory: .
-        run: just client-ci
-      - name: Install browsers
-        run: bunx playwright install --with-deps chromium firefox
+          bun: 'true'
+          client-deps: 'true'
+      - name: Install browser
+        run: cd client && bunx playwright install --with-deps ${{ matrix.project }}
       - name: Stubbed browser suite
-        working-directory: .
-        run: just client-browser
+        run: just client-browser ${{ matrix.project }}
 
-  e2e:
-    name: End to end
+  tui:
+    name: TUI cross-build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    needs: plan
+    if: needs.plan.outputs.tui == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-project
         with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+          go: 'true'
+      - name: Build every supported TUI target
+        run: just tui-cross-build
+
+  integration:
+    name: Browser/server E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.integration == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-project
         with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}
-          restore-keys: bun-${{ runner.os }}-
-      - name: Install
-        working-directory: client
-        run: bun install --frozen-lockfile
-      # H3 remains Chromium-only: QUIC ignores ignoreHTTPSErrors and Firefox
-      # needs a system trust anchor. The H1-clear upload path runs on both.
+          go: 'true'
+          bun: 'true'
+          client-deps: 'true'
       - name: Install browsers
-        working-directory: client
-        run: bunx playwright install --with-deps chromium firefox
-      # The stubbed suite never reaches a backend, so this is the only coverage
-      # the browser half of a transport has.
+        run: cd client && bunx playwright install --with-deps chromium firefox
       - name: Real transports against a real server
         run: just client-e2e
 
   smoke:
-    name: Smoke
+    name: Container smoke
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: changes
-    if: needs.changes.outputs.smoke == 'true'
+    needs: plan
+    if: needs.plan.outputs.smoke == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: versions
+        name: Read repository toolchain versions
+        shell: bash
+        run: echo "bun=$(tr -d '[:space:]' < .bun-version)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Build image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -292,10 +220,8 @@ jobs:
           file: container/Dockerfile
           load: true
           tags: graphite-meter:smoke
-          # The Client job owns semantic checks and tests. Smoke only needs
-          # the integration artifact, so avoid repeating svelte-check/tsc
-          # inside Docker while still running the real bundle step.
           build-args: |
+            BUN_VERSION=${{ steps.versions.outputs.bun }}
             VERSION=0.0.0-ci
             GM_CLIENT_BUILD_LABEL=ci-${{ github.sha }}
             GM_CLIENT_VALIDATE=0
@@ -306,184 +232,65 @@ jobs:
             org.opencontainers.image.licenses=AGPL-3.0-or-later
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Run container
-        run: docker run -d --name gm -p 7246:7246 graphite-meter:smoke
-      - name: Verify legal files, trust store, and OCI license label
+      - name: Verify image
+        env:
+          GM_VERIFY_VERSION: 0.0.0-ci+ci-${{ github.sha }}
+          GM_VERIFY_LABEL: ci-${{ github.sha }}
+        run: scripts/verify-container.sh graphite-meter:smoke
+
+  release:
+    name: Release package checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-project
+        with:
+          go: 'true'
+          bun: 'true'
+          client-deps: 'true'
+      - name: Release artifact invariants
+        run: just release-check
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: plan
+    if: needs.plan.outputs.security == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-project
+        with:
+          go: 'true'
+          tools: 'true'
+      - name: Vulnerability scan
+        run: just security
+
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [plan, core, go, browser, tui, integration, smoke, release, security]
+    steps:
+      - name: Require all selected checks to pass
+        env:
+          PLAN: ${{ needs.plan.result }}
+          CORE: ${{ needs.core.result }}
+          GO: ${{ needs.go.result }}
+          BROWSER: ${{ needs.browser.result }}
+          TUI: ${{ needs.tui.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          SMOKE: ${{ needs.smoke.result }}
+          RELEASE: ${{ needs.release.result }}
+          SECURITY: ${{ needs.security.result }}
         run: |
-          set -euo pipefail
-          tmp=$(mktemp -d)
-          trap 'rm -rf "$tmp"' EXIT
-          docker export gm -o "$tmp/rootfs.tar"
-          tar -tf "$tmp/rootfs.tar" > "$tmp/files"
-          for path in \
-            etc/ssl/certs/ca-certificates.crt \
-            usr/share/licenses/graphite-meter/LICENSE \
-            usr/share/licenses/graphite-meter/COPYRIGHT \
-            usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt \
-            usr/share/licenses/graphite-meter/SOURCE.txt \
-            usr/share/licenses/ca-certificates/COPYRIGHT
-          do
-            grep -Fx "$path" "$tmp/files" > /dev/null
-          done
-          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/LICENSE > "$tmp/LICENSE"
-          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/COPYRIGHT > "$tmp/COPYRIGHT"
-          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt > "$tmp/THIRD_PARTY_NOTICES.txt"
-          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/SOURCE.txt > "$tmp/SOURCE.txt"
-          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/ca-certificates/COPYRIGHT > "$tmp/CA_COPYRIGHT"
-          grep -F 'GNU AFFERO GENERAL PUBLIC LICENSE' "$tmp/LICENSE" > /dev/null
-          grep -F 'Graphite Meter' "$tmp/COPYRIGHT" > /dev/null
-          grep -F 'THIRD-PARTY SOFTWARE NOTICES' "$tmp/THIRD_PARTY_NOTICES.txt" > /dev/null
-          grep -F 'https://github.com/zR-JB/graphite-meter' "$tmp/SOURCE.txt" > /dev/null
-          test -s "$tmp/CA_COPYRIGHT"
-          test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' graphite-meter:smoke)" = 'AGPL-3.0-or-later'
-      - name: Wait for ready
-        run: |
-          for i in $(seq 1 30); do
-            curl -fsS -o /dev/null http://localhost:7246/preflight && exit 0
-            sleep 1
-          done
-          echo "::error::server never became ready"
-          exit 1
-      - name: Smoke /preflight
-        run: |
-          curl -fsS http://localhost:7246/preflight | tee /tmp/preflight.json
-          jq -e '
-            .engineVersion == "0.0.0-ci"
-            and (.generation | type == "string" and length > 0)
-            and .capabilities.throughput == [{
-              "baseUrl": "http://localhost:7246",
-              "transport": "fetch-stream",
-              "protocol": "http1"
-            }]
-            and .capabilities.latency == [{
-              "baseUrl": "http://localhost:7246",
-              "transport": "websocket"
-            }]
-            and .server.name == "graphite-meter"
-          ' /tmp/preflight.json
-      - name: Smoke /probe
-        run: |
-          curl -fsS http://localhost:7246/probe | tee /tmp/probe.json
-          jq -e '
-            (.clientIp | type == "string" and length > 0)
-            and (.clientIpVersion == 4 or .clientIpVersion == 6)
-            and (.clientIpSource | type == "string" and length > 0)
-            and .protocolNegotiated == "http/1.1"
-          ' /tmp/probe.json
-      - name: Smoke built client metadata
-        run: |
-          curl -fsS http://localhost:7246/version.json | tee /tmp/version.json
-          jq -e '
-            .version == "0.0.0-ci+ci-${{ github.sha }}"
-            and .label == "ci-${{ github.sha }}"
-          ' /tmp/version.json
-      - name: Smoke built client assets
-        run: |
-          set -euo pipefail
-          base=http://localhost:7246
-          curl -fsS "$base/" -o /tmp/index.html
-
-          grep -qi '<script[^>]*type="module"' /tmp/index.html || {
-            echo "::error::/ did not return a built module-based SPA index"
-            exit 1
-          }
-          if grep -q '/src/main.ts' /tmp/index.html; then
-            echo "::error::index.html still references the dev entrypoint"
-            exit 1
-          fi
-
-          python3 - <<'PY' > /tmp/client-assets.txt
-          from html.parser import HTMLParser
-
-          class AssetParser(HTMLParser):
-              def __init__(self):
-                  super().__init__()
-                  self.urls = set()
-
-              def handle_starttag(self, tag, attrs):
-                  attrs = dict(attrs)
-                  for key in ("href", "src"):
-                      value = attrs.get(key)
-                      if value and value.startswith("/"):
-                          self.urls.add(value)
-
-          parser = AssetParser()
-          with open("/tmp/index.html", encoding="utf-8") as f:
-              parser.feed(f.read())
-          for url in sorted(parser.urls):
-              print(url)
-          PY
-
-          grep -Eq '^/assets/.+\.js$' /tmp/client-assets.txt || {
-            echo "::error::index.html does not reference a built JS asset"
-            cat /tmp/client-assets.txt
-            exit 1
-          }
-          grep -Eq '^/assets/.+\.css$' /tmp/client-assets.txt || {
-            echo "::error::index.html does not reference a built CSS asset"
-            cat /tmp/client-assets.txt
-            exit 1
-          }
-
-          while IFS= read -r path; do
-            headers=$(mktemp)
-            body=$(mktemp)
-            curl -fsS -D "$headers" -o "$body" "$base$path"
-            bytes=$(wc -c < "$body")
-            if [ "$bytes" -le 0 ]; then
-              echo "::error::$path was empty"
-              exit 1
-            fi
-            content_type=$(tr -d '\r' < "$headers" | awk 'BEGIN { IGNORECASE = 1 } /^content-type:/ { print $2; exit }')
-            case "$path" in
-              *.js)
-                echo "$content_type" | grep -Eqi 'javascript' || {
-                  echo "::error::$path content-type was $content_type, expected JavaScript"
-                  exit 1
-                }
-                ;;
-              *.css)
-                echo "$content_type" | grep -Eqi '^text/css' || {
-                  echo "::error::$path content-type was $content_type, expected CSS"
-                  exit 1
-                }
-                ;;
-              *.woff2)
-                echo "$content_type" | grep -Eqi 'font/woff2|application/octet-stream' || {
-                  echo "::error::$path content-type was $content_type, expected font/woff2"
-                  exit 1
-                }
-                ;;
-              *.svg)
-                echo "$content_type" | grep -Eqi 'image/svg\+xml|text/xml' || {
-                  echo "::error::$path content-type was $content_type, expected SVG"
-                  exit 1
-                }
-                ;;
+          set -eu
+          for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "CI gate failed: $result" >&2; exit 1 ;;
             esac
-            if grep -Eqi '<!doctype html|<html' "$body"; then
-              echo "::error::$path resolved to HTML instead of its asset body"
-              exit 1
-            fi
-          done < /tmp/client-assets.txt
-      - name: Smoke SPA routing
-        run: |
-          set -euo pipefail
-          base=http://localhost:7246
-          curl -fsS "$base/settings/" -o /tmp/spa-route.html
-          grep -qi '<div id="app"' /tmp/spa-route.html || {
-            echo "::error::extensionless SPA route did not fall back to index.html"
-            exit 1
-          }
-          status=$(curl -sS -o /tmp/missing-asset.txt -w '%{http_code}' "$base/assets/missing-${{ github.sha }}.js")
-          if [ "$status" != "404" ]; then
-            echo "::error::missing built asset returned HTTP $status, expected 404"
-            exit 1
-          fi
-          if grep -Eqi '<!doctype html|<html' /tmp/missing-asset.txt; then
-            echo "::error::missing built asset returned SPA HTML instead of a 404 body"
-            exit 1
-          fi
-      - name: Dump logs on failure
-        if: failure()
-        run: docker logs gm || true
+          done

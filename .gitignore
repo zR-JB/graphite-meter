@@ -23,6 +23,7 @@ go/internal/static/dist/*
 !go/internal/static/dist/.gitkeep
 
 # --- General ---
+.tools/
 # (no bare `dist` rule — it would shadow the Go embed placeholder negation
 #  above; dist dirs are ignored explicitly per-package.)
 node_modules

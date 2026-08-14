@@ -371,7 +371,10 @@ func repositoryRoot(explicit string) (string, error) {
 }
 
 func discoverGo(repo string, reviews []legal.Review, provenance []legal.Provenance) ([]legal.Component, []legal.Component, error) {
-	targets := goDiscoveryTargets()
+	targets, err := goDiscoveryTargets(repo)
+	if err != nil {
+		return nil, nil, err
+	}
 	modules := map[string]struct {
 		path, version, dir string
 	}{}
@@ -429,14 +432,38 @@ func discoverGo(repo string, reviews []legal.Review, provenance []legal.Provenan
 	return sortComponents(server), sortComponents(tui), nil
 }
 
-func goDiscoveryTargets() []goTarget {
-	targets := []goTarget{{"server", "linux", "amd64"}, {"server", "linux", "arm64"}}
-	for _, osName := range []string{"linux", "darwin"} {
-		for _, arch := range []string{"amd64", "arm64"} {
-			targets = append(targets, goTarget{"tui", osName, arch})
+func goDiscoveryTargets(repo string) ([]goTarget, error) {
+	data, err := os.ReadFile(filepath.Join(repo, "scripts", "tui-targets.txt"))
+	if err != nil {
+		return nil, fmt.Errorf("read TUI target list: %w", err)
+	}
+	var targets []goTarget
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || seen[line] {
+			return nil, fmt.Errorf("invalid or duplicate TUI target %q", line)
+		}
+		seen[line] = true
+		targets = append(targets, goTarget{"tui", parts[0], parts[1]})
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("scripts/tui-targets.txt contains no targets")
+	}
+	serverTargets := make([]goTarget, 0, 2)
+	for _, target := range targets {
+		if target.goos == "linux" && (target.goarch == "amd64" || target.goarch == "arm64") {
+			serverTargets = append(serverTargets, goTarget{"server", target.goos, target.goarch})
 		}
 	}
-	return append(targets, goTarget{"tui", "windows", "amd64"})
+	if len(serverTargets) != 2 {
+		return nil, errors.New("scripts/tui-targets.txt must include linux/amd64 and linux/arm64")
+	}
+	return append(serverTargets, targets...), nil
 }
 
 func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope string) bool {

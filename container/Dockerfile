@@ -7,6 +7,7 @@
 #
 # Reserved for a future Go->Rust server swap:
 ARG SERVER_IMPL=go
+ARG BUN_VERSION=canary
 # Stamped into both EngineVersion (server) and the client bundle (see the
 # client stage's VERSION ARG below) — one value, two consumers. This default
 # only applies to a manual `docker build` with no --build-arg; CI (ci.yml's
@@ -17,7 +18,7 @@ ARG VERSION=0.1.0
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.
 # ---------------------------------------------------------------------------
-FROM docker.io/oven/bun:canary AS client
+FROM docker.io/oven/bun:${BUN_VERSION} AS client
 # Build-time client config (override with --build-arg). Defaults = production:
 # real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
 # reaches `bun run build`'s process.env, where vite.config.ts reads it.
@@ -40,11 +41,10 @@ ENV GM_CLIENT_ENGINE=$GM_CLIENT_ENGINE \
     GM_CLIENT_BUILD_LABEL=$GM_CLIENT_BUILD_LABEL \
     VERSION=$VERSION
 WORKDIR /app/client
-# Install deps first for layer caching. (Not --frozen-lockfile: the committed
-# bun.lock may be a newer lockfile version than the pinned bun image; bun then
-# resolves from package.json's pinned ranges, which is fine for a build image.)
+# Install deps first for layer caching. Every official build uses the
+# repository's declared Bun channel and the committed lockfile.
 COPY client/package.json client/bun.lock ./
-RUN bun --bun install
+RUN bun --bun install --frozen-lockfile
 # Then the source, then build.
 COPY client/ ./
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi

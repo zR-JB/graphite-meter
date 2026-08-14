@@ -192,13 +192,15 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-project
         with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+          go: 'true'
+          bun: 'true'
+          client-deps: 'true'
+      - id: versions
+        name: Read repository toolchain versions
+        shell: bash
+        run: echo "bun=$(tr -d '[:space:]' < .bun-version)" >> "$GITHUB_OUTPUT"
       - name: Generate release legal outputs
         env:
           VERSION: ${{ needs.guard.outputs.version }}
@@ -225,6 +227,7 @@ jobs:
             VERSION=${{ needs.guard.outputs.version }}
             GM_CLIENT_BUILD_LABEL=prod
             GM_CLIENT_VALIDATE=0
+            BUN_VERSION=${{ steps.versions.outputs.bun }}
       - name: Store image archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -256,16 +259,24 @@ jobs:
           STABLE: ${{ needs.guard.outputs.stable }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes skopeo
           image="ghcr.io/${REPOSITORY,,}"
-          printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          skopeo copy --all "oci-archive:$RUNNER_TEMP/release-image/graphite-meter.oci.tar" "docker://$image:$VERSION"
-          if [[ "$STABLE" == "true" ]]; then
-            skopeo copy --all "docker://$image:$VERSION" "docker://$image:$SERIES"
-            skopeo copy --all "docker://$image:$VERSION" "docker://$image:latest"
-          fi
-          skopeo logout ghcr.io
+          skopeo_image="quay.io/skopeo/stable@sha256:d0d9c22ee28fd0aee10de8b1ee2e2dfb5eab50d0f0b6a2558bd80a6112bb51fd" # Skopeo v1.18.0
+          docker run --rm --entrypoint /bin/sh \
+            -e GH_TOKEN \
+            -e GITHUB_ACTOR \
+            -e IMAGE="$image" \
+            -e VERSION SERIES STABLE \
+            -v "$RUNNER_TEMP/release-image:/work:ro" \
+            "$skopeo_image" \
+            -ec '
+              printf "%s" "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+              skopeo copy --all "oci-archive:/work/graphite-meter.oci.tar" "docker://$IMAGE:$VERSION"
+              if [ "$STABLE" = true ]; then
+                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:$SERIES"
+                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:latest"
+              fi
+              skopeo logout ghcr.io
+            '
 
   tag-prerelease:
     name: Create prerelease tag
@@ -312,44 +323,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: ./.github/actions/setup-project
         with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      # Standalone downloads for the native Bubble Tea TUI client (connects to
-      # any running server; not embedded in the container image). Pure Go, no
-      # cgo, so it cross-compiles cleanly from one runner. Stamped with the
-      # same VERSION as the image (see go/internal/goclient.Version).
-      #
-      # Symbols are deliberately NOT stripped: unsigned Go binaries built with
-      # -s -w trip AV ML heuristics (Trojan:Win32/Wacatac.C!ml and friends).
-      # The build is bit-for-bit reproducible from a clean checkout of the
-      # tagged commit with this exact go build line (go/dist and the
-      # intermediate binaries are gitignored so buildvcs stamps a clean tree).
+          go: 'true'
+          bun: 'true'
+          client-deps: 'true'
       - name: Generate release legal outputs
         run: just legal-generate
-      - name: Build corresponding source archive
-        run: just legal-source-bundle
-      - name: Build native client binaries
-        working-directory: go
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          build() {
-            os="$1"; arch="$2"
-            echo "building ${os}/${arch}"
-            ../scripts/package-tui.sh "$VERSION" "$os" "$arch" dist
-          }
-          build linux amd64
-          build linux arm64
-          build darwin amd64
-          build darwin arm64
-          build windows amd64
-          ( cd dist && sha256sum * > checksums.txt )
+      - name: Build native release artifacts
+        run: just release-artifacts "$VERSION"
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true

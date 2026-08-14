@@ -2,6 +2,8 @@ module github.com/zR-JB/graphite-meter/go
 
 go 1.26.5
 
+toolchain go1.26.6
+
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
