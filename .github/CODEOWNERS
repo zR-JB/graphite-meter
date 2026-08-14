@@ -1,0 +1,14 @@
+# Supply-chain-sensitive repository controls and release inputs.
+/.github/                  @zR-JB
+/justfile                  @zR-JB
+/container/                @zR-JB
+/scripts/                  @zR-JB
+/go/go.mod                 @zR-JB
+/go/go.sum                 @zR-JB
+/client/bun.lock           @zR-JB
+/.bun-version              @zR-JB
+/.just-version             @zR-JB
+/.gitleaks-version         @zR-JB
+/legal/                    @zR-JB
+/LICENSE                   @zR-JB
+/COPYRIGHT                 @zR-JB

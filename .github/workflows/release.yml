@@ -1,40 +1,33 @@
 name: Release
 
-# Tag scheme (SemVer 2.0.0): vMAJOR.MINOR.PATCH[-alpha.N|-beta.N|-rc.N].
-#   v0.1.0-alpha.0, v0.1.0-alpha.1, ... -beta.0 ..., -rc.0 ... then v0.1.0.
-# Use dotted numeric prerelease identifiers (alpha.9 < alpha.10 compares
-# correctly; a bare "alpha10" would sort lexically wrong). A tag counts as
-# a prerelease iff its name contains "-" — every job below keys off that.
-# Prerelease images can also be published manually from an exact CI-green PR
-# head. The trusted workflow on main creates that tag after publishing; the
-# GITHUB_TOKEN tag push does not recursively start another workflow run.
-# Prereleases never move the `latest`/`{{major}}.{{minor}}` floating tags or
-# cut a GitHub Release. Final tags (no "-"): main-only full promotion.
+# Production publishing is tag-only. workflow_dispatch is deliberately a
+# validation build from trusted main and never receives publication rights.
 on:
   push:
-    tags: ["v*.*.*"] # glob `*` matches "-" too, so this already covers prereleases
+    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
-      pr:
-        description: Open same-repository PR targeting main
+      version:
+        description: SemVer test version for a trusted-main dry run
         required: true
-        type: number
-      tag:
-        description: Prerelease tag, for example v0.3.0-alpha.0
-        required: true
-        type: string
-      sha:
-        description: Exact current PR head commit
-        required: true
+        default: v0.3.0-rc.0
         type: string
 
 permissions:
   contents: read
-  actions: read # guard job reads the CI run for the tagged commit
-  pull-requests: read # manual prereleases resolve an exact PR head
+  actions: read
+  checks: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.version || github.ref_name }}
+
+env:
+  # Official Quay currently publishes v1.22.2 as its newest stable Skopeo
+  # image. Keep this digest immutable and verify the binary at runtime. Move
+  # this single reference to the official v1.23.0 image when that image is
+  # published; do not substitute an unverified digest.
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
+  SKOPEO_VERSION: 1.22.2
 
 jobs:
   guard:
@@ -42,148 +35,44 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
-      sha: ${{ steps.source.outputs.sha }}
-      tag: ${{ steps.source.outputs.tag }}
-      version: ${{ steps.source.outputs.version }}
-      series: ${{ steps.source.outputs.series }}
-      stable: ${{ steps.source.outputs.stable }}
-      pr: ${{ steps.source.outputs.pr }}
+      sha: ${{ steps.guard.outputs.sha }}
+      tag: ${{ steps.guard.outputs.tag }}
+      version: ${{ steps.guard.outputs.version }}
+      series: ${{ steps.guard.outputs.series }}
+      stable: ${{ steps.guard.outputs.stable }}
+      dry_run: ${{ steps.guard.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout trusted tag
+        if: github.event_name == 'push'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Resolve release source
-        id: source
+      - name: Checkout trusted main for dry run
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - id: guard
+        name: Verify exact release source and checks
         env:
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
-          REF_NAME: ${{ github.ref_name }}
           REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
-          REPOSITORY: ${{ github.repository }}
-          ACTOR: ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          OWNER: ${{ github.repository_owner }}
-          REQUESTED_PR: ${{ inputs.pr }}
-          REQUESTED_TAG: ${{ inputs.tag }}
-          EXPECTED_SHA: ${{ inputs.sha }}
-        run: |
-          set -euo pipefail
-          export GIT_CONFIG_COUNT=1
-          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
-          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          tag="$REF_NAME"
-          sha="$EVENT_SHA"
-          ci_event=push
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$REF" != "refs/heads/main" || "$WORKFLOW_REF" != "$REPOSITORY/.github/workflows/release.yml@refs/heads/main" ]]; then
-              echo "::error::Manual prereleases must run from the trusted release workflow on main."
-              exit 1
-            fi
-            if [[ "$ACTOR" != "$OWNER" || "$TRIGGERING_ACTOR" != "$OWNER" ]]; then
-              echo "::error::Only the repository owner may start or rerun an off-main prerelease."
-              exit 1
-            fi
-            tag="$REQUESTED_TAG"
-            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
-              echo "::error::Manual publishing requires a tag such as v0.3.0-alpha.0, v0.3.0-beta.0, or v0.3.0-rc.0."
-              exit 1
-            fi
-            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::The expected PR head must be a full 40-character commit SHA."
-              exit 1
-            fi
-            if [[ ! "$REQUESTED_PR" =~ ^[1-9][0-9]*$ ]]; then
-              echo "::error::The PR input must be a positive integer."
-              exit 1
-            fi
-            read -r state base sha head_repo <<<"$(gh api "repos/$REPOSITORY/pulls/$REQUESTED_PR" \
-              --jq '[.state, .base.ref, .head.sha, .head.repo.full_name] | @tsv')"
-            if [[ "$state" != "open" || "$base" != "main" || "$head_repo" != "$REPOSITORY" ]]; then
-              echo "::error::PR #$REQUESTED_PR must be open, target main, and use a branch in this repository."
-              exit 1
-            fi
-            if [[ "$sha" != "$EXPECTED_SHA" ]]; then
-              echo "::error::PR #$REQUESTED_PR moved: expected $EXPECTED_SHA, current head is $sha."
-              exit 1
-            fi
-            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-              echo "::error::Tag $tag already exists."
-              exit 1
-            fi
-            git fetch origin "$sha"
-            git fetch origin "pull/$REQUESTED_PR/merge"
-            merge_sha="$(git rev-parse FETCH_HEAD)"
-            if ! git diff --quiet "$sha^{tree}" "$merge_sha^{tree}"; then
-              echo "::error::PR #$REQUESTED_PR is not up to date with main; its tested merge tree differs from head $sha."
-              exit 1
-            fi
-            ci_event=pull_request
-          elif [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
-            echo "::error::Unsupported release tag $tag."
-            exit 1
-          fi
-
-          git fetch origin main
-          if [[ "$ci_event" == "push" ]] && ! git merge-base --is-ancestor "$sha" origin/main; then
-            echo "::error::Tag $tag (commit $sha) is not reachable from main — refusing to publish."
-            exit 1
-          fi
-          version="${tag#v}"
-          IFS=. read -r major minor _ <<<"$version"
-          stable=true
-          [[ "$tag" == *-* ]] && stable=false
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "series=$major.$minor" >> "$GITHUB_OUTPUT"
-          echo "stable=$stable" >> "$GITHUB_OUTPUT"
-          echo "ci_event=$ci_event" >> "$GITHUB_OUTPUT"
-          echo "pr=$REQUESTED_PR" >> "$GITHUB_OUTPUT"
-      # CI already tested this exact main commit or the merge tree proven
-      # identical to this PR head. Wait for an in-flight run and fail on
-      # anything but a completed success.
-      - name: Verify CI succeeded for the release source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          SHA: ${{ steps.source.outputs.sha }}
-          CI_EVENT: ${{ steps.source.outputs.ci_event }}
-          PR: ${{ steps.source.outputs.pr }}
-        run: |
-          set -euo pipefail
-          runs_url="repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=${CI_EVENT}"
-          for i in $(seq 1 60); do
-            filter='.workflow_runs | first // {}'
-            if [[ "$CI_EVENT" == "pull_request" ]]; then
-              filter=".workflow_runs | map(select(any(.pull_requests[]; .number == $PR))) | first // {}"
-            fi
-            read -r status conclusion <<<"$(gh api "$runs_url" --jq "$filter | \"\(.status // \"missing\") \(.conclusion // \"-\")\"")"
-            case "$status" in
-              completed)
-                [ "$conclusion" = "success" ] && exit 0
-                echo "::error::CI for $SHA concluded '$conclusion' — refusing to publish."
-                exit 1
-                ;;
-              missing)
-                echo "::error::No $CI_EVENT CI run found for $SHA."
-                exit 1
-                ;;
-              *)
-                echo "CI run is '$status' — waiting ($i/60)"
-                sleep 15
-                ;;
-            esac
-          done
-          echo "::error::Timed out waiting for CI on $SHA."
-          exit 1
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: scripts/release-guard.sh
 
   build:
-    name: Build image
+    name: Trusted release build and verification
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     needs: guard
     permissions:
       contents: read
@@ -192,22 +81,31 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: zR-JB/graphite-meter/.github/actions/setup-project@f93944ad191f8a55e74f49b2de92ed1a1747692a
         with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+          go: 'true'
+          bun: 'true'
+          client-deps: 'true'
+          bun-cache: 'false'
+      - id: versions
+        name: Read repository toolchain versions
+        shell: bash
+        run: echo "bun=$(tr -d '[:space:]' < .bun-version)" >> "$GITHUB_OUTPUT"
       - name: Generate release legal outputs
         env:
           VERSION: ${{ needs.guard.outputs.version }}
         run: just legal-generate
+      - name: Build exact production client and server
+        run: just release-build "${{ needs.guard.outputs.version }}"
+      - name: Build all native release artifacts
+        run: just release-artifacts "${{ needs.guard.outputs.version }}"
+      - name: Verify release package invariants
+        run: just release-check "${{ needs.guard.outputs.version }}"
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
         with:
           platforms: arm64
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Build OCI archive
+      - name: Build multi-platform OCI archive
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -219,26 +117,36 @@ jobs:
             org.opencontainers.image.revision=${{ needs.guard.outputs.sha }}
             org.opencontainers.image.version=${{ needs.guard.outputs.version }}
             org.opencontainers.image.licenses=AGPL-3.0-or-later
-          # The guard requires a successful CI push run for this exact commit,
-          # so release only rebuilds the artifact.
           build-args: |
             VERSION=${{ needs.guard.outputs.version }}
             GM_CLIENT_BUILD_LABEL=prod
             GM_CLIENT_VALIDATE=0
-      - name: Store image archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+            BUN_VERSION=${{ steps.versions.outputs.bun }}
+      - name: Verify OCI archive and release artifacts
+        env:
+          RELEASE_DIST: go/dist
+        run: scripts/verify-release.sh "${{ needs.guard.outputs.version }}" "${{ runner.temp }}/graphite-meter.oci.tar"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-image
           path: ${{ runner.temp }}/graphite-meter.oci.tar
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-artifacts
+          path: go/dist/*
+          if-no-files-found: error
+          retention-days: 1
 
   publish:
-    name: Publish image
+    name: Publish exact image
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [guard, build]
+    if: needs.guard.outputs.dry_run != 'true'
+    environment: ghcr-release
     permissions:
       actions: read
       packages: write
@@ -247,7 +155,7 @@ jobs:
         with:
           name: release-image
           path: ${{ runner.temp }}/release-image
-      - name: Copy image to GHCR
+      - name: Publish image and stable aliases
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -256,101 +164,38 @@ jobs:
           STABLE: ${{ needs.guard.outputs.stable }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes skopeo
-          image="ghcr.io/${REPOSITORY,,}"
-          printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          skopeo copy --all "oci-archive:$RUNNER_TEMP/release-image/graphite-meter.oci.tar" "docker://$image:$VERSION"
-          if [[ "$STABLE" == "true" ]]; then
-            skopeo copy --all "docker://$image:$VERSION" "docker://$image:$SERIES"
-            skopeo copy --all "docker://$image:$VERSION" "docker://$image:latest"
-          fi
-          skopeo logout ghcr.io
+          IMAGE="ghcr.io/${REPOSITORY,,}"
+          docker run --rm --entrypoint /bin/sh \
+            -e GH_TOKEN -e GITHUB_ACTOR -e IMAGE -e VERSION -e SERIES -e STABLE \
+            -v "$RUNNER_TEMP/release-image:/work:ro" \
+            "$SKOPEO_IMAGE" -ec '
+              auth_dir=$(mktemp -d)
+              trap "rm -rf \"$auth_dir\"" EXIT
+              export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
+              printf "%s" "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+              skopeo copy --all oci-archive:/work/graphite-meter.oci.tar "docker://$IMAGE:$VERSION"
+              if [ "$STABLE" = true ]; then
+                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:$SERIES"
+                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:latest"
+              fi
+              skopeo logout ghcr.io
+            '
 
-  tag-prerelease:
-    name: Create prerelease tag
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    needs: [guard, publish]
-    permissions:
-      contents: write
-    steps:
-      - name: Create annotated tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          TAG: ${{ needs.guard.outputs.tag }}
-          SHA: ${{ needs.guard.outputs.sha }}
-          PR: ${{ inputs.pr }}
-        run: |
-          set -euo pipefail
-          tag_object="$(gh api "repos/$REPOSITORY/git/tags" \
-            -f tag="$TAG" \
-            -f message="Prerelease image from PR #$PR ($SHA)" \
-            -f object="$SHA" \
-            -f type=commit \
-            --jq .sha)"
-          gh api "repos/$REPOSITORY/git/refs" \
-            -f ref="refs/tags/$TAG" \
-            -f sha="$tag_object" >/dev/null
-
-  release:
-    name: GitHub Release
+  github-release:
+    name: Create stable GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [guard, publish]
+    if: needs.guard.outputs.stable == 'true' && needs.guard.outputs.dry_run != 'true'
     permissions:
       contents: write
-    # Prerelease tags (v0.1.0-alpha.0 etc.) publish an image to test against
-    # but deliberately don't cut a GitHub Release — that's reserved for the
-    # final tag once it's actually promoted. Same gate covers the native TUI
-    # client binaries below: no Release object, nowhere to attach them.
-    if: ${{ github.event_name == 'push' && needs.guard.outputs.stable == 'true' }}
-    env:
-      VERSION: ${{ needs.guard.outputs.version }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.6'
-          go-version-file: go/go.mod
-          cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      # Standalone downloads for the native Bubble Tea TUI client (connects to
-      # any running server; not embedded in the container image). Pure Go, no
-      # cgo, so it cross-compiles cleanly from one runner. Stamped with the
-      # same VERSION as the image (see go/internal/goclient.Version).
-      #
-      # Symbols are deliberately NOT stripped: unsigned Go binaries built with
-      # -s -w trip AV ML heuristics (Trojan:Win32/Wacatac.C!ml and friends).
-      # The build is bit-for-bit reproducible from a clean checkout of the
-      # tagged commit with this exact go build line (go/dist and the
-      # intermediate binaries are gitignored so buildvcs stamps a clean tree).
-      - name: Generate release legal outputs
-        run: just legal-generate
-      - name: Build corresponding source archive
-        run: just legal-source-bundle
-      - name: Build native client binaries
-        working-directory: go
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          build() {
-            os="$1"; arch="$2"
-            echo "building ${os}/${arch}"
-            ../scripts/package-tui.sh "$VERSION" "$os" "$arch" dist
-          }
-          build linux amd64
-          build linux arm64
-          build darwin amd64
-          build darwin arm64
-          build windows amd64
-          ( cd dist && sha256sum * > checksums.txt )
+          name: release-artifacts
+          path: ${{ runner.temp }}/release-artifacts
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          tag_name: ${{ needs.guard.outputs.tag }}
           generate_release_notes: true
-          files: go/dist/*
+          files: ${{ runner.temp }}/release-artifacts/*

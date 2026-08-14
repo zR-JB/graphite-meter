@@ -2,17 +2,15 @@
 
 ## Normal development
 
-No legal action is required for ordinary source changes. The offline CI gate
-runs:
+No legal action is required beyond the normal fast gate:
 
 ```bash
-just legal-check
+just check
 ```
 
 ## Routine dependency update
 
 ```bash
-update dependency
 just legal-generate
 just ci
 ```
@@ -20,25 +18,29 @@ just ci
 If the component's complete legal-file fingerprint is unchanged, the existing
 review is reusable and only the generated version changes.
 
-For an independent, deterministic audit manifest of every currently discovered
-component, run:
+## New dependency or changed legal facts
 
-```bash
-just legal-review audit
-```
-
-This reports the exact artifact scope, upstream metadata, legal-file hashes, and
-whether the current review record matches. It never approves or edits a review.
-
-## New dependency or changed legal files
+For a new dependency or changed legal file, generate the maintainer review
+template first:
 
 ```bash
 just legal-review template
 ```
 
+For an independent deterministic audit manifest of discovered components:
+
+```bash
+just legal-review audit
+```
+
+The private generator modes and packaging helpers are not part of the normal
+developer interface. Use `just --list` for the current public command list.
+
 Inspect the exact upstream revision and its legal files, then add a reviewed
 record to `reviewed-components.json`, regenerate, and run CI. New components
-are never approved by matching a familiar license template.
+are never approved by matching a familiar license template. `legal-check`,
+`legal-generate`, and `legal-review` are the public legal interface; packaging
+helpers and generator modes are private implementation details.
 
 ## Custom, copied, or modified material
 

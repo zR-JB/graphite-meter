@@ -1,0 +1,89 @@
+name: Setup Graphite Meter project
+description: Set up the pinned project toolchain and optional dependencies
+inputs:
+  go:
+    description: Set up Go from go/go.mod
+    required: false
+    default: 'false'
+  bun:
+    description: Set up Bun from .bun-version
+    required: false
+    default: 'false'
+  client-deps:
+    description: Restore the Bun cache and install client dependencies
+    required: false
+    default: 'false'
+  bun-cache:
+    description: Restore the shared Bun package cache (disable for guarded release checkouts)
+    required: false
+    default: 'true'
+  staticcheck:
+    description: Prepare the pinned staticcheck tool
+    required: false
+    default: 'false'
+  govulncheck:
+    description: Prepare the pinned govulncheck tool
+    required: false
+    default: 'false'
+  gitleaks:
+    description: Prepare the pinned Gitleaks tool
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - id: just-version
+      name: Read Just version
+      shell: bash
+      run: echo "version=$(tr -d '[:space:]' < .just-version)" >> "$GITHUB_OUTPUT"
+    - name: Set up Just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      with:
+        just-version: ${{ steps.just-version.outputs.version }}
+    - name: Set up Go
+      if: inputs.go == 'true'
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go/go.mod
+        cache-dependency-path: go/go.sum
+    - name: Show Go version
+      if: inputs.go == 'true'
+      shell: bash
+      run: go version
+    - name: Download Go dependencies
+      if: inputs.go == 'true'
+      shell: bash
+      run: cd go && go mod download
+    - name: Set up Bun
+      if: inputs.bun == 'true'
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      with:
+        bun-version-file: .bun-version
+    - name: Show Bun version
+      if: inputs.bun == 'true'
+      shell: bash
+      run: |
+        bun --version
+        bun --revision
+    - name: Cache Bun packages
+      if: inputs.client-deps == 'true' && inputs.bun-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}-${{ hashFiles('.bun-version') }}
+    - name: Install client dependencies
+      if: inputs.client-deps == 'true'
+      shell: bash
+      run: cd client && bun install --frozen-lockfile
+    - name: Prepare pinned staticcheck
+      if: inputs.staticcheck == 'true'
+      shell: bash
+      run: just _install-tools true false false
+    - name: Prepare pinned govulncheck
+      if: inputs.govulncheck == 'true'
+      shell: bash
+      run: just _install-tools false true false
+    - name: Prepare pinned Gitleaks
+      if: inputs.gitleaks == 'true'
+      shell: bash
+      run: just _install-tools false false true

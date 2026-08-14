@@ -98,6 +98,13 @@ func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 	if err := os.WriteFile(manual, []byte("manual source\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	certDir := filepath.Join(repo, ".dev-certs")
+	if err := os.MkdirAll(certDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certDir, "development.pem"), []byte("private material\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	provenance := []legal.Provenance{{Name: "sample", LocalPaths: []string{"manual.txt"}}}
 	outDir := t.TempDir()
 	first := filepath.Join(outDir, "first.tar.gz")
@@ -143,6 +150,9 @@ func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 		names = append(names, header.Name)
 	}
 	joined := strings.Join(names, "\n")
+	if strings.Contains(joined, ".dev-certs") {
+		t.Fatal("development certificates leaked into source archive")
+	}
 	for _, want := range []string{
 		"graphite-meter_development_corresponding-source/project/LICENSE",
 		"graphite-meter_development_corresponding-source/third_party/manual/sample/manual.txt",
@@ -336,8 +346,12 @@ func TestGoReplacementRequiresProvenance(t *testing.T) {
 }
 
 func TestGoDiscoveryTargetsIncludeServerArchitectures(t *testing.T) {
+	repo, err := repositoryRoot("")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var server []string
-	for _, target := range goDiscoveryTargets() {
+	for _, target := range mustGoDiscoveryTargets(t, repo) {
 		if target.name == "server" {
 			server = append(server, target.goos+"/"+target.goarch)
 		}
@@ -345,6 +359,32 @@ func TestGoDiscoveryTargetsIncludeServerArchitectures(t *testing.T) {
 	if strings.Join(server, ",") != "linux/amd64,linux/arm64" {
 		t.Fatalf("server discovery targets = %v", server)
 	}
+}
+
+func TestGoDiscoveryTargetsUseCanonicalTUIList(t *testing.T) {
+	repo, err := repositoryRoot("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64"}
+	var tui []string
+	for _, target := range mustGoDiscoveryTargets(t, repo) {
+		if target.name == "tui" {
+			tui = append(tui, target.goos+"/"+target.goarch)
+		}
+	}
+	if strings.Join(tui, ",") != strings.Join(want, ",") {
+		t.Fatalf("TUI discovery targets = %v, want %v", tui, want)
+	}
+}
+
+func mustGoDiscoveryTargets(t *testing.T, repo string) []goTarget {
+	t.Helper()
+	targets, err := goDiscoveryTargets(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return targets
 }
 
 func TestProvenanceHashesLocalArtifacts(t *testing.T) {

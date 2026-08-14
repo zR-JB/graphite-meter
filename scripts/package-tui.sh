@@ -11,13 +11,18 @@ goos=$2
 goarch=$3
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_dir=${4:-"$repo/go/dist"}
+case "$output_dir" in
+    /*) ;;
+    *) output_dir="$repo/$output_dir" ;;
+esac
 binary=graphite-meter-client
 [ "$goos" = "windows" ] && binary=graphite-meter-client.exe
 
-case "$goos/$goarch" in
-    linux/amd64|linux/arm64|darwin/amd64|darwin/arm64|windows/amd64) ;;
-    *) echo "unsupported TUI target: $goos/$goarch" >&2; exit 2 ;;
-esac
+target="$goos/$goarch"
+if ! grep -Fx "$target" "$repo/scripts/tui-targets.txt" >/dev/null; then
+    echo "unsupported TUI target: $target" >&2
+    exit 2
+fi
 
 archive_base="graphite-meter-client_${version}_${goos}_${goarch}"
 stage=$(mktemp -d)
