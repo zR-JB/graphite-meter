@@ -56,7 +56,7 @@ recommended edit. `none` means the existing fail-closed record is correct.
 - confirmed — `golang.org/x/term` — `v0.45.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/term/+/refs/tags/v0.45.0/LICENSE) and [PATENTS](https://go.googlesource.com/term/+/refs/tags/v0.45.0/PATENTS) — none
 - confirmed — `golang.org/x/text` — `v0.40.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/text/+/refs/tags/v0.40.0/LICENSE) and [PATENTS](https://go.googlesource.com/text/+/refs/tags/v0.40.0/PATENTS) — none
 - confirmed — Go standard library — `go1.26.6-X:nodwarf5` — BSD-3-Clause — [Go LICENSE](https://go.dev/LICENSE) and [Go PATENTS](https://go.dev/PATENTS) — none
-- confirmed — `svelte` — `5.56.8` — MIT — [LICENSE.md at tag](https://github.com/sveltejs/svelte/tree/svelte%405.56.8/LICENSE.md) — none
+- confirmed — `svelte` — `5.56.9` — MIT — [LICENSE.md at tag](https://github.com/sveltejs/svelte/tree/svelte%405.56.9/LICENSE.md) — none
 - confirmed — `Instrument Sans` — `2022 webfont` — OFL-1.1 — [upstream repository](https://github.com/Instrument/instrument-sans), local `legal/manual/fonts/INSTRUMENT-OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
 - confirmed — `Spline Sans Mono` — `1.002 webfont` — OFL-1.1 — [upstream repository](https://github.com/SorkinType/SplineSansMono), local `legal/manual/fonts/OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
 - confirmed — `ca-certificates` — `builder package` — LicenseRef-Debian-ca-certificates-bundle — [Debian upstream](https://salsa.debian.org/debian/ca-certificates), builder copies `/usr/share/doc/ca-certificates/copyright` from the CA-bundle image — none

@@ -12,6 +12,16 @@
       "client/public/fonts/instrument-sans-latin.woff2",
       "client/public/fonts/instrument-sans-latin-ext.woff2"
     ],
+    "localArtifacts": [
+      {
+        "path": "client/public/fonts/instrument-sans-latin.woff2",
+        "sha256": "2ee17598a98d8a59e4df8152d015bec9ab8e4d5672cc0ab42bef806b568e3971"
+      },
+      {
+        "path": "client/public/fonts/instrument-sans-latin-ext.woff2",
+        "sha256": "c4fcfea41f2c1cfeea9211fa43679845454a1d0e0d7e95e069c7e73c4ae302d2"
+      }
+    ],
     "localLegalFiles": [
       {
         "name": "legal/manual/fonts/INSTRUMENT-OFL-1.1.txt",
@@ -33,6 +43,16 @@
     "localPaths": [
       "client/public/fonts/spline-sans-mono-latin.woff2",
       "client/public/fonts/spline-sans-mono-latin-ext.woff2"
+    ],
+    "localArtifacts": [
+      {
+        "path": "client/public/fonts/spline-sans-mono-latin.woff2",
+        "sha256": "46b7dcafe3e51dbe87be1bafaac3fed7646db1fe0a146647a6ffce3699f2752d"
+      },
+      {
+        "path": "client/public/fonts/spline-sans-mono-latin-ext.woff2",
+        "sha256": "0ca9a3989044d1f9b4da1f303cea3c3091f5cb02fe54da04fd51fceaf676ecf9"
+      }
     ],
     "localLegalFiles": [
       {

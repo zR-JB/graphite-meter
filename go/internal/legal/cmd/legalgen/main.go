@@ -51,6 +51,10 @@ type about struct {
 	Components    []aboutComponent `json:"components"`
 }
 
+type goTarget struct {
+	name, goos, goarch string
+}
+
 var releaseVersion = regexp.MustCompile(`^(?:v)?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$`)
 
 func main() {
@@ -91,7 +95,7 @@ func main() {
 	if *browserScan == "" {
 		fatal(errors.New("browser scan output is required; run the temporary production Vite scan first"))
 	}
-	browser, err := discoverBrowser(repo, *browserScan)
+	browser, err := discoverBrowser(repo, *browserScan, reviews)
 	if err != nil {
 		fatal(err)
 	}
@@ -236,7 +240,10 @@ func sourceBundle(repo string, project legal.Project, version string, server, tu
 			continue
 		}
 		seen[component.Name+"\x00"+component.Version] = true
-		dir := filepath.Join(repo, "client", "node_modules", filepath.FromSlash(component.Name))
+		dir := component.SourcePath
+		if dir == "" {
+			dir = filepath.Join(repo, "client", "node_modules", filepath.FromSlash(component.Name))
+		}
 		if _, err := os.Stat(dir); err != nil {
 			return fmt.Errorf("browser source component %s: %w", component.Name, err)
 		}
@@ -363,16 +370,7 @@ func repositoryRoot(explicit string) (string, error) {
 }
 
 func discoverGo(repo string, reviews []legal.Review, provenance []legal.Provenance) ([]legal.Component, []legal.Component, error) {
-	type target struct {
-		name, goos, goarch string
-	}
-	targets := []target{{"server", "linux", "amd64"}}
-	for _, osName := range []string{"linux", "darwin"} {
-		for _, arch := range []string{"amd64", "arm64"} {
-			targets = append(targets, target{"tui", osName, arch})
-		}
-	}
-	targets = append(targets, target{"tui", "windows", "amd64"})
+	targets := goDiscoveryTargets()
 	modules := map[string]struct {
 		path, version, dir string
 	}{}
@@ -430,6 +428,16 @@ func discoverGo(repo string, reviews []legal.Review, provenance []legal.Provenan
 	return sortComponents(server), sortComponents(tui), nil
 }
 
+func goDiscoveryTargets() []goTarget {
+	targets := []goTarget{{"server", "linux", "amd64"}, {"server", "linux", "arm64"}}
+	for _, osName := range []string{"linux", "darwin"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			targets = append(targets, goTarget{"tui", osName, arch})
+		}
+	}
+	return append(targets, goTarget{"tui", "windows", "amd64"})
+}
+
 func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope string) bool {
 	for _, entry := range entries {
 		if entry.Ecosystem != "go" || entry.Name != name || entry.Version == "" {
@@ -446,15 +454,12 @@ func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope
 }
 
 func goComponent(name, version, dir string, reviews []legal.Review) (legal.Component, error) {
-	files, err := legal.ReadLegalFiles(dir)
+	files, err := componentLegalFiles(dir, "go", name, reviews)
 	if err != nil {
-		files, err = reviewedLegalFiles(dir, "go", name, reviews)
-		if err != nil {
-			// Review-template mode needs to report the unresolved component rather
-			// than hiding it behind discovery failure. Normal mode still fails
-			// closed because UNKNOWN has no valid review basis.
-			return legal.Component{Name: name, Version: version, Ecosystem: "go", Source: legalSource(name, ""), DeclaredLicenseExpression: "UNKNOWN", SelectedLicenseExpression: "UNKNOWN"}, nil
-		}
+		// Review-template mode needs to report the unresolved component rather
+		// than hiding it behind discovery failure. Normal mode still fails
+		// closed because UNKNOWN has no valid review basis.
+		return legal.Component{Name: name, Version: version, Ecosystem: "go", Source: legalSource(name, ""), DeclaredLicenseExpression: "UNKNOWN", SelectedLicenseExpression: "UNKNOWN"}, nil
 	}
 	component := componentFromFiles("go", name, version, legalSource(name, ""), files)
 	for _, review := range reviews {
@@ -467,20 +472,54 @@ func goComponent(name, version, dir string, reviews []legal.Review) (legal.Compo
 	return component, nil
 }
 
-func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]legal.LegalFile, error) {
-	var review *legal.Review
-	for i := range reviews {
-		if reviews[i].Ecosystem == ecosystem && reviews[i].Name == name {
-			review = &reviews[i]
-			break
+func componentLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]legal.LegalFile, error) {
+	discovered, discoverErr := legal.ReadLegalFiles(dir)
+	review := findReview(ecosystem, name, reviews)
+	if review == nil {
+		return discovered, discoverErr
+	}
+	if discoverErr != nil && !strings.Contains(discoverErr.Error(), "no legal candidate") {
+		return nil, discoverErr
+	}
+	files, err := reviewedLegalFiles(dir, ecosystem, name, reviews)
+	if err != nil {
+		return nil, err
+	}
+	if discoverErr == nil {
+		reviewedNames := make(map[string]bool, len(review.LegalFiles))
+		for _, file := range review.LegalFiles {
+			reviewedNames[strings.ToLower(filepath.ToSlash(file.Name))] = true
+		}
+		for _, file := range discovered {
+			if !reviewedNames[strings.ToLower(filepath.ToSlash(file.Name))] {
+				return nil, fmt.Errorf("LEGAL REVIEW REQUIRED: new legal file for %s: %s", name, file.Name)
+			}
 		}
 	}
+	return files, nil
+}
+
+func findReview(ecosystem, name string, reviews []legal.Review) *legal.Review {
+	for i := range reviews {
+		if reviews[i].Ecosystem == ecosystem && reviews[i].Name == name {
+			return &reviews[i]
+		}
+	}
+	return nil
+}
+
+func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]legal.LegalFile, error) {
+	review := findReview(ecosystem, name, reviews)
 	if review == nil || len(review.LegalFiles) == 0 {
 		return nil, errors.New("no explicit reviewed legal-file override")
 	}
 	files := make([]legal.LegalFile, 0, len(review.LegalFiles))
 	for _, expected := range review.LegalFiles {
-		path := filepath.Join(dir, filepath.FromSlash(expected.Name))
+		relative := filepath.Clean(filepath.FromSlash(expected.Name))
+		if filepath.IsAbs(relative) || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("reviewed legal path must stay inside component: %s", expected.Name)
+		}
+		path := filepath.Join(dir, relative)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
@@ -489,7 +528,7 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 		file.SHA256 = legal.SHA256(data)
 		file.Text = string(data)
 		if file.Kind == "" {
-			file.Kind = "license"
+			file.Kind = legal.LegalFileKind(file.Name)
 		}
 		files = append(files, file)
 	}
@@ -501,11 +540,11 @@ func goToolchainComponent(repo string) (legal.Component, error) {
 	if err != nil {
 		return legal.Component{}, err
 	}
-	files, err := legal.ReadLegalFiles(root)
+	files, err := legal.ReadRootLegalFiles(root)
 	if err != nil {
 		// Some distro-packaged Go installations omit distribution-level files from
 		// GOROOT. The checked-in exact upstream snapshots remain offline input.
-		files, err = legal.ReadLegalFiles(filepath.Join(repo, "legal", "toolchains", "go"))
+		files, err = legal.ReadRootLegalFiles(filepath.Join(repo, "legal", "toolchains", "go"))
 		if err != nil {
 			return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
 		}
@@ -579,7 +618,7 @@ func inferLicense(files []legal.LegalFile) string {
 	return "UNKNOWN"
 }
 
-func discoverBrowser(repo, scanPath string) ([]legal.Component, error) {
+func discoverBrowser(repo, scanPath string, reviews []legal.Review) ([]legal.Component, error) {
 	var ids []string
 	if err := legal.ReadJSON(scanPath, &ids); err != nil {
 		return nil, fmt.Errorf("read browser scan: %w", err)
@@ -597,7 +636,7 @@ func discoverBrowser(repo, scanPath string) ([]legal.Component, error) {
 	}
 	var result []legal.Component
 	for root := range roots {
-		component, err := npmComponent(root)
+		component, err := npmComponent(root, reviews)
 		if err != nil {
 			return nil, err
 		}
@@ -622,7 +661,7 @@ func packageRoot(moduleID string) (string, error) {
 	}
 }
 
-func npmComponent(root string) (legal.Component, error) {
+func npmComponent(root string, reviews []legal.Review) (legal.Component, error) {
 	var metadata struct {
 		Name     string `json:"name"`
 		Version  string `json:"version"`
@@ -635,11 +674,12 @@ func npmComponent(root string) (legal.Component, error) {
 	if err := legal.ReadJSON(filepath.Join(root, "package.json"), &metadata); err != nil {
 		return legal.Component{}, err
 	}
-	files, err := legal.ReadLegalFiles(root)
+	files, err := componentLegalFiles(root, "npm", metadata.Name, reviews)
 	if err != nil {
 		return legal.Component{}, fmt.Errorf("npm package %s: %w", metadata.Name, err)
 	}
 	component := componentFromFiles("npm", metadata.Name, metadata.Version, repositoryURL(metadata.Repository, metadata.Name), files)
+	component.SourcePath = root
 	component.DeclaredLicenseExpression = packageLicense(metadata.License, metadata.Licenses, component.DeclaredLicenseExpression)
 	component.SelectedLicenseExpression = component.DeclaredLicenseExpression
 	return component, nil
@@ -691,6 +731,22 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 		}
 		if entry.Name == "" || entry.Version == "" || entry.LicenseExpression == "" || strings.Contains(strings.ToUpper(entry.LicenseExpression), "UNKNOWN") || entry.ReviewNotes == "" {
 			return nil, fmt.Errorf("provenance entry %q is incomplete or unresolved", entry.Name)
+		}
+		for _, artifact := range entry.LocalArtifacts {
+			if artifact.Path == "" || artifact.SHA256 == "" {
+				return nil, fmt.Errorf("provenance %s has an incomplete local artifact", entry.Name)
+			}
+			path := artifact.Path
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(repo, filepath.FromSlash(path))
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("provenance %s local artifact %s: %w", entry.Name, artifact.Path, err)
+			}
+			if artifact.SHA256 != legal.SHA256(data) {
+				return nil, fmt.Errorf("provenance %s local artifact hash changed: %s", entry.Name, artifact.Path)
+			}
 		}
 		files := append([]legal.LegalFile(nil), entry.LocalLegalFiles...)
 		for i := range files {

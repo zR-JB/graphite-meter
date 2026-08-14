@@ -123,7 +123,7 @@ func TestSourceBundleHelpers(t *testing.T) {
 
 func TestSourceBundleIncludesBrowserComponent(t *testing.T) {
 	repo := t.TempDir()
-	packageDir := filepath.Join(repo, "client", "node_modules", "svelte")
+	packageDir := filepath.Join(repo, "client", "node_modules", "outer", "node_modules", "svelte")
 	if err := os.MkdirAll(packageDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestSourceBundleIncludesBrowserComponent(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "source.tar.gz")
-	component := legal.Component{Name: "svelte", Version: "5.56.8", Ecosystem: "npm"}
+	component := legal.Component{Name: "svelte", Version: "5.56.8", Ecosystem: "npm", SourcePath: packageDir}
 	if err := sourceBundle(repo, legal.Project{}, "development", []legal.Component{component}, nil, nil, nil, out); err != nil {
 		t.Fatal(err)
 	}
@@ -285,6 +285,83 @@ func TestGoReplacementRequiresProvenance(t *testing.T) {
 	}
 	if hasGoReplacementProvenance(entries, "example/replacement", "v1.2.3", "tui") {
 		t.Fatal("out-of-scope replacement provenance was accepted")
+	}
+}
+
+func TestGoDiscoveryTargetsIncludeServerArchitectures(t *testing.T) {
+	var server []string
+	for _, target := range goDiscoveryTargets() {
+		if target.name == "server" {
+			server = append(server, target.goos+"/"+target.goarch)
+		}
+	}
+	if strings.Join(server, ",") != "linux/amd64,linux/arm64" {
+		t.Fatalf("server discovery targets = %v", server)
+	}
+}
+
+func TestProvenanceHashesLocalArtifacts(t *testing.T) {
+	repo := t.TempDir()
+	assetPath := filepath.Join(repo, "font.woff2")
+	if err := os.WriteFile(assetPath, []byte("approved font bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := legal.Provenance{
+		Ecosystem: "font", Name: "Example Font", Version: "1", LicenseExpression: "OFL-1.1",
+		ArtifactScopes: []string{"server/browser"}, ReviewNotes: "reviewed",
+		LocalArtifacts: []legal.LocalArtifact{{Path: "font.woff2", SHA256: legal.SHA256([]byte("approved font bytes\n"))}},
+	}
+	if _, err := addProvenance(repo, nil, []legal.Provenance{entry}, "server/browser"); err != nil {
+		t.Fatalf("unchanged local artifact rejected: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("changed font bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addProvenance(repo, nil, []legal.Provenance{entry}, "server/browser"); err == nil || !strings.Contains(err.Error(), "local artifact hash changed") {
+		t.Fatalf("changed local artifact was accepted: %v", err)
+	}
+}
+
+func TestReviewedNestedLegalFilesAreRehashedAndAuthoritative(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "vendor", "foo", "LICENSE")
+	if err := os.MkdirAll(filepath.Dir(nested), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rootText := []byte("MIT License\nroot license\n")
+	nestedText := []byte("MIT License\nnested license\n")
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), rootText, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nested, nestedText, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	review := legal.Review{
+		Ecosystem: "npm", Name: "example", ReviewedVersion: "1.0.0",
+		DeclaredLicenseExpression: "MIT", SelectedLicenseExpression: "MIT", ReviewDecision: "approved",
+		LegalFiles: []legal.LegalFile{
+			{Name: "LICENSE", SHA256: legal.SHA256(rootText)},
+			{Name: "vendor/foo/LICENSE", SHA256: legal.SHA256(nestedText)},
+		},
+	}
+	files, err := componentLegalFiles(dir, "npm", "example", []legal.Review{review})
+	if err != nil {
+		t.Fatal(err)
+	}
+	component := componentFromFiles("npm", "example", "1.0.0", "https://example.invalid", files)
+	if err := legal.ValidateReview(component, []legal.Review{review}); err != nil {
+		t.Fatalf("unchanged nested legal file rejected: %v", err)
+	}
+	if err := os.WriteFile(nested, []byte("changed nested license\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err = componentLegalFiles(dir, "npm", "example", []legal.Review{review})
+	if err != nil {
+		t.Fatal(err)
+	}
+	component = componentFromFiles("npm", "example", "1.0.0", "https://example.invalid", files)
+	if err := legal.ValidateReview(component, []legal.Review{review}); err == nil || !strings.Contains(err.Error(), "fingerprint") {
+		t.Fatalf("changed nested legal file was accepted: %v", err)
 	}
 }
 

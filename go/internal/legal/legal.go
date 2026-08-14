@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-var candidatePrefixes = []string{"LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "PATENTS"}
+var candidatePrefixes = []string{"LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "PATENTS", "THIRD_PARTY"}
 
 type Project struct {
 	SchemaVersion     int    `json:"schemaVersion"`
@@ -33,6 +33,11 @@ type LegalFile struct {
 	Kind   string `json:"kind,omitempty"`
 }
 
+type LocalArtifact struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
 type Review struct {
 	Ecosystem                 string      `json:"ecosystem"`
 	Name                      string      `json:"name"`
@@ -48,20 +53,21 @@ type Review struct {
 }
 
 type Provenance struct {
-	Ecosystem           string      `json:"ecosystem"`
-	Name                string      `json:"name"`
-	Version             string      `json:"version"`
-	Upstream            string      `json:"upstream"`
-	UpstreamRevision    string      `json:"upstreamRevision"`
-	LicenseExpression   string      `json:"licenseExpression"`
-	Modified            bool        `json:"modified"`
-	ModificationNote    string      `json:"modificationNote,omitempty"`
-	ModificationDate    string      `json:"modificationDate,omitempty"`
-	ArtifactScopes      []string    `json:"artifactScopes"`
-	LocalPaths          []string    `json:"localPaths"`
-	LocalLegalFiles     []LegalFile `json:"localLegalFiles"`
-	CorrespondingSource string      `json:"correspondingSource,omitempty"`
-	ReviewNotes         string      `json:"reviewNotes"`
+	Ecosystem           string          `json:"ecosystem"`
+	Name                string          `json:"name"`
+	Version             string          `json:"version"`
+	Upstream            string          `json:"upstream"`
+	UpstreamRevision    string          `json:"upstreamRevision"`
+	LicenseExpression   string          `json:"licenseExpression"`
+	Modified            bool            `json:"modified"`
+	ModificationNote    string          `json:"modificationNote,omitempty"`
+	ModificationDate    string          `json:"modificationDate,omitempty"`
+	ArtifactScopes      []string        `json:"artifactScopes"`
+	LocalPaths          []string        `json:"localPaths"`
+	LocalArtifacts      []LocalArtifact `json:"localArtifacts,omitempty"`
+	LocalLegalFiles     []LegalFile     `json:"localLegalFiles"`
+	CorrespondingSource string          `json:"correspondingSource,omitempty"`
+	ReviewNotes         string          `json:"reviewNotes"`
 }
 
 type Component struct {
@@ -74,6 +80,7 @@ type Component struct {
 	Modified                  bool        `json:"modified"`
 	LegalTexts                []LegalFile `json:"legalTexts"`
 	Notices                   []LegalFile `json:"notices"`
+	SourcePath                string      `json:"-"`
 }
 
 type GoPackage struct {
@@ -142,13 +149,47 @@ func isCandidate(name string) bool {
 
 func fileKind(name string) string {
 	upper := strings.ToUpper(name)
-	if strings.HasPrefix(upper, "NOTICE") || strings.HasPrefix(upper, "COPYRIGHT") || strings.HasPrefix(upper, "PATENTS") {
+	if strings.HasPrefix(upper, "NOTICE") || strings.HasPrefix(upper, "COPYRIGHT") || strings.HasPrefix(upper, "PATENTS") || strings.HasPrefix(upper, "THIRD_PARTY") {
 		return "notice"
 	}
 	return "license"
 }
 
+func LegalFileKind(name string) string {
+	return fileKind(filepath.Base(filepath.FromSlash(name)))
+}
+
 func ReadLegalFiles(dir string) ([]LegalFile, error) {
+	files := make([]LegalFile, 0)
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !isCandidate(entry.Name()) {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, LegalFile{Name: filepath.ToSlash(name), SHA256: SHA256(b), Text: string(b), Kind: fileKind(entry.Name())})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no legal candidate file in %s", dir)
+	}
+	return files, nil
+}
+
+func ReadRootLegalFiles(dir string) ([]LegalFile, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -197,6 +238,9 @@ func ValidateReview(c Component, reviews []Review) error {
 	}
 	if r.ReviewDecision != "approved" {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: review for %s is unresolved", c.Name)
+	}
+	if r.ReviewedVersion != "" && r.ReviewedVersion != c.Version {
+		return fmt.Errorf("LEGAL REVIEW REQUIRED: reviewed version changed for %s", c.Name)
 	}
 	if r.DeclaredLicenseExpression != c.DeclaredLicenseExpression || r.SelectedLicenseExpression == "" {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: declared license changed for %s", c.Name)

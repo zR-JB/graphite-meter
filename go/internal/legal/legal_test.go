@@ -37,6 +37,37 @@ func TestReadLegalFilesPreservesCandidateBytesAndKinds(t *testing.T) {
 	}
 }
 
+func TestReadLegalFilesIncludesNestedAndThirdPartyNotices(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "vendor", "foo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, text := range map[string]string{
+		"LICENSE":              "root license\n",
+		"THIRD_PARTY_LICENSES": "embedded licenses\n",
+		"vendor/foo/LICENSE":   "nested license\n",
+		"vendor/foo/README.md": "not a legal file\n",
+	} {
+		fullPath := filepath.Join(dir, filepath.FromSlash(path))
+		if err := os.WriteFile(fullPath, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ReadLegalFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("legal files = %#v", got)
+	}
+	if got[1].Name != "THIRD_PARTY_LICENSES" || got[1].Kind != "notice" {
+		t.Fatalf("third-party notice = %#v", got[1])
+	}
+	if got[2].Name != "vendor/foo/LICENSE" || got[2].Kind != "license" {
+		t.Fatalf("nested license = %#v", got[2])
+	}
+}
+
 func TestValidateReviewRequiresIdentityAndCompleteFingerprint(t *testing.T) {
 	file := LegalFile{Name: "LICENSE", SHA256: SHA256([]byte("MIT"))}
 	component := Component{

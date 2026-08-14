@@ -210,6 +210,10 @@
       {
         "name": "LICENSE",
         "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"
+      },
+      {
+        "name": "utf8/LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
       }
     ],
     "modified": false,
@@ -340,6 +344,10 @@
       {
         "name": "LICENSE",
         "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "name": "json/LICENSE",
+        "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
       }
     ],
     "modified": false,
@@ -524,6 +532,10 @@
       {
         "name": "LICENSE",
         "sha256": "77d0b7b53e8abb84cf4dd3f9945a7fdf27044240d2e8023966a721a9a46fe96e"
+      },
+      {
+        "name": "assets/LICENSE.md",
+        "sha256": "2c8d4ff4244edf09d99dcd428d278e47a059d24f0030b38c1ab38e93b1c8030c"
       }
     ],
     "modified": false,
@@ -778,7 +790,7 @@
   {
     "ecosystem": "npm",
     "name": "svelte",
-    "reviewedVersion": "5.56.8",
+    "reviewedVersion": "5.56.9",
     "upstream": "https://github.com/sveltejs/svelte",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -786,6 +798,10 @@
       {
         "name": "LICENSE.md",
         "sha256": "06257f4847b13a49a039efb17b944c141e71b12fd8d231b362d86919067d77a3"
+      },
+      {
+        "name": "node_modules/magic-string/LICENSE",
+        "sha256": "1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484"
       }
     ],
     "modified": false,

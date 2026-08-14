@@ -164,8 +164,6 @@ jobs:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: '1.4.0-canary.1'
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Install exact client dependencies
         working-directory: client
@@ -310,16 +308,33 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Run container
         run: docker run -d --name gm -p 7246:7246 graphite-meter:smoke
-      - name: Verify outbound TLS trust store
-        run: docker export gm | tar -tf - | grep -qx 'etc/ssl/certs/ca-certificates.crt'
-      - name: Verify legal files and OCI license label
+      - name: Verify legal files, trust store, and OCI license label
         run: |
           set -euo pipefail
-          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/LICENSE'
-          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/COPYRIGHT'
-          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt'
-          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/graphite-meter/SOURCE.txt'
-          docker export gm | tar -tf - | grep -qx 'usr/share/licenses/ca-certificates/COPYRIGHT'
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          docker export gm -o "$tmp/rootfs.tar"
+          tar -tf "$tmp/rootfs.tar" > "$tmp/files"
+          for path in \
+            etc/ssl/certs/ca-certificates.crt \
+            usr/share/licenses/graphite-meter/LICENSE \
+            usr/share/licenses/graphite-meter/COPYRIGHT \
+            usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt \
+            usr/share/licenses/graphite-meter/SOURCE.txt \
+            usr/share/licenses/ca-certificates/COPYRIGHT
+          do
+            grep -Fx "$path" "$tmp/files" > /dev/null
+          done
+          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/LICENSE > "$tmp/LICENSE"
+          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/COPYRIGHT > "$tmp/COPYRIGHT"
+          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt > "$tmp/THIRD_PARTY_NOTICES.txt"
+          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/graphite-meter/SOURCE.txt > "$tmp/SOURCE.txt"
+          tar -xOf "$tmp/rootfs.tar" usr/share/licenses/ca-certificates/COPYRIGHT > "$tmp/CA_COPYRIGHT"
+          grep -F 'GNU AFFERO GENERAL PUBLIC LICENSE' "$tmp/LICENSE" > /dev/null
+          grep -F 'Graphite Meter' "$tmp/COPYRIGHT" > /dev/null
+          grep -F 'THIRD-PARTY SOFTWARE NOTICES' "$tmp/THIRD_PARTY_NOTICES.txt" > /dev/null
+          grep -F 'https://github.com/zR-JB/graphite-meter' "$tmp/SOURCE.txt" > /dev/null
+          test -s "$tmp/CA_COPYRIGHT"
           test "$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.licenses" }}' graphite-meter:smoke)" = 'AGPL-3.0-or-later'
       - name: Wait for ready
         run: |
