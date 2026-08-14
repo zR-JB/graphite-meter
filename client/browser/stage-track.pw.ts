@@ -16,6 +16,11 @@ async function configureShortDownload(page: Page): Promise<void> {
     await settings.getByLabel(label).fill(value);
 }
 
+function parseElapsed(text: string): number {
+  const match = text.match(/elapsed\s+([0-9]+(?:\.[0-9]+)?)s/);
+  return match ? Number(match[1]) : 0;
+}
+
 test("terminal stage switches select the next run without erasing retained status", async ({
   page,
 }) => {
@@ -116,6 +121,31 @@ test("terminal stage switches select the next run without erasing retained statu
       ),
     ).toBeLessThanOrEqual(1);
   }
+});
+
+test("elapsed time restarts after a completed run", async ({ page }) => {
+  await page.goto("/?engine=dummy");
+  await configureShortDownload(page);
+  const status = page.locator("footer.status");
+
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible({ timeout: 5_000 });
+  await expect
+    .poll(async () => parseElapsed((await status.textContent()) ?? ""))
+    .toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "Run the test again" }).click();
+  await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible({
+    timeout: 5_000,
+  });
+  await expect(status).toContainText("left", { timeout: 5_000 });
+  await expect
+    .poll(async () => parseElapsed((await status.textContent()) ?? ""), {
+      timeout: 2_000,
+    })
+    .toBeGreaterThan(0);
 });
 
 test("stage switches preserve the at-least-one measured-stage guard", async ({

@@ -520,6 +520,7 @@ class AppStore {
         this.infra = event.info;
         break;
       case "phase": {
+        const startsRun = event.transition.to === "connecting";
         if (event.transition.from === "idle") {
           this.#latencyScale.reset();
           this.latencyScaleMs = this.#latencyScale.scaleMs;
@@ -530,7 +531,7 @@ class AppStore {
         this.phaseFraction = 0;
         this.uploadPresentationBytesPerSec = null;
         // Stamp the wall-clock run start once, not on every warmup segment.
-        if (event.transition.from === "idle") this.startEpoch = Date.now();
+        if (startsRun) this.startEpoch = Date.now();
         break;
       }
       case "progress":
