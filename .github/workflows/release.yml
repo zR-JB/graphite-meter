@@ -8,9 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: SemVer test version for a trusted-main dry run (e.g., vX.Y.Z)
+        description: SemVer test version for a trusted-main dry run, e.g. v0.5.2
         required: true
-        default: vX.Y.Z
         type: string
 
 permissions:

@@ -92,16 +92,22 @@ first release after a merge, wait for the exact main commit's `Gate` and
 run with a test version. The dry run builds and verifies the OCI archive and
 all native artifacts without publishing anything.
 
-After that validation succeeds, tags are the only release input:
+After that validation succeeds, tags are the only release input. Use a shell
+variable so examples are safe to copy and won't create literal `vX.Y.Z` tags:
 
 ```sh
+# For a prerelease (RC) tag
+VERSION=0.5.2-rc.0
+
 git switch main
 git pull --ff-only
-git tag -a vX.Y.Z-rc.0 -m "vX.Y.Z-rc.0"
-git push origin vX.Y.Z-rc.0
+git tag -a "v${VERSION}" -m "v${VERSION}"
+git push origin "v${VERSION}"
 
-git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin vX.Y.Z
+# For a stable release
+VERSION=0.5.2
+git tag -a "v${VERSION}" -m "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
 Prerelease tags publish only their exact image tag. Stable tags publish the
