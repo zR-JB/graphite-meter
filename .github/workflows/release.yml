@@ -8,15 +8,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: SemVer test version for a trusted-main dry run
+        description: SemVer test version for a trusted-main dry run (e.g., vX.Y.Z)
         required: true
-        default: v0.3.0-rc.0
+        default: vX.Y.Z
         type: string
 
 permissions:
   contents: read
   actions: read
   checks: read
+  security-events: read
 
 concurrency:
   group: release-${{ inputs.version || github.ref_name }}

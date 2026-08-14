@@ -97,11 +97,11 @@ After that validation succeeds, tags are the only release input:
 ```sh
 git switch main
 git pull --ff-only
-git tag -a v0.3.0-rc.0 -m "v0.3.0-rc.0"
-git push origin v0.3.0-rc.0
+git tag -a vX.Y.Z-rc.0 -m "vX.Y.Z-rc.0"
+git push origin vX.Y.Z-rc.0
 
-git tag -a v0.3.0 -m "v0.3.0"
-git push origin v0.3.0
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
 Prerelease tags publish only their exact image tag. Stable tags publish the
@@ -123,20 +123,6 @@ its inert OCI artifact before the isolated publisher writes only the exact
 versioned GHCR prerelease tag. This path creates no Git tag, GitHub Release,
 `latest`, or series alias, and the temporary label is removed automatically.
 
-## Required GitHub repository settings
-
-The repository owner must configure these settings manually; tracked files do
-not claim to enforce them:
-
-- require the `Gate` status on `main`;
-- protect CodeQL high-or-higher findings;
-- require zero human approvals while there is one maintainer;
-- set the default Actions token to read-only;
-- require full-SHA-pinned Actions and maintain a selected-action allowlist;
-- enable Secret Scanning and Push Protection;
-- configure the `ghcr-release` environment;
-- protect release tags and decide whether release immutability is enabled;
-- keep administrative bypass intentionally limited to the owner.
 
 ## Exceptional maintenance
 

@@ -25,7 +25,7 @@ if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
     tag="${REQUESTED_VERSION:-}"
     dry_run=true
     if [[ ! "$tag" =~ $semver ]]; then
-        echo "Release refused: dry-run version '$tag' is not supported SemVer." >&2
+        echo "Release refused: dry-run version '$tag' is not supported SemVer (must be vX.Y.Z format)." >&2
         exit 1
     fi
     sha=$(git rev-parse HEAD)
@@ -85,7 +85,25 @@ require_check() {
 }
 
 require_check Gate github-actions
-require_check CodeQL github-advanced-security
+
+# Verify CodeQL analyses exist and succeeded for the commit.
+# GitHub's code-scanning analyses API is the authoritative source for this,
+# not the check-runs API. We verify at least one CodeQL analysis succeeded.
+analyses=$(gh api "repos/$REPOSITORY/code-scanning/analyses?ref=refs/heads/main" --jq '.analyses')
+codeql_analyses=$(jq --arg sha "$sha" '[.[] | select(.commit_sha == $sha and .tool.name == "CodeQL")]' <<<"$analyses")
+codeql_count=$(jq 'length' <<<"$codeql_analyses")
+
+if [[ "$codeql_count" -eq 0 ]]; then
+    echo "Release refused: CodeQL analysis for $sha is missing." >&2
+    exit 1
+fi
+
+# Check that no analysis has an error state
+codeql_errors=$(jq '[.[] | select(.error != "")]' <<<"$codeql_analyses")
+if [[ $(jq 'length' <<<"$codeql_errors") -gt 0 ]]; then
+    echo "Release refused: CodeQL analysis for $sha has errors." >&2
+    exit 1
+fi
 
 version=${tag#v}
 IFS=. read -r major minor _ <<<"${version%%-*}"
