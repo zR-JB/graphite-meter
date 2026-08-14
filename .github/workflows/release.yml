@@ -192,6 +192,17 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          go-version-file: go/go.mod
+          cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - name: Generate release legal outputs
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: just legal-generate
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
         with:
           platforms: arm64
@@ -207,6 +218,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.guard.outputs.sha }}
             org.opencontainers.image.version=${{ needs.guard.outputs.version }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
           # The guard requires a successful CI push run for this exact commit,
           # so release only rebuilds the artifact.
           build-args: |
@@ -306,6 +318,8 @@ jobs:
           go-version: '1.26.6'
           go-version-file: go/go.mod
           cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       # Standalone downloads for the native Bubble Tea TUI client (connects to
       # any running server; not embedded in the container image). Pure Go, no
       # cgo, so it cross-compiles cleanly from one runner. Stamped with the
@@ -316,24 +330,19 @@ jobs:
       # The build is bit-for-bit reproducible from a clean checkout of the
       # tagged commit with this exact go build line (go/dist and the
       # intermediate binaries are gitignored so buildvcs stamps a clean tree).
+      - name: Generate release legal outputs
+        run: just legal-generate
+      - name: Build corresponding source archive
+        run: just legal-source-bundle
       - name: Build native client binaries
         working-directory: go
         run: |
           set -euo pipefail
           mkdir -p dist
-          ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=${VERSION}"
           build() {
             os="$1"; arch="$2"
-            bin="graphite-meter-client"
-            [ "$os" = "windows" ] && bin="graphite-meter-client.exe"
             echo "building ${os}/${arch}"
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$bin" ./cmd/graphite-meter-client
-            if [ "$os" = "windows" ]; then
-              zip -j "dist/graphite-meter-client_${VERSION}_${os}_${arch}.zip" "$bin"
-            else
-              tar -czf "dist/graphite-meter-client_${VERSION}_${os}_${arch}.tar.gz" "$bin"
-            fi
-            rm -f "$bin"
+            ../scripts/package-tui.sh "$VERSION" "$os" "$arch" dist
           }
           build linux amd64
           build linux arm64

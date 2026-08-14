@@ -1,0 +1,450 @@
+package main
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/legal"
+)
+
+func TestPackageRootHandlesScopedNPMModules(t *testing.T) {
+	root := t.TempDir()
+	packageDir := filepath.Join(root, "node_modules", "@scope", "package")
+	if err := os.MkdirAll(filepath.Join(packageDir, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(`{"name":"@scope/package","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := packageRoot(filepath.Join(packageDir, "dist", "index.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != packageDir {
+		t.Fatalf("package root = %q, want %q", got, packageDir)
+	}
+}
+
+func TestSourceURLUsesReleaseTagOnlyForReleaseVersions(t *testing.T) {
+	if !releaseVersion.MatchString("1.2.3-rc.4") {
+		t.Fatal("release expression does not accept rc versions")
+	}
+	if releaseVersion.MatchString("0.0.0-dev+abc") {
+		t.Fatal("development version was treated as a release")
+	}
+}
+
+func TestLegalGoVersionNormalizesToolchainSuffixes(t *testing.T) {
+	for _, test := range []struct {
+		raw, want string
+	}{
+		{"go1.26.6", "go1.26.6"},
+		{"go1.26.6-X:nodwarf5", "go1.26.6"},
+		{"go1.26.6 local build", "go1.26.6"},
+		{"devel go1.27-abcdef", "devel go1.27-abcdef"},
+	} {
+		t.Run(test.raw, func(t *testing.T) {
+			if got := legalGoVersion(test.raw); got != test.want {
+				t.Fatalf("legalGoVersion(%q) = %q, want %q", test.raw, got, test.want)
+			}
+		})
+	}
+}
+
+func TestGoToolchainComponentIgnoresGOROOTFormatting(t *testing.T) {
+	repo := t.TempDir()
+	toolchainDir := filepath.Join(repo, "legal", "toolchains", "go")
+	if err := os.MkdirAll(toolchainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeGOROOT := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeGOROOT, "PATENTS"), []byte("local GOROOT formatting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOROOT", fakeGOROOT)
+	if err := os.WriteFile(filepath.Join(toolchainDir, "LICENSE"), []byte("Redistribution and use in source and binary forms\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(toolchainDir, "PATENTS"), []byte("canonical patents snapshot\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	component, err := goToolchainComponent(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(component.LegalTexts) != 1 || component.LegalTexts[0].Name != "LICENSE" {
+		t.Fatalf("canonical legal files = %#v", component.LegalTexts)
+	}
+	if len(component.Notices) != 1 || component.Notices[0].Name != "PATENTS" || component.Notices[0].Text != "canonical patents snapshot\n" {
+		t.Fatalf("canonical notices = %#v", component.Notices)
+	}
+}
+
+func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "project"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "LICENSE"), []byte("project license\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manual := filepath.Join(repo, "manual.txt")
+	if err := os.WriteFile(manual, []byte("manual source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	provenance := []legal.Provenance{{Name: "sample", LocalPaths: []string{"manual.txt"}}}
+	outDir := t.TempDir()
+	first := filepath.Join(outDir, "first.tar.gz")
+	second := filepath.Join(outDir, "second.tar.gz")
+	project := legal.Project{Name: "Graphite Meter", Repository: "https://example.invalid/repo"}
+	if err := sourceBundle(repo, project, "development", nil, nil, nil, provenance, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceBundle(repo, project, "development", nil, nil, nil, provenance, second); err != nil {
+		t.Fatal(err)
+	}
+	one, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := os.ReadFile(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(one) != string(two) {
+		t.Fatal("corresponding-source archive is not deterministic")
+	}
+	file, err := os.Open(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tarReader := tar.NewReader(reader)
+	var names []string
+	for {
+		header, readErr := tarReader.Next()
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		names = append(names, header.Name)
+	}
+	joined := strings.Join(names, "\n")
+	for _, want := range []string{
+		"graphite-meter_development_corresponding-source/project/LICENSE",
+		"graphite-meter_development_corresponding-source/third_party/manual/sample/manual.txt",
+		"graphite-meter_development_corresponding-source/LEGAL_INVENTORY.json",
+		"graphite-meter_development_corresponding-source/README.txt",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("archive does not contain %s", want)
+		}
+	}
+}
+
+func TestSourceBundleHelpers(t *testing.T) {
+	if got := safeName("github.com/example/pkg@v1"); got != "github.com_example_pkg_at_v1" {
+		t.Fatalf("safeName = %q", got)
+	}
+	files := legalFilePaths([]legal.LegalFile{{Name: "LICENSE"}, {Name: "NOTICE"}})
+	if strings.Join(files, ",") != "LICENSE,NOTICE" {
+		t.Fatalf("legalFilePaths = %v", files)
+	}
+	if _, err := moduleDirectory(t.TempDir(), "missing/module", "v0.0.0"); err == nil {
+		t.Fatal("missing module unexpectedly resolved")
+	}
+}
+
+func TestSourceBundleIncludesBrowserComponent(t *testing.T) {
+	repo := t.TempDir()
+	packageDir := filepath.Join(repo, "client", "node_modules", "outer", "node_modules", "svelte")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "package.json"), []byte(`{"name":"svelte","version":"5.56.8"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageDir, "LICENSE.md"), []byte("MIT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "source.tar.gz")
+	component := legal.Component{Name: "svelte", Version: "5.56.8", Ecosystem: "npm", SourcePath: packageDir}
+	if err := sourceBundle(repo, legal.Project{}, "development", []legal.Component{component}, nil, nil, nil, out); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tarReader := tar.NewReader(reader)
+	found := false
+	for {
+		header, readErr := tarReader.Next()
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.HasSuffix(header.Name, "/third_party/npm/svelte_at_5.56.8/LICENSE.md") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("browser source component was not archived")
+	}
+}
+
+func TestLegalGeneratorFormattingHelpers(t *testing.T) {
+	if sourceFor("github.com/example/module", "") != "https://github.com/example/module" {
+		t.Fatal("github source URL mismatch")
+	}
+	if sourceFor("golang.org/x/net", "") != "https://go.googlesource.com/net" {
+		t.Fatal("Go source URL mismatch")
+	}
+	if sourceFor("example.invalid/module", "https://upstream.invalid") != "https://upstream.invalid" {
+		t.Fatal("explicit source URL mismatch")
+	}
+	if packageLicense("MIT", nil, "UNKNOWN") != "MIT" {
+		t.Fatal("string package license mismatch")
+	}
+	if packageLicense(nil, []struct {
+		Type string `json:"type"`
+	}{{Type: "ISC"}}, "UNKNOWN") != "ISC" {
+		t.Fatal("package license list mismatch")
+	}
+	if repositoryURL(map[string]any{"url": "git+https://github.com/example/module.git"}, "x") != "https://github.com/example/module" {
+		t.Fatal("repository URL normalization mismatch")
+	}
+	if inferLicense([]legal.LegalFile{{Text: "MIT License\n"}}) != "MIT" {
+		t.Fatal("license inference mismatch")
+	}
+	components := sortComponents([]legal.Component{
+		{Name: "b", Version: "1", Ecosystem: "go"},
+		{Name: "a", Version: "1", Ecosystem: "go"},
+		{Name: "a", Version: "1", Ecosystem: "go", Source: "same"},
+	})
+	if len(components) != 2 || components[0].Name != "a" || components[1].Name != "b" {
+		t.Fatalf("component ordering/deduplication mismatch: %#v", components)
+	}
+	if yesNo(true) != "yes" || yesNo(false) != "no" || !contains([]string{"tui"}, "tui") {
+		t.Fatal("formatting helper mismatch")
+	}
+	notice := notices([]legal.Component{{
+		Name: "demo", Version: "1", Source: "https://example.invalid",
+		SelectedLicenseExpression: "MIT",
+		LegalTexts:                []legal.LegalFile{{Name: "LICENSE", Text: "text"}},
+	}})
+	if !strings.Contains(notice, "Component: demo") || !strings.Contains(notice, "--- LICENSE ---") {
+		t.Fatal("notice rendering mismatch")
+	}
+	if data, err := marshal(map[string]string{"ok": "yes"}); err != nil || !strings.Contains(string(data), "ok") {
+		t.Fatal("JSON rendering mismatch")
+	}
+}
+
+func TestReviewedLegalFilesRehashesCurrentBytes(t *testing.T) {
+	dir := t.TempDir()
+	current := []byte("current legal text")
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), current, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reviews := []legal.Review{{
+		Name: "example", Ecosystem: "go",
+		LegalFiles: []legal.LegalFile{{Name: "LICENSE", SHA256: legal.SHA256([]byte("approved text"))}},
+	}}
+	files, err := reviewedLegalFiles(dir, "go", "example", reviews)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files[0].SHA256 != legal.SHA256(current) {
+		t.Fatalf("current hash = %q, want %q", files[0].SHA256, legal.SHA256(current))
+	}
+}
+
+func TestReviewedSelectionBecomesAuthoritativeAfterValidation(t *testing.T) {
+	components := []legal.Component{{
+		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT OR GPL-3.0",
+	}}
+	reviews := []legal.Review{{
+		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT",
+	}}
+	got := applyReviewedSelections(components, reviews)
+	if got[0].SelectedLicenseExpression != "MIT" {
+		t.Fatalf("selected license = %q, want reviewed MIT", got[0].SelectedLicenseExpression)
+	}
+}
+
+func TestLicenseInferenceAndApacheNoticeSeparation(t *testing.T) {
+	for _, test := range []struct {
+		name, text, want string
+	}{
+		{"MIT", "MIT License\nPermission is hereby granted, free of charge", "MIT"},
+		{"ISC", "Permission to use, copy, modify, and distribute", "ISC"},
+		{"BSD", "BSD 3-Clause\nRedistribution and use in source and binary forms", "BSD-3-Clause"},
+		{"Apache", "                                  Apache License\n                              Version 2.0", "Apache-2.0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			component := componentFromFiles("go", "example", "v1", "https://example.invalid", []legal.LegalFile{{Name: "LICENSE", Text: test.text, Kind: "license"}})
+			if component.SelectedLicenseExpression != test.want {
+				t.Fatalf("license = %q, want %q", component.SelectedLicenseExpression, test.want)
+			}
+		})
+	}
+	component := componentFromFiles("go", "apache", "v1", "https://example.invalid", []legal.LegalFile{
+		{Name: "LICENSE", Text: "Apache License Version 2.0", Kind: "license"},
+		{Name: "NOTICE", Text: "Upstream notice", Kind: "notice"},
+	})
+	if len(component.LegalTexts) != 1 || len(component.Notices) != 1 {
+		t.Fatalf("Apache legal/notice split = %#v / %#v", component.LegalTexts, component.Notices)
+	}
+}
+
+func TestGoReplacementRequiresProvenance(t *testing.T) {
+	if hasGoReplacementProvenance(nil, "example/replacement", "v1.2.3", "server") {
+		t.Fatal("unrecorded replacement was accepted")
+	}
+	entries := []legal.Provenance{{Ecosystem: "go", Name: "example/replacement", Version: "v1.2.3", ArtifactScopes: []string{"server/browser"}}}
+	if !hasGoReplacementProvenance(entries, "example/replacement", "v1.2.3", "server") {
+		t.Fatal("matching replacement provenance was rejected")
+	}
+	if !hasGoReplacementProvenance(entries, "example/replacement", "", "server") {
+		t.Fatal("local replacement without module version was rejected")
+	}
+	if hasGoReplacementProvenance(entries, "example/replacement", "v1.2.3", "tui") {
+		t.Fatal("out-of-scope replacement provenance was accepted")
+	}
+}
+
+func TestGoDiscoveryTargetsIncludeServerArchitectures(t *testing.T) {
+	var server []string
+	for _, target := range goDiscoveryTargets() {
+		if target.name == "server" {
+			server = append(server, target.goos+"/"+target.goarch)
+		}
+	}
+	if strings.Join(server, ",") != "linux/amd64,linux/arm64" {
+		t.Fatalf("server discovery targets = %v", server)
+	}
+}
+
+func TestProvenanceHashesLocalArtifacts(t *testing.T) {
+	repo := t.TempDir()
+	assetPath := filepath.Join(repo, "font.woff2")
+	if err := os.WriteFile(assetPath, []byte("approved font bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := legal.Provenance{
+		Ecosystem: "font", Name: "Example Font", Version: "1", LicenseExpression: "OFL-1.1",
+		ArtifactScopes: []string{"server/browser"}, ReviewNotes: "reviewed",
+		LocalArtifacts: []legal.LocalArtifact{{Path: "font.woff2", SHA256: legal.SHA256([]byte("approved font bytes\n"))}},
+	}
+	if _, err := addProvenance(repo, nil, []legal.Provenance{entry}, "server/browser"); err != nil {
+		t.Fatalf("unchanged local artifact rejected: %v", err)
+	}
+	if err := os.WriteFile(assetPath, []byte("changed font bytes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addProvenance(repo, nil, []legal.Provenance{entry}, "server/browser"); err == nil || !strings.Contains(err.Error(), "local artifact hash changed") {
+		t.Fatalf("changed local artifact was accepted: %v", err)
+	}
+}
+
+func TestReviewedNestedLegalFilesAreRehashedAndAuthoritative(t *testing.T) {
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "vendor", "foo", "LICENSE")
+	if err := os.MkdirAll(filepath.Dir(nested), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rootText := []byte("MIT License\nroot license\n")
+	nestedText := []byte("MIT License\nnested license\n")
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), rootText, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nested, nestedText, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	review := legal.Review{
+		Ecosystem: "npm", Name: "example", ReviewedVersion: "1.0.0",
+		DeclaredLicenseExpression: "MIT", SelectedLicenseExpression: "MIT", ReviewDecision: "approved",
+		LegalFiles: []legal.LegalFile{
+			{Name: "LICENSE", SHA256: legal.SHA256(rootText)},
+			{Name: "vendor/foo/LICENSE", SHA256: legal.SHA256(nestedText)},
+		},
+	}
+	files, err := componentLegalFiles(dir, "npm", "example", []legal.Review{review})
+	if err != nil {
+		t.Fatal(err)
+	}
+	component := componentFromFiles("npm", "example", "1.0.0", "https://example.invalid", files)
+	if err := legal.ValidateReview(component, []legal.Review{review}); err != nil {
+		t.Fatalf("unchanged nested legal file rejected: %v", err)
+	}
+	if err := os.WriteFile(nested, []byte("changed nested license\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files, err = componentLegalFiles(dir, "npm", "example", []legal.Review{review})
+	if err != nil {
+		t.Fatal(err)
+	}
+	component = componentFromFiles("npm", "example", "1.0.0", "https://example.invalid", files)
+	if err := legal.ValidateReview(component, []legal.Review{review}); err == nil || !strings.Contains(err.Error(), "fingerprint") {
+		t.Fatalf("changed nested legal file was accepted: %v", err)
+	}
+}
+
+func TestSourceBundleExcludesGeneratedCoverageProfile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "go", "cover.out"), []byte("generated profile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := sourceBundle(repo, legal.Project{}, "development", nil, nil, nil, nil, out); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tarReader := tar.NewReader(reader)
+	for {
+		header, readErr := tarReader.Next()
+		if readErr == io.EOF {
+			return
+		}
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.Contains(header.Name, "cover.out") {
+			t.Fatalf("generated coverage profile leaked into source archive: %s", header.Name)
+		}
+	}
+}

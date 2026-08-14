@@ -52,7 +52,10 @@ RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:b
 # ---------------------------------------------------------------------------
 # Stage: server — build the Go binary with the client embedded.
 # ---------------------------------------------------------------------------
-FROM docker.io/library/golang:1.26 AS server
+# Pin the patch release used by CI and the checked-in Go legal snapshot. The
+# floating 1.26 tag can lag the go.mod minimum and fail before the image's
+# legal files are even staged.
+FROM docker.io/library/golang:1.26.6 AS server
 ARG VERSION
 WORKDIR /src/go
 # Module graph first for caching.
@@ -61,12 +64,16 @@ RUN go mod download
 # Source + the api/ tree (the schema-conformance test references ../../../api).
 COPY go/ ./
 COPY api/ /src/api/
+# Legal assets are generated from the same runtime closure used by the
+# server/browser and container inventories.
+COPY LICENSE COPYRIGHT legal/generated/container/THIRD_PARTY_NOTICES.txt legal/generated/container/SOURCE.txt /legal/graphite-meter/
 # Embed the built client.
 COPY --from=client /app/client/dist ./internal/static/dist
 RUN CGO_ENABLED=0 go build \
       -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=${VERSION}" \
       -trimpath \
       -o /graphite-meter ./cmd/graphite-meter
+RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/ca-certificates; cp /usr/share/doc/ca-certificates/copyright /legal/ca-certificates/COPYRIGHT
 
 # ---------------------------------------------------------------------------
 # Final: a single static binary. The Svelte client is embedded inside it.
@@ -75,6 +82,8 @@ RUN CGO_ENABLED=0 go build \
 # ---------------------------------------------------------------------------
 FROM scratch
 COPY --from=server /graphite-meter /graphite-meter
+COPY --from=server /legal/graphite-meter /usr/share/licenses/graphite-meter
+COPY --from=server /legal/ca-certificates/COPYRIGHT /usr/share/licenses/ca-certificates/COPYRIGHT
 # Outbound OIDC discovery, token exchange, UserInfo, and JWKS requests need the
 # public CA roots. A scratch image does not provide them on its own.
 COPY --from=server /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

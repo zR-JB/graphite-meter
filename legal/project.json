@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "Graphite Meter",
+  "copyrightHolder": "zR-JB",
+  "copyrightYears": "2026",
+  "licenseExpression": "AGPL-3.0-or-later",
+  "repository": "https://github.com/zR-JB/graphite-meter"
+}

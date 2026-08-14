@@ -10,6 +10,7 @@
     dockWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
+    onOpenLegal?: (invoker: HTMLElement) => void;
   }
   let {
     open = $bindable(false),
@@ -18,6 +19,7 @@
     dockWidth,
     onResize,
     onResetWidth,
+    onOpenLegal,
   }: Props = $props();
 </script>
 
@@ -37,17 +39,18 @@
   <EndpointInfo />
 
   <p class="license">
-    <span>License</span>
-    <a
-      href="https://www.gnu.org/licenses/agpl-3.0.html"
-      target="_blank"
-      rel="license noopener noreferrer">AGPL-3.0-or-later</a
+    <span>Legal</span>
+    <button
+      type="button"
+      onclick={(event) =>
+        onOpenLegal?.(event.currentTarget as unknown as HTMLElement)}
+      >About &amp; legal</button
     >
   </p>
 </SidePanel>
 
 <style>
-  /* Footer license line: label plus linked SPDX id. */
+  /* Footer legal line keeps the previous Endpoint Info visual weight. */
   .license {
     display: flex;
     justify-content: space-between;
@@ -57,17 +60,20 @@
     font-size: var(--type-xs);
     color: var(--text-soft);
   }
-  .license a {
+  .license button {
+    border: 0;
+    padding: 0;
+    background: transparent;
     color: var(--text-muted);
     font-family: var(--font-mono);
-    text-decoration: none;
-    transition: color var(--dur-hover) var(--ease-out);
-  }
-  .license a:hover {
-    color: var(--text);
     text-decoration: underline;
+    transition: color var(--dur-hover) var(--ease-out);
+    cursor: pointer;
   }
-  .license a:focus-visible {
+  .license button:hover {
+    color: var(--text);
+  }
+  .license button:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
     border-radius: var(--r-well);

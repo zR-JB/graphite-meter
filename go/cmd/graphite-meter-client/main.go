@@ -11,9 +11,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/legal"
 )
 
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--legal" {
+			fmt.Print(string(legal.TUIReport()))
+			return
+		}
+	}
+
 	cfg := goclient.DefaultConfig()
 	var stages string
 	var ping string

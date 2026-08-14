@@ -1,0 +1,869 @@
+[
+  {
+    "ecosystem": "go",
+    "name": "github.com/atotto/clipboard",
+    "reviewedVersion": "v0.1.4",
+    "upstream": "https://github.com/atotto/clipboard",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "2c4bac8e2a97180d6e7758c37de85d1cda1859aaf85b56da15d935d2d9a5564f"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/aymanbagabas/go-osc52/v2",
+    "reviewedVersion": "v2.0.1",
+    "upstream": "https://github.com/aymanbagabas/go-osc52",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "11319e34d9dac2f45392f14f4f62e28b24173cfa13d39b32e7b7b66c2f3bdccd"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/bubbles",
+    "reviewedVersion": "v1.0.0",
+    "upstream": "https://github.com/charmbracelet/bubbles",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "69793670485e4ae8bf28fcbe5639141f604256d5bb6c1862571f3a32823fa221"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/bubbletea",
+    "reviewedVersion": "v1.3.10",
+    "upstream": "https://github.com/charmbracelet/bubbletea",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "69793670485e4ae8bf28fcbe5639141f604256d5bb6c1862571f3a32823fa221"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/colorprofile",
+    "reviewedVersion": "v0.4.1",
+    "upstream": "https://github.com/charmbracelet/colorprofile",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "57d6eeeb336030b89c0e0d12cf869f84b97a481cd00b350ef21fca995da5a39a"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/lipgloss",
+    "reviewedVersion": "v1.1.0",
+    "upstream": "https://github.com/charmbracelet/lipgloss",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "699cffa88b62691ea09706d356e5ee0982e87ca2b1c58ca682f27d6ae87f9efc"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/x/ansi",
+    "reviewedVersion": "v0.11.6",
+    "upstream": "https://github.com/charmbracelet/x",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/x/cellbuf",
+    "reviewedVersion": "v0.0.15",
+    "upstream": "https://github.com/charmbracelet/x",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/charmbracelet/x/term",
+    "reviewedVersion": "v0.2.2",
+    "upstream": "https://github.com/charmbracelet/x",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "0baa4a5942a801d93f4050d2bc0039d8c037105fcd335230d118eec99a11782b"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/clipperhouse/displaywidth",
+    "reviewedVersion": "v0.9.0",
+    "upstream": "https://github.com/clipperhouse/displaywidth",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/clipperhouse/stringish",
+    "reviewedVersion": "v0.1.1",
+    "upstream": "https://github.com/clipperhouse/stringish",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"
+      },
+      {
+        "name": "utf8/LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/clipperhouse/uax29/v2",
+    "reviewedVersion": "v2.5.0",
+    "upstream": "https://github.com/clipperhouse/uax29",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "07e9e3daaccc707c9b7d535ed1405a65d37919fdd42197fe55e68820e974688c"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/coder/websocket",
+    "reviewedVersion": "v1.8.15",
+    "upstream": "https://github.com/coder/websocket",
+    "declaredLicenseExpression": "ISC",
+    "selectedLicenseExpression": "ISC",
+    "legalFiles": [
+      {
+        "name": "LICENSE.txt",
+        "sha256": "cc0975a5f6305145bdd7b41ce9479632fdac3870e6ac4281f28017f18c767c4e"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/coreos/go-oidc/v3",
+    "reviewedVersion": "v3.20.0",
+    "upstream": "https://github.com/coreos/go-oidc",
+    "declaredLicenseExpression": "Apache-2.0",
+    "selectedLicenseExpression": "Apache-2.0",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "cb5e8e7e5f4a3988e1063c142c60dc2df75605f4c46515e776e3aca6df976e14"
+      },
+      {
+        "name": "NOTICE",
+        "sha256": "dccd26c6fd9c296daf44d0bc56bb4efc566edd4880381b3331c9a63e6e471338"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/dunglas/httpsfv",
+    "reviewedVersion": "v1.1.0",
+    "upstream": "https://github.com/dunglas/httpsfv",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "2a5341732bde88aeb3b066492df6e15bf10d082761f9e3a251236ce80419d6ba"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/erikgeiser/coninput",
+    "reviewedVersion": "v0.0.0-20211004153227-1c3628e74d0f",
+    "upstream": "https://github.com/erikgeiser/coninput",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "0a00deeeb36bb7b8ccbb9003100b665e584d9384e66c8c26f29b5929ecaa745b"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/go-jose/go-jose/v4",
+    "reviewedVersion": "v4.1.4",
+    "upstream": "https://github.com/go-jose/go-jose",
+    "declaredLicenseExpression": "Apache-2.0",
+    "selectedLicenseExpression": "Apache-2.0",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "name": "json/LICENSE",
+        "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/lucasb-eyer/go-colorful",
+    "reviewedVersion": "v1.3.0",
+    "upstream": "https://github.com/lucasb-eyer/go-colorful",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "1e4cf2a117516ec1b54041d68ed4f5d331878b04de3386f4790e7b5b9c04e1ec"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/mattn/go-isatty",
+    "reviewedVersion": "v0.0.20",
+    "upstream": "https://github.com/mattn/go-isatty",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "08eab1118c80885fa1fa6a6dd7303f65a379fcb3733e063d20d1bbc2c76e6fa1"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/mattn/go-localereader",
+    "reviewedVersion": "v0.0.1",
+    "upstream": "https://github.com/mattn/go-localereader",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "README.md",
+        "sha256": "0c5c52517f13becd7a1e1234f1e8a5ba370f5a5078cee9ac058c2d534e267fcb"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/mattn/go-runewidth",
+    "reviewedVersion": "v0.0.19",
+    "upstream": "https://github.com/mattn/go-runewidth",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "88a2379b3ca34bf5c57127aff9dcb802bbb60ece0805cdbda65b3bd115f971d9"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/muesli/ansi",
+    "reviewedVersion": "v0.0.0-20230316100256-276c6243b2f6",
+    "upstream": "https://github.com/muesli/ansi",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "43f65e00e8919fa43c5f45bb2ae578b6d3ee823eb99aa14c85c9ecd06e0350b5"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/muesli/cancelreader",
+    "reviewedVersion": "v0.2.2",
+    "upstream": "https://github.com/muesli/cancelreader",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "8c139dbbc83b4fb055b4100b6b9402f7de3dd6bbca05015bdfcc4b392c8cfd5f"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/muesli/termenv",
+    "reviewedVersion": "v0.16.0",
+    "upstream": "https://github.com/muesli/termenv",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "233e8cf9a812999ccee4d3edb270b0f11ab3539658e680bcb873604915ca5038"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/quic-go/qpack",
+    "reviewedVersion": "v0.6.0",
+    "upstream": "https://github.com/quic-go/qpack",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE.md",
+        "sha256": "1b6a897efd39b20b3cdce8cd306160d115dbded39d855ceeffe21dc11e4d53df"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/quic-go/quic-go",
+    "reviewedVersion": "v0.61.0",
+    "upstream": "https://github.com/quic-go/quic-go",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "77d0b7b53e8abb84cf4dd3f9945a7fdf27044240d2e8023966a721a9a46fe96e"
+      },
+      {
+        "name": "assets/LICENSE.md",
+        "sha256": "2c8d4ff4244edf09d99dcd428d278e47a059d24f0030b38c1ab38e93b1c8030c"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/quic-go/webtransport-go",
+    "reviewedVersion": "v0.12.0",
+    "upstream": "https://github.com/quic-go/webtransport-go",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "83fcbe9e2a58019f63c1eb3dbccd74ec735bf69a750822bf4a0a17a1d174672c"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/rivo/uniseg",
+    "reviewedVersion": "v0.4.7",
+    "upstream": "https://github.com/rivo/uniseg",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE.txt",
+        "sha256": "a59885f5f0f3b3c07cf9444db5fe399b6f0791eac82055f7b85cc65500551039"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "github.com/xo/terminfo",
+    "reviewedVersion": "v0.0.0-20220910002029-abceb7e1c41e",
+    "upstream": "https://github.com/xo/terminfo",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "1f5f51151ba96f0492ce288bd007242f924fdad9f04002e175e951644340a891"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "golang.org/x/crypto",
+    "reviewedVersion": "v0.54.0",
+    "upstream": "https://go.googlesource.com/crypto",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "name": "PATENTS",
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "golang.org/x/net",
+    "reviewedVersion": "v0.56.0",
+    "upstream": "https://go.googlesource.com/net",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "name": "PATENTS",
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "golang.org/x/oauth2",
+    "reviewedVersion": "v0.36.0",
+    "upstream": "https://go.googlesource.com/oauth2",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "golang.org/x/sys",
+    "reviewedVersion": "v0.47.0",
+    "upstream": "https://go.googlesource.com/sys",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "name": "PATENTS",
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "golang.org/x/term",
+    "reviewedVersion": "v0.45.0",
+    "upstream": "https://go.googlesource.com/term",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "name": "PATENTS",
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go",
+    "name": "golang.org/x/text",
+    "reviewedVersion": "v0.40.0",
+    "upstream": "https://go.googlesource.com/text",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "name": "PATENTS",
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container",
+      "tui"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "go-toolchain",
+    "name": "Go standard library",
+    "reviewedVersion": "go1.26.6",
+    "upstream": "https://go.dev/",
+    "declaredLicenseExpression": "BSD-3-Clause",
+    "selectedLicenseExpression": "BSD-3-Clause",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "name": "PATENTS",
+        "sha256": "abc34799220e8fc15996bbb11df857547eb2ba8741a73d03cf86489dad145f3b"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "tui",
+      "container"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "npm",
+    "name": "svelte",
+    "reviewedVersion": "5.56.9",
+    "upstream": "https://github.com/sveltejs/svelte",
+    "declaredLicenseExpression": "MIT",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE.md",
+        "sha256": "06257f4847b13a49a039efb17b944c141e71b12fd8d231b362d86919067d77a3"
+      },
+      {
+        "name": "node_modules/magic-string/LICENSE",
+        "sha256": "1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": [
+      "server/browser",
+      "container"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "font",
+    "name": "Instrument Sans",
+    "reviewedVersion": "2022 webfont",
+    "upstream": "https://github.com/Instrument/instrument-sans",
+    "declaredLicenseExpression": "OFL-1.1",
+    "selectedLicenseExpression": "OFL-1.1",
+    "legalFiles": [
+      {
+        "name": "INSTRUMENT-OFL-1.1.txt",
+        "sha256": "9e27a72ed30eb49a08678f6a5d6ed98ec7ba5368f541637ee0683ec9134ef966"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": ["server/browser", "container"],
+    "reviewDecision": "approved",
+    "reviewNotes": "The self-hosted webfont is the upstream Instrument Sans family, distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
+  },
+  {
+    "ecosystem": "font",
+    "name": "Spline Sans Mono",
+    "reviewedVersion": "1.002 webfont",
+    "upstream": "https://github.com/SorkinType/SplineSansMono",
+    "declaredLicenseExpression": "OFL-1.1",
+    "selectedLicenseExpression": "OFL-1.1",
+    "legalFiles": [
+      {
+        "name": "OFL-1.1.txt",
+        "sha256": "4abb88162e4c0c5f9fc6c2f15d7085f7b7e27fd89f541a13488e1bcb829bde3f"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": ["server/browser", "container"],
+    "reviewDecision": "approved",
+    "reviewNotes": "The self-hosted webfont identifies Spline Sans Mono version 1.002 and is distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
+  },
+  {
+    "ecosystem": "container",
+    "name": "ca-certificates",
+    "reviewedVersion": "builder package",
+    "upstream": "https://salsa.debian.org/debian/ca-certificates",
+    "declaredLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
+    "selectedLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
+    "legalFiles": [
+      {
+        "name": "README.txt",
+        "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": ["container"],
+    "reviewDecision": "approved",
+    "reviewNotes": "The final image preserves /usr/share/doc/ca-certificates/copyright from the exact builder supplying /etc/ssl/certs/ca-certificates.crt. The package contains Debian, Mozilla, and certificate-authority attribution with multiple licenses; the build-time copy is fail-closed and the package copyright file is retained verbatim."
+  }
+]

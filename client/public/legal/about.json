@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "project": {
+    "schemaVersion": 1,
+    "name": "Graphite Meter",
+    "copyrightHolder": "zR-JB",
+    "copyrightYears": "2026",
+    "licenseExpression": "AGPL-3.0-or-later",
+    "repository": "https://github.com/zR-JB/graphite-meter"
+  },
+  "sourceVersion": "development",
+  "sourceURL": "https://github.com/zR-JB/graphite-meter",
+  "licenseURL": "legal/LICENSE.txt",
+  "noticesURL": "legal/THIRD_PARTY_NOTICES.txt",
+  "components": [
+    {
+      "name": "Instrument Sans",
+      "version": "2022 webfont",
+      "ecosystem": "font",
+      "source": "https://github.com/Instrument/instrument-sans",
+      "declaredLicenseExpression": "OFL-1.1",
+      "selectedLicenseExpression": "OFL-1.1",
+      "modified": false
+    },
+    {
+      "name": "Spline Sans Mono",
+      "version": "1.002 webfont",
+      "ecosystem": "font",
+      "source": "https://github.com/SorkinType/SplineSansMono",
+      "declaredLicenseExpression": "OFL-1.1",
+      "selectedLicenseExpression": "OFL-1.1",
+      "modified": false
+    },
+    {
+      "name": "github.com/coder/websocket",
+      "version": "v1.8.15",
+      "ecosystem": "go",
+      "source": "https://github.com/coder/websocket",
+      "declaredLicenseExpression": "ISC",
+      "selectedLicenseExpression": "ISC",
+      "modified": false
+    },
+    {
+      "name": "github.com/coreos/go-oidc/v3",
+      "version": "v3.20.0",
+      "ecosystem": "go",
+      "source": "https://github.com/coreos/go-oidc",
+      "declaredLicenseExpression": "Apache-2.0",
+      "selectedLicenseExpression": "Apache-2.0",
+      "modified": false
+    },
+    {
+      "name": "github.com/dunglas/httpsfv",
+      "version": "v1.1.0",
+      "ecosystem": "go",
+      "source": "https://github.com/dunglas/httpsfv",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "github.com/go-jose/go-jose/v4",
+      "version": "v4.1.4",
+      "ecosystem": "go",
+      "source": "https://github.com/go-jose/go-jose",
+      "declaredLicenseExpression": "Apache-2.0",
+      "selectedLicenseExpression": "Apache-2.0",
+      "modified": false
+    },
+    {
+      "name": "github.com/quic-go/qpack",
+      "version": "v0.6.0",
+      "ecosystem": "go",
+      "source": "https://github.com/quic-go/qpack",
+      "declaredLicenseExpression": "MIT",
+      "selectedLicenseExpression": "MIT",
+      "modified": false
+    },
+    {
+      "name": "github.com/quic-go/quic-go",
+      "version": "v0.61.0",
+      "ecosystem": "go",
+      "source": "https://github.com/quic-go/quic-go",
+      "declaredLicenseExpression": "MIT",
+      "selectedLicenseExpression": "MIT",
+      "modified": false
+    },
+    {
+      "name": "github.com/quic-go/webtransport-go",
+      "version": "v0.12.0",
+      "ecosystem": "go",
+      "source": "https://github.com/quic-go/webtransport-go",
+      "declaredLicenseExpression": "MIT",
+      "selectedLicenseExpression": "MIT",
+      "modified": false
+    },
+    {
+      "name": "golang.org/x/crypto",
+      "version": "v0.54.0",
+      "ecosystem": "go",
+      "source": "https://go.googlesource.com/crypto",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "golang.org/x/net",
+      "version": "v0.56.0",
+      "ecosystem": "go",
+      "source": "https://go.googlesource.com/net",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "golang.org/x/oauth2",
+      "version": "v0.36.0",
+      "ecosystem": "go",
+      "source": "https://go.googlesource.com/oauth2",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "golang.org/x/sys",
+      "version": "v0.47.0",
+      "ecosystem": "go",
+      "source": "https://go.googlesource.com/sys",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "golang.org/x/term",
+      "version": "v0.45.0",
+      "ecosystem": "go",
+      "source": "https://go.googlesource.com/term",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "golang.org/x/text",
+      "version": "v0.40.0",
+      "ecosystem": "go",
+      "source": "https://go.googlesource.com/text",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "Go standard library",
+      "version": "go1.26.6",
+      "ecosystem": "go-toolchain",
+      "source": "https://go.dev/",
+      "declaredLicenseExpression": "BSD-3-Clause",
+      "selectedLicenseExpression": "BSD-3-Clause",
+      "modified": false
+    },
+    {
+      "name": "svelte",
+      "version": "5.56.9",
+      "ecosystem": "npm",
+      "source": "https://github.com/sveltejs/svelte",
+      "declaredLicenseExpression": "MIT",
+      "selectedLicenseExpression": "MIT",
+      "modified": false
+    }
+  ]
+}

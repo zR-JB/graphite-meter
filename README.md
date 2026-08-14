@@ -108,14 +108,22 @@ Defaults need no configuration. Everything beyond them:
 git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
 just dev     # build the browser client, embed it, run the server on :7246
-just ci      # the same checks CI runs
+just ci      # the local fast gates; CI also runs browser, E2E, image, and matrix jobs
 ```
 
 Prerequisites and everything else are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## License
 
-[AGPL-3.0-or-later](LICENSE).
+Graphite Meter — Copyright © 2026 zR-JB
+
+Licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE) and
+[COPYRIGHT](COPYRIGHT). Third-party notices are generated for each
+distributed artifact.
+
+- Browser: Endpoint Info → About & legal
+- Container: `/usr/share/licenses/graphite-meter/`
+- Native client: license and notices are included in every release archive
 
 ---
 

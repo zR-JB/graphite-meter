@@ -46,6 +46,10 @@ dev_tools   := env("GM_CLIENT_DEV_TOOLS", "0")
 #      the git tag) — the authoritative release version.
 label       := env("GM_CLIENT_BUILD_LABEL", if os() == "windows" { `cmd.exe /c "git rev-parse --short HEAD 2>nul || echo prod"` } else { `git rev-parse --short HEAD 2>/dev/null || echo prod` })
 version     := env("VERSION", label)
+# Legal metadata distinguishes a release tag from an untagged development
+# build. The normal build label may be a commit hash, but that is not a source
+# release version and must not appear as legal source-version metadata.
+legal_version := env("VERSION", "development")
 
 # Set OS-specific path for the Go build cache to remain fully cross-platform
 GOCACHE     := env("GOCACHE", if os() == "windows" { env("TEMP") / "graphite-meter-go-build" } else { "/tmp/graphite-meter-go-build" })
@@ -76,6 +80,46 @@ client-build-dev:
 client-build-prod:
     cd client && bun install
     bun -e "process.env.GM_CLIENT_ENGINE='{{engine}}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{allow_dummy}}'; process.env.GM_CLIENT_DEV_TOOLS='{{dev_tools}}'; process.env.GM_CLIENT_BUILD_LABEL='{{label}}'; process.env.VERSION='{{version}}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+
+# Discover the production browser closure in a temporary Vite output tree and
+# run the single offline legal generator. The scan build always consumes the
+# checked-in about.json from the previous generation, avoiding a circular
+# dependency between the bundle and its legal data.
+_legal-run mode="check":
+    #!/usr/bin/env sh
+    set -eu
+    scan=$(mktemp)
+    out=$(mktemp -d)
+    trap 'rm -f "$scan"; rm -rf "$out"' EXIT
+    cd client
+    if [ "${GM_LEGAL_REFRESH_LOCK:-0}" = "1" ]; then bun install; else bun install --frozen-lockfile; fi
+    GM_LEGAL_SCAN_OUT="$scan" GM_LEGAL_SCAN_DIR="$out" bun run build:bundle -- --outDir "$out"
+    cd ..
+    cd go
+    VERSION='{{legal_version}}' GM_LEGAL_SCAN_MODULES="$scan" go run ./internal/legal/cmd/legalgen -mode '{{mode}}' -repo ..
+
+legal-generate:
+    just _legal-run generate
+
+legal-check:
+    just _legal-run check
+
+legal-review mode="audit":
+    just _legal-run review-{{mode}}
+
+legal-source-bundle:
+    just _legal-run source-bundle
+
+legal-source-bundle-test:
+    ./scripts/legal-source-bundle-test.sh
+
+legal: legal-check
+
+tui-package-test:
+    ./scripts/tui-package-test.sh
+
+tui-legal-test:
+    report=$(cd go && go run ./cmd/graphite-meter-client --legal); printf '%s\n' "$report" | grep -F 'Graphite Meter'; printf '%s\n' "$report" | grep -F 'GNU AFFERO GENERAL PUBLIC LICENSE'; printf '%s\n' "$report" | grep -F 'THIRD-PARTY SOFTWARE NOTICES'; printf '%s\n' "$report" | grep -F 'github.com/charmbracelet/bubbletea'
 
 # Type-check the client, including Bun test files
 client-check:
@@ -244,7 +288,7 @@ bench-throughput filter="" project="":
 
 # The fast local gate. ci.yml runs these same recipes; the pre-commit hook runs
 # all but go-lint, and only those matching the staged files.
-ci: check-generated client-ci server-check go-lint server-test
+ci: check-generated client-ci server-check go-lint server-test legal-check tui-package-test tui-legal-test legal-source-bundle-test
 
 # Everything CI runs that is meaningful on a workstation: the fast gate plus the
 # browser E2E, stubbed and live. The Docker smoke job and the cross-build matrix
