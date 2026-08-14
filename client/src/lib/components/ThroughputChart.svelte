@@ -182,7 +182,7 @@
             style:color={stat.stroke}
             style:left={`${stat.x}px`}
             style:top={`${stat.y}px`}
-            >avg {fmtSpeed(store.toUnit(stat.bytesPerSec))}</span
+            >{fmtSpeed(store.toUnit(stat.bytesPerSec))} {store.unitLabel}</span
           >
         {/each}
       </div>

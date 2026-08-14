@@ -184,6 +184,25 @@ test("adaptive completion off always reports the entire measurement phase", () =
   expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
 });
 
+test("stable evidence does not select a window unless early completion shortened the stage", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  for (let i = 0; i < 4; i++) {
+    accum.pushThroughput("download", "down", 100, 100, 1);
+    accum.trackStableRun("download", 0, adaptive);
+  }
+  for (let i = 0; i < 4; i++) {
+    accum.pushThroughput("download", "down", 1000, 1000, 1);
+    accum.trackStableRun("download", 1, adaptive);
+  }
+
+  const result = accum.throughputResult("download", false);
+
+  expect(result.method).toBe("full-average");
+  expect(result.reportedBytesPerSec).toBeCloseTo(550, 6);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(550, 6);
+});
+
 // Bidirectional coverage: the phase carries two concurrent lanes (down + up)
 // reduced independently, but shares a single combined-rate stability signal.
 // These tests are about lane bookkeeping, not adaptive phase duration.
@@ -309,6 +328,31 @@ test("bidirectional final plateau aligns each interleaved lane to shared stabili
   expect(result.up.method).toBe("stable-window");
   expect(result.down.meanBytesPerSec).toBeCloseTo(500, 6);
   expect(result.up.meanBytesPerSec).toBeCloseTo(300, 6);
+});
+
+test("bidirectional stable evidence also requires actual early completion", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  const pushBidi = (dir: "down" | "up", value: number, score: number): void => {
+    accum.pushThroughput("bidirectional", dir, value, value, 1);
+    accum.trackStableRun("bidirectional", score, adaptive);
+  };
+
+  for (let i = 0; i < 4; i++) {
+    pushBidi("down", 100, 0);
+    pushBidi("up", 50, 0);
+  }
+  for (let i = 0; i < 4; i++) {
+    pushBidi("down", 1000, 1);
+    pushBidi("up", 500, 1);
+  }
+
+  const result = accum.bidirectionalResult(false);
+
+  expect(result.down.method).toBe("full-average");
+  expect(result.up.method).toBe("full-average");
+  expect(result.down.reportedBytesPerSec).toBeCloseTo(550, 6);
+  expect(result.up.reportedBytesPerSec).toBeCloseTo(275, 6);
 });
 
 test("final bidirectional observation preserves the opening evidence in both lanes", () => {

@@ -7,6 +7,7 @@ import {
   entries,
   nearestMetric,
   hoverContext,
+  metricLabel,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -19,7 +20,8 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     max: 90,
     p10: 20,
     p90: 80,
-    average: 50,
+    center: 50,
+    centerKind: "average",
     current: 55,
     jitter: 5,
     lossRatio: 0,
@@ -59,12 +61,12 @@ test("lossLabel: hidden at zero, extra precision under one percent", () => {
 
 test("entries: present metrics in label order, nulls dropped", () => {
   const got = entries(lane({ p10: null, current: null }));
-  expect(got.map((e) => e.metric)).toEqual(["min", "average", "p90", "max"]);
+  expect(got.map((e) => e.metric)).toEqual(["min", "center", "p90", "max"]);
 });
 
 test("nearestMetric: picks the closest measured value", () => {
   const l = lane();
-  expect(nearestMetric(l, 51)).toBe("average"); // 50 is nearest
+  expect(nearestMetric(l, 51)).toBe("center"); // 50 is nearest
   expect(nearestMetric(l, 88)).toBe("max"); // 90 is nearest
   expect(nearestMetric(l, 0)).toBe("min"); // 10 is nearest
 });
@@ -75,17 +77,22 @@ test("nearestMetric: no measured metrics yields null", () => {
     max: null,
     p10: null,
     p90: null,
-    average: null,
+    center: null,
     current: null,
   });
   expect(nearestMetric(empty, 42)).toBeNull();
 });
 
-test("hoverContext: band for percentiles, range for average, blank when unmeasured", () => {
+test("center labels and hover context follow the lane's semantics", () => {
   const l = lane();
   expect(hoverContext(l, "p10")).toContain("P10–P90");
-  expect(hoverContext(l, "average")).toContain("Range");
+  expect(metricLabel(l, "center")).toBe("Avg");
+  expect(hoverContext(l, "center")).toContain("Range");
   expect(hoverContext(l, "current")).toContain("Avg");
+  const result = lane({ center: 70, centerKind: "result" });
+  expect(metricLabel(result, "center")).toBe("Result");
+  expect(hoverContext(result, "current")).toBe("Result 70.0");
+  expect(hoverContext(result, "center")).toContain("Range");
   expect(hoverContext(lane({ p10: null }), "p90")).toBe("");
-  expect(hoverContext(lane({ average: null }), "current")).toBe("");
+  expect(hoverContext(lane({ center: null }), "current")).toBe("");
 });

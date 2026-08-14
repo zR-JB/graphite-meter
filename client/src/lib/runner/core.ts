@@ -189,6 +189,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #debugThroughputLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
   #stageFailures = new Map<TransportRole, StageFailure>();
+  #completedEarlyStages = new Set<TransportRole>();
 
   #accum = new RunAccumulator();
   #dlResult: ThroughputResult | null = null;
@@ -312,6 +313,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#lastThroughputDisplayAt.up = -Infinity;
     this.#bytesCumulative = 0;
     this.#stageFailures.clear();
+    this.#completedEarlyStages.clear();
     this.#accum.reset();
     this.#dlResult = null;
     this.#ulResult = null;
@@ -1032,9 +1034,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       return false;
 
     if (seg.phase === "latency") this.#accum.confirmLatencyEarlyStop();
+    const previousTotalMs = this.#totalMs;
     const truncated = truncateSegmentAt(this.#segments, seg, elapsed);
     this.#segments = truncated.segments;
     this.#totalMs = truncated.totalMs;
+    if (truncated.totalMs < previousTotalMs)
+      this.#completedEarlyStages.add(seg.activity.stage);
     this.#earlyCandidateSeg = -1;
     this.#earlyCandidateStartedAt = 0;
     return true;
@@ -1081,7 +1086,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (phase === "download" && cfg.stages.download && !this.#dlResult) {
       this.#dlResult = failed
         ? this.#accum.partialThroughputResult("download")
-        : this.#accum.throughputResult("download", cfg.adaptive.enabled);
+        : this.#accum.throughputResult(
+            "download",
+            this.#completedEarlyStages.has("download"),
+          );
       if (this.#dlResult)
         this.emit({
           type: "stageResult",
@@ -1091,7 +1099,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
       this.#ulResult = failed
         ? this.#accum.partialThroughputResult("upload")
-        : this.#accum.throughputResult("upload", cfg.adaptive.enabled);
+        : this.#accum.throughputResult(
+            "upload",
+            this.#completedEarlyStages.has("upload"),
+          );
       if (this.#ulResult)
         this.emit({
           type: "stageResult",
@@ -1130,7 +1141,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       const bidirectional = cfg.stages.bidirectional
         ? this.#stageFailures.has("bidirectional")
           ? (this.#biResult ?? this.#accum.partialBidirectionalResult())
-          : this.#accum.bidirectionalResult(cfg.adaptive.enabled)
+          : this.#accum.bidirectionalResult(
+              this.#completedEarlyStages.has("bidirectional"),
+            )
         : null;
       const result = {
         download: this.#dlResult,
