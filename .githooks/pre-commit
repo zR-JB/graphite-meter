@@ -73,3 +73,14 @@ if echo "$staged" | grep -q '^client/'; then
     echo "pre-commit: client (just client-ci)"
     just client-ci
 fi
+
+# Keep this path set aligned with the `legal` filter in ci.yml. Legal output
+# depends on the source tree and packaging scripts, so those changes need the
+# same four legal gates locally that CI runs.
+if echo "$staged" | grep -qE '^(legal/|LICENSE$|COPYRIGHT$|go/|client/|container/|scripts/package-tui\.sh$|scripts/tui-package-test\.sh$|scripts/legal-source-bundle-test\.sh$|\.github/workflows/(ci|release)\.yml$|justfile$)'; then
+    echo "pre-commit: legal (just legal-check tui-package-test tui-legal-test legal-source-bundle-test)"
+    just legal-check
+    just tui-package-test
+    just tui-legal-test
+    just legal-source-bundle-test
+fi
