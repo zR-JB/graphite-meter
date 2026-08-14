@@ -81,7 +81,7 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-project
+      - uses: ${{ github.repository }}/.github/actions/setup-project@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           go: 'true'
           bun: 'true'
