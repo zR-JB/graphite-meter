@@ -352,13 +352,13 @@ export class RunAccumulator {
   /** Reduce a transfer phase to effective bytes over represented time. */
   throughputResult(
     phase: "download" | "upload",
-    adaptiveEnabled: boolean,
+    useStableWindow: boolean,
   ): ThroughputResult {
     const download = phase === "download";
     return this.#reduceTransfer(
       download ? this.#dl : this.#ul,
       download ? this.#dlStableStartMs : this.#ulStableStartMs,
-      adaptiveEnabled,
+      useStableWindow,
       download ? this.#dlFinalScore : this.#ulFinalScore,
       this.#loadedLossPct(),
     );
@@ -382,7 +382,7 @@ export class RunAccumulator {
   }
 
   /** Reduce both bidirectional lanes with the common effective-rate reducer. */
-  bidirectionalResult(adaptiveEnabled: boolean): {
+  bidirectionalResult(useStableWindow: boolean): {
     down: ThroughputResult;
     up: ThroughputResult;
   } {
@@ -391,14 +391,14 @@ export class RunAccumulator {
       down: this.#reduceTransfer(
         this.#biDown,
         this.#biStableStartDownMs,
-        adaptiveEnabled,
+        useStableWindow,
         this.#biFinalScore,
         lossPct,
       ),
       up: this.#reduceTransfer(
         this.#biUp,
         this.#biStableStartUpMs,
-        adaptiveEnabled,
+        useStableWindow,
         this.#biFinalScore,
         lossPct,
       ),
@@ -439,7 +439,7 @@ export class RunAccumulator {
   #reduceTransfer(
     accum: PhaseAccum,
     stableStart: number,
-    adaptiveEnabled: boolean,
+    useStableWindow: boolean,
     finalScore: number,
     packetLossPct: number,
   ): ThroughputResult {
@@ -463,7 +463,7 @@ export class RunAccumulator {
     const full =
       accum.evidenceMs > 0 ? accum.bytes / (accum.evidenceMs / 1_000) : 0;
     const stableRatio = (): { rate: number; has: boolean } => {
-      if (!adaptiveEnabled || stableStart < 0) return { rate: 0, has: false };
+      if (!useStableWindow || stableStart < 0) return { rate: 0, has: false };
       let bytes = 0;
       let seconds = 0;
       for (const sample of accum.samples) {
@@ -477,8 +477,8 @@ export class RunAccumulator {
       return { rate: seconds > 0 ? bytes / seconds : 0, has: seconds > 0 };
     };
     const stable = stableRatio();
-    const useStableWindow = stable.has;
-    const reported = useStableWindow ? stable.rate : full;
+    const hasStableEvidence = stable.has;
+    const reported = hasStableEvidence ? stable.rate : full;
     const stabilityBuckets = new FixedRateBuckets();
     for (const sample of accum.samples) {
       stabilityBuckets.observe(sample.bytes, sample.seconds * 1_000);
@@ -496,7 +496,7 @@ export class RunAccumulator {
       totalBytes: accum.bytes,
       reportedBytesPerSec: reported,
       fullAverageBytesPerSec: full,
-      method: useStableWindow ? "stable-window" : "full-average",
+      method: hasStableEvidence ? "stable-window" : "full-average",
       stabilityScore: finalScore,
       band,
       packetLossPct,

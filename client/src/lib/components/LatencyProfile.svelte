@@ -7,7 +7,7 @@
   import { tooltip, JARGON } from "../actions/tooltip";
   import {
     type MetricKey,
-    METRIC_LABELS,
+    metricLabel,
     pos as domainPos,
     rangeWidth as domainRangeWidth,
     tickLabel,
@@ -138,9 +138,11 @@
         <div class="lane-meta">
           <span>{meta.label}</span>
           <strong
-            >{lane.average == null
+            >{lane.center == null
               ? "waiting"
-              : `avg ${fmtMs(lane.average)}`}</strong
+              : lane.centerKind === "result"
+                ? `${fmtMs(lane.center)} ms`
+                : `avg ${fmtMs(lane.center)}`}</strong
           >
           {#if lane.jitter != null}
             <em class="jit" use:tooltip={JARGON.jitter}
@@ -186,8 +188,8 @@
                 )}%"
               ></span>
             {/if}
-            {#if lane.average != null}
-              <i class="avg-marker" style="left:{pos(lane.average)}%"></i>
+            {#if lane.center != null}
+              <i class="center-marker" style="left:{pos(lane.center)}%"></i>
             {/if}
             {#if lane.current != null}
               <i class="cur-marker" style="left:{pos(lane.current)}%"></i>
@@ -204,7 +206,7 @@
               <span class="guide" style="left:{pos(hoverValue)}%"></span>
               <span
                 class="pin"
-                class:avg={hover.metric === "average"}
+                class:center={hover.metric === "center"}
                 style="left:{pos(hoverValue)}%"
               ></span>
               <div
@@ -215,7 +217,8 @@
                 <div class="hc-head">
                   <span>{meta.label}</span>
                   <strong
-                    >{METRIC_LABELS[hover.metric]} {fmtMs(hoverValue)}</strong
+                    >{metricLabel(lane, hover.metric)}
+                    {fmtMs(hoverValue)}</strong
                   >
                 </div>
                 {#if hoverContext(lane, hover.metric)}
@@ -448,12 +451,12 @@
       color-mix(in srgb, var(--phase-upload) 30%, transparent);
   }
 
-  .avg-marker,
+  .center-marker,
   .cur-marker {
     position: absolute;
     transform: translateX(-50%);
   }
-  .avg-marker {
+  .center-marker {
     top: 5px;
     bottom: 5px;
     width: 2px;
@@ -520,7 +523,7 @@
     pointer-events: none;
     transform: translate(-50%, -50%);
   }
-  .pin.avg {
+  .pin.center {
     width: 8px;
     border-radius: var(--r-well);
     background: var(--text);

@@ -75,11 +75,11 @@ export interface HoverInfo {
   latencyOverflow: boolean;
 }
 
-/** Per-lane average overlay drawn in result mode. */
+/** Per-lane finalized result overlay drawn in result mode. */
 interface PhaseStat {
   t0: number;
   t1: number;
-  avg: number;
+  bytesPerSec: number;
   stroke: string;
 }
 
@@ -568,10 +568,10 @@ export class ChartEngine implements CanvasEngine {
           const x0 = Math.max(plot.left, this.#x(stat.t0));
           const x1 = Math.min(plot.right, this.#x(stat.t1));
           if (x1 <= x0) return [];
-          const y = this.#yL(stat.avg);
+          const y = this.#yL(stat.bytesPerSec);
           return [
             {
-              bytesPerSec: stat.avg,
+              bytesPerSec: stat.bytesPerSec,
               stroke: stat.stroke,
               x: Math.min(x0 + 3, plot.right - 130),
               y: y - 4 - 14 < plot.top ? y + 4 : y - 4 - 14,
@@ -641,7 +641,7 @@ export class ChartEngine implements CanvasEngine {
       const x0 = Math.max(this.#layout.plot.left, this.#x(stat.t0));
       const x1 = Math.min(this.#layout.plot.right, this.#x(stat.t1));
       if (x1 <= x0) continue;
-      const yAvg = this.#yL(stat.avg);
+      const yResult = this.#yL(stat.bytesPerSec);
 
       ctx.save();
       ctx.strokeStyle = stat.stroke;
@@ -649,8 +649,8 @@ export class ChartEngine implements CanvasEngine {
       ctx.lineWidth = 1.25;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
-      ctx.moveTo(x0, Math.round(yAvg) + 0.5);
-      ctx.lineTo(x1, Math.round(yAvg) + 0.5);
+      ctx.moveTo(x0, Math.round(yResult) + 0.5);
+      ctx.lineTo(x1, Math.round(yResult) + 0.5);
       ctx.stroke();
       ctx.restore();
     }
@@ -660,12 +660,12 @@ export class ChartEngine implements CanvasEngine {
     const out: PhaseStat[] = [];
     for (const phase of ["download", "upload"] as const) {
       const seg = all.filter((s) => s.phase === phase);
-      const average = this.#get().resultRates[phase];
-      if (seg.length < 2 || average == null) continue;
+      const bytesPerSec = this.#get().resultRates[phase];
+      if (seg.length < 2 || bytesPerSec == null) continue;
       out.push({
         t0: seg[0].t,
         t1: seg[seg.length - 1].t,
-        avg: average,
+        bytesPerSec,
         stroke:
           phase === "download" ? this.#colors.download : this.#colors.upload,
       });
@@ -674,13 +674,13 @@ export class ChartEngine implements CanvasEngine {
       const seg = all.filter(
         (s) => s.phase === "bidirectional" && s.dir === dir,
       );
-      const average =
+      const bytesPerSec =
         this.#get().resultRates[dir === "down" ? "bidiDown" : "bidiUp"];
-      if (seg.length < 2 || average == null) continue;
+      if (seg.length < 2 || bytesPerSec == null) continue;
       out.push({
         t0: seg[0].t,
         t1: seg[seg.length - 1].t,
-        avg: average,
+        bytesPerSec,
         stroke: dir === "down" ? this.#colors.download : this.#colors.upload,
       });
     }

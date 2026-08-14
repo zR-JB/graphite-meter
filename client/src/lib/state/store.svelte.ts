@@ -91,7 +91,8 @@ export interface LatencyLane {
   max: number | null;
   p10: number | null;
   p90: number | null;
-  average: number | null;
+  center: number | null;
+  centerKind: "average" | "result";
   current: number | null;
   jitter: number | null;
   lossRatio: number;
@@ -679,6 +680,9 @@ class AppStore {
         weight: sample.pingCount - sample.lossCount,
       }));
       const avg = weightedMean(weightedRtts);
+      const reported =
+        key === "latency" ? this.stageResults.latency?.reportedMs : null;
+      const centerKind = reported != null ? "result" : "average";
       const jitter =
         avg != null && valid.length >= 2
           ? weightedMeanAbsoluteDeviation(weightedRtts, avg)
@@ -702,7 +706,8 @@ class AppStore {
           ) || null,
         p10: quantile(sorted, 0.1),
         p90: quantile(sorted, 0.9),
-        average: avg,
+        center: reported ?? avg,
+        centerKind,
         current: valid.at(-1)?.medianRttMs ?? null,
         jitter,
         lossRatio,

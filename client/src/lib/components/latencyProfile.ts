@@ -4,12 +4,20 @@
 import { fmtMs } from "../format";
 import type { LatencyLane } from "../state/store.svelte";
 
-export type MetricKey = "min" | "p10" | "average" | "p90" | "max" | "current";
+export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
 
-export const METRIC_LABELS: Record<MetricKey, string> = {
+const METRIC_ORDER: readonly MetricKey[] = [
+  "min",
+  "p10",
+  "center",
+  "p90",
+  "max",
+  "current",
+];
+
+const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
   min: "Min",
   p10: "P10",
-  average: "Avg",
   p90: "P90",
   max: "Max",
   current: "Latest",
@@ -57,11 +65,17 @@ export function metricValue(
   return lane[metric];
 }
 
+export function metricLabel(lane: LatencyLane, metric: MetricKey): string {
+  if (metric === "center")
+    return lane.centerKind === "result" ? "Result" : "Avg";
+  return METRIC_LABELS[metric];
+}
+
 // The present metrics in label order, dropping any the lane has not measured.
 export function entries(
   lane: LatencyLane,
 ): { metric: MetricKey; value: number }[] {
-  return (Object.keys(METRIC_LABELS) as MetricKey[]).flatMap((metric) => {
+  return METRIC_ORDER.flatMap((metric) => {
     const value = metricValue(lane, metric);
     return value == null ? [] : [{ metric, value }];
   });
@@ -82,18 +96,22 @@ export function nearestMetric(
 }
 
 // Secondary line under the hovered metric: the band it belongs to, or the
-// lane's average as a fallback anchor.
+// lane's center as a fallback anchor.
 export function hoverContext(lane: LatencyLane, metric: MetricKey): string {
   if (metric === "p10" || metric === "p90") {
     if (lane.p10 == null || lane.p90 == null) return "";
     return `P10–P90 ${fmtMs(lane.p10)} – ${fmtMs(lane.p90)}`;
   }
   if (metric === "current") {
-    return lane.average == null ? "" : `Avg ${fmtMs(lane.average)}`;
+    return lane.center == null
+      ? ""
+      : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
   }
-  if (metric === "average") {
+  if (metric === "center") {
     if (lane.min == null || lane.max == null) return "";
     return `Range ${fmtMs(lane.min)} – ${fmtMs(lane.max)}`;
   }
-  return lane.average == null ? "" : `Avg ${fmtMs(lane.average)}`;
+  return lane.center == null
+    ? ""
+    : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
 }

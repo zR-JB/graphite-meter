@@ -1111,6 +1111,51 @@ test("adaptive completion off publishes the whole phase even when it ends stable
   }
 });
 
+test("adaptive enabled does not select a stable tail when the nominal phase wins", async () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+
+  const cfg = makeConfig({
+    duration: { downloadMs: 10_000 },
+    adaptive: {
+      enabled: true,
+      minCoverageRatio: 0.25,
+      stabilityThreshold: 0.9,
+      maxPhaseReductionRatio: 1,
+      minTransferSamples: 4,
+      confirmationMs: 10_000,
+    },
+  });
+  await core.start(cfg);
+
+  // The first four seconds differ from the final stable tail. Once that old
+  // evidence leaves the four-second confidence horizon, the candidate can arm
+  // while its confirmation still cannot finish before the stage ends.
+  for (let i = 0; i < 40; i++) {
+    core.ingestThroughput("down", 100, 10, 0.1);
+    advance(100);
+  }
+  for (let i = 0; i < 60; i++) {
+    core.ingestThroughput("down", 1_000, 100, 0.1);
+    advance(100);
+  }
+
+  const stability = events.filter((event) => event.type === "stability").at(-1);
+  expect(stability?.type === "stability" && stability.snapshot.band).toBe(
+    "high",
+  );
+  const complete = events.find((event) => event.type === "complete");
+  expect(complete?.type).toBe("complete");
+  if (complete?.type === "complete") {
+    const result = complete.result.download!;
+    expect(result.method).toBe("full-average");
+    expect(result.reportedBytesPerSec).toBeCloseTo(640, 6);
+    expect(result.reportedBytesPerSec).toBe(result.fullAverageBytesPerSec);
+  }
+});
+
 test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the phase runs to its nominal end", async () => {
   const backend = new FakeBackend();
   const core = new RunnerCore(backend);
