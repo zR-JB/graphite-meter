@@ -764,7 +764,7 @@
   {
     "ecosystem": "go-toolchain",
     "name": "Go standard library",
-    "reviewedVersion": "go1.26.6-X:nodwarf5",
+    "reviewedVersion": "go1.26.6",
     "upstream": "https://go.dev/",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",

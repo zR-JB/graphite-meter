@@ -1,50 +1,8 @@
-// Persistence tests use an in-memory localStorage and a mocked config default so
-// load/merge behavior is pinned to this fixture rather than the shipped values.
-import { test, expect, mock, beforeEach } from "bun:test";
-import type { RunnerConfig } from "../runner/contract";
-
-const FAKE_CONFIG: RunnerConfig = {
-  stages: { latency: true, download: true, upload: true, bidirectional: false },
-  skipLoadedLatencyWhenStageOff: true,
-  duration: {
-    warmupMs: 800,
-    latencyMs: 4000,
-    downloadMs: 10000,
-    uploadMs: 10000,
-    bidirectionalMs: 10000,
-  },
-  pingCadence: "reply-driven",
-  loadedPingCadence: "medium",
-  transferStreams: { mode: "auto", count: 6 },
-  experimentalChunkedDownload: false,
-  experimentalDatagramThroughput: false,
-  transports: { throughputTarget: "auto", latencyTarget: "auto" },
-  compensation: {
-    profile: "lan",
-    transport: "auto",
-    params: {
-      mtuBytes: 1500,
-      ipVersion: "auto",
-      vlanTagged: false,
-      tcpOptionsMinBytes: 0,
-      tcpOptionsMaxBytes: 12,
-      encapsulationBytes: 0,
-      quicConnIdMinBytes: 0,
-      quicConnIdMaxBytes: 20,
-    },
-  },
-  adaptive: {
-    enabled: false,
-    minCoverageRatio: 0.52,
-    stabilityThreshold: 0.86,
-    maxPhaseReductionRatio: 0.5,
-    minLatencySamples: 8,
-    minTransferSamples: 12,
-    confirmationMs: 1100,
-  },
-  visualization: { throughputMaxBytesPerSec: "auto" },
-};
-mock.module("./defaults", () => ({ DEFAULT_CONFIG: FAKE_CONFIG }));
+// Persistence tests use an in-memory localStorage and the shipped config
+// defaults, so this file cannot poison the shared defaults module for other
+// tests in the Bun process.
+import { test, expect, beforeEach } from "bun:test";
+import { DEFAULT_CONFIG } from "./defaults";
 
 class MemoryStorage {
   private map = new Map<string, string>();
@@ -85,7 +43,7 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
   const result = loadPersisted();
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
-  expect(result.config).toEqual(FAKE_CONFIG);
+  expect(result.config).toEqual(DEFAULT_CONFIG);
   expect(result.showWireEstimates).toBe(true);
 });
 
@@ -154,7 +112,7 @@ test("obsolete endpoint override cannot restore the old listener port", () => {
       config: { endpoint: { host: "localhost", port: 8765 } },
     }),
   );
-  expect(loadPersisted().config).toEqual(FAKE_CONFIG);
+  expect(loadPersisted().config).toEqual(DEFAULT_CONFIG);
   expect(loadPersisted().config).not.toHaveProperty("endpoint");
 });
 

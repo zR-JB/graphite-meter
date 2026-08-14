@@ -56,6 +56,7 @@ type goTarget struct {
 }
 
 var releaseVersion = regexp.MustCompile(`^(?:v)?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$`)
+var goReleaseVersion = regexp.MustCompile(`^(go[0-9]+\.[0-9]+(?:\.[0-9]+)?)(?:[- \t].*)?$`)
 
 func main() {
 	mode := flag.String("mode", "check", "check, generate, review-template, or review-audit")
@@ -549,8 +550,15 @@ func goToolchainComponent(repo string) (legal.Component, error) {
 			return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
 		}
 	}
-	version := commandOutput("go", "env", "GOVERSION")
+	version := legalGoVersion(commandOutput("go", "env", "GOVERSION"))
 	return componentFromFiles("go-toolchain", "Go standard library", version, "https://go.dev/", files), nil
+}
+
+func legalGoVersion(raw string) string {
+	if match := goReleaseVersion.FindStringSubmatch(raw); match != nil {
+		return match[1]
+	}
+	return raw
 }
 
 func goRoot() (string, error) {

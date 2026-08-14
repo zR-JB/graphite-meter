@@ -1210,7 +1210,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: Go standard library
-Version: go1.26.6-X:nodwarf5
+Version: go1.26.6
 Source: https://go.dev/
 License: BSD-3-Clause
 Modified by Graphite Meter: no

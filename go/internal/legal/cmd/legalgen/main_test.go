@@ -39,6 +39,23 @@ func TestSourceURLUsesReleaseTagOnlyForReleaseVersions(t *testing.T) {
 	}
 }
 
+func TestLegalGoVersionNormalizesToolchainSuffixes(t *testing.T) {
+	for _, test := range []struct {
+		raw, want string
+	}{
+		{"go1.26.6", "go1.26.6"},
+		{"go1.26.6-X:nodwarf5", "go1.26.6"},
+		{"go1.26.6 local build", "go1.26.6"},
+		{"devel go1.27-abcdef", "devel go1.27-abcdef"},
+	} {
+		t.Run(test.raw, func(t *testing.T) {
+			if got := legalGoVersion(test.raw); got != test.want {
+				t.Fatalf("legalGoVersion(%q) = %q, want %q", test.raw, got, test.want)
+			}
+		})
+	}
+}
+
 func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, "project"), 0o755); err != nil {
