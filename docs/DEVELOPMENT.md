@@ -92,16 +92,22 @@ first release after a merge, wait for the exact main commit's `Gate` and
 run with a test version. The dry run builds and verifies the OCI archive and
 all native artifacts without publishing anything.
 
-After that validation succeeds, tags are the only release input:
+After that validation succeeds, tags are the only release input. Use a shell
+variable so examples are safe to copy and won't create literal `vX.Y.Z` tags:
 
 ```sh
+# For a prerelease (RC) tag
+VERSION=0.5.2-rc.0
+
 git switch main
 git pull --ff-only
-git tag -a v0.3.0-rc.0 -m "v0.3.0-rc.0"
-git push origin v0.3.0-rc.0
+git tag -a "v${VERSION}" -m "v${VERSION}"
+git push origin "v${VERSION}"
 
-git tag -a v0.3.0 -m "v0.3.0"
-git push origin v0.3.0
+# For a stable release
+VERSION=0.5.2
+git tag -a "v${VERSION}" -m "v${VERSION}"
+git push origin "v${VERSION}"
 ```
 
 Prerelease tags publish only their exact image tag. Stable tags publish the
@@ -123,20 +129,6 @@ its inert OCI artifact before the isolated publisher writes only the exact
 versioned GHCR prerelease tag. This path creates no Git tag, GitHub Release,
 `latest`, or series alias, and the temporary label is removed automatically.
 
-## Required GitHub repository settings
-
-The repository owner must configure these settings manually; tracked files do
-not claim to enforce them:
-
-- require the `Gate` status on `main`;
-- protect CodeQL high-or-higher findings;
-- require zero human approvals while there is one maintainer;
-- set the default Actions token to read-only;
-- require full-SHA-pinned Actions and maintain a selected-action allowlist;
-- enable Secret Scanning and Push Protection;
-- configure the `ghcr-release` environment;
-- protect release tags and decide whether release immutability is enabled;
-- keep administrative bypass intentionally limited to the owner.
 
 ## Exceptional maintenance
 

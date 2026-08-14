@@ -25,7 +25,7 @@ if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
     tag="${REQUESTED_VERSION:-}"
     dry_run=true
     if [[ ! "$tag" =~ $semver ]]; then
-        echo "Release refused: dry-run version '$tag' is not supported SemVer." >&2
+        echo "Release refused: dry-run version '$tag' is not supported SemVer; must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N" >&2
         exit 1
     fi
     sha=$(git rev-parse HEAD)
@@ -85,7 +85,34 @@ require_check() {
 }
 
 require_check Gate github-actions
-require_check CodeQL github-advanced-security
+
+# GitHub returns this endpoint as a top-level JSON array. Fetch all CodeQL
+# analyses for main so releasing an older-but-still-main-reachable commit
+# cannot fail merely because its analysis fell off the first result page.
+analysis_pages=$(
+    gh api --paginate --slurp \
+        "repos/$REPOSITORY/code-scanning/analyses?ref=refs/heads/main&tool_name=CodeQL&per_page=100"
+)
+
+codeql_analyses=$(
+    jq --arg sha "$sha" \
+        '[.[][] | select(.commit_sha == $sha and (.tool.name // "") == "CodeQL")]' \
+        <<<"$analysis_pages"
+)
+
+codeql_count=$(jq 'length' <<<"$codeql_analyses")
+
+if [[ "$codeql_count" -eq 0 ]]; then
+    echo "Release refused: CodeQL analysis for $sha is missing." >&2
+    exit 1
+fi
+
+codeql_errors=$(jq '[.[] | select((.error // "") != "") ]' <<<"$codeql_analyses")
+if [[ $(jq 'length' <<<"$codeql_errors") -gt 0 ]]; then
+    echo "Release refused: CodeQL analysis for $sha has errors." >&2
+    jq -r '.[] | "  \(.category // .analysis_key // \"unknown\"): \(.error)"' <<<"$codeql_errors" >&2
+    exit 1
+fi
 
 version=${tag#v}
 IFS=. read -r major minor _ <<<"${version%%-*}"
