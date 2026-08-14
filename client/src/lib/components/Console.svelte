@@ -13,6 +13,7 @@
   import ShortcutHints from "./ShortcutHints.svelte";
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import LegalDialog from "./LegalDialog.svelte";
   import { engage, returnToStart } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
@@ -25,6 +26,8 @@
   let telemetryOpen = $state(false);
   let settingsOpen = $state(false);
   let resetConfirmOpen = $state(false);
+  let legalOpen = $state(false);
+  let legalInvoker = $state<HTMLElement | null>(null);
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
 
@@ -91,6 +94,15 @@
   function confirmReturnToStart() {
     resetConfirmOpen = false;
     returnToStart();
+  }
+
+  function openLegal(invoker: HTMLElement) {
+    legalInvoker = invoker;
+    legalOpen = true;
+  }
+
+  function closeLegal() {
+    legalOpen = false;
   }
 
   function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -289,6 +301,7 @@
     dockWidth={store.dockWidth.right}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
+    onOpenLegal={openLegal}
   />
 
   <!-- Transient phase-change toast, pinned bottom-right. -->
@@ -304,6 +317,8 @@
     onCancel={() => (resetConfirmOpen = false)}
     onConfirm={confirmReturnToStart}
   />
+
+  <LegalDialog open={legalOpen} invoker={legalInvoker} onClose={closeLegal} />
 </main>
 
 <style>

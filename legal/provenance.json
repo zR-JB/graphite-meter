@@ -1,1 +1,65 @@
-[]
+[
+  {
+    "ecosystem": "font",
+    "name": "Instrument Sans",
+    "version": "2022 webfont",
+    "upstream": "https://github.com/Instrument/instrument-sans",
+    "upstreamRevision": "main (upstream review 2026-08-14; source import e41c57d)",
+    "licenseExpression": "OFL-1.1",
+    "modified": false,
+    "artifactScopes": ["server/browser", "container"],
+    "localPaths": [
+      "client/public/fonts/instrument-sans-latin.woff2",
+      "client/public/fonts/instrument-sans-latin-ext.woff2"
+    ],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/fonts/OFL-1.1.txt",
+        "sha256": "dabc4ec489d815411646bb98f736511dcae1f0e38eec6529310f221121141e94"
+      }
+    ],
+    "correspondingSource": "third_party/manual/fonts/instrument-sans",
+    "reviewNotes": "Self-hosted upstream webfont; the two shipped WOFF2 files are hash-tracked and are not modified."
+  },
+  {
+    "ecosystem": "font",
+    "name": "Spline Sans Mono",
+    "version": "1.002 webfont",
+    "upstream": "https://github.com/SorkinType/SplineSansMono",
+    "upstreamRevision": "1.002 metadata; upstream review 2026-08-14; source import e41c57d",
+    "licenseExpression": "OFL-1.1",
+    "modified": false,
+    "artifactScopes": ["server/browser", "container"],
+    "localPaths": [
+      "client/public/fonts/spline-sans-mono-latin.woff2",
+      "client/public/fonts/spline-sans-mono-latin-ext.woff2"
+    ],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/fonts/OFL-1.1.txt",
+        "sha256": "dabc4ec489d815411646bb98f736511dcae1f0e38eec6529310f221121141e94"
+      }
+    ],
+    "correspondingSource": "third_party/manual/fonts/spline-sans-mono",
+    "reviewNotes": "Self-hosted upstream webfont; the two shipped WOFF2 files are hash-tracked and are not modified."
+  },
+  {
+    "ecosystem": "container",
+    "name": "ca-certificates",
+    "version": "builder package",
+    "upstream": "https://salsa.debian.org/debian/ca-certificates",
+    "upstreamRevision": "builder image package metadata; verified 2026-08-14",
+    "licenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
+    "modified": false,
+    "artifactScopes": ["container"],
+    "localPaths": ["/etc/ssl/certs/ca-certificates.crt"],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/ca-certificates/README.txt",
+        "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"
+      }
+    ],
+    "correspondingSource": "third_party/manual/ca-certificates",
+    "reviewNotes": "Container-only attribution. The Dockerfile copies the package copyright file from the same builder as the CA bundle and fails if that exact file is unavailable."
+  }
+]

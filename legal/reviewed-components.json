@@ -795,5 +795,59 @@
     ],
     "reviewDecision": "approved",
     "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+  },
+  {
+    "ecosystem": "font",
+    "name": "Instrument Sans",
+    "reviewedVersion": "2022 webfont",
+    "upstream": "https://github.com/Instrument/instrument-sans",
+    "declaredLicenseExpression": "OFL-1.1",
+    "selectedLicenseExpression": "OFL-1.1",
+    "legalFiles": [
+      {
+        "name": "legal/manual/fonts/OFL-1.1.txt",
+        "sha256": "dabc4ec489d815411646bb98f736511dcae1f0e38eec6529310f221121141e94"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": ["server/browser", "container"],
+    "reviewDecision": "approved",
+    "reviewNotes": "The self-hosted webfont is the upstream Instrument Sans family, distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
+  },
+  {
+    "ecosystem": "font",
+    "name": "Spline Sans Mono",
+    "reviewedVersion": "1.002 webfont",
+    "upstream": "https://github.com/SorkinType/SplineSansMono",
+    "declaredLicenseExpression": "OFL-1.1",
+    "selectedLicenseExpression": "OFL-1.1",
+    "legalFiles": [
+      {
+        "name": "legal/manual/fonts/OFL-1.1.txt",
+        "sha256": "dabc4ec489d815411646bb98f736511dcae1f0e38eec6529310f221121141e94"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": ["server/browser", "container"],
+    "reviewDecision": "approved",
+    "reviewNotes": "The self-hosted webfont identifies Spline Sans Mono version 1.002 and is distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
+  },
+  {
+    "ecosystem": "container",
+    "name": "ca-certificates",
+    "reviewedVersion": "builder package",
+    "upstream": "https://salsa.debian.org/debian/ca-certificates",
+    "declaredLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
+    "selectedLicenseExpression": "LicenseRef-Debian-ca-certificates-bundle",
+    "legalFiles": [
+      {
+        "name": "legal/manual/ca-certificates/README.txt",
+        "sha256": "55577caffaee581cb3b1e746b200915260c693c70de006ab6c0ffa050ac44503"
+      }
+    ],
+    "modified": false,
+    "artifactScopes": ["container"],
+    "reviewDecision": "approved",
+    "reviewNotes": "The final image preserves /usr/share/doc/ca-certificates/copyright from the exact builder supplying /etc/ssl/certs/ca-certificates.crt. The package contains Debian, Mozilla, and certificate-authority attribution with multiple licenses; the build-time copy is fail-closed and the package copyright file is retained verbatim."
   }
 ]

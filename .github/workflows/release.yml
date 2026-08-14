@@ -207,6 +207,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.guard.outputs.sha }}
             org.opencontainers.image.version=${{ needs.guard.outputs.version }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
           # The guard requires a successful CI push run for this exact commit,
           # so release only rebuilds the artifact.
           build-args: |
@@ -321,19 +322,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=${VERSION}"
           build() {
             os="$1"; arch="$2"
-            bin="graphite-meter-client"
-            [ "$os" = "windows" ] && bin="graphite-meter-client.exe"
             echo "building ${os}/${arch}"
-            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$bin" ./cmd/graphite-meter-client
-            if [ "$os" = "windows" ]; then
-              zip -j "dist/graphite-meter-client_${VERSION}_${os}_${arch}.zip" "$bin"
-            else
-              tar -czf "dist/graphite-meter-client_${VERSION}_${os}_${arch}.tar.gz" "$bin"
-            fi
-            rm -f "$bin"
+            ../scripts/package-tui.sh "$VERSION" "$os" "$arch" dist
           }
           build linux amd64
           build linux arm64

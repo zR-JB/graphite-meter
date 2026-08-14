@@ -29,6 +29,7 @@ type inventory struct {
 type about struct {
 	SchemaVersion int               `json:"schemaVersion"`
 	Project       legal.Project     `json:"project"`
+	SourceVersion string            `json:"sourceVersion"`
 	SourceURL     string            `json:"sourceURL"`
 	License       string            `json:"license"`
 	Components    []legal.Component `json:"components"`
@@ -37,7 +38,7 @@ type about struct {
 var releaseVersion = regexp.MustCompile(`^(?:v)?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$`)
 
 func main() {
-	mode := flag.String("mode", "check", "check, generate, or review-template")
+	mode := flag.String("mode", "check", "check, generate, review-template, or review-audit")
 	repoFlag := flag.String("repo", "", "repository root")
 	browserScan := flag.String("browser-scan", "", "JSON file emitted by the production browser scan")
 	version := flag.String("version", os.Getenv("VERSION"), "release version")
@@ -110,6 +111,10 @@ func main() {
 	}
 	if *mode == "review-template" {
 		printReviewTemplate(server, tui, container, reviews)
+		return
+	}
+	if *mode == "review-audit" {
+		printReviewAudit(server, tui, container, reviews)
 		return
 	}
 
@@ -332,6 +337,9 @@ func sourceFor(name, upstream string) string {
 	if len(parts) >= 3 && (parts[0] == "github.com" || parts[0] == "gitlab.com") {
 		return "https://" + strings.Join(parts[:3], "/")
 	}
+	if len(parts) == 3 && parts[0] == "golang.org" && parts[1] == "x" {
+		return "https://go.googlesource.com/" + parts[2]
+	}
 	return ""
 }
 
@@ -469,7 +477,7 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 		if entry.Name == "" || entry.Version == "" || entry.LicenseExpression == "" || strings.Contains(strings.ToUpper(entry.LicenseExpression), "UNKNOWN") || entry.ReviewNotes == "" {
 			return nil, fmt.Errorf("provenance entry %q is incomplete or unresolved", entry.Name)
 		}
-		files := entry.LocalLegalFiles
+		files := append([]legal.LegalFile(nil), entry.LocalLegalFiles...)
 		for i := range files {
 			path := filepath.Join(repo, filepath.FromSlash(files[i].Name))
 			data, err := os.ReadFile(path)
@@ -483,6 +491,10 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 			if files[i].Kind == "" {
 				files[i].Kind = "license"
 			}
+			// Provenance paths identify the checked-in source of a manual
+			// artifact; notices expose the upstream/legal basename instead of a
+			// workstation-relative repository path.
+			files[i].Name = filepath.Base(files[i].Name)
 		}
 		component := legal.Component{Name: entry.Name, Version: entry.Version, Ecosystem: entry.Ecosystem, Source: entry.Upstream, DeclaredLicenseExpression: entry.LicenseExpression, SelectedLicenseExpression: entry.LicenseExpression, Modified: entry.Modified}
 		for _, file := range files {
@@ -547,13 +559,33 @@ func render(repo string, project legal.Project, version string, server, tui, con
 		files = append(files, outputFile{filepath.Join("legal", "generated", scope.name, "THIRD_PARTY_NOTICES.txt"), []byte(notices(scope.components))})
 		files = append(files, outputFile{filepath.Join("legal", "generated", scope.name, "SOURCE.txt"), []byte(sourceURL + "\n")})
 	}
-	web, err := marshal(about{SchemaVersion: 1, Project: project, SourceURL: sourceURL, License: string(licenseText), Components: server})
+	web, err := marshal(about{SchemaVersion: 1, Project: project, SourceVersion: version, SourceURL: sourceURL, License: string(licenseText), Components: server})
 	if err != nil {
 		return nil, err
 	}
 	files = append(files, outputFile{"client/public/legal/about.json", web})
 	files = append(files, outputFile{"client/public/legal/THIRD_PARTY_NOTICES.txt", []byte(notices(server))})
+	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "LICENSE"), licenseText})
+	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "COPYRIGHT"), []byte(copyText)})
+	tuiNotices := notices(tui)
+	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "THIRD_PARTY_NOTICES.txt"), []byte(tuiNotices)})
+	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "SOURCE.txt"), []byte(sourceURL + "\n")})
+	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "TUI_LEGAL.txt"), []byte(tuiReport(copyText, sourceURL, licenseText, tuiNotices))})
 	return files, nil
+}
+
+func tuiReport(copyText, sourceURL string, licenseText []byte, noticesText string) string {
+	var out strings.Builder
+	out.WriteString(copyText)
+	fmt.Fprintf(&out, "\nSource code: %s\n\n", sourceURL)
+	out.WriteString("LICENSE\n\n")
+	out.Write(licenseText)
+	if len(licenseText) == 0 || licenseText[len(licenseText)-1] != '\n' {
+		out.WriteByte('\n')
+	}
+	out.WriteString("\n")
+	out.WriteString(noticesText)
+	return out.String()
 }
 
 func marshal(value any) ([]byte, error) {
@@ -602,6 +634,42 @@ func printReviewTemplate(server, tui, container []legal.Component, reviews []leg
 		})
 	}
 	b, _ := marshal(out)
+	fmt.Print(string(b))
+}
+
+func printReviewAudit(server, tui, container []legal.Component, reviews []legal.Review) {
+	type auditComponent struct {
+		Scope       string          `json:"scope"`
+		Component   legal.Component `json:"component"`
+		Review      *legal.Review   `json:"review,omitempty"`
+		ReviewState string          `json:"reviewState"`
+	}
+	var out []auditComponent
+	for _, scoped := range []struct {
+		name       string
+		components []legal.Component
+	}{
+		{"server/browser", server}, {"tui", tui}, {"container", container},
+	} {
+		for _, component := range scoped.components {
+			var matched *legal.Review
+			for i := range reviews {
+				if reviews[i].Ecosystem == component.Ecosystem && reviews[i].Name == component.Name {
+					matched = &reviews[i]
+					break
+				}
+			}
+			state := "review-required"
+			if matched != nil && legal.ValidateReview(component, []legal.Review{*matched}) == nil {
+				state = "fingerprint-matches"
+			}
+			out = append(out, auditComponent{Scope: scoped.name, Component: component, Review: matched, ReviewState: state})
+		}
+	}
+	b, err := marshal(out)
+	if err != nil {
+		fatal(err)
+	}
 	fmt.Print(string(b))
 }
 
