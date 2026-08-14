@@ -1213,7 +1213,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: svelte
-Version: 5.56.8
+Version: 5.56.9
 Source: https://github.com/sveltejs/svelte
 License: MIT
 Modified by Graphite Meter: no
