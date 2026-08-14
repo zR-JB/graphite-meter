@@ -24,7 +24,7 @@ For an independent, deterministic audit manifest of every currently discovered
 component, run:
 
 ```bash
-just legal-review-audit
+just legal-review audit
 ```
 
 This reports the exact artifact scope, upstream metadata, legal-file hashes, and
@@ -33,7 +33,7 @@ whether the current review record matches. It never approves or edits a review.
 ## New dependency or changed legal files
 
 ```bash
-just legal-review-template
+just legal-review template
 ```
 
 Inspect the exact upstream revision and its legal files, then add a reviewed

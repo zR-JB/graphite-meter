@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import { writeFileSync } from "node:fs";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
-import pkg from "./package.json";
+import pkg from "./package.json" with { type: "json" };
 
 // --- Build-time client configuration (see src/lib/buildenv.ts) -------------
 // Driven by GM_CLIENT_* env vars (the justfile `prod` recipe / `docker build

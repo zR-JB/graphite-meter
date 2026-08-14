@@ -104,24 +104,19 @@ legal-generate:
 legal-check:
     just _legal-run check
 
-legal-review-template:
-    just _legal-run review-template
-
-legal-review-audit:
-    just _legal-run review-audit
+legal-review mode="audit":
+    just _legal-run review-{{mode}}
 
 legal-source-bundle:
     just _legal-run source-bundle
 
 legal-source-bundle-test:
-    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; VERSION=development LEGAL_SOURCE_OUT="$tmp/source.tar.gz" just _legal-run source-bundle; tar -tzf "$tmp/source.tar.gz" | grep -Fx 'graphite-meter_development_corresponding-source/project/LICENSE'; tar -tzf "$tmp/source.tar.gz" | grep -Fx 'graphite-meter_development_corresponding-source/LEGAL_INVENTORY.json'; tar -tzf "$tmp/source.tar.gz" | grep -q '/third_party/go/'; tar -tzf "$tmp/source.tar.gz" | grep -q '/third_party/npm/'; if tar -tzf "$tmp/source.tar.gz" | grep -q '.dev-certs'; then echo 'development certificates leaked into source bundle' >&2; exit 1; fi
+    ./scripts/legal-source-bundle-test.sh
 
 legal: legal-check
 
 tui-package-test:
-    # Build and inspect one real archive so release layout cannot drift from
-    # the checked-in packaging helper.
-    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; ./scripts/package-tui.sh development linux amd64 "$tmp"; tar -tzf "$tmp/graphite-meter-client_development_linux_amd64.tar.gz" | grep -Fx 'graphite-meter-client_development_linux_amd64/graphite-meter-client'; tar -tzf "$tmp/graphite-meter-client_development_linux_amd64.tar.gz" | grep -Fx 'graphite-meter-client_development_linux_amd64/LICENSE'; tar -tzf "$tmp/graphite-meter-client_development_linux_amd64.tar.gz" | grep -Fx 'graphite-meter-client_development_linux_amd64/COPYRIGHT'; tar -tzf "$tmp/graphite-meter-client_development_linux_amd64.tar.gz" | grep -Fx 'graphite-meter-client_development_linux_amd64/THIRD_PARTY_NOTICES.txt'; tar -tzf "$tmp/graphite-meter-client_development_linux_amd64.tar.gz" | grep -Fx 'graphite-meter-client_development_linux_amd64/SOURCE.txt'; tar -xOf "$tmp/graphite-meter-client_development_linux_amd64.tar.gz" 'graphite-meter-client_development_linux_amd64/SOURCE.txt' | grep -Fx 'https://github.com/zR-JB/graphite-meter'
+    ./scripts/tui-package-test.sh
 
 tui-legal-test:
     report=$(cd go && go run ./cmd/graphite-meter-client --legal); printf '%s\n' "$report" | grep -F 'Graphite Meter'; printf '%s\n' "$report" | grep -F 'GNU AFFERO GENERAL PUBLIC LICENSE'; printf '%s\n' "$report" | grep -F 'THIRD-PARTY SOFTWARE NOTICES'; printf '%s\n' "$report" | grep -F 'github.com/charmbracelet/bubbletea'

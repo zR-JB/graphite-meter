@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
   import { loadLegal, retryLegal } from "../legal/loader";
-  import { sourceUrl } from "../legal/sourceUrl";
-  import type { LegalAbout, LegalComponent, LegalFile } from "../legal/types";
+  import type { LegalAbout, LegalComponent } from "../legal/types";
 
   interface Props {
     open: boolean;
@@ -14,7 +12,6 @@
   let { open, invoker = null, onClose }: Props = $props();
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let data = $state<LegalAbout | null>(null);
-  let previousOverflow = "";
 
   function load() {
     loadState = "loading";
@@ -57,16 +54,13 @@
     return `${component.name} (${component.ecosystem})`;
   }
 
-  function text(file: LegalFile): string {
-    return file.text;
-  }
-
   $effect(() => {
     if (open) load();
   });
 
-  onMount(() => {
-    previousOverflow = document.body.style.overflow;
+  $effect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
@@ -119,66 +113,49 @@
               warranty, to the extent permitted by applicable law.
             </p>
             <p class="legal-links">
+              <a href={data.sourceURL} target="_blank" rel="noopener noreferrer"
+                >Source code</a
+              >
               <a
-                href={sourceUrl(data.project.repository, data.sourceVersion)}
+                href={data.licenseURL}
                 target="_blank"
-                rel="noopener noreferrer">Source code</a
+                rel="noopener noreferrer">Project license</a
               >
-              <a
-                href={new URL(
-                  "legal/THIRD_PARTY_NOTICES.txt",
-                  document.baseURI,
-                ).toString()}>Third-party notices</a
-              >
+              <a href={data.noticesURL}>Third-party notices</a>
             </p>
-          </section>
-
-          <section aria-labelledby="agpl-title">
-            <h3 id="agpl-title">Graphite Meter license</h3>
-            <pre class="legal-text">{text({
-                name: "LICENSE",
-                sha256: "",
-                text: data.license,
-              })}</pre>
           </section>
 
           <section aria-labelledby="third-party-title">
             <h3 id="third-party-title">Third-party software</h3>
             {#each data.components as component (component.ecosystem + component.name + component.version)}
               <article class="component">
-                <h4>{componentTitle(component)}</h4>
-                <dl>
-                  <div>
-                    <dt>Version</dt>
-                    <dd>{component.version}</dd>
-                  </div>
-                  <div>
-                    <dt>License</dt>
-                    <dd>{component.selectedLicenseExpression}</dd>
-                  </div>
-                  <div>
-                    <dt>Source</dt>
-                    <dd>
-                      <a
-                        href={component.source}
-                        target="_blank"
-                        rel="noopener noreferrer">{component.source}</a
-                      >
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Modified by Graphite Meter</dt>
-                    <dd>{component.modified ? "yes" : "no"}</dd>
-                  </div>
-                </dl>
-                {#each component.legalTexts as file (file.name)}
-                  <h5>{file.name}</h5>
-                  <pre class="legal-text">{text(file)}</pre>
-                {/each}
-                {#each component.notices as file (file.name)}
-                  <h5>{file.name}</h5>
-                  <pre class="legal-text">{text(file)}</pre>
-                {/each}
+                <details>
+                  <summary>{componentTitle(component)}</summary>
+                  <dl>
+                    <div>
+                      <dt>Version</dt>
+                      <dd>{component.version}</dd>
+                    </div>
+                    <div>
+                      <dt>License</dt>
+                      <dd>{component.selectedLicenseExpression}</dd>
+                    </div>
+                    <div>
+                      <dt>Source</dt>
+                      <dd>
+                        <a
+                          href={component.source}
+                          target="_blank"
+                          rel="noopener noreferrer">{component.source}</a
+                        >
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Modified by Graphite Meter</dt>
+                      <dd>{component.modified ? "yes" : "no"}</dd>
+                    </div>
+                  </dl>
+                </details>
               </article>
             {/each}
           </section>
@@ -224,9 +201,7 @@
     background: var(--surface-1);
   }
   .legal-head h2,
-  .legal-body h3,
-  .legal-body h4,
-  .legal-body h5 {
+  .legal-body h3 {
     margin: 0;
     font-family: var(--font-display);
   }
@@ -246,14 +221,6 @@
   .legal-body h3 {
     font-size: var(--type-md);
   }
-  .legal-body h4 {
-    margin-top: var(--space-4);
-    font-size: var(--type-sm);
-  }
-  .legal-body h5 {
-    margin-top: var(--space-3);
-    font-size: var(--type-xs);
-  }
   .copyright {
     margin: var(--space-1) 0;
   }
@@ -266,22 +233,18 @@
   .component a {
     color: var(--brand);
   }
-  .legal-text {
-    margin: var(--space-2) 0 0;
-    padding: var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    color: var(--text-muted);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    user-select: text;
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    line-height: 1.5;
-  }
   .component {
     padding-top: var(--space-2);
+  }
+  .component details {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
+  }
+  .component summary {
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: var(--type-sm);
+    font-weight: 650;
   }
   .component dl {
     margin: var(--space-2) 0 0;

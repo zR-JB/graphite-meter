@@ -1,10 +1,3 @@
-export interface LegalFile {
-  name: string;
-  sha256: string;
-  text: string;
-  kind?: string;
-}
-
 export interface LegalComponent {
   name: string;
   version: string;
@@ -13,8 +6,6 @@ export interface LegalComponent {
   declaredLicenseExpression: string;
   selectedLicenseExpression: string;
   modified: boolean;
-  legalTexts: LegalFile[];
-  notices: LegalFile[];
 }
 
 export interface LegalProject {
@@ -31,6 +22,7 @@ export interface LegalAbout {
   project: LegalProject;
   sourceVersion: string;
   sourceURL: string;
-  license: string;
+  licenseURL: string;
+  noticesURL: string;
   components: LegalComponent[];
 }

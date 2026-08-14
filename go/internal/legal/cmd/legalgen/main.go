@@ -31,13 +31,24 @@ type inventory struct {
 	Components    []legal.Component `json:"components"`
 }
 
+type aboutComponent struct {
+	Name                      string `json:"name"`
+	Version                   string `json:"version"`
+	Ecosystem                 string `json:"ecosystem"`
+	Source                    string `json:"source"`
+	DeclaredLicenseExpression string `json:"declaredLicenseExpression"`
+	SelectedLicenseExpression string `json:"selectedLicenseExpression"`
+	Modified                  bool   `json:"modified"`
+}
+
 type about struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Project       legal.Project     `json:"project"`
-	SourceVersion string            `json:"sourceVersion"`
-	SourceURL     string            `json:"sourceURL"`
-	License       string            `json:"license"`
-	Components    []legal.Component `json:"components"`
+	SchemaVersion int              `json:"schemaVersion"`
+	Project       legal.Project    `json:"project"`
+	SourceVersion string           `json:"sourceVersion"`
+	SourceURL     string           `json:"sourceURL"`
+	LicenseURL    string           `json:"licenseURL"`
+	NoticesURL    string           `json:"noticesURL"`
+	Components    []aboutComponent `json:"components"`
 }
 
 var releaseVersion = regexp.MustCompile(`^(?:v)?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$`)
@@ -115,6 +126,9 @@ func main() {
 			}
 		}
 	}
+	server = applyReviewedSelections(server, reviews)
+	tui = applyReviewedSelections(tui, reviews)
+	container = applyReviewedSelections(container, reviews)
 	if *mode == "review-template" {
 		printReviewTemplate(server, tui, container, reviews)
 		return
@@ -472,6 +486,7 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 			return nil, err
 		}
 		file := expected
+		file.SHA256 = legal.SHA256(data)
 		file.Text = string(data)
 		if file.Kind == "" {
 			file.Kind = "license"
@@ -630,6 +645,19 @@ func npmComponent(root string) (legal.Component, error) {
 	return component, nil
 }
 
+func applyReviewedSelections(components []legal.Component, reviews []legal.Review) []legal.Component {
+	result := append([]legal.Component(nil), components...)
+	for i := range result {
+		for _, review := range reviews {
+			if review.Ecosystem == result[i].Ecosystem && review.Name == result[i].Name {
+				result[i].SelectedLicenseExpression = review.SelectedLicenseExpression
+				break
+			}
+		}
+	}
+	return result
+}
+
 func packageLicense(value any, licenses []struct {
 	Type string `json:"type"`
 }, fallback string) string {
@@ -746,19 +774,40 @@ func render(repo string, project legal.Project, version string, server, tui, con
 		files = append(files, outputFile{filepath.Join("legal", "generated", scope.name, "THIRD_PARTY_NOTICES.txt"), []byte(notices(scope.components))})
 		files = append(files, outputFile{filepath.Join("legal", "generated", scope.name, "SOURCE.txt"), []byte(sourceURL + "\n")})
 	}
-	web, err := marshal(about{SchemaVersion: 1, Project: project, SourceVersion: version, SourceURL: sourceURL, License: string(licenseText), Components: server})
+	web, err := marshal(about{
+		SchemaVersion: 2,
+		Project:       project,
+		SourceVersion: version,
+		SourceURL:     sourceURL,
+		LicenseURL:    "legal/LICENSE.txt",
+		NoticesURL:    "legal/THIRD_PARTY_NOTICES.txt",
+		Components:    aboutComponents(server),
+	})
 	if err != nil {
 		return nil, err
 	}
 	files = append(files, outputFile{"client/public/legal/about.json", web})
+	files = append(files, outputFile{"client/public/legal/LICENSE.txt", licenseText})
 	files = append(files, outputFile{"client/public/legal/THIRD_PARTY_NOTICES.txt", []byte(notices(server))})
-	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "LICENSE"), licenseText})
-	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "COPYRIGHT"), []byte(copyText)})
 	tuiNotices := notices(tui)
-	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "THIRD_PARTY_NOTICES.txt"), []byte(tuiNotices)})
-	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "SOURCE.txt"), []byte(sourceURL + "\n")})
 	files = append(files, outputFile{filepath.Join("go", "internal", "legal", "assets", "TUI_LEGAL.txt"), []byte(tuiReport(copyText, sourceURL, licenseText, tuiNotices))})
 	return files, nil
+}
+
+func aboutComponents(components []legal.Component) []aboutComponent {
+	result := make([]aboutComponent, 0, len(components))
+	for _, component := range components {
+		result = append(result, aboutComponent{
+			Name:                      component.Name,
+			Version:                   component.Version,
+			Ecosystem:                 component.Ecosystem,
+			Source:                    component.Source,
+			DeclaredLicenseExpression: component.DeclaredLicenseExpression,
+			SelectedLicenseExpression: component.SelectedLicenseExpression,
+			Modified:                  component.Modified,
+		})
+	}
+	return result
 }
 
 func tuiReport(copyText, sourceURL string, licenseText []byte, noticesText string) string {

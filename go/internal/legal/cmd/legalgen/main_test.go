@@ -215,6 +215,38 @@ func TestLegalGeneratorFormattingHelpers(t *testing.T) {
 	}
 }
 
+func TestReviewedLegalFilesRehashesCurrentBytes(t *testing.T) {
+	dir := t.TempDir()
+	current := []byte("current legal text")
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), current, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reviews := []legal.Review{{
+		Name: "example", Ecosystem: "go",
+		LegalFiles: []legal.LegalFile{{Name: "LICENSE", SHA256: legal.SHA256([]byte("approved text"))}},
+	}}
+	files, err := reviewedLegalFiles(dir, "go", "example", reviews)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files[0].SHA256 != legal.SHA256(current) {
+		t.Fatalf("current hash = %q, want %q", files[0].SHA256, legal.SHA256(current))
+	}
+}
+
+func TestReviewedSelectionBecomesAuthoritativeAfterValidation(t *testing.T) {
+	components := []legal.Component{{
+		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT OR GPL-3.0",
+	}}
+	reviews := []legal.Review{{
+		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT",
+	}}
+	got := applyReviewedSelections(components, reviews)
+	if got[0].SelectedLicenseExpression != "MIT" {
+		t.Fatalf("selected license = %q, want reviewed MIT", got[0].SelectedLicenseExpression)
+	}
+}
+
 func TestLicenseInferenceAndApacheNoticeSeparation(t *testing.T) {
 	for _, test := range []struct {
 		name, text, want string

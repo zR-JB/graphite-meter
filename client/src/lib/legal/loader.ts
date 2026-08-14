@@ -14,7 +14,13 @@ async function fetchLegal(): Promise<LegalAbout> {
   if (!response.ok)
     throw new Error(`legal notices returned ${response.status}`);
   const data = (await response.json()) as LegalAbout;
-  if (!data.project || !data.license || !Array.isArray(data.components)) {
+  if (
+    !data.project ||
+    !data.sourceURL ||
+    !data.licenseURL ||
+    !data.noticesURL ||
+    !Array.isArray(data.components)
+  ) {
     throw new Error("legal notices were incomplete");
   }
   return data;

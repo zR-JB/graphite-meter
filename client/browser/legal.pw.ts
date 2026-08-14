@@ -28,7 +28,12 @@ test("Endpoint Info opens the accessible generated legal modal", async ({
   await expect(
     dialog.getByRole("link", { name: "Source code" }),
   ).toHaveAttribute("href", "https://github.com/zR-JB/graphite-meter");
-  await expect(dialog).toContainText("GNU AFFERO GENERAL PUBLIC LICENSE");
+  await expect(
+    dialog.getByRole("link", { name: "Project license" }),
+  ).toHaveAttribute("href", "legal/LICENSE.txt");
+  await expect(
+    dialog.getByRole("link", { name: "Third-party notices" }),
+  ).toHaveAttribute("href", "legal/THIRD_PARTY_NOTICES.txt");
   await expect(dialog).toContainText("github.com/coder/websocket");
   await expect(dialog).toContainText("svelte (npm)");
 
@@ -53,6 +58,7 @@ test("Endpoint Info opens the accessible generated legal modal", async ({
 
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  expect(await page.evaluate(() => document.body.style.overflow)).toBe("");
   await expect(
     endpoint.getByRole("button", { name: "About & legal" }),
   ).toBeFocused();
@@ -81,7 +87,7 @@ test("legal modal reports load failure and Retry can recover", async ({
   const dialog = page.getByRole("dialog", { name: "About & legal" });
   await expect(dialog).toContainText("Unable to load legal notices.");
   await dialog.getByRole("button", { name: "Retry" }).click();
-  await expect(dialog).toContainText("GNU AFFERO GENERAL PUBLIC LICENSE");
+  await expect(dialog).toContainText("Third-party software");
   expect(attempts).toBe(2);
 });
 

@@ -83,6 +83,7 @@ jobs:
               - "go/cmd/graphite-meter-client/**"
               - "go/internal/goclient/**"
               - "go/internal/wire/**"
+              - "scripts/package-tui.sh"
             client:
               - *workflow
               - "client/**"
@@ -106,6 +107,9 @@ jobs:
               - "go/**"
               - "client/**"
               - "container/**"
+              - "scripts/package-tui.sh"
+              - "scripts/tui-package-test.sh"
+              - "scripts/legal-source-bundle-test.sh"
               - ".github/workflows/release.yml"
 
   go:
