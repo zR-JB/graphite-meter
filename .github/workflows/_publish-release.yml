@@ -86,7 +86,7 @@ jobs:
             "Source for third-party components included in the distributed artifacts is attached as **$source_asset**. Together, the tagged repository source and that archive form the source offer for this release.")
 
           resolve_tag_target() {
-            ref_json=$1
+            local ref_json=$1 object_type object_sha tag_json
             object_type=$(jq -r '.object.type' <<<"$ref_json")
             object_sha=$(jq -r '.object.sha' <<<"$ref_json")
             case "$object_type" in
@@ -103,13 +103,50 @@ jobs:
             esac
           }
 
-          # A pre-existing tag is acceptable only when it already names the exact source SHA.
-          if tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
-            resolved=$(resolve_tag_target "$tag_ref")
+          require_tag_target() {
+            local ref_json=$1 resolved
+            resolved=$(resolve_tag_target "$ref_json")
             [[ "$resolved" == "$TARGET_SHA" ]] || {
-              echo "$TAG already exists at $resolved, expected $TARGET_SHA" >&2
+              echo "$TAG resolves to $resolved, expected $TARGET_SHA" >&2
               exit 1
             }
+          }
+
+          ensure_tag_target() {
+            local tag_ref create_payload create_error
+            : >"$err"
+            if tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
+              require_tag_target "$tag_ref"
+              return
+            fi
+            if ! grep -Eiq 'HTTP 404|Not Found' "$err"; then
+              cat "$err" >&2
+              exit 1
+            fi
+
+            # Publishing a draft can create a missing tag, but we must verify the
+            # exact target before making the release public. Materialize the
+            # lightweight ref ourselves, then re-read it so retries and races
+            # converge on one verified state.
+            create_payload=$(jq -nc --arg ref "refs/tags/$TAG" --arg sha "$TARGET_SHA" '{ref:$ref,sha:$sha}')
+            : >"$err"
+            if ! gh api --method POST "repos/$REPOSITORY/git/refs" --input - <<<"$create_payload" >/dev/null 2>"$err"; then
+              create_error=$(cat "$err")
+              : >"$err"
+              if ! tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
+                printf '%s\n' "$create_error" >&2
+                cat "$err" >&2
+                exit 1
+              fi
+            else
+              tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG")
+            fi
+            require_tag_target "$tag_ref"
+          }
+
+          # A pre-existing tag is acceptable only when it already names the exact source SHA.
+          if tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
+            require_tag_target "$tag_ref"
           elif ! grep -Eiq 'HTTP 404|Not Found' "$err"; then
             cat "$err" >&2
             exit 1
@@ -207,12 +244,10 @@ jobs:
             exit 1
           }
 
-          tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG")
-          resolved=$(resolve_tag_target "$tag_ref")
-          [[ "$resolved" == "$TARGET_SHA" ]] || {
-            echo "$TAG resolves to $resolved, expected $TARGET_SHA" >&2
-            exit 1
-          }
+          # Only materialize a missing tag after the draft payload is exact.
+          # A failed create is re-read and accepted only when a concurrent writer
+          # produced the same verified target, making retries race-safe.
+          ensure_tag_target
 
           gh api --method PATCH "repos/$REPOSITORY/releases/$release_id" \
             --input - <<'JSON' >/dev/null
@@ -221,6 +256,8 @@ jobs:
 
           published=$(gh api "repos/$REPOSITORY/releases/$release_id")
           jq -e --arg tag "$TAG" '.tag_name == $tag and .draft == false and .prerelease == false' <<<"$published" >/dev/null
+          tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG")
+          require_tag_target "$tag_ref"
           published_body=$(jq -r '.body // ""' <<<"$published")
           [[ "$published_body" == "$source_notice"* ]] || {
             echo "published release lost its source-availability notice" >&2
