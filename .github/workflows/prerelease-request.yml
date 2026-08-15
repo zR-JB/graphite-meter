@@ -3,9 +3,12 @@ run-name: PR prerelease request · #${{ inputs.pr }} · ${{ inputs.tag }} · ${{
 
 # LOW AUTHORITY PRODUCER: workflow_dispatch can be pointed at a selected ref.
 # This workflow therefore has read-only contents access, no secrets/write token,
-# no shared dependency caches, and its OCI artifact is treated as untrusted data.
-# The trusted workflow_run consumer only authorizes runs that actually came from
-# current main and then revalidates the PR, Gate, CodeQL, and artifact.
+# and no shared dependency caches. PR source is never checked out onto the runner:
+# after the request SHA is shape-validated by trusted main tooling, BuildKit fetches
+# that exact commit directly as an immutable remote Git context. The OCI artifact is
+# still treated as untrusted data by the trusted workflow_run consumer, which only
+# authorizes successful request runs from current main and independently revalidates
+# the PR, Gate, CodeQL, and artifact before publication.
 on:
   workflow_dispatch:
     inputs:
@@ -32,6 +35,7 @@ concurrency:
 jobs:
   candidate:
     name: Build untrusted PR prerelease candidate
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -41,16 +45,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           sparse-checkout: |
+            .bun-version
             .github/actions/build-oci
             scripts/ci
           sparse-checkout-cone-mode: false
-
-      - name: Checkout exact requested PR source as isolated build payload
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.sha }}
-          path: source
-          persist-credentials: false
 
       - id: request
         name: Validate request shape
@@ -70,15 +68,16 @@ jobs:
           REQUESTED_TAG: ${{ inputs.tag }}
         run: python3 scripts/ci/prerelease.py request-prepare
 
-      # PR application code is never executed directly on the host. The selected
-      # source is only consumed as a local Docker/BuildKit context by this action.
+      # The raw dispatch SHA reaches only the trusted validator above. PR files never
+      # exist in the runner workspace; BuildKit fetches the validated 40-char commit
+      # directly from this public repository and receives no GitHub credential.
       - name: Build candidate linux/amd64 + linux/arm64 OCI archive
         uses: ./.github/actions/build-oci
         with:
           version: ${{ steps.request.outputs.version }}
           revision: ${{ steps.request.outputs.sha }}
           output: ${{ runner.temp }}/prerelease-candidate/graphite-meter.oci.tar
-          source-dir: source
+          source-sha: ${{ steps.request.outputs.sha }}
           client-validate: '1'
 
       - name: Finalize untrusted candidate metadata and checksum

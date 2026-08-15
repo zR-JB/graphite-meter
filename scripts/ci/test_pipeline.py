@@ -332,6 +332,7 @@ class PipelineTests(unittest.TestCase):
         from unittest.mock import patch
 
         required = {
+            ".bun-version",
             ".github/workflows/ci.yml",
             ".github/workflows/prerelease-request.yml",
             ".github/workflows/prerelease-publish.yml",
@@ -658,10 +659,24 @@ class PipelineTests(unittest.TestCase):
         text = (ROOT / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
         self.assertIn("no-cache: ${{ inputs.bun-cache != 'true' }}", text)
 
-    def test_oci_builder_disables_shared_tool_caches(self) -> None:
+    def test_oci_builder_disables_shared_tool_caches_and_git_credentials(self) -> None:
         text = (ROOT / ".github/actions/build-oci/action.yml").read_text(encoding="utf-8")
         self.assertIn("cache-image: 'false'", text)
         self.assertIn("cache-binary: 'false'", text)
+        self.assertIn("no-cache: true", text)
+        self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", text)
+        self.assertIn("github-token: ''", text)
+        self.assertNotIn("cache-from:", text)
+        self.assertNotIn("cache-to:", text)
+
+    def test_oci_builder_remote_context_is_exact_public_commit(self) -> None:
+        text = (ROOT / ".github/actions/build-oci/action.yml").read_text(encoding="utf-8")
+        self.assertIn('[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', text)
+        self.assertIn('context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"', text)
+        self.assertIn("context: ${{ steps.source.outputs.context }}", text)
+        self.assertIn("file: container/Dockerfile", text)
+        self.assertIn("bun=$(tr -d '[:space:]' < .bun-version)", text)
+        self.assertNotIn("source-dir:", text)
 
     def test_policy_requires_explicit_max_oci_provenance(self) -> None:
         root = self._copy_policy_tree()
@@ -828,12 +843,64 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "forbidden path|host run steps"):
             check_candidate_boundary(root)
 
-    def test_policy_rejects_prerelease_source_at_workspace_root(self) -> None:
+    def test_policy_rejects_prerelease_untrusted_runner_checkout(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/prerelease-request.yml"
-        path.write_text(path.read_text().replace("          path: source\n", "", 1))
+        text = path.read_text().replace(
+            "      - id: request\n",
+            "      - name: Checkout untrusted PR source\n"
+            "        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+            "        with:\n"
+            "          ref: ${{ inputs.sha }}\n"
+            "          path: source\n\n"
+            "      - id: request\n",
+            1,
+        )
+        path.write_text(text)
+        with self.assertRaisesRegex(PolicyError, "checkout trusted tooling exactly once|forbidden path"):
+            check_candidate_boundary(root)
+
+    def test_policy_rejects_raw_prerelease_sha_bypassing_validator(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-request.yml"
+        path.write_text(
+            path.read_text().replace(
+                "source-sha: ${{ steps.request.outputs.sha }}",
+                "source-sha: ${{ inputs.sha }}",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "isolation invariant|raw prerelease SHA"):
+            check_candidate_boundary(root)
+
+    def test_policy_rejects_missing_prerelease_default_branch_job_guard(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-request.yml"
+        path.write_text(
+            path.read_text().replace(
+                "    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}\n",
+                "",
+                1,
+            )
+        )
         with self.assertRaisesRegex(PolicyError, "isolation invariant"):
+            check_candidate_boundary(root)
+
+    def test_policy_rejects_unneeded_prerelease_actions_read_permission(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-request.yml"
+        path.write_text(
+            path.read_text().replace(
+                "permissions:\n  contents: read\n",
+                "permissions:\n  contents: read\n  actions: read\n",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "forbidden path"):
             check_candidate_boundary(root)
 
     def test_policy_rejects_pr_controlled_candidate_action(self) -> None:
@@ -919,11 +986,17 @@ class PipelineTests(unittest.TestCase):
                 "zR-JB/graphite-meter", "zR-JB", MAIN, request_run_id, api=fake
             )
 
-    def test_prerelease_request_has_no_label_trigger_or_write_permission(self) -> None:
+    def test_prerelease_request_has_no_label_trigger_write_permission_or_pr_checkout(self) -> None:
         request = (ROOT / ".github/workflows/prerelease-request.yml").read_text(encoding="utf-8")
         self.assertNotIn("issues: write", request)
+        self.assertNotIn("actions: read", request)
         self.assertNotIn("pull_request:", request)
         self.assertNotIn("gm-prerelease-", request)
+        self.assertNotIn("path: source", request)
+        self.assertNotIn("ref: ${{ inputs.sha }}", request)
+        self.assertEqual(request.count("uses: actions/checkout@"), 1)
+        self.assertEqual(request.count("${{ inputs.sha }}"), 1)
+        self.assertIn("source-sha: ${{ steps.request.outputs.sha }}", request)
         self.assertFalse((ROOT / ".github/workflows/prerelease-candidate.yml").exists())
 
     def test_stable_request_consumer_binds_exact_main_run_and_artifact(self) -> None:

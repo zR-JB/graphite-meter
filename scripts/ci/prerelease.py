@@ -2,9 +2,11 @@
 """Typed control plane for PR prerelease image publication.
 
 Trust boundary:
-- `Request PR prerelease` is a low-authority workflow_dispatch producer. It may
-  execute the selected ref's request-side helpers, but has only contents:read,
-  no secrets/write token, no shared dependency caches, and no publication path.
+- `Request PR prerelease` is a low-authority workflow_dispatch producer. It runs
+  only trusted default-branch request/build helpers, has only contents:read, no
+  secrets/write token or shared dependency caches, and never checks PR files out
+  onto the runner. BuildKit fetches the validated exact PR commit as a remote Git
+  context and receives no GitHub credential.
 - `Publish verified PR prerelease` is a workflow_run consumer that executes from
   current default-branch tooling. It accepts only a successful request run from
   exact current main, validates the candidate artifact as untrusted data, and
@@ -61,6 +63,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # that defines Gate/publication authority must match exact current main. Pipeline
 # changes merge first; payload PRs then rebase before prerelease authorization.
 PRERELEASE_CI_CONTROL_PLANE: tuple[str, ...] = (
+    ".bun-version",
     ".github/workflows/ci.yml",
     ".github/workflows/prerelease-request.yml",
     ".github/workflows/prerelease-publish.yml",

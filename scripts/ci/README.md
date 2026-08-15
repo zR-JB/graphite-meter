@@ -38,12 +38,14 @@ The path plan comes from `.github/ci-paths.yml`; project operations use named
 ### PR prereleases
 
 1. `prerelease-request.yml` is a **low-authority producer**. Manual
-   `workflow_dispatch` can be pointed at a selected ref, so this workflow has only
-   `contents: read`, no secrets/write permission, no shared dependency caches, and
-   no publication path. For normal use it must be dispatched from `main`. It checks
-   out the requested PR SHA only under `source/` and uses the request ref's local
-   OCI build action to produce an untrusted candidate artifact. PR application code
-   is never executed directly on the host.
+   `workflow_dispatch` can be pointed at a selected ref, so the candidate job is
+   gated to the repository default branch and has only `contents: read`, no
+   secrets/write permission, no shared dependency caches, and no publication path.
+   It checks out only trusted request/build tooling plus the trusted `.bun-version`.
+   The raw dispatch SHA reaches only `prerelease.py request-prepare`; after exact
+   40-character validation, the trusted OCI action gives that sanitized SHA to
+   BuildKit as a public remote Git context. PR files never exist in the runner
+   workspace, and the Docker build receives no `github.token`.
 2. `prerelease-publish.yml` is the trusted default-branch `workflow_run` consumer.
    It accepts a producer run only when GitHub's API proves that the exact run came
    from `prerelease-request.yml`, was attempt 1, was dispatched from `main` at the
@@ -125,7 +127,7 @@ Other checked invariants include:
 
 - explicit `ubuntu-24.04` runner-major labels instead of floating `ubuntu-latest`;
 - explicit max-level OCI provenance with no GitHub-secret references in the build action;
-- low-authority prerelease producer permissions and isolated `source/` build context;
+- low-authority prerelease producer permissions, default-branch job guard, and no PR checkout on the runner;
 - no repository checkout/code execution in isolated publication workflows;
 - exact-tag and stable-alias concurrency guards;
 - zero-write stable manual request plus trusted default-branch consumer, never tag-push/direct write-capable dispatch;

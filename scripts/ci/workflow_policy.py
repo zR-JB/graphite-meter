@@ -201,15 +201,28 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         "provenance: mode=max",
         "cache-image: 'false'",
         "cache-binary: 'false'",
-        "source-dir:",
-        "default: '.'",
-        "context: ${{ inputs.source-dir }}",
-        "file: ${{ inputs.source-dir }}/container/Dockerfile",
-        'case "$SOURCE_DIR" in',
-        '.|source) ;;',
+        "no-cache: true",
+        "source-sha:",
+        "default: ''",
+        '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
+        'context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"',
+        "context: ${{ steps.source.outputs.context }}",
+        "file: container/Dockerfile",
+        "github-token: ''",
+        "DOCKER_BUILD_RECORD_UPLOAD: 'false'",
+        "bun=$(tr -d '[:space:]' < .bun-version)",
     ):
         if required not in text:
             fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
+    for forbidden in (
+        "source-dir:",
+        "inputs.source-dir",
+        "GIT_AUTH_TOKEN",
+        "cache-from:",
+        "cache-to:",
+    ):
+        if forbidden in text:
+            fail(f"build-oci action contains forbidden mutable/cache/token path: {forbidden}")
     if "secrets." in text or "secrets[" in text:
         fail("build-oci action must not pass GitHub secrets into max-level provenance builds")
 
@@ -225,7 +238,7 @@ def check_setup_project_cache_boundary(root: pathlib.Path = ROOT) -> None:
 
 
 def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
-    """Keep the manual prerelease producer low-authority and host-isolated."""
+    """Keep the manual prerelease producer low-authority and PR-source-free on the runner."""
     workflows = root / ".github" / "workflows"
     if (workflows / "prerelease-candidate.yml").exists():
         fail("standalone label-triggered prerelease candidate workflow must remain removed")
@@ -238,25 +251,44 @@ def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
         fail("prerelease request/candidate producer must not grant write permissions")
     if "secrets." in request or "secrets[" in request:
         fail("prerelease request/candidate producer must not reference secrets")
+
     for required in (
+        "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "ref: ${{ github.sha }}",
-        "ref: ${{ inputs.sha }}",
-        "path: source",
+        ".bun-version",
         "uses: ./.github/actions/build-oci",
-        "source-dir: source",
+        "source-sha: ${{ steps.request.outputs.sha }}",
         "client-validate: '1'",
+        "REQUESTED_SHA: ${{ inputs.sha }}",
         "run: python3 scripts/ci/prerelease.py request-prepare",
         "run: python3 scripts/ci/prerelease.py request-finalize",
         "prerelease-candidate-${{ github.run_id }}",
     ):
         if required not in request:
             fail(f"prerelease request/candidate producer missing isolation invariant: {required}")
+
+    if request.count("uses: actions/checkout@") != 1:
+        fail("prerelease request/candidate producer must checkout trusted tooling exactly once")
+    if request.count("${{ inputs.sha }}") != 1:
+        fail("raw prerelease SHA input must reach only trusted request validation")
+    validation_pos = request.find("run: python3 scripts/ci/prerelease.py request-prepare")
+    build_pos = request.find("uses: ./.github/actions/build-oci")
+    if validation_pos < 0 or build_pos < 0 or validation_pos > build_pos:
+        fail("prerelease request SHA must be validated before the remote BuildKit build")
+
     for forbidden in (
+        "ref: ${{ inputs.sha }}",
+        "path: source",
+        "source-dir:",
         "uses: ./.github/actions/setup-project",
         "uses: ./source/",
         "run: source/",
         "run: ./source/",
         "run: just ",
+        "actions: read",
+        "checks: read",
+        "pull-requests: read",
+        "security-events: read",
         "issues: write",
         "gm-prerelease-",
     ):
@@ -400,10 +432,13 @@ def check_prerelease_request_workflow(root: pathlib.Path = ROOT) -> None:
     )
     for required in (
         "workflow_dispatch:",
+        "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "ref: ${{ github.sha }}",
         "EVENT_SHA: ${{ github.sha }}",
         "REF: ${{ github.ref }}",
         "WORKFLOW_REF: ${{ github.workflow_ref }}",
+        "REQUESTED_SHA: ${{ inputs.sha }}",
+        "source-sha: ${{ steps.request.outputs.sha }}",
         "python3 scripts/ci/prerelease.py request-prepare",
         "python3 scripts/ci/prerelease.py request-finalize",
     ):
