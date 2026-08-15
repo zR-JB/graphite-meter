@@ -4,7 +4,7 @@
 //
 // A contract check, not a measurement. It asserts that bytes moved and that no
 // lane reported an error — never a rate, which on a shared runner is noise.
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { origins } from "../playwright.e2e.config";
 import type { CellSpec, CellResult } from "../bench/harness";
 
@@ -93,12 +93,15 @@ const cells: {
 ];
 
 for (const { name, spec, projects } of cells) {
-  test(`${name} carries bytes end to end`, async ({ page }, testInfo) => {
+  test(`${name} carries bytes end to end`, async ({
+    page,
+    harnessOrigin,
+  }, testInfo) => {
     test.skip(
       projects !== undefined && !projects.includes(testInfo.project.name),
       "this transport is not available in this real-browser project",
     );
-    await page.goto("/bench/harness.html");
+    await page.goto(`${harnessOrigin}/bench/harness.html`);
     const result = await page.evaluate((cell) => window.__gmBench.run(cell), {
       ...spec,
       warmupMs: WARMUP_MS,

@@ -7,6 +7,7 @@ image, see the [README quick start](../README.md#quick-start).
 
 - **Go** — use the exact toolchain declared by `go/go.mod`.
 - **Bun** — use the channel/version declared by `.bun-version`.
+- **Python 3** — `python3` must be available for the typed CI policy, release verification, and Git hook.
 - **[`just`](https://github.com/casey/just)** — use the version declared by `.just-version`.
 - **Docker or Podman and Playwright browsers** — required for the complete `just ci` workflow.
 
@@ -86,48 +87,48 @@ just --list
 
 ## Release operations
 
-Release publishing is driven only by trusted commits on `main`. Before the
-first release after a merge, wait for the exact main commit's `Gate` and
-`CodeQL` checks, then run the **Release** workflow's `workflow_dispatch` dry
-run with a test version. The dry run builds and verifies the OCI archive and
-all native artifacts without publishing anything.
+Release publication is request-driven and all write-capable consumers execute
+from trusted default-branch workflow definitions. Do not create or push release
+tags manually: tag pushes are intentionally not release triggers.
 
-After that validation succeeds, tags are the only release input. Use a shell
-variable so examples are safe to copy and won't create literal `vX.Y.Z` tags:
+For a stable release, first wait for the exact `main` commit's `Gate` and
+`CodeQL` checks. Then open **Actions → Request stable release**, select `main`,
+enter the stable tag (`vMAJOR.MINOR.PATCH`), and choose `validate`. The
+zero-write request workflow hands a small request artifact to the trusted
+`Release` `workflow_run` consumer. Validation builds and verifies the exact
+native artifacts and OCI archive but stops before environment approval or any
+registry/GitHub Release write.
 
-```sh
-# For a prerelease (RC) tag
-VERSION=0.5.2-rc.0
+After a validation run succeeds, start a fresh **Request stable release** run
+from `main` with the same tag and `publish`. The trusted consumer rebinds the
+request to exact current `main`, Gate, and CodeQL; builds and verifies the exact
+payload; waits for the `ghcr-release` environment approval; rechecks mutable
+trust; then publishes the immutable version image, the GitHub Release/tag, and
+finally the monotonic series/`latest` aliases. If `main` advances or the guarded
+CI/CodeQL state changes before publication, start a fresh request rather than
+forcing the old transaction through.
 
-git switch main
-git pull --ff-only
-git tag -a "v${VERSION}" -m "v${VERSION}"
-git push origin "v${VERSION}"
+For a PR prerelease, wait for the PR's exact head to pass both `Gate` and
+PR-bound `CodeQL`, and ensure the PR contains current `main`. Open **Actions →
+Request PR prerelease**, select `main`, and provide the PR number, exact
+40-character head SHA, and a strict `vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N` tag.
+The request job has no write permission and never checks PR files out on the
+runner; trusted tooling gives the validated commit directly to BuildKit as a
+public remote Git context. The trusted default-branch publisher later treats the
+OCI handoff as untrusted data, revalidates PR/Gate/CodeQL provenance, waits for
+the protected environment, rechecks again, and publishes only the exact
+prerelease image tag. It creates no Git tag, GitHub Release, series alias, or
+`latest`.
 
-# For a stable release
-VERSION=0.5.2
-git tag -a "v${VERSION}" -m "v${VERSION}"
-git push origin "v${VERSION}"
-```
-
-Prerelease tags publish only their exact image tag. Stable tags publish the
-exact image, the series tag, `latest`, and the GitHub Release with native TUI
-archives, checksums, and corresponding source. Do not use a PAT, manually log
-into GHCR, upload release artifacts, or construct a GitHub Release by hand.
-The `ghcr-release` environment must be configured by the repository owner
-before the first real release; it is an approval/policy hook, not a place for
-GHCR credentials.
-
-To publish a prerelease image from an open same-repository PR, wait for that
-PR's exact `Gate` and `CodeQL` checks, then run **Publish PR prerelease** with
-the PR number, exact head SHA, and an alpha/beta/RC tag. The trusted request
-job validates the PR and creates a one-use `gm-prerelease-<run-id>` label. The
-repository owner must apply that generated label to the PR; that genuine
-`pull_request:labeled` event starts the low-trust candidate build. The
-candidate has no secrets or package-write permission. A trusted job validates
-its inert OCI artifact before the isolated publisher writes only the exact
-versioned GHCR prerelease tag. This path creates no Git tag, GitHub Release,
-`latest`, or series alias, and the temporary label is removed automatically.
+Do not use a PAT, manually log into GHCR, hand-upload release artifacts, or
+construct a GitHub Release by hand. The `ghcr-release` environment is an
+approval/policy boundary, not a credential store. Repository **Actions → General →
+Artifact and log retention** must permit at least 35 days: trusted publication
+handoffs use that lifetime so a protected-environment approval can wait without
+losing the already-verified payload. For a transient failure after a trusted
+transaction has started, prefer GitHub's **Re-run failed jobs** so the run retains
+its original immutable source; if a trust recheck refuses the rerun, start a
+fresh request.
 
 
 ## Exceptional maintenance

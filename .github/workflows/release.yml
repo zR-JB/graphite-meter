@@ -97,15 +97,16 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
         run: just release-build "$VERSION"
 
-      - name: Build native artifacts and corresponding source
+      - name: Build native artifacts and third-party source
         env:
           VERSION: ${{ needs.guard.outputs.version }}
         run: just release-artifacts "$VERSION"
 
-      - name: Verify release package invariants
+      - name: Verify exact native artifacts and embedded versions
         env:
+          RELEASE_DIST: go/dist
           VERSION: ${{ needs.guard.outputs.version }}
-        run: just release-check "$VERSION"
+        run: python3 scripts/ci/verify_release_assets.py "$VERSION"
 
       - name: Build linux/amd64 + linux/arm64 OCI archive
         uses: ./.github/actions/build-oci
@@ -124,12 +125,6 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: python3 scripts/ci/verify_oci.py "$VERSION" "$SOURCE_SHA" "$RUNNER_TEMP/release-image/graphite-meter.oci.tar"
 
-      - name: Verify native artifacts and embedded versions
-        env:
-          RELEASE_DIST: go/dist
-          VERSION: ${{ needs.guard.outputs.version }}
-        run: python3 scripts/ci/verify_release_assets.py "$VERSION"
-
       - id: oci-digest
         name: Record OCI archive SHA-256
         run: |
@@ -139,22 +134,24 @@ jobs:
           echo "::notice::release OCI handoff sha256:$digest"
 
       - name: Upload verified release image handoff
+        if: needs.guard.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-image
           path: ${{ runner.temp }}/release-image/graphite-meter.oci.tar
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 35
           compression-level: 0
           overwrite: true
 
       - name: Upload verified release asset handoff
+        if: needs.guard.outputs.publish == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts
           path: go/dist/*
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 35
           overwrite: true
 
   approval:

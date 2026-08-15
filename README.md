@@ -108,7 +108,7 @@ Defaults need no configuration. Everything beyond them:
 git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
 just dev     # build the browser client, embed it, run the server on :7246
-just ci      # the local fast gates; CI also runs browser, E2E, image, and matrix jobs
+just ci      # heavyweight local gate (race/security/browser/E2E/release/container included)
 ```
 
 Prerequisites and everything else are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

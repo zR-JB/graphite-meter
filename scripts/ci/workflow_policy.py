@@ -136,6 +136,13 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
         "auth_header",
         "release handoff contains a non-regular entry",
         "release handoff contains an unsafe asset name",
+        'source_asset="graphite-meter_${version}_third-party-source.tar.gz"',
+        "source_notice=$(printf '%s\\n\\n%s\\n\\n%s'",
+        "Source code (zip)",
+        "Source code (tar.gz)",
+        "generate_release_notes:true,body:$body",
+        "source-availability notice is missing or stale",
+        "published release lost its source-availability notice",
     ):
         if required not in text:
             fail(f"_publish-release.yml missing invariant: {required}")
@@ -177,6 +184,18 @@ def check_skopeo_contract_consistency(root: pathlib.Path = ROOT) -> None:
         fail("CI release checks must execute the pinned Skopeo runtime contract")
 
 
+def check_ci_path_map(root: pathlib.Path = ROOT) -> None:
+    path = root / ".github" / "ci-paths.yml"
+    text = path.read_text(encoding="utf-8")
+    for section in ("smoke", "release"):
+        match = re.search(
+            rf"(?ms)^{section}:\n(?P<body>.*?)(?=^[A-Za-z0-9_-]+:|\Z)",
+            text,
+        )
+        if match is None or "'.dockerignore'" not in match.group("body"):
+            fail(f"CI path map must run {section} checks when .dockerignore changes")
+
+
 def check_runner_labels(root: pathlib.Path = ROOT) -> None:
     violations: list[str] = []
     for path in sorted((root / ".github" / "workflows").glob("*.yml")):
@@ -201,6 +220,7 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         "provenance: mode=max",
         "cache-image: 'false'",
         "cache-binary: 'false'",
+        "buildkitd-flags: --log-level=info",
         "no-cache: true",
         "source-sha:",
         "default: ''",
@@ -214,6 +234,14 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
     ):
         if required not in text:
             fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
+    if re.search(
+        r"(?m)^\s*image:\s*docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}\s*$",
+        text,
+    ) is None:
+        fail("build-oci action must pin the privileged binfmt/QEMU image by digest")
+    if re.search(r"(?m)^\s*buildkitd-flags:.*allow-insecure-entitlement", text) is not None:
+        fail("build-oci action must not enable BuildKit insecure entitlements")
+
     for forbidden in (
         "source-dir:",
         "inputs.source-dir",
@@ -342,6 +370,14 @@ def check_trusted_checkout_refs(root: pathlib.Path = ROOT) -> None:
         if required not in publisher:
             fail(f"prerelease publisher missing trusted-consumer/freshness input: {required}")
 
+    handoff_start = publisher.find("- name: Upload trusted publication handoff")
+    if handoff_start < 0:
+        fail("prerelease publisher is missing the trusted publication handoff")
+    handoff_end = publisher.find("\n      - ", handoff_start + 1)
+    handoff = publisher[handoff_start:] if handoff_end < 0 else publisher[handoff_start:handoff_end]
+    if "retention-days: 35" not in handoff:
+        fail("trusted prerelease handoff must survive the maximum environment approval window")
+
     approval_pos = publisher.find("approval:")
     recheck_pos = publisher.find("recheck:")
     publish_pos = publisher.find("publish:")
@@ -410,6 +446,30 @@ def check_release_workflow(root: pathlib.Path = ROOT) -> None:
         if required not in release:
             fail(f"release.yml missing trusted-consumer invariant: {required}")
 
+    if "just release-check" in release:
+        fail(
+            "stable release build must verify the exact built payload, not rebuild a second "
+            "representative release-check payload"
+        )
+    native_verify = release.find("python3 scripts/ci/verify_release_assets.py")
+    oci_build = release.find("uses: ./.github/actions/build-oci")
+    if native_verify < 0 or oci_build < 0 or native_verify > oci_build:
+        fail("stable release must fail-fast on exact native artifact verification before OCI build")
+
+    for step_name in (
+        "Upload verified release image handoff",
+        "Upload verified release asset handoff",
+    ):
+        start = release.find(f"- name: {step_name}")
+        if start < 0:
+            fail(f"release.yml missing handoff step: {step_name}")
+        end = release.find("\n      - ", start + 1)
+        step = release[start:] if end < 0 else release[start:end]
+        if "if: needs.guard.outputs.publish == 'true'" not in step:
+            fail(f"stable validate mode must not upload publication handoff: {step_name}")
+        if "retention-days: 35" not in step:
+            fail(f"publication handoff must survive delayed environment approval: {step_name}")
+
     for line in release.splitlines():
         stripped = line.strip()
         if stripped.startswith("ref: ${{") and stripped != "ref: ${{ github.sha }}":
@@ -449,6 +509,201 @@ def check_prerelease_request_workflow(root: pathlib.Path = ROOT) -> None:
             fail(f"prerelease-request.yml contains obsolete/privileged trigger path: {forbidden}")
 
 
+
+def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
+    hook = root / ".githooks" / "pre-commit"
+    if not hook.is_file():
+        fail("missing .githooks/pre-commit")
+    hook_text = hook.read_text(encoding="utf-8")
+    for required in (
+        "git show :scripts/ci/precommit.py",
+        'python3 "$tmp"',
+    ):
+        if required not in hook_text:
+            fail(
+                "pre-commit hook must execute the typed implementation from the staged index: "
+                + required
+            )
+    if "python3 scripts/ci/precommit.py" in hook_text:
+        fail("pre-commit hook must not execute a possibly-unstaged working-tree implementation")
+    if hook.stat().st_mode & 0o111 == 0:
+        fail(".githooks/pre-commit must remain executable")
+
+    script = root / "scripts" / "ci" / "precommit.py"
+    if not script.is_file():
+        fail("missing typed staged-tree precommit implementation")
+    text = script.read_text(encoding="utf-8")
+    for required in (
+        '"write-tree"',
+        '"worktree", "add"',
+        '"checkout-index"',
+        '"--name-status"',
+        '"--diff-filter=ACMRD"',
+        '"protect", "--staged"',
+        '"--local-env-vars"',
+        'prepare_staged_worktree(root, tree, worktree, env=worktree_env)',
+        'run_pipeline_checks(worktree, env=worktree_env)',
+        'command(("just", recipe), cwd=worktree, env=worktree_env)',
+        'server-check", "server-test',
+    ):
+        if required not in text:
+            fail(f"precommit.py missing staged-tree invariant: {required}")
+
+    just = (root / "justfile").read_text(encoding="utf-8")
+    if "_pre-commit:" in just or "_pipeline-check-staged:" in just:
+        fail("Just must not duplicate staged-tree hook implementation")
+    if "server-unit:" in just:
+        fail("Just must not call integration-bearing Go tests a unit suite")
+    if "server-test:" not in just or "server-race:" not in just:
+        fail("Just must expose distinct normal and race Go test recipes")
+
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    if "run: just server-race" not in ci:
+        fail("CI Go job must use the explicit race/coverage recipe")
+
+
+def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
+    config = (root / "client" / "playwright.e2e.config.ts").read_text(encoding="utf-8")
+    if "bun run dev" in config or "5273" in config:
+        fail("transport E2E must not depend on a fixed-port Vite development server")
+    if config.count("command:") != 1 or "command: JSON.stringify(SERVER_BIN)" not in config:
+        fail("Playwright E2E must manage only the prebuilt real Graphite Meter server process")
+    if "GM_E2E_SERVER_BIN" not in config:
+        fail("Playwright E2E must require the server binary prebuilt by Just")
+    if "timeout: 30_000" not in config:
+        fail("Playwright E2E server readiness must fail fast after the server is prebuilt")
+    if "reuseExistingServer: false" not in config:
+        fail("Playwright E2E must never reuse an unrelated existing backend")
+
+    browser_config = (root / "client" / "playwright.browser.config.ts").read_text(
+        encoding="utf-8"
+    )
+    if "reuseExistingServer: false" not in browser_config:
+        fail("stubbed browser tests must not silently reuse a stale local preview server")
+    if "timeout: 30_000" not in browser_config:
+        fail("stubbed browser preview readiness must fail fast after the bundle is prebuilt")
+
+    just = (root / "justfile").read_text(encoding="utf-8")
+    for required in (
+        'GM_E2E_SERVER_BIN="$certs/graphite-meter-e2e"',
+        'go build -trimpath -o "$GM_E2E_SERVER_BIN" ./cmd/graphite-meter',
+        "GM_E2E_SERVER_BIN",
+    ):
+        if required not in just:
+            fail(f"client-e2e recipe missing prebuilt-server invariant: {required}")
+
+    fixture = (root / "client" / "e2e" / "fixtures.ts").read_text(encoding="utf-8")
+    for required in (
+        "server.listen(0, HOST",
+        'resolve(here, "../.e2e-dist")',
+        '"Cache-Control": "no-store"',
+    ):
+        if required not in fixture:
+            fail(f"E2E harness fixture missing dynamic static-server invariant: {required}")
+
+    vite = (root / "client" / "vite.e2e.config.ts").read_text(encoding="utf-8")
+    for required in (
+        "root: here",
+        'outDir: resolve(here, ".e2e-dist")',
+        'input: resolve(here, "bench/harness.html")',
+    ):
+        if required not in vite:
+            fail(f"E2E harness build missing invariant: {required}")
+
+    for ignore_name in (".gitignore", ".dockerignore"):
+        ignore = (root / ignore_name).read_text(encoding="utf-8")
+        if "client/.e2e-dist" not in ignore:
+            fail(f"{ignore_name} must exclude generated E2E harness output")
+
+    package = (root / "client" / "package.json").read_text(encoding="utf-8")
+    if '"test:e2e": "bun run build:e2e-harness && playwright test -c playwright.e2e.config.ts"' not in package:
+        fail("E2E test script must build the static harness before Playwright")
+
+def check_oci_verifier_boundary(root: pathlib.Path = ROOT) -> None:
+    verifier = (root / "scripts" / "ci" / "verify_oci.py").read_text(encoding="utf-8")
+    for required in (
+        '"--network",',
+        '"none",',
+        'f"{archive.resolve()}:/work/image.oci.tar:ro"',
+        '"oci:/tmp/graphite-meter-verified:verified"',
+        "archive.is_symlink()",
+    ):
+        if required not in verifier:
+            fail(f"OCI verifier missing local/no-network isolation invariant: {required}")
+    for forbidden in (
+        "TemporaryDirectory",
+        "/work/oci-copy",
+        ":/work/oci-copy",
+    ):
+        if forbidden in verifier:
+            fail(f"OCI verifier must not create host-writable container output: {forbidden}")
+
+
+def check_release_verifier_boundary(root: pathlib.Path = ROOT) -> None:
+    verifier = (root / "scripts" / "ci" / "verify_release_assets.py").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        '[str(binary.resolve()), "--version"]',
+        "subprocess.run(",
+        "server --version failed",
+    ):
+        if required not in verifier:
+            fail(f"release verifier missing direct binary-version invariant: {required}")
+    for forbidden in (
+        "subprocess.Popen(",
+        "urllib.",
+        '"/preflight"',
+        "GM_H1_ADDR",
+        "127.0.0.1:7246",
+    ):
+        if forbidden in verifier:
+            fail(f"release verifier must not start a fixed-port server: {forbidden}")
+
+    for required in (
+        'graphite-meter_{version}_third-party-source.tar.gz',
+        "verify_third_party_source_archive",
+        "third_party/go/",
+        "third_party/npm/",
+        "third_party/manual/",
+        "PROVENANCE.json",
+        "Source code (tar.gz)",
+        "does not duplicate Graphite Meter's own repository source",
+    ):
+        if required not in verifier:
+            fail(f"release verifier missing split source-offer invariant: {required}")
+    if "corresponding-source.tar.gz" in verifier:
+        fail("release verifier must not require the obsolete duplicated corresponding-source asset")
+
+    just = (root / "justfile").read_text(encoding="utf-8")
+    if 'python3 scripts/ci/verify_release_assets.py "{{ version }}"' not in just:
+        fail("ordinary release-check must exercise the same native artifact verifier as stable release")
+    for required in (
+        "_legal-third-party-source-bundle:",
+        "third-party-source-bundle",
+        "graphite-meter_{{ version }}_third-party-source.tar.gz",
+        "LEGAL_THIRD_PARTY_SOURCE_OUT",
+    ):
+        if required not in just:
+            fail(f"release packaging missing split source-offer invariant: {required}")
+    if "_legal-source-bundle:" in just or "_corresponding-source.tar.gz" in just:
+        fail("release packaging must not recreate the obsolete project+dependency source bundle")
+
+    generator = (root / "go" / "internal" / "legal" / "cmd" / "legalgen" / "main.go").read_text(encoding="utf-8")
+    for required in (
+        '"third-party-source-bundle"',
+        "thirdPartySourceBundle",
+        'archiveRoot+"/third_party/go/"',
+        'archiveRoot+"/third_party/npm/"',
+        'archiveRoot+"/PROVENANCE.json"',
+        "manualSourceDestination",
+    ):
+        if required not in generator:
+            fail(f"legal source generator missing split source-offer invariant: {required}")
+    if 'archiveRoot+"/project"' in generator or "corresponding-source.tar.gz" in generator:
+        fail("third-party source generator must not duplicate Graphite Meter project source")
+
+
 def tracked_files(root: pathlib.Path = ROOT) -> list[str]:
     result = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -459,7 +714,7 @@ def tracked_files(root: pathlib.Path = ROOT) -> list[str]:
     )
     if result.returncode == 0:
         return [entry.decode("utf-8") for entry in result.stdout.split(b"\0") if entry]
-    # Staged-tree pre-commit checks run from a git archive with no .git directory.
+    # Bundle/staged-archive validation may run without a .git directory.
     return [str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()]
 
 
@@ -485,6 +740,7 @@ def check_repository(root: pathlib.Path = ROOT) -> None:
     check_external_action_shas(root)
     check_privileged_workflows(root)
     check_skopeo_contract_consistency(root)
+    check_ci_path_map(root)
     check_runner_labels(root)
     check_oci_build_action(root)
     check_setup_project_cache_boundary(root)
@@ -493,6 +749,10 @@ def check_repository(root: pathlib.Path = ROOT) -> None:
     check_release_request_workflow(root)
     check_release_workflow(root)
     check_prerelease_request_workflow(root)
+    check_precommit_boundary(root)
+    check_e2e_lifecycle(root)
+    check_oci_verifier_boundary(root)
+    check_release_verifier_boundary(root)
     check_certificates(root)
 
 
