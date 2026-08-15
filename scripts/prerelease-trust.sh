@@ -26,12 +26,14 @@ if [[ "$MODE" == request ]]; then
     : "${ACTOR:?ACTOR is required}"
     : "${TRIGGERING_ACTOR:?TRIGGERING_ACTOR is required}"
     : "${REQUEST_RUN_ID:?REQUEST_RUN_ID is required}"
+    : "${REQUEST_RUN_ATTEMPT:?REQUEST_RUN_ATTEMPT is required}"
 
     [[ "$EVENT_NAME" == workflow_dispatch ]] || die "only workflow_dispatch may request a prerelease"
     [[ "$REF" == refs/heads/main ]] || die "the trusted prerelease workflow must run from main"
     [[ "$WORKFLOW_REF" == "$REPOSITORY/.github/workflows/prerelease.yml@refs/heads/main" ]] || die "workflow is not the trusted main workflow"
     [[ "$ACTOR" == "$REPOSITORY_OWNER" && "$TRIGGERING_ACTOR" == "$REPOSITORY_OWNER" ]] || die "Only the repository owner may publish an off-main prerelease."
     [[ "$REQUEST_RUN_ID" =~ ^[0-9]+$ ]] || die "workflow run ID is invalid"
+    [[ "$REQUEST_RUN_ATTEMPT" == 1 ]] || die "workflow reruns are not valid prerelease requests; start a fresh dispatch"
 elif [[ "$MODE" != recheck ]]; then
     die "unknown mode '$MODE'"
 fi
