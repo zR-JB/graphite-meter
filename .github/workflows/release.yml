@@ -155,18 +155,16 @@ jobs:
         with:
           name: release-image
           path: ${{ runner.temp }}/release-image
-      - name: Publish image and stable aliases
+      - name: Publish exact version image only
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ needs.guard.outputs.version }}
-          SERIES: ${{ needs.guard.outputs.series }}
-          STABLE: ${{ needs.guard.outputs.stable }}
         run: |
           set -euo pipefail
           IMAGE="ghcr.io/${REPOSITORY,,}"
           docker run --rm --entrypoint /bin/sh \
-            -e GH_TOKEN -e GITHUB_ACTOR -e "IMAGE=$IMAGE" -e "VERSION=$VERSION" -e "SERIES=$SERIES" -e "STABLE=$STABLE" \
+            -e GH_TOKEN -e GITHUB_ACTOR -e "IMAGE=$IMAGE" -e "VERSION=$VERSION" \
             -v "$RUNNER_TEMP/release-image:/work:ro" \
             "$SKOPEO_IMAGE" -ec '
               auth_dir=$(mktemp -d)
@@ -174,11 +172,7 @@ jobs:
               export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
               printf "%s" "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
               skopeo copy --all oci-archive:/work/graphite-meter.oci.tar "docker://$IMAGE:$VERSION"
-              if [ "$STABLE" = true ]; then
-                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:$SERIES"
-                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:latest"
-              fi
-              skopeo logout ghcr.io
+              skopeo logout ghcr.io >/dev/null 2>&1 || true
             '
 
   github-release:
@@ -199,3 +193,35 @@ jobs:
           tag_name: ${{ needs.guard.outputs.tag }}
           generate_release_notes: true
           files: ${{ runner.temp }}/release-artifacts/*
+
+  promote-stable-aliases:
+    name: Promote stable GHCR aliases
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [guard, publish, github-release]
+    if: needs.guard.outputs.stable == 'true' && needs.guard.outputs.dry_run != 'true'
+    environment: ghcr-release
+    permissions:
+      actions: read
+      packages: write
+    steps:
+      - name: Move exact version to series and latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          SERIES: ${{ needs.guard.outputs.series }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${REPOSITORY,,}"
+          docker run --rm --entrypoint /bin/sh \
+            -e GH_TOKEN -e GITHUB_ACTOR -e "IMAGE=$IMAGE" -e "VERSION=$VERSION" -e "SERIES=$SERIES" \
+            "$SKOPEO_IMAGE" -ec '
+              auth_dir=$(mktemp -d)
+              trap "rm -rf \"$auth_dir\"" EXIT
+              export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
+              printf "%s" "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+              skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:$SERIES"
+              skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:latest"
+              skopeo logout ghcr.io >/dev/null 2>&1 || true
+            '
