@@ -1,0 +1,82 @@
+name: Request stable release
+run-name: Stable release request · ${{ inputs.mode }} · ${{ inputs.version }} · ${{ github.sha }}
+
+# LOW AUTHORITY: this manual entrypoint may be dispatched against a selected ref.
+# It never checks out repository code and has no GITHUB_TOKEN permissions. A
+# separate workflow_run consumer on the default branch treats this artifact as
+# untrusted input and is the only workflow that can reach publication jobs.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable SemVer tag, e.g. v0.5.2
+        required: true
+        type: string
+      mode:
+        description: Validate only, or publish after protected-environment approval
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - publish
+
+permissions: {}
+
+concurrency:
+  group: stable-release-request-${{ github.repository }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    name: Record untrusted stable release request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate request shape and write handoff
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          VERSION: ${{ inputs.version }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          [[ "$REF" == refs/heads/main ]] || { echo "stable release requests must be dispatched from main" >&2; exit 1; }
+          [[ "$ACTOR" == "$REPOSITORY_OWNER" && "$TRIGGERING_ACTOR" == "$REPOSITORY_OWNER" ]] || {
+            echo "stable release requests must be initiated by the repository owner" >&2
+            exit 1
+          }
+          [[ "$RUN_ATTEMPT" == 1 ]] || { echo "rerun requests are not accepted; start a fresh dispatch" >&2; exit 1; }
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid request source SHA" >&2; exit 1; }
+          [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "stable release version must be vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          }
+          [[ "$MODE" == validate || "$MODE" == publish ]] || { echo "invalid release mode" >&2; exit 1; }
+
+          out="$RUNNER_TEMP/stable-release-request"
+          mkdir -p "$out"
+          jq -nc \
+            --arg repository "$REPOSITORY" \
+            --arg sourceSha "$SOURCE_SHA" \
+            --arg version "$VERSION" \
+            --arg mode "$MODE" \
+            --argjson requestRunId "$RUN_ID" \
+            --argjson requestRunAttempt "$RUN_ATTEMPT" \
+            '{schemaVersion:1,repository:$repository,sourceSha:$sourceSha,version:$version,mode:$mode,requestRunId:$requestRunId,requestRunAttempt:$requestRunAttempt}' \
+            >"$out/request.json"
+
+      - name: Upload untrusted stable release request
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stable-release-request-${{ github.run_id }}
+          path: ${{ runner.temp }}/stable-release-request/request.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

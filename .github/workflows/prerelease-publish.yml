@@ -1,0 +1,189 @@
+name: Publish verified PR prerelease
+run-name: PR prerelease publish · request run ${{ github.event.workflow_run.id }} · ${{ github.sha }}
+
+# PRIVILEGED CONSUMER: the manual request/build run is a low-authority producer.
+# Its metadata and OCI archive are untrusted data. This workflow executes only
+# default-branch tooling and never checks out or executes PR source.
+on:
+  workflow_run:
+    workflows: ["Request PR prerelease"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prerelease-publish-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+env:
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
+  SKOPEO_VERSION: 1.22.2
+
+jobs:
+  resolve:
+    if: github.event.workflow_run.conclusion == 'success'
+    name: Resolve trusted request-run provenance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      request_run_id: ${{ steps.resolve.outputs.request_run_id }}
+      candidate_artifact: ${{ steps.resolve.outputs.candidate_artifact }}
+    steps:
+      - name: Checkout trusted publisher tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: resolve
+        name: Bind triggering run to trusted current-main request workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          PUBLISHER_SHA: ${{ github.sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 scripts/ci/prerelease.py publish-resolve
+
+  validate:
+    name: Validate candidate strictly as untrusted data
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: resolve
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.validate.outputs.pr }}
+      sha: ${{ steps.validate.outputs.sha }}
+      version: ${{ steps.validate.outputs.version }}
+      tag: ${{ steps.validate.outputs.tag }}
+      oci_sha256: ${{ steps.validate.outputs.oci_sha256 }}
+      main_sha: ${{ steps.validate.outputs.main_sha }}
+      validated_artifact: ${{ steps.artifact-name.outputs.name }}
+    steps:
+      - name: Download low-trust request/candidate artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.resolve.outputs.candidate_artifact }}
+          path: ${{ runner.temp }}/candidate
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.resolve.outputs.request_run_id }}
+
+      - name: Checkout trusted validation tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: validate
+        name: Recheck request metadata, PR state, Gate, and CodeQL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PUBLISHER_SHA: ${{ github.sha }}
+          REQUEST_RUN_ID: ${{ needs.resolve.outputs.request_run_id }}
+          CANDIDATE_DIR: ${{ runner.temp }}/candidate
+          HANDOFF_DIR: ${{ runner.temp }}/validated
+        run: python3 scripts/ci/prerelease.py publish-validate
+
+      - name: Verify OCI platforms and labels without executing image payload
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
+          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
+          VERSION: ${{ steps.validate.outputs.version }}
+          SOURCE_SHA: ${{ steps.validate.outputs.sha }}
+        run: >-
+          python3 scripts/ci/verify_oci.py
+          "$VERSION"
+          "$SOURCE_SHA"
+          "$RUNNER_TEMP/validated/graphite-meter.oci.tar"
+
+      - id: artifact-name
+        name: Name trusted publication handoff
+        env:
+          REQUEST_RUN_ID: ${{ needs.resolve.outputs.request_run_id }}
+        run: echo "name=validated-prerelease-$REQUEST_RUN_ID" >>"$GITHUB_OUTPUT"
+
+      - name: Upload trusted publication handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: ${{ runner.temp }}/validated/graphite-meter.oci.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
+
+  approval:
+    name: Approve prerelease publication
+    needs: [resolve, validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: ghcr-release
+    permissions: {}
+    steps:
+      - name: Publication authorization granted
+        run: echo "::notice::protected release environment approved; final PR trust recheck starts next"
+
+  recheck:
+    name: Recheck mutable PR trust after approval
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: [resolve, validate, approval]
+    outputs:
+      ci_run_id: ${{ steps.recheck.outputs.ci_run_id }}
+      codeql_check_id: ${{ steps.recheck.outputs.codeql_check_id }}
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted recheck tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: recheck
+        name: Reconfirm exact PR head, current main, Gate, and CodeQL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.validate.outputs.pr }}
+          EXPECTED_SHA: ${{ needs.validate.outputs.sha }}
+          EXPECTED_MAIN_SHA: ${{ needs.validate.outputs.main_sha }}
+        run: python3 scripts/ci/prerelease.py publish-recheck
+
+  publish:
+    name: Publish exact prerelease tag
+    needs: [resolve, validate, recheck]
+    uses: ./.github/workflows/_publish-oci.yml
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      checks: read
+      security-events: read
+      packages: write
+    with:
+      artifact: ${{ needs.validate.outputs.validated_artifact }}
+      tag: ${{ needs.validate.outputs.version }}
+      expected_sha256: ${{ needs.validate.outputs.oci_sha256 }}
+      source_sha: ${{ needs.validate.outputs.sha }}
+      trusted_main_sha: ${{ needs.validate.outputs.main_sha }}
+      pr_number: ${{ needs.validate.outputs.pr }}
+      expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}
+      expected_codeql_check_id: ${{ needs.recheck.outputs.codeql_check_id }}

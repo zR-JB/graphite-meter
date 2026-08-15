@@ -1,0 +1,106 @@
+name: Request PR prerelease
+run-name: PR prerelease request · #${{ inputs.pr }} · ${{ inputs.tag }} · ${{ github.sha }}
+
+# LOW AUTHORITY PRODUCER: workflow_dispatch can be pointed at a selected ref.
+# This workflow therefore has read-only contents access, no secrets/write token,
+# and no shared dependency caches. PR source is never checked out onto the runner:
+# after the request SHA is shape-validated by trusted main tooling, BuildKit fetches
+# that exact commit directly as an immutable remote Git context. The OCI artifact is
+# still treated as untrusted data by the trusted workflow_run consumer, which only
+# authorizes successful request runs from current main and independently revalidates
+# the PR, Gate, CodeQL, and artifact before publication.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Open same-repository PR number
+        required: true
+        type: string
+      tag:
+        description: vMAJOR.MINOR.PATCH-alpha.N, beta.N, or rc.N
+        required: true
+        type: string
+      sha:
+        description: Exact 40-character current PR head SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prerelease-request-${{ github.repository }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: Build untrusted PR prerelease candidate
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout request-side build tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .bun-version
+            .github/actions/build-oci
+            scripts/ci
+          sparse-checkout-cone-mode: false
+
+      - id: request
+        name: Validate request shape
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REQUEST_RUN_ID: ${{ github.run_id }}
+          REQUEST_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PR_NUMBER: ${{ inputs.pr }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: python3 scripts/ci/prerelease.py request-prepare
+
+      # The raw dispatch SHA reaches only the trusted validator above. PR files never
+      # exist in the runner workspace; BuildKit fetches the validated 40-char commit
+      # directly from this public repository and receives no GitHub credential.
+      - name: Build candidate linux/amd64 + linux/arm64 OCI archive
+        uses: ./.github/actions/build-oci
+        with:
+          version: ${{ steps.request.outputs.version }}
+          revision: ${{ steps.request.outputs.sha }}
+          output: ${{ runner.temp }}/prerelease-candidate/graphite-meter.oci.tar
+          source-sha: ${{ steps.request.outputs.sha }}
+          client-validate: '1'
+
+      - name: Finalize untrusted candidate metadata and checksum
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.request.outputs.pr }}
+          HEAD_SHA: ${{ steps.request.outputs.sha }}
+          TAG: ${{ steps.request.outputs.tag }}
+          VERSION: ${{ steps.request.outputs.version }}
+          REQUEST_RUN_ID: ${{ github.run_id }}
+          REQUEST_RUN_ATTEMPT: ${{ github.run_attempt }}
+          OUT_DIR: ${{ runner.temp }}/prerelease-candidate
+          OCI_ARCHIVE: ${{ runner.temp }}/prerelease-candidate/graphite-meter.oci.tar
+        run: python3 scripts/ci/prerelease.py request-finalize
+
+      - name: Upload untrusted candidate handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prerelease-candidate-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/prerelease-candidate/graphite-meter.oci.tar
+            ${{ runner.temp }}/prerelease-candidate/graphite-meter.oci.tar.sha256
+            ${{ runner.temp }}/prerelease-candidate/candidate.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
