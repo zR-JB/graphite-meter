@@ -95,59 +95,133 @@ jobs:
                 tag_json=$(gh api "repos/$REPOSITORY/git/tags/$object_sha")
                 [[ $(jq -r '.object.type' <<<"$tag_json") == commit ]] || {
                   echo "release tag does not ultimately reference a commit" >&2
-                  exit 1
+                  return 1
                 }
                 jq -r '.object.sha' <<<"$tag_json"
                 ;;
-              *) echo "unexpected tag object type: $object_type" >&2; exit 1 ;;
+              *) echo "unexpected tag object type: $object_type" >&2; return 1 ;;
             esac
           }
 
           require_tag_target() {
             local ref_json=$1 resolved
+            [[ $(jq -r '.ref' <<<"$ref_json") == "refs/tags/$TAG" ]] || {
+              echo "release tag ref identity mismatch for $TAG" >&2
+              return 1
+            }
             resolved=$(resolve_tag_target "$ref_json")
             [[ "$resolved" == "$TARGET_SHA" ]] || {
               echo "$TAG resolves to $resolved, expected $TARGET_SHA" >&2
-              exit 1
+              return 1
             }
           }
 
+          wait_for_tag_target() {
+            local context=$1 tag_ref delay
+            local -a delays=(0 0.25 0.5 1 2 4 8)
+            for delay in "${delays[@]}"; do
+              if [[ "$delay" != 0 ]]; then
+                echo "::notice::release transaction: waiting ${delay}s for $TAG visibility ($context)" >&2
+                sleep "$delay"
+              fi
+              : >"$err"
+              if tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
+                require_tag_target "$tag_ref"
+                echo "::notice::release transaction: $TAG is visible at the exact target ($context)" >&2
+                return 0
+              fi
+              if ! grep -Eiq 'HTTP 404|Not Found' "$err"; then
+                echo "release transaction: unexpected error while reading $TAG ($context)" >&2
+                cat "$err" >&2
+                return 1
+              fi
+            done
+            echo "release transaction: $TAG was created but did not become readable within the bounded convergence window ($context)" >&2
+            cat "$err" >&2
+            return 1
+          }
+
           ensure_tag_target() {
-            local tag_ref create_payload create_error
+            local tag_ref create_payload created_ref create_error
             : >"$err"
             if tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
               require_tag_target "$tag_ref"
-              return
+              echo "::notice::release transaction: using existing exact tag $TAG" >&2
+              return 0
             fi
             if ! grep -Eiq 'HTTP 404|Not Found' "$err"; then
+              echo "release transaction: failed to inspect $TAG before creation" >&2
               cat "$err" >&2
-              exit 1
+              return 1
             fi
 
-            # Publishing a draft can create a missing tag, but we must verify the
-            # exact target before making the release public. Materialize the
-            # lightweight ref ourselves, then re-read it so retries and races
-            # converge on one verified state.
             create_payload=$(jq -nc --arg ref "refs/tags/$TAG" --arg sha "$TARGET_SHA" '{ref:$ref,sha:$sha}')
             : >"$err"
-            if ! gh api --method POST "repos/$REPOSITORY/git/refs" --input - <<<"$create_payload" >/dev/null 2>"$err"; then
-              create_error=$(cat "$err")
-              : >"$err"
-              if ! tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
-                printf '%s\n' "$create_error" >&2
-                cat "$err" >&2
-                exit 1
-              fi
-            else
-              tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG")
+            echo "::notice::release transaction: creating $TAG at $TARGET_SHA" >&2
+            if created_ref=$(gh api --method POST "repos/$REPOSITORY/git/refs" --input - <<<"$create_payload" 2>"$err"); then
+              # The create response is authoritative for the accepted write. Validate
+              # it immediately, then separately wait for the read path to converge.
+              require_tag_target "$created_ref"
+              echo "::notice::release transaction: tag creation accepted; waiting for read visibility" >&2
+              wait_for_tag_target "new tag creation"
+              return 0
             fi
-            require_tag_target "$tag_ref"
+
+            create_error=$(cat "$err")
+            if grep -Eiq 'Reference already exists|already exists' <<<"$create_error"; then
+              # A concurrent writer may have won the create race. Never trust the
+              # conflict itself: accept it only after the resulting ref is readable
+              # and resolves to the exact authorized source SHA.
+              echo "::warning::release transaction: $TAG creation raced with another writer; verifying the winner" >&2
+              wait_for_tag_target "concurrent tag creation"
+              return 0
+            fi
+
+            echo "release transaction: GitHub rejected creation of $TAG at $TARGET_SHA" >&2
+            printf '%s\n' "$create_error" >&2
+            return 1
+          }
+
+          wait_for_release_published() {
+            local context=$1 release_json draft prerelease delay
+            local -a delays=(0 0.25 0.5 1 2 4 8)
+            for delay in "${delays[@]}"; do
+              if [[ "$delay" != 0 ]]; then
+                echo "::notice::release transaction: waiting ${delay}s for release publication visibility ($context)" >&2
+                sleep "$delay"
+              fi
+              : >"$err"
+              if release_json=$(gh api "repos/$REPOSITORY/releases/$release_id" 2>"$err"); then
+                [[ $(jq -r '.tag_name' <<<"$release_json") == "$TAG" ]] || {
+                  echo "release transaction: release ID/tag mismatch while reconciling publication" >&2
+                  return 1
+                }
+                draft=$(jq -r '.draft' <<<"$release_json")
+                prerelease=$(jq -r '.prerelease' <<<"$release_json")
+                if [[ "$draft" == false && "$prerelease" == false ]]; then
+                  printf '%s\n' "$release_json"
+                  return 0
+                fi
+                [[ "$prerelease" == false ]] || {
+                  echo "release transaction: $TAG unexpectedly became a prerelease" >&2
+                  return 1
+                }
+              elif ! grep -Eiq 'HTTP 404|Not Found' "$err"; then
+                echo "release transaction: unexpected error while reconciling publication ($context)" >&2
+                cat "$err" >&2
+                return 1
+              fi
+            done
+            echo "release transaction: release $release_id did not converge to published stable state ($context)" >&2
+            [[ ! -s "$err" ]] || cat "$err" >&2
+            return 1
           }
 
           # A pre-existing tag is acceptable only when it already names the exact source SHA.
           if tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG" 2>"$err"); then
             require_tag_target "$tag_ref"
           elif ! grep -Eiq 'HTTP 404|Not Found' "$err"; then
+            echo "release transaction: failed to inspect pre-existing tag $TAG" >&2
             cat "$err" >&2
             exit 1
           fi
@@ -175,11 +249,7 @@ jobs:
                 diff -u "$local_map" "$remote_map" >&2 || true
                 exit 1
               }
-              tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG")
-              [[ $(resolve_tag_target "$tag_ref") == "$TARGET_SHA" ]] || {
-                echo "$TAG published release tag target changed" >&2
-                exit 1
-              }
+              wait_for_tag_target "already-published release verification"
               published_body=$(jq -r '.body // ""' <<<"$release")
               [[ "$published_body" == "$source_notice"* ]] || {
                 echo "$TAG is published but its source-availability notice is missing or stale" >&2
@@ -244,20 +314,38 @@ jobs:
             exit 1
           }
 
-          # Only materialize a missing tag after the draft payload is exact.
-          # A failed create is re-read and accepted only when a concurrent writer
-          # produced the same verified target, making retries race-safe.
+          # Materialize only after the draft payload is exact. A successful
+          # create is validated from its write response, then the read path is given
+          # a bounded convergence window before the irreversible publication step.
           ensure_tag_target
 
-          gh api --method PATCH "repos/$REPOSITORY/releases/$release_id" \
-            --input - <<'JSON' >/dev/null
+          publish_error=""
+          : >"$err"
+          echo "::notice::release transaction: publishing verified draft release $release_id for $TAG" >&2
+          if ! gh api --method PATCH "repos/$REPOSITORY/releases/$release_id" \
+            --input - <<'JSON' >/dev/null 2>"$err"
           {"draft":false,"prerelease":false,"make_latest":"legacy"}
           JSON
+          then
+            publish_error=$(cat "$err")
+            echo "::warning::release transaction: publish request returned an error; reconciling release state before failing" >&2
+          fi
 
-          published=$(gh api "repos/$REPOSITORY/releases/$release_id")
-          jq -e --arg tag "$TAG" '.tag_name == $tag and .draft == false and .prerelease == false' <<<"$published" >/dev/null
-          tag_ref=$(gh api "repos/$REPOSITORY/git/ref/tags/$TAG")
-          require_tag_target "$tag_ref"
+          if ! published=$(wait_for_release_published "post-publish reconciliation"); then
+            [[ -z "$publish_error" ]] || {
+              echo "release transaction: original publish error:" >&2
+              printf '%s\n' "$publish_error" >&2
+            }
+            exit 1
+          fi
+          if [[ -n "$publish_error" ]]; then
+            echo "::warning::release transaction: publish request committed despite the client-visible error; continuing from verified state" >&2
+          else
+            echo "::notice::release transaction: publication is visible and stable" >&2
+          fi
+
+          # Re-read the tag after publication as the final source-binding check.
+          wait_for_tag_target "post-publish verification"
           published_body=$(jq -r '.body // ""' <<<"$published")
           [[ "$published_body" == "$source_notice"* ]] || {
             echo "published release lost its source-availability notice" >&2
