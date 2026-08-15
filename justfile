@@ -230,8 +230,8 @@ legal-review mode="audit":
     just _legal-run review-{{ mode }}
 
 [private]
-_legal-source-bundle:
-    just _legal-run source-bundle
+_legal-third-party-source-bundle:
+    just _legal-run third-party-source-bundle
 
 # Type-check the client, including Bun test files.
 [group('check')]
@@ -452,8 +452,8 @@ tui-cross-build:
         (cd go && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -o /dev/null ./cmd/graphite-meter-client)
     done < scripts/tui-targets.txt
 
-# Verify distributable package and source-bundle invariants without publishing.
-# Verify representative release packages and corresponding source.
+# Verify distributable package and third-party-source invariants without publishing.
+# Verify representative release packages and the split source offer.
 [group('release')]
 release-check version="development":
     #!/usr/bin/env sh
@@ -472,7 +472,7 @@ release-build version="development":
     VERSION="{{ version }}" GM_CLIENT_BUILD_LABEL=prod just server-build-prod
 
 # Build all stable release artifacts into go/dist without publishing them.
-# Build all versioned release artifacts and their checksums.
+# Build all versioned release artifacts, third-party source, and checksums.
 [group('release')]
 release-artifacts version="development":
     #!/usr/bin/env sh
@@ -481,7 +481,7 @@ release-artifacts version="development":
     case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
     mkdir -p "$dist"
     find "$dist" -maxdepth 1 -type f -delete
-    VERSION="{{ version }}" LEGAL_SOURCE_OUT="$dist/graphite-meter_{{ version }}_corresponding-source.tar.gz" just _legal-source-bundle
+    VERSION="{{ version }}" LEGAL_THIRD_PARTY_SOURCE_OUT="$dist/graphite-meter_{{ version }}_third-party-source.tar.gz" just _legal-third-party-source-bundle
     while IFS= read -r target; do
         [ -n "$target" ] || continue
         goos=${target%/*}

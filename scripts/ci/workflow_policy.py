@@ -136,6 +136,13 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
         "auth_header",
         "release handoff contains a non-regular entry",
         "release handoff contains an unsafe asset name",
+        'source_asset="graphite-meter_${version}_third-party-source.tar.gz"',
+        "source_notice=$(printf '%s\\n\\n%s\\n\\n%s'",
+        "Source code (zip)",
+        "Source code (tar.gz)",
+        "generate_release_notes:true,body:$body",
+        "source-availability notice is missing or stale",
+        "published release lost its source-availability notice",
     ):
         if required not in text:
             fail(f"_publish-release.yml missing invariant: {required}")
@@ -653,9 +660,48 @@ def check_release_verifier_boundary(root: pathlib.Path = ROOT) -> None:
         if forbidden in verifier:
             fail(f"release verifier must not start a fixed-port server: {forbidden}")
 
+    for required in (
+        'graphite-meter_{version}_third-party-source.tar.gz',
+        "verify_third_party_source_archive",
+        "third_party/go/",
+        "third_party/npm/",
+        "third_party/manual/",
+        "PROVENANCE.json",
+        "Source code (tar.gz)",
+        "does not duplicate Graphite Meter's own repository source",
+    ):
+        if required not in verifier:
+            fail(f"release verifier missing split source-offer invariant: {required}")
+    if "corresponding-source.tar.gz" in verifier:
+        fail("release verifier must not require the obsolete duplicated corresponding-source asset")
+
     just = (root / "justfile").read_text(encoding="utf-8")
     if 'python3 scripts/ci/verify_release_assets.py "{{ version }}"' not in just:
         fail("ordinary release-check must exercise the same native artifact verifier as stable release")
+    for required in (
+        "_legal-third-party-source-bundle:",
+        "third-party-source-bundle",
+        "graphite-meter_{{ version }}_third-party-source.tar.gz",
+        "LEGAL_THIRD_PARTY_SOURCE_OUT",
+    ):
+        if required not in just:
+            fail(f"release packaging missing split source-offer invariant: {required}")
+    if "_legal-source-bundle:" in just or "_corresponding-source.tar.gz" in just:
+        fail("release packaging must not recreate the obsolete project+dependency source bundle")
+
+    generator = (root / "go" / "internal" / "legal" / "cmd" / "legalgen" / "main.go").read_text(encoding="utf-8")
+    for required in (
+        '"third-party-source-bundle"',
+        "thirdPartySourceBundle",
+        'archiveRoot+"/third_party/go/"',
+        'archiveRoot+"/third_party/npm/"',
+        'archiveRoot+"/PROVENANCE.json"',
+        "manualSourceDestination",
+    ):
+        if required not in generator:
+            fail(f"legal source generator missing split source-offer invariant: {required}")
+    if 'archiveRoot+"/project"' in generator or "corresponding-source.tar.gz" in generator:
+        fail("third-party source generator must not duplicate Graphite Meter project source")
 
 
 def tracked_files(root: pathlib.Path = ROOT) -> list[str]:

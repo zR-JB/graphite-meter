@@ -148,11 +148,8 @@ func TestGoToolchainComponentIgnoresGOROOTFormatting(t *testing.T) {
 	}
 }
 
-func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
+func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, "project"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(repo, "LICENSE"), []byte("project license\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -167,15 +164,19 @@ func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(certDir, "development.pem"), []byte("private material\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	provenance := []legal.Provenance{{Name: "sample", LocalPaths: []string{"manual.txt"}}}
+	provenance := []legal.Provenance{{
+		Name:                "sample",
+		LocalPaths:          []string{"manual.txt"},
+		CorrespondingSource: "third_party/manual/sample",
+	}}
 	outDir := t.TempDir()
 	first := filepath.Join(outDir, "first.tar.gz")
 	second := filepath.Join(outDir, "second.tar.gz")
 	project := legal.Project{Name: "Graphite Meter", Repository: "https://example.invalid/repo"}
-	if err := sourceBundle(repo, project, "development", nil, nil, nil, provenance, first); err != nil {
+	if err := thirdPartySourceBundle(repo, project, "development", nil, nil, nil, provenance, first); err != nil {
 		t.Fatal(err)
 	}
-	if err := sourceBundle(repo, project, "development", nil, nil, nil, provenance, second); err != nil {
+	if err := thirdPartySourceBundle(repo, project, "development", nil, nil, nil, provenance, second); err != nil {
 		t.Fatal(err)
 	}
 	one, err := os.ReadFile(first)
@@ -187,7 +188,7 @@ func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(one) != string(two) {
-		t.Fatal("corresponding-source archive is not deterministic")
+		t.Fatal("third-party source archive is not deterministic")
 	}
 	file, err := os.Open(first)
 	if err != nil {
@@ -200,7 +201,8 @@ func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 	}
 	defer reader.Close()
 	tarReader := tar.NewReader(reader)
-	var names []string
+	names := make([]string, 0)
+	contents := map[string]string{}
 	for {
 		header, readErr := tarReader.Next()
 		if readErr == io.EOF {
@@ -210,24 +212,37 @@ func TestSourceBundleIsDeterministicAndIncludesManualMaterial(t *testing.T) {
 			t.Fatal(readErr)
 		}
 		names = append(names, header.Name)
+		data, err := io.ReadAll(tarReader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents[header.Name] = string(data)
 	}
 	joined := strings.Join(names, "\n")
-	if strings.Contains(joined, ".dev-certs") {
-		t.Fatal("development certificates leaked into source archive")
+	if strings.Contains(joined, "/project/") || strings.Contains(joined, "/LICENSE") {
+		t.Fatal("project source was duplicated into third-party source archive")
 	}
+	if strings.Contains(joined, ".dev-certs") {
+		t.Fatal("developer-local project material leaked into third-party source archive")
+	}
+	root := "graphite-meter_development_third-party-source"
 	for _, want := range []string{
-		"graphite-meter_development_corresponding-source/project/LICENSE",
-		"graphite-meter_development_corresponding-source/third_party/manual/sample/manual.txt",
-		"graphite-meter_development_corresponding-source/LEGAL_INVENTORY.json",
-		"graphite-meter_development_corresponding-source/README.txt",
+		root + "/third_party/manual/sample/manual.txt",
+		root + "/LEGAL_INVENTORY.json",
+		root + "/PROVENANCE.json",
+		root + "/README.txt",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("archive does not contain %s", want)
 		}
 	}
+	readme := contents[root+"/README.txt"]
+	if !strings.Contains(readme, "Source code (tar.gz)") || !strings.Contains(readme, project.Repository) {
+		t.Fatalf("third-party source README does not explain the split source offer: %q", readme)
+	}
 }
 
-func TestSourceBundleHelpers(t *testing.T) {
+func TestThirdPartySourceBundleHelpers(t *testing.T) {
 	if got := safeName("github.com/example/pkg@v1"); got != "github.com_example_pkg_at_v1" {
 		t.Fatalf("safeName = %q", got)
 	}
@@ -238,9 +253,18 @@ func TestSourceBundleHelpers(t *testing.T) {
 	if _, err := moduleDirectory(t.TempDir(), "missing/module", "v0.0.0"); err == nil {
 		t.Fatal("missing module unexpectedly resolved")
 	}
+	got, err := manualSourceDestination(legal.Provenance{Name: "sample", CorrespondingSource: "third_party/manual/sample"})
+	if err != nil || got != "third_party/manual/sample" {
+		t.Fatalf("manualSourceDestination = %q, %v", got, err)
+	}
+	for _, bad := range []string{"../escape", "third_party/go/not-manual", "/absolute", `third_party\\manual\\windows`} {
+		if _, err := manualSourceDestination(legal.Provenance{Name: "sample", CorrespondingSource: bad}); err == nil {
+			t.Fatalf("manualSourceDestination unexpectedly accepted %q", bad)
+		}
+	}
 }
 
-func TestSourceBundleIncludesBrowserComponent(t *testing.T) {
+func TestThirdPartySourceBundleIncludesBrowserComponent(t *testing.T) {
 	repo := t.TempDir()
 	packageDir := filepath.Join(repo, "client", "node_modules", "outer", "node_modules", "svelte")
 	if err := os.MkdirAll(packageDir, 0o755); err != nil {
@@ -254,7 +278,7 @@ func TestSourceBundleIncludesBrowserComponent(t *testing.T) {
 	}
 	out := filepath.Join(t.TempDir(), "source.tar.gz")
 	component := legal.Component{Name: "svelte", Version: "5.56.8", Ecosystem: "npm", SourcePath: packageDir}
-	if err := sourceBundle(repo, legal.Project{}, "development", []legal.Component{component}, nil, nil, nil, out); err != nil {
+	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", []legal.Component{component}, nil, nil, nil, out); err != nil {
 		t.Fatal(err)
 	}
 	file, err := os.Open(out)
@@ -514,7 +538,7 @@ func TestReviewedNestedLegalFilesAreRehashedAndAuthoritative(t *testing.T) {
 	}
 }
 
-func TestSourceBundleExcludesGeneratedCoverageProfile(t *testing.T) {
+func TestThirdPartySourceBundleExcludesProjectBuildArtifacts(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, "go"), 0o755); err != nil {
 		t.Fatal(err)
@@ -523,7 +547,7 @@ func TestSourceBundleExcludesGeneratedCoverageProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "source.tar.gz")
-	if err := sourceBundle(repo, legal.Project{}, "development", nil, nil, nil, nil, out); err != nil {
+	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", nil, nil, nil, nil, out); err != nil {
 		t.Fatal(err)
 	}
 	file, err := os.Open(out)
@@ -546,7 +570,7 @@ func TestSourceBundleExcludesGeneratedCoverageProfile(t *testing.T) {
 			t.Fatal(readErr)
 		}
 		if strings.Contains(header.Name, "cover.out") {
-			t.Fatalf("generated coverage profile leaked into source archive: %s", header.Name)
+			t.Fatalf("project build artifact leaked into third-party source archive: %s", header.Name)
 		}
 	}
 }

@@ -112,8 +112,15 @@ order is exact version OCI image → verified draft GitHub Release → monotonic
 directly, verifies the release target SHA and GitHub-recorded asset SHA-256
 digests, and does not run third-party release code with `contents: write`. Native
 release archives are rejected for traversal paths, links/devices, duplicate
-members, unexpected files, or missing checksums. `_promote-oci.yml` globally
-serializes alias movement and rejects SemVer rollback.
+members, unexpected files, or missing checksums. Stable releases do not duplicate
+Graphite Meter's own tagged repository tree inside a custom source asset: GitHub's
+automatic `Source code (zip)` / `Source code (tar.gz)` links provide the project
+source for the release tag, while the verified
+`graphite-meter_VERSION_third-party-source.tar.gz` asset carries the external
+Go/npm/manual source material and legal/provenance inventories. The publisher
+prepends an explicit source-availability notice to generated release notes and
+fails closed on retries if that notice is missing or stale. `_promote-oci.yml`
+globally serializes alias movement and rejects SemVer rollback.
 
 The OCI build explicitly requests BuildKit `provenance: mode=max`. The privileged
 `binfmt` image launched by `setup-qemu-action` is pinned by digest rather than

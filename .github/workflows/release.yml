@@ -97,7 +97,7 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
         run: just release-build "$VERSION"
 
-      - name: Build native artifacts and corresponding source
+      - name: Build native artifacts and third-party source
         env:
           VERSION: ${{ needs.guard.outputs.version }}
         run: just release-artifacts "$VERSION"

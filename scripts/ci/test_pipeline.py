@@ -52,6 +52,7 @@ from verify_release_assets import (
     verify_client_version,
     verify_release_file_set,
     verify_server_version,
+    verify_third_party_source_archive,
 )
 from release import (
     SEMVER_RE,
@@ -598,6 +599,7 @@ class PipelineTests(unittest.TestCase):
             "client/vite.e2e.config.ts",
             "client/e2e/fixtures.ts",
             "client/package.json",
+            "go/internal/legal/cmd/legalgen/main.go",
         ):
             source = ROOT / relative
             target = dst / relative
@@ -728,6 +730,72 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseVerificationError, "unsafe archive path"):
                 archive_names(bad_zip)
 
+    def test_third_party_source_verifier_accepts_upstream_test_keys_but_not_manual_keys(self) -> None:
+        import io
+        import tarfile
+
+        with tempfile.TemporaryDirectory() as td:
+            dist = pathlib.Path(td)
+            version = "1.2.3"
+            root = f"graphite-meter_{version}_third-party-source"
+            path = dist / f"graphite-meter_{version}_third-party-source.tar.gz"
+
+            def write_archive(manual_name: str = "manual.txt") -> None:
+                with tarfile.open(path, "w:gz") as archive:
+                    members = {
+                        f"{root}/README.txt": (
+                            "Graphite Meter third-party source.\n"
+                            "Use Source code (tar.gz) or Source code (zip).\n"
+                            "This archive does not duplicate Graphite Meter's own repository source.\n"
+                        ).encode(),
+                        f"{root}/LEGAL_INVENTORY.json": b'{"server":[],"tui":[],"container":[]}\n',
+                        f"{root}/PROVENANCE.json": b"[]\n",
+                        f"{root}/third_party/go/github.com_quic-go_quic-go_at_v0.61.0/internal/testdata/priv.key": b"public upstream test fixture\n",
+                        f"{root}/third_party/npm/example/cert.pem": b"public upstream test fixture\n",
+                        f"{root}/third_party/manual/sample/{manual_name}": b"manual source\n",
+                    }
+                    for name, payload in members.items():
+                        info = tarfile.TarInfo(name)
+                        info.size = len(payload)
+                        archive.addfile(info, io.BytesIO(payload))
+
+            write_archive()
+            verify_third_party_source_archive(dist, version)
+
+            write_archive("private.key")
+            with self.assertRaisesRegex(
+                ReleaseVerificationError,
+                "certificate/key material outside upstream dependency source",
+            ):
+                verify_third_party_source_archive(dist, version)
+
+    def test_third_party_source_verifier_rejects_project_source_duplication(self) -> None:
+        import io
+        import tarfile
+
+        with tempfile.TemporaryDirectory() as td:
+            dist = pathlib.Path(td)
+            version = "1.2.3"
+            root = f"graphite-meter_{version}_third-party-source"
+            path = dist / f"graphite-meter_{version}_third-party-source.tar.gz"
+            with tarfile.open(path, "w:gz") as archive:
+                members = {
+                    f"{root}/README.txt": (
+                        "Use Source code (tar.gz) or Source code (zip).\n"
+                        "This archive does not duplicate Graphite Meter's own repository source.\n"
+                    ).encode(),
+                    f"{root}/LEGAL_INVENTORY.json": b'{"server":[],"tui":[],"container":[]}\n',
+                    f"{root}/PROVENANCE.json": b"[]\n",
+                    f"{root}/third_party/manual/sample/source.txt": b"x\n",
+                    f"{root}/project/LICENSE": b"duplicate project source\n",
+                }
+                for name, payload in members.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+            with self.assertRaisesRegex(ReleaseVerificationError, "unexpected non-third-party source paths"):
+                verify_third_party_source_archive(dist, version)
+
     def test_release_verifier_requires_built_client_and_server_outputs(self) -> None:
         previous = pathlib.Path.cwd()
         with tempfile.TemporaryDirectory() as td:
@@ -797,7 +865,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(
                 expected_release_artifacts("1.2.3", targets),
                 {
-                    "graphite-meter_1.2.3_corresponding-source.tar.gz",
+                    "graphite-meter_1.2.3_third-party-source.tar.gz",
                     "graphite-meter-client_1.2.3_linux_amd64.tar.gz",
                     "graphite-meter-client_1.2.3_windows_amd64.zip",
                 },
@@ -1041,6 +1109,28 @@ class PipelineTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(PolicyError, "fixed-port server"):
             check_release_verifier_boundary(root)
+
+    def test_policy_rejects_obsolete_duplicated_source_bundle(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "justfile"
+        path.write_text(
+            path.read_text().replace(
+                "graphite-meter_{{ version }}_third-party-source.tar.gz",
+                "graphite-meter_{{ version }}_corresponding-source.tar.gz",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "split source-offer|obsolete"):
+            check_release_verifier_boundary(root)
+
+    def test_policy_requires_stable_release_source_notice(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_publish-release.yml"
+        path.write_text(path.read_text().replace("Source code (zip)", "Project archive", 1))
+        with self.assertRaisesRegex(PolicyError, "_publish-release.yml missing invariant"):
+            check_privileged_workflows(root)
 
     def test_policy_rejects_missing_last_mile_source_freshness(self) -> None:
         root = self._copy_policy_tree()
