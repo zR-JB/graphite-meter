@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,10 +57,71 @@ func TestLegalGoVersionNormalizesToolchainSuffixes(t *testing.T) {
 	}
 }
 
+func TestRepositoryGoToolchainVersionUsesExactPin(t *testing.T) {
+	repo := t.TempDir()
+	goDir := filepath.Join(repo, "go")
+	if err := os.MkdirAll(goDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(goDir, "go.mod"),
+		[]byte("module example.invalid/test\n\ngo 1.26.5\ntoolchain go1.26.6\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repositoryGoToolchainVersion(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "go1.26.6" {
+		t.Fatalf("repositoryGoToolchainVersion = %q, want go1.26.6", got)
+	}
+}
+
+func TestRepositoryGoToolchainVersionRequiresExactPin(t *testing.T) {
+	for _, contents := range []string{
+		"module example.invalid/test\n\ngo 1.26.5\n",
+		"module example.invalid/test\n\ngo 1.26.5\ntoolchain default\n",
+		"module example.invalid/test\n\ngo 1.26.5\ntoolchain go1.26.6 extra\n",
+	} {
+		repo := t.TempDir()
+		goDir := filepath.Join(repo, "go")
+		if err := os.MkdirAll(goDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(goDir, "go.mod"), []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repositoryGoToolchainVersion(repo); err == nil {
+			t.Fatalf("repositoryGoToolchainVersion unexpectedly accepted %q", contents)
+		}
+	}
+}
+
+func TestValidateGoToolchainVersionExplainsMismatch(t *testing.T) {
+	err := validateGoToolchainVersion("go1.26.6", "go1.26.5")
+	if err == nil || !strings.Contains(err.Error(), "go/go.mod pins go1.26.6 but legalgen is running go1.26.5") {
+		t.Fatalf("unexpected mismatch error: %v", err)
+	}
+}
+
 func TestGoToolchainComponentIgnoresGOROOTFormatting(t *testing.T) {
 	repo := t.TempDir()
+	goDir := filepath.Join(repo, "go")
 	toolchainDir := filepath.Join(repo, "legal", "toolchains", "go")
+	if err := os.MkdirAll(goDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(toolchainDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	version := legalGoVersion(runtime.Version())
+	if err := os.WriteFile(
+		filepath.Join(goDir, "go.mod"),
+		[]byte("module example.invalid/test\n\ngo 1.26.5\ntoolchain "+version+"\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	fakeGOROOT := t.TempDir()

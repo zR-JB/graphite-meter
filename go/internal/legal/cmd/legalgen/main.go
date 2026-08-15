@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -564,6 +565,25 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 }
 
 func goToolchainComponent(repo string) (legal.Component, error) {
+	// The reviewed standard-library version is a repository property, not an
+	// ambient PATH property. The generator itself is built by `go run`, so
+	// runtime.Version reports the toolchain that actually compiled/executed it.
+	// Require that selected toolchain to match the exact `toolchain` directive
+	// in go/go.mod, then use the repository pin as the inventory version.
+	//
+	// This deliberately avoids spawning a second `go env GOVERSION` process:
+	// hooks, shims, and linked worktrees can make that nested command resolve a
+	// different Go executable even though the generator is already running with
+	// the correct selected toolchain.
+	expected, err := repositoryGoToolchainVersion(repo)
+	if err != nil {
+		return legal.Component{}, err
+	}
+	actual := legalGoVersion(runtime.Version())
+	if err := validateGoToolchainVersion(expected, actual); err != nil {
+		return legal.Component{}, err
+	}
+
 	// The checked-in snapshots are the canonical legal material. GOROOT is an
 	// installation-dependent input and may contain distro or local-build
 	// formatting differences that are unrelated to the reviewed Go release.
@@ -571,8 +591,40 @@ func goToolchainComponent(repo string) (legal.Component, error) {
 	if err != nil {
 		return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
 	}
-	version := legalGoVersion(commandOutput("go", "env", "GOVERSION"))
-	return componentFromFiles("go-toolchain", "Go standard library", version, "https://go.dev/", files), nil
+	return componentFromFiles("go-toolchain", "Go standard library", expected, "https://go.dev/", files), nil
+}
+
+func repositoryGoToolchainVersion(repo string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(repo, "go", "go.mod"))
+	if err != nil {
+		return "", fmt.Errorf("read pinned Go toolchain: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "toolchain" {
+			continue
+		}
+		if len(fields) != 2 {
+			return "", fmt.Errorf("go/go.mod has malformed toolchain directive")
+		}
+		match := goReleaseVersion.FindStringSubmatch(fields[1])
+		if match == nil || match[1] != fields[1] {
+			return "", fmt.Errorf("go/go.mod toolchain must pin an exact Go release, got %q", fields[1])
+		}
+		return match[1], nil
+	}
+	return "", fmt.Errorf("go/go.mod must declare an exact toolchain for legal review")
+}
+
+func validateGoToolchainVersion(expected, actual string) error {
+	if actual != expected {
+		return fmt.Errorf(
+			"Go toolchain mismatch during legal review: go/go.mod pins %s but legalgen is running %s; run `just doctor`",
+			expected,
+			actual,
+		)
+	}
+	return nil
 }
 
 func legalGoVersion(raw string) string {
@@ -580,15 +632,6 @@ func legalGoVersion(raw string) string {
 		return match[1]
 	}
 	return raw
-}
-
-func commandOutput(name string, args ...string) string {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-	return strings.TrimSpace(string(out))
 }
 
 func legalSource(name, upstream string) string {
