@@ -31,6 +31,10 @@ node_modules
 *.local
 .vite
 
+# Python bytecode and cache
+*.pyc
+__pycache__
+
 # Claude Code — personal, machine-local settings
 .claude/settings.local.json
 

@@ -1,0 +1,80 @@
+name: Request PR prerelease
+run-name: PR prerelease request · #${{ inputs.pr }} · ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Open same-repository PR number
+        required: true
+        type: string
+      tag:
+        description: vMAJOR.MINOR.PATCH-alpha.N, beta.N, or rc.N
+        required: true
+        type: string
+      sha:
+        description: Exact 40-character current PR head SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: prerelease-request-${{ github.repository }}-${{ inputs.pr }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    name: Validate and create one-use request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted request tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: prepare
+        name: Validate PR, current main, Gate, and CodeQL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          REQUEST_RUN_ID: ${{ github.run_id }}
+          REQUEST_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PR_NUMBER: ${{ inputs.pr }}
+          REQUESTED_SHA: ${{ inputs.sha }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          OUT_DIR: ${{ runner.temp }}/prerelease-request
+        run: python3 scripts/ci/prerelease.py request-prepare
+
+      - name: Store immutable request metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.prepare.outputs.request_artifact }}
+          path: ${{ runner.temp }}/prerelease-request/request.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Create the one-use label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.prepare.outputs.pr }}
+          LABEL_NAME: ${{ steps.prepare.outputs.label }}
+          LABEL_DESCRIPTION: ${{ steps.prepare.outputs.label_description }}
+        run: python3 scripts/ci/prerelease.py request-label

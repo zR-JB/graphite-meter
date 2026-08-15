@@ -55,6 +55,7 @@ version := env("VERSION", label)
 legal_version := env("VERSION", "development")
 tools_dir := ".tools"
 gitleaks_version := trim(shell("cat .gitleaks-version"))
+gitleaks_image := "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 staticcheck_version := "2025.1.1"
 govulncheck_version := "v1.6.0"
 
@@ -189,6 +190,11 @@ _pre-commit:
         exit 1
     fi
     "$gitleaks" protect --staged --redact -v
+    git diff --cached --check
+
+    if printf '%s\n' "$staged" | grep -qE '^(\.github/|\.githooks/|scripts/ci/|justfile$)'; then
+        just _pipeline-check-staged
+    fi
 
     if printf '%s\n' "$staged" | grep -qE '^(go/|client/src/auth/)'; then
         just check-generated
@@ -204,9 +210,44 @@ _pre-commit:
         just legal-check
     fi
 
+# Validate the staged index, not the working tree, before committing CI/control-plane changes.
+[private]
+_pipeline-check-staged:
+    #!/usr/bin/env sh
+    set -eu
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    tree=$(git write-tree)
+    git archive "$tree" | tar -x -C "$tmp"
+    (cd "$tmp" && python3 -m compileall -q scripts/ci && python3 scripts/ci/workflow_policy.py && python3 scripts/ci/test_pipeline.py)
+
+# Validate GitHub Actions structure, immutable external refs, trust boundaries, and publication ordering.
+[group('check')]
+workflow-check:
+    python3 scripts/ci/workflow_policy.py
+
+# Run dependency-free release/prerelease control-plane regressions.
+[group('check')]
+pipeline-test:
+    python3 -m compileall -q scripts/ci
+    python3 scripts/ci/test_pipeline.py
+
+# Run the same pinned Gitleaks container used by GitHub Actions.
+[group('check')]
+secret-scan-ci:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${CONTAINER_ENGINE:-docker}
+    command -v "$engine" >/dev/null 2>&1 || { echo "secret-scan-ci requires Docker or Podman" >&2; exit 2; }
+    expected=$(printf '%s' '{{ gitleaks_version }}' | sed 's/^v//')
+    actual=$("$engine" run --rm "{{ gitleaks_image }}" version | tr -d '\r')
+    [ "$actual" = "$expected" ] || { echo "Gitleaks image version $actual != expected $expected" >&2; exit 1; }
+    "$engine" run --rm -v "$PWD:/repo:ro" "{{ gitleaks_image }}" \
+      detect --source=/repo --no-banner --redact --exit-code 1
+
 # Run the fast deterministic developer gate after setup.
 [group('check')]
-check: doctor check-generated client-ci server-check server-unit staticcheck legal-check
+check: doctor workflow-check pipeline-test check-generated client-ci server-check server-unit staticcheck legal-check
 
 # Run client formatting, type checks, generated checks, and unit tests.
 [group('check')]

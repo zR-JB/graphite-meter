@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import ast
+import pathlib
+import shutil
+import sys
+import tempfile
+import unittest
+
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+sys.path.insert(0, str(HERE))
+
+from github_api import JsonValue
+from prerelease import (
+    PRERELEASE_CI_CONTROL_PLANE,
+    PRERELEASE_RE,
+    compact_label_description,
+    exact_file_set,
+    parse_label_description,
+    require_prerelease_ci_control_plane,
+)
+from verify_oci import (
+    VerificationError as OCIVerificationError,
+    validate_index_descriptors,
+    verify_archive_blobs,
+)
+from verify_release_assets import (
+    VerificationError as ReleaseVerificationError,
+    archive_names,
+    expected_release_artifacts,
+    verify_checksums,
+    verify_release_file_set,
+)
+from release import SEMVER_RE, STABLE_SEMVER_RE, require_compatible_release_tag
+from trust import (
+    TrustError,
+    require_ci_gate,
+    require_current_main,
+    require_exact_current_main,
+    require_file_matches_main,
+)
+from workflow_policy import (
+    PINNED_ACTION,
+    PolicyError,
+    check_candidate_boundary,
+    check_oci_build_action,
+    check_external_action_shas,
+    check_privileged_workflows,
+    check_runner_labels,
+    check_prerelease_request_workflow,
+    check_release_workflow,
+    check_repository,
+    check_trusted_checkout_refs,
+)
+
+MAIN = "1" * 40
+HEAD = "2" * 40
+OLD_MAIN = "3" * 40
+
+
+class PipelineTests(unittest.TestCase):
+    def test_pr_behind_current_main_is_rejected(self) -> None:
+        def fake(path: str, **_: object) -> JsonValue:
+            if path.endswith("/commits/main"):
+                return {"sha": MAIN}
+            if "/compare/" in path:
+                return {"behind_by": 3, "merge_base_commit": {"sha": OLD_MAIN}}
+            raise AssertionError(path)
+
+        with self.assertRaisesRegex(TrustError, "behind current main"):
+            require_current_main("zR-JB/graphite-meter", 101, HEAD, api=fake)
+
+    def test_pr_containing_current_main_is_accepted(self) -> None:
+        def fake(path: str, **_: object) -> JsonValue:
+            if path.endswith("/commits/main"):
+                return {"sha": MAIN}
+            if "/compare/" in path:
+                return {"behind_by": 0, "merge_base_commit": {"sha": MAIN}}
+            raise AssertionError(path)
+
+        self.assertEqual(require_current_main("zR-JB/graphite-meter", 101, HEAD, api=fake), MAIN)
+
+    def test_stable_release_requires_exact_current_main_tip(self) -> None:
+        self.assertEqual(require_exact_current_main("zR-JB/graphite-meter", MAIN, api=lambda *_a, **_k: {"sha": MAIN}), MAIN)
+        with self.assertRaisesRegex(TrustError, "no longer current main"):
+            require_exact_current_main("zR-JB/graphite-meter", OLD_MAIN, api=lambda *_a, **_k: {"sha": MAIN})
+
+    def test_candidate_workflow_must_match_current_main(self) -> None:
+        workflow_path = ".github/workflows/prerelease-candidate.yml"
+
+        def good(path: str, **_: object) -> JsonValue:
+            if f"contents/{workflow_path}" in path and "ref=" in path:
+                return {"sha": "a" * 40}
+            raise AssertionError(path)
+
+        self.assertEqual(require_file_matches_main("zR-JB/graphite-meter", workflow_path, HEAD, MAIN, api=good), "a" * 40)
+
+        def bad(path: str, **_: object) -> JsonValue:
+            if f"contents/{workflow_path}" in path:
+                return {"sha": ("b" if f"ref={HEAD}" in path else "a") * 40}
+            raise AssertionError(path)
+
+        with self.assertRaisesRegex(TrustError, "changes .*prerelease-candidate.yml"):
+            require_file_matches_main("zR-JB/graphite-meter", workflow_path, HEAD, MAIN, api=bad)
+
+    def test_ci_gate_is_bound_to_exact_successful_run_and_gate_job(self) -> None:
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            self.assertTrue(paginate)
+            if "/actions/workflows/ci.yml/runs?" in path:
+                return [{"workflow_runs": [
+                    {"id": 10, "run_number": 10, "run_attempt": 1, "head_sha": HEAD, "head_branch": "fix/test", "event": "pull_request", "status": "completed", "conclusion": "failure", "pull_requests": [{"number": 101}]},
+                    {"id": 11, "run_number": 11, "run_attempt": 2, "head_sha": HEAD, "head_branch": "fix/test", "event": "pull_request", "status": "completed", "conclusion": "success", "pull_requests": [{"number": 101}]},
+                ]}]
+            if "/actions/runs/11/jobs?" in path:
+                return [{"jobs": [{"name": "Gate", "status": "completed", "conclusion": "success"}]}]
+            raise AssertionError(path)
+
+        self.assertEqual(require_ci_gate("zR-JB/graphite-meter", HEAD, event="pull_request", branch="fix/test", pr_number=101, api=fake), 11)
+
+    def test_ci_gate_rejects_newer_failed_run_even_if_older_run_succeeded(self) -> None:
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            self.assertTrue(paginate)
+            if "/actions/workflows/ci.yml/runs?" in path:
+                return [{"workflow_runs": [
+                    {"id": 10, "run_number": 10, "run_attempt": 1, "head_sha": HEAD, "head_branch": "fix/test", "event": "pull_request", "status": "completed", "conclusion": "success", "pull_requests": [{"number": 101}]},
+                    {"id": 11, "run_number": 11, "run_attempt": 1, "head_sha": HEAD, "head_branch": "fix/test", "event": "pull_request", "status": "completed", "conclusion": "failure", "pull_requests": [{"number": 101}]},
+                ]}]
+            raise AssertionError(f"newer failed CI must stop before job lookup: {path}")
+
+        with self.assertRaisesRegex(TrustError, "latest CI run 11.*failure"):
+            require_ci_gate(
+                "zR-JB/graphite-meter",
+                HEAD,
+                event="pull_request",
+                branch="fix/test",
+                pr_number=101,
+                api=fake,
+            )
+
+    def test_ci_gate_rejects_successful_run_with_failed_gate(self) -> None:
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            if "/actions/workflows/ci.yml/runs?" in path:
+                return [{"workflow_runs": [{"id": 11, "run_number": 11, "run_attempt": 1, "head_sha": HEAD, "head_branch": "main", "event": "push", "status": "completed", "conclusion": "success", "pull_requests": []}]}]
+            if "/actions/runs/11/jobs?" in path:
+                return [{"jobs": [{"name": "Gate", "status": "completed", "conclusion": "failure"}]}]
+            raise AssertionError(path)
+
+        with self.assertRaisesRegex(TrustError, "Gate in CI run"):
+            require_ci_gate("zR-JB/graphite-meter", HEAD, event="push", branch="main", api=fake)
+
+    def test_label_metadata_is_compact_and_round_trips(self) -> None:
+        description = compact_label_description("v0.5.2-alpha.0", HEAD)
+        self.assertLessEqual(len(description), 100)
+        self.assertEqual(parse_label_description(description), ("v0.5.2-alpha.0", HEAD))
+
+    def test_stable_release_preflights_existing_tag_target(self) -> None:
+        def absent(path: str, **_: object) -> JsonValue:
+            self.assertIn("matching-refs/tags/v1.2.3", path)
+            return []
+
+        require_compatible_release_tag("zR-JB/graphite-meter", "v1.2.3", MAIN, api=absent)
+
+        def wrong(path: str, **_: object) -> JsonValue:
+            self.assertIn("matching-refs/tags/v1.2.3", path)
+            return [{"ref": "refs/tags/v1.2.3", "object": {"type": "commit", "sha": HEAD}}]
+
+        with self.assertRaisesRegex(SystemExit, "already exists"):
+            require_compatible_release_tag("zR-JB/graphite-meter", "v1.2.3", MAIN, api=wrong)
+
+        tag_object = "4" * 40
+        def annotated(path: str, **_: object) -> JsonValue:
+            if "matching-refs" in path:
+                return [{"ref": "refs/tags/v1.2.3", "object": {"type": "tag", "sha": tag_object}}]
+            if path.endswith(f"/git/tags/{tag_object}"):
+                return {"object": {"type": "commit", "sha": MAIN}}
+            raise AssertionError(path)
+
+        require_compatible_release_tag("zR-JB/graphite-meter", "v1.2.3", MAIN, api=annotated)
+
+    def test_release_semver_contracts(self) -> None:
+        for value in ("v0.5.2", "v0.5.2-alpha.0", "v10.12.30-rc.7"):
+            self.assertIsNotNone(SEMVER_RE.fullmatch(value), value)
+        self.assertIsNotNone(STABLE_SEMVER_RE.fullmatch("v0.5.2"))
+        for value in ("v0.5.2-alpha.0", "0.5.2", "v0.5", "v0.5.2-preview.1", "v01.5.2", "v0.05.2", "v0.5.02"):
+            self.assertIsNone(STABLE_SEMVER_RE.fullmatch(value), value)
+        for value in ("v01.5.2-alpha.0", "v0.5.2-alpha.00", "v0.05.2-rc.1"):
+            self.assertIsNone(SEMVER_RE.fullmatch(value), value)
+            self.assertIsNone(PRERELEASE_RE.fullmatch(value), value)
+
+    def test_external_actions_require_exact_40_character_sha(self) -> None:
+        valid = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
+        broken = "docker/setup-buildx-action@bb05f3f5519dd7d3ba754cc423b652a5edd6d2c"
+        self.assertIsNotNone(PINNED_ACTION.fullmatch(valid))
+        self.assertIsNone(PINNED_ACTION.fullmatch(broken))
+
+    def test_prerelease_gate_control_plane_is_bound_to_current_main(self) -> None:
+        from unittest.mock import patch
+
+        required = {
+            ".github/workflows/ci.yml",
+            ".github/workflows/prerelease-candidate.yml",
+            ".github/ci-paths.yml",
+            ".github/actions/setup-project/action.yml",
+            "justfile",
+            "scripts/ci/workflow_policy.py",
+            "scripts/ci/test_pipeline.py",
+        }
+        self.assertTrue(required.issubset(set(PRERELEASE_CI_CONTROL_PLANE)))
+        with patch("prerelease.require_file_matches_main") as match_file:
+            require_prerelease_ci_control_plane("zR-JB/graphite-meter", HEAD, MAIN)
+        self.assertEqual(match_file.call_count, len(PRERELEASE_CI_CONTROL_PLANE))
+        self.assertEqual(
+            {call.args[1] for call in match_file.call_args_list},
+            set(PRERELEASE_CI_CONTROL_PLANE),
+        )
+
+    def test_candidate_artifact_file_set_rejects_extras_and_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            (root / "candidate.json").write_text("{}")
+            exact_file_set(root, {"candidate.json"}, "candidate")
+            (root / "extra").write_text("x")
+            with self.assertRaisesRegex(SystemExit, "candidate files"):
+                exact_file_set(root, {"candidate.json"}, "candidate")
+
+    def test_repository_policy_passes_canonical_tree(self) -> None:
+        check_repository(ROOT)
+
+    def _copy_policy_tree(self) -> pathlib.Path:
+        td = tempfile.mkdtemp()
+        dst = pathlib.Path(td)
+        shutil.copytree(ROOT / ".github", dst / ".github")
+        shutil.copytree(ROOT / "scripts" / "ci", dst / "scripts" / "ci")
+        (dst / "justfile").write_text((ROOT / "justfile").read_text())
+        return dst
+
+    def test_ci_python_functions_are_fully_annotated(self) -> None:
+        missing: list[str] = []
+        for path in sorted((ROOT / "scripts/ci").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if node.returns is None:
+                    missing.append(f"{path.name}:{node.lineno}:{node.name}:return")
+                arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+                for argument in arguments:
+                    if argument.arg not in {"self", "cls"} and argument.annotation is None:
+                        missing.append(
+                            f"{path.name}:{node.lineno}:{node.name}:{argument.arg}"
+                        )
+                if node.args.vararg is not None and node.args.vararg.annotation is None:
+                    missing.append(
+                        f"{path.name}:{node.lineno}:{node.name}:*{node.args.vararg.arg}"
+                    )
+                if node.args.kwarg is not None and node.args.kwarg.annotation is None:
+                    missing.append(
+                        f"{path.name}:{node.lineno}:{node.name}:**{node.args.kwarg.arg}"
+                    )
+            self.assertNotIn("type:" + " ignore", path.read_text(encoding="utf-8"), path.name)
+        self.assertEqual(missing, [])
+
+    def test_external_action_policy_has_no_second_pin_database(self) -> None:
+        self.assertFalse((ROOT / "scripts/ci/action-pins.json").exists())
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        text = path.read_text()
+        text = text.replace(
+            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            "actions/checkout@v7",
+            1,
+        )
+        path.write_text(text)
+        with self.assertRaisesRegex(PolicyError, "full 40-character commit SHA"):
+            check_external_action_shas(root)
+
+    def test_github_api_is_the_single_json_decode_boundary(self) -> None:
+        violations: list[str] = []
+        for path in sorted((ROOT / "scripts/ci").glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                if (
+                    isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "json"
+                    and node.func.attr == "loads"
+                    and path.name != "github_api.py"
+                ):
+                    violations.append(f"{path.name}:{node.lineno}")
+        self.assertEqual(violations, [])
+
+    def test_ci_control_plane_has_no_standalone_shell_scripts(self) -> None:
+        shell_files = sorted(
+            path.name
+            for pattern in ("*.sh", "*.bash")
+            for path in (ROOT / "scripts/ci").glob(pattern)
+        )
+        self.assertEqual(shell_files, [])
+
+    def test_checksum_verifier_accepts_file_and_rejects_path_escape(self) -> None:
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as td:
+            dist = pathlib.Path(td)
+            payload = dist / "artifact.bin"
+            payload.write_bytes(b"graphite-meter")
+            digest = hashlib.sha256(payload.read_bytes()).hexdigest()
+            (dist / "checksums.txt").write_text(f"{digest}  artifact.bin\n")
+            checksummed = verify_checksums(dist)
+            self.assertEqual(checksummed, {"artifact.bin"})
+            verify_release_file_set(dist, checksummed)
+
+            (dist / "extra.bin").write_bytes(b"not checksummed")
+            with self.assertRaisesRegex(ReleaseVerificationError, "unchecksummed=extra.bin"):
+                verify_release_file_set(dist, checksummed)
+            (dist / "extra.bin").unlink()
+
+            (dist / "checksums.txt").write_text(f"{digest}  ../artifact.bin\n")
+            with self.assertRaisesRegex(ReleaseVerificationError, "unsafe checksums.txt path"):
+                verify_checksums(dist)
+
+            (dist / "checksums.txt").write_text(f"{digest}  artifact\tname.bin\n")
+            with self.assertRaisesRegex(ReleaseVerificationError, "unsafe release artifact name"):
+                verify_checksums(dist)
+
+    def test_release_archive_verifier_rejects_traversal_and_links(self) -> None:
+        import io
+        import tarfile
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            directory = pathlib.Path(td)
+            bad_tar = directory / "bad.tar.gz"
+            with tarfile.open(bad_tar, "w:gz") as archive:
+                info = tarfile.TarInfo("../escape")
+                payload = b"x"
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+            with self.assertRaisesRegex(ReleaseVerificationError, "unsafe archive path"):
+                archive_names(bad_tar)
+
+            link_tar = directory / "link.tar.gz"
+            with tarfile.open(link_tar, "w:gz") as archive:
+                info = tarfile.TarInfo("bundle/link")
+                info.type = tarfile.SYMTYPE
+                info.linkname = "../../outside"
+                archive.addfile(info)
+            with self.assertRaisesRegex(ReleaseVerificationError, "link/device"):
+                archive_names(link_tar)
+
+            bad_zip = directory / "bad.zip"
+            with zipfile.ZipFile(bad_zip, "w") as archive:
+                archive.writestr("..\\escape", b"x")
+            with self.assertRaisesRegex(ReleaseVerificationError, "unsafe archive path"):
+                archive_names(bad_zip)
+
+    def test_release_artifact_set_is_derived_from_supported_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            targets = pathlib.Path(td) / "targets.txt"
+            targets.write_text("linux/amd64\nwindows/amd64\n", encoding="utf-8")
+            self.assertEqual(
+                expected_release_artifacts("1.2.3", targets),
+                {
+                    "graphite-meter_1.2.3_corresponding-source.tar.gz",
+                    "graphite-meter-client_1.2.3_linux_amd64.tar.gz",
+                    "graphite-meter-client_1.2.3_windows_amd64.zip",
+                },
+            )
+
+    def test_oci_index_requires_linked_buildkit_provenance(self) -> None:
+        amd_digest = "sha256:" + "a" * 64
+        arm_digest = "sha256:" + "b" * 64
+        manifest_type = "application/vnd.oci.image.manifest.v1+json"
+        index: JsonValue = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {"mediaType": manifest_type, "digest": amd_digest, "platform": {"os": "linux", "architecture": "amd64"}},
+                {"mediaType": manifest_type, "digest": arm_digest, "platform": {"os": "linux", "architecture": "arm64"}},
+                {
+                    "mediaType": manifest_type,
+                    "digest": "sha256:" + "c" * 64,
+                    "platform": {"os": "unknown", "architecture": "unknown"},
+                    "annotations": {
+                        "vnd.docker.reference.type": "attestation-manifest",
+                        "vnd.docker.reference.digest": amd_digest,
+                    },
+                },
+                {
+                    "mediaType": manifest_type,
+                    "digest": "sha256:" + "d" * 64,
+                    "platform": {"os": "unknown", "architecture": "unknown"},
+                    "annotations": {
+                        "vnd.docker.reference.type": "attestation-manifest",
+                        "vnd.docker.reference.digest": arm_digest,
+                    },
+                },
+            ]
+        }
+        from github_api import expect_object
+
+        self.assertEqual(
+            validate_index_descriptors(expect_object(index, "test index")),
+            {"amd64": amd_digest, "arm64": arm_digest},
+        )
+
+        manifests = expect_object(index, "test index")["manifests"]
+        assert isinstance(manifests, list)
+        bad_missing = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": manifests[:-1],
+        }
+        with self.assertRaisesRegex(OCIVerificationError, "one provenance attestation"):
+            validate_index_descriptors(bad_missing)
+
+        bad_link = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [*manifests[:-1], {
+            "mediaType": manifest_type,
+            "digest": "sha256:" + "e" * 64,
+            "platform": {"os": "unknown", "architecture": "unknown"},
+            "annotations": {
+                "vnd.docker.reference.type": "attestation-manifest",
+                "vnd.docker.reference.digest": "sha256:" + "f" * 64,
+            },
+        }]}
+        with self.assertRaisesRegex(OCIVerificationError, "one provenance attestation"):
+            validate_index_descriptors(bad_link)
+
+        bad_extra = {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [*manifests, {
+            "mediaType": manifest_type,
+            "digest": "sha256:" + "e" * 64,
+            "platform": {"os": "linux", "architecture": "s390x"},
+        }]}
+        with self.assertRaisesRegex(OCIVerificationError, "unexpected platform"):
+            validate_index_descriptors(bad_extra)
+
+    def test_policy_rejects_floating_runner_major(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        path.write_text(path.read_text().replace("runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", 1))
+        with self.assertRaisesRegex(PolicyError, "pin the Ubuntu major image"):
+            check_runner_labels(root)
+
+    def test_policy_rejects_secret_reference_in_max_provenance_build(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/actions/build-oci/action.yml"
+        path.write_text(path.read_text() + "\n# ${{ secrets.EXAMPLE }}\n")
+        with self.assertRaisesRegex(PolicyError, "must not pass GitHub secrets"):
+            check_oci_build_action(root)
+
+    def test_policy_requires_explicit_max_oci_provenance(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/actions/build-oci/action.yml"
+        path.write_text(path.read_text().replace("        provenance: mode=max\n", "", 1))
+        with self.assertRaisesRegex(PolicyError, "OCI provenance invariant"):
+            check_oci_build_action(root)
+
+    def test_oci_verifier_forces_full_multi_image_copy(self) -> None:
+        from unittest.mock import patch
+
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(*args: str) -> str:
+            calls.append(args)
+            for argument in args:
+                if argument.endswith(":/work/oci-copy") and not argument.startswith("dir:"):
+                    host_path = pathlib.Path(argument[: -len(":/work/oci-copy")])
+                    (host_path / "oci-layout").write_text("{}", encoding="utf-8")
+                    (host_path / "index.json").write_text("{}", encoding="utf-8")
+            return ""
+
+        with tempfile.TemporaryDirectory() as td:
+            archive = pathlib.Path(td) / "image.oci.tar"
+            archive.write_bytes(b"placeholder")
+            with patch("verify_oci.run", side_effect=fake_run):
+                verify_archive_blobs("docker", "skopeo@example", archive)
+
+        self.assertTrue(
+            any("copy" in call and "--all" in call for call in calls),
+            "OCI verification must force Skopeo to read every referenced blob",
+        )
+
+
+    def test_policy_rejects_missing_last_mile_source_freshness(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_publish-oci.yml"
+        path.write_text(
+            path.read_text().replace(
+                'gh api "repos/$REPOSITORY/commits/main"',
+                'echo "skip current-main API check"',
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "last-mile source freshness invariant"):
+            check_privileged_workflows(root)
+
+    def test_policy_rejects_unbound_prerelease_request_dispatch_sha(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-request.yml"
+        path.write_text(
+            path.read_text().replace(
+                "EVENT_SHA: ${{ github.sha }}",
+                "EVENT_SHA: ${{ inputs.sha }}",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "current-main request invariant"):
+            check_prerelease_request_workflow(root)
+
+    def test_policy_rejects_prerelease_publisher_head_checkout(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-publish.yml"
+        text = path.read_text().replace(
+            "ref: ${{ github.sha }}",
+            "ref: ${{ github.event.workflow_run.head_sha }}",
+            1,
+        )
+        path.write_text(text)
+        with self.assertRaisesRegex(PolicyError, "non-trusted checkout ref"):
+            check_trusted_checkout_refs(root)
+
+    def test_policy_rejects_missing_exact_tag_publication_serialization(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_publish-oci.yml"
+        path.write_text(
+            path.read_text().replace(
+                "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}",
+                "group: publish-oci-${{ github.repository }}",
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "serialize publication by exact destination tag"):
+            check_privileged_workflows(root)
+
+    def test_policy_rejects_pr_controlled_candidate_action(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-candidate.yml"
+        path.write_text(path.read_text().replace("./.trusted-ci/.github/actions/setup-project", "./.github/actions/setup-project"))
+        with self.assertRaises(PolicyError):
+            check_candidate_boundary(root)
+
+    def test_policy_rejects_published_only_release_lookup_for_draft_retry(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_publish-release.yml"
+        text = path.read_text()
+        text = text.replace(
+            'release_pages=$(gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100")',
+            'release_pages=$(gh api "repos/$REPOSITORY/releases/tags/$TAG")',
+        )
+        path.write_text(text)
+        with self.assertRaises(PolicyError):
+            check_privileged_workflows(root)
+
+    def test_policy_rejects_tag_triggered_stable_release(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release.yml"
+        path.write_text(path.read_text().replace("on:\n  workflow_dispatch:", "on:\n  push:\n    tags: ['v*']\n  workflow_dispatch:"))
+        with self.assertRaises(PolicyError):
+            check_release_workflow(root)
+
+
+if __name__ == "__main__":
+    unittest.main()

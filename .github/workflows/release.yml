@@ -1,201 +1,246 @@
 name: Release
+run-name: Release · ${{ inputs.mode }} · ${{ inputs.version }} · ${{ github.sha }}
 
-# Production publishing is tag-only. workflow_dispatch is deliberately a
-# validation build from trusted main and never receives publication rights.
+# Stable release publication is manual and must execute from protected current main.
+# There is intentionally no tag-push trigger, so an old tag cannot resurrect old workflow code.
 on:
-  push:
-    tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       version:
-        description: SemVer test version for a trusted-main dry run, e.g. v0.5.2
+        description: Stable SemVer tag, e.g. v0.5.2
         required: true
         type: string
+      mode:
+        description: Validate only, or publish after protected-environment approval
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - publish
 
 permissions:
   contents: read
   actions: read
-  checks: read
   security-events: read
 
+# One stable release transaction at a time. This also avoids confusing interleaved UI state.
 concurrency:
-  group: release-${{ inputs.version || github.ref_name }}
+  group: stable-release-${{ github.repository }}
+  cancel-in-progress: false
 
 env:
-  # Official Quay currently publishes v1.22.2 as its newest stable Skopeo
-  # image. Keep this digest immutable and verify the binary at runtime. Move
-  # this single reference to the official v1.23.0 image when that image is
-  # published; do not substitute an unverified digest.
   SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
   SKOPEO_VERSION: 1.22.2
 
 jobs:
   guard:
-    name: Release guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Guard trusted current-main release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     outputs:
       sha: ${{ steps.guard.outputs.sha }}
       tag: ${{ steps.guard.outputs.tag }}
       version: ${{ steps.guard.outputs.version }}
       series: ${{ steps.guard.outputs.series }}
-      stable: ${{ steps.guard.outputs.stable }}
-      dry_run: ${{ steps.guard.outputs.dry_run }}
+      publish: ${{ steps.guard.outputs.publish }}
     steps:
-      - name: Checkout trusted tag
-        if: github.event_name == 'push'
+      - name: Checkout exact workflow-dispatch SHA
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
-      - name: Checkout trusted main for dry run
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/heads/main
-          fetch-depth: 0
-          persist-credentials: false
+
       - id: guard
-        name: Verify exact release source and checks
+        name: Require current main, Gate, CodeQL, and stable SemVer
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
           REF: ${{ github.ref }}
-          REF_NAME: ${{ github.ref_name }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
           REQUESTED_VERSION: ${{ inputs.version }}
-        run: scripts/release-guard.sh
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: python3 scripts/ci/release.py guard
 
   build:
-    name: Trusted release build and verification
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    name: Build and verify exact release payload
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     needs: guard
     permissions:
       contents: read
+    outputs:
+      oci_sha256: ${{ steps.oci-digest.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout guarded release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
-      - uses: zR-JB/graphite-meter/.github/actions/setup-project@f93944ad191f8a55e74f49b2de92ed1a1747692a
+
+      - name: Set up release toolchain without dependency caches
+        uses: ./.github/actions/setup-project
         with:
           go: 'true'
+          go-cache: 'false'
           bun: 'true'
           client-deps: 'true'
           bun-cache: 'false'
-      - id: versions
-        name: Read repository toolchain versions
-        shell: bash
-        run: echo "bun=$(tr -d '[:space:]' < .bun-version)" >> "$GITHUB_OUTPUT"
+
       - name: Generate release legal outputs
         env:
           VERSION: ${{ needs.guard.outputs.version }}
         run: just legal-generate
+
       - name: Build exact production client and server
         run: just release-build "${{ needs.guard.outputs.version }}"
-      - name: Build all native release artifacts
+
+      - name: Build native artifacts and corresponding source
         run: just release-artifacts "${{ needs.guard.outputs.version }}"
+
       - name: Verify release package invariants
         run: just release-check "${{ needs.guard.outputs.version }}"
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: Build linux/amd64 + linux/arm64 OCI archive
+        uses: ./.github/actions/build-oci
         with:
-          platforms: arm64
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Build multi-platform OCI archive
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: container/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          outputs: type=oci,dest=${{ runner.temp }}/graphite-meter.oci.tar
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ needs.guard.outputs.sha }}
-            org.opencontainers.image.version=${{ needs.guard.outputs.version }}
-            org.opencontainers.image.licenses=AGPL-3.0-or-later
-          build-args: |
-            VERSION=${{ needs.guard.outputs.version }}
-            GM_CLIENT_BUILD_LABEL=prod
-            GM_CLIENT_VALIDATE=0
-            BUN_VERSION=${{ steps.versions.outputs.bun }}
-      - name: Verify OCI archive and release artifacts
+          version: ${{ needs.guard.outputs.version }}
+          revision: ${{ needs.guard.outputs.sha }}
+          output: ${{ runner.temp }}/release-image/graphite-meter.oci.tar
+          client-validate: '0'
+
+      - name: Verify OCI platforms and provenance labels
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
+          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
+        run: >-
+          python3 scripts/ci/verify_oci.py
+          "${{ needs.guard.outputs.version }}"
+          "${{ needs.guard.outputs.sha }}"
+          "$RUNNER_TEMP/release-image/graphite-meter.oci.tar"
+
+      - name: Verify native artifacts and embedded versions
         env:
           RELEASE_DIST: go/dist
-        run: scripts/verify-release.sh "${{ needs.guard.outputs.version }}" "${{ runner.temp }}/graphite-meter.oci.tar"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        run: python3 scripts/ci/verify_release_assets.py "${{ needs.guard.outputs.version }}"
+
+      - id: oci-digest
+        name: Record OCI archive SHA-256
+        run: |
+          set -euo pipefail
+          digest=$(sha256sum "$RUNNER_TEMP/release-image/graphite-meter.oci.tar" | awk '{print $1}')
+          echo "sha256=$digest" >>"$GITHUB_OUTPUT"
+          echo "::notice::release OCI handoff sha256:$digest"
+
+      - name: Upload verified release image handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-image
-          path: ${{ runner.temp }}/graphite-meter.oci.tar
+          path: ${{ runner.temp }}/release-image/graphite-meter.oci.tar
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          overwrite: true
+
+      - name: Upload verified release asset handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts
           path: go/dist/*
           if-no-files-found: error
           retention-days: 1
+          overwrite: true
 
-  publish:
-    name: Publish exact image
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  approval:
+    name: Approve stable publication
+    if: needs.guard.outputs.publish == 'true'
     needs: [guard, build]
-    if: needs.guard.outputs.dry_run != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     environment: ghcr-release
-    permissions:
-      actions: read
-      packages: write
+    permissions: {}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Publication authorization granted
+        run: echo "::notice::protected release environment approved; final trust recheck starts next"
+
+  recheck:
+    name: Recheck mutable release trust after approval
+    if: needs.guard.outputs.publish == 'true'
+    needs: [guard, build, approval]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      security-events: read
+    steps:
+      - name: Checkout trusted current release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: release-image
-          path: ${{ runner.temp }}/release-image
-      - name: Publish image and stable aliases
+          ref: ${{ needs.guard.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Reconfirm source is still current main with Gate and CodeQL
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          VERSION: ${{ needs.guard.outputs.version }}
-          SERIES: ${{ needs.guard.outputs.series }}
-          STABLE: ${{ needs.guard.outputs.stable }}
-        run: |
-          set -euo pipefail
-          IMAGE="ghcr.io/${REPOSITORY,,}"
-          docker run --rm --entrypoint /bin/sh \
-            -e GH_TOKEN -e GITHUB_ACTOR -e IMAGE -e VERSION -e SERIES -e STABLE \
-            -v "$RUNNER_TEMP/release-image:/work:ro" \
-            "$SKOPEO_IMAGE" -ec '
-              auth_dir=$(mktemp -d)
-              trap "rm -rf \"$auth_dir\"" EXIT
-              export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
-              printf "%s" "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-              skopeo copy --all oci-archive:/work/graphite-meter.oci.tar "docker://$IMAGE:$VERSION"
-              if [ "$STABLE" = true ]; then
-                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:$SERIES"
-                skopeo copy --all "docker://$IMAGE:$VERSION" "docker://$IMAGE:latest"
-              fi
-              skopeo logout ghcr.io
-            '
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ needs.guard.outputs.sha }}
+          REF: ${{ github.ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REQUESTED_VERSION: ${{ needs.guard.outputs.tag }}
+          RELEASE_MODE: publish
+        run: python3 scripts/ci/release.py recheck
 
-  github-release:
-    name: Create stable GitHub Release
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [guard, publish]
-    if: needs.guard.outputs.stable == 'true' && needs.guard.outputs.dry_run != 'true'
+  publish-image:
+    name: Publish exact version image
+    if: needs.guard.outputs.publish == 'true'
+    needs: [guard, build, recheck]
+    uses: ./.github/workflows/_publish-oci.yml
     permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      packages: write
+    with:
+      artifact: release-image
+      tag: ${{ needs.guard.outputs.version }}
+      expected_sha256: ${{ needs.build.outputs.oci_sha256 }}
+      source_sha: ${{ needs.guard.outputs.sha }}
+      trusted_main_sha: ${{ needs.guard.outputs.sha }}
+
+  publish-release:
+    name: Publish verified stable GitHub Release
+    if: needs.guard.outputs.publish == 'true'
+    needs: [guard, build, publish-image]
+    uses: ./.github/workflows/_publish-release.yml
+    permissions:
+      actions: read
       contents: write
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-artifacts
-          path: ${{ runner.temp }}/release-artifacts
-      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          tag_name: ${{ needs.guard.outputs.tag }}
-          generate_release_notes: true
-          files: ${{ runner.temp }}/release-artifacts/*
+    with:
+      artifact: release-artifacts
+      tag: ${{ needs.guard.outputs.tag }}
+      target_sha: ${{ needs.guard.outputs.sha }}
+
+  promote:
+    name: Promote stable aliases without rollback
+    if: needs.guard.outputs.publish == 'true'
+    needs: [guard, publish-release]
+    uses: ./.github/workflows/_promote-oci.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      version: ${{ needs.guard.outputs.version }}
+      series: ${{ needs.guard.outputs.series }}

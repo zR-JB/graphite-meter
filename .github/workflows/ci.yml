@@ -1,4 +1,5 @@
 name: CI
+run-name: CI · ${{ github.event_name }} · ${{ github.ref_name }} · ${{ github.sha }}
 
 on:
   pull_request:
@@ -13,13 +14,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Plan is deliberately the only path-sensitive job. Every substantive check
-# remains visible to branch protection through Gate, including when skipped.
 jobs:
   plan:
     name: Plan and repository safety
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       core: ${{ steps.filter.outputs.core }}
       go: ${{ steps.filter.outputs.go }}
@@ -30,340 +32,204 @@ jobs:
       release: ${{ steps.filter.outputs.release }}
       security: ${{ steps.filter.outputs.security }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout exact CI source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Reject certificates and private keys
-        shell: bash
-        run: |
-          set -euo pipefail
-          pattern='(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|\.(pem|key|crt|cer|der|csr|p12|pfx|pkcs8|jks|keystore)$'
-          files=$(git ls-files | grep -Ei "$pattern" || true)
-          if [[ -n "$files" ]]; then
-            echo "::error::TLS certificate or key material is tracked"
-            printf '%s\n' "$files"
-            exit 1
-          fi
-          pem=$(git grep -Il -E -e '-----BEGIN (CERTIFICATE|([^ -]+ )*PRIVATE KEY)-----' -- . || true)
-          if [[ -n "$pem" ]]; then
-            echo "::error::PEM certificate or private-key material is tracked"
-            printf '%s\n' "$pem"
-            exit 1
-          fi
-      - name: Validate external GitHub Action SHAs
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import pathlib
-          import re
-          import sys
 
-          root = pathlib.Path('.')
-          files = []
-          files.extend(root.glob('.github/workflows/**/*.yml'))
-          files.extend(root.glob('.github/workflows/**/*.yaml'))
-          files.extend(root.glob('.github/actions/**/action.yml'))
-          seen = set()
-          for path in files:
-              if path.is_file():
-                  seen.add(path)
+      - name: Enforce repository and workflow security policy
+        run: python3 scripts/ci/workflow_policy.py
 
-          pattern = re.compile(r'^\s*(?:-\s*)?uses:\s*(\S+)\s*(?:#.*)?$')
-          local = re.compile(r'^\./[A-Za-z0-9_./-]+$')
-          external = re.compile(r'^(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@[0-9a-f]{40}$')
-          violations = []
-          for path in sorted(seen):
-              for lineno, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
-                  match = pattern.match(line)
-                  if not match:
-                      continue
-                  ref = match.group(1)
-                  if local.fullmatch(ref) or external.fullmatch(ref):
-                      continue
-                  violations.append((path, lineno, ref))
-
-          if violations:
-              print('workflow safety: malformed external action refs found', file=sys.stderr)
-              for path, lineno, ref in violations:
-                  print(f'  {path}:{lineno}: {ref}', file=sys.stderr)
-              raise SystemExit(1)
-
-          print('workflow safety: all external action refs are pinned to 40-character SHAs')
-          PY
       - id: filter
+        name: Determine affected CI areas
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          filters: |
-            workflow: &workflow
-              - ".github/workflows/**"
-              - ".github/actions/**"
-              - "justfile"
-              - ".bun-version"
-              - ".just-version"
-              - ".gitleaks-version"
-              - "go/go.mod"
-              - "go/go.sum"
-            core:
-              - *workflow
-              - ".githooks/**"
-              - "api/**"
-              - "client/**"
-              - "go/**"
-              - "legal/**"
-              - "LICENSE"
-              - "COPYRIGHT"
-              - "scripts/**"
-              - "container/**"
-            go:
-              - *workflow
-              - "api/**"
-              - "go/**"
-              - "client/src/auth/**"
-            browser:
-              - *workflow
-              - "api/**"
-              - "client/**"
-            tui:
-              - *workflow
-              - "go/**"
-              - "scripts/tui-targets.txt"
-              - "scripts/package-tui.sh"
-            integration:
-              - *workflow
-              - "api/**"
-              - "client/**"
-              - "go/**"
-              - "container/**"
-            smoke:
-              - *workflow
-              - "api/**"
-              - "client/**"
-              - "go/**"
-              - "container/**"
-              - "legal/**"
-              - "LICENSE"
-              - "COPYRIGHT"
-              - "scripts/verify-container.sh"
-              - ".bun-version"
-            release:
-              - *workflow
-              - "api/**"
-              - "client/**"
-              - "go/**"
-              - "legal/**"
-              - "container/**"
-              - "scripts/**"
-              - "LICENSE"
-              - "COPYRIGHT"
-            security:
-              - *workflow
-              - "go/go.mod"
-              - "go/go.sum"
-              - "go/**"
+          filters: .github/ci-paths.yml
+
+      - name: Summarize CI plan
+        env:
+          CORE: ${{ steps.filter.outputs.core }}
+          GO: ${{ steps.filter.outputs.go }}
+          BROWSER: ${{ steps.filter.outputs.browser }}
+          TUI: ${{ steps.filter.outputs.tui }}
+          INTEGRATION: ${{ steps.filter.outputs.integration }}
+          SMOKE: ${{ steps.filter.outputs.smoke }}
+          RELEASE: ${{ steps.filter.outputs.release }}
+          SECURITY: ${{ steps.filter.outputs.security }}
+        run: |
+          cat >>"$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
+          ### CI execution plan
+
+          Source: \`${GITHUB_SHA}\`
+
+          | Area | Selected |
+          |---|---|
+          | Core | \`$CORE\` |
+          | Go race/coverage | \`$GO\` |
+          | Browser | \`$BROWSER\` |
+          | TUI cross-build | \`$TUI\` |
+          | Integration | \`$INTEGRATION\` |
+          | Container smoke | \`$SMOKE\` |
+          | Release package checks | \`$RELEASE\` |
+          | Vulnerability scan | \`$SECURITY\` |
+          | Secret scan | always |
+          EOF_SUMMARY
 
   core:
     name: Core checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.core == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-          bun: 'true'
-          client-deps: 'true'
-          staticcheck: 'true'
-      - name: Fast repository gates
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up core toolchain
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true'}
+      - name: Run deterministic repository gate
         run: just check
 
   go:
     name: Go race and coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.go == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-      - name: Race tests and coverage floor
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Go
+        uses: ./.github/actions/setup-project
+        with: {go: 'true'}
+      - name: Run race detector and coverage floor
         run: just server-test
 
   browser:
     name: Browser (${{ matrix.project }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.browser == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        project: [chromium, firefox]
+      matrix: {project: [chromium, firefox]}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          bun: 'true'
-          client-deps: 'true'
-      - name: Install browser
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up browser test toolchain
+        uses: ./.github/actions/setup-project
+        with: {bun: 'true', client-deps: 'true'}
+      - name: Install ${{ matrix.project }} runtime
         run: cd client && bunx playwright install --with-deps ${{ matrix.project }}
-      - name: Stubbed browser suite
+      - name: Run ${{ matrix.project }} browser suite
         run: just client-browser ${{ matrix.project }}
 
   tui:
     name: TUI cross-build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.tui == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-      - name: Build every supported TUI target
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Go
+        uses: ./.github/actions/setup-project
+        with: {go: 'true'}
+      - name: Cross-build all supported TUI targets
         run: just tui-cross-build
 
   integration:
     name: Browser/server E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: plan
     if: needs.plan.outputs.integration == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-          bun: 'true'
-          client-deps: 'true'
-      - name: Install browsers
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up E2E toolchain
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', bun: 'true', client-deps: 'true'}
+      - name: Install Chromium and Firefox
         run: cd client && bunx playwright install --with-deps chromium firefox
-      - name: Real transports against a real server
+      - name: Run browser/server transport E2E
         run: just client-e2e
 
   smoke:
     name: Container smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: plan
     if: needs.plan.outputs.smoke == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - id: versions
-        name: Read repository toolchain versions
-        shell: bash
-        run: echo "bun=$(tr -d '[:space:]' < .bun-version)" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Build image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: container/Dockerfile
-          load: true
-          tags: graphite-meter:smoke
-          build-args: |
-            BUN_VERSION=${{ steps.versions.outputs.bun }}
-            VERSION=0.0.0-ci
-            GM_CLIENT_BUILD_LABEL=ci-${{ github.sha }}
-            GM_CLIENT_VALIDATE=0
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=0.0.0-ci
-            org.opencontainers.image.licenses=AGPL-3.0-or-later
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Verify image
-        env:
-          GM_VERIFY_VERSION: 0.0.0-ci+ci-${{ github.sha }}
-          GM_VERIFY_LABEL: ci-${{ github.sha }}
-        run: scripts/verify-container.sh graphite-meter:smoke
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Just
+        uses: ./.github/actions/setup-project
+      - name: Build and verify local container
+        run: just container-smoke
 
   release:
     name: Release package checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: plan
     if: needs.plan.outputs.release == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-          bun: 'true'
-          client-deps: 'true'
-      - name: Release artifact invariants
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up release test toolchain
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', bun: 'true', client-deps: 'true'}
+      - name: Build and verify representative release packages
         run: just release-check
 
   security:
     name: Security scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.security == 'true'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/setup-project
-        with:
-          go: 'true'
-          govulncheck: 'true'
-      - name: Vulnerability scan
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up pinned vulnerability scanner
+        uses: ./.github/actions/setup-project
+        with: {go: 'true', govulncheck: 'true'}
+      - name: Run Go vulnerability scan
         run: just security
 
   secret-scan:
     name: Secret Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-    permissions:
-      contents: read
+    permissions: {contents: read}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Verify pinned Gitleaks image
-        env:
-          GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          GITLEAKS_VERSION: v8.30.1
-        run: |
-          set -euo pipefail
-          test "$(tr -d '[:space:]' < .gitleaks-version)" = "$GITLEAKS_VERSION"
-          docker run --rm "$GITLEAKS_IMAGE" version | grep -Fx 'v8.30.1'
-      - name: Scan repository for secrets
-        env:
-          GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-        run: |
-          set -euo pipefail
-          docker run --rm -v "$GITHUB_WORKSPACE:/repo:ro" "$GITLEAKS_IMAGE" \
-            detect --source=/repo --no-banner --redact --exit-code 1
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Just
+        uses: ./.github/actions/setup-project
+      - name: Scan repository with pinned Gitleaks image
+        run: just secret-scan-ci
 
   gate:
     name: Gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: always()
     needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
     steps:
-      - name: Require all selected checks to pass
+      - name: Summarize and require all selected jobs
         env:
           PLAN: ${{ needs.plan.result }}
           CORE: ${{ needs.core.result }}
@@ -377,9 +243,28 @@ jobs:
           SECRET_SCAN: ${{ needs.secret-scan.result }}
         run: |
           set -eu
+          cat >>"$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
+          ### CI Gate
+
+          | Job | Result |
+          |---|---|
+          | Plan | \`$PLAN\` |
+          | Core | \`$CORE\` |
+          | Go | \`$GO\` |
+          | Browser | \`$BROWSER\` |
+          | TUI | \`$TUI\` |
+          | Integration | \`$INTEGRATION\` |
+          | Container smoke | \`$SMOKE\` |
+          | Release packages | \`$RELEASE\` |
+          | Security | \`$SECURITY\` |
+          | Secret scan | \`$SECRET_SCAN\` |
+          EOF_SUMMARY
+          failed=0
           for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
-            case "$result" in
-              success|skipped) ;;
-              *) echo "CI gate failed: $result" >&2; exit 1 ;;
-            esac
+            case "$result" in success|skipped) ;; *) failed=1 ;; esac
           done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::CI Gate failed; inspect the summary table for the failing job"
+            exit 1
+          fi
+          echo "::notice::CI Gate passed for $GITHUB_SHA"
