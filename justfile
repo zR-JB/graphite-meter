@@ -239,9 +239,9 @@ secret-scan-ci:
     set -eu
     engine=${CONTAINER_ENGINE:-docker}
     command -v "$engine" >/dev/null 2>&1 || { echo "secret-scan-ci requires Docker or Podman" >&2; exit 2; }
-    expected=$(printf '%s' '{{ gitleaks_version }}' | sed 's/^v//')
+    expected='{{ gitleaks_version }}'
     actual=$("$engine" run --rm "{{ gitleaks_image }}" version | tr -d '\r')
-    [ "$actual" = "$expected" ] || { echo "Gitleaks image version $actual != expected $expected" >&2; exit 1; }
+    [ "${actual#v}" = "${expected#v}" ] || { echo "Gitleaks image version $actual != expected $expected" >&2; exit 1; }
     "$engine" run --rm -v "$PWD:/repo:ro" "{{ gitleaks_image }}" \
       detect --source=/repo --no-banner --redact --exit-code 1
 
