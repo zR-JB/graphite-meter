@@ -49,11 +49,11 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Checkout trusted main for dry run
+      - name: Checkout exact workflow SHA for dry run
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: refs/heads/main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - id: guard
@@ -166,7 +166,7 @@ jobs:
           set -euo pipefail
           IMAGE="ghcr.io/${REPOSITORY,,}"
           docker run --rm --entrypoint /bin/sh \
-            -e GH_TOKEN -e GITHUB_ACTOR -e IMAGE -e VERSION -e SERIES -e STABLE \
+            -e GH_TOKEN -e GITHUB_ACTOR -e "IMAGE=$IMAGE" -e "VERSION=$VERSION" -e "SERIES=$SERIES" -e "STABLE=$STABLE" \
             -v "$RUNNER_TEMP/release-image:/work:ro" \
             "$SKOPEO_IMAGE" -ec '
               auth_dir=$(mktemp -d)

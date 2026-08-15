@@ -28,7 +28,11 @@ if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
         echo "Release refused: dry-run version '$tag' is not supported SemVer; must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N" >&2
         exit 1
     fi
-    sha=$(git rev-parse HEAD)
+    sha="$EVENT_SHA"
+    if [[ "$(git rev-parse HEAD)" != "$sha" ]]; then
+        echo "Release refused: checked-out dry-run commit does not match workflow SHA $sha." >&2
+        exit 1
+    fi
 else
     if [[ ! "$tag" =~ $semver ]]; then
         echo "Release refused: unsupported release tag '$tag'." >&2
