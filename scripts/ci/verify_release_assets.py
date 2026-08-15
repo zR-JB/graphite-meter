@@ -14,10 +14,6 @@ import re
 import stat
 import subprocess
 import tarfile
-import tempfile
-import time
-import urllib.error
-import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 from github_api import JsonShapeError, JsonValue, decode_json
@@ -270,56 +266,19 @@ def verify_server_version(version: str) -> None:
     if not binary.is_file() or binary.is_symlink():
         raise VerificationError(f"production server binary is missing: {binary}")
 
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "GM_H1_ADDR": "127.0.0.1:7246",
-            "GM_H1_TLS_ADDR": "",
-            "GM_H2_ADDR": "",
-            "GM_H3_ADDR": "",
-        }
+    result = subprocess.run(
+        [str(binary.resolve()), "--version"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
     )
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        log_path = Path(temp_dir) / "server.log"
-        with log_path.open("wb") as log_handle:
-            process = subprocess.Popen(
-                [str(binary.resolve())],
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                env=environment,
-            )
-            try:
-                payload: JsonValue | None = None
-                for _ in range(30):
-                    if process.poll() is not None:
-                        break
-                    try:
-                        with urllib.request.urlopen(
-                            "http://127.0.0.1:7246/preflight", timeout=1.0
-                        ) as response:
-                            body = response.read().decode("utf-8")
-                        payload = decode_json(body, "/preflight response")
-                        break
-                    except (urllib.error.URLError, TimeoutError, JsonShapeError):
-                        time.sleep(1)
-                if not isinstance(payload, dict):
-                    detail = log_path.read_text(encoding="utf-8", errors="replace")
-                    raise VerificationError(
-                        "server did not expose a valid /preflight response\n" + detail
-                    )
-                if payload.get("engineVersion") != version:
-                    raise VerificationError(
-                        f"server engineVersion is {payload.get('engineVersion')!r}; expected {version!r}"
-                    )
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise VerificationError(f"server --version failed: {detail}")
+    actual = result.stdout.strip()
+    if actual != version:
+        raise VerificationError(f"server version is {actual!r}; expected {version!r}")
 
 
 def verify(version: str, dist: Path) -> None:

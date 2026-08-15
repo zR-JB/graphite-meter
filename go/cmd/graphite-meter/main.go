@@ -21,6 +21,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && isVersionCommand(os.Args[1]) {
+		fmt.Fprintln(os.Stdout, config.EngineVersion)
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "hash-password" {
 		if err := hashPassword(os.Stdin, os.Stdout, os.Stderr); err != nil {
 			log.Fatalf("hash-password: %v", err)
@@ -41,6 +45,10 @@ func main() {
 	if err := server.Run(ctx, &cfg); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func isVersionCommand(arg string) bool {
+	return arg == "version" || arg == "--version"
 }
 
 // parseConfig loads the base configuration, applies the command-line flags in

@@ -528,23 +528,12 @@ release-check version="development":
     #!/usr/bin/env sh
     set -eu
     VERSION="{{ version }}" just legal-check
+    (cd go && go test ./internal/legal/...)
+    VERSION="{{ version }}" just release-build "{{ version }}"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    (cd go && go test ./internal/legal/...)
     RELEASE_DIST="$tmp/dist" VERSION="{{ version }}" just release-artifacts "{{ version }}"
-    (cd "$tmp/dist" && sha256sum -c checksums.txt)
-    while IFS= read -r target; do
-        [ -n "$target" ] || continue
-        goos=${target%/*}
-        goarch=${target#*/}
-        archive_base="graphite-meter-client_{{ version }}_${goos}_${goarch}"
-        case "$goos" in
-            windows) archive="$tmp/dist/$archive_base.zip"; unzip -l "$archive" | grep -F "$archive_base/THIRD_PARTY_NOTICES.txt" ;;
-            *) archive="$tmp/dist/$archive_base.tar.gz"; tar -tzf "$archive" | grep -Fx "$archive_base/THIRD_PARTY_NOTICES.txt" ;;
-        esac
-        test -s "$archive"
-    done < scripts/tui-targets.txt
-    test -s "$tmp/dist/graphite-meter_{{ version }}_corresponding-source.tar.gz"
+    RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "{{ version }}"
 
 # Build exact production client and Go server artifacts for release validation.
 [group('release')]
