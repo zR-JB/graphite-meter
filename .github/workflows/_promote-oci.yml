@@ -1,0 +1,114 @@
+name: _Promote stable OCI aliases
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Published stable version without a leading v
+        required: true
+        type: string
+      series:
+        description: Stable major.minor alias
+        required: true
+        type: string
+
+# Alias moves are globally serialized and then guarded by published SemVer order.
+concurrency:
+  group: promote-stable-oci-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote non-regressing stable aliases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
+    steps:
+      - id: order
+        name: Determine safe alias promotions from published releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          SERIES: ${{ inputs.series }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "invalid stable version" >&2; exit 1; }
+          [[ "$SERIES" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "invalid stable series" >&2; exit 1; }
+          requested="v$VERSION"
+          mapfile -t stable_tags < <(
+            gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || true
+          )
+          ((${#stable_tags[@]} > 0)) || { echo "no published stable releases found" >&2; exit 1; }
+
+          highest_global=$(printf '%s\n' "${stable_tags[@]}" | sort -V | tail -n1)
+          highest_series=$(printf '%s\n' "${stable_tags[@]}" | grep -E "^v${SERIES//./\\.}\.[0-9]+$" | sort -V | tail -n1 || true)
+          [[ -n "$highest_series" ]] || { echo "no published release found for series $SERIES" >&2; exit 1; }
+
+          if [[ "$requested" == "$highest_series" ]]; then
+            echo "series=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "series=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::skip $SERIES alias: $requested is older than published $highest_series"
+          fi
+          if [[ "$requested" == "$highest_global" ]]; then
+            echo "latest=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "latest=false" >>"$GITHUB_OUTPUT"
+            echo "::notice::skip latest alias: $requested is older than published $highest_global"
+          fi
+
+      - name: Promote verified stable image without rollback
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REGISTRY_ACTOR: ${{ github.actor }}
+          VERSION: ${{ inputs.version }}
+          SERIES: ${{ inputs.series }}
+          PROMOTE_SERIES: ${{ steps.order.outputs.series }}
+          PROMOTE_LATEST: ${{ steps.order.outputs.latest }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${REPOSITORY,,}"
+          docker run --rm --entrypoint /bin/sh \
+            -e REGISTRY_TOKEN="$REGISTRY_TOKEN" \
+            -e REGISTRY_ACTOR="$REGISTRY_ACTOR" \
+            -e IMAGE="$image" \
+            -e VERSION="$VERSION" \
+            -e SERIES="$SERIES" \
+            -e PROMOTE_SERIES="$PROMOTE_SERIES" \
+            -e PROMOTE_LATEST="$PROMOTE_LATEST" \
+            "$SKOPEO_IMAGE" -ec '
+              set -eu
+              auth_dir=$(mktemp -d)
+              cleanup() {
+                skopeo logout ghcr.io >/dev/null 2>&1 || true
+                rm -rf "$auth_dir"
+              }
+              trap cleanup EXIT
+              export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
+
+              printf "%s" "$REGISTRY_TOKEN" | skopeo login ghcr.io --username "$REGISTRY_ACTOR" --password-stdin
+              source="docker://$IMAGE:$VERSION"
+              source_digest=$(skopeo inspect --format "{{.Digest}}" "$source")
+
+              promote() {
+                alias=$1
+                skopeo copy --all --preserve-digests "$source" "docker://$IMAGE:$alias"
+                alias_digest=$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$alias")
+                [ "$alias_digest" = "$source_digest" ] || {
+                  echo "$alias digest $alias_digest does not match $VERSION digest $source_digest" >&2
+                  exit 1
+                }
+                echo "promoted $IMAGE:$alias -> $source_digest"
+              }
+
+              [ "$PROMOTE_SERIES" = true ] && promote "$SERIES"
+              [ "$PROMOTE_LATEST" = true ] && promote latest
+            '

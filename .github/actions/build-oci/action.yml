@@ -1,0 +1,93 @@
+name: Build Graphite Meter OCI archive
+description: Build the production multi-platform OCI archive from trusted local source or an exact remote Git commit
+inputs:
+  version:
+    description: Image/application version without the leading v
+    required: true
+  revision:
+    description: Exact 40-character Git revision stamped into OCI labels
+    required: true
+  output:
+    description: Destination path for the OCI archive
+    required: true
+  source-sha:
+    description: Optional exact 40-character commit fetched directly by BuildKit; empty uses the trusted local checkout
+    required: false
+    default: ''
+  client-validate:
+    description: Run client validation inside the Docker build
+    required: false
+    default: '0'
+runs:
+  using: composite
+  steps:
+    - id: source
+      name: Resolve isolated OCI build context
+      shell: bash
+      env:
+        REPOSITORY: ${{ github.repository }}
+        SOURCE_SHA: ${{ inputs.source-sha }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$SOURCE_SHA" ]]; then
+          context='.'
+        else
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "remote OCI source SHA must be exactly 40 lowercase hexadecimal characters" >&2
+            exit 2
+          }
+          context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"
+        fi
+        echo "context=$context" >>"$GITHUB_OUTPUT"
+
+    - id: versions
+      name: Read trusted repository Bun version
+      shell: bash
+      run: |
+        set -euo pipefail
+        bun=$(tr -d '[:space:]' < .bun-version)
+        [[ -n "$bun" ]] || { echo "trusted .bun-version is empty" >&2; exit 2; }
+        echo "bun=$bun" >>"$GITHUB_OUTPUT"
+
+    - name: Prepare OCI output directory
+      shell: bash
+      env:
+        OCI_OUTPUT: ${{ inputs.output }}
+      run: mkdir -p "$(dirname "$OCI_OUTPUT")"
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      with:
+        platforms: arm64
+        cache-image: 'false'
+
+    - name: Set up Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      with:
+        cache-binary: 'false'
+
+    - name: Build linux/amd64 + linux/arm64 OCI archive
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      env:
+        # Avoid an extra build-record artifact from this untrusted/verification build.
+        DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      with:
+        context: ${{ steps.source.outputs.context }}
+        file: container/Dockerfile
+        platforms: linux/amd64,linux/arm64
+        outputs: type=oci,dest=${{ inputs.output }}
+        no-cache: true
+        provenance: mode=max
+        # Public exact-commit Git contexts do not need a repository credential.
+        # Keeping this empty prevents the default github.token from entering BuildKit.
+        github-token: ''
+        labels: |
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.revision=${{ inputs.revision }}
+          org.opencontainers.image.version=${{ inputs.version }}
+          org.opencontainers.image.licenses=AGPL-3.0-or-later
+        build-args: |
+          VERSION=${{ inputs.version }}
+          GM_CLIENT_BUILD_LABEL=prod
+          GM_CLIENT_VALIDATE=${{ inputs.client-validate }}
+          BUN_VERSION=${{ steps.versions.outputs.bun }}
