@@ -29,29 +29,35 @@ for attempt in $(seq 1 120); do
     fi
     if [[ "$count" -eq 1 ]]; then
         artifact_json=$(jq -c '.[0]' <<<"$matches")
+        artifact_id=$(jq -r '.id' <<<"$artifact_json")
+        artifact_digest=$(jq -r '.digest // ""' <<<"$artifact_json")
+        artifact_run_id=$(jq -r '.workflow_run.id // ""' <<<"$artifact_json")
+        [[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "GitHub did not provide an artifact SHA-256 digest"
+        [[ "$artifact_run_id" =~ ^[0-9]+$ ]] || die "artifact has no producing workflow run"
+
+        run=$(gh api "repos/$REPOSITORY/actions/runs/$artifact_run_id")
+        run_status=$(jq -r '.status // "unknown"' <<<"$run")
+        if [[ "$run_status" != completed ]]; then
+            echo "waiting for candidate workflow $artifact_run_id to finish (status=$run_status, attempt $attempt/120)"
+            sleep 15
+            continue
+        fi
+
+        jq -e --arg sha "$REQUEST_SHA" --arg repo "$REPOSITORY" --arg pr "$REQUEST_PR" '
+            .event == "pull_request"
+            and .name == "PR prerelease candidate"
+            and .head_sha == $sha
+            and (.head_repository.full_name // "") == $repo
+            and .status == "completed"
+            and .conclusion == "success"
+            and ([.pull_requests[]? | select((.number | tostring) == $pr)] | length) == 1
+        ' <<<"$run" >/dev/null || die "candidate workflow provenance does not match this request"
         break
     fi
     echo "waiting for candidate artifact $artifact_name (attempt $attempt/120)"
     sleep 15
 done
 [[ -n "$artifact_json" ]] || die "candidate artifact did not arrive"
-
-artifact_id=$(jq -r '.id' <<<"$artifact_json")
-artifact_digest=$(jq -r '.digest // ""' <<<"$artifact_json")
-artifact_run_id=$(jq -r '.workflow_run.id // ""' <<<"$artifact_json")
-[[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "GitHub did not provide an artifact SHA-256 digest"
-[[ "$artifact_run_id" =~ ^[0-9]+$ ]] || die "artifact has no producing workflow run"
-
-run=$(gh api "repos/$REPOSITORY/actions/runs/$artifact_run_id")
-jq -e --arg sha "$REQUEST_SHA" --arg repo "$REPOSITORY" --arg pr "$REQUEST_PR" '
-    .event == "pull_request"
-    and .name == "PR prerelease candidate"
-    and .head_sha == $sha
-    and (.head_repository.full_name // "") == $repo
-    and .status == "completed"
-    and .conclusion == "success"
-    and ([.pull_requests[]? | select((.number | tostring) == $pr)] | length) == 1
-' <<<"$run" >/dev/null || die "candidate workflow provenance does not match this request"
 
 zip="$root/download/artifact.zip"
 gh api "repos/$REPOSITORY/actions/artifacts/$artifact_id/zip" >"$zip"

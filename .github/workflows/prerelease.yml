@@ -69,6 +69,7 @@ jobs:
           ACTOR: ${{ github.actor }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           REQUEST_RUN_ID: ${{ github.run_id }}
+          REQUEST_RUN_ATTEMPT: ${{ github.run_attempt }}
           PR_NUMBER: ${{ inputs.pr }}
           REQUESTED_SHA: ${{ inputs.sha }}
           REQUESTED_TAG: ${{ inputs.tag }}
