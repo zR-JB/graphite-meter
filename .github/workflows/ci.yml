@@ -44,6 +44,9 @@ jobs:
       - name: Enforce repository and workflow security policy
         run: python3 scripts/ci/workflow_policy.py
 
+      - name: Test privileged release transaction
+        run: python3 scripts/ci/test_release_transaction.py
+
       - id: filter
         name: Determine affected CI areas
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
