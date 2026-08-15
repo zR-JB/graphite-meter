@@ -79,8 +79,11 @@ require_check CodeQL github-advanced-security
 version=${REQUESTED_TAG#v}
 if [[ "$MODE" == request ]]; then
     label="gm-prerelease-$REQUEST_RUN_ID"
-    description=$(jq -cn --arg tag "$REQUESTED_TAG" --arg sha "$REQUESTED_SHA" --arg requestRunId "$REQUEST_RUN_ID" \
-        '{tag:$tag,sha:$sha,requestRunId:$requestRunId}')
+    description=$(jq -cn --arg tag "$REQUESTED_TAG" --arg sha "$REQUESTED_SHA" \
+        '{t:$tag,s:$sha}')
+    if (( ${#description} > 100 )); then
+        die "internal prerelease label metadata exceeds GitHub's 100-character limit"
+    fi
     label_body=$(jq -cn --arg name "$label" --arg description "$description" \
         '{name:$name,color:"b60205",description:$description}')
     gh api --method POST "repos/$REPOSITORY/labels" --input - <<<"$label_body" >/dev/null
