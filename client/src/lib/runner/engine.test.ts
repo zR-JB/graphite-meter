@@ -158,3 +158,16 @@ test("bootRunner seeds background activity from the live visibilityState", async
       Reflect.deleteProperty(globalThis, key);
   }
 });
+
+test("a rerun stamps a fresh start epoch from every terminal phase", async () => {
+  const { store } = await import("../state/store.svelte");
+  for (const from of ["complete", "aborted", "error"] as const) {
+    store.reset();
+    expect(store.startEpoch).toBe(0);
+    store.ingest({
+      type: "phase",
+      transition: { from, to: "connecting", stage: null, t: 0 },
+    });
+    expect(store.startEpoch).toBeGreaterThan(0);
+  }
+});
