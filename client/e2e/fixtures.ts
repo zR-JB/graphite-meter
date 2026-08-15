@@ -29,7 +29,10 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function startHarnessServer(): Promise<{ server: Server; origin: string }> {
+async function startHarnessServer(): Promise<{
+  server: Server;
+  origin: string;
+}> {
   const server = createServer(async (request, response) => {
     try {
       const requestURL = new URL(request.url ?? "/", `http://${HOST}`);
@@ -45,7 +48,8 @@ async function startHarnessServer(): Promise<{ server: Server; origin: string }>
         return;
       }
       response.writeHead(200, {
-        "Content-Type": contentTypes[extname(path)] ?? "application/octet-stream",
+        "Content-Type":
+          contentTypes[extname(path)] ?? "application/octet-stream",
         "Cache-Control": "no-store",
       });
       createReadStream(path).pipe(response);

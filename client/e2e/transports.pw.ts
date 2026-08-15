@@ -93,7 +93,10 @@ const cells: {
 ];
 
 for (const { name, spec, projects } of cells) {
-  test(`${name} carries bytes end to end`, async ({ page, harnessOrigin }, testInfo) => {
+  test(`${name} carries bytes end to end`, async ({
+    page,
+    harnessOrigin,
+  }, testInfo) => {
     test.skip(
       projects !== undefined && !projects.includes(testInfo.project.name),
       "this transport is not available in this real-browser project",

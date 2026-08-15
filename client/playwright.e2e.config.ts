@@ -17,7 +17,8 @@ const ports = { h1: 7256, h1tls: 7257, h3: 7259 };
 const SPKI = process.env.GM_E2E_SPKI;
 if (!SPKI) throw new Error("GM_E2E_SPKI unset: run `just client-e2e`");
 const SERVER_BIN = process.env.GM_E2E_SERVER_BIN;
-if (!SERVER_BIN) throw new Error("GM_E2E_SERVER_BIN unset: run `just client-e2e`");
+if (!SERVER_BIN)
+  throw new Error("GM_E2E_SERVER_BIN unset: run `just client-e2e`");
 
 export const origins = {
   "h1-clear": `http://${HOST}:${ports.h1}`,
