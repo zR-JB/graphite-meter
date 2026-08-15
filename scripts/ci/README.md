@@ -37,39 +37,54 @@ The path plan comes from `.github/ci-paths.yml`; project operations use named
 
 ### PR prereleases
 
-1. `prerelease-request.yml` runs from trusted `main`. It validates the exact
-   same-repository PR head, current-main ancestry, and that the CI orchestration
-   defining Gate (`ci.yml`, path plan, setup action, `justfile`, and `scripts/ci/*.py`)
-   is byte-identical to current main. It then requires the newest exact CI Gate
-   and CodeQL result before creating a one-use request label/artifact.
-2. `prerelease-candidate.yml` treats the PR checkout as build payload. Canonical
-   helper copies are checked out separately from the PR base into `.trusted-ci`
-   to reduce PR-controlled pipeline configuration. The runner is still low trust:
-   no candidate-side file becomes a publication authority after PR code executes.
-   The job has no secrets/write permission and disables shared Go/Bun caches.
-3. `prerelease-publish.yml` is the trusted `workflow_run` consumer. It treats
-   request/candidate artifacts as untrusted data and validates them with
-   trusted-main tooling before the `ghcr-release` environment approval.
-4. Before approval, validation binds the transaction to an exact current-main SHA.
-   After approval it requires that exact main tip plus PR/Gate/CodeQL state again.
-   Any main advance requires a fresh prerelease request rather than silently
-   reusing an approval against a different trust base.
-5. `_publish-oci.yml` has no repository checkout, serializes by exact destination
-   tag, and performs an API-only exact-main/source/PR freshness check immediately
-   before registry authentication. It verifies the archive checksum, accepts an existing
-   identical digest as an idempotent retry, and rejects a conflicting digest.
+1. `prerelease-request.yml` is a **low-authority producer**. Manual
+   `workflow_dispatch` can be pointed at a selected ref, so this workflow has only
+   `contents: read`, no secrets/write permission, no shared dependency caches, and
+   no publication path. For normal use it must be dispatched from `main`. It checks
+   out the requested PR SHA only under `source/` and uses the request ref's local
+   OCI build action to produce an untrusted candidate artifact. PR application code
+   is never executed directly on the host.
+2. `prerelease-publish.yml` is the trusted default-branch `workflow_run` consumer.
+   It accepts a producer run only when GitHub's API proves that the exact run came
+   from `prerelease-request.yml`, was attempt 1, was dispatched from `main` at the
+   exact current-main SHA, completed successfully, and was initiated by the
+   repository owner. A selected stale/feature ref can therefore build only
+   low-authority data; it can never authorize publication.
+3. The publisher never checks out PR source. On a fresh runner it downloads the
+   candidate artifact as untrusted data, checks the exact file set/checksum, binds
+   its metadata to the open same-repository PR, requires that PR to contain exact
+   current main, requires the complete CI/release control plane to be byte-identical
+   to that main SHA, then requires the newest exact PR CI Gate and PR-bound CodeQL
+   check before environment approval.
+4. After approval, PR head/current-main/Gate/CodeQL are rechecked. Any main advance
+   or PR/CI/CodeQL change requires a fresh prerelease request. `_publish-oci.yml`
+   performs one final API-only source/CI/CodeQL freshness check immediately before
+   registry authentication while still executing no repository code.
+5. The old label-triggered candidate hop is intentionally absent. GitHub suppresses
+   most workflow runs caused by events created with the repository `GITHUB_TOKEN`,
+   including `pull_request:labeled`, so publication does not depend on a
+   workflow-created label triggering another workflow.
 
 The pre-approval and post-approval checks are intentional, not duplicate policy:
-the first avoids asking for approval of already-invalid state; the second proves
-that the exact approved main tip plus mutable PR/Gate/CodeQL state still holds
-immediately before publication. CI control-plane identity is checked against that
-exact main tip before approval; the immutable PR/main SHAs make a duplicate blob
-comparison after approval unnecessary.
+first avoid asking a human to approve already-invalid state; then prove that the
+mutable state still holds immediately before the first irreversible write.
 
 ### Stable releases
 
-Stable publication is never tag-push triggered. `release.yml` is manual
-`workflow_dispatch` from protected current `main` with:
+Stable publication is never tag-push triggered and the write-capable release
+workflow is **not** directly manually dispatched. `release-request.yml` is a
+zero-write manual request workflow. Because GitHub allows a manual dispatch to
+select a branch/tag, that request is treated as untrusted input and only uploads a
+small request artifact.
+
+`release.yml` is a trusted default-branch `workflow_run` consumer of `Request
+stable release`. Its guard accepts the request only when GitHub proves the request
+run was attempt 1, owner-initiated, dispatched from `main`, completed successfully,
+and has the exact same SHA as the current default-branch consumer. The immutable
+release source thereafter is `${{ github.sha }}` directly; no guard job output is
+reused as a second source identity.
+
+The request has two modes:
 
 - `validate`: full build/verification, zero publication;
 - `publish`: same build, protected-environment approval, then a fresh current-main
@@ -101,14 +116,19 @@ packages may execute. The local checker only enforces the zero-maintenance
 property that every external `uses:` reference is an immutable 40-character
 commit SHA, plus the pipeline-specific trust boundaries.
 
+The ordinary release-package CI job also executes the exact digest-pinned Skopeo
+container's `--version` contract through the same typed parser used by OCI
+verification, so a CLI output/digest-version mismatch is caught on a workflow PR
+instead of at first publication.
+
 Other checked invariants include:
 
 - explicit `ubuntu-24.04` runner-major labels instead of floating `ubuntu-latest`;
 - explicit max-level OCI provenance with no GitHub-secret references in the build action;
-- low-trust candidate permissions and base-sourced helper boundaries;
+- low-authority prerelease producer permissions and isolated `source/` build context;
 - no repository checkout/code execution in isolated publication workflows;
 - exact-tag and stable-alias concurrency guards;
-- manual current-main stable release initiation, never tag-push initiation;
+- zero-write stable manual request plus trusted default-branch consumer, never tag-push/direct write-capable dispatch;
 - protected-environment approval before the final mutable trust recheck;
 - GitHub Release target/asset-digest verification;
 - no tracked certificate/private-key material.

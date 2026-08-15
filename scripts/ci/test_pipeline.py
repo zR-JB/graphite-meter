@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import ast
+import json
+import os
 import pathlib
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -16,14 +19,15 @@ from github_api import JsonValue
 from prerelease import (
     PRERELEASE_CI_CONTROL_PLANE,
     PRERELEASE_RE,
-    compact_label_description,
     exact_file_set,
-    parse_label_description,
     require_prerelease_ci_control_plane,
+    validate_request_run,
 )
 from verify_oci import (
     VerificationError as OCIVerificationError,
+    parse_skopeo_version,
     validate_index_descriptors,
+    verify_skopeo_runtime,
     verify_archive_blobs,
 )
 from verify_release_assets import (
@@ -31,15 +35,25 @@ from verify_release_assets import (
     archive_names,
     expected_release_artifacts,
     verify_checksums,
+    verify_client_archives,
+    verify_client_version,
     verify_release_file_set,
+    verify_server_version,
 )
-from release import SEMVER_RE, STABLE_SEMVER_RE, require_compatible_release_tag
+from release import (
+    SEMVER_RE,
+    STABLE_SEMVER_RE,
+    require_compatible_release_tag,
+    validate_request_context,
+)
 from trust import (
     TrustError,
     require_ci_gate,
     require_current_main,
     require_exact_current_main,
     require_file_matches_main,
+    require_check_run,
+    require_main_codeql,
 )
 from workflow_policy import (
     PINNED_ACTION,
@@ -49,7 +63,10 @@ from workflow_policy import (
     check_external_action_shas,
     check_privileged_workflows,
     check_runner_labels,
+    check_setup_project_cache_boundary,
+    check_skopeo_contract_consistency,
     check_prerelease_request_workflow,
+    check_release_request_workflow,
     check_release_workflow,
     check_repository,
     check_trusted_checkout_refs,
@@ -87,8 +104,8 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(TrustError, "no longer current main"):
             require_exact_current_main("zR-JB/graphite-meter", OLD_MAIN, api=lambda *_a, **_k: {"sha": MAIN})
 
-    def test_candidate_workflow_must_match_current_main(self) -> None:
-        workflow_path = ".github/workflows/prerelease-candidate.yml"
+    def test_prerelease_publisher_workflow_must_match_current_main(self) -> None:
+        workflow_path = ".github/workflows/prerelease-publish.yml"
 
         def good(path: str, **_: object) -> JsonValue:
             if f"contents/{workflow_path}" in path and "ref=" in path:
@@ -102,8 +119,50 @@ class PipelineTests(unittest.TestCase):
                 return {"sha": ("b" if f"ref={HEAD}" in path else "a") * 40}
             raise AssertionError(path)
 
-        with self.assertRaisesRegex(TrustError, "changes .*prerelease-candidate.yml"):
+        with self.assertRaisesRegex(TrustError, "changes .*prerelease-publish.yml"):
             require_file_matches_main("zR-JB/graphite-meter", workflow_path, HEAD, MAIN, api=bad)
+
+    def test_main_codeql_uses_newest_result_per_analysis_identity(self) -> None:
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            self.assertTrue(paginate)
+            return [[
+                {
+                    "id": 10, "commit_sha": MAIN, "created_at": "2026-08-15T10:00:00Z",
+                    "category": "go", "analysis_key": "default", "environment": "go",
+                    "error": "transient upload error", "warning": "", "tool": {"name": "CodeQL"},
+                },
+                {
+                    "id": 11, "commit_sha": MAIN, "created_at": "2026-08-15T10:05:00Z",
+                    "category": "go", "analysis_key": "default", "environment": "go",
+                    "error": "", "warning": "", "tool": {"name": "CodeQL"},
+                },
+                {
+                    "id": 12, "commit_sha": MAIN, "created_at": "2026-08-15T10:04:00Z",
+                    "category": "javascript", "analysis_key": "default", "environment": "js",
+                    "error": "", "warning": "", "tool": {"name": "CodeQL"},
+                },
+            ]]
+
+        require_main_codeql("zR-JB/graphite-meter", MAIN, api=fake)
+
+    def test_main_codeql_rejects_newer_failure_even_if_older_succeeded(self) -> None:
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            self.assertTrue(paginate)
+            return [[
+                {
+                    "id": 20, "commit_sha": MAIN, "created_at": "2026-08-15T10:00:00Z",
+                    "category": "go", "analysis_key": "default", "environment": "go",
+                    "error": "", "warning": "", "tool": {"name": "CodeQL"},
+                },
+                {
+                    "id": 21, "commit_sha": MAIN, "created_at": "2026-08-15T10:06:00Z",
+                    "category": "go", "analysis_key": "default", "environment": "go",
+                    "error": "database finalize failed", "warning": "", "tool": {"name": "CodeQL"},
+                },
+            ]]
+
+        with self.assertRaisesRegex(TrustError, "latest CodeQL analysis"):
+            require_main_codeql("zR-JB/graphite-meter", MAIN, api=fake)
 
     def test_ci_gate_is_bound_to_exact_successful_run_and_gate_job(self) -> None:
         def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
@@ -150,10 +209,84 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(TrustError, "Gate in CI run"):
             require_ci_gate("zR-JB/graphite-meter", HEAD, event="push", branch="main", api=fake)
 
-    def test_label_metadata_is_compact_and_round_trips(self) -> None:
-        description = compact_label_description("v0.5.2-alpha.0", HEAD)
-        self.assertLessEqual(len(description), 100)
-        self.assertEqual(parse_label_description(description), ("v0.5.2-alpha.0", HEAD))
+    def test_codeql_check_is_bound_to_exact_pr_and_latest_result(self) -> None:
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            self.assertTrue(paginate)
+            self.assertIn(f"/commits/{HEAD}/check-runs?", path)
+            return [{"check_runs": [
+                {
+                    "id": 20,
+                    "name": "CodeQL",
+                    "app": {"slug": "github-advanced-security"},
+                    "status": "completed",
+                    "conclusion": "success",
+                    "completed_at": "2026-08-15T10:00:00Z",
+                    "pull_requests": [{"number": 999}],
+                },
+                {
+                    "id": 21,
+                    "name": "CodeQL",
+                    "app": {"slug": "github-advanced-security"},
+                    "status": "completed",
+                    "conclusion": "success",
+                    "completed_at": "2026-08-15T10:01:00Z",
+                    "pull_requests": [{"number": 101}],
+                },
+            ]}]
+
+        self.assertEqual(
+            require_check_run(
+                "zR-JB/graphite-meter",
+                HEAD,
+                name="CodeQL",
+                app_slug="github-advanced-security",
+                pr_number=101,
+                api=fake,
+            ),
+            21,
+        )
+
+    def test_codeql_check_rejects_unbound_or_newer_failed_pr_result(self) -> None:
+        def unbound(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            return [{"check_runs": [{
+                "id": 30,
+                "name": "CodeQL",
+                "app": {"slug": "github-advanced-security"},
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-08-15T10:00:00Z",
+                "pull_requests": [],
+            }]}]
+
+        with self.assertRaisesRegex(TrustError, "CodeQL for PR #101.*missing"):
+            require_check_run(
+                "zR-JB/graphite-meter", HEAD, name="CodeQL",
+                app_slug="github-advanced-security", pr_number=101, api=unbound
+            )
+
+        def failed(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            return [{"check_runs": [
+                {
+                    "id": 31, "name": "CodeQL",
+                    "app": {"slug": "github-advanced-security"},
+                    "status": "completed", "conclusion": "success",
+                    "completed_at": "2026-08-15T10:00:00Z",
+                    "pull_requests": [{"number": 101}],
+                },
+                {
+                    "id": 32, "name": "CodeQL",
+                    "app": {"slug": "github-advanced-security"},
+                    "status": "completed", "conclusion": "failure",
+                    "completed_at": "2026-08-15T10:01:00Z",
+                    "pull_requests": [{"number": 101}],
+                },
+            ]}]
+
+        with self.assertRaisesRegex(TrustError, "CodeQL for PR #101.*failure"):
+            require_check_run(
+                "zR-JB/graphite-meter", HEAD, name="CodeQL",
+                app_slug="github-advanced-security", pr_number=101, api=failed
+            )
 
     def test_stable_release_preflights_existing_tag_target(self) -> None:
         def absent(path: str, **_: object) -> JsonValue:
@@ -200,9 +333,16 @@ class PipelineTests(unittest.TestCase):
 
         required = {
             ".github/workflows/ci.yml",
-            ".github/workflows/prerelease-candidate.yml",
+            ".github/workflows/prerelease-request.yml",
+            ".github/workflows/prerelease-publish.yml",
+            ".github/workflows/release-request.yml",
+            ".github/workflows/release.yml",
+            ".github/workflows/_publish-oci.yml",
+            ".github/workflows/_publish-release.yml",
+            ".github/workflows/_promote-oci.yml",
             ".github/ci-paths.yml",
             ".github/actions/setup-project/action.yml",
+            ".github/actions/build-oci/action.yml",
             "justfile",
             "scripts/ci/workflow_policy.py",
             "scripts/ci/test_pipeline.py",
@@ -358,6 +498,60 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseVerificationError, "unsafe archive path"):
                 archive_names(bad_zip)
 
+    def test_release_verifier_requires_built_client_and_server_outputs(self) -> None:
+        previous = pathlib.Path.cwd()
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            (root / "client/dist").mkdir(parents=True)
+            (root / "go").mkdir()
+            try:
+                os.chdir(root)
+                with self.assertRaisesRegex(ReleaseVerificationError, "client version metadata is missing"):
+                    verify_client_version("1.2.3")
+                (root / "client/dist/version.json").write_text(
+                    '{"version":"1.2.3+prod","label":"prod"}\n', encoding="utf-8"
+                )
+                verify_client_version("1.2.3")
+                with self.assertRaisesRegex(ReleaseVerificationError, "server binary is missing"):
+                    verify_server_version("1.2.3")
+            finally:
+                os.chdir(previous)
+
+    def test_tui_release_archive_requires_expected_binary(self) -> None:
+        import io
+        import tarfile
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            dist = root / "dist"
+            dist.mkdir()
+            targets = root / "targets.txt"
+            targets.write_text("linux/amd64\n", encoding="utf-8")
+            base = "graphite-meter-client_1.2.3_linux_amd64"
+            archive_path = dist / f"{base}.tar.gz"
+            with tarfile.open(archive_path, "w:gz") as archive:
+                for name in ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt"):
+                    payload = b"x"
+                    info = tarfile.TarInfo(f"{base}/{name}")
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+            with self.assertRaisesRegex(ReleaseVerificationError, "graphite-meter-client"):
+                verify_client_archives(dist, "1.2.3", targets)
+
+    def test_zip_release_archive_rejects_special_file_entries(self) -> None:
+        import stat
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "special.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                info = zipfile.ZipInfo("bundle/device")
+                info.create_system = 3
+                info.external_attr = (stat.S_IFCHR | 0o600) << 16
+                archive.writestr(info, b"")
+            with self.assertRaisesRegex(ReleaseVerificationError, "unsupported special entry"):
+                archive_names(path)
+
     def test_release_artifact_set_is_derived_from_supported_targets(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             targets = pathlib.Path(td) / "targets.txt"
@@ -460,6 +654,15 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "must not pass GitHub secrets"):
             check_oci_build_action(root)
 
+    def test_setup_project_disables_bun_executable_cache_with_bun_cache(self) -> None:
+        text = (ROOT / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
+        self.assertIn("no-cache: ${{ inputs.bun-cache != 'true' }}", text)
+
+    def test_oci_builder_disables_shared_tool_caches(self) -> None:
+        text = (ROOT / ".github/actions/build-oci/action.yml").read_text(encoding="utf-8")
+        self.assertIn("cache-image: 'false'", text)
+        self.assertIn("cache-binary: 'false'", text)
+
     def test_policy_requires_explicit_max_oci_provenance(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
@@ -467,6 +670,48 @@ class PipelineTests(unittest.TestCase):
         path.write_text(path.read_text().replace("        provenance: mode=max\n", "", 1))
         with self.assertRaisesRegex(PolicyError, "OCI provenance invariant"):
             check_oci_build_action(root)
+
+    def test_skopeo_runtime_contract_uses_pinned_image_and_strict_version(self) -> None:
+        from unittest.mock import patch
+
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(*args: str) -> str:
+            calls.append(args)
+            return "skopeo version 1.22.2"
+
+        with patch.dict(
+            "os.environ",
+            {"SKOPEO_IMAGE": "quay.io/skopeo/stable@sha256:" + "a" * 64, "SKOPEO_VERSION": "1.22.2"},
+            clear=False,
+        ), patch("verify_oci.select_engine", return_value="docker"), patch("verify_oci.run", side_effect=fake_run):
+            engine, image = verify_skopeo_runtime()
+        self.assertEqual(engine, "docker")
+        self.assertTrue(image.endswith("a" * 64))
+        self.assertEqual(calls[0][-1], "--version")
+
+    def test_policy_rejects_skopeo_digest_drift_between_consumers(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_promote-oci.yml"
+        text = path.read_text().replace(
+            "c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615",
+            "a" * 64,
+            1,
+        )
+        path.write_text(text)
+        with self.assertRaisesRegex(PolicyError, "Skopeo consumers must share exactly one"):
+            check_skopeo_contract_consistency(root)
+
+    def test_skopeo_version_parser_accepts_supported_output_shapes(self) -> None:
+        self.assertEqual(parse_skopeo_version("skopeo version 1.22.2"), "1.22.2")
+        self.assertEqual(
+            parse_skopeo_version("skopeo version 1.22.2 commit: abcdef0123456789"),
+            "1.22.2",
+        )
+        self.assertEqual(parse_skopeo_version("skopeo version 1.22.2-custom"), "1.22.2-custom")
+        with self.assertRaisesRegex(OCIVerificationError, "unexpected Skopeo --version output"):
+            parse_skopeo_version("skopeo 1.22.2")
 
     def test_oci_verifier_forces_full_multi_image_copy(self) -> None:
         from unittest.mock import patch
@@ -508,6 +753,20 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "last-mile source freshness invariant"):
             check_privileged_workflows(root)
 
+    def test_policy_rejects_missing_last_mile_ci_recheck(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_publish-oci.yml"
+        path.write_text(
+            path.read_text().replace(
+                'gh api "repos/$REPOSITORY/actions/runs/$EXPECTED_CI_RUN_ID"',
+                'echo "skip exact CI-run API check"',
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "last-mile source freshness invariant"):
+            check_privileged_workflows(root)
+
     def test_policy_rejects_unbound_prerelease_request_dispatch_sha(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
@@ -519,8 +778,16 @@ class PipelineTests(unittest.TestCase):
                 1,
             )
         )
-        with self.assertRaisesRegex(PolicyError, "current-main request invariant"):
+        with self.assertRaisesRegex(PolicyError, "low-authority request invariant"):
             check_prerelease_request_workflow(root)
+
+    def test_policy_rejects_unbound_prerelease_publisher_tooling_sha(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-publish.yml"
+        path.write_text(path.read_text().replace("          PUBLISHER_SHA: ${{ github.sha }}\n", ""))
+        with self.assertRaisesRegex(PolicyError, "trusted-consumer/freshness input"):
+            check_trusted_checkout_refs(root)
 
     def test_policy_rejects_prerelease_publisher_head_checkout(self) -> None:
         root = self._copy_policy_tree()
@@ -548,11 +815,32 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "serialize publication by exact destination tag"):
             check_privileged_workflows(root)
 
+    def test_policy_rejects_candidate_host_execution_before_trusted_oci_build(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-request.yml"
+        text = path.read_text().replace(
+            "      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
+            "      - name: Execute PR code on host\n        run: just release-build \"1.2.3\"\n\n      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
+            1,
+        )
+        path.write_text(text)
+        with self.assertRaisesRegex(PolicyError, "forbidden path|host run steps"):
+            check_candidate_boundary(root)
+
+    def test_policy_rejects_prerelease_source_at_workspace_root(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-request.yml"
+        path.write_text(path.read_text().replace("          path: source\n", "", 1))
+        with self.assertRaisesRegex(PolicyError, "isolation invariant"):
+            check_candidate_boundary(root)
+
     def test_policy_rejects_pr_controlled_candidate_action(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-candidate.yml"
-        path.write_text(path.read_text().replace("./.trusted-ci/.github/actions/setup-project", "./.github/actions/setup-project"))
+        path = root / ".github/workflows/prerelease-request.yml"
+        path.write_text(path.read_text().replace("./.github/actions/build-oci", "./source/.github/actions/build-oci"))
         with self.assertRaises(PolicyError):
             check_candidate_boundary(root)
 
@@ -569,13 +857,218 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             check_privileged_workflows(root)
 
+    def test_policy_rejects_stable_source_sha_job_output_indirection(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release.yml"
+        path.write_text(path.read_text().replace(
+            "target_sha: ${{ github.sha }}",
+            "target_sha: ${{ needs.guard.outputs.sha }}",
+            1,
+        ))
+        with self.assertRaisesRegex(PolicyError, "github.sha directly"):
+            check_release_workflow(root)
+
+    def test_privileged_registry_workflows_do_not_parse_skopeo_version_text(self) -> None:
+        for name in ("_publish-oci.yml", "_promote-oci.yml"):
+            text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+            self.assertNotIn("skopeo --version", text, name)
+            self.assertNotIn("SKOPEO_VERSION", text, name)
+
+
+
+    def test_prerelease_request_run_is_bound_to_exact_current_main_and_owner(self) -> None:
+        request_run_id = 6001
+        workflow = 7001
+        run = {
+            "id": request_run_id,
+            "workflow_id": workflow,
+            "event": "workflow_dispatch",
+            "head_branch": "main",
+            "head_sha": MAIN,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+            "actor": {"login": "zR-JB"},
+            "triggering_actor": {"login": "zR-JB"},
+        }
+
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            if path.endswith("/actions/workflows/prerelease-request.yml"):
+                return {"id": workflow}
+            if path.endswith(f"/actions/runs/{request_run_id}"):
+                return run
+            if f"/actions/runs/{request_run_id}/artifacts" in path and paginate:
+                return [{"artifacts": [{
+                    "name": f"prerelease-candidate-{request_run_id}",
+                    "expired": False,
+                    "size_in_bytes": 4096,
+                }]}]
+            raise AssertionError((path, paginate))
+
+        self.assertEqual(
+            validate_request_run(
+                "zR-JB/graphite-meter", "zR-JB", MAIN, request_run_id, api=fake
+            ),
+            f"prerelease-candidate-{request_run_id}",
+        )
+
+        run["head_branch"] = "feature/stale-pipeline"
+        with self.assertRaisesRegex(SystemExit, "not dispatched from main"):
+            validate_request_run(
+                "zR-JB/graphite-meter", "zR-JB", MAIN, request_run_id, api=fake
+            )
+
+    def test_prerelease_request_has_no_label_trigger_or_write_permission(self) -> None:
+        request = (ROOT / ".github/workflows/prerelease-request.yml").read_text(encoding="utf-8")
+        self.assertNotIn("issues: write", request)
+        self.assertNotIn("pull_request:", request)
+        self.assertNotIn("gm-prerelease-", request)
+        self.assertFalse((ROOT / ".github/workflows/prerelease-candidate.yml").exists())
+
+    def test_stable_request_consumer_binds_exact_main_run_and_artifact(self) -> None:
+        request_run_id = 4242
+        workflow_id = 31337
+        ci_run_id = 5151
+        request_dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, request_dir)
+        (request_dir / "request.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "repository": "zR-JB/graphite-meter",
+                    "sourceSha": MAIN,
+                    "version": "v1.2.3",
+                    "mode": "validate",
+                    "requestRunId": request_run_id,
+                    "requestRunAttempt": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        request_run = {
+            "id": request_run_id,
+            "workflow_id": workflow_id,
+            "event": "workflow_dispatch",
+            "head_branch": "main",
+            "head_sha": MAIN,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+            "actor": {"login": "zR-JB"},
+            "triggering_actor": {"login": "zR-JB"},
+        }
+
+        def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
+            if path.endswith("/commits/main"):
+                return {"sha": MAIN}
+            if path.endswith("/actions/workflows/release-request.yml"):
+                return {"id": workflow_id}
+            if path.endswith(f"/actions/runs/{request_run_id}"):
+                return request_run
+            if f"/actions/runs/{request_run_id}/artifacts" in path and paginate:
+                return [{"artifacts": [{
+                    "name": f"stable-release-request-{request_run_id}",
+                    "expired": False,
+                    "size_in_bytes": 1024,
+                }]}]
+            if "/git/matching-refs/tags/v1.2.3" in path:
+                return []
+            if "/actions/workflows/ci.yml/runs" in path and paginate:
+                return [{"workflow_runs": [{
+                    "id": ci_run_id,
+                    "head_sha": MAIN,
+                    "head_branch": "main",
+                    "event": "push",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "run_number": 8,
+                    "run_attempt": 1,
+                    "updated_at": "2026-08-15T12:00:00Z",
+                }]}]
+            if f"/actions/runs/{ci_run_id}/jobs" in path and paginate:
+                return [{"jobs": [{
+                    "name": "Gate",
+                    "status": "completed",
+                    "conclusion": "success",
+                }]}]
+            if "/code-scanning/analyses" in path and paginate:
+                return [[{
+                    "id": 99,
+                    "commit_sha": MAIN,
+                    "tool": {"name": "CodeQL"},
+                    "category": "/language:go",
+                    "analysis_key": ".github/workflows/codeql.yml:analyze",
+                    "environment": "{}",
+                    "created_at": "2026-08-15T12:01:00Z",
+                    "error": "",
+                    "warning": "",
+                }]]
+            raise AssertionError((path, paginate))
+
+        env = {
+            "REPOSITORY": "zR-JB/graphite-meter",
+            "REPOSITORY_OWNER": "zR-JB",
+            "PUBLISHER_SHA": MAIN,
+            "WORKFLOW_REF": "zR-JB/graphite-meter/.github/workflows/release.yml@refs/heads/main",
+            "REQUEST_RUN_ID": str(request_run_id),
+            "REQUEST_DIR": str(request_dir),
+        }
+        with patch.dict(os.environ, env, clear=False), patch("release.git", return_value=MAIN):
+            context = validate_request_context(api=fake)
+        self.assertEqual(context.sha, MAIN)
+        self.assertEqual(context.ci_run_id, ci_run_id)
+        self.assertFalse(context.publish)
+
+        request_run["head_branch"] = "feature/release-rewrite"
+        with patch.dict(os.environ, env, clear=False), patch("release.git", return_value=MAIN):
+            with self.assertRaisesRegex(SystemExit, "not dispatched from main"):
+                validate_request_context(api=fake)
+
     def test_policy_rejects_tag_triggered_stable_release(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/release.yml"
-        path.write_text(path.read_text().replace("on:\n  workflow_dispatch:", "on:\n  push:\n    tags: ['v*']\n  workflow_dispatch:"))
-        with self.assertRaises(PolicyError):
+        path.write_text(
+            path.read_text().replace(
+                "on:\n  workflow_run:",
+                "on:\n  push:\n    tags: ['v*']\n  workflow_run:",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "tag pushes"):
             check_release_workflow(root)
+
+    def test_policy_rejects_direct_dispatch_on_write_capable_stable_consumer(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release.yml"
+        path.write_text(
+            path.read_text().replace(
+                "on:\n  workflow_run:",
+                "on:\n  workflow_dispatch:\n  workflow_run:",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "directly workflow_dispatch"):
+            check_release_workflow(root)
+
+    def test_stable_release_request_is_zero_write_and_no_checkout(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release-request.yml"
+        text = path.read_text()
+        path.write_text(text.replace("permissions: {}", "permissions:\n  contents: write", 1))
+        with self.assertRaisesRegex(PolicyError, "write permission"):
+            check_release_request_workflow(root)
+
+        path.write_text(text.replace("steps:\n", "steps:\n      - uses: actions/checkout@" + "a" * 40 + "\n", 1))
+        with self.assertRaisesRegex(PolicyError, "repository checkout"):
+            check_release_request_workflow(root)
+
+    def test_prerelease_control_plane_includes_stable_request_workflow(self) -> None:
+        self.assertIn(".github/workflows/release-request.yml", PRERELEASE_CI_CONTROL_PLANE)
 
 
 if __name__ == "__main__":

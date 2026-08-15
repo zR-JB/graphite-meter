@@ -187,6 +187,72 @@ def require_file_matches_main(
     return main_blob
 
 
+
+
+def workflow_id(
+    repository: str,
+    path: str,
+    *,
+    api: APICall = default_api,
+) -> int:
+    workflow = _object(api(f"repos/{repository}/actions/workflows/{path}"), f"workflow {path}")
+    try:
+        return int_field(workflow, "id", f"workflow {path}")
+    except JsonShapeError as exc:
+        raise TrustError(str(exc)) from exc
+
+
+def actor_login(run: JsonObject, key: str, context: str) -> str:
+    try:
+        actor = object_field(run, key, context)
+        return str_field(actor, "login", f"{context}.{key}")
+    except JsonShapeError as exc:
+        raise TrustError(str(exc)) from exc
+
+
+def run_artifacts(
+    repository: str,
+    run_id: int,
+    *,
+    api: APICall = default_api,
+) -> list[JsonObject]:
+    pages = api(
+        query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
+        paginate=True,
+    )
+    return _flatten_objects(pages, "artifacts")
+
+
+def require_exact_artifact(
+    repository: str,
+    run_id: int,
+    name: str,
+    *,
+    max_size: int,
+    required: bool,
+    api: APICall = default_api,
+) -> None:
+    matches = [
+        artifact
+        for artifact in run_artifacts(repository, run_id, api=api)
+        if artifact.get("name") == name and artifact.get("expired") is False
+    ]
+    if not matches and not required:
+        return
+    if len(matches) != 1:
+        raise TrustError(
+            f"expected exactly one non-expired artifact named {name}, found {len(matches)}"
+        )
+    try:
+        size = int_field(matches[0], "size_in_bytes", f"artifact {name}")
+    except JsonShapeError as exc:
+        raise TrustError(str(exc)) from exc
+    if size < 0:
+        raise TrustError(f"artifact {name} has an invalid size")
+    if size > max_size:
+        raise TrustError(f"artifact {name} is too large ({size} bytes; limit {max_size})")
+
+
 def require_ci_gate(
     repository: str,
     sha: str,
@@ -275,6 +341,7 @@ def require_check_run(
     *,
     name: str,
     app_slug: str,
+    pr_number: int | None = None,
     api: APICall = default_api,
 ) -> int:
     pages = api(
@@ -283,27 +350,48 @@ def require_check_run(
     )
     checks = _flatten_objects(pages, "check_runs")
 
+    def belongs_to_pr(check: JsonObject) -> bool:
+        if pr_number is None:
+            return True
+        matches = 0
+        for item in _optional_array(check, "pull_requests", "check run"):
+            pr = _object(item, "check run pull request")
+            if pr.get("number") == pr_number:
+                matches += 1
+        return matches == 1
+
     matches: list[JsonObject] = []
     for check in checks:
         app_value = check.get("app")
         if not isinstance(app_value, dict):
             continue
-        if check.get("name") == name and app_value.get("slug") == app_slug:
+        if (
+            check.get("name") == name
+            and app_value.get("slug") == app_slug
+            and belongs_to_pr(check)
+        ):
             matches.append(check)
+    scope = f" for PR #{pr_number}" if pr_number is not None else ""
     if not matches:
-        raise TrustError(f"{name} for {sha} is missing")
+        raise TrustError(f"{name}{scope} at {sha} is missing")
 
-    def check_order(check: JsonObject) -> str:
+    def check_order(check: JsonObject) -> tuple[str, int]:
+        timestamp = ""
         for key in ("completed_at", "started_at", "created_at"):
             value = check.get(key)
             if isinstance(value, str):
-                return value
-        return ""
+                timestamp = value
+                break
+        check_id = check.get("id")
+        return (
+            timestamp,
+            check_id if isinstance(check_id, int) and not isinstance(check_id, bool) else 0,
+        )
 
     selected = max(matches, key=check_order)
     if selected.get("status") != "completed" or selected.get("conclusion") != "success":
         raise TrustError(
-            f"{name} for {sha} is {selected.get('status')}/{selected.get('conclusion')}"
+            f"{name}{scope} at {sha} is {selected.get('status')}/{selected.get('conclusion')}"
         )
     try:
         return int_field(selected, "id", f"{name} check")
@@ -337,9 +425,35 @@ def require_main_codeql(
     if not analyses:
         raise TrustError(f"CodeQL analysis for {sha} is missing")
 
+    # The endpoint is historical and a rerun can leave an older failed analysis
+    # beside a newer success for the same category. Authorize only the newest
+    # exact-SHA result in each analysis identity; never let an older success hide
+    # a newer failure, and never let an older transient failure brick the SHA.
+    def identity(analysis: JsonObject) -> tuple[str, str, str]:
+        values: list[str] = []
+        for key in ("category", "analysis_key", "environment"):
+            value = analysis.get(key)
+            values.append(value if isinstance(value, str) else "")
+        return values[0], values[1], values[2]
+
+    def order(analysis: JsonObject) -> tuple[str, int]:
+        created = analysis.get("created_at")
+        analysis_id = analysis.get("id")
+        return (
+            created if isinstance(created, str) else "",
+            analysis_id if isinstance(analysis_id, int) and not isinstance(analysis_id, bool) else 0,
+        )
+
+    newest: dict[tuple[str, str, str], JsonObject] = {}
+    for analysis in analyses:
+        key = identity(analysis)
+        previous = newest.get(key)
+        if previous is None or order(analysis) > order(previous):
+            newest[key] = analysis
+
     errors = [
         analysis
-        for analysis in analyses
+        for analysis in newest.values()
         if isinstance(analysis.get("error"), str) and analysis.get("error") != ""
     ]
     if errors:
@@ -350,9 +464,9 @@ def require_main_codeql(
             error = analysis.get("error")
             label = category if isinstance(category, str) and category else analysis_key
             details.append(f"{label if isinstance(label, str) and label else 'unknown'}: {error}")
-        raise TrustError(f"CodeQL analysis for {sha} has errors: {'; '.join(details)}")
+        raise TrustError(f"latest CodeQL analysis for {sha} has errors: {'; '.join(details)}")
 
-    for analysis in analyses:
+    for analysis in newest.values():
         warning = analysis.get("warning")
         if isinstance(warning, str) and warning:
             print(f"::warning::CodeQL analysis warning for {sha}: {warning}")

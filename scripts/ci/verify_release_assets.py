@@ -186,9 +186,10 @@ def archive_names(path: Path) -> set[str]:
                 for member in archive.infolist():
                     require_safe_archive_name(path, member.filename)
                     mode = member.external_attr >> 16
-                    if stat.S_ISLNK(mode):
+                    file_type = stat.S_IFMT(mode)
+                    if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
                         raise VerificationError(
-                            f"{path.name} contains unsupported symlink entry: {member.filename!r}"
+                            f"{path.name} contains unsupported special entry: {member.filename!r}"
                         )
                     normalized = member.filename.rstrip("/")
                     if normalized in names:
@@ -237,7 +238,9 @@ def verify_client_archives(dist: Path, version: str, targets_file: Path) -> None
             raise VerificationError(f"release archive is missing or empty: {path}")
 
         names = archive_names(path)
+        binary_name = "graphite-meter-client.exe" if goos == "windows" else "graphite-meter-client"
         required = {
+            f"{base}/{binary_name}",
             f"{base}/LICENSE",
             f"{base}/COPYRIGHT",
             f"{base}/THIRD_PARTY_NOTICES.txt",
@@ -251,8 +254,8 @@ def verify_client_archives(dist: Path, version: str, targets_file: Path) -> None
 
 def verify_client_version(version: str) -> None:
     path = Path("client/dist/version.json")
-    if not path.is_file():
-        return
+    if not path.is_file() or path.is_symlink():
+        raise VerificationError(f"production client version metadata is missing: {path}")
     value = parse_json(path)
     if not isinstance(value, dict):
         raise VerificationError(f"{path} must contain a JSON object")
@@ -264,8 +267,8 @@ def verify_client_version(version: str) -> None:
 
 def verify_server_version(version: str) -> None:
     binary = Path("go/graphite-meter")
-    if not binary.is_file():
-        return
+    if not binary.is_file() or binary.is_symlink():
+        raise VerificationError(f"production server binary is missing: {binary}")
 
     environment = os.environ.copy()
     environment.update(

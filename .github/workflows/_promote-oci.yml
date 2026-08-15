@@ -27,7 +27,6 @@ jobs:
       packages: write
     env:
       SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
-      SKOPEO_VERSION: 1.22.2
     steps:
       - id: order
         name: Determine safe alias promotions from published releases
@@ -85,7 +84,6 @@ jobs:
             -e SERIES="$SERIES" \
             -e PROMOTE_SERIES="$PROMOTE_SERIES" \
             -e PROMOTE_LATEST="$PROMOTE_LATEST" \
-            -e SKOPEO_VERSION="$SKOPEO_VERSION" \
             "$SKOPEO_IMAGE" -ec '
               set -eu
               auth_dir=$(mktemp -d)
@@ -96,7 +94,6 @@ jobs:
               trap cleanup EXIT
               export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
 
-              skopeo --version | grep -F "skopeo version $SKOPEO_VERSION " >/dev/null
               printf "%s" "$REGISTRY_TOKEN" | skopeo login ghcr.io --username "$REGISTRY_ACTOR" --password-stdin
               source="docker://$IMAGE:$VERSION"
               source_digest=$(skopeo inspect --format "{{.Digest}}" "$source")

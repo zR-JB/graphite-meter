@@ -28,6 +28,15 @@ on:
         required: false
         default: ''
         type: string
+      expected_ci_run_id:
+        description: Exact CI workflow run revalidated after environment approval
+        required: true
+        type: string
+      expected_codeql_check_id:
+        description: Exact PR CodeQL check revalidated after approval; empty for stable releases
+        required: false
+        default: ''
+        type: string
 
 # Serialize the check-then-copy transaction for one immutable destination tag.
 concurrency:
@@ -43,10 +52,11 @@ jobs:
       actions: read
       contents: read
       pull-requests: read
+      checks: read
+      security-events: read
       packages: write
     env:
       SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
-      SKOPEO_VERSION: 1.22.2
     steps:
       - name: Download verified OCI archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -75,11 +85,14 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
           TRUSTED_MAIN_SHA: ${{ inputs.trusted_main_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_CI_RUN_ID: ${{ inputs.expected_ci_run_id }}
+          EXPECTED_CODEQL_CHECK_ID: ${{ inputs.expected_codeql_check_id }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid source SHA" >&2; exit 1; }
           [[ "$TRUSTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid trusted main SHA" >&2; exit 1; }
+          [[ "$EXPECTED_CI_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "invalid expected CI run ID" >&2; exit 1; }
           [[ "$IMAGE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]] || {
             echo "invalid immutable image tag: $IMAGE_TAG" >&2
             exit 1
@@ -93,13 +106,45 @@ jobs:
             echo "main changed after authorization: trusted $TRUSTED_MAIN_SHA, current $current_main" >&2
             exit 1
           }
+
+          ci_run=$(gh api "repos/$REPOSITORY/actions/runs/$EXPECTED_CI_RUN_ID")
           if [[ -z "$PR_NUMBER" ]]; then
+            [[ -z "$EXPECTED_CODEQL_CHECK_ID" ]] || { echo "stable publication must not carry a PR CodeQL check ID" >&2; exit 1; }
             [[ "$TRUSTED_MAIN_SHA" == "$SOURCE_SHA" ]] || {
               echo "stable source is not the trusted main SHA" >&2
               exit 1
             }
+            jq -e --arg sha "$SOURCE_SHA" \
+              '.head_sha == $sha and .head_branch == "main" and .event == "push" and .status == "completed" and .conclusion == "success"' \
+              <<<"$ci_run" >/dev/null || {
+                echo "stable CI run changed or no longer succeeds after final approval recheck" >&2
+                exit 1
+              }
+            analyses=$(gh api --paginate --slurp \
+              "repos/$REPOSITORY/code-scanning/analyses?ref=refs/heads/main&tool_name=CodeQL&per_page=100")
+            jq -e --arg sha "$SOURCE_SHA" '
+              [.[][] | select(.commit_sha == $sha and .tool.name == "CodeQL")] as $matches
+              | ($matches
+                 | group_by([(.category // ""), (.analysis_key // ""), (.environment // "")])
+                 | map(max_by([(.created_at // ""), (.id // 0)]))) as $latest
+              | ($latest | length) > 0
+              and all($latest[]; ((.error // "") == ""))
+            ' <<<"$analyses" >/dev/null || {
+              echo "latest stable CodeQL analysis disappeared or reports an error after final approval recheck" >&2
+              exit 1
+            }
           else
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "invalid prerelease PR number" >&2; exit 1; }
+            [[ "$EXPECTED_CODEQL_CHECK_ID" =~ ^[1-9][0-9]*$ ]] || { echo "invalid expected CodeQL check ID" >&2; exit 1; }
+            jq -e --arg sha "$SOURCE_SHA" --argjson pr "$PR_NUMBER" '
+              .head_sha == $sha and .event == "pull_request"
+              and .status == "completed" and .conclusion == "success"
+              and ([.pull_requests[]?.number | select(. == $pr)] | length) == 1
+            ' <<<"$ci_run" >/dev/null || {
+              echo "prerelease CI run changed or no longer succeeds after final approval recheck" >&2
+              exit 1
+            }
+
             pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")
             jq -e \
               --arg repo "$REPOSITORY" \
@@ -116,8 +161,24 @@ jobs:
                 echo "prerelease source no longer contains current main" >&2
                 exit 1
               }
+
+            check_pages=$(gh api --paginate --slurp \
+              "repos/$REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100")
+            latest_codeql=$(jq -c --argjson pr "$PR_NUMBER" '
+              [.[] | .check_runs[]?
+                | select(.name == "CodeQL" and .app.slug == "github-advanced-security")
+                | select(([.pull_requests[]?.number | select(. == $pr)] | length) == 1)]
+              | sort_by((.completed_at // .started_at // .created_at // ""), (.id // 0))
+              | last // empty
+            ' <<<"$check_pages")
+            [[ -n "$latest_codeql" ]] && jq -e --argjson id "$EXPECTED_CODEQL_CHECK_ID" \
+              '.id == $id and .status == "completed" and .conclusion == "success"' \
+              <<<"$latest_codeql" >/dev/null || {
+                echo "prerelease CodeQL check changed or no longer succeeds after final approval recheck" >&2
+                exit 1
+              }
           fi
-          echo "::notice::live source freshness check passed immediately before registry authentication"
+          echo "::notice::live source, CI, and CodeQL freshness checks passed immediately before registry authentication"
 
           image="ghcr.io/${REPOSITORY,,}"
           docker run --rm --entrypoint /bin/sh \
@@ -125,7 +186,6 @@ jobs:
             -e REGISTRY_ACTOR="$REGISTRY_ACTOR" \
             -e IMAGE="$image" \
             -e IMAGE_TAG="$IMAGE_TAG" \
-            -e SKOPEO_VERSION="$SKOPEO_VERSION" \
             -v "$RUNNER_TEMP/image:/work:ro" \
             "$SKOPEO_IMAGE" -ec '
               set -eu
@@ -138,7 +198,6 @@ jobs:
               trap cleanup EXIT
               export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
 
-              skopeo --version | grep -F "skopeo version $SKOPEO_VERSION " >/dev/null
               source_digest=$(skopeo inspect --format "{{.Digest}}" oci-archive:/work/graphite-meter.oci.tar)
               printf "%s" "$REGISTRY_TOKEN" | skopeo login ghcr.io \
                 --username "$REGISTRY_ACTOR" --password-stdin

@@ -35,7 +35,18 @@ ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
 EXPECTED_PLATFORMS = {("linux", "amd64"), ("linux", "arm64")}
 OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+SKOPEO_VERSION_OUTPUT_RE = re.compile(
+    r"^skopeo version (?P<version>[^\s]+)(?: commit: [0-9a-fA-F]+)?$"
+)
 
+
+
+def parse_skopeo_version(output: str) -> str:
+    """Return the exact Skopeo semantic version from supported `--version` output."""
+    match = SKOPEO_VERSION_OUTPUT_RE.fullmatch(output.strip())
+    if match is None:
+        raise VerificationError(f"unexpected Skopeo --version output: {output!r}")
+    return match.group("version")
 
 def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
     """Validate the two runnable images and their BuildKit provenance manifests.
@@ -181,6 +192,29 @@ def skopeo(engine: str, image: str, archive: Path, *args: str) -> str:
     )
 
 
+def verify_skopeo_runtime() -> tuple[str, str]:
+    """Verify the pinned Skopeo image and its declared human-readable version."""
+    engine = select_engine()
+    image = require_env("SKOPEO_IMAGE")
+    expected_skopeo = require_env("SKOPEO_VERSION")
+    version_text = run(
+        engine,
+        "run",
+        "--rm",
+        "--entrypoint",
+        "skopeo",
+        image,
+        "--version",
+    )
+    print(version_text)
+    actual_skopeo = parse_skopeo_version(version_text)
+    if actual_skopeo != expected_skopeo:
+        raise VerificationError(
+            f"unexpected Skopeo version; expected {expected_skopeo!r}, got {actual_skopeo!r}"
+        )
+    return engine, image
+
+
 def verify_archive_blobs(engine: str, image: str, archive: Path) -> None:
     """Force Skopeo to read and materialize every image in the OCI archive."""
     with tempfile.TemporaryDirectory(prefix="graphite-meter-oci-") as temp_dir:
@@ -209,25 +243,8 @@ def verify(version: str, revision: str, archive: Path) -> None:
     if not archive.is_file() or archive.stat().st_size == 0:
         raise VerificationError(f"OCI archive is missing or empty: {archive}")
 
-    engine = select_engine()
-    image = require_env("SKOPEO_IMAGE")
-    expected_skopeo = require_env("SKOPEO_VERSION")
+    engine, image = verify_skopeo_runtime()
     repository = require_env("REPOSITORY")
-
-    version_text = run(
-        engine,
-        "run",
-        "--rm",
-        "--entrypoint",
-        "skopeo",
-        image,
-        "--version",
-    )
-    print(version_text)
-    if f"skopeo version {expected_skopeo} " not in f"{version_text} ":
-        raise VerificationError(
-            f"unexpected Skopeo version; expected {expected_skopeo!r}, got {version_text!r}"
-        )
 
     index = parse_object_json(
         skopeo(engine, image, archive, "inspect", "--raw", "oci-archive:/work/image.oci.tar"),
@@ -275,11 +292,20 @@ def verify(version: str, revision: str, archive: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("version")
-    parser.add_argument("revision")
-    parser.add_argument("archive", type=Path)
+    parser.add_argument("--check-skopeo", action="store_true")
+    parser.add_argument("version", nargs="?")
+    parser.add_argument("revision", nargs="?")
+    parser.add_argument("archive", nargs="?", type=Path)
     args = parser.parse_args()
     try:
+        if args.check_skopeo:
+            if any(value is not None for value in (args.version, args.revision, args.archive)):
+                parser.error("--check-skopeo does not accept release arguments")
+            verify_skopeo_runtime()
+            print("Skopeo runtime contract passed")
+            return
+        if args.version is None or args.revision is None or args.archive is None:
+            parser.error("version, revision, and archive are required")
         verify(args.version, args.revision, args.archive)
     except VerificationError as exc:
         raise SystemExit(f"OCI verification failed: {exc}") from exc

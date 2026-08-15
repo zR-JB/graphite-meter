@@ -1,23 +1,13 @@
 name: Release
-run-name: Release · ${{ inputs.mode }} · ${{ inputs.version }} · ${{ github.sha }}
+run-name: Stable release · trusted request run ${{ github.event.workflow_run.id }} · ${{ github.sha }}
 
-# Stable release publication is manual and must execute from protected current main.
-# There is intentionally no tag-push trigger, so an old tag cannot resurrect old workflow code.
+# TRUSTED CONSUMER: the manual request workflow has no publication authority.
+# workflow_run executes this workflow from the default branch, where the request
+# run/ref/artifact are treated as untrusted input and rebound to exact current main.
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Stable SemVer tag, e.g. v0.5.2
-        required: true
-        type: string
-      mode:
-        description: Validate only, or publish after protected-environment approval
-        required: true
-        default: validate
-        type: choice
-        options:
-          - validate
-          - publish
+  workflow_run:
+    workflows: ["Request stable release"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -35,37 +25,41 @@ env:
 
 jobs:
   guard:
+    if: github.event.workflow_run.conclusion == 'success'
     name: Guard trusted current-main release source
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
-      sha: ${{ steps.guard.outputs.sha }}
       tag: ${{ steps.guard.outputs.tag }}
       version: ${{ steps.guard.outputs.version }}
       series: ${{ steps.guard.outputs.series }}
       publish: ${{ steps.guard.outputs.publish }}
     steps:
-      - name: Checkout exact workflow-dispatch SHA
+      - name: Checkout trusted default-branch release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Download untrusted manual release request
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: stable-release-request-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/stable-release-request
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
       - id: guard
-        name: Require current main, Gate, CodeQL, and stable SemVer
+        name: Bind request to trusted current main, Gate, CodeQL, and stable SemVer
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
-          ACTOR: ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_SHA: ${{ github.sha }}
-          REF: ${{ github.ref }}
+          PUBLISHER_SHA: ${{ github.sha }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
-          REQUESTED_VERSION: ${{ inputs.version }}
-          RELEASE_MODE: ${{ inputs.mode }}
+          REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}
+          REQUEST_DIR: ${{ runner.temp }}/stable-release-request
         run: python3 scripts/ci/release.py guard
 
   build:
@@ -81,7 +75,7 @@ jobs:
       - name: Checkout guarded release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.guard.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Set up release toolchain without dependency caches
@@ -99,19 +93,25 @@ jobs:
         run: just legal-generate
 
       - name: Build exact production client and server
-        run: just release-build "${{ needs.guard.outputs.version }}"
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: just release-build "$VERSION"
 
       - name: Build native artifacts and corresponding source
-        run: just release-artifacts "${{ needs.guard.outputs.version }}"
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: just release-artifacts "$VERSION"
 
       - name: Verify release package invariants
-        run: just release-check "${{ needs.guard.outputs.version }}"
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: just release-check "$VERSION"
 
       - name: Build linux/amd64 + linux/arm64 OCI archive
         uses: ./.github/actions/build-oci
         with:
           version: ${{ needs.guard.outputs.version }}
-          revision: ${{ needs.guard.outputs.sha }}
+          revision: ${{ github.sha }}
           output: ${{ runner.temp }}/release-image/graphite-meter.oci.tar
           client-validate: '0'
 
@@ -120,16 +120,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
           SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
-        run: >-
-          python3 scripts/ci/verify_oci.py
-          "${{ needs.guard.outputs.version }}"
-          "${{ needs.guard.outputs.sha }}"
-          "$RUNNER_TEMP/release-image/graphite-meter.oci.tar"
+          VERSION: ${{ needs.guard.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/verify_oci.py "$VERSION" "$SOURCE_SHA" "$RUNNER_TEMP/release-image/graphite-meter.oci.tar"
 
       - name: Verify native artifacts and embedded versions
         env:
           RELEASE_DIST: go/dist
-        run: python3 scripts/ci/verify_release_assets.py "${{ needs.guard.outputs.version }}"
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: python3 scripts/ci/verify_release_assets.py "$VERSION"
 
       - id: oci-digest
         name: Record OCI archive SHA-256
@@ -176,6 +175,8 @@ jobs:
     needs: [guard, build, approval]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      ci_run_id: ${{ steps.recheck.outputs.ci_run_id }}
     permissions:
       contents: read
       actions: read
@@ -184,23 +185,17 @@ jobs:
       - name: Checkout trusted current release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.guard.outputs.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Reconfirm source is still current main with Gate and CodeQL
+      - id: recheck
+        name: Reconfirm source is still current main with Gate and CodeQL
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          REPOSITORY_OWNER: ${{ github.repository_owner }}
-          ACTOR: ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_SHA: ${{ needs.guard.outputs.sha }}
-          REF: ${{ github.ref }}
-          WORKFLOW_REF: ${{ github.workflow_ref }}
+          SOURCE_SHA: ${{ github.sha }}
           REQUESTED_VERSION: ${{ needs.guard.outputs.tag }}
-          RELEASE_MODE: publish
         run: python3 scripts/ci/release.py recheck
 
   publish-image:
@@ -212,13 +207,16 @@ jobs:
       actions: read
       contents: read
       pull-requests: read
+      checks: read
+      security-events: read
       packages: write
     with:
       artifact: release-image
       tag: ${{ needs.guard.outputs.version }}
       expected_sha256: ${{ needs.build.outputs.oci_sha256 }}
-      source_sha: ${{ needs.guard.outputs.sha }}
-      trusted_main_sha: ${{ needs.guard.outputs.sha }}
+      source_sha: ${{ github.sha }}
+      trusted_main_sha: ${{ github.sha }}
+      expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}
 
   publish-release:
     name: Publish verified stable GitHub Release
@@ -231,7 +229,7 @@ jobs:
     with:
       artifact: release-artifacts
       tag: ${{ needs.guard.outputs.tag }}
-      target_sha: ${{ needs.guard.outputs.sha }}
+      target_sha: ${{ github.sha }}
 
   promote:
     name: Promote stable aliases without rollback

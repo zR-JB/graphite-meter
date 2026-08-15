@@ -94,12 +94,19 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
         "source_sha:",
         "trusted_main_sha:",
         "pr_number:",
+        "expected_ci_run_id:",
+        "expected_codeql_check_id:",
         "contents: read",
         "pull-requests: read",
+        "checks: read",
+        "security-events: read",
         'gh api "repos/$REPOSITORY/commits/main"',
+        'gh api "repos/$REPOSITORY/actions/runs/$EXPECTED_CI_RUN_ID"',
         'gh api "repos/$REPOSITORY/pulls/$PR_NUMBER"',
         'gh api "repos/$REPOSITORY/compare/$TRUSTED_MAIN_SHA...$SOURCE_SHA"',
-        "live source freshness check passed immediately before registry authentication",
+        'code-scanning/analyses?ref=refs/heads/main&tool_name=CodeQL',
+        'commits/$SOURCE_SHA/check-runs?per_page=100',
+        "live source, CI, and CodeQL freshness checks passed immediately before registry authentication",
     ):
         if required not in oci:
             fail(f"_publish-oci.yml missing last-mile source freshness invariant: {required}")
@@ -127,12 +134,17 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
         ".upload_url",
         "https://uploads.github.com/",
         "auth_header",
+        "release handoff contains a non-regular entry",
+        "release handoff contains an unsafe asset name",
     ):
         if required not in text:
             fail(f"_publish-release.yml missing invariant: {required}")
     for forbidden in (
         "releases/tags/$TAG",
         "gh release upload",
+        "--show-error -L",
+        "--location",
+        "--location-trusted",
     ):
         if forbidden in text:
             fail(
@@ -144,6 +156,25 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
         fail("_promote-oci.yml must prevent stable alias rollback using published SemVer ordering")
     if "group: promote-stable-oci-${{ github.repository }}" not in promote:
         fail("_promote-oci.yml must serialize stable alias movement")
+
+
+def check_skopeo_contract_consistency(root: pathlib.Path = ROOT) -> None:
+    """Require every Skopeo consumer to use one digest/version contract without a pin DB."""
+    images: set[str] = set()
+    versions: set[str] = set()
+    image_re = re.compile(r"quay\.io/skopeo/stable@sha256:[0-9a-f]{64}")
+    version_re = re.compile(r"(?m)^\s*SKOPEO_VERSION:\s*([^\s#]+)\s*$")
+    for path in sorted((root / ".github" / "workflows").glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        images.update(image_re.findall(text))
+        versions.update(version_re.findall(text))
+    if len(images) != 1:
+        fail(f"Skopeo consumers must share exactly one digest-pinned image; got {sorted(images)}")
+    if len(versions) != 1:
+        fail(f"Skopeo verification must share exactly one declared version; got {sorted(versions)}")
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    if "python3 scripts/ci/verify_oci.py --check-skopeo" not in ci:
+        fail("CI release checks must execute the pinned Skopeo runtime contract")
 
 
 def check_runner_labels(root: pathlib.Path = ROOT) -> None:
@@ -168,6 +199,14 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         "platforms: linux/amd64,linux/arm64",
         "outputs: type=oci,dest=${{ inputs.output }}",
         "provenance: mode=max",
+        "cache-image: 'false'",
+        "cache-binary: 'false'",
+        "source-dir:",
+        "default: '.'",
+        "context: ${{ inputs.source-dir }}",
+        "file: ${{ inputs.source-dir }}/container/Dockerfile",
+        'case "$SOURCE_DIR" in',
+        '.|source) ;;',
     ):
         if required not in text:
             fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
@@ -175,56 +214,101 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         fail("build-oci action must not pass GitHub secrets into max-level provenance builds")
 
 
-def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
-    candidate = (root / ".github" / "workflows" / "prerelease-candidate.yml").read_text(
+def check_setup_project_cache_boundary(root: pathlib.Path = ROOT) -> None:
+    setup = (root / ".github" / "actions" / "setup-project" / "action.yml").read_text(
         encoding="utf-8"
     )
-    if "pull_request_target:" in candidate or "pull_request:" not in candidate:
-        fail("prerelease candidate must use pull_request and never pull_request_target")
-    if re.search(r"(?m)^permissions:\s*$\n\s{2}contents:\s*read\s*$", candidate) is None:
-        fail("prerelease candidate must declare only top-level contents: read")
-    if re.search(r"(?m)^\s+[A-Za-z0-9_-]+:\s*write\s*$", candidate) is not None:
-        fail("prerelease candidate must not grant write permissions")
-    if "secrets." in candidate or "secrets[" in candidate:
-        fail("prerelease candidate must not reference secrets")
+    if "no-cache: ${{ inputs.bun-cache != 'true' }}" not in setup:
+        fail(
+            "setup-project must disable setup-bun executable caching when bun-cache is false"
+        )
+
+
+def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
+    """Keep the manual prerelease producer low-authority and host-isolated."""
+    workflows = root / ".github" / "workflows"
+    if (workflows / "prerelease-candidate.yml").exists():
+        fail("standalone label-triggered prerelease candidate workflow must remain removed")
+    request = (workflows / "prerelease-request.yml").read_text(encoding="utf-8")
+    if "workflow_dispatch:" not in request or "pull_request_target:" in request:
+        fail("prerelease request/candidate producer must remain workflow_dispatch-only")
+    if re.search(r"(?m)^permissions:\s*$\n\s{2}contents:\s*read\s*$", request) is None:
+        fail("prerelease request/candidate producer must declare only top-level contents: read")
+    if re.search(r"(?m)^\s+[A-Za-z0-9_-]+:\s*write\s*$", request) is not None:
+        fail("prerelease request/candidate producer must not grant write permissions")
+    if "secrets." in request or "secrets[" in request:
+        fail("prerelease request/candidate producer must not reference secrets")
     for required in (
-        "path: .trusted-ci",
-        "ref: ${{ github.event.pull_request.base.sha }}",
-        "python3 .trusted-ci/scripts/ci/prerelease.py",
-        "uses: ./.trusted-ci/.github/actions/setup-project",
-        "uses: ./.trusted-ci/.github/actions/build-oci",
-        "go-cache: 'false'",
-        "bun-cache: 'false'",
+        "ref: ${{ github.sha }}",
+        "ref: ${{ inputs.sha }}",
+        "path: source",
+        "uses: ./.github/actions/build-oci",
+        "source-dir: source",
+        "client-validate: '1'",
+        "run: python3 scripts/ci/prerelease.py request-prepare",
+        "run: python3 scripts/ci/prerelease.py request-finalize",
+        "prerelease-candidate-${{ github.run_id }}",
     ):
-        if required not in candidate:
-            fail(f"prerelease candidate missing base-sourced helper invariant: {required}")
+        if required not in request:
+            fail(f"prerelease request/candidate producer missing isolation invariant: {required}")
     for forbidden in (
         "uses: ./.github/actions/setup-project",
-        "uses: ./.github/actions/build-oci",
-        "run: python3 scripts/ci/prerelease.py",
+        "uses: ./source/",
+        "run: source/",
+        "run: ./source/",
+        "run: just ",
+        "issues: write",
+        "gm-prerelease-",
     ):
-        if forbidden in candidate:
-            fail(f"prerelease candidate executes PR-controlled control plane: {forbidden}")
+        if forbidden in request:
+            fail(f"prerelease request/candidate producer contains forbidden path: {forbidden}")
+
+    allowed_runs = {
+        "run: python3 scripts/ci/prerelease.py request-prepare",
+        "run: python3 scripts/ci/prerelease.py request-finalize",
+    }
+    actual_runs = {
+        line.strip() for line in request.splitlines() if line.strip().startswith("run:")
+    }
+    if actual_runs != allowed_runs:
+        fail(
+            "prerelease request/candidate host run steps must be limited to request shape/finalize helpers; "
+            f"got {sorted(actual_runs)}"
+        )
 
 
 def check_trusted_checkout_refs(root: pathlib.Path = ROOT) -> None:
     publisher = (root / ".github" / "workflows" / "prerelease-publish.yml").read_text(
         encoding="utf-8"
     )
-    if "workflow_run:" not in publisher:
-        fail("prerelease-publish.yml must remain a workflow_run consumer")
+    if "workflow_run:" not in publisher or 'workflows: ["Request PR prerelease"]' not in publisher:
+        fail("prerelease-publish.yml must remain a workflow_run consumer of the low-authority request")
     for line in publisher.splitlines():
         stripped = line.strip()
         if stripped.startswith("ref:") and stripped != "ref: ${{ github.sha }}":
             fail(f"prerelease publisher has non-trusted checkout ref: {stripped}")
+    for forbidden in (
+        "path: source",
+        "github.event.pull_request.head.sha",
+        "uses: ./source/",
+        "prerelease-candidate.yml",
+        "LABEL_",
+        "issues: write",
+    ):
+        if forbidden in publisher:
+            fail(f"prerelease publisher must never checkout/execute PR source or manage request labels: {forbidden}")
 
     for required in (
-        "source_sha: ${{ needs.resolve.outputs.sha }}",
+        "PUBLISHER_SHA: ${{ github.sha }}",
+        "REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}",
+        "source_sha: ${{ needs.validate.outputs.sha }}",
         "trusted_main_sha: ${{ needs.validate.outputs.main_sha }}",
-        "pr_number: ${{ needs.resolve.outputs.pr }}",
+        "pr_number: ${{ needs.validate.outputs.pr }}",
+        "expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}",
+        "expected_codeql_check_id: ${{ needs.recheck.outputs.codeql_check_id }}",
     ):
         if required not in publisher:
-            fail(f"prerelease publisher missing last-mile freshness input: {required}")
+            fail(f"prerelease publisher missing trusted-consumer/freshness input: {required}")
 
     approval_pos = publisher.find("approval:")
     recheck_pos = publisher.find("recheck:")
@@ -235,33 +319,68 @@ def check_trusted_checkout_refs(root: pathlib.Path = ROOT) -> None:
         fail("prerelease publication must approve, then recheck, then publish")
 
 
+def check_release_request_workflow(root: pathlib.Path = ROOT) -> None:
+    path = root / ".github" / "workflows" / "release-request.yml"
+    if not path.is_file():
+        fail("missing low-authority stable release request workflow")
+    request = path.read_text(encoding="utf-8")
+    for label, needle in {
+        "repository checkout": "actions/checkout@",
+        "local action execution": "uses: ./",
+        "repository script execution": "scripts/",
+        "Just execution": "just ",
+        "write permission": ": write",
+        "environment approval": "environment:",
+        "secret reference": "secrets.",
+    }.items():
+        if needle in request:
+            fail(f"release-request.yml contains forbidden {label}: {needle}")
+    for required in (
+        "workflow_dispatch:",
+        "permissions: {}",
+        "REF: ${{ github.ref }}",
+        "SOURCE_SHA: ${{ github.sha }}",
+        "RUN_ATTEMPT: ${{ github.run_attempt }}",
+        "[[ \"$REF\" == refs/heads/main ]]",
+        "stable-release-request-${{ github.run_id }}",
+        "retention-days: 1",
+    ):
+        if required not in request:
+            fail(f"release-request.yml missing low-authority request invariant: {required}")
+
+
 def check_release_workflow(root: pathlib.Path = ROOT) -> None:
     release = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     if re.search(r"(?m)^\s{2}push:\s*$", release) is not None or "tags:" in release:
-        fail("stable release workflow must not be triggered by tag pushes")
+        fail("stable release consumer must not be triggered by tag pushes")
+    if "workflow_dispatch:" in release:
+        fail("write-capable stable release consumer must not be directly workflow_dispatch-triggered")
+    if "needs.guard.outputs.sha" in release:
+        fail("stable release source identity must use immutable workflow_run github.sha directly, not a guard output")
+
     for required in (
-        "workflow_dispatch:",
+        "workflow_run:",
+        'workflows: ["Request stable release"]',
+        "types: [completed]",
         "group: stable-release-${{ github.repository }}",
         "environment: ghcr-release",
         "python3 scripts/ci/release.py recheck",
-        "target_sha: ${{ needs.guard.outputs.sha }}",
-        "REF: ${{ github.ref }}",
+        "target_sha: ${{ github.sha }}",
+        "PUBLISHER_SHA: ${{ github.sha }}",
         "WORKFLOW_REF: ${{ github.workflow_ref }}",
-        "REPOSITORY_OWNER: ${{ github.repository_owner }}",
-        "ACTOR: ${{ github.actor }}",
-        "TRIGGERING_ACTOR: ${{ github.triggering_actor }}",
-        "source_sha: ${{ needs.guard.outputs.sha }}",
-        "trusted_main_sha: ${{ needs.guard.outputs.sha }}",
+        "REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}",
+        "stable-release-request-${{ github.event.workflow_run.id }}",
+        "run-id: ${{ github.event.workflow_run.id }}",
+        "source_sha: ${{ github.sha }}",
+        "trusted_main_sha: ${{ github.sha }}",
+        "expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}",
     ):
         if required not in release:
-            fail(f"release.yml missing invariant: {required}")
+            fail(f"release.yml missing trusted-consumer invariant: {required}")
 
     for line in release.splitlines():
         stripped = line.strip()
-        if stripped.startswith("ref: ${{") and stripped not in {
-            "ref: ${{ github.sha }}",
-            "ref: ${{ needs.guard.outputs.sha }}",
-        }:
+        if stripped.startswith("ref: ${{") and stripped != "ref: ${{ github.sha }}":
             fail(f"release workflow has unexpected dynamic checkout ref: {stripped}")
 
     order = [
@@ -286,9 +405,13 @@ def check_prerelease_request_workflow(root: pathlib.Path = ROOT) -> None:
         "REF: ${{ github.ref }}",
         "WORKFLOW_REF: ${{ github.workflow_ref }}",
         "python3 scripts/ci/prerelease.py request-prepare",
+        "python3 scripts/ci/prerelease.py request-finalize",
     ):
         if required not in request:
-            fail(f"prerelease-request.yml missing current-main request invariant: {required}")
+            fail(f"prerelease-request.yml missing low-authority request invariant: {required}")
+    for forbidden in ("issues: write", "request-label", "pull_request:", "pull_request_target:"):
+        if forbidden in request:
+            fail(f"prerelease-request.yml contains obsolete/privileged trigger path: {forbidden}")
 
 
 def tracked_files(root: pathlib.Path = ROOT) -> list[str]:
@@ -315,8 +438,8 @@ def check_certificates(root: pathlib.Path = ROOT) -> None:
         path = root / name
         try:
             data = path.read_bytes()
-        except OSError:
-            continue
+        except OSError as exc:
+            fail(f"cannot read tracked file {name!r} during certificate scan: {exc}")
         if PEM.search(data):
             bad_content.append(name)
     if bad_content:
@@ -326,10 +449,13 @@ def check_certificates(root: pathlib.Path = ROOT) -> None:
 def check_repository(root: pathlib.Path = ROOT) -> None:
     check_external_action_shas(root)
     check_privileged_workflows(root)
+    check_skopeo_contract_consistency(root)
     check_runner_labels(root)
     check_oci_build_action(root)
+    check_setup_project_cache_boundary(root)
     check_candidate_boundary(root)
     check_trusted_checkout_refs(root)
+    check_release_request_workflow(root)
     check_release_workflow(root)
     check_prerelease_request_workflow(root)
     check_certificates(root)

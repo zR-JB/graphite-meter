@@ -55,11 +55,24 @@ jobs:
           printf 'Authorization: Bearer %s\n' "$GH_TOKEN" >"$auth_header"
           trap 'rm -f "$local_map" "$remote_map" "$err" "$auth_header"' EXIT
 
-          find "$assets" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | while IFS= read -r name; do
-            digest=$(sha256sum "$assets/$name" | awk '{print $1}')
-            printf '%s\tsha256:%s\n' "$name" "$digest"
-          done >"$local_map"
-          test -s "$local_map" || { echo "release artifact is empty" >&2; exit 1; }
+          : >"$local_map"
+          asset_count=0
+          while IFS= read -r -d '' entry; do
+            name=${entry##*/}
+            [[ -f "$entry" && ! -L "$entry" ]] || {
+              echo "release handoff contains a non-regular entry: $name" >&2
+              exit 1
+            }
+            [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || {
+              echo "release handoff contains an unsafe asset name: $name" >&2
+              exit 1
+            }
+            digest=$(sha256sum "$entry" | awk '{print $1}')
+            printf '%s\tsha256:%s\n' "$name" "$digest" >>"$local_map"
+            asset_count=$((asset_count + 1))
+          done < <(find "$assets" -mindepth 1 -maxdepth 1 -print0)
+          ((asset_count > 0)) || { echo "release artifact is empty" >&2; exit 1; }
+          LC_ALL=C sort -o "$local_map" "$local_map"
 
           resolve_tag_target() {
             ref_json=$1
@@ -146,7 +159,7 @@ jobs:
           while IFS= read -r name; do
             [[ -n "$name" ]] || continue
             encoded_name=$(jq -nr --arg name "$name" '$name | @uri')
-            curl --fail-with-body --silent --show-error -L \
+            curl --fail-with-body --silent --show-error \
               --request POST \
               --header 'Accept: application/vnd.github+json' \
               --header "@$auth_header" \

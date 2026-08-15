@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+env:
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:c7d3c512612f52805023cd38351081dad7e2729fc13d14b701e47c7c8bdd6615
+  SKOPEO_VERSION: 1.22.2
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -124,9 +128,13 @@ jobs:
         uses: ./.github/actions/setup-project
         with: {bun: 'true', client-deps: 'true'}
       - name: Install ${{ matrix.project }} runtime
-        run: cd client && bunx playwright install --with-deps ${{ matrix.project }}
+        env:
+          BROWSER_PROJECT: ${{ matrix.project }}
+        run: cd client && bunx playwright install --with-deps "$BROWSER_PROJECT"
       - name: Run ${{ matrix.project }} browser suite
-        run: just client-browser ${{ matrix.project }}
+        env:
+          BROWSER_PROJECT: ${{ matrix.project }}
+        run: just client-browser "$BROWSER_PROJECT"
 
   tui:
     name: TUI cross-build
@@ -192,6 +200,11 @@ jobs:
         with: {go: 'true', bun: 'true', client-deps: 'true'}
       - name: Build and verify representative release packages
         run: just release-check
+      - name: Verify pinned Skopeo runtime contract
+        env:
+          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
+          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
+        run: python3 scripts/ci/verify_oci.py --check-skopeo
 
   security:
     name: Security scan
