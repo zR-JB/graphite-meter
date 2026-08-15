@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "vite.e2e.config.ts"]
 }

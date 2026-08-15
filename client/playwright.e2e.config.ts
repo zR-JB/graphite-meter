@@ -16,6 +16,8 @@ const ports = { h1: 7256, h1tls: 7257, h3: 7259 };
  *  the recipe was bypassed; failing here beats a QUIC error 40 minutes later. */
 const SPKI = process.env.GM_E2E_SPKI;
 if (!SPKI) throw new Error("GM_E2E_SPKI unset: run `just client-e2e`");
+const SERVER_BIN = process.env.GM_E2E_SERVER_BIN;
+if (!SERVER_BIN) throw new Error("GM_E2E_SERVER_BIN unset: run `just client-e2e`");
 
 export const origins = {
   "h1-clear": `http://${HOST}:${ports.h1}`,
@@ -30,7 +32,6 @@ export default defineConfig({
   reporter: process.env.CI ? "github" : "list",
   timeout: 60_000,
   use: {
-    baseURL: `http://${HOST}:5273`,
     trace: "retain-on-failure",
   },
   projects: [
@@ -50,10 +51,14 @@ export default defineConfig({
     },
     { name: "firefox", use: { browserName: "firefox" } },
   ],
+  // Only the real Graphite Meter process is managed by Playwright. The
+  // prebuilt transport harness is served by a worker-scoped fixture on an
+  // OS-assigned port, so no Vite dev server or fixed harness port can stall CI.
   webServer: [
     {
-      command: "go run ./cmd/graphite-meter",
-      cwd: "../go",
+      // The recipe compiles this exact binary before Playwright starts, so
+      // server build failures are not hidden inside webServer readiness.
+      command: JSON.stringify(SERVER_BIN),
       url: `http://${HOST}:${ports.h1}/preflight`,
       env: {
         GM_H1_ADDR: `${HOST}:${ports.h1}`,
@@ -64,13 +69,7 @@ export default defineConfig({
       },
       reuseExistingServer: false,
       stdout: "pipe",
-      timeout: 180_000,
-    },
-    {
-      command: `bun run dev -- --host ${HOST} --port 5273`,
-      url: `http://${HOST}:5273/bench/harness.html`,
-      reuseExistingServer: false,
-      timeout: 120_000,
+      timeout: 30_000,
     },
   ],
 });

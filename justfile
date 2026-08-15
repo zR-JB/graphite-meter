@@ -470,7 +470,9 @@ client-e2e:
     GM_E2E_SPKI=$(openssl x509 -in "$certs/cert.pem" -pubkey -noout \
       | openssl pkey -pubin -outform der \
       | openssl dgst -sha256 -binary | openssl enc -base64)
-    export GM_E2E_TLS_CERT GM_E2E_TLS_KEY GM_E2E_SPKI
+    GM_E2E_SERVER_BIN="$certs/graphite-meter-e2e"
+    (cd go && go build -trimpath -o "$GM_E2E_SERVER_BIN" ./cmd/graphite-meter)
+    export GM_E2E_TLS_CERT GM_E2E_TLS_KEY GM_E2E_SPKI GM_E2E_SERVER_BIN
     cd client && bun run test:e2e
 
 # Measurement only; not part of ci. Unix only, since the CPU column reads
