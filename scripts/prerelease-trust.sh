@@ -86,11 +86,24 @@ if [[ "$MODE" == request ]]; then
     fi
     label_body=$(jq -cn --arg name "$label" --arg description "$description" \
         '{name:$name,color:"b60205",description:$description}')
+    echo "Creating temporary prerelease label $label..."
     gh api --method POST "repos/$REPOSITORY/labels" --input - <<<"$label_body" >/dev/null
+    echo "Temporary prerelease label created."
 
-    comment=$(jq -cn --arg label "$label" --arg tag "$REQUESTED_TAG" \
-        '{body:("Trusted prerelease request validated for `" + $tag + "`. An owner must apply the temporary label `" + $label + "` to this PR to start the isolated candidate build. The label will be removed automatically when the request finishes.")}')
-    gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" --input - <<<"$comment" >/dev/null
+    {
+        echo "### PR prerelease request ready"
+        echo
+        echo "Apply this temporary label to PR #$PR_NUMBER:"
+        echo
+        echo "\`$label\`"
+        echo
+        echo "Requested image: \`${REQUESTED_TAG#v}\`"
+        echo
+        echo "Requested PR SHA: \`$REQUESTED_SHA\`"
+        echo
+        echo "The trusted workflow will continue automatically after you apply the label."
+    } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY is required}"
+    echo "Temporary prerelease request label created: $label"
 
     {
         echo "label=$label"
