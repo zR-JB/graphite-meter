@@ -34,9 +34,10 @@ type authenticatedStack struct {
 func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
-	// One port for the UDP listener and its TCP Alt-Svc companion, as
-	// TestRunServesH3 does.
-	cfg.Native.H3 = freeTCPAddr(t)
+	// One already-reserved port for the UDP listener and its TCP Alt-Svc
+	// companion, so assembly never releases and races to rebind it.
+	sockets := newTestListenerSockets(t)
+	cfg.Native.H3 = sockets.reserveH3()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -72,7 +73,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	// assembleH3 builds the HTTP/3 listener, rather than a copy of it here: the
 	// browser CONNECT path hangs entirely on the auth.Listener{WebTransport:
 	// true} it passes to Enforce, and a mirrored construction pins nothing.
-	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm,
+	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, sockets: sockets,
 		connections: newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)}
 	if err := build.assembleH3(); err != nil {
 		t.Fatal(err)

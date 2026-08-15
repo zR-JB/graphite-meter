@@ -61,24 +61,25 @@ func (d *testWTTransport) armClose() {
 // one, no transport.
 func wtTestOrigins(t *testing.T, tune func(*config.Config)) (string, string) {
 	t.Helper()
-	cfg := wtTestConfig(t, tune)
-	t.Cleanup(runUntilCancel(t, &cfg))
+	cfg, sockets := wtTestConfig(t, tune)
+	t.Cleanup(runUntilCancel(t, &cfg, sockets))
 	waitForOK(t, http.DefaultClient, "http://"+cfg.Native.H1+"/preflight")
 	return "https://" + cfg.Native.H3, "http://" + cfg.Native.H1
 }
 
-func wtTestConfig(t *testing.T, tune func(*config.Config)) config.Config {
+func wtTestConfig(t *testing.T, tune func(*config.Config)) (config.Config, *testListenerSockets) {
 	t.Helper()
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = freeTCPAddr(t)
-	cfg.Native.H3 = freeTCPAddr(t)
+	cfg.Native.H1 = sockets.reserveTCP()
+	cfg.Native.H3 = sockets.reserveH3()
 	cfg.TLSCert, cfg.TLSKey = cert, key
 	if tune != nil {
 		tune(&cfg)
 	}
-	return cfg
+	return cfg, sockets
 }
 
 // wtTestServerWithIdleBound is wtTestServerTuned for the tests that turn on the
@@ -99,11 +100,11 @@ func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*con
 // test-only ships in the handlers.
 func wtShapedServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (string, string, *endpoints) {
 	t.Helper()
-	cfg := wtTestConfig(t, tune)
+	cfg, sockets := wtTestConfig(t, tune)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	build, err := newListenerBuild(ctx, &cfg)
+	build, err := newListenerBuildWithSockets(ctx, &cfg, sockets)
 	if err != nil {
 		t.Fatalf("build listeners: %v", err)
 	}

@@ -84,6 +84,25 @@ type service struct {
 	stop                func(context.Context) error
 }
 
+// listenerSockets owns socket creation. Production uses the operating system
+// directly; integration tests can hand already-bound sockets to the exact same
+// assembly path so they never have to "find a free port", release it, and race
+// another process to rebind it later.
+type listenerSockets interface {
+	listenTCP(string) (net.Listener, error)
+	listenUDP(string) (net.PacketConn, error)
+}
+
+type systemListenerSockets struct{}
+
+func (systemListenerSockets) listenTCP(addr string) (net.Listener, error) {
+	return net.Listen("tcp", addr)
+}
+
+func (systemListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
+	return net.ListenPacket("udp", addr)
+}
+
 func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error) {
 	block := make([]byte, downloadBlockSize)
 	if _, err := rand.Read(block); err != nil {
@@ -295,7 +314,14 @@ func pinConnectOrigins(cfg *config.Config, authn *auth.Service) {
 // Run validates the config and certificate, binds every configured listener,
 // and shuts the logical server down as one unit.
 func Run(ctx context.Context, cfg *config.Config) error {
-	b, err := newListenerBuild(ctx, cfg)
+	return runWithSockets(ctx, cfg, systemListenerSockets{})
+}
+
+// runWithSockets is Run with socket creation injected. Keeping this seam below
+// the exported API lets tests reserve the exact TCP/UDP sockets they will use
+// while production keeps the normal net.Listen/net.ListenPacket behavior.
+func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) error {
+	b, err := newListenerBuildWithSockets(ctx, cfg, sockets)
 	if err != nil {
 		return err
 	}
@@ -314,6 +340,10 @@ func Run(ctx context.Context, cfg *config.Config) error {
 // constructor argument all the way down, so there is nothing to race and
 // nothing test-only in the shipped handler.
 func newListenerBuild(ctx context.Context, cfg *config.Config) (*listenerBuild, error) {
+	return newListenerBuildWithSockets(ctx, cfg, systemListenerSockets{})
+}
+
+func newListenerBuildWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) (*listenerBuild, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -341,7 +371,7 @@ func newListenerBuild(ctx context.Context, cfg *config.Config) (*listenerBuild, 
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}
-	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa}, nil
+	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa, sockets: sockets}, nil
 }
 
 // listenerBuild accumulates the listeners Run assembles: the shared
@@ -357,6 +387,7 @@ type listenerBuild struct {
 	spa         http.Handler
 	services    []service
 	opened      []io.Closer
+	sockets     listenerSockets
 }
 
 // closeOpened releases every socket bound so far, so a failed bind does not
@@ -373,7 +404,7 @@ func (b *listenerBuild) closeOpened() {
 func (b *listenerBuild) tcpTLS(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
 	mux := listenerMuxConfigured(b.ctx, b.e, topo, handler, b.authn)
 	s := baseServer(b.authn.Enforce(mux, l), proto)
-	ln, err := net.Listen("tcp", addr)
+	ln, err := b.sockets.listenTCP(addr)
 	if err != nil {
 		b.closeOpened()
 		return err
@@ -398,7 +429,7 @@ func (b *listenerBuild) assemble() error {
 	spa := b.spa
 	// Clear HTTP/1.1 is the one listener bound unconditionally.
 	h1 := baseServer(b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, b.authn), auth.Listener{UI: true}), h1Protocols())
-	h1ln, err := net.Listen("tcp", b.cfg.Native.H1)
+	h1ln, err := b.sockets.listenTCP(b.cfg.Native.H1)
 	if err != nil {
 		return err
 	}
@@ -480,7 +511,7 @@ func (b *listenerBuild) assembleH3() error {
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{WebTransport: true})
 	h3.MaxHeaderBytes = 32 << 10
-	pc, err := net.ListenPacket("udp", b.cfg.Native.H3)
+	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
 		b.closeOpened()
 		return err
