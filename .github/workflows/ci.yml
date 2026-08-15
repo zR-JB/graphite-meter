@@ -50,6 +50,47 @@ jobs:
             printf '%s\n' "$pem"
             exit 1
           fi
+      - name: Validate external GitHub Action SHAs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path('.')
+          files = []
+          files.extend(root.glob('.github/workflows/**/*.yml'))
+          files.extend(root.glob('.github/workflows/**/*.yaml'))
+          files.extend(root.glob('.github/actions/**/action.yml'))
+          seen = set()
+          for path in files:
+              if path.is_file():
+                  seen.add(path)
+
+          pattern = re.compile(r'^\s*(?:-\s*)?uses:\s*(\S+)\s*(?:#.*)?$')
+          local = re.compile(r'^\./[A-Za-z0-9_./-]+$')
+          external = re.compile(r'^(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)@[0-9a-f]{40}$')
+          violations = []
+          for path in sorted(seen):
+              for lineno, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+                  match = pattern.match(line)
+                  if not match:
+                      continue
+                  ref = match.group(1)
+                  if local.fullmatch(ref) or external.fullmatch(ref):
+                      continue
+                  violations.append((path, lineno, ref))
+
+          if violations:
+              print('workflow safety: malformed external action refs found', file=sys.stderr)
+              for path, lineno, ref in violations:
+                  print(f'  {path}:{lineno}: {ref}', file=sys.stderr)
+              raise SystemExit(1)
+
+          print('workflow safety: all external action refs are pinned to 40-character SHAs')
+          PY
       - id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
