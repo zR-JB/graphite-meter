@@ -7,6 +7,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,7 +18,16 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from github_api import JsonValue
-from precommit import CheckPlan, StagedChange, is_tls_path, parse_staged_changes, plan_checks
+from precommit import (
+    CheckPlan,
+    StagedChange,
+    is_tls_path,
+    parse_staged_changes,
+    plan_checks,
+    prepare_staged_worktree,
+    remove_worktree,
+    staged_worktree_environment,
+)
 from prerelease import (
     PRERELEASE_CI_CONTROL_PLANE,
     PRERELEASE_RE,
@@ -410,6 +420,64 @@ class PipelineTests(unittest.TestCase):
         )
         plan = plan_checks(tuple(change.path for change in parse_staged_changes(raw)))
         self.assertTrue(plan.pipeline, "deleted/renamed workflow paths must still select pipeline checks")
+
+    def test_precommit_scrubs_parent_git_environment_for_staged_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td) / "repo"
+            subprocess.run(("git", "init", "-q", str(repo)), check=True)
+            (repo / "tracked.txt").write_text("staged snapshot\n", encoding="utf-8")
+            subprocess.run(("git", "-C", str(repo), "add", "tracked.txt"), check=True)
+            subprocess.run(
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=CI",
+                    "-c",
+                    "user.email=ci@example.invalid",
+                    "commit",
+                    "-qm",
+                    "base",
+                ),
+                check=True,
+            )
+            tree = subprocess.run(
+                ("git", "-C", str(repo), "write-tree"),
+                check=True,
+                stdout=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            worktree = pathlib.Path(td) / "staged"
+            poisoned = {
+                "GIT_DIR": ".git",
+                "GIT_WORK_TREE": ".",
+                "GIT_INDEX_FILE": ".git/index",
+            }
+
+            with patch.dict(os.environ, poisoned, clear=False):
+                clean_env = staged_worktree_environment(repo)
+                for name in poisoned:
+                    self.assertNotIn(name, clean_env)
+                self.assertEqual(clean_env.get("PATH"), os.environ.get("PATH"))
+                prepare_staged_worktree(repo, tree, worktree, env=clean_env)
+
+            try:
+                self.assertEqual(
+                    (worktree / "tracked.txt").read_text(encoding="utf-8"),
+                    "staged snapshot\n",
+                )
+                status = subprocess.run(
+                    ("git", "status", "--porcelain"),
+                    cwd=worktree,
+                    env=clean_env,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                ).stdout
+                self.assertEqual(status, "")
+            finally:
+                remove_worktree(repo, worktree)
 
     def test_policy_rejects_precommit_working_tree_regression(self) -> None:
         root = self._copy_policy_tree()

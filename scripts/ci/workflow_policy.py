@@ -533,6 +533,10 @@ def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
         '"--name-status"',
         '"--diff-filter=ACMRD"',
         '"protect", "--staged"',
+        '"--local-env-vars"',
+        'prepare_staged_worktree(root, tree, worktree, env=worktree_env)',
+        'run_pipeline_checks(worktree, env=worktree_env)',
+        'command(("just", recipe), cwd=worktree, env=worktree_env)',
         'server-check", "server-test',
     ):
         if required not in text:

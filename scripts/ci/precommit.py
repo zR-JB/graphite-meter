@@ -17,7 +17,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn, Sequence
+from typing import Mapping, NoReturn, Sequence
 
 TLS_NAME = re.compile(
     r"(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|"
@@ -58,6 +58,7 @@ def command(
     cwd: Path,
     capture: bool = False,
     check: bool = True,
+    env: Mapping[str, str] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     result = subprocess.run(
         list(args),
@@ -65,6 +66,7 @@ def command(
         stdout=subprocess.PIPE if capture else None,
         stderr=subprocess.PIPE if capture else None,
         check=False,
+        env=None if env is None else dict(env),
     )
     if check and result.returncode != 0:
         if capture:
@@ -83,6 +85,26 @@ def git_bytes(root: Path, *args: str) -> bytes:
 
 def git_text(root: Path, *args: str) -> str:
     return git_bytes(root, *args).decode("utf-8", errors="strict").strip()
+
+
+def staged_worktree_environment(root: Path) -> dict[str, str]:
+    """Return an environment that cannot bind child Git to the parent worktree.
+
+    Git exports repository-local variables to hooks, notably GIT_INDEX_FILE.
+    A linked worktree uses a `.git` *file*, so inheriting a relative value such
+    as `.git/index` makes Git try to create `.git/index.lock` beneath that file.
+    More importantly, any later tool that invokes Git could accidentally keep
+    addressing the developer worktree instead of the staged snapshot.
+
+    Git documents `rev-parse --local-env-vars` as the set to clear before
+    operating on another repository/worktree. Keep all non-repository process
+    environment intact and let Git rediscover the linked worktree from cwd.
+    """
+    local_names = git_text(root, "rev-parse", "--local-env-vars").splitlines()
+    env = os.environ.copy()
+    for name in local_names:
+        env.pop(name, None)
+    return env
 
 
 def repository_root() -> Path:
@@ -197,13 +219,19 @@ def link_optional_directory(source: Path, destination: Path) -> None:
     destination.symlink_to(source, target_is_directory=True)
 
 
-def prepare_staged_worktree(root: Path, tree: str, worktree: Path) -> None:
+def prepare_staged_worktree(
+    root: Path,
+    tree: str,
+    worktree: Path,
+    *,
+    env: Mapping[str, str],
+) -> None:
     command(
         ("git", "worktree", "add", "--quiet", "--detach", "--no-checkout", str(worktree), "HEAD"),
         cwd=root,
     )
-    command(("git", "read-tree", tree), cwd=worktree)
-    command(("git", "checkout-index", "-a", "-f"), cwd=worktree)
+    command(("git", "read-tree", tree), cwd=worktree, env=env)
+    command(("git", "checkout-index", "-a", "-f"), cwd=worktree, env=env)
     # These are ignored dependency/tool caches prepared by `just setup`. Tests
     # may read them, but all tracked/generated outputs remain in the disposable
     # staged worktree so the developer tree cannot hide staged drift.
@@ -227,24 +255,25 @@ def remove_worktree(root: Path, worktree: Path) -> None:
         command(("git", "worktree", "prune"), cwd=root, check=False)
 
 
-def run_pipeline_checks(worktree: Path) -> None:
-    command(("python3", "-m", "compileall", "-q", "scripts/ci"), cwd=worktree)
-    command(("python3", "scripts/ci/workflow_policy.py"), cwd=worktree)
-    command(("python3", "scripts/ci/test_pipeline.py"), cwd=worktree)
+def run_pipeline_checks(worktree: Path, *, env: Mapping[str, str]) -> None:
+    command(("python3", "-m", "compileall", "-q", "scripts/ci"), cwd=worktree, env=env)
+    command(("python3", "scripts/ci/workflow_policy.py"), cwd=worktree, env=env)
+    command(("python3", "scripts/ci/test_pipeline.py"), cwd=worktree, env=env)
 
 
 def run_staged_checks(root: Path, plan: CheckPlan) -> None:
     if not plan.pipeline and not plan.recipes:
         return
     tree = git_text(root, "write-tree")
+    worktree_env = staged_worktree_environment(root)
     with tempfile.TemporaryDirectory(prefix="graphite-meter-precommit-") as temp_dir:
         worktree = Path(temp_dir) / "staged"
         try:
-            prepare_staged_worktree(root, tree, worktree)
+            prepare_staged_worktree(root, tree, worktree, env=worktree_env)
             if plan.pipeline:
-                run_pipeline_checks(worktree)
+                run_pipeline_checks(worktree, env=worktree_env)
             for recipe in plan.recipes:
-                command(("just", recipe), cwd=worktree)
+                command(("just", recipe), cwd=worktree, env=worktree_env)
         finally:
             remove_worktree(root, worktree)
 
