@@ -147,79 +147,9 @@ _install-tools staticcheck="true" govulncheck="true" gitleaks="true":
         "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" version
     fi
 
-[private]
-_pre-commit:
-    #!/usr/bin/env sh
-    set -eu
-    staged=$(git diff --cached --name-only --diff-filter=ACMR)
-    [ -z "$staged" ] && exit 0
-    branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo HEAD)
-    if [ "$branch" = main ]; then
-        echo "pre-commit: refusing to commit directly to main; create a branch first" >&2
-        exit 1
-    fi
-    if git diff --cached -U0 --diff-filter=ACMR | grep -qE '^\+(<{7}|={7}|>{7})'; then
-        echo "pre-commit: unresolved merge conflict markers in staged changes" >&2
-        exit 1
-    fi
-    tls_files=$(printf '%s\n' "$staged" | grep -Ei '(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|\.(pem|key|crt|cer|der|csr|p12|pfx|pkcs8|jks|keystore)$' || true)
-    if [ -n "$tls_files" ]; then
-        echo "pre-commit: refusing staged TLS certificate or key material:" >&2
-        echo "$tls_files" >&2
-        exit 1
-    fi
-    if git diff --cached -U0 --diff-filter=ACMR | grep -qE '^\+-----BEGIN (CERTIFICATE|([^ -]+ )*PRIVATE KEY)-----'; then
-        echo "pre-commit: refusing staged PEM certificate or private-key material" >&2
-        exit 1
-    fi
-    if ! git diff --cached --name-only --diff-filter=ACMR -z |
-        xargs -0 -r -n1 sh -c '
-            file=$1
-            bytes=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
-            if [ "$bytes" -gt 1048576 ]; then
-                echo "pre-commit: staged file exceeds 1 MiB: $file" >&2
-                exit 1
-            fi
-        ' sh
-    then
-        exit 1
-    fi
-    gitleaks="{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks"
-    if [ ! -x "$gitleaks" ]; then
-        echo "pre-commit: pinned Gitleaks is missing; run just setup" >&2
-        exit 1
-    fi
-    "$gitleaks" protect --staged --redact -v
-    git diff --cached --check
-
-    if printf '%s\n' "$staged" | grep -qE '^(\.github/|\.githooks/|scripts/ci/|justfile$)'; then
-        just _pipeline-check-staged
-    fi
-
-    if printf '%s\n' "$staged" | grep -qE '^(go/|client/src/auth/)'; then
-        just check-generated
-    fi
-    if printf '%s\n' "$staged" | grep -q '^go/'; then
-        just server-check
-        just server-unit
-    fi
-    if printf '%s\n' "$staged" | grep -q '^client/'; then
-        just client-ci
-    fi
-    if printf '%s\n' "$staged" | grep -qE '^(go/|client/|legal/|container/|scripts/(package-tui\.sh|tui-targets\.txt)$|LICENSE$|COPYRIGHT$)'; then
-        just legal-check
-    fi
-
-# Validate the staged index, not the working tree, before committing CI/control-plane changes.
-[private]
-_pipeline-check-staged:
-    #!/usr/bin/env sh
-    set -eu
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    tree=$(git write-tree)
-    git archive "$tree" | tar -x -C "$tmp"
-    (cd "$tmp" && python3 -m compileall -q scripts/ci && python3 scripts/ci/workflow_policy.py && python3 scripts/ci/test_pipeline.py)
+# The Git hook delegates to typed scripts/ci/precommit.py, which validates the
+# exact staged tree in a disposable worktree. Keep hook policy out of Just so
+# there is one implementation and unstaged fixes cannot mask staged failures.
 
 # Validate GitHub Actions structure, immutable external refs, trust boundaries, and publication ordering.
 [group('check')]
@@ -247,7 +177,7 @@ secret-scan-ci:
 
 # Run the fast deterministic developer gate after setup.
 [group('check')]
-check: doctor workflow-check pipeline-test check-generated client-ci server-check server-unit staticcheck legal-check
+check: doctor workflow-check pipeline-test check-generated client-ci server-check server-test staticcheck legal-check
 
 # Run client formatting, type checks, generated checks, and unit tests.
 [group('check')]
@@ -387,10 +317,11 @@ server-check:
     cd go && go vet ./...
     cd go && go vet -tags stress ./internal/server/
 
-# Run the fast non-race Go unit suite used by the normal developer gate.
-# Run the fast non-race Go unit suite.
+# Run the normal non-race Go suite, including loopback integration tests.
+# The name is intentionally not "unit": package tests include real listener and
+# transport integration coverage. This is the developer/pre-commit Go gate.
 [group('check')]
-server-unit:
+server-test:
     cd go && go test ./...
 
 # Regenerate the embedded auth assets and fail if they drift from source. The
@@ -433,7 +364,7 @@ security:
 # climbs; never lower it.
 # Run shuffled race tests and enforce the coverage floor.
 [group('check')]
-server-test:
+server-race:
     #!/usr/bin/env sh
     set -e
     cd go
@@ -576,15 +507,16 @@ container-smoke:
       --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
     scripts/verify-container.sh graphite-meter:smoke
 
-# Full local CI-equivalent validation, including security and Docker.
-# Run the complete local CI-equivalent validation.
+# Heavyweight local gate: deterministic checks plus race, security, browser, E2E, release, and container validation.
+# GitHub additionally validates workflow-hosted runtime contracts such as the pinned Skopeo image.
 [group('check')]
 ci:
     #!/usr/bin/env sh
     set -eu
     just check
-    just server-test
+    just server-race
     just security
+    just secret-scan-ci
     just client-browser chromium
     just client-browser firefox
     just client-e2e

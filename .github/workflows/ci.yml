@@ -109,7 +109,7 @@ jobs:
         uses: ./.github/actions/setup-project
         with: {go: 'true'}
       - name: Run race detector and coverage floor
-        run: just server-test
+        run: just server-race
 
   browser:
     name: Browser (${{ matrix.project }})

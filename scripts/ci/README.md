@@ -35,6 +35,15 @@ compiles every `scripts/ci/*.py` module before running tests.
 The path plan comes from `.github/ci-paths.yml`; project operations use named
 `just` recipes. `Gate` is the single ordinary branch-protection status.
 
+The browser/server transport E2E suite does not keep a Vite development server
+alive beside Playwright. Vite builds the small transport harness once into
+`client/.e2e-dist`, and a worker-scoped Node HTTP server serves those immutable
+assets on an OS-assigned loopback port. Playwright therefore manages only the
+real Graphite Meter backend process. The Go server integration tests use an
+internal socket-provider seam so tests hand already-bound TCP/UDP sockets into
+the production listener assembly path; they never probe a free port, release it,
+and race to bind the same number later.
+
 ### PR prereleases
 
 1. `prerelease-request.yml` is a **low-authority producer**. Manual
@@ -69,7 +78,11 @@ The path plan comes from `.github/ci-paths.yml`; project operations use named
 
 The pre-approval and post-approval checks are intentional, not duplicate policy:
 first avoid asking a human to approve already-invalid state; then prove that the
-mutable state still holds immediately before the first irreversible write.
+mutable state still holds immediately before the first irreversible write. Trusted
+publication handoffs are retained for 35 days so the artifact lifetime covers the
+platform's approval/wait lifetime; repository/organization Actions retention must
+therefore allow at least 35 days. Extending artifact storage does not extend trust,
+because the post-approval and last-mile checks still fail closed on stale state.
 
 ### Stable releases
 
@@ -102,12 +115,27 @@ release archives are rejected for traversal paths, links/devices, duplicate
 members, unexpected files, or missing checksums. `_promote-oci.yml` globally
 serializes alias movement and rejects SemVer rollback.
 
-The OCI build explicitly requests BuildKit `provenance: mode=max`. Verification
-requires an OCI v1 index with exactly one runnable `linux/amd64` and `linux/arm64`
+The OCI build explicitly requests BuildKit `provenance: mode=max`. The privileged
+`binfmt` image launched by `setup-qemu-action` is pinned by digest rather than
+accepting that action's floating `latest` default. `setup-buildx-action` also gets
+an explicit benign daemon flag, which replaces its default
+`security.insecure`/`network.host` entitlements; this build needs neither.
+Verification requires an OCI v1 index with exactly one runnable `linux/amd64` and `linux/arm64`
 manifest plus exactly one correctly linked BuildKit attestation manifest for each
-runnable digest, then forces Skopeo to copy `--all` into a temporary OCI layout
-so every referenced manifest/blob must be readable. Build arguments contain no
-secrets; max-level provenance would make build-argument values observable.
+runnable digest, then forces the pinned Skopeo container to copy `--all` into its
+own ephemeral filesystem so every referenced manifest/blob must be readable. The
+archive is the verifier container's only host bind mount, it is read-only, and
+local verification runs with container networking disabled. This avoids both
+root-owned verifier output on the runner and unnecessary verifier network access.
+Build arguments contain no secrets; max-level provenance would make build-argument
+values observable.
+
+Stable native artifacts are verified immediately after the exact release payload
+is built, before the more expensive multi-platform OCI build. The verifier checks
+the built server's embedded version through `graphite-meter --version`; it does
+not boot a fixed-port HTTP server merely to read `/preflight`. The stable workflow
+also does not rebuild a second representative `release-check` payload after the
+exact artifacts already exist.
 
 ## Policy and tests
 
@@ -127,18 +155,28 @@ Other checked invariants include:
 
 - explicit `ubuntu-24.04` runner-major labels instead of floating `ubuntu-latest`;
 - explicit max-level OCI provenance with no GitHub-secret references in the build action;
+- digest-pinned privileged QEMU/binfmt input and no BuildKit insecure daemon entitlements;
 - low-authority prerelease producer permissions, default-branch job guard, and no PR checkout on the runner;
 - no repository checkout/code execution in isolated publication workflows;
 - exact-tag and stable-alias concurrency guards;
 - zero-write stable manual request plus trusted default-branch consumer, never tag-push/direct write-capable dispatch;
 - protected-environment approval before the final mutable trust recheck;
 - GitHub Release target/asset-digest verification;
+- local OCI verification with no network and no writable host output mount;
+- static, dynamically served browser E2E harness instead of a fixed-port dev server;
+- exact staged-tree pre-commit checks, including staged deletions/renames;
 - no tracked certificate/private-key material.
 
 `just pipeline-test` compiles all control-plane Python and runs dependency-free
-positive and negative regression tests. `_pre-commit` executes these pipeline
-checks from a temporary archive of the **staged Git index**, not the working tree,
-so an unstaged fix cannot hide a broken staged workflow.
+positive and negative regression tests. The Git hook is only a two-line launcher
+for `scripts/ci/precommit.py`; Just no longer contains a second hook implementation.
+The typed hook records the exact staged Git tree, materializes that tree in a
+disposable detached worktree, and runs selected component checks there. Deleted
+paths and the old side of renames participate in check planning, so removing or
+renaming a workflow cannot skip pipeline validation. Gitleaks still scans the
+staged index directly. This prevents an unstaged local fix from making a broken
+staged commit appear healthy while keeping ignored dependency/tool directories
+out of Git history.
 
 ## External action maintenance
 
