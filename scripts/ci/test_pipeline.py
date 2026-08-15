@@ -5,7 +5,9 @@ import ast
 import json
 import os
 import pathlib
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +18,16 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from github_api import JsonValue
+from precommit import (
+    CheckPlan,
+    StagedChange,
+    is_tls_path,
+    parse_staged_changes,
+    plan_checks,
+    prepare_staged_worktree,
+    remove_worktree,
+    staged_worktree_environment,
+)
 from prerelease import (
     PRERELEASE_CI_CONTROL_PLANE,
     PRERELEASE_RE,
@@ -29,6 +41,7 @@ from verify_oci import (
     validate_index_descriptors,
     verify_skopeo_runtime,
     verify_archive_blobs,
+    verify as verify_oci_archive,
 )
 from verify_release_assets import (
     VerificationError as ReleaseVerificationError,
@@ -39,6 +52,7 @@ from verify_release_assets import (
     verify_client_version,
     verify_release_file_set,
     verify_server_version,
+    verify_third_party_source_archive,
 )
 from release import (
     SEMVER_RE,
@@ -59,8 +73,13 @@ from workflow_policy import (
     PINNED_ACTION,
     PolicyError,
     check_candidate_boundary,
+    check_ci_path_map,
     check_oci_build_action,
     check_external_action_shas,
+    check_e2e_lifecycle,
+    check_oci_verifier_boundary,
+    check_precommit_boundary,
+    check_release_verifier_boundary,
     check_privileged_workflows,
     check_runner_labels,
     check_setup_project_cache_boundary,
@@ -366,6 +385,203 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "candidate files"):
                 exact_file_set(root, {"candidate.json"}, "candidate")
 
+    def test_precommit_plan_uses_exact_component_gates(self) -> None:
+        self.assertEqual(
+            plan_checks(("go/internal/server/listeners.go",)),
+            CheckPlan(
+                pipeline=False,
+                recipes=("check-generated", "server-check", "server-test", "legal-check"),
+            ),
+        )
+        self.assertEqual(
+            plan_checks((".github/workflows/ci.yml",)),
+            CheckPlan(pipeline=True, recipes=()),
+        )
+        self.assertEqual(
+            plan_checks(("justfile", "go/internal/server/listeners.go")),
+            CheckPlan(pipeline=False, recipes=("check",)),
+        )
+        self.assertTrue(is_tls_path("tmp/cert.pem"))
+        self.assertFalse(is_tls_path("go/internal/server/tls.go"))
+
+    def test_precommit_staged_change_parser_keeps_deletions_and_rename_sources(self) -> None:
+        raw = (
+            b"M\0go/internal/server/listeners.go\0"
+            b"D\0.github/workflows/old.yml\0"
+            b"R100\0.github/workflows/ci.yml\0docs/ci-example.yml\0"
+        )
+        self.assertEqual(
+            parse_staged_changes(raw),
+            (
+                StagedChange("go/internal/server/listeners.go", deleted=False),
+                StagedChange(".github/workflows/old.yml", deleted=True),
+                StagedChange(".github/workflows/ci.yml", deleted=True),
+                StagedChange("docs/ci-example.yml", deleted=False),
+            ),
+        )
+        plan = plan_checks(tuple(change.path for change in parse_staged_changes(raw)))
+        self.assertTrue(plan.pipeline, "deleted/renamed workflow paths must still select pipeline checks")
+
+    def test_precommit_scrubs_parent_git_environment_for_staged_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td) / "repo"
+            subprocess.run(("git", "init", "-q", str(repo)), check=True)
+            (repo / "tracked.txt").write_text("staged snapshot\n", encoding="utf-8")
+            subprocess.run(("git", "-C", str(repo), "add", "tracked.txt"), check=True)
+            subprocess.run(
+                (
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=CI",
+                    "-c",
+                    "user.email=ci@example.invalid",
+                    "commit",
+                    "-qm",
+                    "base",
+                ),
+                check=True,
+            )
+            tree = subprocess.run(
+                ("git", "-C", str(repo), "write-tree"),
+                check=True,
+                stdout=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            worktree = pathlib.Path(td) / "staged"
+            poisoned = {
+                "GIT_DIR": ".git",
+                "GIT_WORK_TREE": ".",
+                "GIT_INDEX_FILE": ".git/index",
+            }
+
+            with patch.dict(os.environ, poisoned, clear=False):
+                clean_env = staged_worktree_environment(repo)
+                for name in poisoned:
+                    self.assertNotIn(name, clean_env)
+                self.assertEqual(clean_env.get("PATH"), os.environ.get("PATH"))
+                prepare_staged_worktree(repo, tree, worktree, env=clean_env)
+
+            try:
+                self.assertEqual(
+                    (worktree / "tracked.txt").read_text(encoding="utf-8"),
+                    "staged snapshot\n",
+                )
+                status = subprocess.run(
+                    ("git", "status", "--porcelain"),
+                    cwd=worktree,
+                    env=clean_env,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    text=True,
+                ).stdout
+                self.assertEqual(status, "")
+            finally:
+                remove_worktree(repo, worktree)
+
+    def test_policy_rejects_precommit_working_tree_regression(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "scripts/ci/precommit.py"
+        path.write_text(path.read_text().replace('"write-tree"', '"rev-parse"', 1))
+        with self.assertRaisesRegex(PolicyError, "staged-tree invariant"):
+            check_precommit_boundary(root)
+
+    def test_policy_requires_dockerignore_to_select_image_checks(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/ci-paths.yml"
+        text = path.read_text(encoding="utf-8")
+        release_start = text.index("release:\n")
+        release_end = text.index("\nsecurity:\n", release_start)
+        release = text[release_start:release_end].replace("  - '.dockerignore'\n", "", 1)
+        path.write_text(text[:release_start] + release + text[release_end:], encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "release checks when .dockerignore changes"):
+            check_ci_path_map(root)
+
+    def test_policy_rejects_unpinned_privileged_qemu_image(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/actions/build-oci/action.yml"
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(
+            r"(?m)^\s*image:\s*docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}\s*\n",
+            "",
+            text,
+            count=1,
+        )
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "privileged binfmt/QEMU image"):
+            check_oci_build_action(root)
+
+    def test_policy_rejects_buildkit_insecure_entitlements(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/actions/build-oci/action.yml"
+        text = path.read_text(encoding="utf-8").replace(
+            "buildkitd-flags: --log-level=info",
+            "buildkitd-flags: --allow-insecure-entitlement network.host",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "BuildKit insecure entitlements|OCI provenance invariant"):
+            check_oci_build_action(root)
+
+    def test_policy_rejects_fixed_port_vite_e2e_server(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/playwright.e2e.config.ts"
+        path.write_text(path.read_text() + '\n// bun run dev -- --port 5273\n')
+        with self.assertRaisesRegex(PolicyError, "fixed-port Vite"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_slow_e2e_server_readiness_timeout(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/playwright.e2e.config.ts"
+        path.write_text(path.read_text().replace("timeout: 30_000", "timeout: 180_000", 1))
+        with self.assertRaisesRegex(PolicyError, "fail fast"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_stale_local_browser_server_reuse(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/playwright.browser.config.ts"
+        path.write_text(path.read_text().replace("reuseExistingServer: false", "reuseExistingServer: true", 1))
+        with self.assertRaisesRegex(PolicyError, "stale local preview server"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_slow_browser_preview_readiness_timeout(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/playwright.browser.config.ts"
+        path.write_text(path.read_text().replace("timeout: 30_000", "timeout: 120_000", 1))
+        with self.assertRaisesRegex(PolicyError, "preview readiness must fail fast"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_playwright_managed_go_build(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/playwright.e2e.config.ts"
+        path.write_text(
+            path.read_text().replace(
+                "command: JSON.stringify(SERVER_BIN)",
+                'command: "go run ./cmd/graphite-meter"',
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "prebuilt real Graphite Meter"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_fixed_harness_fixture_port(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/e2e/fixtures.ts"
+        path.write_text(path.read_text().replace("server.listen(0, HOST", "server.listen(5273, HOST", 1))
+        with self.assertRaisesRegex(PolicyError, "dynamic static-server"):
+            check_e2e_lifecycle(root)
+
     def test_repository_policy_passes_canonical_tree(self) -> None:
         check_repository(ROOT)
 
@@ -373,7 +589,22 @@ class PipelineTests(unittest.TestCase):
         td = tempfile.mkdtemp()
         dst = pathlib.Path(td)
         shutil.copytree(ROOT / ".github", dst / ".github")
+        shutil.copytree(ROOT / ".githooks", dst / ".githooks")
         shutil.copytree(ROOT / "scripts" / "ci", dst / "scripts" / "ci")
+        shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
+        shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
+        for relative in (
+            "client/playwright.e2e.config.ts",
+            "client/playwright.browser.config.ts",
+            "client/vite.e2e.config.ts",
+            "client/e2e/fixtures.ts",
+            "client/package.json",
+            "go/internal/legal/cmd/legalgen/main.go",
+        ):
+            source = ROOT / relative
+            target = dst / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
         (dst / "justfile").write_text((ROOT / "justfile").read_text())
         return dst
 
@@ -499,6 +730,72 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseVerificationError, "unsafe archive path"):
                 archive_names(bad_zip)
 
+    def test_third_party_source_verifier_accepts_upstream_test_keys_but_not_manual_keys(self) -> None:
+        import io
+        import tarfile
+
+        with tempfile.TemporaryDirectory() as td:
+            dist = pathlib.Path(td)
+            version = "1.2.3"
+            root = f"graphite-meter_{version}_third-party-source"
+            path = dist / f"graphite-meter_{version}_third-party-source.tar.gz"
+
+            def write_archive(manual_name: str = "manual.txt") -> None:
+                with tarfile.open(path, "w:gz") as archive:
+                    members = {
+                        f"{root}/README.txt": (
+                            "Graphite Meter third-party source.\n"
+                            "Use Source code (tar.gz) or Source code (zip).\n"
+                            "This archive does not duplicate Graphite Meter's own repository source.\n"
+                        ).encode(),
+                        f"{root}/LEGAL_INVENTORY.json": b'{"server":[],"tui":[],"container":[]}\n',
+                        f"{root}/PROVENANCE.json": b"[]\n",
+                        f"{root}/third_party/go/github.com_quic-go_quic-go_at_v0.61.0/internal/testdata/priv.key": b"public upstream test fixture\n",
+                        f"{root}/third_party/npm/example/cert.pem": b"public upstream test fixture\n",
+                        f"{root}/third_party/manual/sample/{manual_name}": b"manual source\n",
+                    }
+                    for name, payload in members.items():
+                        info = tarfile.TarInfo(name)
+                        info.size = len(payload)
+                        archive.addfile(info, io.BytesIO(payload))
+
+            write_archive()
+            verify_third_party_source_archive(dist, version)
+
+            write_archive("private.key")
+            with self.assertRaisesRegex(
+                ReleaseVerificationError,
+                "certificate/key material outside upstream dependency source",
+            ):
+                verify_third_party_source_archive(dist, version)
+
+    def test_third_party_source_verifier_rejects_project_source_duplication(self) -> None:
+        import io
+        import tarfile
+
+        with tempfile.TemporaryDirectory() as td:
+            dist = pathlib.Path(td)
+            version = "1.2.3"
+            root = f"graphite-meter_{version}_third-party-source"
+            path = dist / f"graphite-meter_{version}_third-party-source.tar.gz"
+            with tarfile.open(path, "w:gz") as archive:
+                members = {
+                    f"{root}/README.txt": (
+                        "Use Source code (tar.gz) or Source code (zip).\n"
+                        "This archive does not duplicate Graphite Meter's own repository source.\n"
+                    ).encode(),
+                    f"{root}/LEGAL_INVENTORY.json": b'{"server":[],"tui":[],"container":[]}\n',
+                    f"{root}/PROVENANCE.json": b"[]\n",
+                    f"{root}/third_party/manual/sample/source.txt": b"x\n",
+                    f"{root}/project/LICENSE": b"duplicate project source\n",
+                }
+                for name, payload in members.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    archive.addfile(info, io.BytesIO(payload))
+            with self.assertRaisesRegex(ReleaseVerificationError, "unexpected non-third-party source paths"):
+                verify_third_party_source_archive(dist, version)
+
     def test_release_verifier_requires_built_client_and_server_outputs(self) -> None:
         previous = pathlib.Path.cwd()
         with tempfile.TemporaryDirectory() as td:
@@ -515,6 +812,14 @@ class PipelineTests(unittest.TestCase):
                 verify_client_version("1.2.3")
                 with self.assertRaisesRegex(ReleaseVerificationError, "server binary is missing"):
                     verify_server_version("1.2.3")
+                (root / "go/graphite-meter").write_text("placeholder", encoding="utf-8")
+                with patch("verify_release_assets.subprocess.run") as run_version:
+                    run_version.return_value.returncode = 0
+                    run_version.return_value.stdout = "1.2.3\n"
+                    run_version.return_value.stderr = ""
+                    verify_server_version("1.2.3")
+                    run_version.assert_called_once()
+                    self.assertEqual(run_version.call_args.args[0][-1], "--version")
             finally:
                 os.chdir(previous)
 
@@ -560,7 +865,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(
                 expected_release_artifacts("1.2.3", targets),
                 {
-                    "graphite-meter_1.2.3_corresponding-source.tar.gz",
+                    "graphite-meter_1.2.3_third-party-source.tar.gz",
                     "graphite-meter-client_1.2.3_linux_amd64.tar.gz",
                     "graphite-meter-client_1.2.3_windows_amd64.zip",
                 },
@@ -704,6 +1009,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(engine, "docker")
         self.assertTrue(image.endswith("a" * 64))
         self.assertEqual(calls[0][-1], "--version")
+        self.assertIn("--network", calls[0])
+        self.assertIn("none", calls[0])
 
     def test_policy_rejects_skopeo_digest_drift_between_consumers(self) -> None:
         root = self._copy_policy_tree()
@@ -728,18 +1035,23 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(OCIVerificationError, "unexpected Skopeo --version output"):
             parse_skopeo_version("skopeo 1.22.2")
 
-    def test_oci_verifier_forces_full_multi_image_copy(self) -> None:
+    def test_oci_verifier_rejects_symlink_archive_before_container_use(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            target = root / "image.oci.tar.real"
+            target.write_bytes(b"placeholder")
+            archive = root / "image.oci.tar"
+            archive.symlink_to(target.name)
+            with self.assertRaisesRegex(OCIVerificationError, "not a regular file"):
+                verify_oci_archive("1.2.3", HEAD, archive)
+
+    def test_oci_verifier_forces_full_copy_without_host_writable_mount(self) -> None:
         from unittest.mock import patch
 
         calls: list[tuple[str, ...]] = []
 
         def fake_run(*args: str) -> str:
             calls.append(args)
-            for argument in args:
-                if argument.endswith(":/work/oci-copy") and not argument.startswith("dir:"):
-                    host_path = pathlib.Path(argument[: -len(":/work/oci-copy")])
-                    (host_path / "oci-layout").write_text("{}", encoding="utf-8")
-                    (host_path / "index.json").write_text("{}", encoding="utf-8")
             return ""
 
         with tempfile.TemporaryDirectory() as td:
@@ -748,11 +1060,77 @@ class PipelineTests(unittest.TestCase):
             with patch("verify_oci.run", side_effect=fake_run):
                 verify_archive_blobs("docker", "skopeo@example", archive)
 
-        self.assertTrue(
-            any("copy" in call and "--all" in call for call in calls),
-            "OCI verification must force Skopeo to read every referenced blob",
-        )
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertIn("copy", call)
+        self.assertIn("--all", call)
+        self.assertIn("--network", call)
+        self.assertIn("none", call)
+        self.assertIn("oci:/tmp/graphite-meter-verified:verified", call)
+        mounts = [call[index + 1] for index, value in enumerate(call[:-1]) if value == "-v"]
+        self.assertEqual(len(mounts), 1, "OCI verification must mount only the archive")
+        self.assertTrue(mounts[0].endswith(":/work/image.oci.tar:ro"))
 
+
+    def test_policy_rejects_oci_verifier_host_writable_output(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "scripts/ci/verify_oci.py"
+        text = path.read_text(encoding="utf-8").replace(
+            '"oci:/tmp/graphite-meter-verified:verified"',
+            '"oci:/work/oci-copy:verified"',
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "OCI verifier"):
+            check_oci_verifier_boundary(root)
+
+    def test_policy_rejects_release_check_without_shared_asset_verifier(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "justfile"
+        path.write_text(
+            path.read_text().replace(
+                'RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "{{ version }}"',
+                'echo "skip shared release verifier"',
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "same native artifact verifier"):
+            check_release_verifier_boundary(root)
+
+    def test_policy_rejects_release_verifier_fixed_port_server(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "scripts/ci/verify_release_assets.py"
+        path.write_text(
+            path.read_text(encoding="utf-8") + '\n# regression: GM_H1_ADDR=127.0.0.1:7246\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "fixed-port server"):
+            check_release_verifier_boundary(root)
+
+    def test_policy_rejects_obsolete_duplicated_source_bundle(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "justfile"
+        path.write_text(
+            path.read_text().replace(
+                "graphite-meter_{{ version }}_third-party-source.tar.gz",
+                "graphite-meter_{{ version }}_corresponding-source.tar.gz",
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "split source-offer|obsolete"):
+            check_release_verifier_boundary(root)
+
+    def test_policy_requires_stable_release_source_notice(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/_publish-release.yml"
+        path.write_text(path.read_text().replace("Source code (zip)", "Project archive", 1))
+        with self.assertRaisesRegex(PolicyError, "_publish-release.yml missing invariant"):
+            check_privileged_workflows(root)
 
     def test_policy_rejects_missing_last_mile_source_freshness(self) -> None:
         root = self._copy_policy_tree()
@@ -1126,6 +1504,43 @@ class PipelineTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(PolicyError, "directly workflow_dispatch"):
             check_release_workflow(root)
+
+    def test_stable_validate_mode_does_not_upload_publication_handoffs(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release.yml"
+        text = path.read_text(encoding="utf-8").replace(
+            "        if: needs.guard.outputs.publish == 'true'\n        uses: actions/upload-artifact@",
+            "        uses: actions/upload-artifact@",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "validate mode must not upload"):
+            check_release_workflow(root)
+
+    def test_stable_release_build_does_not_rebuild_representative_payload(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release.yml"
+        text = path.read_text()
+        path.write_text(
+            text.replace(
+                'run: python3 scripts/ci/verify_release_assets.py "$VERSION"',
+                'run: just release-check "$VERSION"',
+                1,
+            )
+        )
+        with self.assertRaisesRegex(PolicyError, "exact built payload"):
+            check_release_workflow(root)
+
+    def test_stable_release_verifies_native_payload_before_oci_build(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/release.yml"
+        text = path.read_text()
+        verify = 'python3 scripts/ci/verify_release_assets.py "$VERSION"'
+        build = "uses: ./.github/actions/build-oci"
+        self.assertLess(text.find(verify), text.find(build))
 
     def test_stable_release_request_is_zero_write_and_no_checkout(self) -> None:
         root = self._copy_policy_tree()

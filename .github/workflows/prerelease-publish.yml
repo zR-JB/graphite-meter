@@ -121,7 +121,7 @@ jobs:
           name: ${{ steps.artifact-name.outputs.name }}
           path: ${{ runner.temp }}/validated/graphite-meter.oci.tar
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 35
           compression-level: 0
           overwrite: true
 

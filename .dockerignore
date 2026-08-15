@@ -2,6 +2,7 @@
 .git
 **/node_modules
 client/dist
+client/.e2e-dist
 client/.vite
 server/graphite-meter
 server/internal/static/dist

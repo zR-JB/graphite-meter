@@ -74,6 +74,17 @@ jobs:
           ((asset_count > 0)) || { echo "release artifact is empty" >&2; exit 1; }
           LC_ALL=C sort -o "$local_map" "$local_map"
 
+          version=${TAG#v}
+          source_asset="graphite-meter_${version}_third-party-source.tar.gz"
+          awk -F '\t' -v name="$source_asset" '$1 == name { found=1 } END { exit found ? 0 : 1 }' "$local_map" || {
+            echo "release handoff is missing required third-party source asset: $source_asset" >&2
+            exit 1
+          }
+          source_notice=$(printf '%s\n\n%s\n\n%s' \
+            '## Source availability' \
+            "Graphite Meter source for this release is the repository snapshot at tag **$TAG** (commit **$TARGET_SHA**). GitHub provides that tagged project source below as **Source code (zip)** and **Source code (tar.gz)**." \
+            "Source for third-party components included in the distributed artifacts is attached as **$source_asset**. Together, the tagged repository source and that archive form the source offer for this release.")
+
           resolve_tag_target() {
             ref_json=$1
             object_type=$(jq -r '.object.type' <<<"$ref_json")
@@ -132,11 +143,16 @@ jobs:
                 echo "$TAG published release tag target changed" >&2
                 exit 1
               }
-              echo "::notice::$TAG is already published with the exact expected source and assets"
+              published_body=$(jq -r '.body // ""' <<<"$release")
+              [[ "$published_body" == "$source_notice"* ]] || {
+                echo "$TAG is published but its source-availability notice is missing or stale" >&2
+                exit 1
+              }
+              echo "::notice::$TAG is already published with the exact expected source, assets, and source notice"
               exit 0
             fi
           else
-            payload=$(jq -nc --arg tag "$TAG" --arg sha "$TARGET_SHA" '{tag_name:$tag,target_commitish:$sha,draft:true,prerelease:false,generate_release_notes:true}')
+            payload=$(jq -nc --arg tag "$TAG" --arg sha "$TARGET_SHA" --arg body "$source_notice" '{tag_name:$tag,target_commitish:$sha,draft:true,prerelease:false,generate_release_notes:true,body:$body}')
             release=$(gh api --method POST "repos/$REPOSITORY/releases" --input - <<<"$payload")
             release_id=$(jq -r '.id' <<<"$release")
           fi
@@ -145,6 +161,20 @@ jobs:
           current=$(gh api "repos/$REPOSITORY/releases/$release_id")
           [[ $(jq -r '.tag_name' <<<"$current") == "$TAG" ]] || { echo "release ID/tag mismatch" >&2; exit 1; }
           [[ $(jq -r '.draft' <<<"$current") == true ]] || { echo "$TAG must remain draft during asset verification" >&2; exit 1; }
+          current_body=$(jq -r '.body // ""' <<<"$current")
+          if [[ "$current_body" != "$source_notice"* ]]; then
+            if grep -Fq '## Source availability' <<<"$current_body"; then
+              echo "$TAG draft contains a stale source-availability notice" >&2
+              exit 1
+            fi
+            if [[ -n "$current_body" ]]; then
+              updated_body=$(printf '%s\n\n%s' "$source_notice" "$current_body")
+            else
+              updated_body=$source_notice
+            fi
+            body_payload=$(jq -nc --arg body "$updated_body" '{body:$body}')
+            current=$(gh api --method PATCH "repos/$REPOSITORY/releases/$release_id" --input - <<<"$body_payload")
+          fi
 
           # Refresh drafts from a clean asset set so retries cannot retain stale files.
           while IFS= read -r asset_id; do
@@ -191,4 +221,9 @@ jobs:
 
           published=$(gh api "repos/$REPOSITORY/releases/$release_id")
           jq -e --arg tag "$TAG" '.tag_name == $tag and .draft == false and .prerelease == false' <<<"$published" >/dev/null
-          echo "::notice::published $TAG with verified SHA-256 assets; latest selection uses GitHub legacy SemVer ordering"
+          published_body=$(jq -r '.body // ""' <<<"$published")
+          [[ "$published_body" == "$source_notice"* ]] || {
+            echo "published release lost its source-availability notice" >&2
+            exit 1
+          }
+          echo "::notice::published $TAG with verified SHA-256 assets and source notice; latest selection uses GitHub legacy SemVer ordering"

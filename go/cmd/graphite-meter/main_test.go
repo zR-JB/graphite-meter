@@ -13,6 +13,19 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
+func TestVersionCommandAliases(t *testing.T) {
+	for _, arg := range []string{"version", "--version"} {
+		if !isVersionCommand(arg) {
+			t.Fatalf("isVersionCommand(%q) = false", arg)
+		}
+	}
+	for _, arg := range []string{"-version", "v", "hash-password"} {
+		if isVersionCommand(arg) {
+			t.Fatalf("isVersionCommand(%q) = true", arg)
+		}
+	}
+}
+
 func TestH1AddressFlagOverridesDefault(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)

@@ -13,18 +13,76 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
-// freeTCPAddr reserves a loopback port and releases it, returning the address
-// for a listener to rebind. The gap is racy in theory; in practice the OS does
-// not immediately recycle the port to another process on a quiet test host.
-func freeTCPAddr(t *testing.T) string {
+// testListenerSockets reserves the exact sockets an integration test will hand
+// to listener assembly. In particular H3 reserves TCP and UDP on the same port
+// at the same time, removing the release/rebind TOCTOU that made race/shuffle
+// runs intermittently fail with "address already in use".
+type testListenerSockets struct {
+	t   *testing.T
+	tcp map[string]net.Listener
+	udp map[string]net.PacketConn
+}
+
+func newTestListenerSockets(t *testing.T) *testListenerSockets {
 	t.Helper()
+	s := &testListenerSockets{t: t, tcp: make(map[string]net.Listener), udp: make(map[string]net.PacketConn)}
+	t.Cleanup(func() {
+		for _, ln := range s.tcp {
+			_ = ln.Close()
+		}
+		for _, pc := range s.udp {
+			_ = pc.Close()
+		}
+	})
+	return s
+}
+
+func (s *testListenerSockets) reserveTCP() string {
+	s.t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("reserve port: %v", err)
+		s.t.Fatalf("reserve TCP listener: %v", err)
 	}
 	addr := ln.Addr().String()
-	_ = ln.Close()
+	s.tcp[addr] = ln
 	return addr
+}
+
+func (s *testListenerSockets) reserveH3() string {
+	s.t.Helper()
+	for attempt := 0; attempt < 32; attempt++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			s.t.Fatalf("reserve H3 TCP listener: %v", err)
+		}
+		addr := ln.Addr().String()
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			_ = ln.Close()
+			continue
+		}
+		s.tcp[addr] = ln
+		s.udp[addr] = pc
+		return addr
+	}
+	s.t.Fatal("could not reserve a shared TCP/UDP H3 port")
+	return ""
+}
+
+func (s *testListenerSockets) listenTCP(addr string) (net.Listener, error) {
+	if ln, ok := s.tcp[addr]; ok {
+		delete(s.tcp, addr)
+		return ln, nil
+	}
+	return net.Listen("tcp", addr)
+}
+
+func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
+	if pc, ok := s.udp[addr]; ok {
+		delete(s.udp, addr)
+		return pc, nil
+	}
+	return net.ListenPacket("udp", addr)
 }
 
 // waitForOK polls a URL until it answers 200 or the deadline passes, so the
@@ -48,11 +106,11 @@ func waitForOK(t *testing.T, client *http.Client, url string) {
 
 // runUntilCancel starts Run in the background and returns a stop function that
 // cancels it and asserts a clean (nil) shutdown.
-func runUntilCancel(t *testing.T, cfg *config.Config) func() {
+func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, cfg) }()
+	go func() { done <- runWithSockets(ctx, cfg, sockets) }()
 	return func() {
 		cancel()
 		select {
@@ -70,11 +128,12 @@ func runUntilCancel(t *testing.T, cfg *config.Config) func() {
 // real loopback socket: validation, endpoint build, the clear-H1 assemble path,
 // runServices, and a clean shutdown on cancel.
 func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
-	addr := freeTCPAddr(t)
+	sockets := newTestListenerSockets(t)
+	addr := sockets.reserveTCP()
 	cfg := config.Default()
 	cfg.Native.H1 = addr
 
-	stop := runUntilCancel(t, &cfg)
+	stop := runUntilCancel(t, &cfg, sockets)
 	defer stop()
 
 	base := "http://" + addr
@@ -95,13 +154,14 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 func TestRunServesTLSH1(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = freeTCPAddr(t)
-	tlsAddr := freeTCPAddr(t)
+	cfg.Native.H1 = sockets.reserveTCP()
+	tlsAddr := sockets.reserveTCP()
 	cfg.Native.H1TLS = tlsAddr
 	cfg.TLSCert, cfg.TLSKey = cert, key
 
-	stop := runUntilCancel(t, &cfg)
+	stop := runUntilCancel(t, &cfg, sockets)
 	defer stop()
 
 	client := &http.Client{Transport: &http.Transport{
@@ -116,13 +176,14 @@ func TestRunServesTLSH1(t *testing.T) {
 func TestRunServesH3(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = freeTCPAddr(t)
-	h3Addr := freeTCPAddr(t) // one port used for both the TCP bootstrap and UDP
+	cfg.Native.H1 = sockets.reserveTCP()
+	h3Addr := sockets.reserveH3() // same reserved port for TCP bootstrap and UDP
 	cfg.Native.H3 = h3Addr
 	cfg.TLSCert, cfg.TLSKey = cert, key
 
-	stop := runUntilCancel(t, &cfg)
+	stop := runUntilCancel(t, &cfg, sockets)
 	defer stop()
 
 	// The bootstrap companion is a TCP listener on the H3 address; a successful
@@ -154,12 +215,13 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 	}
 	defer occupied.Close()
 
+	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = freeTCPAddr(t)              // opens first, then must be closed
+	cfg.Native.H1 = sockets.reserveTCP()        // opens first, then must be closed
 	cfg.Native.H1TLS = occupied.Addr().String() // bind fails here
 	cfg.TLSCert, cfg.TLSKey = cert, key
 
-	if err = Run(t.Context(), &cfg); err == nil {
+	if err = runWithSockets(t.Context(), &cfg, sockets); err == nil {
 		t.Fatal("Run succeeded despite a listener that could not bind")
 	}
 	// The H1 listener bound before the failure, so its port must be free again.

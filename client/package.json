@@ -15,7 +15,8 @@
     "test": "bun test",
     "build:browser": "bun -e \"process.env.GM_CLIENT_ENGINE='real'; process.env.GM_CLIENT_ALLOW_DUMMY='1'; process.env.GM_CLIENT_DEV_TOOLS='1'; process.env.GM_CLIENT_BUILD_LABEL='browser-test'; const result = Bun.spawnSync(['bun', 'run', 'build:bundle'], { cwd: '.', stdout: 'inherit', stderr: 'inherit' }); process.exit(result.exitCode);\"",
     "test:browser": "bun run build:browser && playwright test -c playwright.browser.config.ts",
-    "test:e2e": "playwright test -c playwright.e2e.config.ts",
+    "build:e2e-harness": "vite build -c vite.e2e.config.ts",
+    "test:e2e": "bun run build:e2e-harness && playwright test -c playwright.e2e.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

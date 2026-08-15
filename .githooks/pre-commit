@@ -1,2 +1,14 @@
 #!/bin/sh
-exec just _pre-commit
+set -u
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+
+# Execute the implementation from the staged index, not the developer working
+# tree. This keeps an unstaged edit to precommit.py from changing the checks for
+# the commit currently being created.
+if ! git show :scripts/ci/precommit.py >"$tmp"; then
+    echo "pre-commit: staged scripts/ci/precommit.py is unavailable" >&2
+    exit 1
+fi
+python3 "$tmp"

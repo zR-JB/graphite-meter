@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from github_api import (
     JsonObject,
@@ -178,18 +177,30 @@ def run(*args: str) -> str:
     return result.stdout.strip()
 
 
-def skopeo(engine: str, image: str, archive: Path, *args: str) -> str:
-    return run(
+def run_skopeo_container(
+    engine: str,
+    image: str,
+    *args: str,
+    archive: Path | None = None,
+) -> str:
+    """Run pinned Skopeo with no network and at most one read-only host mount."""
+    command = [
         engine,
         "run",
         "--rm",
+        "--network",
+        "none",
         "--entrypoint",
         "skopeo",
-        "-v",
-        f"{archive.resolve()}:/work/image.oci.tar:ro",
-        image,
-        *args,
-    )
+    ]
+    if archive is not None:
+        command.extend(("-v", f"{archive.resolve()}:/work/image.oci.tar:ro"))
+    command.extend((image, *args))
+    return run(*command)
+
+
+def skopeo(engine: str, image: str, archive: Path, *args: str) -> str:
+    return run_skopeo_container(engine, image, *args, archive=archive)
 
 
 def verify_skopeo_runtime() -> tuple[str, str]:
@@ -197,15 +208,7 @@ def verify_skopeo_runtime() -> tuple[str, str]:
     engine = select_engine()
     image = require_env("SKOPEO_IMAGE")
     expected_skopeo = require_env("SKOPEO_VERSION")
-    version_text = run(
-        engine,
-        "run",
-        "--rm",
-        "--entrypoint",
-        "skopeo",
-        image,
-        "--version",
-    )
+    version_text = run_skopeo_container(engine, image, "--version")
     print(version_text)
     actual_skopeo = parse_skopeo_version(version_text)
     if actual_skopeo != expected_skopeo:
@@ -216,32 +219,27 @@ def verify_skopeo_runtime() -> tuple[str, str]:
 
 
 def verify_archive_blobs(engine: str, image: str, archive: Path) -> None:
-    """Force Skopeo to read and materialize every image in the OCI archive."""
-    with tempfile.TemporaryDirectory(prefix="graphite-meter-oci-") as temp_dir:
-        destination = Path(temp_dir)
-        run(
-            engine,
-            "run",
-            "--rm",
-            "--entrypoint",
-            "skopeo",
-            "-v",
-            f"{archive.resolve()}:/work/image.oci.tar:ro",
-            "-v",
-            f"{destination.resolve()}:/work/oci-copy",
-            image,
-            "copy",
-            "--all",
-            "oci-archive:/work/image.oci.tar",
-            "oci:/work/oci-copy:verified",
-        )
-        if not (destination / "oci-layout").is_file() or not (destination / "index.json").is_file():
-            raise VerificationError("Skopeo copy did not materialize a readable OCI image layout")
+    """Force Skopeo to read every referenced blob without writing to the host."""
+    # The verifier container normally runs as root. A writable bind mount here
+    # would therefore create root-owned files in the runner's temporary
+    # directory and make Python cleanup fail after an otherwise successful copy.
+    # Keep the archive as the only bind mount and materialize the verified OCI
+    # layout in the container's ephemeral filesystem; successful `copy --all`
+    # is the proof that every referenced manifest/config/layer was readable.
+    run_skopeo_container(
+        engine,
+        image,
+        "copy",
+        "--all",
+        "oci-archive:/work/image.oci.tar",
+        "oci:/tmp/graphite-meter-verified:verified",
+        archive=archive,
+    )
 
 
 def verify(version: str, revision: str, archive: Path) -> None:
-    if not archive.is_file() or archive.stat().st_size == 0:
-        raise VerificationError(f"OCI archive is missing or empty: {archive}")
+    if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
+        raise VerificationError(f"OCI archive is missing, empty, or not a regular file: {archive}")
 
     engine, image = verify_skopeo_runtime()
     repository = require_env("REPOSITORY")

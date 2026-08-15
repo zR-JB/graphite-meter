@@ -14,10 +14,6 @@ import re
 import stat
 import subprocess
 import tarfile
-import tempfile
-import time
-import urllib.error
-import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 from github_api import JsonShapeError, JsonValue, decode_json
@@ -134,7 +130,7 @@ def expected_release_artifacts(version: str, targets_file: Path) -> set[str]:
     except OSError as exc:
         raise VerificationError(f"cannot read {targets_file}: {exc}") from exc
 
-    expected = {f"graphite-meter_{version}_corresponding-source.tar.gz"}
+    expected = {f"graphite-meter_{version}_third-party-source.tar.gz"}
     for raw_target in targets:
         target = raw_target.strip()
         if not target:
@@ -211,12 +207,103 @@ def verify_no_certificate_material(path: Path, names: set[str]) -> None:
         )
 
 
-def verify_source_archive(dist: Path, version: str) -> None:
-    source = dist / f"graphite-meter_{version}_corresponding-source.tar.gz"
-    if not source.is_file() or source.stat().st_size == 0:
-        raise VerificationError(f"corresponding-source archive is missing or empty: {source}")
+def read_tar_text(path: Path, member_name: str) -> str:
+    try:
+        with tarfile.open(path, mode="r:gz") as archive:
+            member = archive.getmember(member_name)
+            handle = archive.extractfile(member)
+            if handle is None:
+                raise VerificationError(f"{path.name} cannot read metadata member: {member_name}")
+            return handle.read().decode("utf-8")
+    except (KeyError, OSError, UnicodeDecodeError, tarfile.TarError) as exc:
+        raise VerificationError(f"cannot read {member_name} from {path.name}: {exc}") from exc
+
+
+def verify_third_party_source_archive(dist: Path, version: str) -> None:
+    source = dist / f"graphite-meter_{version}_third-party-source.tar.gz"
+    if not source.is_file() or source.is_symlink() or source.stat().st_size == 0:
+        raise VerificationError(f"third-party source archive is missing, empty, or not regular: {source}")
+
+    root = f"graphite-meter_{version}_third-party-source"
     names = archive_names(source)
-    verify_no_certificate_material(source, names)
+    required = {
+        f"{root}/README.txt",
+        f"{root}/LEGAL_INVENTORY.json",
+        f"{root}/PROVENANCE.json",
+    }
+    missing = sorted(required - names)
+    if missing:
+        raise VerificationError(
+            f"{source.name} is missing source-offer metadata: {', '.join(missing)}"
+        )
+
+    dependency_prefixes = (
+        f"{root}/third_party/go/",
+        f"{root}/third_party/npm/",
+    )
+    manual_prefix = f"{root}/third_party/manual/"
+    unexpected = sorted(
+        name
+        for name in names
+        if name not in required
+        and not name.startswith(dependency_prefixes)
+        and not name.startswith(manual_prefix)
+    )
+    if unexpected:
+        raise VerificationError(
+            f"{source.name} contains unexpected non-third-party source paths: "
+            + ", ".join(unexpected[:5])
+        )
+    if not any(
+        name.startswith(dependency_prefixes) or name.startswith(manual_prefix)
+        for name in names
+    ):
+        raise VerificationError(f"{source.name} contains no third-party source material")
+
+    # Public upstream source distributions may legitimately contain test
+    # certificates and test private keys. Keep the credential-leak invariant
+    # strict for Graphite Meter-controlled manual provenance, while not treating
+    # immutable Go/npm upstream fixtures as repository secrets.
+    bad = sorted(
+        name
+        for name in names
+        if FORBIDDEN_NAME.search(name)
+        and not name.startswith(dependency_prefixes)
+    )
+    if bad:
+        raise VerificationError(
+            f"{source.name} contains certificate/key material outside upstream dependency source: "
+            + ", ".join(bad[:5])
+        )
+
+    try:
+        inventory = decode_json(
+            read_tar_text(source, f"{root}/LEGAL_INVENTORY.json"),
+            f"{source.name}:LEGAL_INVENTORY.json",
+        )
+        provenance = decode_json(
+            read_tar_text(source, f"{root}/PROVENANCE.json"),
+            f"{source.name}:PROVENANCE.json",
+        )
+    except JsonShapeError as exc:
+        raise VerificationError(str(exc)) from exc
+    if not isinstance(inventory, dict) or set(inventory) != {"server", "tui", "container"}:
+        raise VerificationError(f"{source.name} has invalid LEGAL_INVENTORY.json shape")
+    if any(not isinstance(inventory[key], list) for key in ("server", "tui", "container")):
+        raise VerificationError(f"{source.name} has invalid LEGAL_INVENTORY.json component lists")
+    if not isinstance(provenance, list):
+        raise VerificationError(f"{source.name} has invalid PROVENANCE.json shape")
+
+    readme = read_tar_text(source, f"{root}/README.txt")
+    for required_text in (
+        "Source code (tar.gz)",
+        "Source code (zip)",
+        "does not duplicate Graphite Meter's own repository source",
+    ):
+        if required_text not in readme:
+            raise VerificationError(
+                f"{source.name} README does not describe the split source offer: {required_text!r}"
+            )
 
 
 def verify_client_archives(dist: Path, version: str, targets_file: Path) -> None:
@@ -270,56 +357,19 @@ def verify_server_version(version: str) -> None:
     if not binary.is_file() or binary.is_symlink():
         raise VerificationError(f"production server binary is missing: {binary}")
 
-    environment = os.environ.copy()
-    environment.update(
-        {
-            "GM_H1_ADDR": "127.0.0.1:7246",
-            "GM_H1_TLS_ADDR": "",
-            "GM_H2_ADDR": "",
-            "GM_H3_ADDR": "",
-        }
+    result = subprocess.run(
+        [str(binary.resolve()), "--version"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
     )
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        log_path = Path(temp_dir) / "server.log"
-        with log_path.open("wb") as log_handle:
-            process = subprocess.Popen(
-                [str(binary.resolve())],
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                env=environment,
-            )
-            try:
-                payload: JsonValue | None = None
-                for _ in range(30):
-                    if process.poll() is not None:
-                        break
-                    try:
-                        with urllib.request.urlopen(
-                            "http://127.0.0.1:7246/preflight", timeout=1.0
-                        ) as response:
-                            body = response.read().decode("utf-8")
-                        payload = decode_json(body, "/preflight response")
-                        break
-                    except (urllib.error.URLError, TimeoutError, JsonShapeError):
-                        time.sleep(1)
-                if not isinstance(payload, dict):
-                    detail = log_path.read_text(encoding="utf-8", errors="replace")
-                    raise VerificationError(
-                        "server did not expose a valid /preflight response\n" + detail
-                    )
-                if payload.get("engineVersion") != version:
-                    raise VerificationError(
-                        f"server engineVersion is {payload.get('engineVersion')!r}; expected {version!r}"
-                    )
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        raise VerificationError(f"server --version failed: {detail}")
+    actual = result.stdout.strip()
+    if actual != version:
+        raise VerificationError(f"server version is {actual!r}; expected {version!r}")
 
 
 def verify(version: str, dist: Path) -> None:
@@ -338,7 +388,7 @@ def verify(version: str, dist: Path) -> None:
             detail.append("unexpected=" + ",".join(extra))
         raise VerificationError("checksums.txt release artifact set is unexpected: " + "; ".join(detail))
     verify_release_file_set(dist, checksummed)
-    verify_source_archive(dist, version)
+    verify_third_party_source_archive(dist, version)
     verify_client_archives(dist, version, targets_file)
     verify_client_version(version)
     verify_server_version(version)
