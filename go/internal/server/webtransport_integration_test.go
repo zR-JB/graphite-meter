@@ -104,7 +104,7 @@ func wtShapedServer(t *testing.T, tune func(*config.Config), shape func(*endpoin
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	build, err := newListenerBuildWithSockets(ctx, &cfg, sockets)
+	build, err := newListenerBuild(ctx, &cfg, sockets)
 	if err != nil {
 		t.Fatalf("build listeners: %v", err)
 	}

@@ -321,7 +321,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 // the exported API lets tests reserve the exact TCP/UDP sockets they will use
 // while production keeps the normal net.Listen/net.ListenPacket behavior.
 func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) error {
-	b, err := newListenerBuildWithSockets(ctx, cfg, sockets)
+	b, err := newListenerBuild(ctx, cfg, sockets)
 	if err != nil {
 		return err
 	}
@@ -333,17 +333,10 @@ func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSoc
 
 // newListenerBuild validates the config and brings up everything the listeners
 // share: authentication, the certificate manager, the endpoint set and the
-// connection budget. It is separate from Run because it is the seam a test
-// needs -- the endpoints exist here, and nothing has been assembled around them
-// yet, so a bound they were built with can still be chosen. That is what
-// replaced an exported setter over a package-global idle bound: the value is a
-// constructor argument all the way down, so there is nothing to race and
-// nothing test-only in the shipped handler.
-func newListenerBuild(ctx context.Context, cfg *config.Config) (*listenerBuild, error) {
-	return newListenerBuildWithSockets(ctx, cfg, systemListenerSockets{})
-}
-
-func newListenerBuildWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) (*listenerBuild, error) {
+// connection budget. Socket creation is injected here so tests can reserve the
+// exact live TCP/UDP sockets they exercise while production passes
+// systemListenerSockets from Run.
+func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerSockets) (*listenerBuild, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
