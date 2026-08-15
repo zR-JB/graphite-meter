@@ -123,7 +123,9 @@ test("terminal stage switches select the next run without erasing retained statu
   }
 });
 
-test("elapsed time restarts after a completed run", async ({ page }) => {
+test("elapsed time freezes on abort and restarts on the next run", async ({
+  page,
+}) => {
   await page.goto("/?engine=dummy");
   await configureShortDownload(page);
   const status = page.locator("footer.status");
@@ -137,10 +139,26 @@ test("elapsed time restarts after a completed run", async ({ page }) => {
     .toBeGreaterThan(0);
 
   await page.getByRole("button", { name: "Run the test again" }).click();
-  await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible({
-    timeout: 5_000,
-  });
-  await expect(status).toContainText("left", { timeout: 5_000 });
+  const abort = page.getByRole("button", { name: "Abort test" });
+  await expect(abort).toBeVisible({ timeout: 5_000 });
+  await expect
+    .poll(async () => parseElapsed((await status.textContent()) ?? ""), {
+      timeout: 2_000,
+    })
+    .toBeGreaterThan(0.3);
+
+  await abort.click();
+  await expect(status).toContainText("Aborted");
+  const abortedElapsed = parseElapsed((await status.textContent()) ?? "");
+  expect(abortedElapsed).toBeGreaterThan(0);
+  await page.waitForTimeout(400);
+  expect(parseElapsed((await status.textContent()) ?? "")).toBe(abortedElapsed);
+
+  await page.getByRole("button", { name: "Run the test again" }).click();
+  await expect(abort).toBeVisible({ timeout: 5_000 });
+  expect(parseElapsed((await status.textContent()) ?? "")).toBeLessThan(
+    abortedElapsed,
+  );
   await expect
     .poll(async () => parseElapsed((await status.textContent()) ?? ""), {
       timeout: 2_000,

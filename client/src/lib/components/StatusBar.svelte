@@ -40,7 +40,10 @@
   const elapsedMs = $derived(
     store.isRunning && store.startEpoch
       ? now - store.startEpoch
-      : (store.result?.durationMs ?? 0),
+      : (store.result?.durationMs ??
+        (store.phase === "aborted" && store.startEpoch
+          ? now - store.startEpoch
+          : 0)),
   );
 
   function fmtElapsed(ms: number): string {
