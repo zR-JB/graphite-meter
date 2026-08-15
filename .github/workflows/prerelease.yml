@@ -258,8 +258,8 @@ jobs:
           set -euo pipefail
           label="gm-prerelease-$REQUEST_RUN_ID"
           if metadata=$(gh api "repos/$REPOSITORY/labels/$label" 2>/dev/null); then
-            expected=$(jq -cn --arg tag "$REQUESTED_TAG" --arg sha "$REQUESTED_SHA" --arg requestRunId "$REQUEST_RUN_ID" \
-              '{tag:$tag,sha:$sha,requestRunId:$requestRunId}')
+            expected=$(jq -cn --arg tag "$REQUESTED_TAG" --arg sha "$REQUESTED_SHA" \
+              '{t:$tag,s:$sha}')
             actual=$(jq -r '.description // ""' <<<"$metadata")
             if [[ "$actual" == "$expected" ]]; then
               gh api --method DELETE "repos/$REPOSITORY/issues/$PR_NUMBER/labels/$label" >/dev/null 2>&1 || true
