@@ -1,8 +1,6 @@
 module github.com/zR-JB/graphite-meter/go
 
-go 1.26.5
-
-toolchain go1.26.6
+go 1.27.0
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

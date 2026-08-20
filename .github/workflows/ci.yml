@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 env:
-  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:02053f3c795ecf32af60e58c2099935ae620a1a9b6186c1dbcf557b6a09fb1eb
   SKOPEO_VERSION: 1.22.2
 
 concurrency:
@@ -91,10 +91,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up core toolchain
         uses: ./.github/actions/setup-project
-        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true'}
+        with:
+          { go: "true", bun: "true", client-deps: "true", staticcheck: "true" }
       - name: Run deterministic repository gate
         run: just check
 
@@ -107,37 +108,43 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up Go
         uses: ./.github/actions/setup-project
-        with: {go: 'true'}
+        with: { go: "true" }
       - name: Run race detector and coverage floor
         run: just server-race
 
   browser:
-    name: Browser (${{ matrix.project }})
+    name: Browser (Chromium WebView)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
     if: needs.plan.outputs.browser == 'true'
-    strategy:
-      fail-fast: false
-      matrix: {project: [chromium, firefox]}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up browser test toolchain
         uses: ./.github/actions/setup-project
-        with: {bun: 'true', client-deps: 'true'}
-      - name: Install ${{ matrix.project }} runtime
+        with: { bun: "true", client-deps: "true" }
+      - id: chrome
+        name: Install pinned Chrome for Testing
+        uses: browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4 # v2
+        with:
+          chrome-version: 152.0.7977.54
+          install-dependencies: true
+      - name: Run Chromium WebView browser suite
         env:
-          BROWSER_PROJECT: ${{ matrix.project }}
-        run: cd client && bunx playwright install --with-deps "$BROWSER_PROJECT"
-      - name: Run ${{ matrix.project }} browser suite
-        env:
-          BROWSER_PROJECT: ${{ matrix.project }}
-        run: just client-browser "$BROWSER_PROJECT"
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: just client-browser
+      - name: Upload WebView failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webview-browser-failures
+          path: client/test-results/webview
+          if-no-files-found: ignore
 
   tui:
     name: TUI cross-build
@@ -148,10 +155,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up Go
         uses: ./.github/actions/setup-project
-        with: {go: 'true'}
+        with: { go: "true" }
       - name: Cross-build all supported TUI targets
         run: just tui-cross-build
 
@@ -164,14 +171,27 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up E2E toolchain
         uses: ./.github/actions/setup-project
-        with: {go: 'true', bun: 'true', client-deps: 'true'}
-      - name: Install Chromium and Firefox
-        run: cd client && bunx playwright install --with-deps chromium firefox
+        with: { go: "true", bun: "true", client-deps: "true" }
+      - id: chrome
+        name: Install pinned Chrome for Testing
+        uses: browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4 # v2
+        with:
+          chrome-version: 152.0.7977.54
+          install-dependencies: true
       - name: Run browser/server transport E2E
+        env:
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: just client-e2e
+      - name: Upload WebView failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: webview-e2e-failures
+          path: client/test-results/webview
+          if-no-files-found: ignore
 
   smoke:
     name: Container smoke
@@ -182,7 +202,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up Just
         uses: ./.github/actions/setup-project
       - name: Build and verify local container
@@ -197,10 +217,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up release test toolchain
         uses: ./.github/actions/setup-project
-        with: {go: 'true', bun: 'true', client-deps: 'true'}
+        with: { go: "true", bun: "true", client-deps: "true" }
       - name: Build and verify representative release packages
         run: just release-check
       - name: Verify pinned Skopeo runtime contract
@@ -218,22 +238,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up pinned vulnerability scanner
+        with: { persist-credentials: false }
+      - name: Set up pinned vulnerability scanner and client dependencies
         uses: ./.github/actions/setup-project
-        with: {go: 'true', govulncheck: 'true'}
-      - name: Run Go vulnerability scan
-        run: just security
+        with:
+          { go: "true", bun: "true", client-deps: "true", govulncheck: "true" }
+      - name: Run Go and client vulnerability scans
+        run: |
+          just security
+          just client-audit
 
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    permissions: {contents: read}
+    permissions: { contents: read }
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: { persist-credentials: false }
       - name: Set up Just
         uses: ./.github/actions/setup-project
       - name: Scan repository with pinned Gitleaks image
@@ -243,7 +266,19 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
+    needs:
+      [
+        plan,
+        core,
+        go,
+        browser,
+        tui,
+        integration,
+        smoke,
+        release,
+        security,
+        secret-scan,
+      ]
     steps:
       - name: Summarize and require all selected jobs
         env:

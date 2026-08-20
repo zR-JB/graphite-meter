@@ -495,7 +495,7 @@ class PipelineTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         release_start = text.index("release:\n")
         release_end = text.index("\nsecurity:\n", release_start)
-        release = text[release_start:release_end].replace("  - '.dockerignore'\n", "", 1)
+        release = text[release_start:release_end].replace('  - ".dockerignore"\n', "", 1)
         path.write_text(text[:release_start] + release + text[release_end:], encoding="utf-8")
         with self.assertRaisesRegex(PolicyError, "release checks when .dockerignore changes"):
             check_ci_path_map(root)
@@ -528,58 +528,68 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "BuildKit insecure entitlements|OCI provenance invariant"):
             check_oci_build_action(root)
 
-    def test_policy_rejects_fixed_port_vite_e2e_server(self) -> None:
+    def test_policy_rejects_fixed_port_webview_e2e_server(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.e2e.config.ts"
-        path.write_text(path.read_text() + '\n// bun run dev -- --port 5273\n')
-        with self.assertRaisesRegex(PolicyError, "fixed-port Vite"):
+        path = root / "client/e2e/fixtures.ts"
+        path.write_text(path.read_text().replace("port: 0", "port: 5273", 1))
+        with self.assertRaisesRegex(PolicyError, "ephemeral lifecycle"):
             check_e2e_lifecycle(root)
 
     def test_policy_rejects_slow_e2e_server_readiness_timeout(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.e2e.config.ts"
-        path.write_text(path.read_text().replace("timeout: 30_000", "timeout: 180_000", 1))
-        with self.assertRaisesRegex(PolicyError, "fail fast"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_stale_local_browser_server_reuse(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.browser.config.ts"
-        path.write_text(path.read_text().replace("reuseExistingServer: false", "reuseExistingServer: true", 1))
-        with self.assertRaisesRegex(PolicyError, "stale local preview server"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_slow_browser_preview_readiness_timeout(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.browser.config.ts"
-        path.write_text(path.read_text().replace("timeout: 30_000", "timeout: 120_000", 1))
-        with self.assertRaisesRegex(PolicyError, "preview readiness must fail fast"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_playwright_managed_go_build(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.e2e.config.ts"
-        path.write_text(
-            path.read_text().replace(
-                "command: JSON.stringify(SERVER_BIN)",
-                'command: "go run ./cmd/graphite-meter"',
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "prebuilt real Graphite Meter"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_fixed_harness_fixture_port(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
         path = root / "client/e2e/fixtures.ts"
-        path.write_text(path.read_text().replace("server.listen(0, HOST", "server.listen(5273, HOST", 1))
-        with self.assertRaisesRegex(PolicyError, "dynamic static-server"):
+        path.write_text(path.read_text().replace("Date.now() + 30_000", "Date.now() + 180_000", 1))
+        with self.assertRaisesRegex(PolicyError, "ephemeral lifecycle"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_persistent_webview_profile(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/browser/webview.ts"
+        path.write_text(path.read_text().replace('dataStore: "ephemeral"', 'dataStore: { directory: "profile" }', 1))
+        with self.assertRaisesRegex(PolicyError, "WebView harness"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_missing_webview_failure_screenshot(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/browser/webview.ts"
+        path.write_text(path.read_text().replace("screenshot", "capture", 1))
+        with self.assertRaisesRegex(PolicyError, "diagnostic invariant"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_unpinned_chrome_version(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        path.write_text(path.read_text().replace("chrome-version: 152.0.7977.54", "chrome-version: latest"))
+        with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_playwright_dependency(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/package.json"
+        path.write_text(path.read_text().replace('"axe-core":', '"@playwright/test": "1",\n    "axe-core":', 1))
+        with self.assertRaisesRegex(PolicyError, "browser dependency"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_missing_client_audit(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        path.write_text(path.read_text().replace("          just client-audit\n", ""))
+        with self.assertRaisesRegex(PolicyError, "networked Bun audit"):
+            check_ci_path_map(root)
+
+    def test_policy_rejects_missing_webview_orphan_cleanup(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/package.json"
+        path.write_text(path.read_text().replace(" --no-orphans", ""))
+        with self.assertRaisesRegex(PolicyError, "browser scripts"):
             check_e2e_lifecycle(root)
 
     def test_repository_policy_passes_canonical_tree(self) -> None:
@@ -594,8 +604,7 @@ class PipelineTests(unittest.TestCase):
         shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
         shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
         for relative in (
-            "client/playwright.e2e.config.ts",
-            "client/playwright.browser.config.ts",
+            "client/browser/webview.ts",
             "client/vite.e2e.config.ts",
             "client/e2e/fixtures.ts",
             "client/package.json",
@@ -1031,7 +1040,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/_promote-oci.yml"
         text = path.read_text().replace(
-            "4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810",
+            "02053f3c795ecf32af60e58c2099935ae620a1a9b6186c1dbcf557b6a09fb1eb",
             "a" * 64,
             1,
         )

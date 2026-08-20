@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { AxeBuilder } from "./webview";
+import { expect, test } from "./webview";
 
 test("Endpoint Info opens the accessible generated legal modal", async ({
   page,

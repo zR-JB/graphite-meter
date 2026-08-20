@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -58,6 +59,7 @@ type goTarget struct {
 
 var releaseVersion = regexp.MustCompile(`^(?:v)?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?$`)
 var goReleaseVersion = regexp.MustCompile(`^(go[0-9]+\.[0-9]+(?:\.[0-9]+)?)(?:[- \t].*)?$`)
+var goDirectiveVersion = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 func main() {
 	mode := flag.String(
@@ -460,7 +462,7 @@ func goDiscoveryTargets(repo string) ([]goTarget, error) {
 	}
 	var targets []goTarget
 	seen := make(map[string]bool)
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -570,6 +572,17 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 		}
 		path := filepath.Join(dir, relative)
 		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			// Bun's isolated linker stores a package's dependencies beside the
+			// package directory rather than beneath package/node_modules. Preserve
+			// the reviewed logical name while reading the same dependency-owned
+			// legal file from that isolated-store sibling.
+			prefix := "node_modules" + string(filepath.Separator)
+			if after, ok := strings.CutPrefix(relative, prefix); ok {
+				path = filepath.Join(filepath.Dir(dir), after)
+				data, err = os.ReadFile(path)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -588,8 +601,10 @@ func goToolchainComponent(repo string) (legal.Component, error) {
 	// The reviewed standard-library version is a repository property, not an
 	// ambient PATH property. The generator itself is built by `go run`, so
 	// runtime.Version reports the toolchain that actually compiled/executed it.
-	// Require that selected toolchain to match the exact `toolchain` directive
-	// in go/go.mod, then use the repository pin as the inventory version.
+	// Require that selected toolchain to match the exact release in go/go.mod,
+	// then use the repository pin as the inventory version. Go 1.27's tidy
+	// removes a redundant toolchain directive when it equals the go directive,
+	// so the patch-qualified go directive is authoritative in that layout.
 	//
 	// This deliberately avoids spawning a second `go env GOVERSION` process:
 	// hooks, shims, and linked worktrees can make that nested command resolve a
@@ -619,21 +634,34 @@ func repositoryGoToolchainVersion(repo string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read pinned Go toolchain: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	var languageVersion string
+	for line := range strings.SplitSeq(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || fields[0] != "toolchain" {
+		if len(fields) == 0 {
 			continue
 		}
-		if len(fields) != 2 {
-			return "", fmt.Errorf("go/go.mod has malformed toolchain directive")
+		if fields[0] == "go" {
+			if len(fields) != 2 || !goDirectiveVersion.MatchString(fields[1]) {
+				return "", fmt.Errorf("go/go.mod must pin an exact Go release, got %q", strings.Join(fields[1:], " "))
+			}
+			languageVersion = "go" + fields[1]
+			continue
 		}
-		match := goReleaseVersion.FindStringSubmatch(fields[1])
-		if match == nil || match[1] != fields[1] {
-			return "", fmt.Errorf("go/go.mod toolchain must pin an exact Go release, got %q", fields[1])
+		if fields[0] == "toolchain" {
+			if len(fields) != 2 {
+				return "", fmt.Errorf("go/go.mod has malformed toolchain directive")
+			}
+			match := goReleaseVersion.FindStringSubmatch(fields[1])
+			if match == nil || match[1] != fields[1] {
+				return "", fmt.Errorf("go/go.mod toolchain must pin an exact Go release, got %q", fields[1])
+			}
+			return match[1], nil
 		}
-		return match[1], nil
 	}
-	return "", fmt.Errorf("go/go.mod must declare an exact toolchain for legal review")
+	if languageVersion != "" {
+		return languageVersion, nil
+	}
+	return "", fmt.Errorf("go/go.mod must declare an exact Go release for legal review")
 }
 
 func validateGoToolchainVersion(expected, actual string) error {
@@ -869,12 +897,7 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 }
 
 func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }
 
 func sortComponents(components []legal.Component) []legal.Component {

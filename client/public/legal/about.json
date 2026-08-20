@@ -150,7 +150,7 @@
     },
     {
       "name": "Go standard library",
-      "version": "go1.26.6",
+      "version": "go1.27.0",
       "ecosystem": "go-toolchain",
       "source": "https://go.dev/",
       "declaredLicenseExpression": "BSD-3-Clause",

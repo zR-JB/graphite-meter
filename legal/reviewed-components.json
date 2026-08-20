@@ -764,7 +764,7 @@
   {
     "ecosystem": "go-toolchain",
     "name": "Go standard library",
-    "reviewedVersion": "go1.26.6",
+    "reviewedVersion": "go1.27.0",
     "upstream": "https://go.dev/",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -775,7 +775,7 @@
       },
       {
         "name": "PATENTS",
-        "sha256": "abc34799220e8fc15996bbb11df857547eb2ba8741a73d03cf86489dad145f3b"
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
       }
     ],
     "modified": false,
@@ -785,7 +785,7 @@
       "container"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
+    "reviewNotes": "Audited 2026-08-20 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
   },
   {
     "ecosystem": "npm",

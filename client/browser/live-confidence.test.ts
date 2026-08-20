@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
 test("live results stay measurement-first and defer confidence verdicts", async ({
   page,

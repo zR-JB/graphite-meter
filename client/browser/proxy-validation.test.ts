@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
 test("proxy discovery does not restart its own validation", async ({
   page,

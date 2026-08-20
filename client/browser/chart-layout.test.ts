@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
 test("chart axes and time ticks are DOM labels anchored inside the canvas layout", async ({
   page,

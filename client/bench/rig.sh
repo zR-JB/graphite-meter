@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rig B: the server in a network namespace, the browser on the host, and netem
-# on the veth ends. Playwright's own traffic stays on unshaped loopback, which
+# on the veth ends. WebView control traffic stays on unshaped loopback, which
 # is what shaping `lo` directly cannot give.
 #
 #   sudo ./rig.sh up lan-1g     # create and shape

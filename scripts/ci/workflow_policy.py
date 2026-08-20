@@ -84,7 +84,7 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
             fail(f"{name} must declare packages: write")
         if '-e IMAGE="$image"' not in text:
             fail(f"{name} must pass IMAGE explicitly to the Skopeo container")
-        if re.search(r"@sha256:[0-9a-f]{64}", text) is None:
+        if "@sha256:02053f3c795ecf32af60e58c2099935ae620a1a9b6186c1dbcf557b6a09fb1eb" not in text:
             fail(f"{name} must pin the Skopeo container by digest")
 
     oci = (workflows / "_publish-oci.yml").read_text(encoding="utf-8")
@@ -192,8 +192,21 @@ def check_ci_path_map(root: pathlib.Path = ROOT) -> None:
             rf"(?ms)^{section}:\n(?P<body>.*?)(?=^[A-Za-z0-9_-]+:|\Z)",
             text,
         )
-        if match is None or "'.dockerignore'" not in match.group("body"):
+        if match is None or ".dockerignore" not in match.group("body"):
             fail(f"CI path map must run {section} checks when .dockerignore changes")
+    security = re.search(
+        r"(?ms)^security:\n(?P<body>.*?)(?=^[A-Za-z0-9_-]+:|\Z)", text
+    )
+    security_paths = ("client/package.json", "client/bun.lock", "client/bunfig.toml")
+    if security is None or any(path not in security.group("body") for path in security_paths):
+        fail("CI security paths must include the client manifest, lockfile, and Bun config")
+
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    if "just client-audit" not in ci:
+        fail("CI security job must run the networked Bun audit")
+    just = (root / "justfile").read_text(encoding="utf-8")
+    if "    just security\n    just client-audit\n" not in just:
+        fail("local CI-equivalent gate must run both Go and Bun vulnerability scans")
 
 
 def check_runner_labels(root: pathlib.Path = ROOT) -> None:
@@ -566,25 +579,36 @@ def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
 
 
 def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
-    config = (root / "client" / "playwright.e2e.config.ts").read_text(encoding="utf-8")
-    if "bun run dev" in config or "5273" in config:
-        fail("transport E2E must not depend on a fixed-port Vite development server")
-    if config.count("command:") != 1 or "command: JSON.stringify(SERVER_BIN)" not in config:
-        fail("Playwright E2E must manage only the prebuilt real Graphite Meter server process")
-    if "GM_E2E_SERVER_BIN" not in config:
-        fail("Playwright E2E must require the server binary prebuilt by Just")
-    if "timeout: 30_000" not in config:
-        fail("Playwright E2E server readiness must fail fast after the server is prebuilt")
-    if "reuseExistingServer: false" not in config:
-        fail("Playwright E2E must never reuse an unrelated existing backend")
+    client = root / "client"
+    forbidden = [
+        path
+        for path in client.rglob("*")
+        if path.is_file()
+        and "node_modules" not in path.parts
+        and ("playwright" in path.name.lower() or path.name.endswith(".pw.ts"))
+    ]
+    if forbidden:
+        fail(f"Playwright configuration/tests must be removed: {forbidden[0]}")
 
-    browser_config = (root / "client" / "playwright.browser.config.ts").read_text(
-        encoding="utf-8"
-    )
-    if "reuseExistingServer: false" not in browser_config:
-        fail("stubbed browser tests must not silently reuse a stale local preview server")
-    if "timeout: 30_000" not in browser_config:
-        fail("stubbed browser preview readiness must fail fast after the bundle is prebuilt")
+    webview = (client / "browser" / "webview.ts").read_text(encoding="utf-8")
+    for required in (
+        "new Bun.WebView",
+        'type: "chrome"',
+        "BUN_CHROME_PATH",
+        'dataStore: "ephemeral"',
+        "Bun.serve",
+        "port: 0",
+        '"cache-control": "no-store"',
+        "Runtime.exceptionThrown",
+        "Network.setBlockedURLs",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "screenshot",
+        "document.documentElement.outerHTML",
+        "page.close()",
+        "Bun.WebView.closeAll()",
+    ):
+        if required not in webview:
+            fail(f"WebView harness missing lifecycle/diagnostic invariant: {required}")
 
     just = (root / "justfile").read_text(encoding="utf-8")
     for required in (
@@ -597,12 +621,16 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
 
     fixture = (root / "client" / "e2e" / "fixtures.ts").read_text(encoding="utf-8")
     for required in (
-        "server.listen(0, HOST",
-        'resolve(here, "../.e2e-dist")',
-        '"Cache-Control": "no-store"',
+        "Bun.spawn([binary]",
+        "Bun.serve",
+        "port: 0",
+        'resolve(".e2e-dist")',
+        '"cache-control": "no-store"',
+        "Date.now() + 30_000",
+        "backend.kill()",
     ):
         if required not in fixture:
-            fail(f"E2E harness fixture missing dynamic static-server invariant: {required}")
+            fail(f"E2E fixture missing ephemeral lifecycle invariant: {required}")
 
     vite = (root / "client" / "vite.e2e.config.ts").read_text(encoding="utf-8")
     for required in (
@@ -619,8 +647,30 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
             fail(f"{ignore_name} must exclude generated E2E harness output")
 
     package = (root / "client" / "package.json").read_text(encoding="utf-8")
-    if '"test:e2e": "bun run build:e2e-harness && playwright test -c playwright.e2e.config.ts"' not in package:
-        fail("E2E test script must build the static harness before Playwright")
+    for required in (
+        '"test:browser": "bun run build:browser && bun test browser --no-orphans --timeout 30000"',
+        '"test:e2e": "bun run build:e2e-harness && bun test e2e --no-orphans --timeout 60000"',
+        '"test:bench": "bun run build:e2e-harness && bun test ./bench/throughput.bench.ts --no-orphans --timeout 1800000"',
+        '"axe-core"',
+    ):
+        if required not in package:
+            fail(f"client browser scripts missing Bun.WebView invariant: {required}")
+    if 'process.on("exit"' not in webview or "Bun.WebView.closeAll();" not in webview:
+        fail("WebView suites must explicitly close the shared browser at process exit")
+    for forbidden_dependency in ("@playwright/test", "@axe-core/playwright", "puppeteer"):
+        if forbidden_dependency in package:
+            fail(f"browser dependency must be removed: {forbidden_dependency}")
+
+    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for required in (
+        "browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4",
+        "chrome-version: 152.0.7977.54",
+        "BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}",
+        "webview-browser-failures",
+        "webview-e2e-failures",
+    ):
+        if required not in ci:
+            fail(f"CI missing pinned Chromium/WebView invariant: {required}")
 
 def check_oci_verifier_boundary(root: pathlib.Path = ROOT) -> None:
     verifier = (root / "scripts" / "ci" / "verify_oci.py").read_text(encoding="utf-8")

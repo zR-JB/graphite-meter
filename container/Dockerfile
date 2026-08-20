@@ -7,7 +7,7 @@
 #
 # Reserved for a future Go->Rust server swap:
 ARG SERVER_IMPL=go
-ARG BUN_VERSION=canary
+ARG BUN_VERSION=1.4.0
 # Stamped into the server EngineVersion. Manual builds use the same default
 # for the client bundle; release and prerelease builds pass both values.
 ARG VERSION=0.1.0
@@ -38,8 +38,8 @@ ENV GM_CLIENT_ENGINE=$GM_CLIENT_ENGINE \
     VERSION=$CLIENT_VERSION
 WORKDIR /app/client
 # Install deps first for layer caching. Every official build uses the
-# repository's declared Bun channel and the committed lockfile.
-COPY client/package.json client/bun.lock ./
+# repository's exact Bun release and the committed lockfile.
+COPY client/package.json client/bun.lock client/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
 # Then the source, then build.
 COPY client/ ./
@@ -49,9 +49,9 @@ RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:b
 # Stage: server — build the Go binary with the client embedded.
 # ---------------------------------------------------------------------------
 # Pin the patch release used by CI and the checked-in Go legal snapshot. The
-# floating 1.26 tag can lag the go.mod minimum and fail before the image's
+# floating 1.27 tag can lag the go.mod minimum and fail before the image's
 # legal files are even staged.
-FROM docker.io/library/golang:1.26.6 AS server
+FROM docker.io/library/golang:1.27.0 AS server
 ARG VERSION
 WORKDIR /src/go
 # Module graph first for caching.

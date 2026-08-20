@@ -1131,7 +1131,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: Go standard library
-Version: go1.26.6
+Version: go1.27.0
 Source: https://go.dev/
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1178,8 +1178,8 @@ no-charge, royalty-free, irrevocable (except as stated in this section)
 patent license to make, have made, use, offer to sell, sell, import,
 transfer and otherwise run, modify and propagate the contents of this
 implementation of Go, where such license applies only to those patent
-claims, both currently owned or controlled by Google and acquired in the
-future, licensable by Google that are necessarily infringed by this
+claims, both currently owned or controlled by Google and acquired in
+the future, licensable by Google that are necessarily infringed by this
 implementation of Go.  This grant does not include claims that would be
 infringed only as a consequence of further modification of this
 implementation.  If you or your agent or exclusive licensee institute or

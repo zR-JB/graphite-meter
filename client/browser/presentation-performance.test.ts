@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
 type Metrics = {
   __canvasDraws: number;
@@ -42,28 +42,28 @@ test.beforeEach(async ({ page }) => {
           metrics.__longTasks.push(entry.duration);
       }).observe({ type: "longtask", buffered: true });
     } catch {
-      // Firefox has no Long Tasks API.
+      // Older engines may not expose the Long Tasks API.
     }
   });
 });
 
-const draws = (page: import("@playwright/test").Page) =>
+const draws = (page: import("./webview").Page) =>
   page.evaluate(() => (window as unknown as Metrics).__canvasDraws);
 
-const chartSample = (page: import("@playwright/test").Page) =>
+const chartSample = (page: import("./webview").Page) =>
   page.evaluate(() => ({
     frames: (window as unknown as Metrics).__chartFrames,
     now: performance.now(),
   }));
 
-const resetMetrics = (page: import("@playwright/test").Page) =>
+const resetMetrics = (page: import("./webview").Page) =>
   page.evaluate(() => {
     const metrics = window as unknown as Metrics;
     metrics.__frameWork.length = 0;
     metrics.__longTasks.length = 0;
   });
 
-const performanceMetrics = (page: import("@playwright/test").Page) =>
+const performanceMetrics = (page: import("./webview").Page) =>
   page.evaluate(() => {
     const metrics = window as unknown as Metrics;
     const sorted = [...metrics.__frameWork].sort((a, b) => a - b);

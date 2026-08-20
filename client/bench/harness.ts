@@ -30,7 +30,7 @@ export interface CellSpec {
   lanes: number;
   warmupMs: number;
   measureMs: number;
-  /** Wait for the Alt-Svc upgrade before opening lanes. Firefox reaches h3 only
+  /** Wait for the Alt-Svc upgrade before opening lanes. Chromium reaches h3 only
    *  that way, and the TCP companion carries no transfer routes. */
   bootstrapH3?: boolean;
 }
