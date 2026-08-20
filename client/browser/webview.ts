@@ -66,12 +66,34 @@ function staticServer() {
   return server;
 }
 
-const encode = (value: unknown) =>
+const unsafeScriptCharMap: Record<string, string> = {
+  "<": "\\u003C",
+  ">": "\\u003E",
+  "/": "\\u002F",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+const serializedJSON = (value: unknown) =>
   JSON.stringify(value, (_key, item) =>
     item instanceof RegExp
       ? { __regexp: true, source: item.source, flags: item.flags }
       : item,
   );
+
+const encode = (value: unknown) => {
+  const json = serializedJSON(value);
+  if (json === undefined) return "undefined";
+  return json.replace(
+    /[<>/\u2028\u2029]/g,
+    (char) => unsafeScriptCharMap[char],
+  );
+};
+
+const pageValue = (value: unknown) => {
+  const json = serializedJSON(value);
+  return json === undefined ? undefined : JSON.parse(json);
+};
 
 const resolver = String.raw`
 const revive = value => value && value.__regexp ? new RegExp(value.source, value.flags) : value;
@@ -112,10 +134,6 @@ const resolveWithin = (root, steps) => {
   }
   document.__gmRoot = old; return nodes.filter(Boolean);
 };`;
-
-function scriptFor(steps: Step[], body: string) {
-  return `(() => { ${resolver}; const elements = resolveSteps(${encode(steps)}); ${body} })()`;
-}
 
 export class Locator {
   constructor(
@@ -162,30 +180,24 @@ export class Locator {
     fn: (element: any, arg?: any) => T,
     arg?: unknown,
   ): Promise<T> {
-    return this.page.raw.evaluate(
-      scriptFor(
-        this.steps,
-        `if (!elements[0]) throw new Error("locator found no element: " + JSON.stringify(${encode(this.steps)})); return (${fn.toString()})(elements[0], ${encode(arg)});`,
-      ),
+    return this.page.callFunction(
+      `function(steps, arg) { ${resolver}; const elements = resolveSteps(steps); if (!elements[0]) throw new Error("locator found no element: " + JSON.stringify(steps)); return (${fn.toString()})(elements[0], arg); }`,
+      [this.steps, arg],
     );
   }
   async evaluateAll<T>(
     fn: (elements: any[], arg?: any) => T,
     arg?: unknown,
   ): Promise<T> {
-    return this.page.raw.evaluate(
-      scriptFor(
-        this.steps,
-        `return (${fn.toString()})(elements, ${encode(arg)});`,
-      ),
+    return this.page.callFunction(
+      `function(steps, arg) { ${resolver}; const elements = resolveSteps(steps); return (${fn.toString()})(elements, arg); }`,
+      [this.steps, arg],
     );
   }
   async state() {
-    return this.page.raw.evaluate<any>(
-      scriptFor(
-        this.steps,
-        `return elements.map(el => { const box=el.getBoundingClientRect(); const style=getComputedStyle(el); return { text:el.textContent ?? "", value:el.value, checked:!!el.checked, disabled:!!el.disabled, focused:document.activeElement===el, visible:!!(box.width||box.height) && style.visibility!=="hidden" && style.display!=="none", attrs:Object.fromEntries([...el.attributes].map(a=>[a.name,a.value])), box:{x:box.x,y:box.y,width:box.width,height:box.height} }; });`,
-      ),
+    return this.page.callFunction<any[]>(
+      `function(steps) { ${resolver}; const elements = resolveSteps(steps); return elements.map(el => { const box=el.getBoundingClientRect(); const style=getComputedStyle(el); return { text:el.textContent ?? "", value:el.value, checked:!!el.checked, disabled:!!el.disabled, focused:document.activeElement===el, visible:!!(box.width||box.height) && style.visibility!=="hidden" && style.display!=="none", attrs:Object.fromEntries([...el.attributes].map(a=>[a.name,a.value])), box:{x:box.x,y:box.y,width:box.width,height:box.height} }; }); }`,
+      [this.steps],
     );
   }
   async click() {
@@ -348,6 +360,44 @@ export class Page {
       for (const handler of this.pageErrorHandlers) handler(new Error(message));
     }) as EventListener);
     this.initialized = true;
+  }
+  async callFunction<T>(
+    functionDeclaration: string,
+    args: unknown[],
+  ): Promise<T> {
+    await this.init();
+    const global = await this.raw.cdp<{
+      result?: { objectId?: string };
+    }>("Runtime.evaluate", { expression: "globalThis" });
+    const objectId = global.result?.objectId;
+    if (!objectId) throw new Error("CDP did not return the page global object");
+    try {
+      const outcome = await this.raw.cdp<{
+        result?: { value?: T; description?: string };
+        exceptionDetails?: {
+          text?: string;
+          exception?: { description?: string };
+        };
+      }>("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration,
+        arguments: args.map((value) =>
+          value === undefined ? {} : { value: pageValue(value) },
+        ),
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (outcome.exceptionDetails) {
+        throw new Error(
+          outcome.exceptionDetails.exception?.description ??
+            outcome.exceptionDetails.text ??
+            "page function failed",
+        );
+      }
+      return outcome.result?.value as T;
+    } finally {
+      await this.raw.cdp("Runtime.releaseObject", { objectId }).catch(() => {});
+    }
   }
   async route(pattern: string, handler: RouteHandler) {
     if (pattern.startsWith("**")) {
