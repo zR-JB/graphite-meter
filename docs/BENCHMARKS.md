@@ -10,13 +10,13 @@ to re-run. Re-taking one means restoring the sweep and the override plumbing it 
 
 Pass one ran on an 8-core VM with 7 GB of RAM; pass two on an 8-core/16-thread x86 desktop with
 30 GiB, recent Linux, `performance` governor, and enlarged TCP buffers (`tcp_rmem 4096 131072
-33554432`, `tcp_wmem 4096 16384 4194304`). Browsers were the Playwright-pinned Chromium and Firefox
-builds of each pass plus a Mozilla-distributed Firefox binary; the pass-two browser build ids were
-not recorded.
+33554432`, `tcp_wmem 4096 16384 4194304`). The historical campaign used pinned Chromium and Firefox
+builds plus a Mozilla-distributed Firefox binary; the pass-two browser build ids were not recorded.
+The maintained reproduction harness is now Chromium-only and uses Bun.WebView.
 
 ## Method
 
-Playwright drives the **production workers** through a bench-only `window.__gmBench` hook, not a
+Bun.WebView drives the **production workers** through a bench-only `window.__gmBench` hook, not a
 reimplementation of the transfer loop. A cell is a warmup, a measured window and a teardown —
 3 s and 8 s by default, `GM_BENCH_WARMUP_MS` and `GM_BENCH_MEASURE_MS`, and every figure here was
 taken at those defaults — and appends one NDJSON row as it completes; cells run in a fresh
@@ -55,7 +55,7 @@ two lanes is both the fastest and the steadiest cell, in both Chromium runs.
   another transport reports **zero bytes, never a plausible wrong number**.
 - Stalls are detected by page-tick lag (`maxTickMs`) rather than inferred from the rate.
 - Rate buckets carry their own elapsed time. An early bug averaged over assumed intervals, and a
-  failing test once restarted the Playwright worker and wiped in-memory results; hence per-run
+  failing test once restarted the old browser worker and wiped in-memory results; hence per-run
   NDJSON appends.
 
 ### Cross-machine rule, and the calibration gate
@@ -291,46 +291,42 @@ cannot load them. Generate them as [DEVELOPMENT.md](DEVELOPMENT.md) describes.
 
 The harness runs against an ordinary dev server: with the knob sweeps gone it sends no measurement
 overrides, so there is nothing to compile in and no build flag to remember. Everything below is
-env-only. A project whose prerequisite variable is unset is dropped rather than guessed at, so
-Playwright rejects `--project=<name>` by name instead of measuring nothing.
+env-only. The harness refuses to start when its required Chromium or certificate input is absent.
 
 | Variable                | Read by                     | Effect                                                                                     |
 | ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------ |
-| `GM_BENCH_SPKI`         | `playwright.bench.config.ts` | Base64 SHA-256 of the dev leaf's SPKI, for QUIC. **Required**: unset, the `chromium` project does not exist and `--project=chromium` fails with "Project(s) not found". |
-| `GM_BENCH_FIREFOX`      | `playwright.bench.config.ts` | Path to a Mozilla-built binary; gates the `firefox-stock` project the same way.            |
-| `GM_BENCH_HOST`         | `playwright.bench.config.ts` | Address the server binds and the browser dials. Default `127.0.0.1`; Rig B uses the namespace address. |
-| `GM_BENCH_NETNS`        | `playwright.bench.config.ts` | Prefixes the server command with `ip netns exec <name>`. **Unset means no prefix at all.**  |
-| `GM_BENCH_FF_NETBUF`    | `playwright.bench.config.ts` | Sets Firefox's `network.buffer.cache.size` on the `firefox` project only. Off by default — see [Firefox](#firefox). |
-| `GM_BENCH_TLS_CERT`     | `playwright.bench.config.ts` | Leaf the TLS listeners serve. Default `../.dev-certs/localhost.pem`, and it is read on every run. |
-| `GM_BENCH_TLS_KEY`      | `playwright.bench.config.ts` | Its private key. Default `../.dev-certs/localhost-key.pem`.                                |
-| `GM_BENCH_ORIGINS`      | `throughput.bench.pw.ts`     | Comma list of origins to measure. Default `h1-clear`; the matrices here used all four.     |
+| `GM_BENCH_SPKI`         | `bench/fixtures.ts`          | Base64 SHA-256 of the dev leaf's SPKI, for QUIC. Required.                                |
+| `BUN_CHROME_PATH`       | Bun.WebView                  | Chrome for Testing or Chromium executable; optional only when Bun discovers it.           |
+| `GM_BENCH_HOST`         | `bench/fixtures.ts`          | Address the server binds and the browser dials. Default `127.0.0.1`; Rig B uses the namespace address. |
+| `GM_BENCH_NETNS`        | `bench/fixtures.ts`          | Prefixes the server command with `ip netns exec <name>`. Unset means no prefix.            |
+| `GM_BENCH_TLS_CERT`     | `bench/fixtures.ts`          | Leaf the TLS listeners serve. Default `../.dev-certs/localhost.pem`.                       |
+| `GM_BENCH_TLS_KEY`      | `bench/fixtures.ts`          | Its private key. Default `../.dev-certs/localhost-key.pem`.                                |
+| `GM_BENCH_ORIGINS`      | `throughput.bench.ts`        | Comma list of origins to measure. Default `h1-clear`; the matrices here used all four.     |
 | `GM_BENCH_REPS`         | `matrix.ts`                  | Repeat rounds per cell. Default 3; every n=5 figure here needs `5`.                        |
 | `GM_BENCH_WARMUP_MS`    | `matrix.ts`                  | Warmup discarded before each cell's window. Default 3000, which every figure here used.    |
 | `GM_BENCH_MEASURE_MS`   | `matrix.ts`                  | Measured window per cell. Default 8000, which every figure here used.                      |
 | `GM_BENCH_SEED`         | `matrix.ts`                  | Seed for the per-round cell permutation. Default 1; changing it reorders cells, not the set. |
 
 ```sh
-# Full matrix, one engine. ALWAYS pass --project: without it every engine runs,
-# which on a memory-limited machine means the Firefox arm and an OOM kill.
-cd client && GM_BENCH_SPKI=<pin> GM_BENCH_ORIGINS=h1-clear,h1-tls,h2,h3 GM_BENCH_REPS=5 \
-  bunx playwright test -c playwright.bench.config.ts --project=chromium
+# Full Chromium matrix.
+GM_BENCH_SPKI=<pin> GM_BENCH_ORIGINS=h1-clear,h1-tls,h2,h3 GM_BENCH_REPS=5 \
+  just bench-throughput
 
-# One cell, one engine. The recipe's second argument is the --project passthrough;
-# without it the filter still runs against every project.
-GM_BENCH_SPKI=<pin> just bench-throughput 'h1-clear/down/lanes=2' chromium
+# One cell.
+GM_BENCH_SPKI=<pin> just bench-throughput 'h1-clear/down/lanes=2'
 
 # Shaped path. The server is started inside the namespace by hand: entering one
-# needs CAP_SYS_ADMIN, and running Playwright under sudo would run the browser as
+# needs CAP_SYS_ADMIN, and running the browser under sudo would run it as
 # root. GM_BENCH_NETNS is left unset here, so the config adds no `ip netns exec`
 # prefix of its own.
 sudo client/bench/rig.sh up lan-fast-lossy
 sudo ip netns exec gmbench <server binary, bound to 10.77.0.2>
 GM_BENCH_SPKI=<pin> GM_BENCH_HOST=10.77.0.2 \
-  bunx playwright test -c playwright.bench.config.ts --project=chromium
+  just bench-throughput
 sudo client/bench/rig.sh down
 ```
 
-`reuseExistingServer` then picks up the namespace server rather than starting its own. `just
+Set `GM_BENCH_NETNS` when the fixture should start the server inside the namespace itself. `just
 bench-wire` carries the ping-bus encoding evidence, and `just stress` the server saturation
 envelope described in [ARCHITECTURE.md](ARCHITECTURE.md#saturation-envelope-just-stress).
 

@@ -36,10 +36,10 @@ The path plan comes from `.github/ci-paths.yml`; project operations use named
 `just` recipes. `Gate` is the single ordinary branch-protection status.
 
 The browser/server transport E2E suite does not keep a Vite development server
-alive beside Playwright. Vite builds the small transport harness once into
-`client/.e2e-dist`, and a worker-scoped Node HTTP server serves those immutable
-assets on an OS-assigned loopback port. Playwright therefore manages only the
-real Graphite Meter backend process. The Go server integration tests use an
+alive beside the test runner. Vite builds the small transport harness once into
+`client/.e2e-dist`, and `Bun.serve()` serves those immutable assets on an
+OS-assigned loopback port. Bun.WebView drives the pinned Linux Chromium while
+the fixture owns the real Graphite Meter backend process. The Go server integration tests use an
 internal socket-provider seam so tests hand already-bound TCP/UDP sockets into
 the production listener assembly path; they never probe a free port, release it,
 and race to bind the same number later.
