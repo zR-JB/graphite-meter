@@ -547,9 +547,9 @@ class PipelineTests(unittest.TestCase):
     def test_policy_rejects_persistent_webview_profile(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/browser/webview.ts"
+        path = root / "client/browser/chrome.ts"
         path.write_text(path.read_text().replace('dataStore: "ephemeral"', 'dataStore: { directory: "profile" }', 1))
-        with self.assertRaisesRegex(PolicyError, "WebView harness"):
+        with self.assertRaisesRegex(PolicyError, "Chromium launcher"):
             check_e2e_lifecycle(root)
 
     def test_policy_rejects_missing_webview_failure_screenshot(self) -> None:
@@ -566,6 +566,45 @@ class PipelineTests(unittest.TestCase):
         path = root / ".github/workflows/ci.yml"
         path.write_text(path.read_text().replace("chrome-version: 152.0.7977.54", "chrome-version: latest"))
         with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_missing_webview_launch_preflight(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        text = path.read_text(encoding="utf-8").replace(
+            "        run: cd client && bun run check:webview\n", "", 1
+        )
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "launch preflight"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_suppressed_ci_chrome_stderr(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/browser/chrome.ts"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                'process.env.CI || process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
+                'process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "Chromium launcher"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_dropped_ci_chrome_arguments(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/e2e/fixtures.ts"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "  process.env.BUN_CHROME_ARGS,\n", "", 1
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "preserve CI Chromium"):
             check_e2e_lifecycle(root)
 
     def test_policy_rejects_playwright_dependency(self) -> None:
@@ -604,7 +643,10 @@ class PipelineTests(unittest.TestCase):
         shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
         shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
         for relative in (
+            "client/browser/chrome.ts",
             "client/browser/webview.ts",
+            "client/bench/fixtures.ts",
+            "client/scripts/check-webview.ts",
             "client/vite.e2e.config.ts",
             "client/e2e/fixtures.ts",
             "client/package.json",

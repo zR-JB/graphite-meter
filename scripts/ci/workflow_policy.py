@@ -289,6 +289,17 @@ def check_setup_project_cache_boundary(root: pathlib.Path = ROOT) -> None:
         fail(
             "setup-project must disable setup-bun executable caching when bun-cache is false"
         )
+    svelte_check = (root / "client" / "scripts" / "check-svelte.ts").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        "process.execPath",
+        '"--tsgo"',
+    ):
+        if required not in svelte_check:
+            fail(f"Svelte checker missing deterministic TypeScript 7 invariant: {required}")
+    if "--tsgo-experimental-api" in svelte_check or ' : [process.execPath, checker' in svelte_check:
+        fail("Svelte checker must use Bun-hosted TS7 CLI mode without a TS6 fallback")
 
 
 def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
@@ -601,11 +612,8 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
         fail(f"Playwright configuration/tests must be removed: {forbidden[0]}")
 
     webview = (client / "browser" / "webview.ts").read_text(encoding="utf-8")
+    chrome = (client / "browser" / "chrome.ts").read_text(encoding="utf-8")
     for required in (
-        "new Bun.WebView",
-        'type: "chrome"',
-        "BUN_CHROME_PATH",
-        'dataStore: "ephemeral"',
         "Bun.serve",
         "port: 0",
         '"cache-control": "no-store"',
@@ -619,6 +627,15 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
     ):
         if required not in webview:
             fail(f"WebView harness missing lifecycle/diagnostic invariant: {required}")
+    for required in (
+        "new Bun.WebView",
+        'type: "chrome"',
+        "BUN_CHROME_PATH",
+        'dataStore: "ephemeral"',
+        'process.env.CI || process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
+    ):
+        if required not in chrome:
+            fail(f"Chromium launcher missing CI lifecycle/diagnostic invariant: {required}")
 
     just = (root / "justfile").read_text(encoding="utf-8")
     for required in (
@@ -662,9 +679,21 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
         '"test:e2e": "bun run build:e2e-harness && bun test e2e --no-orphans --timeout 60000"',
         '"test:bench": "bun run build:e2e-harness && bun test ./bench/throughput.bench.ts --no-orphans --timeout 1800000"',
         '"axe-core"',
+        '"check:webview": "bun run scripts/check-webview.ts"',
     ):
         if required not in package:
             fail(f"client browser scripts missing Bun.WebView invariant: {required}")
+    preflight = (client / "scripts" / "check-webview.ts").read_text(encoding="utf-8")
+    for required in (
+        "BUN_CHROME_PATH",
+        "GM_EXPECTED_CHROME_VERSION",
+        'view.navigate("about:blank")',
+        'view.cdp<{ product: string }>("Browser.getVersion")',
+        "view.close()",
+        "Bun.WebView.closeAll()",
+    ):
+        if required not in preflight:
+            fail(f"WebView launch preflight missing invariant: {required}")
     if 'process.on("exit"' not in webview or "Bun.WebView.closeAll();" not in webview:
         fail("WebView suites must explicitly close the shared browser at process exit")
     for forbidden_dependency in ("@playwright/test", "@axe-core/playwright", "puppeteer"):
@@ -676,11 +705,21 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
         "browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4",
         "chrome-version: 152.0.7977.54",
         "BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}",
+        "BUN_CHROME_ARGS: --no-sandbox",
+        "GM_EXPECTED_CHROME_VERSION: 152.0.7977.54",
+        "run: cd client && bun run check:webview",
         "webview-browser-failures",
         "webview-e2e-failures",
     ):
         if required not in ci:
             fail(f"CI missing pinned Chromium/WebView invariant: {required}")
+    if ci.count("run: cd client && bun run check:webview") != 2:
+        fail("each CI WebView job must perform an isolated launch preflight")
+
+    for fixture_name in ("e2e/fixtures.ts", "bench/fixtures.ts"):
+        fixture_text = (client / fixture_name).read_text(encoding="utf-8")
+        if "process.env.BUN_CHROME_ARGS," not in fixture_text:
+            fail(f"{fixture_name} must preserve CI Chromium launch arguments")
 
 def check_oci_verifier_boundary(root: pathlib.Path = ROOT) -> None:
     verifier = (root / "scripts" / "ci" / "verify_oci.py").read_text(encoding="utf-8")

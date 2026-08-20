@@ -12,6 +12,7 @@
     "check": "bun run --parallel check:client check:node",
     "check:client": "bun run scripts/check-svelte.ts",
     "check:node": "bun run scripts/check-node.ts",
+    "check:webview": "bun run scripts/check-webview.ts",
     "test": "bun test src --parallel --timings=test-timings.json",
     "build:browser": "bun -e \"process.env.GM_CLIENT_ENGINE='real'; process.env.GM_CLIENT_ALLOW_DUMMY='1'; process.env.GM_CLIENT_DEV_TOOLS='1'; process.env.GM_CLIENT_BUILD_PROFILE='dev'; process.env.GM_CLIENT_REVISION='browser-test'; delete process.env.VERSION; const result = Bun.spawnSync(['bun', 'run', 'build:bundle'], { cwd: '.', stdout: 'inherit', stderr: 'inherit' }); process.exit(result.exitCode);\"",
     "test:browser": "bun run build:browser && bun test browser --no-orphans --timeout 30000",

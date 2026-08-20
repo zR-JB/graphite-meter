@@ -10,9 +10,12 @@ if (!binary || !spki)
   throw new Error("run transport tests with `just client-e2e`");
 
 process.env.BUN_CHROME_ARGS = [
+  process.env.BUN_CHROME_ARGS,
   `--ignore-certificate-errors-spki-list=${spki}`,
   `--origin-to-force-quic-on=${host}:${ports.h3}`,
-].join(" ");
+]
+  .filter(Boolean)
+  .join(" ");
 
 export const origins = {
   "h1-clear": `http://${host}:${ports.h1}`,

@@ -134,8 +134,17 @@ jobs:
         with:
           chrome-version: 152.0.7977.54
           install-dependencies: true
+      - name: Verify pinned Chromium WebView launch
+        env:
+          BUN_CHROME_ARGS: --no-sandbox
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GM_EXPECTED_CHROME_VERSION: 152.0.7977.54
+        run: cd client && bun run check:webview
       - name: Run Chromium WebView browser suite
         env:
+          # Chrome for Testing is an unpacked archive without a setuid sandbox;
+          # this read-only, secret-free job therefore uses Chromium's CI mode.
+          BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: just client-browser
       - name: Upload WebView failure diagnostics
@@ -181,8 +190,16 @@ jobs:
         with:
           chrome-version: 152.0.7977.54
           install-dependencies: true
+      - name: Verify pinned Chromium WebView launch
+        env:
+          BUN_CHROME_ARGS: --no-sandbox
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GM_EXPECTED_CHROME_VERSION: 152.0.7977.54
+        run: cd client && bun run check:webview
       - name: Run browser/server transport E2E
         env:
+          # See the browser job: the archive has no usable setuid sandbox.
+          BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: just client-e2e
       - name: Upload WebView failure diagnostics

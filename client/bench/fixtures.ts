@@ -7,9 +7,12 @@ const ports = { h1: 7246, h1tls: 7247, h2: 7248, h3: 7249 };
 const spki = process.env.GM_BENCH_SPKI;
 if (!spki) throw new Error("GM_BENCH_SPKI is required for Chromium QUIC");
 process.env.BUN_CHROME_ARGS = [
+  process.env.BUN_CHROME_ARGS,
   `--ignore-certificate-errors-spki-list=${spki}`,
   `--origin-to-force-quic-on=${host}:${ports.h3}`,
-].join(" ");
+]
+  .filter(Boolean)
+  .join(" ");
 
 export const origins = {
   "h1-clear": `http://${host}:${ports.h1}`,

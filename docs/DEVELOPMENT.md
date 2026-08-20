@@ -209,10 +209,11 @@ the bundler: Bun's bundler transpiles TypeScript, but semantic type checking is 
 Svelte and Vite integrations still import TypeScript's JavaScript compiler API, which the native
 TypeScript 7 package does not provide as a drop-in replacement. Therefore `typescript@^6.0.3`
 remains the compiler-API dependency, while `@typescript/native` aliases exactly TypeScript 7.0.2
-and its executable checks non-Svelte config/build scripts. CI runs
-`svelte-check --tsgo-experimental-api` so Svelte diagnostics exercise TS7's experimental native
-API while TS6 remains installed for the integration layer. Bun-only hosts report and use the TS6
-Svelte fallback because that experimental API currently depends on Node private stream handles.
+and its executable checks non-Svelte config/build scripts. Bun runs `svelte-check --tsgo`, which
+transforms Svelte components and delegates their TypeScript diagnostics to the TS7 native CLI.
+TS6 remains installed only for the Svelte/Vite JavaScript compiler API. The experimental TS7 API
+mode is not used because its synchronous RPC wrapper currently accesses Node-private stream
+handles that Bun does not expose. There is no environment-dependent TS6 diagnostic fallback.
 The two checks run concurrently, while bundling starts only after both succeed. `bun run build` is
 the validated local/default build (`check` plus `build:bundle`).
 

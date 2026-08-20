@@ -6,6 +6,7 @@ import {
 } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import { resolve, sep } from "node:path";
+import { createChromeWebView } from "./chrome";
 
 type Name = string | RegExp;
 type Step =
@@ -308,24 +309,9 @@ export class Page {
   private storageCleanupScript: { identifier: string } | undefined;
   private pageErrorHandlers: Array<(error: Error) => void> = [];
   constructor() {
-    const argv = [
-      "--hide-scrollbars",
-      ...(process.env.BUN_CHROME_ARGS ?? "").split(/\s+/).filter(Boolean),
-    ];
-    this.raw = new Bun.WebView({
-      width: 1280,
-      height: 720,
-      backend: {
-        type: "chrome",
-        url: false,
-        path: process.env.BUN_CHROME_PATH,
-        argv,
-        stderr: process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore",
-      },
-      dataStore: "ephemeral",
-      console: (type, ...args) =>
-        this.console.push(`${type}: ${args.map(String).join(" ")}`),
-    });
+    this.raw = createChromeWebView((type, ...args) =>
+      this.console.push(`${type}: ${args.map(String).join(" ")}`),
+    );
   }
   locator(value: string, options: { hasText?: Name; has?: Locator } = {}) {
     return new Locator(this, [{ kind: "css", value }]).filter(options);
