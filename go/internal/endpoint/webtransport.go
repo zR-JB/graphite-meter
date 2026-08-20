@@ -347,8 +347,7 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 func (h *wtUpload) serveLane(ctx context.Context, sess *webtransport.Session, str *webtransport.ReceiveStream, query url.Values, owner string, live *sessionActivity) {
 	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live}
 	err := h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
-	var refusal *uploadRefusalError
-	if errors.As(err, &refusal) {
+	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		// Stream uploads have no response headers. Send a separate, structured
 		// control record so the browser can classify the refusal without parsing
 		// a transport-close string or retrying an invalid session ID.

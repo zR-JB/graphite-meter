@@ -145,8 +145,7 @@ func (*zeroReader) Read([]byte) (int, error) { return 0, io.EOF }
 
 func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	cfg, cm := protocolTestTLS(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	e, err := buildEndpoints(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -199,8 +198,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 
 func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	cfg, cm := protocolTestTLS(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	e, err := buildEndpoints(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -255,8 +253,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 
 func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	cfg, cm := protocolTestTLS(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	e, err := buildEndpoints(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

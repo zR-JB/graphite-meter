@@ -520,6 +520,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 // an accept/open/write can block for a whole progress window and then fail
 // without carrying one byte; repeating that schedule must not reset the bound.
 func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
+	t.Parallel()
 	host := &wtStageSession{sess: liveWTSession()}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*wtLaneProgressWindow+300*time.Millisecond)
 	defer cancel()
@@ -542,6 +543,7 @@ func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 }
 
 func TestRunWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
+	t.Parallel()
 	host := &wtStageSession{sess: liveWTSession()}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

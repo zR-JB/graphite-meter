@@ -154,7 +154,7 @@ func authStringFlag(fs *flag.FlagSet, cfg *config.Config, name string, target *s
 
 func splitFlagList(value string) []string {
 	var values []string
-	for _, item := range strings.Split(value, ",") {
+	for item := range strings.SplitSeq(value, ",") {
 		if item = strings.TrimSpace(item); item != "" {
 			values = append(values, item)
 		}

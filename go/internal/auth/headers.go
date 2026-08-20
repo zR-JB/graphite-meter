@@ -100,7 +100,7 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 		forbidden(w)
 		return
 	}
-	for _, raw := range strings.Split(r.Header.Get("Access-Control-Request-Headers"), ",") {
+	for raw := range strings.SplitSeq(r.Header.Get("Access-Control-Request-Headers"), ",") {
 		h := strings.ToLower(strings.TrimSpace(raw))
 		if h != "" && h != "authorization" && h != "content-type" && h != "x-csrf-token" {
 			forbidden(w)

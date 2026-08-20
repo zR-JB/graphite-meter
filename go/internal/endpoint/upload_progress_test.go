@@ -69,8 +69,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx)
 	rec := newProgressRecorder()
 	done := make(chan struct{})
@@ -131,8 +130,7 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -239,7 +237,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 	t.Run("client cap is a retryable 429", func(t *testing.T) {
 		store := NewUploadStore()
 		const owner = "192.0.2.1"
-		for i := 0; i < maxLiveUploadsPerClient; i++ {
+		for i := range maxLiveUploadsPerClient {
 			if _, access := store.getOrCreateFor(store.Mint(), owner); access != uploadAccessOK {
 				t.Fatalf("filler create %d below the per-owner cap = %v", i, access)
 			}
@@ -317,8 +315,7 @@ func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	h := httpAdapter(NewUploadProgress(store))
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
 	go func() {

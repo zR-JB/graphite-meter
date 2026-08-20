@@ -50,7 +50,7 @@ func (s *testListenerSockets) reserveTCP() string {
 
 func (s *testListenerSockets) reserveH3() string {
 	s.t.Helper()
-	for attempt := 0; attempt < 32; attempt++ {
+	for range 32 {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			s.t.Fatalf("reserve H3 TCP listener: %v", err)

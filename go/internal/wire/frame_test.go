@@ -123,7 +123,7 @@ func render(f Frame) string {
 func parseCanonical(t *testing.T, line int, spec string) Frame {
 	t.Helper()
 	var f Frame
-	for _, kv := range strings.Split(spec, ";") {
+	for kv := range strings.SplitSeq(spec, ";") {
 		k, v, _ := strings.Cut(kv, "=")
 		switch k {
 		case "op":

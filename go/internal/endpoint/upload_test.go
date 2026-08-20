@@ -145,7 +145,7 @@ func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 // store never degrades into a plausible client-counted upload result.
 func TestUploadOverCapIDIsRejected(t *testing.T) {
 	store := NewUploadStore()
-	for i := 0; i < maxLiveUploads; i++ {
+	for i := range maxLiveUploads {
 		id := store.Mint()
 		if _, ok := store.getOrCreate(id); !ok {
 			t.Fatalf("filler create %d below the cap was refused", i)
@@ -209,7 +209,7 @@ func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 // bytes nothing counts, with no refusal it can act on.
 func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 	store := NewUploadStore()
-	for i := 0; i < maxLiveUploads; i++ {
+	for i := range maxLiveUploads {
 		if _, ok := store.getOrCreate(store.Mint()); !ok {
 			t.Fatalf("filler create %d below the cap was refused", i)
 		}
@@ -315,10 +315,7 @@ func (r *errReader) Read(p []byte) (int, error) {
 	if r.remaining <= 0 {
 		return 0, errors.New("simulated connection reset")
 	}
-	n := len(p)
-	if n > r.remaining {
-		n = r.remaining
-	}
+	n := min(len(p), r.remaining)
 	r.remaining -= n
 	return n, nil
 }

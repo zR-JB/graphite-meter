@@ -21,7 +21,7 @@ func TestUploadStoreRejectsForgedID(t *testing.T) {
 
 func TestUploadStoreMintAllocatesNoState(t *testing.T) {
 	s := NewUploadStore()
-	for i := 0; i < 10_000; i++ {
+	for i := range 10_000 {
 		if s.Mint() == "" {
 			t.Fatalf("mint %d failed", i)
 		}
@@ -83,7 +83,7 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 // next create is refused (bounding the map under a minted-id flood).
 func TestUploadStoreCapRejectsCreate(t *testing.T) {
 	s := NewUploadStore()
-	for i := 0; i < maxLiveUploads; i++ {
+	for i := range maxLiveUploads {
 		id := s.Mint()
 		if _, ok := s.getOrCreate(id); !ok {
 			t.Fatalf("create %d below the cap was refused", i)
@@ -101,7 +101,7 @@ func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 	s := NewUploadStore()
 	owner := "192.0.2.1"
 	var first string
-	for i := 0; i < maxLiveUploadsPerClient; i++ {
+	for i := range maxLiveUploadsPerClient {
 		id := s.Mint()
 		if i == 0 {
 			first = id
@@ -124,7 +124,7 @@ func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 func TestUploadStoreSweepReleasesOwnerCapacity(t *testing.T) {
 	s := NewUploadStore()
 	owner := "192.0.2.1"
-	for i := 0; i < maxLiveUploadsPerClient; i++ {
+	for range maxLiveUploadsPerClient {
 		agg, access := s.getOrCreateFor(s.Mint(), owner)
 		if access != uploadAccessOK {
 			t.Fatal(access)
@@ -257,7 +257,7 @@ func TestReleaseProgressLeavesALaterClaimAlone(t *testing.T) {
 func TestUploadStoreMint(t *testing.T) {
 	s := NewUploadStore()
 	seen := make(map[string]bool)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		id := s.Mint()
 		if id == "" {
 			t.Fatal("Mint returned empty")
@@ -312,14 +312,12 @@ func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 	const lanes, perLane = 8, 500
 
 	var wg sync.WaitGroup
-	for l := 0; l < lanes; l++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < perLane; i++ {
+	for range lanes {
+		wg.Go(func() {
+			for range perLane {
 				a.recordChunk(monoNanos(), 64) // real clock, like discardSink.Write
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if got := a.elapsedNanos(monoNanos()); got < 0 {
@@ -377,7 +375,7 @@ func TestUploadStoreSweepBoundary(t *testing.T) {
 func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
 	s := NewUploadStore()
 	ids := make([]string, maxLiveUploads)
-	for i := 0; i < maxLiveUploads; i++ {
+	for i := range maxLiveUploads {
 		id := s.Mint()
 		ids[i] = id
 		if _, ok := s.getOrCreate(id); !ok {
@@ -432,18 +430,16 @@ func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	}()
 
 	var wg sync.WaitGroup
-	for w := 0; w < 4; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 500; i++ {
+	for range 4 {
+		wg.Go(func() {
+			for i := range 500 {
 				id := ids[i%n]
 				if agg, ok := s.get(id); ok {
 					agg.lastTouchMono.Store(monoNanos())
 				}
 				s.getOrCreate(id)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(stop)

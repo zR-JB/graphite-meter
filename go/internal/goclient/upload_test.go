@@ -753,8 +753,7 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 	if err == nil {
 		t.Fatalf("dead progress feed published stale prefix: %+v", stats)
 	}
-	var authErr *AuthRequiredError
-	if !errors.As(err, &authErr) {
+	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("permanent auth refusal = %v, want AuthRequiredError", err)
 	}
 }
@@ -764,8 +763,7 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 // and the stage context carries no deadline. Reattach giving up must therefore
 // cancel, or measureUpload blocks for the life of the process.
 func TestUploadProgressWaitNextEndsWhenTheFeedDiesForGood(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	readCtx, readCancel := context.WithCancel(ctx)
 	defer readCancel()
 	p := &uploadProgress{ctx: readCtx, cancel: readCancel, ready: make(chan error, 1), changed: make(chan struct{}, 1), errs: make(chan error, 1)}

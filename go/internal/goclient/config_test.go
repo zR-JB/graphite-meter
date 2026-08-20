@@ -210,6 +210,7 @@ func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
 // that UDP cannot reach it. The cadence belongs to the bus Prepare finally
 // commits to, so a WebSocket fallback must retain its wider valid cadence.
 func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		origin := "http://" + r.Host

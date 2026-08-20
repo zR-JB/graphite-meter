@@ -46,7 +46,7 @@ func loadRoutePin(t *testing.T) map[string]string {
 		t.Fatalf("open route pin: %v", err)
 	}
 	pinned := make(map[string]string)
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

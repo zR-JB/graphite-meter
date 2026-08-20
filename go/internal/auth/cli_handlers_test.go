@@ -113,7 +113,7 @@ func TestCliPageRendersApprovalAndReusesIt(t *testing.T) {
 func TestCliPageCapsApprovalsPerSession(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		rr := httptest.NewRecorder()
 		ch := challengeFor("verifier-cap-" + string(rune('a'+i)))
 		s.cliPage(rr, withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+ch, nil), raw))
