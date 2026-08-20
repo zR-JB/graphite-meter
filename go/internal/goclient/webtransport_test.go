@@ -422,6 +422,25 @@ func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	}
 }
 
+func TestWTStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
+	var dials atomic.Int64
+	host := &wtStageSession{
+		sess: deadWTSession(),
+		dial: func(context.Context) (*wtSession, error) {
+			dials.Add(1)
+			return nil, &AuthRequiredError{URL: "https://meter.example/login"}
+		},
+	}
+
+	err := host.redial(context.Background(), 0)
+	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
+		t.Fatalf("redial error = %v, want AuthRequiredError", err)
+	}
+	if got := dials.Load(); got != 1 {
+		t.Fatalf("permanent auth refusal made %d dials, want one without retries", got)
+	}
+}
+
 // TestRunWTLaneReportsACancelledStageAsAStop pins the other half of the redial
 // contract: a stage the caller cancelled, or one whose own window ended, is a
 // clean stop and not a failed measurement.

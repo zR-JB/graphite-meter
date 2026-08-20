@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -422,7 +423,24 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 				cancelRecovery()
 				break
 			}
-			lastErr = err
+			// Authentication cannot recover inside this retry window: it needs
+			// operator action. Surface the classified refusal immediately instead
+			// of allowing the recovery deadline to race with and obscure it.
+			if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
+				cancelRecovery()
+				select {
+				case p.errs <- err:
+				default:
+				}
+				p.cancel()
+				return
+			}
+			// A final attempt can finish at the same instant as recoveryCtx. Keep
+			// the last concrete transport/status failure rather than replacing it
+			// with the retry budget's generic deadline.
+			if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
+				lastErr = err
+			}
 			select {
 			case <-p.ctx.Done():
 				cancelRecovery()

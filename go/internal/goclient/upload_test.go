@@ -735,7 +735,9 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 	progress.count.Store(&uploadCount{bytes: 200, nanos: uint64(2 * time.Second)})
 	close(progress.done)
 
+	var requests atomic.Int64
 	r := &runner{cfg: DefaultConfig(), http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests.Add(1)
 		return &http.Response{
 			StatusCode: http.StatusForbidden,
 			Header: http.Header{
@@ -755,6 +757,9 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 	}
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("permanent auth refusal = %v, want AuthRequiredError", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("permanent auth refusal made %d requests, want one without retries", got)
 	}
 }
 
