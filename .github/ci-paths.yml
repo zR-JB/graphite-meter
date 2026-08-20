@@ -1,78 +1,78 @@
 workflow: &workflow
-  - ".github/workflows/**"
-  - ".github/actions/**"
-  - ".github/ci-paths.yml"
-  - ".githooks/**"
-  - "scripts/ci/**"
-  - "justfile"
-  - ".bun-version"
-  - ".just-version"
-  - ".gitleaks-version"
-  - "go/go.mod"
-  - "go/go.sum"
+  - '.github/workflows/**'
+  - '.github/actions/**'
+  - '.github/ci-paths.yml'
+  - '.githooks/**'
+  - 'scripts/ci/**'
+  - 'justfile'
+  - '.bun-version'
+  - '.just-version'
+  - '.gitleaks-version'
+  - 'go/go.mod'
+  - 'go/go.sum'
 
 core:
   - *workflow
-  - "api/**"
-  - "client/**"
-  - "go/**"
-  - "legal/**"
-  - "scripts/**"
-  - "container/**"
-  - "LICENSE"
-  - "COPYRIGHT"
+  - 'api/**'
+  - 'client/**'
+  - 'go/**'
+  - 'legal/**'
+  - 'scripts/**'
+  - 'container/**'
+  - 'LICENSE'
+  - 'COPYRIGHT'
 
 go:
   - *workflow
-  - "api/**"
-  - "go/**"
-  - "client/src/auth/**"
+  - 'api/**'
+  - 'go/**'
+  - 'client/src/auth/**'
 
 browser:
   - *workflow
-  - "api/**"
-  - "client/**"
+  - 'api/**'
+  - 'client/**'
 
 tui:
   - *workflow
-  - "go/**"
-  - "scripts/tui-targets.txt"
-  - "scripts/package-tui.sh"
+  - 'go/**'
+  - 'scripts/tui-targets.txt'
+  - 'scripts/package-tui.sh'
 
 integration:
   - *workflow
-  - "api/**"
-  - "client/**"
-  - "go/**"
-  - "container/**"
+  - 'api/**'
+  - 'client/**'
+  - 'go/**'
+  - 'container/**'
 
 smoke:
   - *workflow
-  - "api/**"
-  - "client/**"
-  - "go/**"
-  - "container/**"
-  - ".dockerignore"
-  - "legal/**"
-  - "LICENSE"
-  - "COPYRIGHT"
-  - "scripts/verify-container.sh"
+  - 'api/**'
+  - 'client/**'
+  - 'go/**'
+  - 'container/**'
+  - '.dockerignore'
+  - 'legal/**'
+  - 'LICENSE'
+  - 'COPYRIGHT'
+  - 'scripts/verify-container.sh'
 
 release:
   - *workflow
-  - "api/**"
-  - "client/**"
-  - "go/**"
-  - "legal/**"
-  - "container/**"
-  - ".dockerignore"
-  - "scripts/**"
-  - "LICENSE"
-  - "COPYRIGHT"
+  - 'api/**'
+  - 'client/**'
+  - 'go/**'
+  - 'legal/**'
+  - 'container/**'
+  - '.dockerignore'
+  - 'scripts/**'
+  - 'LICENSE'
+  - 'COPYRIGHT'
 
 security:
   - *workflow
-  - "go/**"
-  - "client/package.json"
-  - "client/bun.lock"
-  - "client/bunfig.toml"
+  - 'go/**'
+  - 'client/package.json'
+  - 'client/bun.lock'
+  - 'client/bunfig.toml'

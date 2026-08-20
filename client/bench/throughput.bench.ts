@@ -41,6 +41,13 @@ if (filterSource) {
     );
   }
 }
+const selectedCells = cellFilter
+  ? cells.filter((cell) => cellFilter.test(cell.id))
+  : cells;
+if (cellFilter && selectedCells.length === 0)
+  throw new Error(
+    `GM_BENCH_FILTER ${JSON.stringify(filterSource)} matched no benchmark cells`,
+  );
 
 /** Appended as each run completes. A failing test restarts the worker and
  *  resets module state, so anything held only in memory is lost with it. */
@@ -80,8 +87,7 @@ async function runCell(
 
 test.describe("matrix", () => {
   for (let rep = 1; rep <= REPS; rep++) {
-    for (const cell of shuffled(cells, SEED + rep)) {
-      if (cellFilter && !cellFilter.test(cell.id)) continue;
+    for (const cell of shuffled(selectedCells, SEED + rep)) {
       test(`${cell.id} r${rep}`, async ({ page }) => {
         const result = await runCell(page, {
           ...cell.spec,

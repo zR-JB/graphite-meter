@@ -66,23 +66,33 @@ const harness = Bun.serve({
   },
 });
 
-const deadline = Date.now() + 180_000;
-while (true) {
-  if (backend.exitCode !== null)
-    throw new Error(`benchmark server exited with ${backend.exitCode}`);
-  try {
-    const response = await fetch(`${origins["h1-clear"]}/preflight`);
-    if (response.ok) break;
-  } catch {}
-  if (Date.now() >= deadline)
-    throw new Error("benchmark server readiness timed out");
-  await Bun.sleep(100);
-}
-
-export const harnessOrigin = `http://127.0.0.1:${harness.port}`;
-afterAll(async () => {
+let closed = false;
+async function closeFixtures() {
+  if (closed) return;
+  closed = true;
   harness.stop(true);
   backend.kill();
   await backend.exited;
-});
+}
+afterAll(closeFixtures);
+
+try {
+  const deadline = Date.now() + 180_000;
+  while (true) {
+    if (backend.exitCode !== null)
+      throw new Error(`benchmark server exited with ${backend.exitCode}`);
+    try {
+      const response = await fetch(`${origins["h1-clear"]}/preflight`);
+      if (response.ok) break;
+    } catch {}
+    if (Date.now() >= deadline)
+      throw new Error("benchmark server readiness timed out");
+    await Bun.sleep(100);
+  }
+} catch (error) {
+  await closeFixtures();
+  throw error;
+}
+
+export const harnessOrigin = `http://127.0.0.1:${harness.port}`;
 export { expect, test };

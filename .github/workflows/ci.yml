@@ -91,11 +91,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up core toolchain
         uses: ./.github/actions/setup-project
-        with:
-          { go: "true", bun: "true", client-deps: "true", staticcheck: "true" }
+        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true'}
       - name: Run deterministic repository gate
         run: just check
 
@@ -108,10 +107,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up Go
         uses: ./.github/actions/setup-project
-        with: { go: "true" }
+        with: {go: 'true'}
       - name: Run race detector and coverage floor
         run: just server-race
 
@@ -124,10 +123,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up browser test toolchain
         uses: ./.github/actions/setup-project
-        with: { bun: "true", client-deps: "true" }
+        with: {bun: 'true', client-deps: 'true'}
       - id: chrome
         name: Install pinned Chrome for Testing
         uses: browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4 # v2
@@ -164,10 +163,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up Go
         uses: ./.github/actions/setup-project
-        with: { go: "true" }
+        with: {go: 'true'}
       - name: Cross-build all supported TUI targets
         run: just tui-cross-build
 
@@ -180,10 +179,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up E2E toolchain
         uses: ./.github/actions/setup-project
-        with: { go: "true", bun: "true", client-deps: "true" }
+        with: {go: 'true', bun: 'true', client-deps: 'true'}
       - id: chrome
         name: Install pinned Chrome for Testing
         uses: browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4 # v2
@@ -219,7 +218,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up Just
         uses: ./.github/actions/setup-project
       - name: Build and verify local container
@@ -234,10 +233,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up release test toolchain
         uses: ./.github/actions/setup-project
-        with: { go: "true", bun: "true", client-deps: "true" }
+        with: {go: 'true', bun: 'true', client-deps: 'true'}
       - name: Build and verify representative release packages
         run: just release-check
       - name: Verify pinned Skopeo runtime contract
@@ -255,11 +254,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up pinned vulnerability scanner and client dependencies
         uses: ./.github/actions/setup-project
-        with:
-          { go: "true", bun: "true", client-deps: "true", govulncheck: "true" }
+        with: {go: 'true', bun: 'true', client-deps: 'true', govulncheck: 'true'}
       - name: Run Go and client vulnerability scans
         run: |
           just security
@@ -269,11 +267,11 @@ jobs:
     name: Secret Scan
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    permissions: { contents: read }
+    permissions: {contents: read}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: {persist-credentials: false}
       - name: Set up Just
         uses: ./.github/actions/setup-project
       - name: Scan repository with pinned Gitleaks image
@@ -283,19 +281,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs:
-      [
-        plan,
-        core,
-        go,
-        browser,
-        tui,
-        integration,
-        smoke,
-        release,
-        security,
-        secret-scan,
-      ]
+    needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
     steps:
       - name: Summarize and require all selected jobs
         env:

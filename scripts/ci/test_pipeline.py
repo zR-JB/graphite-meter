@@ -495,7 +495,7 @@ class PipelineTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         release_start = text.index("release:\n")
         release_end = text.index("\nsecurity:\n", release_start)
-        release = text[release_start:release_end].replace('  - ".dockerignore"\n', "", 1)
+        release = text[release_start:release_end].replace("  - '.dockerignore'\n", "", 1)
         path.write_text(text[:release_start] + release + text[release_end:], encoding="utf-8")
         with self.assertRaisesRegex(PolicyError, "release checks when .dockerignore changes"):
             check_ci_path_map(root)

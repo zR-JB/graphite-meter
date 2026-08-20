@@ -54,23 +54,34 @@ const harness = Bun.serve({
   },
 });
 
-const deadline = Date.now() + 30_000;
-while (true) {
-  if (backend.exitCode !== null)
-    throw new Error(`E2E server exited with ${backend.exitCode}`);
-  try {
-    const response = await fetch(`${origins["h1-clear"]}/preflight`);
-    if (response.ok) break;
-  } catch {}
-  if (Date.now() >= deadline) throw new Error("E2E server readiness timed out");
-  await Bun.sleep(50);
-}
-
-export const harnessOrigin = `http://${host}:${harness.port}`;
-afterAll(async () => {
+let closed = false;
+async function closeFixtures() {
+  if (closed) return;
+  closed = true;
   harness.stop(true);
   backend.kill();
   await backend.exited;
-});
+}
+afterAll(closeFixtures);
+
+try {
+  const deadline = Date.now() + 30_000;
+  while (true) {
+    if (backend.exitCode !== null)
+      throw new Error(`E2E server exited with ${backend.exitCode}`);
+    try {
+      const response = await fetch(`${origins["h1-clear"]}/preflight`);
+      if (response.ok) break;
+    } catch {}
+    if (Date.now() >= deadline)
+      throw new Error("E2E server readiness timed out");
+    await Bun.sleep(50);
+  }
+} catch (error) {
+  await closeFixtures();
+  throw error;
+}
+
+export const harnessOrigin = `http://${host}:${harness.port}`;
 
 export { expect, test };
