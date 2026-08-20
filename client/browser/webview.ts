@@ -580,12 +580,10 @@ type Fixtures = {
   context: Page["context"];
 };
 class SkipTest extends Error {}
-const beforeEachHooks: Array<(fixtures: Fixtures) => unknown> = [];
 interface WebViewTest {
   (name: string, fn: (fixtures: Fixtures) => unknown): void;
   describe: typeof describe;
   afterAll: typeof afterAll;
-  beforeEach(fn: (fixtures: Fixtures) => unknown): void;
   skip(condition?: unknown, reason?: string): void;
   info(): { project: { name: "chromium" } };
 }
@@ -601,7 +599,6 @@ export const test: WebViewTest = Object.assign(
           context: page.context,
         };
         try {
-          for (const hook of beforeEachHooks) await hook(fixtures);
           await fn(fixtures);
           if (page.errors.length) throw new Error(page.errors.join("\n"));
         } catch (error) {
@@ -617,9 +614,6 @@ export const test: WebViewTest = Object.assign(
   {
     describe,
     afterAll,
-    beforeEach: (fn: (fixtures: Fixtures) => unknown) => {
-      beforeEachHooks.push(fn);
-    },
     skip: (condition?: unknown, reason?: string) => {
       if (condition) throw new SkipTest(reason ?? "skipped");
     },

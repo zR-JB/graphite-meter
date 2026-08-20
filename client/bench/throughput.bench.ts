@@ -27,6 +27,20 @@ const active = Object.fromEntries(
 
 const cells = buildCells(active);
 const DIR = "bench/results";
+const filterSource = process.env.GM_BENCH_FILTER;
+let cellFilter: RegExp | undefined;
+if (filterSource) {
+  try {
+    cellFilter = new RegExp(filterSource);
+  } catch (error) {
+    throw new Error(
+      `invalid GM_BENCH_FILTER regex ${JSON.stringify(filterSource)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+}
 
 /** Appended as each run completes. A failing test restarts the worker and
  *  resets module state, so anything held only in memory is lost with it. */
@@ -67,7 +81,7 @@ async function runCell(
 test.describe("matrix", () => {
   for (let rep = 1; rep <= REPS; rep++) {
     for (const cell of shuffled(cells, SEED + rep)) {
-      if (!cell.id.includes(process.env.GM_BENCH_FILTER ?? "")) continue;
+      if (cellFilter && !cellFilter.test(cell.id)) continue;
       test(`${cell.id} r${rep}`, async ({ page }) => {
         const result = await runCell(page, {
           ...cell.spec,

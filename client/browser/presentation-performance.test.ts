@@ -7,7 +7,7 @@ type Metrics = {
   __longTasks: number[];
 };
 
-test.beforeEach(async ({ page }) => {
+const installPerformanceMetrics = async (page: import("./webview").Page) => {
   await page.addInitScript(() => {
     const metrics = window as unknown as Metrics;
     metrics.__canvasDraws = 0;
@@ -45,7 +45,13 @@ test.beforeEach(async ({ page }) => {
       // Older engines may not expose the Long Tasks API.
     }
   });
-});
+};
+
+const performanceTest = (name: string, run: Parameters<typeof test>[1]) =>
+  test(name, async (fixtures) => {
+    await installPerformanceMetrics(fixtures.page);
+    await run(fixtures);
+  });
 
 const draws = (page: import("./webview").Page) =>
   page.evaluate(() => (window as unknown as Metrics).__canvasDraws);
@@ -73,191 +79,201 @@ const performanceMetrics = (page: import("./webview").Page) =>
     };
   });
 
-test("canvas work parks when settled or offscreen", async ({
-  page,
-  browserName,
-  context,
-}) => {
-  if (browserName === "chromium") {
-    const session = await context.newCDPSession(page);
-    await session.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-  }
-  await page.goto("/?engine=dummy");
-  await page.waitForTimeout(1800);
+performanceTest(
+  "canvas work parks when settled or offscreen",
+  async ({ page, browserName, context }) => {
+    if (browserName === "chromium") {
+      const session = await context.newCDPSession(page);
+      await session.send("Emulation.setCPUThrottlingRate", { rate: 4 });
+    }
+    await page.goto("/?engine=dummy");
+    await page.waitForTimeout(1800);
 
-  const idle = await draws(page);
-  await page.waitForTimeout(500);
-  expect(await draws(page)).toBe(idle);
+    const idle = await draws(page);
+    await page.waitForTimeout(500);
+    expect(await draws(page)).toBe(idle);
 
-  await resetMetrics(page);
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await page.waitForTimeout(1200);
-  const plot = page.locator(
-    '[role="img"][aria-label="Throughput and latency over time"]',
-  );
-  await plot.scrollIntoViewIfNeeded();
-  const box = await plot.boundingBox();
-  if (!box) throw new Error("chart is not visible");
-
-  const active = await chartSample(page);
-  for (let i = 0; i < 40; i++)
-    await page.mouse.move(box.x + (box.width * i) / 40, box.y + box.height / 2);
-  await page.waitForTimeout(1000);
-  const afterPointer = await chartSample(page);
-  const frameBudget = Math.ceil(((afterPointer.now - active.now) * 30) / 1000);
-  expect(afterPointer.frames - active.frames).toBeLessThanOrEqual(
-    frameBudget + 2,
-  );
-
-  await page.evaluate(() => {
-    Object.defineProperty(document, "hidden", {
-      value: true,
-      configurable: true,
-    });
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  await page.waitForTimeout(100);
-  const hidden = await draws(page);
-  await page.waitForTimeout(500);
-  expect(await draws(page)).toBe(hidden);
-  await page.evaluate(() => {
-    Object.defineProperty(document, "hidden", {
-      value: false,
-      configurable: true,
-    });
-    document.dispatchEvent(new Event("visibilitychange"));
-  });
-  await page.waitForTimeout(100);
-  expect(await draws(page)).toBeGreaterThan(hidden);
-
-  await page.locator("canvas").evaluateAll((canvases) => {
-    for (const canvas of canvases) canvas.style.display = "none";
-  });
-  await page.waitForTimeout(250);
-  const offscreen = await draws(page);
-  await page.waitForTimeout(500);
-  expect(await draws(page)).toBe(offscreen);
-  await page.locator("canvas").evaluateAll((canvases) => {
-    for (const canvas of canvases) canvas.style.display = "";
-  });
-  await page.waitForTimeout(250);
-  expect(await draws(page)).toBeGreaterThan(offscreen);
-
-  await page.getByRole("button", { name: "Abort test" }).click();
-  await page.waitForTimeout(1800);
-  const aborted = await draws(page);
-  await page.waitForTimeout(500);
-  expect(await draws(page)).toBe(aborted);
-
-  const metrics = await performanceMetrics(page);
-  expect(metrics.frameP95).toBeLessThan(50);
-  // Chromium only reports long tasks once they cross 50 ms, making a 50 ms
-  // ceiling equivalent to requiring none on a shared runner. Under the 4x CPU
-  // throttle, 100 ms still rejects presentation stalls without runner jitter.
-  expect(metrics.longestTask).toBeLessThanOrEqual(100);
-});
-
-test("completed reduced-motion views settle after theme and resize", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "300"],
-    ["Download ms", "300"],
-    ["Upload ms", "300"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5000 });
-  await page.waitForTimeout(500);
-  const complete = await draws(page);
-  await page.waitForTimeout(500);
-  expect(await draws(page)).toBe(complete);
-
-  await page.getByRole("button", { name: /Theme: .*Click to cycle/ }).click();
-  await page.setViewportSize({ width: 900, height: 700 });
-  await page.waitForTimeout(250);
-  expect(await draws(page)).toBeGreaterThan(complete);
-  await page.waitForTimeout(500);
-  const changed = await draws(page);
-  await page.waitForTimeout(500);
-  expect(await draws(page)).toBe(changed);
-});
-
-test("settings retains native scrolling during active presentation", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 640 });
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await page.waitForTimeout(500);
-  await page.getByRole("button", { name: "Open settings" }).click();
-
-  const body = page.locator('[aria-label="Settings"] .panel-body');
-  await expect(body).toBeVisible();
-  expect(
-    await body.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return (
-        style.overflowY === "auto" &&
-        element.scrollHeight > element.clientHeight
-      );
-    }),
-  ).toBe(true);
-
-  const box = await body.boundingBox();
-  if (!box) throw new Error("settings body is not visible");
-  await resetMetrics(page);
-  const before = await chartSample(page);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await body.evaluate((element) => element.scrollBy({ top: 600 }));
-  await expect
-    .poll(() => body.evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
-  const scrollbarClearance = await body.evaluate((element) => {
-    const card = element.querySelector(".choice");
-    if (!(card instanceof HTMLElement)) throw new Error("missing path card");
-    return (
-      element.getBoundingClientRect().right - card.getBoundingClientRect().right
+    await resetMetrics(page);
+    await page.getByRole("button", { name: "Start the speed test" }).click();
+    await page.waitForTimeout(1200);
+    const plot = page.locator(
+      '[role="img"][aria-label="Throughput and latency over time"]',
     );
-  });
-  expect(scrollbarClearance).toBeGreaterThanOrEqual(12);
-  await page.waitForTimeout(500);
-  const after = await chartSample(page);
-  const frameBudget = Math.ceil(((after.now - before.now) * 30) / 1000);
-  expect(after.frames - before.frames).toBeLessThanOrEqual(frameBudget + 2);
+    await plot.scrollIntoViewIfNeeded();
+    const box = await plot.boundingBox();
+    if (!box) throw new Error("chart is not visible");
 
-  const metrics = await performanceMetrics(page);
-  expect(metrics.frameP95).toBeLessThan(50);
-  expect(metrics.longestTask).toBeLessThanOrEqual(100);
-});
+    const active = await chartSample(page);
+    for (let i = 0; i < 40; i++)
+      await page.mouse.move(
+        box.x + (box.width * i) / 40,
+        box.y + box.height / 2,
+      );
+    await page.waitForTimeout(1000);
+    const afterPointer = await chartSample(page);
+    const frameBudget = Math.ceil(
+      ((afterPointer.now - active.now) * 30) / 1000,
+    );
+    expect(afterPointer.frames - active.frames).toBeLessThanOrEqual(
+      frameBudget + 2,
+    );
 
-test("settings remain contained by their desktop dock", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", {
+        value: true,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.waitForTimeout(100);
+    const hidden = await draws(page);
+    await page.waitForTimeout(500);
+    expect(await draws(page)).toBe(hidden);
+    await page.evaluate(() => {
+      Object.defineProperty(document, "hidden", {
+        value: false,
+        configurable: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.waitForTimeout(100);
+    expect(await draws(page)).toBeGreaterThan(hidden);
 
-  const body = page.locator('[aria-label="Settings"] .panel-body');
-  await expect(body).toBeVisible();
-  const desktopSurface = await body.evaluate((element) => ({
-    overflowY: getComputedStyle(element).overflowY,
-    panelBottom: element.closest(".panel")?.getBoundingClientRect().bottom,
-    bodyBottom: element.getBoundingClientRect().bottom,
-    statusTop: document.querySelector(".status")?.getBoundingClientRect().top,
-  }));
-  expect(desktopSurface.overflowY).toBe("auto");
-  expect(desktopSurface.bodyBottom).toBeLessThanOrEqual(
-    desktopSurface.panelBottom! + 1,
-  );
-  expect(desktopSurface.panelBottom).toBeLessThanOrEqual(
-    desktopSurface.statusTop! + 1,
-  );
-});
+    await page.locator("canvas").evaluateAll((canvases) => {
+      for (const canvas of canvases) canvas.style.display = "none";
+    });
+    await page.waitForTimeout(250);
+    const offscreen = await draws(page);
+    await page.waitForTimeout(500);
+    expect(await draws(page)).toBe(offscreen);
+    await page.locator("canvas").evaluateAll((canvases) => {
+      for (const canvas of canvases) canvas.style.display = "";
+    });
+    await page.waitForTimeout(250);
+    expect(await draws(page)).toBeGreaterThan(offscreen);
+
+    await page.getByRole("button", { name: "Abort test" }).click();
+    await page.waitForTimeout(1800);
+    const aborted = await draws(page);
+    await page.waitForTimeout(500);
+    expect(await draws(page)).toBe(aborted);
+
+    const metrics = await performanceMetrics(page);
+    expect(metrics.frameP95).toBeLessThan(50);
+    // Chromium only reports long tasks once they cross 50 ms, making a 50 ms
+    // ceiling equivalent to requiring none on a shared runner. Under the 4x CPU
+    // throttle, 100 ms still rejects presentation stalls without runner jitter.
+    expect(metrics.longestTask).toBeLessThanOrEqual(100);
+  },
+);
+
+performanceTest(
+  "completed reduced-motion views settle after theme and resize",
+  async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/?engine=dummy");
+    await page.getByRole("button", { name: "Open settings" }).click();
+    const settings = page.locator('[aria-label="Settings"]');
+    await settings.getByRole("button", { name: "custom" }).click();
+    for (const [label, value] of [
+      ["Warmup ms", "0"],
+      ["Latency ms", "300"],
+      ["Download ms", "300"],
+      ["Upload ms", "300"],
+    ] as const)
+      await settings.getByLabel(label).fill(value);
+
+    await page.getByRole("button", { name: "Start the speed test" }).click();
+    await expect(
+      page.getByRole("button", { name: "Run the test again" }),
+    ).toBeVisible({ timeout: 5000 });
+    await page.waitForTimeout(500);
+    const complete = await draws(page);
+    await page.waitForTimeout(500);
+    expect(await draws(page)).toBe(complete);
+
+    await page.getByRole("button", { name: /Theme: .*Click to cycle/ }).click();
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.waitForTimeout(250);
+    expect(await draws(page)).toBeGreaterThan(complete);
+    await page.waitForTimeout(500);
+    const changed = await draws(page);
+    await page.waitForTimeout(500);
+    expect(await draws(page)).toBe(changed);
+  },
+);
+
+performanceTest(
+  "settings retains native scrolling during active presentation",
+  async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 640 });
+    await page.goto("/?engine=dummy");
+    await page.getByRole("button", { name: "Start the speed test" }).click();
+    await page.waitForTimeout(500);
+    await page.getByRole("button", { name: "Open settings" }).click();
+
+    const body = page.locator('[aria-label="Settings"] .panel-body');
+    await expect(body).toBeVisible();
+    expect(
+      await body.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return (
+          style.overflowY === "auto" &&
+          element.scrollHeight > element.clientHeight
+        );
+      }),
+    ).toBe(true);
+
+    const box = await body.boundingBox();
+    if (!box) throw new Error("settings body is not visible");
+    await resetMetrics(page);
+    const before = await chartSample(page);
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await body.evaluate((element) => element.scrollBy({ top: 600 }));
+    await expect
+      .poll(() => body.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    const scrollbarClearance = await body.evaluate((element) => {
+      const card = element.querySelector(".choice");
+      if (!(card instanceof HTMLElement)) throw new Error("missing path card");
+      return (
+        element.getBoundingClientRect().right -
+        card.getBoundingClientRect().right
+      );
+    });
+    expect(scrollbarClearance).toBeGreaterThanOrEqual(12);
+    await page.waitForTimeout(500);
+    const after = await chartSample(page);
+    const frameBudget = Math.ceil(((after.now - before.now) * 30) / 1000);
+    expect(after.frames - before.frames).toBeLessThanOrEqual(frameBudget + 2);
+
+    const metrics = await performanceMetrics(page);
+    expect(metrics.frameP95).toBeLessThan(50);
+    expect(metrics.longestTask).toBeLessThanOrEqual(100);
+  },
+);
+
+performanceTest(
+  "settings remain contained by their desktop dock",
+  async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/?engine=dummy");
+    await page.getByRole("button", { name: "Open settings" }).click();
+
+    const body = page.locator('[aria-label="Settings"] .panel-body');
+    await expect(body).toBeVisible();
+    const desktopSurface = await body.evaluate((element) => ({
+      overflowY: getComputedStyle(element).overflowY,
+      panelBottom: element.closest(".panel")?.getBoundingClientRect().bottom,
+      bodyBottom: element.getBoundingClientRect().bottom,
+      statusTop: document.querySelector(".status")?.getBoundingClientRect().top,
+    }));
+    expect(desktopSurface.overflowY).toBe("auto");
+    expect(desktopSurface.bodyBottom).toBeLessThanOrEqual(
+      desktopSurface.panelBottom! + 1,
+    );
+    expect(desktopSurface.panelBottom).toBeLessThanOrEqual(
+      desktopSurface.statusTop! + 1,
+    );
+  },
+);
