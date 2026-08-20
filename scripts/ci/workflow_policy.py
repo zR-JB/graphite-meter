@@ -88,10 +88,14 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
             fail(f"{name} must pin the Skopeo container by digest")
         if not re.search(
             r"(?m)^    env:\n"
+            r"      # Skopeo v1\.22\.2; the digest/version runtime contract is verified in ci\.yml\.\n"
             r"      SKOPEO_IMAGE: quay\.io/skopeo/stable@sha256:[0-9a-f]{64}$",
             text,
         ):
-            fail(f"{name} must declare its digest-pinned SKOPEO_IMAGE in the job env mapping")
+            fail(
+                f"{name} must document and declare its digest-pinned SKOPEO_IMAGE "
+                "in the job env mapping"
+            )
 
     oci = (workflows / "_publish-oci.yml").read_text(encoding="utf-8")
     if "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}" not in oci:
