@@ -1343,7 +1343,15 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn("skopeo --version", text, name)
             self.assertNotIn("SKOPEO_VERSION", text, name)
 
-
+    def test_policy_rejects_skopeo_image_outside_job_env_mapping(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github" / "workflows" / "_promote-oci.yml"
+        path.write_text(
+            path.read_text().replace("      SKOPEO_IMAGE:", "    SKOPEO_IMAGE:", 1)
+        )
+        with self.assertRaisesRegex(PolicyError, "job env mapping"):
+            check_privileged_workflows(root)
 
     def test_prerelease_request_run_is_bound_to_exact_current_main_and_owner(self) -> None:
         request_run_id = 6001

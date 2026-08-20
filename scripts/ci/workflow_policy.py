@@ -86,6 +86,12 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
             fail(f"{name} must pass IMAGE explicitly to the Skopeo container")
         if "@sha256:02053f3c795ecf32af60e58c2099935ae620a1a9b6186c1dbcf557b6a09fb1eb" not in text:
             fail(f"{name} must pin the Skopeo container by digest")
+        if not re.search(
+            r"(?m)^    env:\n"
+            r"      SKOPEO_IMAGE: quay\.io/skopeo/stable@sha256:[0-9a-f]{64}$",
+            text,
+        ):
+            fail(f"{name} must declare its digest-pinned SKOPEO_IMAGE in the job env mapping")
 
     oci = (workflows / "_publish-oci.yml").read_text(encoding="utf-8")
     if "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}" not in oci:
