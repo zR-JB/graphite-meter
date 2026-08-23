@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
+  import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
   import { gaugeLayout } from "../canvas/gaugeLayout";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
@@ -386,6 +387,9 @@
     const { clientWidth: width, clientHeight: height } = stageEl!;
     gaugeSize = { width, height };
     engine.resize(width, height);
+    const stopWatchingPixelRatio = watchCanvasPixelRatio(() =>
+      engine.resize(stageEl!.clientWidth, stageEl!.clientHeight),
+    );
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
@@ -396,6 +400,7 @@
       engine.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
+      stopWatchingPixelRatio();
     };
   });
 </script>

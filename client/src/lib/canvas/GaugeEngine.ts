@@ -6,6 +6,7 @@ import type { CanvasEngine } from "./contract";
 import { presentation, type PresentationHandle } from "./presentation";
 import { sweepTarget, angleForFraction, interpolateSweep } from "./gaugeSweep";
 import { gaugeLayout, type GaugeLayout } from "./gaugeLayout";
+import { canvasPixelRatio } from "./canvasResolution";
 
 export interface GaugeState {
   phase: Phase;
@@ -120,7 +121,7 @@ export class GaugeEngine implements CanvasEngine {
     )
       return;
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = canvasPixelRatio();
     const backingWidth = Math.max(1, Math.round(cssWidth * dpr));
     const backingHeight = Math.max(1, Math.round(cssHeight * dpr));
     if (

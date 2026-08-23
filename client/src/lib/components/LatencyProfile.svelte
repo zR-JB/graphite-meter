@@ -197,7 +197,6 @@
             {#if lane.lossRatio > 0}
               <i
                 class="loss-marker"
-                use:tooltip={{ text: lossLabel(lane.lossRatio), instant: true }}
                 style="width:{Math.min(34, Math.max(8, lane.lossRatio * 100))}%"
               ></i>
             {/if}

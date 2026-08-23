@@ -6,6 +6,10 @@
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
+  import {
+    canvasPixelRatio,
+    watchCanvasPixelRatio,
+  } from "../canvas/canvasResolution";
 
   // CSS size of the sparkline. Mirrors the canvas width/height attributes and
   // the .spark rule, so the backing store scales by the device ratio.
@@ -40,7 +44,7 @@
     if (!canvas) return PARKED;
     const ctx = canvas.getContext("2d");
     if (!ctx) return PARKED;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = canvasPixelRatio();
     const deviceWidth = Math.round(CSS_WIDTH * dpr);
     const deviceHeight = Math.round(CSS_HEIGHT * dpr);
     if (canvas.width !== deviceWidth || canvas.height !== deviceHeight) {
@@ -86,9 +90,13 @@
       attributes: true,
       attributeFilter: ["data-theme"],
     });
+    const stopWatchingPixelRatio = watchCanvasPixelRatio(() =>
+      canvasPresentation.invalidate(),
+    );
     return () => {
       canvasPresentation.destroy();
       themeObserver.disconnect();
+      stopWatchingPixelRatio();
     };
   });
 </script>
