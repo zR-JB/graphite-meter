@@ -1,5 +1,5 @@
 const BASE_PIXEL_RATIO_MAX = 2;
-const PINCH_PIXEL_RATIO_MAX = 3;
+const PINCH_PIXEL_RATIO_MAX = 4;
 const PINCH_PIXEL_RATIO_STEP = 0.5;
 
 export function canvasPixelRatio(

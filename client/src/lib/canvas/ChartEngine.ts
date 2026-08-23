@@ -27,34 +27,11 @@ import {
   type ChartViewport,
 } from "./chartLayout";
 import { canvasPixelRatio } from "./canvasResolution";
+import { traceSmoothLine } from "./smoothPath";
 
 const CHART_TIME_CAMERA_TAU_MS = 120;
 const CHART_TIME_CAMERA_EPSILON_MS = 4;
 const LATENCY_GLYPH_ENTER_MS = 90;
-const THROUGHPUT_CORNER_ROUNDING = 0.22;
-
-function traceRoundedLine(
-  ctx: CanvasRenderingContext2D,
-  points: ReadonlyArray<{ x: number; y: number }>,
-): void {
-  for (let i = 1; i < points.length - 1; i++) {
-    const previous = points[i - 1];
-    const point = points[i];
-    const next = points[i + 1];
-    ctx.lineTo(
-      point.x + (previous.x - point.x) * THROUGHPUT_CORNER_ROUNDING,
-      point.y + (previous.y - point.y) * THROUGHPUT_CORNER_ROUNDING,
-    );
-    ctx.quadraticCurveTo(
-      point.x,
-      point.y,
-      point.x + (next.x - point.x) * THROUGHPUT_CORNER_ROUNDING,
-      point.y + (next.y - point.y) * THROUGHPUT_CORNER_ROUNDING,
-    );
-  }
-  ctx.lineTo(points.at(-1)!.x, points.at(-1)!.y);
-}
-
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencyBucket[];
@@ -839,7 +816,7 @@ export class ChartEngine implements CanvasEngine {
         ctx.beginPath();
         ctx.moveTo(segment[0].x, bot);
         ctx.lineTo(segment[0].x, segment[0].y);
-        traceRoundedLine(ctx, segment);
+        traceSmoothLine(ctx, segment);
         ctx.lineTo(segment.at(-1)!.x, bot);
         ctx.closePath();
         ctx.fill();
@@ -850,7 +827,7 @@ export class ChartEngine implements CanvasEngine {
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(segment[0].x, segment[0].y);
-        traceRoundedLine(ctx, segment);
+        traceSmoothLine(ctx, segment);
         ctx.stroke();
       }
     }

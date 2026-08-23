@@ -58,7 +58,7 @@ test("pinch zoom raises canvas resolution without changing layout", async ({
     expect(after.map((canvas) => canvas.width)).toEqual(
       before.map((canvas) => canvas.width),
     );
-    expect(after.every((canvas) => canvas.ratio <= 3)).toBe(true);
+    expect(after.every((canvas) => canvas.ratio <= 4)).toBe(true);
   } finally {
     await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
   }
