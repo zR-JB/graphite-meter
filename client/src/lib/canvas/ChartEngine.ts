@@ -30,6 +30,29 @@ import {
 const CHART_TIME_CAMERA_TAU_MS = 120;
 const CHART_TIME_CAMERA_EPSILON_MS = 4;
 const LATENCY_GLYPH_ENTER_MS = 90;
+const THROUGHPUT_CORNER_ROUNDING = 0.12;
+
+function traceRoundedLine(
+  ctx: CanvasRenderingContext2D,
+  points: ReadonlyArray<{ x: number; y: number }>,
+): void {
+  for (let i = 1; i < points.length - 1; i++) {
+    const previous = points[i - 1];
+    const point = points[i];
+    const next = points[i + 1];
+    ctx.lineTo(
+      point.x + (previous.x - point.x) * THROUGHPUT_CORNER_ROUNDING,
+      point.y + (previous.y - point.y) * THROUGHPUT_CORNER_ROUNDING,
+    );
+    ctx.quadraticCurveTo(
+      point.x,
+      point.y,
+      point.x + (next.x - point.x) * THROUGHPUT_CORNER_ROUNDING,
+      point.y + (next.y - point.y) * THROUGHPUT_CORNER_ROUNDING,
+    );
+  }
+  ctx.lineTo(points.at(-1)!.x, points.at(-1)!.y);
+}
 
 export interface ChartData {
   throughput: ThroughputSample[];
@@ -128,6 +151,7 @@ interface ThemeColors {
   warmup: string;
   signal: string;
   warn: string;
+  err: string;
   grid: string;
   textSoft: string;
   brand: string;
@@ -208,6 +232,7 @@ export class ChartEngine implements CanvasEngine {
     warmup: "#858c94",
     signal: "#8ba3ba",
     warn: "#c4a568",
+    err: "#d89393",
     grid: "rgba(211,219,227,0.05)",
     textSoft: "#6a717a",
     brand: "#6db0b8",
@@ -356,6 +381,7 @@ export class ChartEngine implements CanvasEngine {
       warmup: g("--phase-warmup", "#858c94"),
       signal: g("--signal", "#8ba3ba"),
       warn: g("--warn", "#c4a568"),
+      err: g("--err", "#d89393"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
       textSoft: g("--text-soft", "#6a717a"),
       brand: g("--brand", "#6db0b8"),
@@ -813,8 +839,7 @@ export class ChartEngine implements CanvasEngine {
         ctx.beginPath();
         ctx.moveTo(segment[0].x, bot);
         ctx.lineTo(segment[0].x, segment[0].y);
-        for (let i = 1; i < segment.length; i++)
-          ctx.lineTo(segment[i].x, segment[i].y);
+        traceRoundedLine(ctx, segment);
         ctx.lineTo(segment.at(-1)!.x, bot);
         ctx.closePath();
         ctx.fill();
@@ -825,8 +850,7 @@ export class ChartEngine implements CanvasEngine {
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(segment[0].x, segment[0].y);
-        for (let i = 1; i < segment.length; i++)
-          ctx.lineTo(segment[i].x, segment[i].y);
+        traceRoundedLine(ctx, segment);
         ctx.stroke();
       }
     }
@@ -905,8 +929,10 @@ export class ChartEngine implements CanvasEngine {
       }
       if (s.lossCount > 0) {
         const x = this.#x(s.t);
-        ctx.fillStyle = this.#colors.warn;
-        ctx.fillRect(x - 1.5, this.#layout.plot.bottom - 5, 3, 5);
+        ctx.fillStyle = this.#colors.err;
+        ctx.beginPath();
+        ctx.roundRect(x - 2.5, this.#layout.plot.bottom - 7, 5, 7, 1.5);
+        ctx.fill();
       }
       ctx.restore();
     }
