@@ -259,7 +259,20 @@ test("a windowed desktop fits compact and final cards without token scrolling", 
   ).toBeVisible({ timeout: 10_000 });
   await expect(page.locator(".result-card")).toHaveCount(3);
   await expect(page.locator(".metric-wrap .gauge-value")).toHaveCount(0);
-  await expect(page.locator(".metric-wrap .gauge-unit.standalone")).toHaveText(
+  const terminalResults = page.locator(".metric-wrap .terminal-result");
+  await expect(terminalResults).toHaveCount(2);
+  await expect(
+    page.locator(".terminal-result.download .terminal-number"),
+  ).toHaveText(
+    await page.locator(".result-card:has(.ico.dl) .num").innerText(),
+  );
+  await expect(
+    page.locator(".terminal-result.upload .terminal-number"),
+  ).toHaveText(
+    await page.locator(".result-card:has(.ico.ul) .num").innerText(),
+  );
+  await expect(page.locator(".terminal-result.bidirectional")).toHaveCount(0);
+  await expect(page.locator(".metric-wrap .terminal-unit")).toHaveText(
     /(?:bit|B)\/s$/,
   );
   await expectStageFits(page);

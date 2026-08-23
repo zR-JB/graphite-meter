@@ -21,6 +21,7 @@
     type PresentationHandle,
   } from "../canvas/presentation";
   import { resultGaugeArcs } from "./resultGauge";
+  import { ICON } from "../constants";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -227,6 +228,21 @@
           `${arc.label} ${fmtSpeed(store.toUnit(arc.bytesPerSec))} ${store.unitLabel}${arc.dashed ? ", partial" : ""}`,
       )
       .join("; "),
+  );
+  const terminalSummary = $derived.by(() =>
+    store.phase === "complete" && terminalArcs.length > 1
+      ? terminalArcs.map((arc) => ({
+          value: fmtSpeed(store.toUnit(arc.bytesPerSec)),
+          direction:
+            arc.phase === "download" || arc.label.endsWith("download")
+              ? "download"
+              : arc.phase === "upload" || arc.label.endsWith("upload")
+                ? "upload"
+                : "bidirectional",
+          phase: arc.phase,
+          dashed: arc.dashed,
+        }))
+      : [],
   );
 
   const STAGE_NAME: Record<string, string> = {
@@ -439,12 +455,35 @@
         </div>
       {/if}
       <div class="metric-wrap">
+        {#if terminalSummary.length}
+          <div class="terminal-readout" aria-hidden="true">
+            <div class="terminal-summary">
+              {#each terminalSummary as item (item.phase)}
+                <span
+                  class="terminal-result {item.phase}"
+                  class:partial={item.dashed}
+                >
+                  <span class="terminal-marker">
+                    {#if item.direction === "download"}
+                      {@html ICON.download}
+                    {:else if item.direction === "upload"}
+                      {@html ICON.upload}
+                    {:else}
+                      {@html ICON.bidirectional}
+                    {/if}
+                  </span>
+                  <span class="terminal-number">{item.value}</span>
+                </span>
+              {/each}
+            </div>
+            <span class="terminal-unit">{display.unit}</span>
+          </div>
+        {/if}
         {#if display.value}<span class="gauge-value" aria-hidden="true"
             >{display.value}</span
           >{/if}
-        {#if display.unit}<span
+        {#if display.unit && !terminalSummary.length}<span
             class="gauge-unit"
-            class:standalone={!display.value}
             aria-hidden="true">{display.unit}</span
           >{/if}
         <span class="sr-only"
@@ -700,6 +739,83 @@
     max-width: 100%;
     white-space: nowrap;
   }
+  .terminal-readout {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    max-width: 72%;
+  }
+  .terminal-summary {
+    display: grid;
+    gap: 4px;
+    max-width: 100%;
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: clamp(18px, 7.2cqmin, 30px);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .terminal-result {
+    --result-accent: var(--text-soft);
+    display: grid;
+    grid-template-columns: 21px minmax(4ch, 1fr);
+    align-items: center;
+    gap: 7px;
+  }
+  .terminal-result.download {
+    --result-accent: var(--phase-download);
+  }
+  .terminal-result.upload {
+    --result-accent: var(--phase-upload);
+  }
+  .terminal-result.bidirectional {
+    --result-accent: var(--phase-bidirectional);
+  }
+  .terminal-marker {
+    display: grid;
+    place-items: center;
+    width: 21px;
+    height: 21px;
+    border: 1px solid
+      color-mix(in srgb, var(--result-accent) 30%, var(--border));
+    border-radius: var(--r-well);
+    background: color-mix(in srgb, var(--result-accent) 6%, var(--surface-2));
+    color: var(--result-accent);
+    line-height: 1;
+  }
+  .terminal-marker :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+  .terminal-result.partial .terminal-marker {
+    border-style: dashed;
+  }
+  .terminal-number {
+    min-width: 0;
+    text-align: right;
+  }
+  .terminal-unit {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: clamp(10px, 3.1cqmin, 12px);
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    color: var(--text-soft);
+    line-height: 1;
+  }
+  .terminal-unit::before,
+  .terminal-unit::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  }
   .gauge-unit {
     margin-top: var(--space-1);
     font-family: var(--font-mono);
@@ -709,9 +825,30 @@
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
   }
-  .gauge-unit.standalone {
-    margin-top: 0;
-    font-size: clamp(13px, 4cqmin, 17px);
+  @media (prefers-reduced-motion: no-preference) {
+    .terminal-result {
+      animation: terminal-result-enter 180ms var(--ease-out) both;
+    }
+    .terminal-result:nth-child(2) {
+      animation-delay: 35ms;
+    }
+    .terminal-result:nth-child(3) {
+      animation-delay: 70ms;
+    }
+    .terminal-unit {
+      animation: terminal-unit-enter 160ms var(--ease-out) 100ms both;
+    }
+  }
+  @keyframes terminal-result-enter {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+  }
+  @keyframes terminal-unit-enter {
+    from {
+      opacity: 0;
+    }
   }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect
