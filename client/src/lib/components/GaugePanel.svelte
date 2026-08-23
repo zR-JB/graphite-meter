@@ -254,7 +254,7 @@
   const hint = $derived.by(() => {
     switch (store.phase) {
       case "idle":
-        return "Press Engage to start your speed test";
+        return "Press Start test to start your speed test";
       case "connecting":
         return "Verifying the selected protocol…";
       case "warmup":
@@ -462,7 +462,7 @@
       <output class="sr-only" aria-live="polite">{announcement}</output>
     </div>
 
-    <div class="engage-slot"><RunButton /></div>
+    <div class="run-slot"><RunButton /></div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel">
@@ -514,7 +514,7 @@
   .gauge-panel:has(:global(.result-cards.reserve)) {
     --result-slot-budget: 80px;
   }
-  /* The instrument grid places stage-head, gauge, Engage, and the optional
+  /* The instrument grid places stage-head, gauge, Start test, and the optional
      latency panel, so one breakpoint flips the whole arrangement. Its
      gauge+latency track is content-independent: the latency panel scrolls
      inside its own height. */
@@ -543,7 +543,7 @@
     grid-template:
       "stagehead" auto
       "gauge" var(--gauge-well-height)
-      "engage" auto
+      "run" auto
       "latency" auto
       / 1fr;
   }
@@ -552,17 +552,17 @@
     grid-template:
       "stagehead" auto
       "gauge" var(--gauge-well-height)
-      "engage" auto
+      "run" auto
       / 1fr;
   }
   /* Wide: gauge + latency side-by-side (each min-width:240px + gap ≈ 492px;
      520px leaves a safety margin over the columns' min-width floor). One
-     query moves Engage, the latency panel, and Test Stages together. */
+     query moves Start test, the latency panel, and Test Stages together. */
   @container viz (min-width: 520px) {
     .instrument {
       grid-template:
         "gauge latency" var(--gauge-well-height)
-        "engage engage" auto
+        "run run" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
@@ -571,7 +571,7 @@
     .instrument:not(:has(.latency-panel)) {
       grid-template:
         "gauge gauge" var(--gauge-well-height)
-        "engage engage" auto
+        "run run" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
@@ -597,10 +597,10 @@
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
   }
-  /* Engage's slot: RunButton centers itself (width:100%, max-width:320px,
+  /* Start test's slot: RunButton centers itself (width:100%, max-width:320px,
      align-self:center), so this slot only has to be a flex row. */
-  .engage-slot {
-    grid-area: engage;
+  .run-slot {
+    grid-area: run;
     display: flex;
     flex-direction: column;
     align-items: center;

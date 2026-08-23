@@ -1,7 +1,7 @@
 <script lang="ts">
   // Primary start/abort action.
   import { store } from "../state/store.svelte";
-  import { engage } from "../runner/engine.svelte";
+  import { toggleRun } from "../runner/engine.svelte";
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
@@ -22,23 +22,23 @@
 </script>
 
 <button
-  class="engage"
+  class="run-button"
   class:running={store.isRunning}
   aria-label={label}
-  onclick={engage}
+  onclick={toggleRun}
   use:tooltip={store.isRunning
     ? "Stop the test (Space / Esc)"
     : resolved
       ? "Run the test again (Space / R)"
       : "Start the test (Space)"}
 >
-  <span class="engage-content">
+  <span class="run-button-content">
     {#if store.isRunning}
       <span class="stop-sq"></span> ABORT
     {:else if resolved}
       <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
     {:else}
-      <span class="ico">{@html ICON.bolt}</span> ENGAGE
+      <span class="ico">{@html ICON.bolt}</span> START TEST
     {/if}
   </span>
 </button>
@@ -47,7 +47,7 @@
 {/if}
 
 <style>
-  .engage {
+  .run-button {
     position: relative;
     isolation: isolate;
     overflow: hidden;
@@ -78,15 +78,15 @@
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
-  .engage:hover {
+  .run-button:hover {
     transform: translateY(-1px);
     filter: brightness(1.04);
   }
-  .engage:focus-visible {
+  .run-button:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-  .engage.running {
+  .run-button.running {
     background: var(--err-soft);
     color: var(--err);
     border-color: color-mix(in srgb, var(--err) 40%, var(--border));
@@ -108,7 +108,7 @@
     width: 18px;
     height: 18px;
   }
-  .engage-content {
+  .run-button-content {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -121,7 +121,7 @@
     text-align: center;
   }
   @media (prefers-reduced-motion: no-preference) {
-    .engage-content {
+    .run-button-content {
       animation: control-content-enter 100ms var(--ease-out) both;
     }
   }

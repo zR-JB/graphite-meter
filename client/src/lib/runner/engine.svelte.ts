@@ -366,7 +366,7 @@ export async function bootRunner() {
   await validateConnections().catch(() => {});
 }
 
-export function engage() {
+export function toggleRun() {
   if (store.isRunning) {
     getRunner().abort();
     return;

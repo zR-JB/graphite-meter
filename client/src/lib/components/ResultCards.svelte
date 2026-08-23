@@ -341,7 +341,7 @@
 
   const guidance = $derived.by(() => {
     if (store.phase === "idle")
-      return "Your results appear here once you press Engage.";
+      return "Your results appear here once you press Start test.";
     return "";
   });
 </script>

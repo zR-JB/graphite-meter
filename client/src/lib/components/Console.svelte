@@ -14,7 +14,7 @@
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
-  import { engage, returnToStart } from "../runner/engine.svelte";
+  import { toggleRun, returnToStart } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
@@ -146,7 +146,7 @@
     if (e.key === "Escape") {
       // Esc aborts a live run first; otherwise it closes the visible panel.
       if (store.isRunning) {
-        engage();
+        toggleRun();
       } else if (settingsOpen) {
         settingsOpen = false;
       } else if (telemetryOpen) {
@@ -160,7 +160,7 @@
 
     if (e.key === " " || e.key === "Enter") {
       if (selfActivating(e.target)) return;
-      engage();
+      toggleRun();
       e.preventDefault();
       return;
     }
@@ -176,7 +176,7 @@
         break;
       case "r":
         if (RESOLVED_PHASES.includes(store.phase)) {
-          engage();
+          toggleRun();
           e.preventDefault();
         }
         break;

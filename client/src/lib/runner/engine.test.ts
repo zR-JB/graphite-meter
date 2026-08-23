@@ -86,7 +86,7 @@ const PROBE_EVIDENCE: InfraInfo = {
 // the gauge's latency scale floor, and `store.liveRtt` — so evidence that
 // outlives its session is rendered as if current.
 //
-// It is server-scoped, not run-scoped. `engage()` calls `store.reset()` at the
+// It is server-scoped, not run-scoped. `toggleRun()` calls `store.reset()` at the
 // start of every run and re-probes only when the prepared probe went stale, so
 // clearing it per run would blank those rows between runs against the same
 // server. Teardown is where the server binding itself ends, which is why

@@ -392,7 +392,7 @@ so a lane that refuses instantly and one that times out cannot independently end
 
 A path is checked on: boot; an explicit Retry; a selection change resolving to a different target; a
 role the run will open that is not verified; `online`; becoming visible after 30 s hidden; a
-preflight generation change; and Engage when the last check is older than 30 s. Nothing else,
+preflight generation change; and Start test when the last check is older than 30 s. Nothing else,
 notably not a stage toggle or any other setting, and not re-selecting the target `auto` already
 picked. Each role is checked independently, has its own Retry, and reports one of four states:
 `Ready`, `Checking`, `Failed`, `Stale`. A failure names itself rather than reading as a check still

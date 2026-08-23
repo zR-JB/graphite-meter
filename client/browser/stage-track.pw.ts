@@ -65,7 +65,7 @@ test("terminal stage switches select the next run without erasing retained statu
     page.evaluate(() =>
       Object.assign(
         Object.fromEntries(
-          [".stage-head", ".gauge-panel .stage", ".engage-slot", ".chart"].map(
+          [".stage-head", ".gauge-panel .stage", ".run-slot", ".chart"].map(
             (selector) => {
               const stage = document.querySelector("#console > section.stage");
               stage?.scrollTo(0, 0);
@@ -101,7 +101,7 @@ test("terminal stage switches select the next run without erasing retained statu
   for (const selector of [
     ".stage-head",
     ".gauge-panel .stage",
-    ".engage-slot",
+    ".run-slot",
     ".chart",
   ]) {
     expect(
