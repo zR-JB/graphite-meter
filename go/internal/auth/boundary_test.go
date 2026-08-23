@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
@@ -171,7 +170,7 @@ func TestAuthClientAddressFailsClosedBehindATrustedProxy(t *testing.T) {
 // other test in this package while silently dropping the prefix's guarantees.
 func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	_, sess, err := s.createSession("local-operator", "Local operator", "local")
 	if err != nil {
 		t.Fatal(err)
 	}

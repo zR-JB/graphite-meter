@@ -471,7 +471,7 @@ func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, tok
 // completeOIDCSignIn mints the session, rotates any prior one, and hands off to
 // the same-site interstitial.
 func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx oidcTransaction, idToken *oidc.IDToken, name string) {
-	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName, idToken.Expiry)
+	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName)
 	if err != nil {
 		s.oidcLoginFailure(w, r, reasonSessionCapacity)
 		return

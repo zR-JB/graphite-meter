@@ -602,8 +602,9 @@
   .engage-slot {
     grid-area: engage;
     display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    height: 46px;
     min-height: 46px;
   }
   /* Latency profile: a matching engraved well, sized identically to the gauge

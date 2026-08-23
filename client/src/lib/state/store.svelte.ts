@@ -107,6 +107,7 @@ const UNIT_STEP_UP_HEADROOM = 1.2;
 
 class AppStore {
   #latencyScale = new LatencyScaleController();
+  startError = $state("");
   throughput = $state<ThroughputSample[]>([]);
   /** Ephemeral upload visual target. Never contributes to history or results. */
   uploadPresentationBytesPerSec = $state<number | null>(null);

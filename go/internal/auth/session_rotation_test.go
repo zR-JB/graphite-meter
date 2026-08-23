@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 )
 
 // addGrant attaches a bearer grant to sess so tests can assert it is revoked
@@ -25,9 +24,9 @@ func addGrant(s *Service, sess *session, token string) [32]byte {
 
 func TestRevokeSessionHashDropsSessionAndGrantsButSparesKeep(t *testing.T) {
 	s := testService(t)
-	_, victim, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	_, victim, _ := s.createSession("local-operator", "Local operator", "local")
 	gh := addGrant(s, victim, "victim-grant-victim-grant-victim")
-	_, keep, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	_, keep, _ := s.createSession("local-operator", "Local operator", "local")
 
 	// keep must be spared even when its own hash is passed.
 	s.revokeSessionHash(keep.hash, keep)
@@ -51,9 +50,9 @@ func TestRevokeSessionHashDropsSessionAndGrantsButSparesKeep(t *testing.T) {
 
 func TestDeleteSubjectSessionsRevokesOnlyThatSubject(t *testing.T) {
 	s := testService(t)
-	_, a, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
-	_, b, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
-	_, other, _ := s.createSession("oidc:someone", "Other", "oidc", time.Time{})
+	_, a, _ := s.createSession("local-operator", "Local operator", "local")
+	_, b, _ := s.createSession("local-operator", "Local operator", "local")
+	_, other, _ := s.createSession("oidc:someone", "Other", "oidc")
 	gh := addGrant(s, b, "b-grant-b-grant-b-grant-b-grant-")
 
 	s.mu.Lock()
@@ -80,7 +79,7 @@ func TestDeleteSubjectSessionsRevokesOnlyThatSubject(t *testing.T) {
 
 func TestPasswordLoginRotatesTheSuppliedSession(t *testing.T) {
 	s := testService(t)
-	rawPrior, prior, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	rawPrior, prior, _ := s.createSession("local-operator", "Local operator", "local")
 	gh := addGrant(s, prior, "prior-grant-prior-grant-prior-gr")
 
 	token := "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -113,8 +112,8 @@ func TestPasswordLoginRotatesTheSuppliedSession(t *testing.T) {
 
 func TestLogoutEverywhereRevokesEverySubjectSession(t *testing.T) {
 	s := testService(t)
-	_, a, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
-	_, b, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	_, a, _ := s.createSession("local-operator", "Local operator", "local")
+	_, b, _ := s.createSession("local-operator", "Local operator", "local")
 	gh := addGrant(s, b, "b-grant-logout-b-grant-logout-bg")
 
 	form := url.Values{"csrf": {a.csrf}, "scope": {"all"}}.Encode()
@@ -143,8 +142,8 @@ func TestLogoutEverywhereRevokesEverySubjectSession(t *testing.T) {
 
 func TestLogoutDefaultScopeSparesSiblingSessions(t *testing.T) {
 	s := testService(t)
-	_, a, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
-	_, b, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	_, a, _ := s.createSession("local-operator", "Local operator", "local")
+	_, b, _ := s.createSession("local-operator", "Local operator", "local")
 
 	form := url.Values{"csrf": {a.csrf}}.Encode()
 	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/logout", strings.NewReader(form))

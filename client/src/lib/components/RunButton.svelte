@@ -42,6 +42,9 @@
     {/if}
   </span>
 </button>
+{#if store.startError}
+  <p class="run-error" role="alert">{store.startError}</p>
+{/if}
 
 <style>
   .engage {
@@ -110,6 +113,12 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
+  }
+  .run-error {
+    margin: var(--space-2) 0 0;
+    color: var(--err);
+    font-size: var(--text-xs);
+    text-align: center;
   }
   @media (prefers-reduced-motion: no-preference) {
     .engage-content {

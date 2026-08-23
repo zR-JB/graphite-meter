@@ -55,7 +55,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		s.loginRejected(w, r, reasonPasswordMismatch)
 		return
 	}
-	raw, sess, err := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, sess, err := s.createSession("local-operator", "Local operator", "local")
 	if err != nil {
 		s.loginRejected(w, r, reasonSessionCapacity)
 		return
@@ -94,7 +94,15 @@ func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"name": p.Name, "provider": p.Provider, "expires": p.Expires, "csrf": p.session.csrf})
+	remaining := p.Expires.Sub(s.now())
+	if remaining < 0 {
+		remaining = 0
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"name": p.Name, "provider": p.Provider, "expires": p.Expires,
+		"csrf": p.session.csrf, "remainingMs": remaining.Milliseconds(),
+		"maximumLifetimeMs": sessionLifetime.Milliseconds(),
+	})
 }
 
 func (s *Service) logout(w http.ResponseWriter, r *http.Request) {

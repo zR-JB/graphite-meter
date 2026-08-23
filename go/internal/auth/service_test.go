@@ -112,7 +112,7 @@ func TestUnauthenticatedUIRootRedirectsButAPIsDoNot(t *testing.T) {
 }
 func TestSessionRevocationCancelsActiveRequest(t *testing.T) {
 	s := testService(t)
-	raw, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	raw, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestOrdinaryDeadlineIsNotSessionEnd(t *testing.T) {
 }
 func TestSessionExpiryCancelsAtDeadline(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("expiring", "Name", "local", time.Now().Add(40*time.Millisecond))
+	_, sess, err := s.createSessionUntil("expiring", "Name", "local", time.Now().Add(40*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,9 +163,81 @@ func TestSessionExpiryCancelsAtDeadline(t *testing.T) {
 		t.Fatal("session survived its deadline")
 	}
 }
+
+func TestSessionUsesAbsolutePolicy(t *testing.T) {
+	s := testService(t)
+	_, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lifetime := sess.expires.Sub(sess.created); lifetime != sessionLifetime {
+		t.Fatalf("session lifetime=%v, want %v", lifetime, sessionLifetime)
+	}
+}
+
+func TestSessionInfoReportsServerCalculatedLifetime(t *testing.T) {
+	s := testService(t)
+	_, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := sess.expires
+	r := secureRequest(http.MethodGet, "/auth/session", nil)
+	p := Principal{Subject: sess.subject, Name: sess.name, Provider: sess.provider, Expires: sess.expires, session: sess}
+	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
+	rr := httptest.NewRecorder()
+	s.sessionInfo(rr, r)
+	var got struct {
+		RemainingMs       int64 `json:"remainingMs"`
+		MaximumLifetimeMs int64 `json:"maximumLifetimeMs"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.MaximumLifetimeMs != sessionLifetime.Milliseconds() {
+		t.Fatalf("maximumLifetimeMs=%d, want %d", got.MaximumLifetimeMs, sessionLifetime.Milliseconds())
+	}
+	if got.RemainingMs < (sessionLifetime-time.Second).Milliseconds() || got.RemainingMs > sessionLifetime.Milliseconds() {
+		t.Fatalf("remainingMs=%d, want a fresh eight-hour session", got.RemainingMs)
+	}
+	if len(rr.Result().Cookies()) != 0 {
+		t.Fatal("session info renewed a cookie")
+	}
+	if !sess.expires.Equal(expires) {
+		t.Fatal("session info changed the absolute expiry")
+	}
+}
+
+func TestAuthenticatedActivityDoesNotExtendSession(t *testing.T) {
+	s := testService(t)
+	raw, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := sess.expires
+	for _, path := range []string{"/", "/download"} {
+		r := secureRequest(http.MethodGet, path, nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		rr := httptest.NewRecorder()
+		s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}), Listener{UI: true}).ServeHTTP(rr, r)
+		if rr.Code != http.StatusNoContent || len(rr.Result().Cookies()) != 0 {
+			t.Fatalf("path=%s status=%d cookies=%d", path, rr.Code, len(rr.Result().Cookies()))
+		}
+	}
+	if _, ok := s.consumeWebTransportToken(mintForSession(t, s, sess)); !ok {
+		t.Fatal("fresh reconnect token was refused")
+	}
+	if !sess.expires.Equal(expires) {
+		t.Fatal("authenticated activity changed the absolute expiry")
+	}
+}
+
 func TestCookieMutationRequiresOriginAndCSRF(t *testing.T) {
 	s := testService(t)
-	raw, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	raw, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +440,7 @@ func TestLoginCSRFFailureReasons(t *testing.T) {
 }
 func TestCookieWebSocketRequiresExactOrigin(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
+	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
 	for _, origin := range []string{"", "https://wrong.example", s.public.String()} {
 		r := secureRequest("GET", "/ws/ping", nil)
@@ -387,7 +459,7 @@ func TestCookieWebSocketRequiresExactOrigin(t *testing.T) {
 }
 func TestCookieMeasurementAllowsExactOriginFromAlternatePort(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
+	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
 	r := secureRequest("GET", "/download", nil)
 	r.Host = "meter.example:7443"
@@ -402,7 +474,7 @@ func TestCookieMeasurementAllowsExactOriginFromAlternatePort(t *testing.T) {
 }
 func TestCookieMeasurementRejectsSiblingSiteWithoutExactOrigin(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
+	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
 	for _, origin := range []string{"", "https://evil.example"} {
 		r := secureRequest("GET", "/download", nil)
@@ -421,7 +493,7 @@ func TestCookieMeasurementRejectsSiblingSiteWithoutExactOrigin(t *testing.T) {
 
 func TestCookieMeasurementRequiresPositiveSameOriginEvidence(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
+	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), Listener{})
 	for _, site := range []string{"", "none", "cross-site"} {
 		r := secureRequest(http.MethodGet, "/probe", nil)
@@ -447,7 +519,7 @@ func TestCookieMeasurementRequiresPositiveSameOriginEvidence(t *testing.T) {
 
 func TestSuccessfulAuthenticatedResponseHasTransportAndFrameHeaders(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
+	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }), Listener{UI: true})
 	r := secureRequest(http.MethodGet, "/", nil)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
@@ -459,7 +531,7 @@ func TestSuccessfulAuthenticatedResponseHasTransportAndFrameHeaders(t *testing.T
 }
 func TestBrowserAuthRoutesRequireCanonicalPort(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("subject", "Name", "local", time.Time{})
+	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
 	r := secureRequest("GET", "/auth/session", nil)
 	r.Host = "meter.example:7443"
@@ -472,7 +544,7 @@ func TestBrowserAuthRoutesRequireCanonicalPort(t *testing.T) {
 }
 func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 	s := testService(t)
-	_, sess, _ := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, _ := s.createSession("subject", "Name", "local")
 	grant := randomToken(32)
 	grantHash := sha256.Sum256([]byte(grant))
 	sess.grants[grantHash] = struct{}{}
@@ -722,7 +794,7 @@ func TestPerSubjectSessionLimitRevokesOldest(t *testing.T) {
 	s := testService(t)
 	var oldest *session
 	for i := 0; i < maxSubjectSessions+1; i++ {
-		_, sess, err := s.createSession("same", "Name", "local", time.Time{})
+		_, sess, err := s.createSession("same", "Name", "local")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -806,7 +878,7 @@ func TestLoginFailurePreservesValidCLIChallenge(t *testing.T) {
 }
 func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 	s := testService(t)
-	_, sess, _ := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, _ := s.createSession("subject", "Name", "local")
 	verifier := "terminal-verifier"
 	sum := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
@@ -843,7 +915,7 @@ func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 }
 func TestCLIGrantSetIsBounded(t *testing.T) {
 	s := testService(t)
-	_, sess, _ := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, _ := s.createSession("subject", "Name", "local")
 	for i := 0; i < 20; i++ {
 		verifier := fmt.Sprintf("verifier-%d", i)
 		sum := sha256.Sum256([]byte(verifier))

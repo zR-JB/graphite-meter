@@ -15,6 +15,7 @@
       <p>Sign in to use this measurement server.</p>
       {{if eq .Status "signed_out"}}<p class="ok" role="status">You're signed out.</p>{{end}}
       {{if eq .Status "expired"}}<p class="notice" role="status">Your session ended. Sign in again.</p>{{end}}
+      {{if eq .Status "renew"}}<p class="notice" role="status">Sign in again before starting this long test.</p>{{end}}
       {{if eq .Notice "password"}}
         <p class="message" role="alert">Incorrect password. Check it and try again.</p>
       {{else if eq .Notice "throttled"}}

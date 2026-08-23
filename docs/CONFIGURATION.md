@@ -151,9 +151,17 @@ required forwarding headers are in
 
 ### Sessions, cookies, and what they bind to
 
-A browser sign-in creates a session that lasts **8 hours, absolute**. Nothing extends it: no
+A successful password or OIDC sign-in creates a Graphite Meter session that lasts **8 hours,
+absolute**. The OIDC token is verified while completing sign-in; its remaining lifetime does not
+shorten the local session. Nothing extends that session: no
 request, no open page, no measurement renews the clock, so a tab left open overnight is signed
 out in the morning and lands back on the login page.
+
+Before an authenticated browser run starts, the client verifies that the complete configured
+timeline plus a one-minute completion margin fits in the remaining session. An older session asks
+for a fresh sign-in; a schedule longer than eight hours is refused. Server restart, explicit
+revocation, session rotation, and the bounded per-account session limit can still end a session
+earlier.
 
 **Signing in again** in the same browser rotates the old session out — the session it replaces,
 and every bearer grant issued from it, is revoked immediately rather than left live for the rest

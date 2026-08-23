@@ -27,6 +27,13 @@ import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
 import {
+  requireSessionCoverage,
+  liveScheduleFitsSession,
+  SessionCoverageError,
+  type SessionBudget,
+} from "../auth";
+import { buildSegments } from "./schedule";
+import {
   CONNECTION_FAILURE_REASONS,
   CONNECTION_FRESH_MS,
   CONNECTION_ROLES,
@@ -55,6 +62,8 @@ let lastDraftRoleKeys: Record<ConnectionRole, string> = {
 let pendingValidation = false;
 let hiddenAt = 0;
 let validating: ConnectionRole[] = [];
+let sessionBudget: SessionBudget | null = null;
+const SESSION_RUN_MARGIN_MS = 60_000;
 
 // Mirror the persisted dev toggle into the main-thread debug logger, live.
 // Workers are separate module graphs: they get the value in their `start`
@@ -362,10 +371,14 @@ export function engage() {
     getRunner().abort();
     return;
   }
-  store.reset();
   const cfg = $state.snapshot(store.config);
   const key = connectionKey(cfg, store.transportDiscovery);
   const start = async () => {
+    sessionBudget = await requireSessionCoverage(
+      buildSegments(cfg).totalMs + SESSION_RUN_MARGIN_MS,
+    );
+    store.startError = "";
+    store.reset();
     const info = preparedIsFresh(key)
       ? prepared!.info
       : await validateConnections();
@@ -375,6 +388,10 @@ export function engage() {
     await getRunner().start(cfg, info);
   };
   start().catch((cause) => {
+    if (cause instanceof SessionCoverageError) {
+      store.startError = cause.message;
+      return;
+    }
     // An abort invalidates the pending start and resolves it without error.
     if (store.phase === "aborted") return;
     store.ingest({
@@ -418,6 +435,27 @@ export function applyLiveRunConfig() {
     duration: config.duration,
     adaptive: config.adaptive,
   };
+  const activeTotal = store.activeConfig
+    ? buildSegments(store.activeConfig).totalMs
+    : 0;
+  const candidateTotal = buildSegments(config).totalMs;
+  if (
+    !liveScheduleFitsSession(
+      sessionBudget,
+      activeTotal,
+      candidateTotal,
+      SESSION_RUN_MARGIN_MS,
+    )
+  ) {
+    if (store.activeConfig) {
+      store.config.stages = structuredClone(store.activeConfig.stages);
+      store.config.duration = structuredClone(store.activeConfig.duration);
+    }
+    store.startError =
+      "This change would extend the test beyond the current session.";
+    return;
+  }
+  store.startError = "";
   getRunner().reconfigure?.(live);
   if (store.activeConfig)
     store.activeConfig = { ...store.activeConfig, ...live };
