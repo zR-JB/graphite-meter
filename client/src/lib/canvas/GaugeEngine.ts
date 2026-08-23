@@ -7,6 +7,13 @@ import { presentation, type PresentationHandle } from "./presentation";
 import { sweepTarget, angleForFraction, interpolateSweep } from "./gaugeSweep";
 import { gaugeLayout, type GaugeLayout } from "./gaugeLayout";
 import { canvasPixelRatio } from "./canvasResolution";
+import type { ResultArcPhase } from "../components/resultGauge";
+
+export interface GaugeResultArc {
+  phase: ResultArcPhase;
+  fraction: number;
+  dashed: boolean;
+}
 
 export interface GaugeState {
   phase: Phase;
@@ -18,6 +25,7 @@ export interface GaugeState {
   layout: GaugeLayout;
   rtt: number;
   completedKind: "speed" | "latency";
+  resultArcs?: readonly GaugeResultArc[];
 }
 
 const PHASE_VAR: Record<Phase, string> = {
@@ -55,6 +63,12 @@ export class GaugeEngine implements CanvasEngine {
   #showValue = true;
   #lastFrame = 0;
   #layout: GaugeLayout = gaugeLayout(0, 0, 0);
+  #resultArcs: readonly GaugeResultArc[] = [];
+  #resultColors: Record<ResultArcPhase, string> = {
+    download: "#4da3ff",
+    upload: "#9b7cff",
+    bidirectional: "#2fcca0",
+  };
 
   // Static geometry and the marker are cached at device resolution.
   #base: HTMLCanvasElement | null = null;
@@ -157,6 +171,18 @@ export class GaugeEngine implements CanvasEngine {
     this.#accent = this.#cssVar(PHASE_VAR[phase], this.#accent);
     this.#track = this.#cssVar("--surface-2", this.#track);
     this.#tick = this.#cssVar("--border-strong", this.#tick);
+    this.#resultColors.download = this.#cssVar(
+      "--phase-download",
+      this.#resultColors.download,
+    );
+    this.#resultColors.upload = this.#cssVar(
+      "--phase-upload",
+      this.#resultColors.upload,
+    );
+    this.#resultColors.bidirectional = this.#cssVar(
+      "--phase-bidirectional",
+      this.#resultColors.bidirectional,
+    );
   }
 
   #render = (now: number): boolean => {
@@ -174,6 +200,7 @@ export class GaugeEngine implements CanvasEngine {
     const s = this.#get();
     this.#layout = s.layout;
     this.#showValue = s.showValue ?? true;
+    this.#resultArcs = s.resultArcs ?? [];
 
     if (s.phase !== this.#lastPhase) {
       this.#resolveColors(s.phase);
@@ -216,6 +243,29 @@ export class GaugeEngine implements CanvasEngine {
       ctx.setTransform(1, 0, 0, 1, 0, 0); // blit device-px sprite without the dpr scale
       ctx.drawImage(this.#base, 0, 0);
       ctx.restore();
+    }
+
+    if (this.#lastPhase === "complete" && this.#resultArcs.length) {
+      const count = this.#resultArcs.length;
+      const lineWidth = count === 1 ? arcW : Math.max(3, arcW * 0.36);
+      const spacing = lineWidth + 2;
+      this.#resultArcs.forEach((arc, index) => {
+        const radius = r + (index - (count - 1) / 2) * spacing;
+        ctx.strokeStyle = this.#resultColors[arc.phase];
+        ctx.lineWidth = lineWidth;
+        ctx.setLineDash(arc.dashed ? [lineWidth * 1.5, lineWidth] : []);
+        ctx.beginPath();
+        ctx.arc(
+          cx,
+          cy,
+          radius,
+          layout.arcStart,
+          angleForFraction(arc.fraction, layout.arcStart, layout.arcSweep),
+        );
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+      return;
     }
 
     if (this.#showValue && sweep > 0.002) {

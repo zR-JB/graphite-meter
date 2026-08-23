@@ -20,6 +20,7 @@
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
+  import { resultGaugeArcs } from "./resultGauge";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -29,11 +30,14 @@
   const activeStagePresentation = $derived(
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
   );
+  const terminalArcs = $derived(resultGaugeArcs(store.result));
   // A one-sided bidirectional partial retains its lane result for diagnostics,
   // but has no truthful combined gauge value.
   const unusableStage = $derived(
     activeStagePresentation?.status === "failed" ||
-      (store.phase === "complete" && store.finalMetric === null),
+      (store.phase === "complete" &&
+        terminalArcs.length === 0 &&
+        !store.result?.latency),
   );
 
   let canvasEl = $state<HTMLCanvasElement>();
@@ -51,52 +55,20 @@
 
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
-  let completedDisplay = $state(EMPTY_DISPLAY);
-  let completedKind = $state<"speed" | "latency">("speed");
+  const completedKind = $derived<"speed" | "latency">(
+    terminalArcs.length ? "speed" : "latency",
+  );
   const gaugeLatency = $derived.by(() => {
-    const metric = store.phase === "complete" ? store.finalMetric : null;
     return gaugeLatencyPresentation({
       phase: store.phase,
       liveRttMs: store.liveRtt,
       liveScaleMs: store.latencyScaleMs,
       history: store.latency,
-      completedRttMs: metric?.kind === "latency" ? metric.ms : null,
+      completedRttMs:
+        store.phase === "complete" && terminalArcs.length === 0
+          ? (store.result?.latency?.reportedMs ?? null)
+          : null,
     });
-  });
-
-  $effect(() => {
-    if (store.phase === "latency") {
-      completedKind = "latency";
-      completedDisplay = store.liveLatencyLost
-        ? { value: "lost", unit: "" }
-        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
-    } else if (
-      store.phase === "download" ||
-      store.phase === "upload" ||
-      store.phase === "bidirectional"
-    ) {
-      completedKind = "speed";
-      completedDisplay = {
-        value: fmtSpeed(store.toUnit(store.visualTransferBytesPerSec)),
-        unit: store.unitLabel,
-      };
-    }
-  });
-
-  $effect(() => {
-    if (store.phase !== "complete") return;
-    const metric = store.finalMetric;
-    if (!metric) return;
-    if (metric.kind === "latency") {
-      completedKind = "latency";
-      completedDisplay = { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
-    } else {
-      completedKind = "speed";
-      completedDisplay = {
-        value: fmtSpeed(store.toUnit(metric.bytesPerSec)),
-        unit: store.unitLabel,
-      };
-    }
   });
 
   const msTicksActive = $derived(
@@ -137,7 +109,17 @@
       p === "warmup"
     )
       return EMPTY_DISPLAY;
-    if (p === "complete") return completedDisplay;
+    if (p === "complete") {
+      if (terminalArcs.length === 1)
+        return {
+          value: fmtSpeed(store.toUnit(terminalArcs[0].bytesPerSec)),
+          unit: `${store.unitLabel} · ${terminalArcs[0].label}`,
+        };
+      if (terminalArcs.length > 1) return { value: "", unit: store.unitLabel };
+      return store.result?.latency
+        ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
+        : EMPTY_DISPLAY;
+    }
     return {
       value: fmtSpeed(store.toUnit(liveRateValues.transfer)),
       unit: store.unitLabel,
@@ -238,6 +220,14 @@
   // visible text out of the accessibility tree; assistive technology receives
   // the same authoritative value used by the live announcement instead.
   const accessibleDisplay = $derived(announcementDisplay);
+  const terminalAnnouncement = $derived(
+    terminalArcs
+      .map(
+        (arc) =>
+          `${arc.label} ${fmtSpeed(store.toUnit(arc.bytesPerSec))} ${store.unitLabel}${arc.dashed ? ", partial" : ""}`,
+      )
+      .join("; "),
+  );
 
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
@@ -321,6 +311,7 @@
     const phase = store.phase;
     pendingAnnouncement =
       statusText ||
+      (phase === "complete" && terminalAnnouncement) ||
       `${announcementDisplay.value} ${announcementDisplay.unit}, phase ${phase}`;
     const commit = () => {
       announcement = pendingAnnouncement;
@@ -346,20 +337,30 @@
     engine = new GaugeEngine(() => {
       const p = store.phase;
       const scale = store.displayScaleBytesPerSec;
-      const finalMetric = p === "complete" ? store.finalMetric : null;
       return {
         phase: p,
         showValue: !unusableStage,
         valueBytesPerSec: unusableStage
           ? 0
-          : finalMetric?.kind === "speed"
-            ? finalMetric.bytesPerSec
+          : p === "complete" && terminalArcs.length
+            ? terminalArcs[0].bytesPerSec
             : liveRateValues.transfer,
         scaleBytesPerSec: scale,
         latencyScaleMs: gaugeLatency.scaleMs,
         layout,
         rtt: gaugeLatency.rttMs,
         completedKind,
+        resultArcs:
+          p === "complete"
+            ? terminalArcs.map((arc) => ({
+                phase: arc.phase,
+                fraction: Math.min(
+                  1,
+                  Math.max(0, arc.bytesPerSec / Math.max(1, scale)),
+                ),
+                dashed: arc.dashed,
+              }))
+            : [],
       };
     });
     engine.attach(canvasEl!);
@@ -438,9 +439,13 @@
         </div>
       {/if}
       <div class="metric-wrap">
-        <span class="gauge-value" aria-hidden="true">{display.value}</span>
-        {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-            >{display.unit}</span
+        {#if display.value}<span class="gauge-value" aria-hidden="true"
+            >{display.value}</span
+          >{/if}
+        {#if display.unit}<span
+            class="gauge-unit"
+            class:standalone={!display.value}
+            aria-hidden="true">{display.unit}</span
           >{/if}
         <span class="sr-only"
           >{accessibleDisplay.value} {accessibleDisplay.unit}</span
@@ -703,6 +708,10 @@
     letter-spacing: 0.02em;
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
+  }
+  .gauge-unit.standalone {
+    margin-top: 0;
+    font-size: clamp(13px, 4cqmin, 17px);
   }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect

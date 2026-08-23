@@ -201,34 +201,6 @@ class AppStore {
     this.debugLogging = persisted.debugLogging;
   }
 
-  // End-of-run headline is phase-agnostic: latency-only, upload-only, and
-  // bidirectional-only runs all resolve to the metric that actually ran.
-  finalMetric = $derived.by<
-    | { kind: "speed"; bytesPerSec: number }
-    | { kind: "latency"; ms: number }
-    | null
-  >(() => {
-    const results = this.stageResults;
-    const bidirectional = this.result?.bidirectional;
-    if (bidirectional?.down && bidirectional.up)
-      return {
-        kind: "speed",
-        bytesPerSec:
-          bidirectional.down.reportedBytesPerSec +
-          bidirectional.up.reportedBytesPerSec,
-      };
-    if (results.upload)
-      return { kind: "speed", bytesPerSec: results.upload.reportedBytesPerSec };
-    if (results.download)
-      return {
-        kind: "speed",
-        bytesPerSec: results.download.reportedBytesPerSec,
-      };
-    if (results.latency)
-      return { kind: "latency", ms: results.latency.reportedMs };
-    return null;
-  });
-
   liveTransferBytesPerSec = $derived.by(() => {
     // Bidirectional is displayed as aggregate throughput: latest down + latest up.
     if (this.phase === "download" || this.phase === "upload") {
@@ -441,12 +413,6 @@ class AppStore {
       this.#estimateResultWire(result?.down ?? null, "download"),
       this.#estimateResultWire(result?.up ?? null, "upload"),
     ]);
-  });
-
-  finalCompensation = $derived.by<CompensationEstimate>(() => {
-    if (this.result?.bidirectional) return this.bidirectionalCompensation;
-    if (this.stageResults.upload) return this.uploadCompensation;
-    return this.downloadCompensation;
   });
 
   #peakBytesPerSec = $state(0);
