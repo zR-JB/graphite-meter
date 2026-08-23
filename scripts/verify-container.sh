@@ -5,8 +5,9 @@ image=${1:?usage: scripts/verify-container.sh IMAGE}
 container="graphite-meter-verify-$$"
 tmp=$(mktemp -d)
 status=1
-expected_version=${GM_VERIFY_VERSION:-0.0.0-ci+local}
-expected_label=${GM_VERIFY_LABEL:-local}
+expected_version=${GM_VERIFY_VERSION:-0.0.0-ci}
+expected_label=${GM_VERIFY_LABEL:-prod}
+expected_revision=${GM_VERIFY_REVISION:-local}
 if [ -n "${CONTAINER_ENGINE:-}" ]; then
     engine=$CONTAINER_ENGINE
 elif command -v docker >/dev/null 2>&1; then
@@ -60,8 +61,8 @@ curl -fsS "$base/probe" | tee "$tmp/probe.json" >/dev/null
 jq -e '(.clientIp | type == "string" and length > 0) and (.clientIpVersion == 4 or .clientIpVersion == 6) and (.clientIpSource | type == "string" and length > 0) and .protocolNegotiated == "http/1.1"' "$tmp/probe.json"
 
 curl -fsS "$base/version.json" | tee "$tmp/version.json" >/dev/null
-jq -e --arg expected_version "$expected_version" --arg expected_label "$expected_label" \
-    '.version == $expected_version and .label == $expected_label' "$tmp/version.json"
+jq -e --arg expected_version "$expected_version" --arg expected_label "$expected_label" --arg expected_revision "$expected_revision" \
+    '.version == $expected_version and .label == $expected_label and .revision == $expected_revision' "$tmp/version.json"
 
 "$engine" export "$container" -o "$tmp/rootfs.tar"
 tar -tf "$tmp/rootfs.tar" > "$tmp/files"

@@ -20,4 +20,4 @@ export const ICON = {
   info: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`,
 } as const;
 
-export const BUILD_HASH = BUILD.buildLabel;
+export const BUILD_IDENTITY = BUILD.identity;

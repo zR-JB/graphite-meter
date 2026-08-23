@@ -416,7 +416,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     __GM_DEFAULT_ENGINE__: "real",
     __GM_ALLOW_DUMMY__: false,
     __GM_DEV_TOOLS__: false,
-    __GM_BUILD_LABEL__: "test",
+    __GM_BUILD_PROFILE__: "test",
+    __GM_RELEASE_VERSION__: null,
+    __GM_SOURCE_REVISION__: "test-revision",
+    __GM_BUILD_IDENTITY__: "test test-revision",
     __GM_CLIENT_VERSION__: "0.0.0-test",
   });
   const { RealBackend, TransportUnavailableError } =
@@ -874,7 +877,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       "__GM_DEFAULT_ENGINE__",
       "__GM_ALLOW_DUMMY__",
       "__GM_DEV_TOOLS__",
-      "__GM_BUILD_LABEL__",
+      "__GM_BUILD_PROFILE__",
+      "__GM_RELEASE_VERSION__",
+      "__GM_SOURCE_REVISION__",
+      "__GM_BUILD_IDENTITY__",
       "__GM_CLIENT_VERSION__",
     ])
       Reflect.deleteProperty(buildGlobals, key);
@@ -891,7 +897,10 @@ const BUILD_TOKENS = {
   __GM_DEFAULT_ENGINE__: "real",
   __GM_ALLOW_DUMMY__: false,
   __GM_DEV_TOOLS__: false,
-  __GM_BUILD_LABEL__: "test",
+  __GM_BUILD_PROFILE__: "test",
+  __GM_RELEASE_VERSION__: null,
+  __GM_SOURCE_REVISION__: "test-revision",
+  __GM_BUILD_IDENTITY__: "test test-revision",
   __GM_CLIENT_VERSION__: "0.0.0-test",
 };
 

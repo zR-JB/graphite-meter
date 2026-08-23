@@ -807,7 +807,7 @@ class PipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReleaseVerificationError, "client version metadata is missing"):
                     verify_client_version("1.2.3")
                 (root / "client/dist/version.json").write_text(
-                    '{"version":"1.2.3+prod","label":"prod"}\n', encoding="utf-8"
+                    '{"version":"1.2.3","label":"prod","revision":"abc1234"}\n', encoding="utf-8"
                 )
                 verify_client_version("1.2.3")
                 with self.assertRaisesRegex(ReleaseVerificationError, "server binary is missing"):

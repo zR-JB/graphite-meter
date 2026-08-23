@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes } from "../format";
-  import { BUILD_HASH } from "../constants";
+  import { BUILD_IDENTITY } from "../constants";
   import type { Phase } from "../runner/contract";
 
   const PHASE_LABEL: Record<Phase, string> = {
@@ -68,7 +68,7 @@
 <span class="sep">·</span>
 <span>{fmtBytes(store.bytesTransferred, store.unitBase)} xfer</span>
 <span class="flex-1"></span>
-<span class="soft">build {BUILD_HASH}</span>
+<span class="soft">{BUILD_IDENTITY}</span>
 
 <style>
   span {

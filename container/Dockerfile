@@ -14,6 +14,7 @@ ARG BUN_VERSION=canary
 # Smoke job, release.yml) always passes VERSION explicitly, so it never
 # relies on this fallback.
 ARG VERSION=0.1.0
+ARG CLIENT_VERSION
 
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.
@@ -22,24 +23,22 @@ FROM docker.io/oven/bun:${BUN_VERSION} AS client
 # Build-time client config (override with --build-arg). Defaults = production:
 # real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
 # reaches `bun run build`'s process.env, where vite.config.ts reads it.
-# GM_CLIENT_BUILD_LABEL is the status-bar label AND the label half of the
-# client version <semver>+<label> (Endpoint info drawer, dist/version.json,
-# preflight ?client_version=). VERSION (the semver half) is the same build-arg
-# the server stage stamps into EngineVersion below — one source of truth for
-# both halves of the binary, so client and server can never disagree.
 ARG GM_CLIENT_ENGINE=real
 ARG GM_CLIENT_ALLOW_DUMMY=0
 ARG GM_CLIENT_DEV_TOOLS=0
-ARG GM_CLIENT_BUILD_LABEL=prod
+ARG GM_CLIENT_BUILD_PROFILE=prod
+ARG GM_CLIENT_REVISION=source
 # Keep standalone/local Docker builds self-validating. CI sets this to 0 only
 # after the same commit has already passed the client check/test job.
 ARG GM_CLIENT_VALIDATE=1
 ARG VERSION
+ARG CLIENT_VERSION
 ENV GM_CLIENT_ENGINE=$GM_CLIENT_ENGINE \
     GM_CLIENT_ALLOW_DUMMY=$GM_CLIENT_ALLOW_DUMMY \
     GM_CLIENT_DEV_TOOLS=$GM_CLIENT_DEV_TOOLS \
-    GM_CLIENT_BUILD_LABEL=$GM_CLIENT_BUILD_LABEL \
-    VERSION=$VERSION
+    GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
+    GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
+    VERSION=$CLIENT_VERSION
 WORKDIR /app/client
 # Install deps first for layer caching. Every official build uses the
 # repository's declared Bun channel and the committed lockfile.

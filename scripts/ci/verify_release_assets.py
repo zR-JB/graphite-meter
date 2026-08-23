@@ -346,9 +346,14 @@ def verify_client_version(version: str) -> None:
     value = parse_json(path)
     if not isinstance(value, dict):
         raise VerificationError(f"{path} must contain a JSON object")
-    if value.get("version") != f"{version}+prod" or value.get("label") != "prod":
+    if (
+        value.get("version") != version
+        or value.get("label") != "prod"
+        or not isinstance(value.get("revision"), str)
+        or not value["revision"]
+    ):
         raise VerificationError(
-            f"{path} must contain version={version}+prod and label=prod"
+            f"{path} must contain version={version}, label=prod, and a revision"
         )
 
 

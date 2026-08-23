@@ -1,8 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
 import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
-import pkg from "./package.json" with { type: "json" };
 
 // --- Build-time client configuration (see src/lib/buildenv.ts) -------------
 // Driven by GM_CLIENT_* env vars (the justfile `prod` recipe / `docker build
@@ -24,17 +24,21 @@ const off = (v: string | undefined) => v === "0" || v === "false";
 const allowDummy = !off(env.GM_CLIENT_ALLOW_DUMMY);
 const devTools = !off(env.GM_CLIENT_DEV_TOOLS);
 
-const buildLabel = env.GM_CLIENT_BUILD_LABEL ?? "dev";
-
-// Canonical client version: the VERSION build-arg/env (same value the server
-// stamps into EngineVersion; see container/Dockerfile and justfile) plus the
-// build label (git short hash in prod, "dev" otherwise), e.g. "0.1.0+abc1234".
-// Falls back to package.json's "version" only when VERSION isn't set (plain
-// `bun run build` outside just/Docker). That field is a frozen "0.0.0"
-// sentinel, matching go/internal/config.EngineVersion's "0.0.0-dev" fallback.
-// Never bump it by hand: every real version comes from the git tag via
-// release.yml, so an untagged build has no version to reflect anyway.
-const clientVersion = `${env.VERSION ?? pkg.version}+${buildLabel}`;
+const buildProfile = env.GM_CLIENT_BUILD_PROFILE ?? "dev";
+const releaseVersion = env.VERSION || null;
+const sourceRevision =
+  env.GM_CLIENT_REVISION ??
+  (() => {
+    try {
+      return execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return "source";
+    }
+  })();
+const clientVersion = releaseVersion ? `v${releaseVersion}` : sourceRevision;
+const buildIdentity = `${buildProfile} ${clientVersion}`;
 
 // Emit dist/version.json alongside the bundle (build only; dev serves no dist).
 const versionFile = (): Plugin => ({
@@ -43,7 +47,11 @@ const versionFile = (): Plugin => ({
     this.emitFile({
       type: "asset",
       fileName: "version.json",
-      source: JSON.stringify({ version: clientVersion, label: buildLabel }),
+      source: JSON.stringify({
+        version: releaseVersion,
+        label: buildProfile,
+        revision: sourceRevision,
+      }),
     });
   },
 });
@@ -173,7 +181,10 @@ export default defineConfig({
     __GM_DEFAULT_ENGINE__: JSON.stringify(defaultEngine), // "real" | "dummy"
     __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy), // bare true | false
     __GM_DEV_TOOLS__: JSON.stringify(devTools), // bare true | false
-    __GM_BUILD_LABEL__: JSON.stringify(buildLabel), // "abc1234"
-    __GM_CLIENT_VERSION__: JSON.stringify(clientVersion), // "0.0.0+abc1234"
+    __GM_BUILD_PROFILE__: JSON.stringify(buildProfile),
+    __GM_RELEASE_VERSION__: JSON.stringify(releaseVersion),
+    __GM_SOURCE_REVISION__: JSON.stringify(sourceRevision),
+    __GM_CLIENT_VERSION__: JSON.stringify(clientVersion),
+    __GM_BUILD_IDENTITY__: JSON.stringify(buildIdentity),
   },
 });
