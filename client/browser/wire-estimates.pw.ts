@@ -60,7 +60,74 @@ test("a persisted opt-out hides only wire-estimate presentation", async ({
   await expect(page.locator(".result-card .est")).toHaveCount(0);
 });
 
-test("loopback omits the non-applicable wire row", async ({ page }) => {
+test("bidirectional results use their combined lane estimate", async ({
+  page,
+}) => {
+  await page.goto("/?engine=dummy");
+  await configureShortDownload(page);
+  const settings = page.locator('[aria-label="Settings"]');
+  await settings
+    .locator("label.switch", {
+      hasText: "Include concurrent download + upload",
+    })
+    .click();
+  await settings.getByLabel("Download ms").fill("0");
+  await settings.getByLabel("Bidirectional ms").fill("900");
+
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible({ timeout: 5_000 });
+  const card = page.locator(".result-card", { hasText: "Bi-dir" });
+  await expect(card.locator(".est")).toContainText("wire +");
+  await card.locator(".est-tag").hover();
+  await expect(page.getByRole("tooltip")).toContainText("Total +");
+});
+
+test("result wire details work with mouse, keyboard, touch, and narrow viewports", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.goto("/?engine=dummy");
+  await configureShortDownload(page);
+  await page.getByRole("button", { name: "Open settings" }).click();
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible({ timeout: 5_000 });
+
+  const tag = page.locator(".result-card .est-tag");
+  await expect(tag).toHaveCSS("text-decoration-line", "underline");
+  await expect(tag).toHaveCSS("text-decoration-style", "dotted");
+  await tag.hover();
+  const tooltip = page.getByRole("tooltip");
+  await expect(tooltip).toContainText("Local Ethernet ·");
+  await expect(tooltip).not.toContainText("(detected)");
+  await expect(tooltip).toContainText(/IPv[46].*MTU/);
+  await expect(tooltip).toContainText("Ethernet +");
+  await expect(tooltip).toContainText("Total +");
+  await expect(tooltip).toHaveCSS("white-space", "pre-line");
+  const box = await tooltip.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+
+  await page.mouse.move(0, 0);
+  await expect(tooltip).toHaveCount(0);
+  await tag.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+
+  await tag.dispatchEvent("pointerup", { pointerType: "touch" });
+  await expect(page.getByRole("tooltip")).toBeVisible();
+  await tag.dispatchEvent("pointerup", { pointerType: "touch" });
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+});
+
+test("loopback explains why wire rate is unavailable", async ({ page }) => {
   await page.goto("/?engine=dummy");
   await configureShortDownload(page);
   const settings = page.locator('[aria-label="Settings"]');
@@ -74,5 +141,10 @@ test("loopback omits the non-applicable wire row", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Run the test again" }),
   ).toBeVisible({ timeout: 5_000 });
-  await expect(page.locator(".result-card .est")).toHaveCount(0);
+  const estimate = page.locator(".result-card .est");
+  await expect(estimate).toContainText("wire n/a");
+  await estimate.locator(".est-tag").hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "No physical-link estimate applies",
+  );
 });

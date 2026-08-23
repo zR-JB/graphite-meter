@@ -7,6 +7,10 @@
   import { tooltip, JARGON } from "../actions/tooltip";
   import { bidirectionalResultPresentation } from "./bidirectionalResult";
   import type { LiveRateValues } from "../presentation/liveRateAnimator";
+  import {
+    compensationTooltip,
+    type CompensationEstimate,
+  } from "../compensation";
 
   interface Props {
     compact?: boolean;
@@ -44,6 +48,7 @@
         estimatedBytesPerSec: live.estimatedBytesPerSec,
         available: live.available,
         multiplier: live.totalMultiplier,
+        compensation: live,
         band: stability?.band ?? "low",
         score: stability?.score ?? 0,
         active: true,
@@ -65,6 +70,7 @@
       estimatedBytesPerSec: compensation.estimatedBytesPerSec,
       available: compensation.available,
       multiplier: compensation.totalMultiplier,
+      compensation,
       band: displayStability?.band ?? stability?.band ?? "low",
       score: displayStability?.score ?? stability?.score ?? 0,
       active: false,
@@ -97,6 +103,7 @@
         active: true,
         has: live.down + live.up > 0,
         status: presentation.status,
+        compensation: store.liveBidirectionalCompensation,
       };
     }
     const result = bidirectionalResultPresentation(
@@ -135,6 +142,7 @@
       active: false,
       has: result.combinedBytesPerSec !== null,
       status: presentation.status,
+      compensation: store.bidirectionalCompensation,
     };
   });
 
@@ -203,7 +211,10 @@
 
   const showWire = $derived(store.showWireEstimates);
 
-  type CardWire = { kind: "lift"; num: string; pct: string } | null;
+  type CardWire =
+    | { kind: "lift"; num: string; pct: string; tooltip: string }
+    | { kind: "na"; tooltip: string }
+    | null;
   interface CardVM {
     key: string;
     icon: string;
@@ -236,16 +247,19 @@
       multiplier: number;
       estimatedBytesPerSec: number;
       available: boolean;
+      compensation: CompensationEstimate;
     },
     status: CardVM["status"],
   ): CardWire {
     if (!showWire || !m.has || status !== "complete") return null;
-    if (!m.available) return null;
+    const tooltip = compensationTooltip(m.compensation);
+    if (!m.available) return { kind: "na", tooltip };
     if (lifted(m.multiplier))
       return {
         kind: "lift",
         num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
         pct: pctLift(m.multiplier),
+        tooltip,
       };
     return null;
   }
@@ -314,7 +328,16 @@
             : bidi.survivingDirection === "up"
               ? `↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel} — download unavailable`
               : undefined,
-        wire: null,
+        wire: wireFor(
+          {
+            has: bidi.has,
+            multiplier: bidi.compensation.totalMultiplier,
+            estimatedBytesPerSec: bidi.compensation.estimatedBytesPerSec,
+            available: bidi.compensation.available,
+            compensation: bidi.compensation,
+          },
+          bidi.status,
+        ),
       });
     if (showPing)
       out.push({
@@ -385,9 +408,11 @@
         {#if c.wire.kind === "lift"}
           <span class="est-arrow">→</span>
           <span class="est-num">{c.wire.num}</span>
-          <span class="est-tag" use:tooltip={JARGON.wireRate}
+          <span class="est-tag" use:tooltip={c.wire.tooltip}
             >wire {c.wire.pct}</span
           >
+        {:else}
+          <span class="est-tag" use:tooltip={c.wire.tooltip}>wire n/a</span>
         {/if}
       </div>
     {/if}
@@ -639,9 +664,18 @@
     color: var(--brand-strong);
   }
   .est-tag {
+    cursor: help;
     color: var(--text-soft);
     font-size: 10px;
     letter-spacing: 0.02em;
+    text-decoration: underline dotted
+      color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+  .est-tag:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: var(--r-well);
   }
   .est-flat {
     color: var(--text-soft);

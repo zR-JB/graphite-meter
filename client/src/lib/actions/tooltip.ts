@@ -26,7 +26,7 @@ function ensureStyles() {
     .gm-tooltip {
       position: fixed;
       z-index: 200;
-      max-width: 260px;
+      max-width: min(300px, calc(100vw - 16px));
       padding: 8px 10px;
       border: 1px solid var(--border-strong);
       border-radius: var(--r-chrome);
@@ -39,6 +39,7 @@ function ensureStyles() {
       font-weight: 500;
       letter-spacing: 0;
       text-transform: none;
+      white-space: pre-line;
       pointer-events: none;
       opacity: 0;
       transform: translateY(2px);
@@ -53,16 +54,6 @@ function ensureStyles() {
     .gm-tooltip[data-show="true"] {
       opacity: 1;
       transform: translateY(0);
-    }
-    .gm-tooltip__term {
-      display: block;
-      margin-bottom: 2px;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--brand-strong);
     }
   `;
   document.head.appendChild(style);
@@ -273,7 +264,7 @@ export const JARGON = {
   packetLoss:
     "Packet loss: the share of test pings that never came back. Even a few percent can stutter calls and streams.",
   wireRate:
-    "Wire-rate: estimated forward-direction Ethernet occupancy for the measured application bytes. The range covers packet details browsers cannot inspect, such as TCP options. Reverse ACK traffic and runtime behavior are not added.",
+    "Estimated forward-path physical-link occupancy for measured application bytes.",
   stability:
     "Stability: how steady the speed held during the test. Higher means a flat, consistent line; lower means it fluctuated.",
   ping: "Ping: the round-trip time for a small message to reach the server and come back. Lower feels snappier.",

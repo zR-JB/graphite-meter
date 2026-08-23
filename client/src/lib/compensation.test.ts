@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   applyConnectionProfile,
   combineCompensationEstimates,
+  compensationTooltip,
   estimateLiveCompensation,
   estimateResultCompensation,
   transportFromProtocol,
@@ -66,7 +67,9 @@ test("result stability, peak, and ping loss never change wire accounting", () =>
   );
   expect(estimate.estimatedBytesPerSec * 8).toBeCloseTo(2_400_000_000, -7);
   expect(estimate.factors.map((factor) => factor.key)).toEqual([
-    "network-framing",
+    "ethernet",
+    "ip",
+    "transport",
   ]);
 });
 
@@ -119,6 +122,7 @@ test("invalid expert bounds are clamped and keep the central estimate in range",
 
 test("automatic IP family uses preflight detection while an override wins", () => {
   const automatic = config();
+  automatic.transport = "auto";
   automatic.params.ipVersion = "auto";
   const ipv4 = estimateLiveCompensation(
     1_000_000,
@@ -137,22 +141,24 @@ test("automatic IP family uses preflight detection while an override wins", () =
     6,
   );
   expect(ipv6.estimatedBytesPerSec).toBeGreaterThan(ipv4.estimatedBytesPerSec);
+  expect(ipv6.ipVersionSource).toBe("detected");
+  expect(ipv6.transportSource).toBe("detected");
   expect(
     estimateLiveCompensation(1_000_000, automatic, "download")
       .estimatedBytesPerSec,
   ).toBe(ipv4.estimatedBytesPerSec);
 
   automatic.params.ipVersion = 4;
-  expect(
-    estimateLiveCompensation(
-      1_000_000,
-      automatic,
-      "download",
-      "http/1.1",
-      false,
-      6,
-    ).estimatedBytesPerSec,
-  ).toBe(ipv4.estimatedBytesPerSec);
+  const overridden = estimateLiveCompensation(
+    1_000_000,
+    automatic,
+    "download",
+    "http/1.1",
+    false,
+    6,
+  );
+  expect(overridden.estimatedBytesPerSec).toBe(ipv4.estimatedBytesPerSec);
+  expect(overridden.ipVersionSource).toBe("override");
 });
 
 test("loopback has no physical wire estimate", () => {
@@ -194,5 +200,70 @@ test("bidirectional compensation is the sum of independently modeled lanes", () 
   );
   expect(combined.upperBytesPerSec).toBe(
     down.upperBytesPerSec + up.upperBytesPerSec,
+  );
+  expect(
+    combined.factors.reduce((sum, factor) => sum + factor.contributionPct, 0),
+  ).toBeCloseTo((combined.totalMultiplier - 1) * 100, 10);
+});
+
+test("factor contributions sum to the displayed overhead", () => {
+  const variants = [
+    config(),
+    config({ transport: "https-tls" }),
+    config({ transport: "http2" }),
+    config({ transport: "http3-quic" }),
+    { ...applyConnectionProfile("tunnel"), transport: "http2" as const },
+  ];
+  for (const variant of variants) {
+    for (const ipVersion of [4, 6] as const) {
+      const estimate = estimateLiveCompensation(
+        1_000_000,
+        { ...variant, params: { ...variant.params, ipVersion } },
+        "download",
+      );
+      expect(
+        estimate.factors.reduce(
+          (sum, factor) => sum + factor.contributionPct,
+          0,
+        ),
+      ).toBeCloseTo((estimate.totalMultiplier - 1) * 100, 10);
+    }
+  }
+});
+
+test("tooltip reports the active model and loopback boundary", () => {
+  const automatic = config({ transport: "auto" });
+  automatic.params.ipVersion = "auto";
+  const estimate = estimateLiveCompensation(
+    1_000_000,
+    automatic,
+    "download",
+    "h3",
+    true,
+    6,
+  );
+  expect(compensationTooltip(estimate)).toContain("IPv6 detected · MTU 1500 B");
+  expect(compensationTooltip(estimate)).toContain("UDP + QUIC");
+  expect(compensationTooltip(estimate)).toContain(
+    "Local Ethernet · HTTP/3 QUIC · detected",
+  );
+  expect(compensationTooltip(estimate)).toContain("Total +");
+
+  const override = estimateLiveCompensation(
+    1_000_000,
+    config({ transport: "http2" }),
+    "download",
+  );
+  expect(compensationTooltip(override)).toContain(
+    "Local Ethernet · HTTP/2 · configured",
+  );
+
+  const loopback = estimateLiveCompensation(
+    1_000_000,
+    { ...applyConnectionProfile("loopback"), transport: "auto" },
+    "download",
+  );
+  expect(compensationTooltip(loopback)).toBe(
+    "Wire n/a\nLoopback · No physical-link estimate applies",
   );
 });
