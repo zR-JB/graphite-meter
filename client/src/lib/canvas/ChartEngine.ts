@@ -26,11 +26,12 @@ import {
   type ChartLayout,
   type ChartViewport,
 } from "./chartLayout";
+import { canvasPixelRatio } from "./canvasResolution";
 
 const CHART_TIME_CAMERA_TAU_MS = 120;
 const CHART_TIME_CAMERA_EPSILON_MS = 4;
 const LATENCY_GLYPH_ENTER_MS = 90;
-const THROUGHPUT_CORNER_ROUNDING = 0.12;
+const THROUGHPUT_CORNER_ROUNDING = 0.22;
 
 function traceRoundedLine(
   ctx: CanvasRenderingContext2D,
@@ -283,8 +284,7 @@ export class ChartEngine implements CanvasEngine {
 
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
-    // Cap at 2: beyond that the raster cost grows without visible fidelity.
-    this.#dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.#dpr = canvasPixelRatio();
     const rect = this.#canvas.getBoundingClientRect();
     this.#w = Math.max(1, rect.width);
     this.#h = Math.max(1, rect.height);

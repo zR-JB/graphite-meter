@@ -12,6 +12,7 @@
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
+  import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
   const PHASE_LABEL: Record<ChartLabelPhase, string> = {
     warmup: "WARM-UP",
@@ -104,12 +105,16 @@
     });
     const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
     resizeObserver.observe(canvasEl!);
+    const stopWatchingPixelRatio = watchCanvasPixelRatio(() =>
+      engine.invalidateTheme(),
+    );
 
     return () => {
       engine.destroy();
       hoverPresentation.destroy();
       themeObserver.disconnect();
       resizeObserver.disconnect();
+      stopWatchingPixelRatio();
     };
   });
 </script>
