@@ -18,8 +18,10 @@ import type { StagePhase } from "./schedule";
 import {
   transferConfidence,
   latencyConfidence,
+  LATENCY_CONFIDENCE_WINDOW_MS,
   bandForState,
   isStillStable,
+  TRANSFER_CONFIDENCE_BUCKETS,
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
@@ -32,24 +34,29 @@ export const MIN_PARTIAL_LATENCY_SUCCESSES = 1;
 
 /** Per-transfer-phase sample bookkeeping for the final result. */
 interface PhaseAccum {
-  samples: {
-    rate: number;
-    bytes: number;
-    seconds: number;
-    evidenceStartMs: number;
-    evidenceEndMs: number;
-  }[];
   bytes: number;
   evidenceMs: number;
+  bytesBeforeLatest: number;
+  evidenceBeforeLatestMs: number;
+  peakBytesPerSec: number;
+  stabilityBuckets: FixedRateBuckets;
   serverAuthoritative: boolean;
 }
 
 const emptyPhaseAccum = (): PhaseAccum => ({
-  samples: [],
   bytes: 0,
   evidenceMs: 0,
+  bytesBeforeLatest: 0,
+  evidenceBeforeLatestMs: 0,
+  peakBytesPerSec: 0,
+  stabilityBuckets: new FixedRateBuckets(TRANSFER_CONFIDENCE_BUCKETS),
   serverAuthoritative: false,
 });
+
+interface StableBaseline {
+  bytes: number;
+  evidenceMs: number;
+}
 
 export class RunAccumulator {
   // ---- whole-run result bookkeeping ----
@@ -69,8 +76,8 @@ export class RunAccumulator {
   #loadedPingsLost = 0;
 
   // ---- per-phase confidence windows (reset each measured phase) ----
-  #phaseDownBuckets = new FixedRateBuckets();
-  #phaseUpBuckets = new FixedRateBuckets();
+  #phaseDownBuckets = new FixedRateBuckets(TRANSFER_CONFIDENCE_BUCKETS);
+  #phaseUpBuckets = new FixedRateBuckets(TRANSFER_CONFIDENCE_BUCKETS);
   #phaseLatency: { tMs: number; rttMs: number | null }[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
@@ -84,6 +91,10 @@ export class RunAccumulator {
   #biStable = false;
   #biStableStartDownMs = -1;
   #biStableStartUpMs = -1;
+  #dlStableBaseline: StableBaseline | null = null;
+  #ulStableBaseline: StableBaseline | null = null;
+  #biStableBaselineDown: StableBaseline | null = null;
+  #biStableBaselineUp: StableBaseline | null = null;
   #dlFinalScore = 0;
   #ulFinalScore = 0;
   #latFinalScore = 0;
@@ -113,6 +124,10 @@ export class RunAccumulator {
     this.#biStable = false;
     this.#biStableStartDownMs = -1;
     this.#biStableStartUpMs = -1;
+    this.#dlStableBaseline = null;
+    this.#ulStableBaseline = null;
+    this.#biStableBaselineDown = null;
+    this.#biStableBaselineUp = null;
     this.#dlFinalScore = 0;
     this.#ulFinalScore = 0;
     this.#latFinalScore = 0;
@@ -148,16 +163,13 @@ export class RunAccumulator {
     const seconds = durationSec;
     const durationMs = seconds * 1_000;
     const bytes = Math.max(0, bytesDelta);
-    const sample = {
-      rate: bytes / seconds,
-      bytes,
-      seconds,
-      evidenceStartMs: accum.evidenceMs,
-      evidenceEndMs: accum.evidenceMs + durationMs,
-    };
-    accum.samples.push(sample);
-    accum.bytes += sample.bytes;
-    accum.evidenceMs = sample.evidenceEndMs;
+    const rate = bytes / seconds;
+    accum.bytesBeforeLatest = accum.bytes;
+    accum.evidenceBeforeLatestMs = accum.evidenceMs;
+    accum.bytes += bytes;
+    accum.evidenceMs += durationMs;
+    accum.peakBytesPerSec = Math.max(accum.peakBytesPerSec, rate);
+    accum.stabilityBuckets.observe(bytes, durationMs);
     accum.serverAuthoritative ||= serverAuthoritative;
     const buckets =
       dir === "down" ? this.#phaseDownBuckets : this.#phaseUpBuckets;
@@ -176,14 +188,10 @@ export class RunAccumulator {
     if (durationSec <= 0) return;
     const accum = this.#transferAccum(phase, dir);
     const durationMs = durationSec * 1_000;
-    accum.samples.push({
-      rate: 0,
-      bytes: 0,
-      seconds: durationSec,
-      evidenceStartMs: accum.evidenceMs,
-      evidenceEndMs: accum.evidenceMs + durationMs,
-    });
+    accum.bytesBeforeLatest = accum.bytes;
+    accum.evidenceBeforeLatestMs = accum.evidenceMs;
     accum.evidenceMs += durationMs;
+    accum.stabilityBuckets.observe(0, durationMs);
     accum.serverAuthoritative = true;
   }
 
@@ -233,8 +241,11 @@ export class RunAccumulator {
       if (underLoad) this.#loadedRtts.push(rttMs);
       else this.#idleRtts.push(rttMs);
     }
-    if (!underLoad)
+    if (!underLoad) {
       this.#phaseLatency.push({ tMs, rttMs: lost ? null : rttMs });
+      const cutoff = tMs - LATENCY_CONFIDENCE_WINDOW_MS;
+      while (this.#phaseLatency[0]?.tMs <= cutoff) this.#phaseLatency.shift();
+    }
   }
 
   /* ================= STABILITY ================= */
@@ -273,6 +284,12 @@ export class RunAccumulator {
       this.#biStableStartDownMs = -1;
       this.#biStableStartUpMs = -1;
     } else this.#latStableStartIndex = -1;
+    if (phase === "download") this.#dlStableBaseline = null;
+    else if (phase === "upload") this.#ulStableBaseline = null;
+    else if (phase === "bidirectional") {
+      this.#biStableBaselineDown = null;
+      this.#biStableBaselineUp = null;
+    }
   }
 
   /** Update the trailing stable run from this tick's score. Transfer lanes use
@@ -303,13 +320,25 @@ export class RunAccumulator {
       if (phase === "bidirectional") {
         this.#biStableStartDownMs = this.#latestEvidenceStart(this.#biDown);
         this.#biStableStartUpMs = this.#latestEvidenceStart(this.#biUp);
-      } else start = this.#stableEvidenceStart(phase);
+        this.#biStableBaselineDown = this.#latestBaseline(this.#biDown);
+        this.#biStableBaselineUp = this.#latestBaseline(this.#biUp);
+      } else {
+        start = this.#stableEvidenceStart(phase);
+        if (phase === "download")
+          this.#dlStableBaseline = this.#latestBaseline(this.#dl);
+        else if (phase === "upload")
+          this.#ulStableBaseline = this.#latestBaseline(this.#ul);
+      }
     } else if (!nowStable && wasStable) {
       start = -1;
       if (phase === "bidirectional") {
         this.#biStableStartDownMs = -1;
         this.#biStableStartUpMs = -1;
+        this.#biStableBaselineDown = null;
+        this.#biStableBaselineUp = null;
       }
+      if (phase === "download") this.#dlStableBaseline = null;
+      if (phase === "upload") this.#ulStableBaseline = null;
     }
 
     if (phase === "download") this.#dlStableStartMs = start;
@@ -344,7 +373,14 @@ export class RunAccumulator {
   /** Stability is evaluated after ingest. Start the result window at the
    * observation that supplied that evidence, not at its end boundary. */
   #latestEvidenceStart(accum: PhaseAccum): number {
-    return accum.samples.at(-1)?.evidenceStartMs ?? -1;
+    return accum.evidenceMs > 0 ? accum.evidenceBeforeLatestMs : -1;
+  }
+
+  #latestBaseline(accum: PhaseAccum): StableBaseline {
+    return {
+      bytes: accum.bytesBeforeLatest,
+      evidenceMs: accum.evidenceBeforeLatestMs,
+    };
   }
 
   /* ================= RESULT REDUCTION ================= */
@@ -358,6 +394,7 @@ export class RunAccumulator {
     return this.#reduceTransfer(
       download ? this.#dl : this.#ul,
       download ? this.#dlStableStartMs : this.#ulStableStartMs,
+      download ? this.#dlStableBaseline : this.#ulStableBaseline,
       useStableWindow,
       download ? this.#dlFinalScore : this.#ulFinalScore,
       this.#loadedLossPct(),
@@ -371,7 +408,14 @@ export class RunAccumulator {
   ): ThroughputResult | null {
     const accum = phase === "download" ? this.#dl : this.#ul;
     if (accum.evidenceMs < MIN_PARTIAL_TRANSFER_EVIDENCE_MS) return null;
-    return this.#reduceTransfer(accum, -1, false, 0, this.#loadedLossPct());
+    return this.#reduceTransfer(
+      accum,
+      -1,
+      null,
+      false,
+      0,
+      this.#loadedLossPct(),
+    );
   }
 
   /** Under-load ping timeout percentage over the whole run. */
@@ -391,6 +435,7 @@ export class RunAccumulator {
       down: this.#reduceTransfer(
         this.#biDown,
         this.#biStableStartDownMs,
+        this.#biStableBaselineDown,
         useStableWindow,
         this.#biFinalScore,
         lossPct,
@@ -398,6 +443,7 @@ export class RunAccumulator {
       up: this.#reduceTransfer(
         this.#biUp,
         this.#biStableStartUpMs,
+        this.#biStableBaselineUp,
         useStableWindow,
         this.#biFinalScore,
         lossPct,
@@ -414,7 +460,7 @@ export class RunAccumulator {
     const lossPct = this.#loadedLossPct();
     const reduce = (accum: PhaseAccum): ThroughputResult | null =>
       accum.evidenceMs >= MIN_PARTIAL_TRANSFER_EVIDENCE_MS
-        ? this.#reduceTransfer(accum, -1, false, 0, lossPct)
+        ? this.#reduceTransfer(accum, -1, null, false, 0, lossPct)
         : null;
     return { down: reduce(this.#biDown), up: reduce(this.#biUp) };
   }
@@ -439,13 +485,13 @@ export class RunAccumulator {
   #reduceTransfer(
     accum: PhaseAccum,
     stableStart: number,
+    stableBaseline: StableBaseline | null,
     useStableWindow: boolean,
     finalScore: number,
     packetLossPct: number,
   ): ThroughputResult {
-    const rates = accum.samples.map((s) => s.rate);
     const band = bandForState(stableStart >= 0, finalScore);
-    if (!rates.length) {
+    if (accum.evidenceMs <= 0) {
       return {
         meanBytesPerSec: 0,
         peakBytesPerSec: 0,
@@ -463,35 +509,27 @@ export class RunAccumulator {
     const full =
       accum.evidenceMs > 0 ? accum.bytes / (accum.evidenceMs / 1_000) : 0;
     const stableRatio = (): { rate: number; has: boolean } => {
-      if (!useStableWindow || stableStart < 0) return { rate: 0, has: false };
-      let bytes = 0;
-      let seconds = 0;
-      for (const sample of accum.samples) {
-        const overlapStart = Math.max(stableStart, sample.evidenceStartMs);
-        const overlapMs = sample.evidenceEndMs - overlapStart;
-        if (overlapMs <= 0) continue;
-        const sampleMs = sample.evidenceEndMs - sample.evidenceStartMs;
-        bytes += sample.bytes * (overlapMs / sampleMs);
-        seconds += overlapMs / 1_000;
-      }
-      return { rate: seconds > 0 ? bytes / seconds : 0, has: seconds > 0 };
+      if (!useStableWindow || stableStart < 0 || !stableBaseline)
+        return { rate: 0, has: false };
+      const evidenceMs = accum.evidenceMs - stableBaseline.evidenceMs;
+      const bytes = accum.bytes - stableBaseline.bytes;
+      return {
+        rate: evidenceMs > 0 ? bytes / (evidenceMs / 1_000) : 0,
+        has: evidenceMs > 0,
+      };
     };
     const stable = stableRatio();
     const hasStableEvidence = stable.has;
     const reported = hasStableEvidence ? stable.rate : full;
-    const stabilityBuckets = new FixedRateBuckets();
-    for (const sample of accum.samples) {
-      stabilityBuckets.observe(sample.bytes, sample.seconds * 1_000);
-    }
-    const stabilityConfidence = transferConfidence([...stabilityBuckets.rates]);
+    const stability = transferConfidence([...accum.stabilityBuckets.rates]);
     const descriptiveStability =
-      stabilityConfidence.sampleCount >= 2
-        ? Math.max(0, Math.min(1, 1 - stabilityConfidence.varianceRatio))
+      stability.sampleCount >= 2
+        ? Math.max(0, Math.min(1, 1 - stability.varianceRatio))
         : 0;
 
     return {
       meanBytesPerSec: reported,
-      peakBytesPerSec: Math.max(...rates),
+      peakBytesPerSec: accum.peakBytesPerSec,
       stabilityPct: descriptiveStability * 100,
       totalBytes: accum.bytes,
       reportedBytesPerSec: reported,

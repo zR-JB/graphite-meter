@@ -8,6 +8,8 @@ export class FixedRateBuckets {
   #completed: number[] = [];
   #evidenceMs = 0;
 
+  constructor(private readonly maxCompleted = Number.POSITIVE_INFINITY) {}
+
   reset(): void {
     this.#bucketBytes = 0;
     this.#bucketDurationMs = 0;
@@ -34,9 +36,9 @@ export class FixedRateBuckets {
         this.#bucketDurationMs >=
         TRANSFER_CONTROL_BUCKET_MS - Number.EPSILON
       ) {
-        this.#completed.push(
-          (this.#bucketBytes * 1_000) / TRANSFER_CONTROL_BUCKET_MS,
-        );
+        const rate = (this.#bucketBytes * 1_000) / TRANSFER_CONTROL_BUCKET_MS;
+        this.#completed.push(rate);
+        if (this.#completed.length > this.maxCompleted) this.#completed.shift();
         this.#bucketBytes = 0;
         this.#bucketDurationMs = 0;
       }

@@ -1,12 +1,26 @@
 import { expect, test } from "bun:test";
 import {
   latencyJitterMs,
+  latencyPresentationBucketMs,
   LatencyPresentationBuckets,
   LATENCY_PRESENTATION_BUCKET_MS,
   singleLatencyBucket,
   upsertLatencyBucket,
 } from "./latencyBuckets";
 import type { LatencyBucket } from "./contract";
+
+test("long phases widen presentation buckets within the history budget", () => {
+  expect(latencyPresentationBucketMs(4_000)).toBe(200);
+  expect(latencyPresentationBucketMs(4_000_000)).toBe(3_400);
+});
+
+test("live duration extensions widen the active latency bucket", () => {
+  const buckets = new LatencyPresentationBuckets();
+  buckets.reset(0, "latency", false, 1, 4_000);
+  expect(buckets.nextBoundaryT).toBe(200);
+  buckets.widen(4_000_000);
+  expect(buckets.nextBoundaryT).toBe(3_400);
+});
 
 test("phase-aligned buckets retain median tail and loss summaries", () => {
   const buckets = new LatencyPresentationBuckets();

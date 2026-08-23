@@ -456,6 +456,18 @@ test("partial latency needs named outcome and success evidence floors", () => {
   expect(result?.reportedMs).toBeCloseTo(20.5, 6);
 });
 
+test("long latency runs bound confidence while retaining exact result evidence", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  for (let i = 0; i < 20_000; i++)
+    accum.pushLatency(10 + (i % 5), false, i % 10 === 0, i * 250);
+  expect(accum.confidence("latency").sampleCount).toBe(16);
+  const result = accum.latencyResult(DEFAULT_CONFIG, 0);
+  expect(result.packetLossPct).toBe(10);
+  expect(result.minMs).toBe(10);
+  expect(result.p95Ms).toBe(14);
+});
+
 test("partial bidirectional keeps each qualifying lane independently", () => {
   const accum = new RunAccumulator();
   accum.reset();

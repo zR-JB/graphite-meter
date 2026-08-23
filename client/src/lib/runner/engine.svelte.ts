@@ -456,6 +456,7 @@ export function applyLiveRunConfig() {
     return;
   }
   store.startError = "";
+  store.compactThroughputForDuration(candidateTotal);
   getRunner().reconfigure?.(live);
   if (store.activeConfig)
     store.activeConfig = { ...store.activeConfig, ...live };

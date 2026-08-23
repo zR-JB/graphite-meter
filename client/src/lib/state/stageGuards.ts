@@ -59,3 +59,32 @@ export function latestBidirectionalLanes(
   }
   return { down, up };
 }
+
+export function updateLiveThroughput(
+  current: readonly ThroughputSample[],
+  sample: ThroughputSample,
+): ThroughputSample[] {
+  const samePhase = current[0]?.phase === sample.phase ? current : [];
+  return [...samePhase.filter((value) => value.dir !== sample.dir), sample];
+}
+
+export function sustainedRate(
+  samples: readonly Pick<ThroughputSample, "t" | "bytesPerSec">[],
+  dwellTargetMs: number,
+): number {
+  if (samples.length < 2) return samples[0]?.bytesPerSec ?? 0;
+  const weighted = samples.map((sample, index) => ({
+    bytesPerSec: sample.bytesPerSec,
+    dwellMs: Math.max(
+      1,
+      index === 0 ? samples[1].t - sample.t : sample.t - samples[index - 1].t,
+    ),
+  }));
+  weighted.sort((a, b) => b.bytesPerSec - a.bytesPerSec);
+  let dwellMs = 0;
+  for (const sample of weighted) {
+    dwellMs += sample.dwellMs;
+    if (dwellMs >= dwellTargetMs) return sample.bytesPerSec;
+  }
+  return weighted.at(-1)!.bytesPerSec;
+}

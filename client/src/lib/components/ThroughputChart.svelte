@@ -37,6 +37,7 @@
     void store.phase;
     void store.runSeq;
     void store.throughput.length;
+    void store.throughputRevision;
     void store.latency.length;
     void store.latencyRevision;
     void store.phaseElapsedMs;
