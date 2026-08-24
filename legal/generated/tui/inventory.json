@@ -76,7 +76,7 @@
     },
     {
       "name": "github.com/charmbracelet/colorprofile",
-      "version": "v0.4.1",
+      "version": "v0.4.3",
       "ecosystem": "go",
       "source": "https://github.com/charmbracelet/colorprofile",
       "declaredLicenseExpression": "MIT",
@@ -112,7 +112,7 @@
     },
     {
       "name": "github.com/charmbracelet/x/ansi",
-      "version": "v0.11.6",
+      "version": "v0.11.8",
       "ecosystem": "go",
       "source": "https://github.com/charmbracelet/x",
       "declaredLicenseExpression": "MIT",
@@ -166,7 +166,7 @@
     },
     {
       "name": "github.com/clipperhouse/displaywidth",
-      "version": "v0.9.0",
+      "version": "v0.11.0",
       "ecosystem": "go",
       "source": "https://github.com/clipperhouse/displaywidth",
       "declaredLicenseExpression": "MIT",
@@ -183,32 +183,8 @@
       "notices": null
     },
     {
-      "name": "github.com/clipperhouse/stringish",
-      "version": "v0.1.1",
-      "ecosystem": "go",
-      "source": "https://github.com/clipperhouse/stringish",
-      "declaredLicenseExpression": "MIT",
-      "selectedLicenseExpression": "MIT",
-      "modified": false,
-      "legalTexts": [
-        {
-          "name": "LICENSE",
-          "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c",
-          "text": "MIT License\n\nCopyright (c) 2025 Matt Sherman\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-          "kind": "license"
-        },
-        {
-          "name": "utf8/LICENSE",
-          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
-          "text": "Copyright 2009 The Go Authors.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are\nmet:\n\n   * Redistributions of source code must retain the above copyright\nnotice, this list of conditions and the following disclaimer.\n   * Redistributions in binary form must reproduce the above\ncopyright notice, this list of conditions and the following disclaimer\nin the documentation and/or other materials provided with the\ndistribution.\n   * Neither the name of Google LLC nor the names of its\ncontributors may be used to endorse or promote products derived from\nthis software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n\"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\nLIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\nA PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\nOWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\nSPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\nLIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\nDATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\nTHEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\nOF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
-          "kind": "license"
-        }
-      ],
-      "notices": null
-    },
-    {
       "name": "github.com/clipperhouse/uax29/v2",
-      "version": "v2.5.0",
+      "version": "v2.7.0",
       "ecosystem": "go",
       "source": "https://github.com/clipperhouse/uax29",
       "declaredLicenseExpression": "MIT",
@@ -244,7 +220,7 @@
     },
     {
       "name": "github.com/dunglas/httpsfv",
-      "version": "v1.1.0",
+      "version": "v1.1.1",
       "ecosystem": "go",
       "source": "https://github.com/dunglas/httpsfv",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -280,7 +256,7 @@
     },
     {
       "name": "github.com/lucasb-eyer/go-colorful",
-      "version": "v1.3.0",
+      "version": "v1.4.1",
       "ecosystem": "go",
       "source": "https://github.com/lucasb-eyer/go-colorful",
       "declaredLicenseExpression": "MIT",
@@ -298,7 +274,7 @@
     },
     {
       "name": "github.com/mattn/go-isatty",
-      "version": "v0.0.20",
+      "version": "v0.0.24",
       "ecosystem": "go",
       "source": "https://github.com/mattn/go-isatty",
       "declaredLicenseExpression": "MIT",
@@ -334,7 +310,7 @@
     },
     {
       "name": "github.com/mattn/go-runewidth",
-      "version": "v0.0.19",
+      "version": "v0.0.28",
       "ecosystem": "go",
       "source": "https://github.com/mattn/go-runewidth",
       "declaredLicenseExpression": "MIT",
@@ -484,7 +460,7 @@
     },
     {
       "name": "github.com/xo/terminfo",
-      "version": "v0.0.0-20220910002029-abceb7e1c41e",
+      "version": "v1.0.0",
       "ecosystem": "go",
       "source": "https://github.com/xo/terminfo",
       "declaredLicenseExpression": "MIT",
@@ -502,7 +478,7 @@
     },
     {
       "name": "golang.org/x/crypto",
-      "version": "v0.54.0",
+      "version": "v0.55.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/crypto",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -527,7 +503,7 @@
     },
     {
       "name": "golang.org/x/net",
-      "version": "v0.56.0",
+      "version": "v0.58.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/net",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -577,7 +553,7 @@
     },
     {
       "name": "golang.org/x/text",
-      "version": "v0.40.0",
+      "version": "v0.41.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/text",
       "declaredLicenseExpression": "BSD-3-Clause",

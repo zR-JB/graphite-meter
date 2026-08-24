@@ -82,7 +82,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/charmbracelet/colorprofile",
-    "reviewedVersion": "v0.4.1",
+    "reviewedVersion": "v0.4.3",
     "upstream": "https://github.com/charmbracelet/colorprofile",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -122,7 +122,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/charmbracelet/x/ansi",
-    "reviewedVersion": "v0.11.6",
+    "reviewedVersion": "v0.11.8",
     "upstream": "https://github.com/charmbracelet/x",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -182,7 +182,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/clipperhouse/displaywidth",
-    "reviewedVersion": "v0.9.0",
+    "reviewedVersion": "v0.11.0",
     "upstream": "https://github.com/clipperhouse/displaywidth",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -201,32 +201,8 @@
   },
   {
     "ecosystem": "go",
-    "name": "github.com/clipperhouse/stringish",
-    "reviewedVersion": "v0.1.1",
-    "upstream": "https://github.com/clipperhouse/stringish",
-    "declaredLicenseExpression": "MIT",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE",
-        "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"
-      },
-      {
-        "name": "utf8/LICENSE",
-        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
-      }
-    ],
-    "modified": false,
-    "artifactScopes": [
-      "tui"
-    ],
-    "reviewDecision": "approved",
-    "reviewNotes": "Audited 2026-08-14 at the exact installed revision; local legal bytes were fingerprinted and the upstream revision/license text and redistribution obligations were checked against the project repository and SPDX identifier."
-  },
-  {
-    "ecosystem": "go",
     "name": "github.com/clipperhouse/uax29/v2",
-    "reviewedVersion": "v2.5.0",
+    "reviewedVersion": "v2.7.0",
     "upstream": "https://github.com/clipperhouse/uax29",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -294,7 +270,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/dunglas/httpsfv",
-    "reviewedVersion": "v1.1.0",
+    "reviewedVersion": "v1.1.1",
     "upstream": "https://github.com/dunglas/httpsfv",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -362,7 +338,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/lucasb-eyer/go-colorful",
-    "reviewedVersion": "v1.3.0",
+    "reviewedVersion": "v1.4.1",
     "upstream": "https://github.com/lucasb-eyer/go-colorful",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -382,7 +358,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/mattn/go-isatty",
-    "reviewedVersion": "v0.0.20",
+    "reviewedVersion": "v0.0.24",
     "upstream": "https://github.com/mattn/go-isatty",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -422,7 +398,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/mattn/go-runewidth",
-    "reviewedVersion": "v0.0.19",
+    "reviewedVersion": "v0.0.28",
     "upstream": "https://github.com/mattn/go-runewidth",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -592,7 +568,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/xo/terminfo",
-    "reviewedVersion": "v0.0.0-20220910002029-abceb7e1c41e",
+    "reviewedVersion": "v1.0.0",
     "upstream": "https://github.com/xo/terminfo",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -612,7 +588,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/crypto",
-    "reviewedVersion": "v0.54.0",
+    "reviewedVersion": "v0.55.0",
     "upstream": "https://go.googlesource.com/crypto",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -638,7 +614,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/net",
-    "reviewedVersion": "v0.56.0",
+    "reviewedVersion": "v0.58.0",
     "upstream": "https://go.googlesource.com/net",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -738,7 +714,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/text",
-    "reviewedVersion": "v0.40.0",
+    "reviewedVersion": "v0.41.0",
     "upstream": "https://go.googlesource.com/text",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -790,7 +766,7 @@
   {
     "ecosystem": "npm",
     "name": "svelte",
-    "reviewedVersion": "5.56.9",
+    "reviewedVersion": "5.56.10",
     "upstream": "https://github.com/sveltejs/svelte",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",

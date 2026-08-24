@@ -83,7 +83,7 @@
     },
     {
       "name": "github.com/dunglas/httpsfv",
-      "version": "v1.1.0",
+      "version": "v1.1.1",
       "ecosystem": "go",
       "source": "https://github.com/dunglas/httpsfv",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -185,7 +185,7 @@
     },
     {
       "name": "golang.org/x/crypto",
-      "version": "v0.54.0",
+      "version": "v0.55.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/crypto",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -210,7 +210,7 @@
     },
     {
       "name": "golang.org/x/net",
-      "version": "v0.56.0",
+      "version": "v0.58.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/net",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -303,7 +303,7 @@
     },
     {
       "name": "golang.org/x/text",
-      "version": "v0.40.0",
+      "version": "v0.41.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/text",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -353,7 +353,7 @@
     },
     {
       "name": "svelte",
-      "version": "5.56.9",
+      "version": "5.56.10",
       "ecosystem": "npm",
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",
