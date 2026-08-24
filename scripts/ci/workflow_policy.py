@@ -702,7 +702,7 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
 
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     for required in (
-        "browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4",
+        "browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4",
         "chrome-version: 152.0.7977.54",
         "BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}",
         "BUN_CHROME_ARGS: --no-sandbox",

@@ -46,9 +46,8 @@ legal_version := env("VERSION", "development")
 tools_dir := ".tools"
 gitleaks_version := trim(shell("cat .gitleaks-version"))
 gitleaks_image := "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
-# Go 1.27 export data and language support first shipped in this tagged RC;
-# replace it with 2026.2 final once upstream publishes that release.
-staticcheck_version := "2026.2rc1"
+# Staticcheck 2026.2 is the first release line with Go 1.27 support.
+staticcheck_version := "2026.2.1"
 govulncheck_version := "v1.6.0"
 
 # Set OS-specific path for the Go build cache to remain fully cross-platform

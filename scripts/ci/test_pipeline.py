@@ -342,8 +342,8 @@ class PipelineTests(unittest.TestCase):
             self.assertIsNone(PRERELEASE_RE.fullmatch(value), value)
 
     def test_external_actions_require_exact_40_character_sha(self) -> None:
-        valid = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
-        broken = "docker/setup-buildx-action@bb05f3f5519dd7d3ba754cc423b652a5edd6d2c"
+        valid = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
+        broken = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0"
         self.assertIsNotNone(PINNED_ACTION.fullmatch(valid))
         self.assertIsNone(PINNED_ACTION.fullmatch(broken))
 

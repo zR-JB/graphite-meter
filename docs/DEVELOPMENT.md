@@ -223,10 +223,9 @@ the release-aware `go fix` modernizations where they reduce allocation or concur
 including `strings.SplitSeq`, `sync.WaitGroup.Go`, typed `errors.AsType`, and built-in `min`/`max`.
 Experimental SIMD and new cryptographic or UUID APIs are intentionally not enabled because the
 current server has no workload or protocol requirement that benefits from them.
-Staticcheck is temporarily pinned to tagged `2026.2rc1`, the first upstream release built for and
-able to analyze Go 1.27 export data and language features; replace it with `2026.2` final when
-available. Repository tool installation runs from inside `go/` so analyzers are compiled with the
-same exact Go toolchain as the application.
+Staticcheck is pinned to `2026.2.1`, which supports Go 1.27 export data and language features.
+Repository tool installation runs from inside `go/` so analyzers are compiled with the same exact
+Go toolchain as the application.
 
 | Variable                | Values           | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does                                                                                                                                                                                                                                                              |
 | ----------------------- | ---------------- | ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
