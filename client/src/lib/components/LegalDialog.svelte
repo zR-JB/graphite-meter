@@ -121,7 +121,11 @@
                 target="_blank"
                 rel="noopener noreferrer">Project license</a
               >
-              <a href={data.noticesURL}>Third-party notices</a>
+              <a
+                href={data.noticesURL}
+                target="_blank"
+                rel="noopener noreferrer">Third-party notices</a
+              >
             </p>
           </section>
 
