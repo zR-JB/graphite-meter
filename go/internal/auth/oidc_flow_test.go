@@ -349,6 +349,9 @@ func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 	if session == nil || session.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("session cookie = %+v, want SameSite=Strict", session)
 	}
+	if remaining := time.Until(session.Expires); remaining < 7*time.Hour || remaining > sessionLifetime {
+		t.Fatalf("OIDC session lifetime = %v, want the local eight-hour policy", remaining)
+	}
 	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("content-type=%q, want a text/html interstitial", ct)
 	}

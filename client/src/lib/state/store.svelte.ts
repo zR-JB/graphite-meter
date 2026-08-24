@@ -42,17 +42,20 @@ import {
 } from "../format";
 import { buildSegments } from "../runner/schedule";
 import { LatencyScaleController } from "../runner/latencyScale";
+import { latencyJitterMs, upsertLatencyBucket } from "../runner/latencyBuckets";
 import {
-  LATENCY_PRESENTATION_HISTORY_LIMIT,
-  latencyJitterMs,
-  upsertLatencyBucket,
-} from "../runner/latencyBuckets";
+  appendThroughputSample,
+  compactThroughputHistory,
+  PRESENTATION_POINT_LIMIT,
+} from "../runner/presentationHistory";
 import { weightedMean, weightedMeanAbsoluteDeviation } from "../runner/stats";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
   canToggleMeasuredStage,
   latestOneWayThroughputForPhase,
   latestBidirectionalLanes,
+  sustainedRate,
+  updateLiveThroughput,
 } from "./stageGuards";
 import {
   deriveStagePresentation,
@@ -70,6 +73,7 @@ import {
 } from "./persistence";
 
 const SCALE_DWELL_MS = 700;
+const LIVE_RATE_SAMPLE_LIMIT = 1_024;
 
 const MEASURED_STAGES = [
   "latency",
@@ -100,14 +104,21 @@ export interface LatencyLane {
   active: boolean;
 }
 
-const MAX_SAMPLES = 1200;
 const MAX_IDLE_SAMPLES = 60;
 
 const UNIT_STEP_UP_HEADROOM = 1.2;
 
 class AppStore {
   #latencyScale = new LatencyScaleController();
+  startError = $state("");
+  startPending = $state(false);
   throughput = $state<ThroughputSample[]>([]);
+  throughputRevision = $state(0);
+  liveThroughput = $state<ThroughputSample[]>([]);
+  #scaleThroughput: Pick<ThroughputSample, "t" | "bytesPerSec">[] = [];
+  #throughputTargetSpanMs = 0;
+  #sustainedPeakBytesPerSec = $state(0);
+  bytesTransferred = $state(0);
   /** Ephemeral upload visual target. Never contributes to history or results. */
   uploadPresentationBytesPerSec = $state<number | null>(null);
   /** Visual-target freshness only; it carries no rate or measurement evidence. */
@@ -191,41 +202,13 @@ class AppStore {
     this.debugLogging = persisted.debugLogging;
   }
 
-  // End-of-run headline is phase-agnostic: latency-only, upload-only, and
-  // bidirectional-only runs all resolve to the metric that actually ran.
-  finalMetric = $derived.by<
-    | { kind: "speed"; bytesPerSec: number }
-    | { kind: "latency"; ms: number }
-    | null
-  >(() => {
-    const results = this.stageResults;
-    const bidirectional = this.result?.bidirectional;
-    if (bidirectional?.down && bidirectional.up)
-      return {
-        kind: "speed",
-        bytesPerSec:
-          bidirectional.down.reportedBytesPerSec +
-          bidirectional.up.reportedBytesPerSec,
-      };
-    if (results.upload)
-      return { kind: "speed", bytesPerSec: results.upload.reportedBytesPerSec };
-    if (results.download)
-      return {
-        kind: "speed",
-        bytesPerSec: results.download.reportedBytesPerSec,
-      };
-    if (results.latency)
-      return { kind: "latency", ms: results.latency.reportedMs };
-    return null;
-  });
-
   liveTransferBytesPerSec = $derived.by(() => {
     // Bidirectional is displayed as aggregate throughput: latest down + latest up.
     if (this.phase === "download" || this.phase === "upload") {
-      return latestOneWayThroughputForPhase(this.phase, this.throughput);
+      return latestOneWayThroughputForPhase(this.phase, this.liveThroughput);
     }
     if (this.phase === "bidirectional") {
-      const { down, up } = latestBidirectionalLanes(this.throughput);
+      const { down, up } = latestBidirectionalLanes(this.liveThroughput);
       return down + up;
     }
     return 0;
@@ -233,14 +216,14 @@ class AppStore {
 
   liveBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
     if (this.phase !== "bidirectional") return null;
-    return latestBidirectionalLanes(this.throughput);
+    return latestBidirectionalLanes(this.liveThroughput);
   });
 
   visualTransferBytesPerSec = $derived.by(() => {
     if (this.phase === "upload")
       return this.uploadPresentationBytesPerSec ?? this.liveTransferBytesPerSec;
     if (this.phase === "bidirectional") {
-      const { down, up } = latestBidirectionalLanes(this.throughput);
+      const { down, up } = latestBidirectionalLanes(this.liveThroughput);
       return down + (this.uploadPresentationBytesPerSec ?? up);
     }
     return this.liveTransferBytesPerSec;
@@ -304,8 +287,6 @@ class AppStore {
   phaseRemainingMs = $derived(
     Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs),
   );
-
-  bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
 
   isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
 
@@ -435,47 +416,21 @@ class AppStore {
     ]);
   });
 
-  finalCompensation = $derived.by<CompensationEstimate>(() => {
-    if (this.result?.bidirectional) return this.bidirectionalCompensation;
-    if (this.stageResults.upload) return this.uploadCompensation;
-    return this.downloadCompensation;
-  });
-
-  #peakBytesPerSec = $derived.by(() => {
-    let peak = 0;
-    for (const s of this.throughput)
-      if (s.bytesPerSec > peak) peak = s.bytesPerSec;
-    return peak;
-  });
-
-  #sustainedPeakBytesPerSec = $derived.by(() => {
-    // Scale from a time-weighted sustained peak, not a single transient spike.
-    const samples = this.throughput;
-    const n = samples.length;
-    if (n === 0) return 0;
-    if (n === 1) return samples[0].bytesPerSec;
-    const weighted = new Array<{ bytesPerSec: number; dwellMs: number }>(n);
-    for (let i = 0; i < n; i++) {
-      const dwellMs =
-        i === 0 ? samples[1].t - samples[0].t : samples[i].t - samples[i - 1].t;
-      weighted[i] = {
-        bytesPerSec: samples[i].bytesPerSec,
-        dwellMs: Math.max(1, dwellMs),
-      };
-    }
-    weighted.sort((a, b) => b.bytesPerSec - a.bytesPerSec);
-    let acc = 0;
-    for (const entry of weighted) {
-      acc += entry.dwellMs;
-      if (acc >= SCALE_DWELL_MS) return entry.bytesPerSec;
-    }
-    return weighted[n - 1].bytesPerSec;
-  });
+  #peakBytesPerSec = $state(0);
 
   displayScaleBytesPerSec = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     if (typeof cfg === "number" && cfg > 0) return cfg;
-    return sharedThroughputScale(this.#sustainedPeakBytesPerSec);
+    const bidi = this.result?.bidirectional;
+    const terminalPeak = Math.max(
+      this.stageResults.download?.reportedBytesPerSec ?? 0,
+      this.stageResults.upload?.reportedBytesPerSec ?? 0,
+      (bidi?.down?.reportedBytesPerSec ?? 0) +
+        (bidi?.up?.reportedBytesPerSec ?? 0),
+    );
+    return sharedThroughputScale(
+      Math.max(this.#sustainedPeakBytesPerSec, terminalPeak),
+    );
   });
 
   #unitIndex = $derived.by(() => {
@@ -562,8 +517,43 @@ class AppStore {
         else this.stageResults[event.stage] = event.result;
         break;
       case "throughput":
-        this.throughput.push(event.sample);
-        if (this.throughput.length > MAX_SAMPLES) this.throughput.shift();
+        this.liveThroughput = updateLiveThroughput(
+          this.liveThroughput,
+          event.sample,
+        );
+        const liveLanes =
+          event.sample.phase === "bidirectional"
+            ? latestBidirectionalLanes(this.liveThroughput)
+            : null;
+        const scaleRate = liveLanes
+          ? liveLanes.down + liveLanes.up
+          : event.sample.bytesPerSec;
+        this.#scaleThroughput.push({
+          t: event.sample.t,
+          bytesPerSec: scaleRate,
+        });
+        while (
+          this.#scaleThroughput.length > 2 &&
+          this.#scaleThroughput[1].t < event.sample.t - SCALE_DWELL_MS * 2
+        )
+          this.#scaleThroughput.shift();
+        if (this.#scaleThroughput.length > LIVE_RATE_SAMPLE_LIMIT)
+          this.#scaleThroughput.shift();
+        this.#sustainedPeakBytesPerSec = Math.max(
+          this.#sustainedPeakBytesPerSec,
+          sustainedRate(this.#scaleThroughput, SCALE_DWELL_MS),
+        );
+        this.bytesTransferred = event.sample.bytesCumulative;
+        this.#peakBytesPerSec = Math.max(this.#peakBytesPerSec, scaleRate);
+        if (
+          appendThroughputSample(
+            this.throughput,
+            event.sample,
+            PRESENTATION_POINT_LIMIT,
+            this.#throughputTargetSpanMs,
+          )
+        )
+          this.throughputRevision++;
         if (event.sample.phase === "bidirectional") {
           this.presentationRateRevision[event.sample.dir]++;
           this.presentationRateRevision.transfer++;
@@ -587,7 +577,7 @@ class AppStore {
           const mutation = upsertLatencyBucket(
             this.latency,
             event.sample,
-            LATENCY_PRESENTATION_HISTORY_LIMIT,
+            PRESENTATION_POINT_LIMIT,
           );
           if (mutation === "structural-change") this.latencyRevision++;
           this.latencyScaleMs = this.#latencyScale.observe(event.sample);
@@ -628,7 +618,16 @@ class AppStore {
   }
 
   reset() {
+    this.startError = "";
+    this.startPending = false;
     this.throughput = [];
+    this.throughputRevision = 0;
+    this.liveThroughput = [];
+    this.#scaleThroughput = [];
+    this.#throughputTargetSpanMs = buildSegments(this.config).totalMs;
+    this.#sustainedPeakBytesPerSec = 0;
+    this.bytesTransferred = 0;
+    this.#peakBytesPerSec = 0;
     this.latency = [];
     this.#latencyScale.reset();
     this.latencyScaleMs = this.#latencyScale.scaleMs;
@@ -661,6 +660,13 @@ class AppStore {
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
     this.showWireEstimates = defaults.showWireEstimates;
+  }
+
+  compactThroughputForDuration(durationMs: number) {
+    if (durationMs <= this.#throughputTargetSpanMs) return;
+    this.#throughputTargetSpanMs = durationMs;
+    if (compactThroughputHistory(this.throughput, this.#throughputTargetSpanMs))
+      this.throughputRevision++;
   }
 
   latencyLanes = $derived.by<LatencyLane[]>(() =>

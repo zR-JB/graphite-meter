@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 const routePinPath = "../../../api/routes.txt"
@@ -171,7 +170,7 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 		assertEnumerates(t, "trust.go wsPingOriginAllowed", []string{ping}, enumeratedPaths(t, "trust.go", "wsPingOriginAllowed"))
 
 		s := testService(t)
-		_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+		_, sess, err := s.createSession("subject", "Name", "local")
 		if err != nil {
 			t.Fatal(err)
 		}

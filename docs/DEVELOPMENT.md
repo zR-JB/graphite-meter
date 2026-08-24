@@ -173,7 +173,7 @@ Pre-test probes and the idle connectivity keepalive are intentionally outside bo
 configurable build instead of the real-only default, e.g.:
 
 ```sh
-just prod allow_dummy=1 dev_tools=1 label=0.2.0
+just prod allow_dummy=1 dev_tools=1
 ```
 
 ## Build-time feature flags
@@ -198,7 +198,9 @@ the bundler: Bun's bundler transpiles TypeScript, but semantic type checking is 
 | `GM_CLIENT_ENGINE`      | `real` / `dummy` | `real`                                | `real`                                  | Default runner when more than one is compiled in.                                                                                                                                                                                                                         |
 | `GM_CLIENT_ALLOW_DUMMY` | `0` / `1`        | `1`                                   | `0`                                     | Compile in the dummy runner and the Developer-tab anomaly-injection cards.                                                                                                                                                                                                |
 | `GM_CLIENT_DEV_TOOLS`   | `0` / `1`        | `1`                                   | `0`                                     | Compile in the whole Developer settings tab (including debug logging).                                                                                                                                                                                                    |
-| `GM_CLIENT_BUILD_LABEL` | string           | `dev`                                 | git short hash                          | Text shown after `build` in the status bar. Also the label half of the client version `<package.json semver>+<label>`, which is shown in the Endpoint info drawer, written to `dist/version.json`, and sent to the server on preflight as `?client=web&client_version=…`. |
+| `GM_CLIENT_BUILD_PROFILE` | string         | `dev`                                 | `prod`                                  | Build profile shown in the footer and diagnostics. |
+| `GM_CLIENT_REVISION`      | string         | `source`                              | git short hash                          | Source revision shown for untagged builds and written to `dist/version.json`. |
+| `VERSION`                 | string         | unset                                 | unset unless releasing                  | Validated release version. Untagged builds keep `version.json.version` null. |
 | `GM_CLIENT_VALIDATE`    | `0` / `1`        | image build arg only                  | image build arg only                    | `1` runs `bun run build` (type check + bundle) inside the Dockerfile; `0` runs `build:bundle` alone. CI smoke and release image builds pass `0` because the same commit already passed the client check/test job.                                                         |
 
 At runtime, when the dummy runner is compiled in, `?engine=dummy` on the URL (or a previously
@@ -299,7 +301,7 @@ podman run -d --name gm --replace -p 7246:7246 graphite-meter:latest
 `container/Dockerfile` stages:
 
 1. **`client`** (`oven/bun:canary`) — installs client deps, builds the Svelte app. Build args
-   `GM_CLIENT_ENGINE`/`GM_CLIENT_ALLOW_DUMMY`/`GM_CLIENT_DEV_TOOLS`/`GM_CLIENT_BUILD_LABEL` default
+   `GM_CLIENT_ENGINE`/`GM_CLIENT_ALLOW_DUMMY`/`GM_CLIENT_DEV_TOOLS`/`GM_CLIENT_BUILD_PROFILE` default
    to production values (`real`/`0`/`0`/`prod`) and are promoted to env vars so `bun run build`'s
    `process.env` (read by `vite.config.ts`) sees them.
 2. **`server`** (`golang:1.26`) — `go mod download`, copies `go/` and `api/` (the schema
@@ -315,6 +317,12 @@ To bake a configurable (non-prod-default) image, pass `--build-arg` for any clie
 podman build -f container/Dockerfile -t graphite-meter:dev \
   --build-arg GM_CLIENT_ALLOW_DUMMY=1 --build-arg GM_CLIENT_DEV_TOOLS=1 .
 ```
+
+The direct Dockerfile and source Compose defaults stamp `0.1.0` into both the server and
+client. `just container-build` and the source-build Quadlet instead derive the server identity
+from the checkout revision; they leave `CLIENT_VERSION` empty for an untagged client and set
+`GM_CLIENT_REVISION` to that revision. Release and prerelease image builds pass the validated
+release version to both `VERSION` and `CLIENT_VERSION`.
 
 `container/docker-compose.build.yml` wraps the same build (context = repo root, `dockerfile:
 container/Dockerfile`) with the server env vars pre-wired, a complete commented native TLS

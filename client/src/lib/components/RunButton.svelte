@@ -1,50 +1,63 @@
 <script lang="ts">
   // Primary start/abort action.
   import { store } from "../state/store.svelte";
-  import { engage } from "../runner/engine.svelte";
+  import { toggleRun } from "../runner/engine.svelte";
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
   // A resolved run relabels the button "Run again", pairing with the R key
   // and the ShortcutHints strip.
+  const pending = $derived(store.startPending);
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||
       store.phase === "error",
   );
   const label = $derived(
-    store.isRunning
-      ? "Abort test"
-      : resolved
-        ? "Run the test again"
-        : "Start the speed test",
+    pending
+      ? "Preparing the speed test"
+      : store.isRunning
+        ? "Abort test"
+        : resolved
+          ? "Run the test again"
+          : "Start the speed test",
   );
 </script>
 
 <button
-  class="engage"
+  class="run-button"
   class:running={store.isRunning}
+  class:pending
   aria-label={label}
-  onclick={engage}
-  use:tooltip={store.isRunning
-    ? "Stop the test (Space / Esc)"
-    : resolved
-      ? "Run the test again (Space / R)"
-      : "Start the test (Space)"}
+  aria-busy={pending}
+  disabled={pending}
+  onclick={toggleRun}
+  use:tooltip={pending
+    ? "Preparing the test"
+    : store.isRunning
+      ? "Stop the test (Space / Esc)"
+      : resolved
+        ? "Run the test again (Space / R)"
+        : "Start the test (Space)"}
 >
-  <span class="engage-content">
-    {#if store.isRunning}
+  <span class="run-button-content">
+    {#if pending}
+      PREPARING…
+    {:else if store.isRunning}
       <span class="stop-sq"></span> ABORT
     {:else if resolved}
       <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
     {:else}
-      <span class="ico">{@html ICON.bolt}</span> ENGAGE
+      <span class="ico">{@html ICON.bolt}</span> START TEST
     {/if}
   </span>
 </button>
+{#if store.startError}
+  <p class="run-error" role="alert">{store.startError}</p>
+{/if}
 
 <style>
-  .engage {
+  .run-button {
     position: relative;
     isolation: isolate;
     overflow: hidden;
@@ -75,19 +88,27 @@
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
-  .engage:hover {
+  .run-button:hover {
     transform: translateY(-1px);
     filter: brightness(1.04);
   }
-  .engage:focus-visible {
+  .run-button:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-  .engage.running {
+  .run-button.running {
     background: var(--err-soft);
     color: var(--err);
     border-color: color-mix(in srgb, var(--err) 40%, var(--border));
     box-shadow: none;
+  }
+  .run-button.pending {
+    cursor: wait;
+    filter: saturate(0.7);
+  }
+  .run-button.pending:hover {
+    transform: none;
+    filter: saturate(0.7);
   }
   .stop-sq {
     width: 12px;
@@ -105,14 +126,20 @@
     width: 18px;
     height: 18px;
   }
-  .engage-content {
+  .run-button-content {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
   }
+  .run-error {
+    margin: var(--space-2) 0 0;
+    color: var(--err);
+    font-size: var(--text-xs);
+    text-align: center;
+  }
   @media (prefers-reduced-motion: no-preference) {
-    .engage-content {
+    .run-button-content {
       animation: control-content-enter 100ms var(--ease-out) both;
     }
   }

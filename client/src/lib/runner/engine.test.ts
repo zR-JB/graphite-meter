@@ -29,7 +29,10 @@ const BUILD_TOKENS = {
   __GM_DEFAULT_ENGINE__: "real",
   __GM_ALLOW_DUMMY__: false,
   __GM_DEV_TOOLS__: false,
-  __GM_BUILD_LABEL__: "test",
+  __GM_BUILD_PROFILE__: "test",
+  __GM_RELEASE_VERSION__: null,
+  __GM_SOURCE_REVISION__: "test-revision",
+  __GM_BUILD_IDENTITY__: "test test-revision",
   __GM_CLIENT_VERSION__: "0.0.0-test",
 };
 
@@ -86,7 +89,7 @@ const PROBE_EVIDENCE: InfraInfo = {
 // the gauge's latency scale floor, and `store.liveRtt` — so evidence that
 // outlives its session is rendered as if current.
 //
-// It is server-scoped, not run-scoped. `engage()` calls `store.reset()` at the
+// It is server-scoped, not run-scoped. `toggleRun()` calls `store.reset()` at the
 // start of every run and re-probes only when the prepared probe went stale, so
 // clearing it per run would blank those rows between runs against the same
 // server. Teardown is where the server binding itself ends, which is why
@@ -114,6 +117,58 @@ test("teardown clears the probe evidence; a run reset keeps it", async () => {
     teardownRunner();
     restore();
     expect(store.infra).toBeNull();
+  } finally {
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("store reset clears a transient start error", async () => {
+  const { store } = await import("../state/store.svelte");
+  store.startError = "This test would outlast the session.";
+  store.startPending = true;
+  store.reset();
+  expect(store.startError).toBe("");
+  expect(store.startPending).toBe(false);
+});
+
+test("repeated start clicks do not cancel a pending preflight", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  try {
+    const {
+      bootRunner,
+      cancelPendingStart,
+      hasPendingStart,
+      teardownRunner,
+      toggleRun,
+    } = await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    const restoreEnvironment = stubBootEnvironment("visible");
+    await bootRunner();
+    const restorePendingFetch = stubGlobal(
+      "fetch",
+      () => new Promise<Response>(() => {}),
+    );
+    store.reset();
+
+    toggleRun();
+    expect(hasPendingStart()).toBe(true);
+    expect(store.startPending).toBe(true);
+    toggleRun();
+    expect(hasPendingStart()).toBe(true);
+    expect(store.startPending).toBe(true);
+
+    cancelPendingStart();
+    expect(hasPendingStart()).toBe(false);
+    expect(store.startPending).toBe(false);
+    restorePendingFetch();
+    teardownRunner();
+    restoreEnvironment();
   } finally {
     restoreWindow();
     for (const key of Object.keys(BUILD_TOKENS))

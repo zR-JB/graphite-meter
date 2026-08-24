@@ -49,7 +49,7 @@ func wtConnect(t *testing.T, s *Service, path string) (reached bool, status int)
 // branch: the request would 404 anyway, and the token is single-use.
 func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
 
 func TestWebTransportConnectAcceptsAMintedTokenOnce(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
 // every other route.
 func TestWebTransportConnectRefusesASessionCookie(t *testing.T) {
 	s := testService(t)
-	raw, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	raw, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestWebTransportConnectRefusesASessionCookie(t *testing.T) {
 
 func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 
 func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func mintWithGrant(t *testing.T, s *Service, grant string) bool {
 // from, for as long as it kept re-minting.
 func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 // signed-in caller is told to retry what will never work, or to log in again.
 func TestWebTransportMintSeparatesCapacityFromNoSession(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestWebTransportMintSeparatesCapacityFromNoSession(t *testing.T) {
 // deadline is what must stop them authenticating, not the sweep.
 func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Now().Add(50*time.Millisecond))
+	_, sess, err := s.createSessionUntil("subject", "Name", "local", time.Now().Add(50*time.Millisecond))
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 // map for its full lifetime after the session that owned it is gone.
 func TestRevokingASessionRemovesItsTokensFromTheService(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestRevokingASessionRemovesItsTokensFromTheService(t *testing.T) {
 // hop. secureRequest sets r.TLS, so nothing else in this package drives one.
 func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 // URL, so its length is a security property in its own right.
 func TestWebTransportTokenCarries256Bits(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local", time.Time{})
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}

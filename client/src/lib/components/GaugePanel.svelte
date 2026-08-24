@@ -20,6 +20,8 @@
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
+  import { resultGaugeArcs } from "./resultGauge";
+  import { ICON } from "../constants";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
@@ -29,11 +31,14 @@
   const activeStagePresentation = $derived(
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
   );
+  const terminalArcs = $derived(resultGaugeArcs(store.result));
   // A one-sided bidirectional partial retains its lane result for diagnostics,
   // but has no truthful combined gauge value.
   const unusableStage = $derived(
     activeStagePresentation?.status === "failed" ||
-      (store.phase === "complete" && store.finalMetric === null),
+      (store.phase === "complete" &&
+        terminalArcs.length === 0 &&
+        !store.result?.latency),
   );
 
   let canvasEl = $state<HTMLCanvasElement>();
@@ -51,52 +56,20 @@
 
   const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
-  let completedDisplay = $state(EMPTY_DISPLAY);
-  let completedKind = $state<"speed" | "latency">("speed");
+  const completedKind = $derived<"speed" | "latency">(
+    terminalArcs.length ? "speed" : "latency",
+  );
   const gaugeLatency = $derived.by(() => {
-    const metric = store.phase === "complete" ? store.finalMetric : null;
     return gaugeLatencyPresentation({
       phase: store.phase,
       liveRttMs: store.liveRtt,
       liveScaleMs: store.latencyScaleMs,
       history: store.latency,
-      completedRttMs: metric?.kind === "latency" ? metric.ms : null,
+      completedRttMs:
+        store.phase === "complete" && terminalArcs.length === 0
+          ? (store.result?.latency?.reportedMs ?? null)
+          : null,
     });
-  });
-
-  $effect(() => {
-    if (store.phase === "latency") {
-      completedKind = "latency";
-      completedDisplay = store.liveLatencyLost
-        ? { value: "lost", unit: "" }
-        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
-    } else if (
-      store.phase === "download" ||
-      store.phase === "upload" ||
-      store.phase === "bidirectional"
-    ) {
-      completedKind = "speed";
-      completedDisplay = {
-        value: fmtSpeed(store.toUnit(store.visualTransferBytesPerSec)),
-        unit: store.unitLabel,
-      };
-    }
-  });
-
-  $effect(() => {
-    if (store.phase !== "complete") return;
-    const metric = store.finalMetric;
-    if (!metric) return;
-    if (metric.kind === "latency") {
-      completedKind = "latency";
-      completedDisplay = { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
-    } else {
-      completedKind = "speed";
-      completedDisplay = {
-        value: fmtSpeed(store.toUnit(metric.bytesPerSec)),
-        unit: store.unitLabel,
-      };
-    }
   });
 
   const msTicksActive = $derived(
@@ -137,7 +110,17 @@
       p === "warmup"
     )
       return EMPTY_DISPLAY;
-    if (p === "complete") return completedDisplay;
+    if (p === "complete") {
+      if (terminalArcs.length === 1)
+        return {
+          value: fmtSpeed(store.toUnit(terminalArcs[0].bytesPerSec)),
+          unit: `${store.unitLabel} · ${terminalArcs[0].label}`,
+        };
+      if (terminalArcs.length > 1) return { value: "", unit: store.unitLabel };
+      return store.result?.latency
+        ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
+        : EMPTY_DISPLAY;
+    }
     return {
       value: fmtSpeed(store.toUnit(liveRateValues.transfer)),
       unit: store.unitLabel,
@@ -238,6 +221,29 @@
   // visible text out of the accessibility tree; assistive technology receives
   // the same authoritative value used by the live announcement instead.
   const accessibleDisplay = $derived(announcementDisplay);
+  const terminalAnnouncement = $derived(
+    terminalArcs
+      .map(
+        (arc) =>
+          `${arc.label} ${fmtSpeed(store.toUnit(arc.bytesPerSec))} ${store.unitLabel}${arc.dashed ? ", partial" : ""}`,
+      )
+      .join("; "),
+  );
+  const terminalSummary = $derived.by(() =>
+    store.phase === "complete" && terminalArcs.length > 1
+      ? terminalArcs.map((arc) => ({
+          value: fmtSpeed(store.toUnit(arc.bytesPerSec)),
+          direction:
+            arc.phase === "download" || arc.label.endsWith("download")
+              ? "download"
+              : arc.phase === "upload" || arc.label.endsWith("upload")
+                ? "upload"
+                : "bidirectional",
+          phase: arc.phase,
+          dashed: arc.dashed,
+        }))
+      : [],
+  );
 
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
@@ -254,7 +260,7 @@
   const hint = $derived.by(() => {
     switch (store.phase) {
       case "idle":
-        return "Press Engage to start your speed test";
+        return "Press Start test to start your speed test";
       case "connecting":
         return "Verifying the selected protocol…";
       case "warmup":
@@ -321,6 +327,7 @@
     const phase = store.phase;
     pendingAnnouncement =
       statusText ||
+      (phase === "complete" && terminalAnnouncement) ||
       `${announcementDisplay.value} ${announcementDisplay.unit}, phase ${phase}`;
     const commit = () => {
       announcement = pendingAnnouncement;
@@ -346,20 +353,30 @@
     engine = new GaugeEngine(() => {
       const p = store.phase;
       const scale = store.displayScaleBytesPerSec;
-      const finalMetric = p === "complete" ? store.finalMetric : null;
       return {
         phase: p,
         showValue: !unusableStage,
         valueBytesPerSec: unusableStage
           ? 0
-          : finalMetric?.kind === "speed"
-            ? finalMetric.bytesPerSec
+          : p === "complete" && terminalArcs.length
+            ? terminalArcs[0].bytesPerSec
             : liveRateValues.transfer,
         scaleBytesPerSec: scale,
         latencyScaleMs: gaugeLatency.scaleMs,
         layout,
         rtt: gaugeLatency.rttMs,
         completedKind,
+        resultArcs:
+          p === "complete"
+            ? terminalArcs.map((arc) => ({
+                phase: arc.phase,
+                fraction: Math.min(
+                  1,
+                  Math.max(0, arc.bytesPerSec / Math.max(1, scale)),
+                ),
+                dashed: arc.dashed,
+              }))
+            : [],
       };
     });
     engine.attach(canvasEl!);
@@ -438,9 +455,36 @@
         </div>
       {/if}
       <div class="metric-wrap">
-        <span class="gauge-value" aria-hidden="true">{display.value}</span>
-        {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-            >{display.unit}</span
+        {#if terminalSummary.length}
+          <div class="terminal-readout" aria-hidden="true">
+            <div class="terminal-summary">
+              {#each terminalSummary as item (item.phase)}
+                <span
+                  class="terminal-result {item.phase}"
+                  class:partial={item.dashed}
+                >
+                  <span class="terminal-marker">
+                    {#if item.direction === "download"}
+                      {@html ICON.download}
+                    {:else if item.direction === "upload"}
+                      {@html ICON.upload}
+                    {:else}
+                      {@html ICON.bidirectional}
+                    {/if}
+                  </span>
+                  <span class="terminal-number">{item.value}</span>
+                </span>
+              {/each}
+            </div>
+            <span class="terminal-unit">{display.unit}</span>
+          </div>
+        {/if}
+        {#if display.value}<span class="gauge-value" aria-hidden="true"
+            >{display.value}</span
+          >{/if}
+        {#if display.unit && !terminalSummary.length}<span
+            class="gauge-unit"
+            aria-hidden="true">{display.unit}</span
           >{/if}
         <span class="sr-only"
           >{accessibleDisplay.value} {accessibleDisplay.unit}</span
@@ -462,7 +506,7 @@
       <output class="sr-only" aria-live="polite">{announcement}</output>
     </div>
 
-    <div class="engage-slot"><RunButton /></div>
+    <div class="run-slot"><RunButton /></div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel">
@@ -514,7 +558,7 @@
   .gauge-panel:has(:global(.result-cards.reserve)) {
     --result-slot-budget: 80px;
   }
-  /* The instrument grid places stage-head, gauge, Engage, and the optional
+  /* The instrument grid places stage-head, gauge, Start test, and the optional
      latency panel, so one breakpoint flips the whole arrangement. Its
      gauge+latency track is content-independent: the latency panel scrolls
      inside its own height. */
@@ -543,7 +587,7 @@
     grid-template:
       "stagehead" auto
       "gauge" var(--gauge-well-height)
-      "engage" auto
+      "run" auto
       "latency" auto
       / 1fr;
   }
@@ -552,17 +596,17 @@
     grid-template:
       "stagehead" auto
       "gauge" var(--gauge-well-height)
-      "engage" auto
+      "run" auto
       / 1fr;
   }
   /* Wide: gauge + latency side-by-side (each min-width:240px + gap ≈ 492px;
      520px leaves a safety margin over the columns' min-width floor). One
-     query moves Engage, the latency panel, and Test Stages together. */
+     query moves Start test, the latency panel, and Test Stages together. */
   @container viz (min-width: 520px) {
     .instrument {
       grid-template:
         "gauge latency" var(--gauge-well-height)
-        "engage engage" auto
+        "run run" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
@@ -571,7 +615,7 @@
     .instrument:not(:has(.latency-panel)) {
       grid-template:
         "gauge gauge" var(--gauge-well-height)
-        "engage engage" auto
+        "run run" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
@@ -597,13 +641,14 @@
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
   }
-  /* Engage's slot: RunButton centers itself (width:100%, max-width:320px,
+  /* Start test's slot: RunButton centers itself (width:100%, max-width:320px,
      align-self:center), so this slot only has to be a flex row. */
-  .engage-slot {
-    grid-area: engage;
+  .run-slot {
+    grid-area: run;
     display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    height: 46px;
     min-height: 46px;
   }
   /* Latency profile: a matching engraved well, sized identically to the gauge
@@ -694,6 +739,83 @@
     max-width: 100%;
     white-space: nowrap;
   }
+  .terminal-readout {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    max-width: 72%;
+  }
+  .terminal-summary {
+    display: grid;
+    gap: 4px;
+    max-width: 100%;
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: clamp(18px, 7.2cqmin, 30px);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .terminal-result {
+    --result-accent: var(--text-soft);
+    display: grid;
+    grid-template-columns: 21px minmax(4ch, 1fr);
+    align-items: center;
+    gap: 7px;
+  }
+  .terminal-result.download {
+    --result-accent: var(--phase-download);
+  }
+  .terminal-result.upload {
+    --result-accent: var(--phase-upload);
+  }
+  .terminal-result.bidirectional {
+    --result-accent: var(--phase-bidirectional);
+  }
+  .terminal-marker {
+    display: grid;
+    place-items: center;
+    width: 21px;
+    height: 21px;
+    border: 1px solid
+      color-mix(in srgb, var(--result-accent) 30%, var(--border));
+    border-radius: var(--r-well);
+    background: color-mix(in srgb, var(--result-accent) 6%, var(--surface-2));
+    color: var(--result-accent);
+    line-height: 1;
+  }
+  .terminal-marker :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
+  .terminal-result.partial .terminal-marker {
+    border-style: dashed;
+  }
+  .terminal-number {
+    min-width: 0;
+    text-align: right;
+  }
+  .terminal-unit {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    font-family: var(--font-mono);
+    font-size: clamp(10px, 3.1cqmin, 12px);
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    color: var(--text-soft);
+    line-height: 1;
+  }
+  .terminal-unit::before,
+  .terminal-unit::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  }
   .gauge-unit {
     margin-top: var(--space-1);
     font-family: var(--font-mono);
@@ -702,6 +824,31 @@
     letter-spacing: 0.02em;
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .terminal-result {
+      animation: terminal-result-enter 180ms var(--ease-out) both;
+    }
+    .terminal-result:nth-child(2) {
+      animation-delay: 35ms;
+    }
+    .terminal-result:nth-child(3) {
+      animation-delay: 70ms;
+    }
+    .terminal-unit {
+      animation: terminal-unit-enter 160ms var(--ease-out) 100ms both;
+    }
+  }
+  @keyframes terminal-result-enter {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+  }
+  @keyframes terminal-unit-enter {
+    from {
+      opacity: 0;
+    }
   }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect

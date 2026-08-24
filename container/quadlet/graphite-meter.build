@@ -23,12 +23,13 @@ File=container/Dockerfile
 Arch=arm64
 
 # The Dockerfile defaults already produce a real-only prod image. Uncomment to
-# override the client build knobs or stamp a version (equivalent to --build-arg).
-# VERSION stamps the server binary (ldflags); GM_CLIENT_BUILD_LABEL stamps the
-# client (status bar + client version <semver>+<label>). ExecStartPre below
-# sets both to the git revision via the build-arg file.
+# override the client build knobs or stamp a release version (equivalent to
+# --build-arg). VERSION stamps the server binary; CLIENT_VERSION stamps the
+# client release version. The source build keeps CLIENT_VERSION empty and uses
+# GM_CLIENT_REVISION for its untagged identity.
 # BuildArg=VERSION=0.1.0
-# BuildArg=GM_CLIENT_BUILD_LABEL=0.1.0
+# BuildArg=CLIENT_VERSION=0.1.0
+# BuildArg=GM_CLIENT_REVISION=abc1234
 # BuildArg=GM_CLIENT_ALLOW_DUMMY=1
 # BuildArg=GM_CLIENT_DEV_TOOLS=1
 
@@ -36,4 +37,4 @@ Arch=arm64
 PodmanArgs=--build-arg-file=%t/graphite-meter-build.args
 
 [Service]
-ExecStartPre=/bin/sh -c 'cd /path/to/graphite-meter && rev="$$(git rev-parse --short=7 HEAD)"; git diff --quiet || rev="$${rev}-dirty"; printf "VERSION=%%s\nGM_CLIENT_BUILD_LABEL=%%s\n" "$$rev" "$$rev" > %t/graphite-meter-build.args'
+ExecStartPre=/bin/sh -c 'cd /path/to/graphite-meter && rev="$$(git rev-parse --short=7 HEAD)"; git diff --quiet || rev="$${rev}-dirty"; printf "VERSION=%%s\nCLIENT_VERSION=\nGM_CLIENT_REVISION=%%s\n" "$$rev" "$$rev" > %t/graphite-meter-build.args'

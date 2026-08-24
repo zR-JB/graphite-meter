@@ -94,6 +94,8 @@ runs:
           org.opencontainers.image.licenses=AGPL-3.0-or-later
         build-args: |
           VERSION=${{ inputs.version }}
-          GM_CLIENT_BUILD_LABEL=prod
+          CLIENT_VERSION=${{ inputs.version }}
+          GM_CLIENT_BUILD_PROFILE=prod
+          GM_CLIENT_REVISION=${{ inputs.revision }}
           GM_CLIENT_VALIDATE=${{ inputs.client-validate }}
           BUN_VERSION=${{ steps.versions.outputs.bun }}

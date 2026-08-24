@@ -15,11 +15,118 @@ export const authEnabled =
 
 /** Replaces the current document, so the calling task stops executing here.
  *  `expired` is the phrasing key the server-rendered login page reads. */
-export function redirectToLogin(): void {
+export function redirectToLogin(reason = "expired"): void {
   if (!authEnabled || redirecting) return;
   redirecting = true;
   window.dispatchEvent(new Event("graphite-meter-auth-required"));
-  location.replace("/login?reason=expired");
+  location.replace(`/login?reason=${encodeURIComponent(reason)}`);
+}
+
+export class SessionCoverageError extends Error {}
+
+export interface SessionBudget {
+  remainingMs: number;
+  maximumLifetimeMs: number;
+  checkedAt: number;
+}
+
+export type SessionCoverage = "enough" | "renew" | "too-long" | "invalid";
+
+export function classifySessionCoverage(
+  requiredMs: number,
+  remainingMs: unknown,
+  maximumLifetimeMs: unknown,
+): SessionCoverage {
+  if (
+    !Number.isFinite(requiredMs) ||
+    requiredMs < 0 ||
+    typeof remainingMs !== "number" ||
+    !Number.isFinite(remainingMs) ||
+    remainingMs < 0 ||
+    typeof maximumLifetimeMs !== "number" ||
+    !Number.isFinite(maximumLifetimeMs) ||
+    maximumLifetimeMs <= 0 ||
+    remainingMs > maximumLifetimeMs
+  )
+    return "invalid";
+  if (requiredMs > maximumLifetimeMs) return "too-long";
+  return requiredMs > remainingMs ? "renew" : "enough";
+}
+
+export function sessionBudgetCovers(
+  budget: SessionBudget,
+  requiredMs: number,
+  now = performance.now(),
+): boolean {
+  return requiredMs <= budget.remainingMs - (now - budget.checkedAt);
+}
+
+export function liveScheduleFitsSession(
+  budget: SessionBudget | null,
+  activeMs: number,
+  candidateMs: number,
+  marginMs: number,
+  now = performance.now(),
+): boolean {
+  return (
+    candidateMs <= activeMs ||
+    budget === null ||
+    sessionBudgetCovers(budget, candidateMs + marginMs, now)
+  );
+}
+
+export async function requireSessionCoverage(
+  requiredMs: number,
+  localSignal?: AbortSignal,
+): Promise<SessionBudget | null> {
+  if (localSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+  if (!authEnabled) return null;
+  const controller = new AbortController();
+  const relayAbort = () => controller.abort();
+  localSignal?.addEventListener("abort", relayAbort, { once: true });
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const response = await authenticatedFetch("/auth/session", {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok)
+      throw new SessionCoverageError("Could not verify the session lifetime.");
+    const body = (await response.json()) as Record<string, unknown>;
+    const remainingMs = body.remainingMs;
+    const maximumLifetimeMs = body.maximumLifetimeMs;
+    const coverage = classifySessionCoverage(
+      requiredMs,
+      remainingMs,
+      maximumLifetimeMs,
+    );
+    if (coverage === "invalid")
+      throw new SessionCoverageError("Could not verify the session lifetime.");
+    if (coverage === "too-long")
+      throw new SessionCoverageError(
+        "This test is longer than the maximum session lifetime. Shorten it before starting.",
+      );
+    if (coverage === "renew") {
+      redirectToLogin("renew");
+      throw new SessionCoverageError(
+        "Sign in again before starting this long test.",
+      );
+    }
+    return {
+      remainingMs: remainingMs as number,
+      maximumLifetimeMs: maximumLifetimeMs as number,
+      checkedAt: performance.now(),
+    };
+  } catch (cause) {
+    if (localSignal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (cause instanceof SessionCoverageError) throw cause;
+    throw new SessionCoverageError("Could not verify the session lifetime.", {
+      cause,
+    });
+  } finally {
+    clearTimeout(timeout);
+    localSignal?.removeEventListener("abort", relayAbort);
+  }
 }
 
 export function csrfHeader(): Record<string, string> {

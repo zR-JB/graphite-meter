@@ -34,21 +34,11 @@ engine := env("GM_CLIENT_ENGINE", "real")
 allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
 dev_tools := env("GM_CLIENT_DEV_TOOLS", "0")
 
-# Detect Git commit hash cross-platform, suppressing errors cleanly depending on OS.
-# `label` is the status-bar label and the label half of the client version
-# <semver>+<label> (Endpoint info drawer, dist/version.json, preflight query).
-# `version` feeds BOTH the client build's VERSION env (see client-build-prod
-# below) and the Go ldflag, identically, so a `just` build always agrees with
-# itself. Three fallback tiers, low to high precedence:
-#   1. no VERSION, no `just` at all (raw `go build`/`bun run build`) — the
-#      compiled-in sentinels: go/internal/config.EngineVersion's "0.0.0-dev"
-#      and client/package.json's "0.0.0". Never bumped by hand.
-#   2. `just` run with no VERSION set — falls back to the git short hash
-#      (this line), a real build identity, distinct from tier 1's sentinel.
-#   3. `VERSION=x.y.z just ...` (or CI/release.yml, which always sets it from
-#      the git tag) — the authoritative release version.
-label := env("GM_CLIENT_BUILD_LABEL", if os() == "windows" { `cmd.exe /c "git rev-parse --short HEAD 2>nul || echo prod"` } else { `git rev-parse --short HEAD 2>/dev/null || echo prod` })
-version := env("VERSION", label)
+# Untagged builds use the source revision as identity; only release automation
+# supplies VERSION.
+revision := env("GM_CLIENT_REVISION", if os() == "windows" { `cmd.exe /c "git rev-parse --short HEAD 2>nul || echo source"` } else { `git rev-parse --short HEAD 2>/dev/null || echo source` })
+release_version := env("VERSION", "")
+version := if release_version == "" { revision } else { release_version }
 # Legal metadata distinguishes a release tag from an untagged development
 # build. The normal build label may be a commit hash, but that is not a source
 # release version and must not appear as legal source-version metadata.
@@ -191,12 +181,12 @@ client-ci: client-check-generated
 # Build the client with the development profile.
 [group('build')]
 client-build-dev:
-    cd client && bun run build
+    bun -e "process.env.GM_CLIENT_BUILD_PROFILE='dev'; process.env.GM_CLIENT_REVISION='{{ revision }}'; delete process.env.VERSION; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
 # Build the client with the production profile.
 [group('build')]
 client-build-prod:
-    bun -e "process.env.GM_CLIENT_ENGINE='{{ engine }}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{ allow_dummy }}'; process.env.GM_CLIENT_DEV_TOOLS='{{ dev_tools }}'; process.env.GM_CLIENT_BUILD_LABEL='{{ label }}'; process.env.VERSION='{{ version }}'; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_ENGINE='{{ engine }}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{ allow_dummy }}'; process.env.GM_CLIENT_DEV_TOOLS='{{ dev_tools }}'; process.env.GM_CLIENT_BUILD_PROFILE='prod'; process.env.GM_CLIENT_REVISION='{{ revision }}'; const version='{{ release_version }}'; if (version) process.env.VERSION=version; else delete process.env.VERSION; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
 # Discover the production browser closure in a temporary Vite output tree and
 # run the single offline legal generator. The scan build always consumes the
@@ -469,7 +459,7 @@ release-check version="development":
 # Build exact production client and Go server artifacts for release validation.
 [group('release')]
 release-build version="development":
-    VERSION="{{ version }}" GM_CLIENT_BUILD_LABEL=prod just server-build-prod
+    VERSION="{{ version }}" just server-build-prod
 
 # Build all stable release artifacts into go/dist without publishing them.
 # Build all versioned release artifacts, third-party source, and checksums.
@@ -502,7 +492,9 @@ container-smoke:
     "$engine" build -f container/Dockerfile -t graphite-meter:smoke \
       --build-arg BUN_VERSION="$bun_version" \
       --build-arg VERSION=0.0.0-ci \
-      --build-arg GM_CLIENT_BUILD_LABEL=local \
+      --build-arg CLIENT_VERSION=0.0.0-ci \
+      --build-arg GM_CLIENT_BUILD_PROFILE=prod \
+      --build-arg GM_CLIENT_REVISION=local \
       --build-arg GM_CLIENT_VALIDATE=0 \
       --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
     scripts/verify-container.sh graphite-meter:smoke
@@ -553,7 +545,7 @@ dev: client-build-dev _embed-client
     cd go && go run ./cmd/graphite-meter
 
 # Override the GM_CLIENT_* knobs inline exactly like client-build-prod, e.g.
-# `just prod allow_dummy=1 dev_tools=1 label=0.2.0`. For a persisted binary
+# `just prod allow_dummy=1 dev_tools=1`. For a persisted binary
 # instead of a live run, use `server-build-prod`.
 # Prod: build + embed the prod-profile client, then `go run` the version-stamped server on :7246.
 # Build the production client and run the embedded server.
@@ -577,4 +569,6 @@ container-build:
     "$engine" build -f container/Dockerfile -t graphite-meter:latest \
       --build-arg BUN_VERSION="$bun_version" \
       --build-arg VERSION="{{ version }}" \
-      --build-arg GM_CLIENT_BUILD_LABEL="{{ label }}" .
+      --build-arg CLIENT_VERSION="{{ release_version }}" \
+      --build-arg GM_CLIENT_BUILD_PROFILE=prod \
+      --build-arg GM_CLIENT_REVISION="{{ revision }}" .

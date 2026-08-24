@@ -88,7 +88,10 @@ test("a refused WebTransport check is re-dialled on the next probe, so Retry wor
     __GM_DEFAULT_ENGINE__: "real",
     __GM_ALLOW_DUMMY__: false,
     __GM_DEV_TOOLS__: false,
-    __GM_BUILD_LABEL__: "test",
+    __GM_BUILD_PROFILE__: "test",
+    __GM_RELEASE_VERSION__: null,
+    __GM_SOURCE_REVISION__: "test-revision",
+    __GM_BUILD_IDENTITY__: "test test-revision",
     __GM_CLIENT_VERSION__: "0.0.0-test",
   });
   const { RealBackend, TransportUnavailableError } =
@@ -174,7 +177,10 @@ test("a session that establishes but carries no bytes is not Ready", async () =>
     __GM_DEFAULT_ENGINE__: "real",
     __GM_ALLOW_DUMMY__: false,
     __GM_DEV_TOOLS__: false,
-    __GM_BUILD_LABEL__: "test",
+    __GM_BUILD_PROFILE__: "test",
+    __GM_RELEASE_VERSION__: null,
+    __GM_SOURCE_REVISION__: "test-revision",
+    __GM_BUILD_IDENTITY__: "test test-revision",
     __GM_CLIENT_VERSION__: "0.0.0-test",
   });
   const { RealBackend, TransportUnavailableError } =
@@ -240,7 +246,10 @@ test("a session kind this client cannot drive fails its role before any dial", a
     __GM_DEFAULT_ENGINE__: "real",
     __GM_ALLOW_DUMMY__: false,
     __GM_DEV_TOOLS__: false,
-    __GM_BUILD_LABEL__: "test",
+    __GM_BUILD_PROFILE__: "test",
+    __GM_RELEASE_VERSION__: null,
+    __GM_SOURCE_REVISION__: "test-revision",
+    __GM_BUILD_IDENTITY__: "test test-revision",
     __GM_CLIENT_VERSION__: "0.0.0-test",
   });
   const { RealBackend } = await import("./RealRunner");
@@ -376,7 +385,10 @@ async function withHeldSessions(
     __GM_DEFAULT_ENGINE__: "real",
     __GM_ALLOW_DUMMY__: false,
     __GM_DEV_TOOLS__: false,
-    __GM_BUILD_LABEL__: "test",
+    __GM_BUILD_PROFILE__: "test",
+    __GM_RELEASE_VERSION__: null,
+    __GM_SOURCE_REVISION__: "test-revision",
+    __GM_BUILD_IDENTITY__: "test test-revision",
     __GM_CLIENT_VERSION__: "0.0.0-test",
   });
   const { RealBackend } = await import("./RealRunner");

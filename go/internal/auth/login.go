@@ -8,7 +8,7 @@ import (
 type loginView struct {
 	Styles template.CSS
 	// Notice is a validated notice code from a failed attempt, or "". Status is
-	// a validated non-failure state ("expired", "signed_out") from a redirect to
+	// a validated non-failure state from a redirect to
 	// the login page. The wording lives in the template.
 	CSRF, Provider, Challenge, Notice, Status string
 	Password, OIDC, OIDCReady                 bool
@@ -18,7 +18,7 @@ type loginView struct {
 // nothing from the query string reaches the template unvalidated.
 func parseStatus(raw string) string {
 	switch raw {
-	case "expired", "signed_out":
+	case "expired", "renew", "signed_out":
 		return raw
 	}
 	return ""

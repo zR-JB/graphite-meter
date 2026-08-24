@@ -404,6 +404,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       activeAfter.activity.stage === activeBefore.activity.stage
     ) {
       this.#activeSeg = activeAfter;
+      this.#latencyBuckets.widen(activeAfter.end - activeAfter.start);
       if (activeAfter.phase !== "warmup") this.#updateStability();
     }
     if (stagesChanged) this.#backend.onReconfigure?.(config.stages);
@@ -750,6 +751,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#phase,
       this.#phase !== "latency",
       this.#continuityId,
+      Math.max(0, (this.#activeSeg?.end ?? 0) - (this.#activeSeg?.start ?? 0)),
     );
   }
 

@@ -21,8 +21,11 @@ mock.module("../buildenv", () => ({
     defaultEngine: "dummy",
     allowDummy: true,
     devTools: true,
-    buildLabel: "test",
-    clientVersion: "0.0.0+test",
+    profile: "test",
+    version: null,
+    revision: "test-revision",
+    clientVersion: "test-revision",
+    identity: "test test-revision",
   },
 }));
 const { DummyBackend } = await import("./dummy");

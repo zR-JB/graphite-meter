@@ -807,7 +807,7 @@ class PipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReleaseVerificationError, "client version metadata is missing"):
                     verify_client_version("1.2.3")
                 (root / "client/dist/version.json").write_text(
-                    '{"version":"1.2.3+prod","label":"prod"}\n', encoding="utf-8"
+                    '{"version":"1.2.3","label":"prod","revision":"abc1234"}\n', encoding="utf-8"
                 )
                 verify_client_version("1.2.3")
                 with self.assertRaisesRegex(ReleaseVerificationError, "server binary is missing"):
@@ -973,6 +973,20 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("github-token: ''", text)
         self.assertNotIn("cache-from:", text)
         self.assertNotIn("cache-to:", text)
+
+    def test_oci_builder_requires_client_identity_build_args(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/actions/build-oci/action.yml"
+        original = path.read_text(encoding="utf-8")
+        for argument in (
+            "CLIENT_VERSION=${{ inputs.version }}",
+            "GM_CLIENT_BUILD_PROFILE=prod",
+            "GM_CLIENT_REVISION=${{ inputs.revision }}",
+        ):
+            path.write_text(original.replace(f"          {argument}\n", "", 1), encoding="utf-8")
+            with self.assertRaisesRegex(PolicyError, "OCI provenance invariant"):
+                check_oci_build_action(root)
 
     def test_oci_builder_remote_context_is_exact_public_commit(self) -> None:
         text = (ROOT / ".github/actions/build-oci/action.yml").read_text(encoding="utf-8")

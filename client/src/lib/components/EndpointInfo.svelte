@@ -118,7 +118,7 @@
   function diagnosticReport() {
     return JSON.stringify(
       {
-        clientVersion: BUILD.clientVersion,
+        client: BUILD,
         server,
         generation: store.transportDiscovery?.generation,
         throughput: connections.throughput,
@@ -228,11 +228,19 @@
         </div>
         <div>
           <dt>Runner</dt>
-          <dd>{engine?.name ?? "—"} · {engine?.version ?? "—"}</dd>
+          <dd>{engine?.name ?? "—"}</dd>
         </div>
         <div>
-          <dt>Client build</dt>
-          <dd>{BUILD.clientVersion}</dd>
+          <dt>Client version</dt>
+          <dd>{BUILD.version ? `v${BUILD.version}` : "—"}</dd>
+        </div>
+        <div>
+          <dt>Build profile</dt>
+          <dd>{BUILD.profile}</dd>
+        </div>
+        <div>
+          <dt>Source revision</dt>
+          <dd>{BUILD.revision}</dd>
         </div>
         <div>
           <dt>Throughput origin</dt>

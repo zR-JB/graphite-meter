@@ -1,10 +1,20 @@
 import type { LatencyBucket, Phase } from "./contract";
 import { median, percentile } from "./stats";
+import {
+  compactLatencyHistory,
+  PRESENTATION_POINT_LIMIT,
+} from "./presentationHistory";
 
 export const LATENCY_PRESENTATION_BUCKET_MS = 200;
 /** Keep the same bounded history in the producer and store so a delayed worker
  * delivery can revise any bucket the UI can still display. */
 export const LATENCY_PRESENTATION_HISTORY_LIMIT = 1_200;
+
+export function latencyPresentationBucketMs(durationMs: number): number {
+  const minimum = LATENCY_PRESENTATION_BUCKET_MS;
+  const needed = Math.max(0, durationMs) / PRESENTATION_POINT_LIMIT;
+  return Math.max(minimum, Math.ceil(needed / minimum) * minimum);
+}
 
 interface TimedRtt {
   t: number;
@@ -27,19 +37,30 @@ export class LatencyPresentationBuckets {
   #pending: PendingBucket | null = null;
   #closed: PendingBucket[] = [];
   #sequence = 0;
+  #bucketMs = LATENCY_PRESENTATION_BUCKET_MS;
 
   reset(
     phaseStartT: number,
     phase: Phase,
     underLoad: boolean,
     continuityId: number,
+    durationMs = 0,
   ): void {
     this.#phase = phase;
     this.#underLoad = underLoad;
     this.#continuityId = continuityId;
+    this.#bucketMs = latencyPresentationBucketMs(durationMs);
     this.#pending = this.#empty(phaseStartT);
     this.#closed = [];
     this.#sequence = 0;
+  }
+
+  widen(durationMs: number): void {
+    const bucketMs = latencyPresentationBucketMs(durationMs);
+    if (bucketMs <= this.#bucketMs) return;
+    this.#bucketMs = bucketMs;
+    if (this.#pending)
+      this.#pending.endT = this.#pending.startT + this.#bucketMs;
   }
 
   observe(t: number, rttMs: number, lost: boolean): LatencyBucket[] {
@@ -101,7 +122,7 @@ export class LatencyPresentationBuckets {
   #empty(startT: number): PendingBucket {
     return {
       startT,
-      endT: startT + LATENCY_PRESENTATION_BUCKET_MS,
+      endT: startT + this.#bucketMs,
       rtts: [],
       pingCount: 0,
       lossCount: 0,
@@ -188,8 +209,8 @@ export function upsertLatencyBucket(
       mutation = "structural-change";
     }
   }
-  while (history.length > Math.max(0, limit)) {
-    history.shift();
+  if (history.length > Math.max(0, limit)) {
+    compactLatencyHistory(history, limit);
     mutation = "structural-change";
   }
   return mutation;

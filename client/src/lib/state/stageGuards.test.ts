@@ -4,6 +4,8 @@ import {
   canToggleMeasuredStage,
   latestBidirectionalLanes,
   latestOneWayThroughputForPhase,
+  sustainedRate,
+  updateLiveThroughput,
 } from "./stageGuards";
 import type { ThroughputSample } from "../runner/contract";
 
@@ -101,4 +103,24 @@ test("latestOneWayThroughputForPhase: returns the active phase's latest sample",
     sample("upload", "up", 500),
   ];
   expect(latestOneWayThroughputForPhase("upload", samples)).toBe(500);
+});
+
+test("live throughput keeps one current value per lane across long histories", () => {
+  let live: ThroughputSample[] = [];
+  live = updateLiveThroughput(live, sample("bidirectional", "up", 50));
+  for (let rate = 1; rate <= 2_000; rate++)
+    live = updateLiveThroughput(live, sample("bidirectional", "down", rate));
+  expect(latestBidirectionalLanes(live)).toEqual({ down: 2_000, up: 50 });
+  expect(updateLiveThroughput(live, sample("upload", "up", 25))).toEqual([
+    sample("upload", "up", 25),
+  ]);
+});
+
+test("sustained rate ignores a single spike and retains real values", () => {
+  const samples = [100, 900, 100, 100].map((rate, index) => ({
+    ...sample("download", "down", rate),
+    t: index * 250,
+  }));
+  expect(sustainedRate(samples, 700)).toBe(100);
+  expect(sustainedRate(samples, 200)).toBe(900);
 });

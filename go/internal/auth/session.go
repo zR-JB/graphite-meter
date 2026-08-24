@@ -39,12 +39,9 @@ type session struct {
 	csrf                    string
 }
 
-func (s *Service) createSession(subject, name, provider string, expires time.Time) (string, *session, error) {
+func (s *Service) createSession(subject, name, provider string) (string, *session, error) {
 	now := s.now()
-	latest := now.Add(sessionLifetime)
-	if expires.IsZero() || expires.After(latest) {
-		expires = latest
-	}
+	expires := now.Add(sessionLifetime)
 	raw := randomToken(32)
 	h := sha256.Sum256([]byte(raw))
 	csrf, id := randomToken(32), randomToken(16)

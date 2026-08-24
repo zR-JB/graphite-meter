@@ -30,7 +30,7 @@ func withSessionCookie(r *http.Request, raw string) *http.Request {
 
 func TestCliPageRejectsInvalidChallenge(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
 	r := withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge=not-a-challenge", nil), raw)
 	rr := httptest.NewRecorder()
 	s.cliPage(rr, r)
@@ -57,7 +57,7 @@ func TestCliPageRejectsBearerPrincipal(t *testing.T) {
 	// Only the browser session may approve: cliPage sees the Bearer principal
 	// and redirects to /login, so a grant can never approve itself.
 	s := testService(t)
-	_, sess, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	_, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 	addGrant(s, sess, token)
 	challenge := challengeFor("verifier-bearer")
@@ -75,7 +75,7 @@ func TestCliPageRejectsBearerPrincipal(t *testing.T) {
 
 func TestCliPageRendersApprovalAndReusesIt(t *testing.T) {
 	s := testService(t)
-	raw, sess, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge := challengeFor("verifier-render")
 	render := func() *httptest.ResponseRecorder {
 		rr := httptest.NewRecorder()
@@ -112,7 +112,7 @@ func TestCliPageRendersApprovalAndReusesIt(t *testing.T) {
 
 func TestCliPageCapsApprovalsPerSession(t *testing.T) {
 	s := testService(t)
-	raw, _, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
 	for i := 0; i < 8; i++ {
 		rr := httptest.NewRecorder()
 		ch := challengeFor("verifier-cap-" + string(rune('a'+i)))
@@ -144,7 +144,7 @@ func approveRequest(s *Service, sess *session, challenge, csrf, origin string) *
 
 func TestCliApproveMarksApprovalApproved(t *testing.T) {
 	s := testService(t)
-	raw, sess, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge := challengeFor("verifier-approve")
 	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
 
@@ -163,8 +163,8 @@ func TestCliApproveMarksApprovalApproved(t *testing.T) {
 
 func TestCliApproveRejectsWrongCSRFOriginAndForeignSession(t *testing.T) {
 	s := testService(t)
-	raw, sess, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
-	_, other, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
+	_, other, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge := challengeFor("verifier-reject")
 	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
 
@@ -191,7 +191,7 @@ func TestCliApproveRejectsWrongCSRFOriginAndForeignSession(t *testing.T) {
 
 func TestCliApproveRejectsExpiredApproval(t *testing.T) {
 	s := testService(t)
-	raw, sess, _ := s.createSession("local-operator", "Local operator", "local", time.Time{})
+	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge := challengeFor("verifier-expired")
 	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
 	s.mu.Lock()

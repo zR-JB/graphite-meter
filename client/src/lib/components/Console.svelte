@@ -3,7 +3,13 @@
   // theme toggle, and docked/flyout layout state.
   import { onMount, type Component } from "svelte";
   import { store } from "../state/store.svelte";
-  import { bootRunner, teardownRunner } from "../runner/engine.svelte";
+  import {
+    bootRunner,
+    cancelPendingStart,
+    hasPendingStart,
+    returnToStart,
+    teardownRunner,
+  } from "../runner/engine.svelte";
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -14,7 +20,7 @@
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
-  import { engage, returnToStart } from "../runner/engine.svelte";
+  import { toggleRun } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
@@ -144,9 +150,11 @@
     if (resetConfirmOpen) return;
 
     if (e.key === "Escape") {
-      // Esc aborts a live run first; otherwise it closes the visible panel.
+      // Esc cancels a pending/live run first; otherwise it closes the panel.
       if (store.isRunning) {
-        engage();
+        toggleRun();
+      } else if (hasPendingStart()) {
+        cancelPendingStart();
       } else if (settingsOpen) {
         settingsOpen = false;
       } else if (telemetryOpen) {
@@ -160,7 +168,7 @@
 
     if (e.key === " " || e.key === "Enter") {
       if (selfActivating(e.target)) return;
-      engage();
+      toggleRun();
       e.preventDefault();
       return;
     }
@@ -176,7 +184,7 @@
         break;
       case "r":
         if (RESOLVED_PHASES.includes(store.phase)) {
-          engage();
+          toggleRun();
           e.preventDefault();
         }
         break;
