@@ -67,11 +67,15 @@ let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
 const SESSION_RUN_MARGIN_MS = 60_000;
 
-function cancelPendingStart() {
-  if (!pendingStartAbort) return;
+export function cancelPendingStart() {
+  if (!pendingStartAbort) {
+    store.startPending = false;
+    return;
+  }
   pendingStartSeq++;
   pendingStartAbort.abort();
   pendingStartAbort = null;
+  store.startPending = false;
 }
 
 // Mirror the persisted dev toggle into the main-thread debug logger, live.
@@ -381,15 +385,13 @@ export function toggleRun() {
     getRunner().abort();
     return;
   }
-  if (pendingStartAbort) {
-    cancelPendingStart();
-    return;
-  }
+  if (pendingStartAbort) return;
   const cfg = $state.snapshot(store.config);
   const key = connectionKey(cfg, store.transportDiscovery);
   const startAbort = new AbortController();
   const startSeq = ++pendingStartSeq;
   pendingStartAbort = startAbort;
+  store.startPending = true;
   const current = () =>
     pendingStartSeq === startSeq && !startAbort.signal.aborted;
   const start = async () => {
@@ -400,6 +402,7 @@ export function toggleRun() {
     if (!current()) return;
     sessionBudget = budget;
     store.reset();
+    store.startPending = true;
     if (!current()) return;
     const info = preparedIsFresh(key)
       ? prepared!.info
@@ -432,7 +435,10 @@ export function toggleRun() {
       });
     })
     .finally(() => {
-      if (pendingStartAbort === startAbort) pendingStartAbort = null;
+      if (pendingStartAbort === startAbort) {
+        pendingStartAbort = null;
+        store.startPending = false;
+      }
     });
 }
 

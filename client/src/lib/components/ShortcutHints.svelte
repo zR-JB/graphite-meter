@@ -13,7 +13,13 @@
       store.phase === "error",
   );
   const primary = $derived(
-    store.isRunning ? "Abort" : resolved ? "Run again" : "Start test",
+    store.startPending
+      ? "Preparing"
+      : store.isRunning
+        ? "Abort"
+        : resolved
+          ? "Run again"
+          : "Start test",
   );
 </script>
 

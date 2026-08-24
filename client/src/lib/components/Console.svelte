@@ -5,7 +5,9 @@
   import { store } from "../state/store.svelte";
   import {
     bootRunner,
+    cancelPendingStart,
     hasPendingStart,
+    returnToStart,
     teardownRunner,
   } from "../runner/engine.svelte";
   import GaugePanel from "./GaugePanel.svelte";
@@ -18,7 +20,7 @@
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
-  import { toggleRun, returnToStart } from "../runner/engine.svelte";
+  import { toggleRun } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
@@ -149,8 +151,10 @@
 
     if (e.key === "Escape") {
       // Esc cancels a pending/live run first; otherwise it closes the panel.
-      if (store.isRunning || hasPendingStart()) {
+      if (store.isRunning) {
         toggleRun();
+      } else if (hasPendingStart()) {
+        cancelPendingStart();
       } else if (settingsOpen) {
         settingsOpen = false;
       } else if (telemetryOpen) {

@@ -111,6 +111,7 @@ const UNIT_STEP_UP_HEADROOM = 1.2;
 class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
+  startPending = $state(false);
   throughput = $state<ThroughputSample[]>([]);
   throughputRevision = $state(0);
   liveThroughput = $state<ThroughputSample[]>([]);
@@ -618,6 +619,7 @@ class AppStore {
 
   reset() {
     this.startError = "";
+    this.startPending = false;
     this.throughput = [];
     this.throughputRevision = 0;
     this.liveThroughput = [];

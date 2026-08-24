@@ -7,33 +7,43 @@
 
   // A resolved run relabels the button "Run again", pairing with the R key
   // and the ShortcutHints strip.
+  const pending = $derived(store.startPending);
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||
       store.phase === "error",
   );
   const label = $derived(
-    store.isRunning
-      ? "Abort test"
-      : resolved
-        ? "Run the test again"
-        : "Start the speed test",
+    pending
+      ? "Preparing the speed test"
+      : store.isRunning
+        ? "Abort test"
+        : resolved
+          ? "Run the test again"
+          : "Start the speed test",
   );
 </script>
 
 <button
   class="run-button"
   class:running={store.isRunning}
+  class:pending
   aria-label={label}
+  aria-busy={pending}
+  disabled={pending}
   onclick={toggleRun}
-  use:tooltip={store.isRunning
-    ? "Stop the test (Space / Esc)"
-    : resolved
-      ? "Run the test again (Space / R)"
-      : "Start the test (Space)"}
+  use:tooltip={pending
+    ? "Preparing the test"
+    : store.isRunning
+      ? "Stop the test (Space / Esc)"
+      : resolved
+        ? "Run the test again (Space / R)"
+        : "Start the test (Space)"}
 >
   <span class="run-button-content">
-    {#if store.isRunning}
+    {#if pending}
+      PREPARING…
+    {:else if store.isRunning}
       <span class="stop-sq"></span> ABORT
     {:else if resolved}
       <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
@@ -91,6 +101,14 @@
     color: var(--err);
     border-color: color-mix(in srgb, var(--err) 40%, var(--border));
     box-shadow: none;
+  }
+  .run-button.pending {
+    cursor: wait;
+    filter: saturate(0.7);
+  }
+  .run-button.pending:hover {
+    transform: none;
+    filter: saturate(0.7);
   }
   .stop-sq {
     width: 12px;
