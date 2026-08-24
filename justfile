@@ -89,7 +89,7 @@ doctor:
     expected_chrome=152.0.7977.54
     ci_chrome=$(sed -n 's/^[[:space:]]*chrome-version:[[:space:]]*//p' .github/workflows/ci.yml | sort -u)
     expected_skopeo=1.22.2
-    expected_skopeo_digest=sha256:02053f3c795ecf32af60e58c2099935ae620a1a9b6186c1dbcf557b6a09fb1eb
+    expected_skopeo_digest=sha256:17da3ac5cadf2b27a3dcf7dea857c4cea558ef757641725fc0eec560030057b3
     ci_skopeo_versions=$(sed -n 's/^[[:space:]]*SKOPEO_VERSION:[[:space:]]*\([0-9][0-9.]*\)$/\1/p' .github/workflows/*.yml | sort -u)
     ci_skopeo_digests=$(sed -n 's/.*quay.io\/skopeo\/stable@\(sha256:[0-9a-f]*\).*/\1/p' .github/workflows/*.yml | sort -u)
     docker_go=$(sed -n 's/^FROM docker.io\/library\/golang:\([^ ]*\) AS server$/\1/p' container/Dockerfile | head -1)
