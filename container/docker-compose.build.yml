@@ -9,6 +9,8 @@ services:
       dockerfile: container/Dockerfile
       args:
         VERSION: "0.1.0"
+        CLIENT_VERSION: "0.1.0"
+        GM_CLIENT_REVISION: "source"
         SERVER_IMPL: "go" # reserved: "rust" -> server-rs (future swap)
         # Client build knobs (defaults = prod: real-only, no dev tooling).
         # Uncomment to build a configurable multi-engine image with dev tools:

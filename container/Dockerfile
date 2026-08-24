@@ -8,13 +8,10 @@
 # Reserved for a future Go->Rust server swap:
 ARG SERVER_IMPL=go
 ARG BUN_VERSION=canary
-# Stamped into both EngineVersion (server) and the client bundle (see the
-# client stage's VERSION ARG below) — one value, two consumers. This default
-# only applies to a manual `docker build` with no --build-arg; CI (ci.yml's
-# Smoke job, release.yml) always passes VERSION explicitly, so it never
-# relies on this fallback.
+# Stamped into the server EngineVersion. Manual builds use the same default
+# for the client bundle; release and prerelease builds pass both values.
 ARG VERSION=0.1.0
-ARG CLIENT_VERSION
+ARG CLIENT_VERSION=0.1.0
 
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.

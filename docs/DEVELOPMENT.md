@@ -318,6 +318,12 @@ podman build -f container/Dockerfile -t graphite-meter:dev \
   --build-arg GM_CLIENT_ALLOW_DUMMY=1 --build-arg GM_CLIENT_DEV_TOOLS=1 .
 ```
 
+The direct Dockerfile and source Compose defaults stamp `0.1.0` into both the server and
+client. `just container-build` and the source-build Quadlet instead derive the server identity
+from the checkout revision; they leave `CLIENT_VERSION` empty for an untagged client and set
+`GM_CLIENT_REVISION` to that revision. Release and prerelease image builds pass the validated
+release version to both `VERSION` and `CLIENT_VERSION`.
+
 `container/docker-compose.build.yml` wraps the same build (context = repo root, `dockerfile:
 container/Dockerfile`) with the server env vars pre-wired, a complete commented native TLS
 listener example, and the client build knobs. The build-from-source Quadlet variant
