@@ -12,6 +12,14 @@ test("session coverage is disabled when authentication is disabled", async () =>
   expect(await requireSessionCoverage(8 * hour)).toBeNull();
 });
 
+test("an aborted session coverage check cannot authorize a start", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    requireSessionCoverage(hour, controller.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+});
+
 test("session coverage handles every lifetime boundary", () => {
   expect(classifySessionCoverage(hour, hour, 8 * hour)).toBe("enough");
   expect(classifySessionCoverage(hour + 1, hour, 8 * hour)).toBe("renew");

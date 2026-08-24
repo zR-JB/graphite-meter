@@ -124,6 +124,13 @@ test("teardown clears the probe evidence; a run reset keeps it", async () => {
   }
 });
 
+test("store reset clears a transient start error", async () => {
+  const { store } = await import("../state/store.svelte");
+  store.startError = "This test would outlast the session.";
+  store.reset();
+  expect(store.startError).toBe("");
+});
+
 // A tab opened in the background never fires visibilitychange, so without a seed
 // at boot the runner keeps its default "foreground" flag and the keepalive stays
 // up in a hidden tab, where Chromium throttles its worker timers past the

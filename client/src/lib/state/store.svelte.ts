@@ -617,6 +617,7 @@ class AppStore {
   }
 
   reset() {
+    this.startError = "";
     this.throughput = [];
     this.throughputRevision = 0;
     this.liveThroughput = [];

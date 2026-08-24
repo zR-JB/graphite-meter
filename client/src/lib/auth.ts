@@ -77,9 +77,13 @@ export function liveScheduleFitsSession(
 
 export async function requireSessionCoverage(
   requiredMs: number,
+  localSignal?: AbortSignal,
 ): Promise<SessionBudget | null> {
+  if (localSignal?.aborted) throw new DOMException("Aborted", "AbortError");
   if (!authEnabled) return null;
   const controller = new AbortController();
+  const relayAbort = () => controller.abort();
+  localSignal?.addEventListener("abort", relayAbort, { once: true });
   const timeout = setTimeout(() => controller.abort(), 3000);
   try {
     const response = await authenticatedFetch("/auth/session", {
@@ -114,12 +118,14 @@ export async function requireSessionCoverage(
       checkedAt: performance.now(),
     };
   } catch (cause) {
+    if (localSignal?.aborted) throw new DOMException("Aborted", "AbortError");
     if (cause instanceof SessionCoverageError) throw cause;
     throw new SessionCoverageError("Could not verify the session lifetime.", {
       cause,
     });
   } finally {
     clearTimeout(timeout);
+    localSignal?.removeEventListener("abort", relayAbort);
   }
 }
 

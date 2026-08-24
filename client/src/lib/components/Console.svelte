@@ -3,7 +3,11 @@
   // theme toggle, and docked/flyout layout state.
   import { onMount, type Component } from "svelte";
   import { store } from "../state/store.svelte";
-  import { bootRunner, teardownRunner } from "../runner/engine.svelte";
+  import {
+    bootRunner,
+    hasPendingStart,
+    teardownRunner,
+  } from "../runner/engine.svelte";
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -144,8 +148,8 @@
     if (resetConfirmOpen) return;
 
     if (e.key === "Escape") {
-      // Esc aborts a live run first; otherwise it closes the visible panel.
-      if (store.isRunning) {
+      // Esc cancels a pending/live run first; otherwise it closes the panel.
+      if (store.isRunning || hasPendingStart()) {
         toggleRun();
       } else if (settingsOpen) {
         settingsOpen = false;

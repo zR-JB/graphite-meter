@@ -51,6 +51,8 @@ import {
 let runner: NetworkRunner | null = null;
 let unsubscribe: (() => void) | null = null;
 let validationAbort: AbortController | null = null;
+let pendingStartAbort: AbortController | null = null;
+let pendingStartSeq = 0;
 let validationSeq = 0;
 let booted = false;
 let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
@@ -64,6 +66,13 @@ let hiddenAt = 0;
 let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
 const SESSION_RUN_MARGIN_MS = 60_000;
+
+function cancelPendingStart() {
+  if (!pendingStartAbort) return;
+  pendingStartSeq++;
+  pendingStartAbort.abort();
+  pendingStartAbort = null;
+}
 
 // Mirror the persisted dev toggle into the main-thread debug logger, live.
 // Workers are separate module graphs: they get the value in their `start`
@@ -368,45 +377,67 @@ export async function bootRunner() {
 
 export function toggleRun() {
   if (store.isRunning) {
+    cancelPendingStart();
     getRunner().abort();
+    return;
+  }
+  if (pendingStartAbort) {
+    cancelPendingStart();
     return;
   }
   const cfg = $state.snapshot(store.config);
   const key = connectionKey(cfg, store.transportDiscovery);
+  const startAbort = new AbortController();
+  const startSeq = ++pendingStartSeq;
+  pendingStartAbort = startAbort;
+  const current = () =>
+    pendingStartSeq === startSeq && !startAbort.signal.aborted;
   const start = async () => {
-    sessionBudget = await requireSessionCoverage(
+    const budget = await requireSessionCoverage(
       buildSegments(cfg).totalMs + SESSION_RUN_MARGIN_MS,
+      startAbort.signal,
     );
-    store.startError = "";
+    if (!current()) return;
+    sessionBudget = budget;
     store.reset();
+    if (!current()) return;
     const info = preparedIsFresh(key)
       ? prepared!.info
       : await validateConnections();
+    if (!current()) return;
     if (!preparedIsFresh(connectionKey(cfg, store.transportDiscovery))) return;
     store.activeConfig = structuredClone(cfg);
     store.activeConnections = $state.snapshot(store.connections);
+    if (!current()) return;
     await getRunner().start(cfg, info);
   };
-  start().catch((cause) => {
-    if (cause instanceof SessionCoverageError) {
-      store.startError = cause.message;
-      return;
-    }
-    // An abort invalidates the pending start and resolves it without error.
-    if (store.phase === "aborted") return;
-    store.ingest({
-      type: "error",
-      error: {
-        reason:
-          cause instanceof TransportUnavailableError
-            ? "transport-unavailable"
-            : "preflight-failed",
-        message: "Couldn't reach the server",
-        phase: "connecting",
-        cause,
-      },
+  start()
+    .catch((cause) => {
+      if (!current()) return;
+      if (cause instanceof SessionCoverageError) {
+        store.startError = cause.message;
+        return;
+      }
+      store.ingest({
+        type: "error",
+        error: {
+          reason:
+            cause instanceof TransportUnavailableError
+              ? "transport-unavailable"
+              : "preflight-failed",
+          message: "Couldn't reach the server",
+          phase: "connecting",
+          cause,
+        },
+      });
+    })
+    .finally(() => {
+      if (pendingStartAbort === startAbort) pendingStartAbort = null;
     });
-  });
+}
+
+export function hasPendingStart(): boolean {
+  return pendingStartAbort !== null;
 }
 
 /**
@@ -416,6 +447,7 @@ export function toggleRun() {
  * and phase back to idle.
  */
 export function returnToStart() {
+  cancelPendingStart();
   if (store.isRunning) getRunner().abort();
   store.reset();
   // A rejection is already recorded as a "failed" role by markValidation.
@@ -473,6 +505,7 @@ export function injectAnomaly(a: RunnerAnomaly) {
 
 export function teardownRunner() {
   booted = false;
+  cancelPendingStart();
   validationSeq++;
   runner?.dispose?.();
   runner = null;
