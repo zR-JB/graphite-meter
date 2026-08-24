@@ -165,8 +165,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		m.discovery = &pf
 	}
 	if msg.err != nil {
-		var authErr *goclient.AuthRequiredError
-		if errors.As(msg.err, &authErr) {
+		if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
 			m.prepareStatus = "authorizing"
 			m.prepareStep = stepPreflight
 			if preflightDecoded {
@@ -254,8 +253,7 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.runSeq {
 		return m, nil
 	}
-	var authErr *goclient.AuthRequiredError
-	if errors.As(msg.err, &authErr) {
+	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
 		if m.cancel != nil {
 			m.cancel()
 		}

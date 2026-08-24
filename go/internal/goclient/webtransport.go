@@ -241,7 +241,12 @@ func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 			w.gen++
 			return nil
 		}
-		lastErr = err
+		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
+			return err
+		}
+		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
+			lastErr = err
+		}
 		select {
 		case <-windowCtx.Done():
 			// The stage's own cancellation is a stop, not a failure; the window

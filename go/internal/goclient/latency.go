@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -63,18 +64,31 @@ const busRedialWindow = 2 * time.Second
 // redialPingBus re-opens the latency channel after the bus dropped or outlived
 // its route's lifetime bound, retrying with backoff until ctx ends or deadline.
 func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, string, error) {
-	ctx, cancel := context.WithDeadline(ctx, deadline)
+	redialCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
+	var lastErr error
 	for {
-		dialCtx, dialCancel := context.WithTimeout(ctx, 3*time.Second)
+		dialCtx, dialCancel := context.WithTimeout(redialCtx, 3*time.Second)
 		bus, proto, err := r.dialPingBus(dialCtx)
 		dialCancel()
 		if err == nil {
 			return bus, proto, nil
 		}
+		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
+			return nil, proto, err
+		}
+		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
+			lastErr = err
+		}
 		select {
-		case <-ctx.Done():
-			return nil, proto, ctx.Err()
+		case <-redialCtx.Done():
+			if ctx.Err() != nil {
+				return nil, proto, ctx.Err()
+			}
+			if lastErr != nil {
+				return nil, proto, fmt.Errorf("latency channel not reconnected within %v: %w", busRedialWindow, lastErr)
+			}
+			return nil, proto, redialCtx.Err()
 		case <-time.After(wtRedialBackoff):
 		}
 	}

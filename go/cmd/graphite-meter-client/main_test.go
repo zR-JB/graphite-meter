@@ -1032,7 +1032,7 @@ func TestNetworkViewEditorsRenderOnTheirOwnRows(t *testing.T) {
 			m.edit = beginEdit(editInt, c.field, "7")
 
 			var editing []string
-			for _, line := range strings.Split(ansiPattern.ReplaceAllString(m.networkView(120), ""), "\n") {
+			for line := range strings.SplitSeq(ansiPattern.ReplaceAllString(m.networkView(120), ""), "\n") {
 				if strings.Contains(line, "editing") {
 					editing = append(editing, strings.TrimSpace(line))
 				}
@@ -1869,7 +1869,7 @@ func TestResultsViewSharedScaleBars(t *testing.T) {
 }
 
 func firstLineContaining(s, sub string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for line := range strings.SplitSeq(s, "\n") {
 		if strings.Contains(line, sub) {
 			return line
 		}
@@ -2167,7 +2167,7 @@ func TestView_DrawsOneSelectionPerScreen(t *testing.T) {
 	for _, width := range []int{80, 120, 200} {
 		m := newModel(goclient.DefaultConfig())
 		m.width = width
-		for sec := section(0); sec < sectionCount; sec++ {
+		for sec := range sectionCount {
 			m.section = sec
 			for row := 0; row < m.rowCount(); row++ {
 				m.row = row

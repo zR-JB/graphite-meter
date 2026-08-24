@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
-async function gaugeHeight(page: import("@playwright/test").Page) {
+async function gaugeHeight(page: import("./webview").Page) {
   return page
     .locator(".gauge-panel .stage")
     .evaluate((element) => element.getBoundingClientRect().height);

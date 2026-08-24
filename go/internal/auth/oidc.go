@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -152,8 +153,7 @@ func classifyDiscoveryFailure(err error) *discoveryFailure {
 	case errors.As(err, &unknownAuthority), errors.As(err, &hostname):
 		reason = "tls_verification"
 	default:
-		var op *net.OpError
-		if errors.As(err, &op) {
+		if _, ok := errors.AsType[*net.OpError](err); ok {
 			reason = "connection"
 		}
 	}
@@ -545,10 +545,8 @@ func safeDisplayName(v string) string {
 
 func allowedGroup(actual, allowed []string) bool {
 	for _, a := range actual {
-		for _, want := range allowed {
-			if a == want {
-				return true
-			}
+		if slices.Contains(allowed, a) {
+			return true
 		}
 	}
 	return false

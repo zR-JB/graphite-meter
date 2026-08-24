@@ -2,7 +2,7 @@ package goclient
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -23,7 +23,7 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 	laneCtx, cancel := context.WithCancel(ctx)
 	g := &laneGroup{cancel: cancel, errs: make(chan error, streams)}
 	stagger := r.laneStaggerStep(streams)
-	for i := 0; i < streams; i++ {
+	for i := range streams {
 		g.wg.Add(1)
 		go func(lane int) {
 			defer g.wg.Done()
@@ -177,7 +177,7 @@ func (s *latencyStats) snapshot() LatencyStats {
 		return LatencyStats{Loss: loss}
 	}
 	xs := append([]time.Duration(nil), s.values...)
-	sort.Slice(xs, func(i, j int) bool { return xs[i] < xs[j] })
+	slices.Sort(xs)
 	var sum time.Duration
 	for _, v := range xs {
 		sum += v

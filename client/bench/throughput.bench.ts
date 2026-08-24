@@ -4,9 +4,8 @@
 // the raw rows they are computed from. Cells run in a fresh permutation each
 // repeat round, so drift across a session inflates spread rather than biasing
 // one cell.
-import { test, expect } from "@playwright/test";
+import { test, expect, origins, harnessOrigin } from "./fixtures";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { origins } from "../playwright.bench.config";
 import type { CellSpec, CellResult } from "./harness";
 import {
   buildCells,
@@ -28,6 +27,27 @@ const active = Object.fromEntries(
 
 const cells = buildCells(active);
 const DIR = "bench/results";
+const filterSource = process.env.GM_BENCH_FILTER;
+let cellFilter: RegExp | undefined;
+if (filterSource) {
+  try {
+    cellFilter = new RegExp(filterSource);
+  } catch (error) {
+    throw new Error(
+      `invalid GM_BENCH_FILTER regex ${JSON.stringify(filterSource)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+}
+const selectedCells = cellFilter
+  ? cells.filter((cell) => cellFilter.test(cell.id))
+  : cells;
+if (cellFilter && selectedCells.length === 0)
+  throw new Error(
+    `GM_BENCH_FILTER ${JSON.stringify(filterSource)} matched no benchmark cells`,
+  );
 
 /** Appended as each run completes. A failing test restarts the worker and
  *  resets module state, so anything held only in memory is lost with it. */
@@ -58,23 +78,23 @@ function record(
 }
 
 async function runCell(
-  page: import("@playwright/test").Page,
+  page: import("../browser/webview").Page,
   spec: CellSpec,
 ): Promise<CellResult> {
-  await page.goto("/bench/harness.html");
+  await page.goto(`${harnessOrigin}/bench/harness.html`);
   return page.evaluate((s) => window.__gmBench.run(s), spec);
 }
 
 test.describe("matrix", () => {
   for (let rep = 1; rep <= REPS; rep++) {
-    for (const cell of shuffled(cells, SEED + rep)) {
+    for (const cell of shuffled(selectedCells, SEED + rep)) {
       test(`${cell.id} r${rep}`, async ({ page }) => {
         const result = await runCell(page, {
           ...cell.spec,
           warmupMs: WARMUP_MS,
           measureMs: MEASURE_MS,
         });
-        record(test.info().project.name, cell.id, cell.group, result);
+        record("chromium", cell.id, cell.group, result);
         // A run that carried nothing is the engine stalling, which is a fact
         // about the engine. Only a lane reporting an error is a broken cell.
         expect(result.errors).toEqual([]);
@@ -84,7 +104,7 @@ test.describe("matrix", () => {
 });
 
 test.afterAll(() => {
-  const project = test.info().project.name;
+  const project = "chromium";
   const path = `${DIR}/${project}.ndjson`;
   if (!existsSync(path)) return;
   const rows = readFileSync(path, "utf8")

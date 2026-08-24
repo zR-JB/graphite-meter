@@ -25,14 +25,12 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	}), nil, "")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 2 {
+		wg.Go(func() {
 			r := httptest.NewRequest(http.MethodGet, "/download", nil)
 			r.RemoteAddr = "192.0.2.10:1234"
 			h.ServeHTTP(httptest.NewRecorder(), r)
-		}()
+		})
 	}
 	<-entered
 	<-entered

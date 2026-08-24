@@ -460,7 +460,9 @@ benchmark cell varies worker topology, and none could without also varying the s
 
 ### Testing
 
-Pure logic uses Bun unit tests; browser behavior uses Playwright in Chromium and Firefox. Commands
+Pure logic uses timing-aware parallel Bun unit tests; browser behavior uses serial `bun:test`
+suites with experimental `Bun.WebView` and pinned Linux Chromium. WebView failures retain a
+screenshot, URL, console/error log, and compact DOM snapshot. Commands
 and contributor workflows live in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---

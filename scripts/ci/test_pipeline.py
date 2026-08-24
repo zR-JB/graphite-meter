@@ -342,8 +342,8 @@ class PipelineTests(unittest.TestCase):
             self.assertIsNone(PRERELEASE_RE.fullmatch(value), value)
 
     def test_external_actions_require_exact_40_character_sha(self) -> None:
-        valid = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
-        broken = "docker/setup-buildx-action@bb05f3f5519dd7d3ba754cc423b652a5edd6d2c"
+        valid = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
+        broken = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0"
         self.assertIsNotNone(PINNED_ACTION.fullmatch(valid))
         self.assertIsNone(PINNED_ACTION.fullmatch(broken))
 
@@ -528,58 +528,107 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "BuildKit insecure entitlements|OCI provenance invariant"):
             check_oci_build_action(root)
 
-    def test_policy_rejects_fixed_port_vite_e2e_server(self) -> None:
+    def test_policy_rejects_fixed_port_webview_e2e_server(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.e2e.config.ts"
-        path.write_text(path.read_text() + '\n// bun run dev -- --port 5273\n')
-        with self.assertRaisesRegex(PolicyError, "fixed-port Vite"):
+        path = root / "client/e2e/fixtures.ts"
+        path.write_text(path.read_text().replace("port: 0", "port: 5273", 1))
+        with self.assertRaisesRegex(PolicyError, "ephemeral lifecycle"):
             check_e2e_lifecycle(root)
 
     def test_policy_rejects_slow_e2e_server_readiness_timeout(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.e2e.config.ts"
-        path.write_text(path.read_text().replace("timeout: 30_000", "timeout: 180_000", 1))
-        with self.assertRaisesRegex(PolicyError, "fail fast"):
+        path = root / "client/e2e/fixtures.ts"
+        path.write_text(path.read_text().replace("Date.now() + 30_000", "Date.now() + 180_000", 1))
+        with self.assertRaisesRegex(PolicyError, "ephemeral lifecycle"):
             check_e2e_lifecycle(root)
 
-    def test_policy_rejects_stale_local_browser_server_reuse(self) -> None:
+    def test_policy_rejects_persistent_webview_profile(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.browser.config.ts"
-        path.write_text(path.read_text().replace("reuseExistingServer: false", "reuseExistingServer: true", 1))
-        with self.assertRaisesRegex(PolicyError, "stale local preview server"):
+        path = root / "client/browser/chrome.ts"
+        path.write_text(path.read_text().replace('dataStore: "ephemeral"', 'dataStore: { directory: "profile" }', 1))
+        with self.assertRaisesRegex(PolicyError, "Chromium launcher"):
             check_e2e_lifecycle(root)
 
-    def test_policy_rejects_slow_browser_preview_readiness_timeout(self) -> None:
+    def test_policy_rejects_missing_webview_failure_screenshot(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.browser.config.ts"
-        path.write_text(path.read_text().replace("timeout: 30_000", "timeout: 120_000", 1))
-        with self.assertRaisesRegex(PolicyError, "preview readiness must fail fast"):
+        path = root / "client/browser/webview.ts"
+        path.write_text(path.read_text().replace("screenshot", "capture", 1))
+        with self.assertRaisesRegex(PolicyError, "diagnostic invariant"):
             check_e2e_lifecycle(root)
 
-    def test_policy_rejects_playwright_managed_go_build(self) -> None:
+    def test_policy_rejects_unpinned_chrome_version(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
-        path = root / "client/playwright.e2e.config.ts"
-        path.write_text(
-            path.read_text().replace(
-                "command: JSON.stringify(SERVER_BIN)",
-                'command: "go run ./cmd/graphite-meter"',
-                1,
-            )
+        path = root / ".github/workflows/ci.yml"
+        path.write_text(path.read_text().replace("chrome-version: 152.0.7977.54", "chrome-version: latest"))
+        with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_missing_webview_launch_preflight(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        text = path.read_text(encoding="utf-8").replace(
+            "        run: cd client && bun run check:webview\n", "", 1
         )
-        with self.assertRaisesRegex(PolicyError, "prebuilt real Graphite Meter"):
+        path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(PolicyError, "launch preflight"):
             check_e2e_lifecycle(root)
 
-    def test_policy_rejects_fixed_harness_fixture_port(self) -> None:
+    def test_policy_rejects_suppressed_ci_chrome_stderr(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/browser/chrome.ts"
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                'process.env.CI || process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
+                'process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "Chromium launcher"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_dropped_ci_chrome_arguments(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / "client/e2e/fixtures.ts"
-        path.write_text(path.read_text().replace("server.listen(0, HOST", "server.listen(5273, HOST", 1))
-        with self.assertRaisesRegex(PolicyError, "dynamic static-server"):
+        path.write_text(
+            path.read_text(encoding="utf-8").replace(
+                "  process.env.BUN_CHROME_ARGS,\n", "", 1
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(PolicyError, "preserve CI Chromium"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_playwright_dependency(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/package.json"
+        path.write_text(path.read_text().replace('"axe-core":', '"@playwright/test": "1",\n    "axe-core":', 1))
+        with self.assertRaisesRegex(PolicyError, "browser dependency"):
+            check_e2e_lifecycle(root)
+
+    def test_policy_rejects_missing_client_audit(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        path.write_text(path.read_text().replace("          just client-audit\n", ""))
+        with self.assertRaisesRegex(PolicyError, "networked Bun audit"):
+            check_ci_path_map(root)
+
+    def test_policy_rejects_missing_webview_orphan_cleanup(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / "client/package.json"
+        path.write_text(path.read_text().replace(" --no-orphans", ""))
+        with self.assertRaisesRegex(PolicyError, "browser scripts"):
             check_e2e_lifecycle(root)
 
     def test_repository_policy_passes_canonical_tree(self) -> None:
@@ -594,8 +643,10 @@ class PipelineTests(unittest.TestCase):
         shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
         shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
         for relative in (
-            "client/playwright.e2e.config.ts",
-            "client/playwright.browser.config.ts",
+            "client/browser/chrome.ts",
+            "client/browser/webview.ts",
+            "client/bench/fixtures.ts",
+            "client/scripts/check-webview.ts",
             "client/vite.e2e.config.ts",
             "client/e2e/fixtures.ts",
             "client/package.json",
@@ -1031,7 +1082,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/_promote-oci.yml"
         text = path.read_text().replace(
-            "4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810",
+            "17da3ac5cadf2b27a3dcf7dea857c4cea558ef757641725fc0eec560030057b3",
             "a" * 64,
             1,
         )
@@ -1334,7 +1385,15 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn("skopeo --version", text, name)
             self.assertNotIn("SKOPEO_VERSION", text, name)
 
-
+    def test_policy_rejects_skopeo_image_outside_job_env_mapping(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github" / "workflows" / "_promote-oci.yml"
+        path.write_text(
+            path.read_text().replace("      SKOPEO_IMAGE:", "    SKOPEO_IMAGE:", 1)
+        )
+        with self.assertRaisesRegex(PolicyError, "job env mapping"):
+            check_privileged_workflows(root)
 
     def test_prerelease_request_run_is_bound_to_exact_current_main_and_owner(self) -> None:
         request_run_id = 6001

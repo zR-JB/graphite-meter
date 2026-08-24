@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./webview";
 
 async function configureShortDownload(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open settings" }).click();

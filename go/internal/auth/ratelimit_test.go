@@ -38,7 +38,7 @@ func TestBudgetKeyCollapsesIPv6ToTheAllocation(t *testing.T) {
 // address it owns, which is no budget at all.
 func TestIPv6SiblingsShareOnePasswordBudget(t *testing.T) {
 	s := testService(t)
-	for i := 0; i < maxAddressAttempts; i++ {
+	for i := range maxAddressAttempts {
 		if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "[2001:db8:1:2::1]:40000")) {
 			t.Fatalf("attempt %d from the first address was refused", i)
 		}
@@ -53,7 +53,7 @@ func TestIPv6SiblingsShareOnePasswordBudget(t *testing.T) {
 
 func TestIPv6SiblingsShareOneExchangeBudget(t *testing.T) {
 	s := testService(t)
-	for i := 0; i < maxAddressExchanges; i++ {
+	for i := range maxAddressExchanges {
 		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", "[2001:db8:1:2::1]:40000")) {
 			t.Fatalf("exchange %d from the first address was refused", i)
 		}
@@ -72,7 +72,7 @@ func TestIPv6SiblingsShareOneExchangeBudget(t *testing.T) {
 func TestTokenExchangeIsThrottledPerAddress(t *testing.T) {
 	s := testService(t)
 	address := "203.0.113.7:40000"
-	for i := 0; i < maxAddressExchanges; i++ {
+	for i := range maxAddressExchanges {
 		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
 			t.Fatalf("exchange %d was refused", i)
 		}
@@ -90,7 +90,7 @@ func TestExchangeBudgetDrainsWithTheWindow(t *testing.T) {
 	now := time.Now()
 	s.now = func() time.Time { return now }
 	address := "203.0.113.7:40000"
-	for i := 0; i < maxAddressExchanges; i++ {
+	for range maxAddressExchanges {
 		s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address))
 	}
 	if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
@@ -114,7 +114,7 @@ func TestGlobalCeilingLogsOncePerWindow(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	spend := func() {
-		for i := 0; i < maxGlobalAttempts+20; i++ {
+		for i := range maxGlobalAttempts + 20 {
 			s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", netip.AddrPortFrom(netip.AddrFrom4([4]byte{203, 0, 113, byte(i % 200)}), 40000).String()))
 		}
 	}
@@ -137,7 +137,7 @@ func TestAttemptStoreStaysBounded(t *testing.T) {
 	s := testService(t)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	for i := 0; i < maxBudgetKeys+100; i++ {
+	for i := range maxBudgetKeys + 100 {
 		s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()))
 	}
 	s.mu.Lock()

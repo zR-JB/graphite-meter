@@ -418,13 +418,7 @@ const laneStagger = 75 * time.Millisecond
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	const slowStartRTTs = 10
 	const ceil = 4 * time.Second
-	w := slowStartRTTs * rtt
-	if w < base {
-		w = base
-	}
-	if w > ceil {
-		w = ceil
-	}
+	w := min(max(slowStartRTTs*rtt, base), ceil)
 	return w
 }
 
@@ -436,10 +430,7 @@ func (r *runner) laneStaggerStep(streams int) time.Duration {
 	if streams <= 1 {
 		return 0
 	}
-	step := adaptiveWarmup(r.cfg.Warmup, r.idleRTT) / 2 / time.Duration(streams-1)
-	if step > laneStagger {
-		step = laneStagger
-	}
+	step := min(adaptiveWarmup(r.cfg.Warmup, r.idleRTT)/2/time.Duration(streams-1), laneStagger)
 	return step
 }
 
@@ -502,9 +493,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	errs := make(chan error, len(dirs)+1)
 	results := make(chan Result, len(dirs))
 	for _, dir := range dirs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			var res Result
 			var err error
 			if dir == Down {
@@ -517,7 +506,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 				return
 			}
 			results <- res
-		}()
+		})
 	}
 
 	// The loaded-latency result is handed back rather than emitted here: the
@@ -526,9 +515,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	// keyed by stage would read the failed stage as having measured.
 	latency := make(chan Result, 1)
 	if r.cfg.LoadedLatency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			stats, err := r.measureLatency(stageCtx, stage, true, duration, start)
 			if stageFailed(err) {
 				errs <- err
@@ -537,7 +524,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 			if stats.Count > 0 {
 				latency <- Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}
 			}
-		}()
+		})
 	}
 
 	done := make(chan struct{})

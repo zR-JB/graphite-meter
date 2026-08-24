@@ -1,5 +1,5 @@
-import type { Page } from "@playwright/test";
-import { expect, test } from "@playwright/test";
+import type { Page } from "./webview";
+import { expect, test } from "./webview";
 
 /* The connection panel and the endpoint drawer describe the same two paths.
  * These run against `?engine=real` with /preflight and /probe stubbed, because

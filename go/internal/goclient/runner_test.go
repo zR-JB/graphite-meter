@@ -551,6 +551,7 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 // both a single forced stream and the forced-stream clamp ceiling from
 // Config.normalized().
 func TestRunBidirectionalStageEndToEnd(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		streams  int

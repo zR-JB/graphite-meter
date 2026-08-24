@@ -5,11 +5,12 @@ image, see the [README quick start](../README.md#quick-start).
 
 ## Prerequisites
 
-- **Go** — use the exact toolchain declared by `go/go.mod`.
-- **Bun** — use the channel/version declared by `.bun-version`.
+- **Go 1.27.0** — use the exact release declared by `go/go.mod`.
+- **Bun 1.4.0** — use the exact version declared by `.bun-version`.
 - **Python 3** — `python3` must be available for the typed CI policy, release verification, and Git hook.
 - **[`just`](https://github.com/casey/just)** — use the version declared by `.just-version`.
-- **Docker or Podman and Playwright browsers** — required for the complete `just ci` workflow.
+- **Docker or Podman and Chrome/Chromium** — required for the complete `just ci` workflow. Set
+  `BUN_CHROME_PATH` when Bun cannot discover the executable.
 
 ## Clone
 
@@ -64,20 +65,34 @@ just ci
 ```
 
 `check` is the fast deterministic developer gate after setup. `ci` is the
-complete local CI-equivalent workflow: race and coverage tests, both browser
-projects, real E2E, TUI cross-builds, release checks, container smoke, and the
+complete local CI-equivalent workflow: race and coverage tests, the Chromium
+WebView suite, real E2E, TUI cross-builds, release checks, container smoke, and the
 networked security scan. `just ci` therefore requires Docker or Podman,
-installed Playwright browsers, and network access for vulnerability advisories.
+installed Chrome/Chromium, and network access for vulnerability advisories.
 CI prepares only the executable analysis tool needed by each job; it does not
 promote `.tools` binaries from pull-request runs into a shared cache.
 
-The Bun unit suite remains on plain `bun test` for correctness. The measured
-canary evaluation found that randomized execution exposes existing global and
-module-mock ordering dependencies, while full `bun test --parallel` runs hang.
-Timing-aware serial shards do not skip files, but their setup overhead is not a
-useful critical-path improvement while the suite is already covered by the
-parallel browser jobs. Do not enable Bun shards or parallel mode without a new
-isolation fix and benchmark.
+The authoritative unit command is `bun test src --parallel
+--timings=test-timings.json`. Bun 1.4 process isolation removed the old ordering
+dependency and reduced the 66-file suite from roughly 15.4 seconds serial to 6.4
+seconds parallel on the reference machine. `just client-test-changed` is a local
+iteration aid only; deterministic and pre-commit gates always execute the full
+suite. Refresh scheduling metadata deliberately with `just client-test-timings`.
+
+Go's test runner already schedules independent packages concurrently. The two
+slowest packages additionally opt isolated, listener-owning integration tests
+into `t.Parallel()`, reducing their combined wall time from about 59 seconds to
+38 seconds on the reference machine. Keep tests that mutate process environment
+or package globals sequential, and validate any new parallel candidate with
+`go test -race -shuffle=on` rather than adding blanket concurrency or retries.
+
+`just client-browser` runs the Chromium-only Bun.WebView suite serially on the
+main thread. Browser, E2E, and benchmark commands use Bun's `--no-orphans`
+cleanup guard in addition to explicit WebView, server, and subprocess teardown.
+Each page closes in a `finally` block, and a process-exit guard stops the shared
+ephemeral server and browser. On failure, screenshots plus URL, console/error,
+and compact DOM diagnostics are written under `client/test-results/webview`;
+failed CI jobs upload that directory.
 
 The authoritative command reference is always:
 
@@ -190,8 +205,27 @@ still the package manager, script runner, test runner, and runtime used by the c
 the small custom inline HTML minification step in `vite.config.ts` also uses `Bun.build`, so there
 is no direct esbuild dependency in this package. The `check` script is deliberately separate from
 the bundler: Bun's bundler transpiles TypeScript, but semantic type checking is handled by
-`svelte-check`/`tsc`. `bun run build` is the validated local/default build (`check` plus
-`build:bundle`).
+`svelte-check` and TypeScript's native checker. Full removal of TypeScript 6 is not yet possible:
+Svelte and Vite integrations still import TypeScript's JavaScript compiler API, which the native
+TypeScript 7 package does not provide as a drop-in replacement. Therefore `typescript@^6.0.3`
+remains the compiler-API dependency, while `@typescript/native` aliases exactly TypeScript 7.0.2
+and its executable checks non-Svelte config/build scripts. Bun runs `svelte-check --tsgo`, which
+transforms Svelte components and delegates their TypeScript diagnostics to the TS7 native CLI.
+TS6 remains installed only for the Svelte/Vite JavaScript compiler API. The experimental TS7 API
+mode is not used because its synchronous RPC wrapper currently accesses Node-private stream
+handles that Bun does not expose. There is no environment-dependent TS6 diagnostic fallback.
+The two checks run concurrently, while bundling starts only after both succeed. `bun run build` is
+the validated local/default build (`check` plus `build:bundle`).
+
+The Go module targets 1.27.0. That release supplies the faster small-object allocator and the
+v2-backed `encoding/json` implementation without application-level switches. The source also uses
+the release-aware `go fix` modernizations where they reduce allocation or concurrency ceremony,
+including `strings.SplitSeq`, `sync.WaitGroup.Go`, typed `errors.AsType`, and built-in `min`/`max`.
+Experimental SIMD and new cryptographic or UUID APIs are intentionally not enabled because the
+current server has no workload or protocol requirement that benefits from them.
+Staticcheck is pinned to `2026.2.1`, which supports Go 1.27 export data and language features.
+Repository tool installation runs from inside `go/` so analyzers are compiled with the same exact
+Go toolchain as the application.
 
 | Variable                | Values           | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does                                                                                                                                                                                                                                                              |
 | ----------------------- | ---------------- | ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -268,20 +302,17 @@ certificates for deployed servers; mkcert is development-only.
 `client/bench/` drives the production workers against a real server and appends one NDJSON row per
 run; `rig.sh` in the same directory puts the server in a network namespace behind a shaped `veth`
 pair. Neither is part of CI: they take hours and measure the machine rather than the code. It runs
-against an ordinary dev server, which `playwright.bench.config.ts` starts.
+against a prebuilt static harness and real server owned by the Bun.WebView fixture.
 
 ```sh
-cd client
 GM_BENCH_SPKI=<base64 SHA-256 of the dev leaf's SPKI> \
   GM_BENCH_ORIGINS=h1-clear GM_BENCH_REPS=5 \
-  bunx playwright test -c playwright.bench.config.ts --project=chromium
+  just bench-throughput
 ```
 
-Always pass `--project`. Without it every browser project runs, which is how a previous session
-exhausted a machine's memory. `GM_BENCH_SPKI` pins the development certificate for QUIC, which
-`ignoreHTTPSErrors` does not cover; the config's own comment gives the `openssl` pipeline that
-derives it, and the `chromium` project is skipped rather than run against a guessed pin when it is
-unset. `GM_BENCH_FIREFOX` behaves the same way for the `firefox-stock` project.
+`GM_BENCH_SPKI` pins the development certificate for QUIC, which ordinary HTTPS error bypasses do
+not cover. The WebView fixture refuses to run without it. Use the recipe's optional test-name filter
+to select a cell; there is no browser-project selector because coverage is Chromium-only.
 
 Every finding — per-transport figures, tuning verdicts, shaped-path results, Firefox's memory
 behavior, and the limits of all of it — is in [BENCHMARKS.md](BENCHMARKS.md).
@@ -300,11 +331,11 @@ podman run -d --name gm --replace -p 7246:7246 graphite-meter:latest
 
 `container/Dockerfile` stages:
 
-1. **`client`** (`oven/bun:canary`) — installs client deps, builds the Svelte app. Build args
+1. **`client`** (`oven/bun:1.4.0`) — installs client deps, builds the Svelte app. Build args
    `GM_CLIENT_ENGINE`/`GM_CLIENT_ALLOW_DUMMY`/`GM_CLIENT_DEV_TOOLS`/`GM_CLIENT_BUILD_PROFILE` default
    to production values (`real`/`0`/`0`/`prod`) and are promoted to env vars so `bun run build`'s
    `process.env` (read by `vite.config.ts`) sees them.
-2. **`server`** (`golang:1.26`) — `go mod download`, copies `go/` and `api/` (the schema
+2. **`server`** (`golang:1.27.0`) — `go mod download`, copies `go/` and `api/` (the schema
    conformance test references `api/` by relative path), embeds the client build from stage 1,
    builds a `CGO_ENABLED=0`, stripped, trimmed, ldflags-versioned static binary.
 3. **final** (`scratch`) — just the binary. It exposes 7246/tcp, 7247/tcp, 7248/tcp, and 7249/tcp+udp.

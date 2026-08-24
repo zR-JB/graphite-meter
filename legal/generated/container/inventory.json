@@ -101,7 +101,7 @@
     },
     {
       "name": "github.com/dunglas/httpsfv",
-      "version": "v1.1.0",
+      "version": "v1.1.1",
       "ecosystem": "go",
       "source": "https://github.com/dunglas/httpsfv",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -203,7 +203,7 @@
     },
     {
       "name": "golang.org/x/crypto",
-      "version": "v0.54.0",
+      "version": "v0.55.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/crypto",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -228,7 +228,7 @@
     },
     {
       "name": "golang.org/x/net",
-      "version": "v0.56.0",
+      "version": "v0.58.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/net",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -321,7 +321,7 @@
     },
     {
       "name": "golang.org/x/text",
-      "version": "v0.40.0",
+      "version": "v0.41.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/text",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -346,7 +346,7 @@
     },
     {
       "name": "Go standard library",
-      "version": "go1.26.6",
+      "version": "go1.27.0",
       "ecosystem": "go-toolchain",
       "source": "https://go.dev/",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -363,15 +363,15 @@
       "notices": [
         {
           "name": "PATENTS",
-          "sha256": "abc34799220e8fc15996bbb11df857547eb2ba8741a73d03cf86489dad145f3b",
-          "text": "Additional IP Rights Grant (Patents)\n\n\"This implementation\" means the copyrightable works distributed by\nGoogle as part of the Go project.\n\nGoogle hereby grants to You a perpetual, worldwide, non-exclusive,\nno-charge, royalty-free, irrevocable (except as stated in this section)\npatent license to make, have made, use, offer to sell, sell, import,\ntransfer and otherwise run, modify and propagate the contents of this\nimplementation of Go, where such license applies only to those patent\nclaims, both currently owned or controlled by Google and acquired in the\nfuture, licensable by Google that are necessarily infringed by this\nimplementation of Go.  This grant does not include claims that would be\ninfringed only as a consequence of further modification of this\nimplementation.  If you or your agent or exclusive licensee institute or\norder or agree to the institution of patent litigation against any\nentity (including a cross-claim or counterclaim in a lawsuit) alleging\nthat this implementation of Go or any code incorporated within this\nimplementation of Go constitutes direct or contributory patent\ninfringement, or inducement of patent infringement, then any patent\nrights granted to you under this License for this implementation of Go\nshall terminate as of the date such litigation is filed.\n",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc",
+          "text": "Additional IP Rights Grant (Patents)\n\n\"This implementation\" means the copyrightable works distributed by\nGoogle as part of the Go project.\n\nGoogle hereby grants to You a perpetual, worldwide, non-exclusive,\nno-charge, royalty-free, irrevocable (except as stated in this section)\npatent license to make, have made, use, offer to sell, sell, import,\ntransfer and otherwise run, modify and propagate the contents of this\nimplementation of Go, where such license applies only to those patent\nclaims, both currently owned or controlled by Google and acquired in\nthe future, licensable by Google that are necessarily infringed by this\nimplementation of Go.  This grant does not include claims that would be\ninfringed only as a consequence of further modification of this\nimplementation.  If you or your agent or exclusive licensee institute or\norder or agree to the institution of patent litigation against any\nentity (including a cross-claim or counterclaim in a lawsuit) alleging\nthat this implementation of Go or any code incorporated within this\nimplementation of Go constitutes direct or contributory patent\ninfringement, or inducement of patent infringement, then any patent\nrights granted to you under this License for this implementation of Go\nshall terminate as of the date such litigation is filed.\n",
           "kind": "notice"
         }
       ]
     },
     {
       "name": "svelte",
-      "version": "5.56.9",
+      "version": "5.56.10",
       "ecosystem": "npm",
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",

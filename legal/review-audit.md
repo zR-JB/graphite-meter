@@ -1,6 +1,6 @@
 # Independent reviewed-components audit
 
-Audit date: 2026-08-14. This is an independent read-only audit of all 40
+Audit date: 2026-08-24. This is an independent read-only audit of all 39
 entries in `legal/reviewed-components.json`.
 
 Method: every recorded legal-file SHA-256 was compared with the exact
@@ -11,7 +11,7 @@ identifiers were cross-checked against SPDX (`MIT`, `ISC`, `BSD-3-Clause`, and
 present. `go-localereader` intentionally uses its upstream README because
 that package places its MIT grant there.
 
-Result: all 40 entries are **confirmed**. None is changed or unresolved, and
+Result: all 39 entries are **confirmed**. None is changed or unresolved, and
 there are no recommended edits to `legal/reviewed-components.json`. The
 recorded local fingerprints matched byte-for-byte.
 
@@ -24,23 +24,22 @@ recommended edit. `none` means the existing fail-closed record is correct.
 - confirmed — `github.com/aymanbagabas/go-osc52/v2` — `v2.0.1` — MIT — [LICENSE at tag](https://github.com/aymanbagabas/go-osc52/tree/v2.0.1/LICENSE) — none
 - confirmed — `github.com/charmbracelet/bubbles` — `v1.0.0` — MIT — [LICENSE at tag](https://github.com/charmbracelet/bubbles/tree/v1.0.0/LICENSE) — none
 - confirmed — `github.com/charmbracelet/bubbletea` — `v1.3.10` — MIT — [LICENSE at tag](https://github.com/charmbracelet/bubbletea/tree/v1.3.10/LICENSE) — none
-- confirmed — `github.com/charmbracelet/colorprofile` — `v0.4.1` — MIT — [LICENSE at tag](https://github.com/charmbracelet/colorprofile/tree/v0.4.1/LICENSE) — none
+- confirmed — `github.com/charmbracelet/colorprofile` — `v0.4.3` — MIT — [LICENSE at tag](https://github.com/charmbracelet/colorprofile/tree/v0.4.3/LICENSE) — none
 - confirmed — `github.com/charmbracelet/lipgloss` — `v1.1.0` — MIT — [LICENSE at tag](https://github.com/charmbracelet/lipgloss/tree/v1.1.0/LICENSE) — none
-- confirmed — `github.com/charmbracelet/x/ansi` — `v0.11.6` — MIT — [LICENSE at tag](https://github.com/charmbracelet/x/tree/v0.11.6/LICENSE) — none
+- confirmed — `github.com/charmbracelet/x/ansi` — `v0.11.8` — MIT — [LICENSE at tag](https://github.com/charmbracelet/x/tree/v0.11.8/LICENSE) — none
 - confirmed — `github.com/charmbracelet/x/cellbuf` — `v0.0.15` — MIT — [LICENSE at tag](https://github.com/charmbracelet/x/tree/v0.0.15/LICENSE) — none
 - confirmed — `github.com/charmbracelet/x/term` — `v0.2.2` — MIT — [LICENSE at tag](https://github.com/charmbracelet/x/tree/v0.2.2/LICENSE) — none
-- confirmed — `github.com/clipperhouse/displaywidth` — `v0.9.0` — MIT — [LICENSE at tag](https://github.com/clipperhouse/displaywidth/tree/v0.9.0/LICENSE) — none
-- confirmed — `github.com/clipperhouse/stringish` — `v0.1.1` — MIT — [LICENSE at tag](https://github.com/clipperhouse/stringish/tree/v0.1.1/LICENSE) — none
-- confirmed — `github.com/clipperhouse/uax29/v2` — `v2.5.0` — MIT — [LICENSE at tag](https://github.com/clipperhouse/uax29/tree/v2.5.0/LICENSE) — none
+- confirmed — `github.com/clipperhouse/displaywidth` — `v0.11.0` — MIT — [LICENSE at tag](https://github.com/clipperhouse/displaywidth/tree/v0.11.0/LICENSE) — none
+- confirmed — `github.com/clipperhouse/uax29/v2` — `v2.7.0` — MIT — [LICENSE at tag](https://github.com/clipperhouse/uax29/tree/v2.7.0/LICENSE) — none
 - confirmed — `github.com/coder/websocket` — `v1.8.15` — ISC — [LICENSE.txt at tag](https://github.com/coder/websocket/tree/v1.8.15/LICENSE.txt) — none
 - confirmed — `github.com/coreos/go-oidc/v3` — `v3.20.0` — Apache-2.0 — [LICENSE](https://github.com/coreos/go-oidc/tree/v3.20.0/LICENSE) and [NOTICE](https://github.com/coreos/go-oidc/tree/v3.20.0/NOTICE) — none
-- confirmed — `github.com/dunglas/httpsfv` — `v1.1.0` — BSD-3-Clause — [LICENSE at tag](https://github.com/dunglas/httpsfv/tree/v1.1.0/LICENSE) — none
+- confirmed — `github.com/dunglas/httpsfv` — `v1.1.1` — BSD-3-Clause — [LICENSE at tag](https://github.com/dunglas/httpsfv/tree/v1.1.1/LICENSE) — none
 - confirmed — `github.com/erikgeiser/coninput` — `1c3628e74d0f` — MIT — [LICENSE at commit](https://github.com/erikgeiser/coninput/tree/1c3628e74d0f/LICENSE) — none
 - confirmed — `github.com/go-jose/go-jose/v4` — `v4.1.4` — Apache-2.0 — [LICENSE at tag](https://github.com/go-jose/go-jose/tree/v4.1.4/LICENSE) — none
-- confirmed — `github.com/lucasb-eyer/go-colorful` — `v1.3.0` — MIT — [LICENSE at tag](https://github.com/lucasb-eyer/go-colorful/tree/v1.3.0/LICENSE) — none
-- confirmed — `github.com/mattn/go-isatty` — `v0.0.20` — MIT — [LICENSE at tag](https://github.com/mattn/go-isatty/tree/v0.0.20/LICENSE) — none
+- confirmed — `github.com/lucasb-eyer/go-colorful` — `v1.4.1` — MIT — [LICENSE at tag](https://github.com/lucasb-eyer/go-colorful/tree/v1.4.1/LICENSE) — none
+- confirmed — `github.com/mattn/go-isatty` — `v0.0.24` — MIT — [LICENSE at tag](https://github.com/mattn/go-isatty/tree/v0.0.24/LICENSE) — none
 - confirmed — `github.com/mattn/go-localereader` — `v0.0.1` — MIT — [README at tag](https://github.com/mattn/go-localereader/tree/v0.0.1/README.md) — none
-- confirmed — `github.com/mattn/go-runewidth` — `v0.0.19` — MIT — [LICENSE at tag](https://github.com/mattn/go-runewidth/tree/v0.0.19/LICENSE) — none
+- confirmed — `github.com/mattn/go-runewidth` — `v0.0.28` — MIT — [LICENSE at tag](https://github.com/mattn/go-runewidth/tree/v0.0.28/LICENSE) — none
 - confirmed — `github.com/muesli/ansi` — `276c6243b2f6` — MIT — [LICENSE at commit](https://github.com/muesli/ansi/tree/276c6243b2f6/LICENSE) — none
 - confirmed — `github.com/muesli/cancelreader` — `v0.2.2` — MIT — [LICENSE at tag](https://github.com/muesli/cancelreader/tree/v0.2.2/LICENSE) — none
 - confirmed — `github.com/muesli/termenv` — `v0.16.0` — MIT — [LICENSE at tag](https://github.com/muesli/termenv/tree/v0.16.0/LICENSE) — none
@@ -48,15 +47,15 @@ recommended edit. `none` means the existing fail-closed record is correct.
 - confirmed — `github.com/quic-go/quic-go` — `v0.61.0` — MIT — [LICENSE at tag](https://github.com/quic-go/quic-go/tree/v0.61.0/LICENSE) — none
 - confirmed — `github.com/quic-go/webtransport-go` — `v0.12.0` — MIT — [LICENSE at tag](https://github.com/quic-go/webtransport-go/tree/v0.12.0/LICENSE) — none
 - confirmed — `github.com/rivo/uniseg` — `v0.4.7` — MIT — [LICENSE.txt at tag](https://github.com/rivo/uniseg/tree/v0.4.7/LICENSE.txt) — none
-- confirmed — `github.com/xo/terminfo` — `abceb7e1c41e` — MIT — [LICENSE at commit](https://github.com/xo/terminfo/tree/abceb7e1c41e/LICENSE) — none
-- confirmed — `golang.org/x/crypto` — `v0.54.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/crypto/+/refs/tags/v0.54.0/LICENSE) and [PATENTS](https://go.googlesource.com/crypto/+/refs/tags/v0.54.0/PATENTS) — none
-- confirmed — `golang.org/x/net` — `v0.56.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/net/+/refs/tags/v0.56.0/LICENSE) and [PATENTS](https://go.googlesource.com/net/+/refs/tags/v0.56.0/PATENTS) — none
+- confirmed — `github.com/xo/terminfo` — `v1.0.0` — MIT — [LICENSE at tag](https://github.com/xo/terminfo/tree/v1.0.0/LICENSE) — none
+- confirmed — `golang.org/x/crypto` — `v0.55.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/crypto/+/refs/tags/v0.55.0/LICENSE) and [PATENTS](https://go.googlesource.com/crypto/+/refs/tags/v0.55.0/PATENTS) — none
+- confirmed — `golang.org/x/net` — `v0.58.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/net/+/refs/tags/v0.58.0/LICENSE) and [PATENTS](https://go.googlesource.com/net/+/refs/tags/v0.58.0/PATENTS) — none
 - confirmed — `golang.org/x/oauth2` — `v0.36.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/oauth2/+/refs/tags/v0.36.0/LICENSE) — none
 - confirmed — `golang.org/x/sys` — `v0.47.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/sys/+/refs/tags/v0.47.0/LICENSE) and [PATENTS](https://go.googlesource.com/sys/+/refs/tags/v0.47.0/PATENTS) — none
 - confirmed — `golang.org/x/term` — `v0.45.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/term/+/refs/tags/v0.45.0/LICENSE) and [PATENTS](https://go.googlesource.com/term/+/refs/tags/v0.45.0/PATENTS) — none
-- confirmed — `golang.org/x/text` — `v0.40.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/text/+/refs/tags/v0.40.0/LICENSE) and [PATENTS](https://go.googlesource.com/text/+/refs/tags/v0.40.0/PATENTS) — none
-- confirmed — Go standard library — `go1.26.6` — BSD-3-Clause — [Go LICENSE](https://go.dev/LICENSE) and [Go PATENTS](https://go.dev/PATENTS) — none
-- confirmed — `svelte` — `5.56.9` — MIT — [LICENSE.md at tag](https://github.com/sveltejs/svelte/tree/svelte%405.56.9/LICENSE.md) — none
+- confirmed — `golang.org/x/text` — `v0.41.0` — BSD-3-Clause — [LICENSE](https://go.googlesource.com/text/+/refs/tags/v0.41.0/LICENSE) and [PATENTS](https://go.googlesource.com/text/+/refs/tags/v0.41.0/PATENTS) — none
+- confirmed — Go standard library — `go1.27.0` — BSD-3-Clause — [Go LICENSE](https://go.dev/LICENSE) and [Go PATENTS](https://go.dev/PATENTS) — none
+- confirmed — `svelte` — `5.56.10` — MIT — [LICENSE.md at tag](https://github.com/sveltejs/svelte/tree/svelte%405.56.10/LICENSE.md) — none
 - confirmed — `Instrument Sans` — `2022 webfont` — OFL-1.1 — [upstream repository](https://github.com/Instrument/instrument-sans), local `legal/manual/fonts/INSTRUMENT-OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
 - confirmed — `Spline Sans Mono` — `1.002 webfont` — OFL-1.1 — [upstream repository](https://github.com/SorkinType/SplineSansMono), local `legal/manual/fonts/OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
 - confirmed — `ca-certificates` — `builder package` — LicenseRef-Debian-ca-certificates-bundle — [Debian upstream](https://salsa.debian.org/debian/ca-certificates), builder copies `/usr/share/doc/ca-certificates/copyright` from the CA-bundle image — none

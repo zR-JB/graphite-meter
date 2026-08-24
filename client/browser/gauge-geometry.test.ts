@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
 function persistedConfig(latency: boolean) {
   return JSON.stringify({
@@ -13,10 +13,7 @@ function persistedConfig(latency: boolean) {
   });
 }
 
-async function gaugeBox(
-  page: import("@playwright/test").Page,
-  latency: boolean,
-) {
+async function gaugeBox(page: import("./webview").Page, latency: boolean) {
   await page.evaluate(
     (value) => localStorage.setItem("graphite-meter:v1", value),
     persistedConfig(latency),
@@ -215,7 +212,7 @@ test("an open phone panel changes from sheet to side flyout on rotation", async 
   expect(rotated.bodyOverflow).toBe("auto");
 });
 
-async function configureThreeStageRun(page: import("@playwright/test").Page) {
+async function configureThreeStageRun(page: import("./webview").Page) {
   await page.getByRole("button", { name: "Open settings" }).click();
   const settings = page.locator('[aria-label="Settings"]');
   await settings.getByRole("button", { name: "custom" }).click();
@@ -231,7 +228,7 @@ async function configureThreeStageRun(page: import("@playwright/test").Page) {
   await settings.getByRole("button", { name: "Close Settings" }).click();
 }
 
-async function expectStageFits(page: import("@playwright/test").Page) {
+async function expectStageFits(page: import("./webview").Page) {
   const stage = await page
     .locator("#console > section.stage")
     .evaluate((element) => ({

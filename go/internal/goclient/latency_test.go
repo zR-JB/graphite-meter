@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -276,5 +277,26 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	}
 	if elapsed := time.Since(begin); elapsed > 500*time.Millisecond {
 		t.Errorf("measureLatency took %v to notice the closed connection, want near-instant", elapsed)
+	}
+}
+
+func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Graphite-Meter-Auth", "required")
+		w.Header().Set("Graphite-Meter-Auth-URL", "/auth/start")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
+	_, _, err := r.redialPingBus(context.Background(), time.Now().Add(busRedialWindow))
+	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
+		t.Fatalf("redial error = %v, want AuthRequiredError", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("permanent auth refusal made %d requests, want one without retries", got)
 	}
 }

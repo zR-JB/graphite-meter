@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810
+  SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:17da3ac5cadf2b27a3dcf7dea857c4cea558ef757641725fc0eec560030057b3
   SKOPEO_VERSION: 1.22.2
 
 jobs:

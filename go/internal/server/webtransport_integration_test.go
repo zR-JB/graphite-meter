@@ -863,6 +863,7 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 // session cap force at least two session kills per stage, on the transfer
 // session and the datagram ping bus alike.
 func TestGoClientOutlivesSessionBoundOverWebTransport(t *testing.T) {
+	t.Parallel()
 	runGoClientUnderLifetimeCaps(t, "webtransport", "webtransport")
 }
 
@@ -871,6 +872,7 @@ func TestGoClientOutlivesSessionBoundOverWebTransport(t *testing.T) {
 // is named rather than left automatic, which would select WebTransport here
 // and leave the WebSocket reconnect untested.
 func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
+	t.Parallel()
 	runGoClientUnderLifetimeCaps(t, "fetch-stream", "websocket")
 }
 
@@ -1038,6 +1040,7 @@ func wtClientConfig(httpBase string) goclient.Config {
 // all, and returned no error to say so. A wrong number published as a
 // measurement is worse than no measurement.
 func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
+	t.Parallel()
 	_, httpBase, e := wtShapedServer(t, func(c *config.Config) {
 		// The session bound kills the stage's session a fifth of the way into the
 		// window; the closed budget is what stops it coming back.
@@ -1093,6 +1096,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 // it end to end. These are whole client runs at 4 and 16 lanes per direction,
 // against the single-lane run as the control.
 func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
+	t.Parallel()
 	down, up := &wtLaneCounter{}, &wtLaneCounter{}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
 		down.Endpoint, up.Endpoint = e.download, e.upload

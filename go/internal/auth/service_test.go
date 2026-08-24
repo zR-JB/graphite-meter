@@ -593,7 +593,7 @@ func TestOIDCTransactionCookieAllowsTopLevelCallback(t *testing.T) {
 func TestAttemptLimiterStaysBounded(t *testing.T) {
 	s := testService(t)
 	now := time.Now()
-	for i := 0; i < 2048; i++ {
+	for i := range 2048 {
 		s.attempts[fmt.Sprintf("2001:db8::%x", i)] = loginAttempt{times: []time.Time{now}}
 	}
 	r := secureRequest("POST", "/auth/password", nil)
@@ -607,7 +607,7 @@ func TestAttemptLimiterStaysBounded(t *testing.T) {
 }
 func TestPerAddressRejectionsDoNotConsumeGlobalPasswordLimit(t *testing.T) {
 	s := testService(t)
-	for i := 0; i < 61; i++ {
+	for i := range 61 {
 		r := secureRequest(http.MethodPost, "/auth/password", nil)
 		r.RemoteAddr = "192.0.2.1:1234"
 		want := i < 5
@@ -631,7 +631,7 @@ func TestPasswordLimiterUsesRollingWindow(t *testing.T) {
 	s.now = func() time.Time { return now }
 	r := secureRequest(http.MethodPost, "/auth/password", nil)
 	r.RemoteAddr = "192.0.2.1:1234"
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !s.allowAttempt(r) {
 			t.Fatalf("attempt %d rejected", i+1)
 		}
@@ -647,7 +647,7 @@ func TestPasswordLimiterUsesRollingWindow(t *testing.T) {
 }
 func TestPasswordLimiterHasGlobalCeiling(t *testing.T) {
 	s := testService(t)
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		r := secureRequest(http.MethodPost, "/auth/password", nil)
 		r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+1)
 		if !s.allowAttempt(r) {
@@ -793,7 +793,7 @@ func TestPasswordLoginPreservesFormEncodedPunctuation(t *testing.T) {
 func TestPerSubjectSessionLimitRevokesOldest(t *testing.T) {
 	s := testService(t)
 	var oldest *session
-	for i := 0; i < maxSubjectSessions+1; i++ {
+	for i := range maxSubjectSessions + 1 {
 		_, sess, err := s.createSession("same", "Name", "local")
 		if err != nil {
 			t.Fatal(err)
@@ -829,7 +829,7 @@ func TestUnknownCLIChallengeAllocatesNothing(t *testing.T) {
 	}
 }
 func TestVerificationCodeIsAlwaysEightCharacters(t *testing.T) {
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		challenge := randomToken(32)
 		if code := verificationCode(challenge); len(code) != 8 {
 			t.Fatalf("code=%q length=%d", code, len(code))
@@ -916,7 +916,7 @@ func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 func TestCLIGrantSetIsBounded(t *testing.T) {
 	s := testService(t)
 	_, sess, _ := s.createSession("subject", "Name", "local")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		verifier := fmt.Sprintf("verifier-%d", i)
 		sum := sha256.Sum256([]byte(verifier))
 		challenge := base64.RawURLEncoding.EncodeToString(sum[:])

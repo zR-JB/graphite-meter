@@ -130,10 +130,10 @@ distributed artifact.
 <sub>\* Sustained medians of n=5, not peaks. Browser figures are Chromium against a localhost
 server over HTTP/1.1 without TLS, at **2 parallel streams** in each direction — the fastest
 configuration measured, reproducible from `client/` with
-`GM_BENCH_SPKI=<dev leaf SPKI pin> GM_BENCH_ORIGINS=h1-clear GM_BENCH_REPS=5 bunx playwright test
--c playwright.bench.config.ts --project=chromium -g 'h1-clear/(down|up)/lanes=2'` — both halves of
-the headline, and the pin is required because without it the `chromium` project does not exist. The
-command also needs `../.dev-certs`, which the config loads on every run whatever the origins asked
+`GM_BENCH_SPKI=<dev leaf SPKI pin> GM_BENCH_ORIGINS=h1-clear GM_BENCH_REPS=5
+just bench-throughput 'h1-clear/(down|up)/lanes=2'` — both halves of the headline. The pin and a
+Chrome/Chromium executable discoverable by Bun (or named by `BUN_CHROME_PATH`) are required. The
+command also needs `.dev-certs`, which the harness loads on every run whatever the origins asked
 for; see [Reproduction](docs/BENCHMARKS.md#reproduction). A repeat of the same matrix read 51.9, so
 treat the figure as carrying ~6% run-to-run uncertainty. The instantaneous rate reaches ~68 Gbit/s
 in individual 200 ms windows, so a live readout shows more than the sustained figure; the sustained

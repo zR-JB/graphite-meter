@@ -62,10 +62,7 @@ func (d *Download) Handle(s transport.Session) error {
 			return nil // client went away or request cancelled, not an error
 		default:
 		}
-		chunk := blockLen - off
-		if chunk > n {
-			chunk = n
-		}
+		chunk := min(blockLen-off, n)
 		wrote, werr := sink.Write(block[off : off+chunk])
 		d.meter.Add(wrote)
 		n -= int64(wrote)

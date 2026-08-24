@@ -46,7 +46,8 @@ legal_version := env("VERSION", "development")
 tools_dir := ".tools"
 gitleaks_version := trim(shell("cat .gitleaks-version"))
 gitleaks_image := "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
-staticcheck_version := "2025.1.1"
+# Staticcheck 2026.2 is the first release line with Go 1.27 support.
+staticcheck_version := "2026.2.1"
 govulncheck_version := "v1.6.0"
 
 # Set OS-specific path for the Go build cache to remain fully cross-platform
@@ -76,14 +77,20 @@ doctor:
     #!/usr/bin/env sh
     set -eu
     fail=0
-    expected_go=$(sed -n 's/^toolchain[[:space:]]\+//p' go/go.mod | head -1)
-    actual_go=$(go env GOVERSION 2>/dev/null || echo unknown)
+    expected_go=go$(sed -n 's/^go[[:space:]]\+//p' go/go.mod | head -1)
+    actual_go=$(cd go && go env GOVERSION 2>/dev/null || echo unknown)
     actual_go=${actual_go%%[-	 ]*}
     expected_bun=$(tr -d '[:space:]' < .bun-version)
     actual_bun=$(bun --version 2>/dev/null || echo missing)
     actual_bun_revision=$(bun --revision 2>/dev/null || echo missing)
     expected_just=$(tr -d '[:space:]' < .just-version)
     actual_just=$(just --version 2>/dev/null | awk '{print $2}')
+    expected_chrome=152.0.7977.54
+    ci_chrome=$(sed -n 's/^[[:space:]]*chrome-version:[[:space:]]*//p' .github/workflows/ci.yml | sort -u)
+    expected_skopeo=1.22.2
+    expected_skopeo_digest=sha256:17da3ac5cadf2b27a3dcf7dea857c4cea558ef757641725fc0eec560030057b3
+    ci_skopeo_versions=$(sed -n 's/^[[:space:]]*SKOPEO_VERSION:[[:space:]]*\([0-9][0-9.]*\)$/\1/p' .github/workflows/*.yml | sort -u)
+    ci_skopeo_digests=$(sed -n 's/.*quay.io\/skopeo\/stable@\(sha256:[0-9a-f]*\).*/\1/p' .github/workflows/*.yml | sort -u)
     docker_go=$(sed -n 's/^FROM docker.io\/library\/golang:\([^ ]*\) AS server$/\1/p' container/Dockerfile | head -1)
     docker_bun=$(sed -n 's/^ARG BUN_VERSION=//p' container/Dockerfile | head -1)
     echo "expected Go: ${expected_go:-missing}"
@@ -94,15 +101,16 @@ doctor:
     echo "actual Just:   ${actual_just:-missing}"
     echo "Docker Go builder: ${docker_go:-missing}"
     echo "Docker Bun fallback: ${docker_bun:-missing}"
+    echo "CI Chrome for Testing: ${ci_chrome:-missing}"
+    echo "CI Skopeo: ${ci_skopeo_versions:-missing} (${ci_skopeo_digests:-missing})"
     [ "$actual_go" = "$expected_go" ] || { echo "doctor: Go toolchain mismatch" >&2; fail=1; }
-    if [ "$expected_bun" = canary ]; then
-        echo "$actual_bun_revision" | grep -q canary || { echo "doctor: Bun is not on the canary channel; run bun upgrade --canary" >&2; fail=1; }
-    else
-        [ "$actual_bun" = "$expected_bun" ] || { echo "doctor: Bun version mismatch" >&2; fail=1; }
-    fi
+    [ "$actual_bun" = "$expected_bun" ] || { echo "doctor: Bun version mismatch" >&2; fail=1; }
     [ "$actual_just" = "$expected_just" ] || { echo "doctor: Just version mismatch" >&2; fail=1; }
     [ "$docker_go" = "${expected_go#go}" ] || { echo "doctor: Docker Go builder disagrees with go.mod" >&2; fail=1; }
     [ "$docker_bun" = "$expected_bun" ] || { echo "doctor: Docker Bun fallback disagrees with .bun-version" >&2; fail=1; }
+    [ "$ci_chrome" = "$expected_chrome" ] || { echo "doctor: Chrome for Testing pin mismatch" >&2; fail=1; }
+    [ "$ci_skopeo_versions" = "$expected_skopeo" ] || { echo "doctor: Skopeo version mismatch" >&2; fail=1; }
+    [ "$ci_skopeo_digests" = "$expected_skopeo_digest" ] || { echo "doctor: Skopeo digest mismatch" >&2; fail=1; }
     hardcoded=$(grep -RInE --include='*.yml' --include='*.yaml' '^[[:space:]]*(go-version|bun-version):' .github/workflows 2>/dev/null || true)
     if [ -n "$hardcoded" ]; then
         echo "doctor: hard-coded CI toolchain declarations found outside setup-project:" >&2
@@ -121,19 +129,20 @@ doctor:
 _install-tools staticcheck="true" govulncheck="true" gitleaks="true":
     #!/usr/bin/env sh
     set -eu
+    repo=$PWD
     if [ "{{ staticcheck }}" = true ]; then
         mkdir -p "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}"
-        test -x "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" || GOBIN="$PWD/{{ tools_dir }}/staticcheck-{{ staticcheck_version }}" go install honnef.co/go/tools/cmd/staticcheck@{{ staticcheck_version }}
+        test -x "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" || (cd go && GOBIN="$repo/{{ tools_dir }}/staticcheck-{{ staticcheck_version }}" go install honnef.co/go/tools/cmd/staticcheck@{{ staticcheck_version }})
         "{{ tools_dir }}/staticcheck-{{ staticcheck_version }}/staticcheck" -version
     fi
     if [ "{{ govulncheck }}" = true ]; then
         mkdir -p "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}"
-        test -x "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" || GOBIN="$PWD/{{ tools_dir }}/govulncheck-{{ govulncheck_version }}" go install golang.org/x/vuln/cmd/govulncheck@{{ govulncheck_version }}
+        test -x "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" || (cd go && GOBIN="$repo/{{ tools_dir }}/govulncheck-{{ govulncheck_version }}" go install golang.org/x/vuln/cmd/govulncheck@{{ govulncheck_version }})
         "{{ tools_dir }}/govulncheck-{{ govulncheck_version }}/govulncheck" -version
     fi
     if [ "{{ gitleaks }}" = true ]; then
         mkdir -p "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}"
-        test -x "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" || GOBIN="$PWD/{{ tools_dir }}/gitleaks-{{ gitleaks_version }}" go install github.com/zricethezav/gitleaks/v8@{{ gitleaks_version }}
+        test -x "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" || (cd go && GOBIN="$repo/{{ tools_dir }}/gitleaks-{{ gitleaks_version }}" go install github.com/zricethezav/gitleaks/v8@{{ gitleaks_version }})
         "{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks" version
     fi
 
@@ -174,7 +183,8 @@ check: doctor workflow-check pipeline-test check-generated client-ci server-chec
 client-ci: client-check-generated
     cd client && bun run format:check
     cd client && bun run check
-    cd client && bun test
+    cd client && bun dedupe --check
+    cd client && bun test src --parallel --timings=test-timings.json
 
 # --- Client (Svelte/Vite, bun) ---
 
@@ -231,12 +241,23 @@ client-check:
 # Run the client's Bun unit tests.
 [group('check')]
 client-test:
-    cd client && bun test
+    cd client && bun test src --parallel --timings=test-timings.json
+
+# Run affected unit tests during local iteration. Deterministic gates continue
+# to execute the complete suite.
+[group('check')]
+client-test-changed:
+    cd client && bun test src --changed --parallel --timings=test-timings.json
+
+# Query the registry advisory database without rewriting dependency pins.
+[group('check')]
+client-audit:
+    cd client && bun audit
 
 # Deliberately refresh Bun's native per-file timing metadata.
 [group('manual')]
 client-test-timings:
-    cd client && bun test --timings=test-timings.json --update-timings
+    cd client && bun test src --parallel --timings=test-timings.json --update-timings
 
 # Run the standalone Vite development server.
 [group('dev')]
@@ -364,19 +385,17 @@ server-race:
     awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
         || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
 
-# The stubbed browser suite for one selected engine. The bundle is rebuilt
-# because Playwright's webServer previews dist.
-# Run the selected stubbed Playwright browser project.
+# The stubbed Chromium suite builds the production bundle, then serves it from
+# an OS-assigned loopback port owned by the Bun.WebView harness.
+# Run the stubbed Chromium browser suite.
 [group('check')]
-client-browser project="chromium":
-    cd client && bun run build:browser && bunx playwright test -c playwright.browser.config.ts --project={{ project }}
+client-browser:
+    cd client && bun run test:browser
 
 # End to end: boots the server and moves bytes over every real transport from
-# a real browser, through the production lanes. The H3 cells are Chromium-only:
-# QUIC ignores ignoreHTTPSErrors, while Firefox needs a system trust anchor.
-# H1-clear fetch cells run on both. Needs Go and openssl; the certificate is
+# Chromium, through the production lanes. Needs Go and openssl; the certificate is
 # generated per run, so nothing is a prerequisite.
-# Run real transport E2E tests through real browsers and a real server.
+# Run real transport E2E tests through Chromium and a real server.
 [group('check')]
 client-e2e:
     #!/usr/bin/env sh
@@ -414,19 +433,17 @@ bench-wire:
     cd go && go test ./internal/wire/ -run '^$' -bench 'Decode|Encode' -benchmem -benchtime=2s
     cd client && bun run src/lib/runner/real/wire.bench.ts
 
-# Measurement only; not part of ci, and it takes hours. `filter` is a playwright
-# -g filter and `project` a --project passthrough; omit either and that axis is
-# not narrowed, so a bare filter still runs against every browser project. Cell
-# ids look like `h1-clear/down/lanes=2`, so one cell on one engine is:
-#   just bench-throughput 'h1-clear/down/lanes=2' chromium
+# Measurement only; not part of ci, and it takes hours. `filter` narrows Bun's
+# test names. Cell ids look like `h1-clear/down/lanes=2`, so one cell is:
+#   just bench-throughput 'h1-clear/down/lanes=2'
 # Needs ../.dev-certs (see docs/DEVELOPMENT.md) on every run, since the config
 # starts all four listeners whatever origins were asked for, and GM_BENCH_SPKI
-# set, or the chromium project does not exist at all.
-# Browser throughput matrix against a real server, chromium and firefox.
+# set, or Chromium cannot establish the pinned QUIC connection.
+# Browser throughput matrix against Chromium.
 # Run the long browser throughput benchmark matrix.
 [group('manual')]
-bench-throughput filter="" project="":
-    cd client && bunx playwright test -c playwright.bench.config.ts {{ if filter != "" { "-g '" + filter + "'" } else { "" } }} {{ if project != "" { "--project=" + project } else { "" } }}
+bench-throughput filter="":
+    cd client && GM_BENCH_FILTER={{ quote(filter) }} bun run test:bench
 
 # Build every supported native TUI target from one warmed Go setup.
 # Cross-build every supported native TUI target from one Go setup.
@@ -508,9 +525,9 @@ ci:
     just check
     just server-race
     just security
+    just client-audit
     just secret-scan-ci
-    just client-browser chromium
-    just client-browser firefox
+    just client-browser
     just client-e2e
     just tui-cross-build
     just release-check

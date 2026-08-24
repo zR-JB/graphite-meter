@@ -65,7 +65,7 @@ func TestRepositoryGoToolchainVersionUsesExactPin(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(goDir, "go.mod"),
-		[]byte("module example.invalid/test\n\ngo 1.26.5\ntoolchain go1.26.6\n"),
+		[]byte("module example.invalid/test\n\ngo 1.27.0\n"),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -74,16 +74,16 @@ func TestRepositoryGoToolchainVersionUsesExactPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "go1.26.6" {
-		t.Fatalf("repositoryGoToolchainVersion = %q, want go1.26.6", got)
+	if got != "go1.27.0" {
+		t.Fatalf("repositoryGoToolchainVersion = %q, want go1.27.0", got)
 	}
 }
 
 func TestRepositoryGoToolchainVersionRequiresExactPin(t *testing.T) {
 	for _, contents := range []string{
-		"module example.invalid/test\n\ngo 1.26.5\n",
-		"module example.invalid/test\n\ngo 1.26.5\ntoolchain default\n",
-		"module example.invalid/test\n\ngo 1.26.5\ntoolchain go1.26.6 extra\n",
+		"module example.invalid/test\n\ngo 1.27\n",
+		"module example.invalid/test\n\ngo latest\n",
+		"module example.invalid/test\n\ngo 1.27.0\ntoolchain go1.27.0 extra\n",
 	} {
 		repo := t.TempDir()
 		goDir := filepath.Join(repo, "go")
@@ -374,6 +374,33 @@ func TestReviewedLegalFilesRehashesCurrentBytes(t *testing.T) {
 	}
 	if files[0].SHA256 != legal.SHA256(current) {
 		t.Fatalf("current hash = %q, want %q", files[0].SHA256, legal.SHA256(current))
+	}
+}
+
+func TestReviewedLegalFilesResolveBunIsolatedDependencySibling(t *testing.T) {
+	store := t.TempDir()
+	packageDir := filepath.Join(store, "svelte")
+	dependencyLicense := filepath.Join(store, "magic-string", "LICENSE")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dependencyLicense), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	current := []byte("isolated dependency license")
+	if err := os.WriteFile(dependencyLicense, current, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reviews := []legal.Review{{
+		Name: "svelte", Ecosystem: "npm",
+		LegalFiles: []legal.LegalFile{{Name: "node_modules/magic-string/LICENSE"}},
+	}}
+	files, err := reviewedLegalFiles(packageDir, "npm", "svelte", reviews)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files[0].Name != "node_modules/magic-string/LICENSE" || files[0].Text != string(current) {
+		t.Fatalf("isolated legal file = %#v", files[0])
 	}
 }
 

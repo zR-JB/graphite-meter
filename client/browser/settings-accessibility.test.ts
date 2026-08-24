@@ -1,5 +1,5 @@
-import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { AxeBuilder } from "./webview";
+import { expect, test } from "./webview";
 
 test("settings expose live controls and lock run construction inputs", async ({
   page,
@@ -48,7 +48,7 @@ test("connection paths stay single-column by default and reflow after a dock res
   await page.getByRole("button", { name: "Open settings" }).click();
 
   const settings = page.locator('[aria-label="Settings"]');
-  const columnCount = (locator: import("@playwright/test").Locator) =>
+  const columnCount = (locator: import("./webview").Locator) =>
     locator.evaluate((element) => {
       const columns = getComputedStyle(element).gridTemplateColumns.trim();
       return columns ? columns.split(/\s+/).length : 0;

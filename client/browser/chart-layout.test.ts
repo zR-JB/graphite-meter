@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./webview";
 
 test("chart axes and time ticks are DOM labels anchored inside the canvas layout", async ({
   page,
@@ -35,6 +35,7 @@ test("chart axes and time ticks are DOM labels anchored inside the canvas layout
 test("pinch zoom raises canvas resolution without changing layout", async ({
   page,
   browserName,
+  context,
 }) => {
   test.skip(browserName !== "chromium", "CDP page scale is Chromium-only");
   await page.goto("/?engine=dummy");
@@ -47,7 +48,7 @@ test("pinch zoom raises canvas resolution without changing layout", async ({
       })),
     );
   const before = await ratios();
-  const session = await page.context().newCDPSession(page);
+  const session = await context.newCDPSession(page);
   try {
     await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
 

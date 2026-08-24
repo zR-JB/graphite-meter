@@ -3,6 +3,7 @@ client/node_modules
 client/dist
 client/.e2e-dist
 client/.vite
+client/.svelte-check
 client/test-results
 # raw benchmark rows; findings live in docs/BENCHMARKS.md, rows are not committed
 client/bench/results/

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,11 +16,9 @@ import (
 )
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--legal" {
-			fmt.Print(string(legal.TUIReport()))
-			return
-		}
+	if slices.Contains(os.Args[1:], "--legal") {
+		fmt.Print(string(legal.TUIReport()))
+		return
 	}
 
 	cfg := goclient.DefaultConfig()
@@ -80,7 +79,7 @@ func main() {
 
 func parseStages(raw string) goclient.StageSet {
 	var s goclient.StageSet
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		switch strings.TrimSpace(strings.ToLower(part)) {
 		case "latency", "ping":
 			s.Latency = true

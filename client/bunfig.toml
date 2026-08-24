@@ -1,2 +1,6 @@
 [run]
 bun = true
+
+[install]
+linker = "isolated"
+globalStore = true

@@ -182,7 +182,7 @@ func Load() (Config, error) {
 		}
 	}
 	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
-		for _, raw := range strings.Split(v, ",") {
+		for raw := range strings.SplitSeq(v, ",") {
 			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
 			if err != nil {
 				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q: %w", raw, err)
@@ -212,7 +212,7 @@ func isDefaultRoute(prefix netip.Prefix) bool {
 
 func splitList(raw string) []string {
 	var out []string
-	for _, value := range strings.Split(raw, ",") {
+	for value := range strings.SplitSeq(raw, ",") {
 		if value = strings.TrimSpace(value); value != "" {
 			out = append(out, value)
 		}

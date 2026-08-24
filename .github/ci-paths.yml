@@ -73,3 +73,6 @@ release:
 security:
   - *workflow
   - 'go/**'
+  - 'client/package.json'
+  - 'client/bun.lock'
+  - 'client/bunfig.toml'
