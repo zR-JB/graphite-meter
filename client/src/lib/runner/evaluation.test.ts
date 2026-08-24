@@ -284,6 +284,23 @@ test("bidirectional: interleaved arrival order doesn't cross-contaminate the lan
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(mean(ups), 6);
 });
 
+test("bidirectional confidence keeps an uneven trailing window aligned", () => {
+  const accum = new RunAccumulator();
+  accum.reset();
+  for (let i = 0; i < 32; i++)
+    accum.pushThroughput("bidirectional", "down", i, i * 0.25, 0.25);
+  for (let i = 0; i < 24; i++)
+    accum.pushThroughput(
+      "bidirectional",
+      "up",
+      100 + i,
+      (100 + i) * 0.25,
+      0.25,
+    );
+
+  expect(accum.confidence("bidirectional").sampleCount).toBe(8);
+});
+
 test("bidirectional: one lane still empty (staggered start) reports the other correctly", () => {
   const accum = new RunAccumulator();
   accum.reset();

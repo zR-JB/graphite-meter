@@ -26,7 +26,7 @@ import {
   type LatencyConfidenceScore,
 } from "./adaptive";
 import { median, percentile, meanAbsDeviation } from "./stats";
-import { FixedRateBuckets } from "./controlBuckets";
+import { FixedRateBuckets, PairedRateBuckets } from "./controlBuckets";
 
 export const MIN_PARTIAL_TRANSFER_EVIDENCE_MS = 800;
 export const MIN_PARTIAL_LATENCY_OUTCOMES = 3;
@@ -78,6 +78,9 @@ export class RunAccumulator {
   // ---- per-phase confidence windows (reset each measured phase) ----
   #phaseDownBuckets = new FixedRateBuckets(TRANSFER_CONFIDENCE_BUCKETS);
   #phaseUpBuckets = new FixedRateBuckets(TRANSFER_CONFIDENCE_BUCKETS);
+  #phaseBidirectionalBuckets = new PairedRateBuckets(
+    TRANSFER_CONFIDENCE_BUCKETS,
+  );
   #phaseLatency: { tMs: number; rttMs: number | null }[] = [];
 
   // ---- trailing contiguous stable-run trackers ----
@@ -141,6 +144,7 @@ export class RunAccumulator {
   beginPhase(): void {
     this.#phaseDownBuckets.reset();
     this.#phaseUpBuckets.reset();
+    this.#phaseBidirectionalBuckets.reset();
     this.#phaseLatency = [];
   }
 
@@ -171,9 +175,13 @@ export class RunAccumulator {
     accum.peakBytesPerSec = Math.max(accum.peakBytesPerSec, rate);
     accum.stabilityBuckets.observe(bytes, durationMs);
     accum.serverAuthoritative ||= serverAuthoritative;
-    const buckets =
-      dir === "down" ? this.#phaseDownBuckets : this.#phaseUpBuckets;
-    buckets.observe(bytes, durationMs);
+    if (phase === "bidirectional")
+      this.#phaseBidirectionalBuckets.observe(dir, bytes, durationMs);
+    else
+      (dir === "down" ? this.#phaseDownBuckets : this.#phaseUpBuckets).observe(
+        bytes,
+        durationMs,
+      );
   }
 
   /** Account the time between upload IDs after their server clocks can no
@@ -259,23 +267,14 @@ export class RunAccumulator {
       return transferConfidence([...this.#phaseDownBuckets.rates]);
     if (phase === "upload")
       return transferConfidence([...this.#phaseUpBuckets.rates]);
-    const count = Math.min(
-      this.#phaseDownBuckets.completedCount,
-      this.#phaseUpBuckets.completedCount,
-    );
-    const down = this.#phaseDownBuckets.rates;
-    const up = this.#phaseUpBuckets.rates;
-    return transferConfidence(
-      Array.from({ length: count }, (_, index) => down[index] + up[index]),
-    );
+    return transferConfidence([...this.#phaseBidirectionalBuckets.rates]);
   }
 
   /** A confirmed regime change or stall invalidates control history only. */
   resetPhaseStability(phase: StagePhase): void {
-    if (phase === "download" || phase === "bidirectional")
-      this.#phaseDownBuckets.reset();
-    if (phase === "upload" || phase === "bidirectional")
-      this.#phaseUpBuckets.reset();
+    if (phase === "download") this.#phaseDownBuckets.reset();
+    if (phase === "upload") this.#phaseUpBuckets.reset();
+    if (phase === "bidirectional") this.#phaseBidirectionalBuckets.reset();
     if (phase === "latency") this.#phaseLatency = [];
     if (phase === "download") this.#dlStableStartMs = -1;
     else if (phase === "upload") this.#ulStableStartMs = -1;

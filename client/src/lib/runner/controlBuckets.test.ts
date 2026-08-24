@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { FixedRateBuckets } from "./controlBuckets";
+import { FixedRateBuckets, PairedRateBuckets } from "./controlBuckets";
 
 test("equivalent exact traces produce identical 250 ms buckets", () => {
   const feed = (cadences: number[]) => {
@@ -17,4 +17,14 @@ test("bucket edges prorate one irregular observation without losing bytes", () =
   buckets.observe(100, 100);
   buckets.observe(400, 400);
   expect([...buckets.rates]).toEqual([1_000, 1_000]);
+});
+
+test("paired lanes keep a shared capped bucket window", () => {
+  const buckets = new PairedRateBuckets(16);
+  for (let i = 0; i < 32; i++) buckets.observe("down", i * 0.25, 250);
+  for (let i = 0; i < 24; i++) buckets.observe("up", (100 + i) * 0.25, 250);
+
+  expect([...buckets.rates]).toEqual(
+    Array.from({ length: 8 }, (_, i) => 16 + i + 116 + i),
+  );
 });
