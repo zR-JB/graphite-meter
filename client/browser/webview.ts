@@ -202,22 +202,55 @@ export class Locator {
     );
   }
   async click() {
-    const marker = `gm-${crypto.randomUUID()}`;
-    await retry(() =>
-      this.evaluate((element, value) => {
-        element.setAttribute("data-gm-webview-target", value);
-        element.scrollIntoView({ block: "nearest" });
-      }, marker),
+    await this.actionPoint(true);
+    await this.evaluate((element) => element.click());
+  }
+  async hover() {
+    const point = await this.actionPoint(false);
+    await this.page.raw.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      ...point,
+    });
+  }
+  private actionPoint(requireEnabled: boolean) {
+    return retry(async () => {
+      const point = await this.evaluate<{
+        x: number;
+        y: number;
+        actionable: boolean;
+      }>((element, enabled) => {
+        element.scrollIntoView({ block: "center", inline: "center" });
+        const box = element.getBoundingClientRect();
+        const x = box.x + box.width / 2;
+        const y = box.y + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          x,
+          y,
+          actionable:
+            box.width > 0 &&
+            box.height > 0 &&
+            (!enabled || !element.disabled) &&
+            !!hit &&
+            (hit === element || element.contains(hit)),
+        };
+      }, requireEnabled);
+      if (!point.actionable) throw new Error("locator is not actionable");
+      return { x: point.x, y: point.y };
+    });
+  }
+  async dispatchEvent(type: string, init: Record<string, unknown> = {}) {
+    await this.evaluate(
+      (element, event) => {
+        const EventType = event.type.startsWith("pointer")
+          ? PointerEvent
+          : Event;
+        element.dispatchEvent(
+          new EventType(event.type, { ...event.init, bubbles: true }),
+        );
+      },
+      { type, init },
     );
-    try {
-      await this.page.raw.click(`[data-gm-webview-target="${marker}"]`, {
-        timeout: 5_000,
-      });
-    } finally {
-      await this.evaluate((element) =>
-        element.removeAttribute("data-gm-webview-target"),
-      ).catch(() => {});
-    }
   }
   async focus() {
     await this.evaluate((el) => el.focus());
@@ -254,6 +287,9 @@ export class Locator {
   async textContent() {
     return (await this.state())[0]?.text ?? null;
   }
+  async innerText() {
+    return this.evaluate<string>((element) => element.innerText);
+  }
   async getAttribute(name: string) {
     return (await this.state())[0]?.attrs[name] ?? null;
   }
@@ -262,7 +298,7 @@ export class Locator {
   }
   async scrollIntoViewIfNeeded() {
     await this.evaluate((element) =>
-      element.scrollIntoView({ block: "nearest" }),
+      element.scrollIntoView({ block: "center", inline: "center" }),
     );
   }
 }
@@ -503,13 +539,15 @@ function pressKey(view: Bun.WebView, chord: string) {
   });
 }
 
-const retry = async (check: () => Promise<void>, timeout = 5000) => {
+const retry = async <T>(
+  check: () => Promise<T>,
+  timeout = 5000,
+): Promise<T> => {
   const end = Date.now() + timeout;
   let last: unknown;
   do {
     try {
-      await check();
-      return;
+      return await check();
     } catch (error) {
       last = error;
       await Bun.sleep(40);
@@ -571,6 +609,17 @@ function locatorExpect(locator: Locator, negative = false) {
     toBeFocused: () => assertion((s) => !!s[0]?.focused, "to be focused"),
     toHaveValue: (value: string) =>
       assertion((s) => s[0]?.value === value, `to have value ${value}`),
+    toHaveCSS: (property: string, value: string | RegExp) =>
+      retry(async () => {
+        const actual = await locator.evaluate(
+          (element, name) => getComputedStyle(element).getPropertyValue(name),
+          property,
+        );
+        if (matchValue(actual, value, true) === negative)
+          throw new Error(
+            `${negative ? "not " : ""}to have CSS ${property}: ${actual}`,
+          );
+      }),
   };
 }
 function matchValue(actual: unknown, wanted: string | RegExp, exact: boolean) {
