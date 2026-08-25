@@ -7,7 +7,7 @@
 
   // A resolved run relabels the button "Run again", pairing with the R key
   // and the ShortcutHints strip.
-  const pending = $derived(store.startPending);
+  const pending = $derived(store.preparing);
   const resolved = $derived(
     store.phase === "complete" ||
       store.phase === "aborted" ||
@@ -15,7 +15,7 @@
   );
   const label = $derived(
     pending
-      ? "Preparing the speed test"
+      ? "Cancel"
       : store.isRunning
         ? "Abort test"
         : resolved
@@ -30,10 +30,9 @@
   class:pending
   aria-label={label}
   aria-busy={pending}
-  disabled={pending}
   onclick={toggleRun}
   use:tooltip={pending
-    ? "Preparing the test"
+    ? "Cancel starting the test (Space / Esc)"
     : store.isRunning
       ? "Stop the test (Space / Esc)"
       : resolved
@@ -42,7 +41,7 @@
 >
   <span class="run-button-content">
     {#if pending}
-      PREPARING…
+      CANCEL
     {:else if store.isRunning}
       <span class="stop-sq"></span> ABORT
     {:else if resolved}
@@ -52,9 +51,6 @@
     {/if}
   </span>
 </button>
-{#if store.startError}
-  <p class="run-error" role="alert">{store.startError}</p>
-{/if}
 
 <style>
   .run-button {
@@ -103,7 +99,7 @@
     box-shadow: none;
   }
   .run-button.pending {
-    cursor: wait;
+    cursor: pointer;
     filter: saturate(0.7);
   }
   .run-button.pending:hover {
@@ -132,15 +128,9 @@
     justify-content: center;
     gap: var(--space-2);
   }
-  .run-error {
-    margin: var(--space-2) 0 0;
-    color: var(--err);
-    font-size: var(--text-xs);
-    text-align: center;
-  }
   @media (prefers-reduced-motion: no-preference) {
     .run-button-content {
-      animation: control-content-enter 100ms var(--ease-out) both;
+      animation: control-content-enter var(--dur-hover) var(--ease-out) both;
     }
   }
   @keyframes control-content-enter {

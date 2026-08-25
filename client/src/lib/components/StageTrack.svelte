@@ -91,7 +91,7 @@
             class="seg-fill seg-fill--{s.key}"
             class:is-done={s.state === "complete" || s.state === "partial"}
             class:is-stalled={s.state === "recovering"}
-            style="width:{s.fill}%"
+            style="--progress:{s.fill / 100}"
           ></span>
         {/if}
       </div>
@@ -138,7 +138,7 @@
             class:is-done={bidi.state === "complete" ||
               bidi.state === "partial"}
             class:is-stalled={bidi.state === "recovering"}
-            style="width:{bidi.fill}%"
+            style="--progress:{bidi.fill / 100}"
           ></span>
         {/if}
       </div>
@@ -234,9 +234,11 @@
     position: absolute;
     inset: 0 auto 0 0;
     height: 100%;
-    width: 0;
+    width: 100%;
+    transform: scaleX(var(--progress, 0));
+    transform-origin: left center;
     border-radius: inherit;
-    transition: width var(--dur-graph) var(--ease-out);
+    transition: transform var(--dur-graph) var(--ease-out);
   }
   .seg-fill--latency {
     background: var(--phase-latency);
@@ -254,7 +256,7 @@
     background: var(--ok);
   }
   .seg-fill--failed {
-    width: 100%;
+    --progress: 1;
     background: var(--err);
     opacity: 0.45;
   }
@@ -278,6 +280,7 @@
 
   .seg-fill--warmup {
     width: 45%;
+    --progress: 1;
     background: color-mix(in srgb, var(--brand) 55%, transparent);
   }
   @media (prefers-reduced-motion: no-preference) {

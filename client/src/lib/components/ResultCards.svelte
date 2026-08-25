@@ -493,10 +493,10 @@
 
   @media (prefers-reduced-motion: no-preference) {
     .result-chip {
-      animation: quick-content-enter 110ms var(--ease-out) both;
+      animation: quick-content-enter var(--dur-hover) var(--ease-out) both;
     }
     .result-card {
-      animation: card-enter 140ms var(--ease-out) both;
+      animation: card-enter var(--dur-slide) var(--ease-out) both;
     }
     .result-card:nth-child(1) {
       animation-delay: 0ms;
