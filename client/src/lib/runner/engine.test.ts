@@ -506,9 +506,14 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
     return PROBE_EVIDENCE;
   };
   const environment = stubEventBootEnvironment("visible", true);
+  let teardownRunner: (() => void) | undefined;
   try {
-    const { bootRunner, getRunner, teardownRunner } =
-      await import("./engine.svelte");
+    const {
+      bootRunner,
+      getRunner,
+      teardownRunner: teardown,
+    } = await import("./engine.svelte");
+    teardownRunner = teardown;
     const { store } = await import("../state/store.svelte");
     await bootRunner();
     expect(probeCalls).toBe(1);
@@ -533,8 +538,8 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
     expect(probeCalls).toBe(3);
     expect(store.connectionValidation.throughput.state).toBe("verified");
     expect(store.connectionValidation.latency.state).toBe("verified");
-    teardownRunner();
   } finally {
+    teardownRunner?.();
     RealBackend.prototype.probe = originalProbe;
     environment.restore();
     restoreWindow();
@@ -559,8 +564,11 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
     return PROBE_EVIDENCE;
   };
   const environment = stubEventBootEnvironment("visible", true);
+  let teardownRunner: (() => void) | undefined;
   try {
-    const { bootRunner, teardownRunner } = await import("./engine.svelte");
+    const { bootRunner, teardownRunner: teardown } =
+      await import("./engine.svelte");
+    teardownRunner = teardown;
     const { store } = await import("../state/store.svelte");
     await bootRunner();
     offline = true;
@@ -575,8 +583,8 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
     await settleValidation();
     expect(probeCalls).toBe(3);
     expect(store.connectionValidation.throughput.state).toBe("verified");
-    teardownRunner();
   } finally {
+    teardownRunner?.();
     RealBackend.prototype.probe = originalProbe;
     environment.restore();
     restoreWindow();
@@ -602,9 +610,14 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
   };
   const environment = stubEventBootEnvironment("visible", true);
   const timers = stubValidationTimers();
+  let teardownRunner: (() => void) | undefined;
   try {
-    const { bootRunner, getRunner, teardownRunner } =
-      await import("./engine.svelte");
+    const {
+      bootRunner,
+      getRunner,
+      teardownRunner: teardown,
+    } = await import("./engine.svelte");
+    teardownRunner = teardown;
     await bootRunner();
     expect(probeCalls).toBe(1);
     expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
@@ -664,9 +677,11 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
     await settleMicrotasks();
     expect(probeCalls).toBe(6);
 
-    teardownRunner();
+    teardownRunner?.();
+    teardownRunner = undefined;
     expect(timers.size()).toBe(0);
   } finally {
+    teardownRunner?.();
     RealBackend.prototype.probe = originalProbe;
     timers.restore();
     environment.restore();
