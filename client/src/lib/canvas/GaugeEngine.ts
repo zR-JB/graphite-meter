@@ -287,25 +287,37 @@ export class GaugeEngine implements CanvasEngine {
       // Paint the highest result first (underneath), then progressively lower
       // results on the same radius. The current finish position clips every
       // layer, so the lowest endpoint hands off cleanly to the next layer.
-      for (const arc of this.#resultArcs) {
+      for (const [index, arc] of this.#resultArcs.entries()) {
         const visibleFraction = Math.min(
           Math.max(0, arc.fraction),
           this.#completedSweep,
         );
         if (visibleFraction <= 0.002) continue;
+        ctx.save();
+        const end = angleForFraction(
+          visibleFraction,
+          layout.arcStart,
+          layout.arcSweep,
+        );
+        if (index > 0) {
+          // A narrow track-colored under-stroke gives upper layers a quiet
+          // separator at their handoff without introducing a second radius.
+          ctx.strokeStyle = this.#track;
+          ctx.lineWidth = arcW + 2;
+          ctx.globalAlpha = 0.5;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, layout.arcStart, end);
+          ctx.stroke();
+        }
         ctx.strokeStyle = this.#resultColors[arc.phase];
         ctx.lineWidth = arcW;
+        ctx.globalAlpha = 1;
         ctx.setLineDash(arc.dashed ? [arcW * 1.5, arcW] : []);
         ctx.beginPath();
-        ctx.arc(
-          cx,
-          cy,
-          r,
-          layout.arcStart,
-          angleForFraction(visibleFraction, layout.arcStart, layout.arcSweep),
-        );
+        ctx.arc(cx, cy, r, layout.arcStart, end);
         ctx.stroke();
-        ctx.setLineDash([]);
+        ctx.restore();
       }
       return;
     }

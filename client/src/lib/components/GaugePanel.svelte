@@ -828,6 +828,7 @@
   .terminal-unit {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 7px;
     width: 100%;
     font-family: var(--font-mono);
