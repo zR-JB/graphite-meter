@@ -11,6 +11,7 @@ import {
   PreflightUnavailableError,
   TransportUnavailableError,
 } from "./real/transportError";
+import { CONNECTION_FRESH_MS } from "./connectionModel";
 
 plugin({
   name: "svelte-runes",
@@ -79,7 +80,16 @@ function stubEventBootEnvironment(
   online: boolean,
 ) {
   const windowListeners = new Map<string, () => void>();
-  const documentState = { visibilityState: visibility };
+  const documentListeners = new Map<string, () => void>();
+  const documentState = {
+    visibilityState: visibility,
+    addEventListener(type: string, listener: () => void) {
+      documentListeners.set(type, listener);
+    },
+    removeEventListener(type: string) {
+      documentListeners.delete(type);
+    },
+  };
   const windowValue = {
     addEventListener(type: string, listener: () => void) {
       windowListeners.set(type, listener);
@@ -90,16 +100,16 @@ function stubEventBootEnvironment(
   };
   const restores = [
     stubGlobal("window", windowValue),
-    stubGlobal("document", {
-      ...documentState,
-      addEventListener() {},
-      removeEventListener() {},
-    }),
+    stubGlobal("document", documentState),
     stubGlobal("navigator", { onLine: online }),
   ];
   return {
     emit(type: string) {
       windowListeners.get(type)?.();
+    },
+    setVisibility(next: "hidden" | "visible") {
+      documentState.visibilityState = next;
+      documentListeners.get("visibilitychange")?.();
     },
     restore() {
       for (const restore of restores.reverse()) restore();
@@ -110,6 +120,48 @@ function stubEventBootEnvironment(
 async function settleValidation(): Promise<void> {
   for (let turn = 0; turn < 10; turn++)
     await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function stubValidationTimers() {
+  const realNow = Date.now;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let now = realNow();
+  let nextId = 1;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  Date.now = () => now;
+  globalThis.setTimeout = ((run: () => void, delay = 0) => {
+    const id = nextId++;
+    timers.set(id, { at: now + delay, run });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id: ReturnType<typeof setTimeout>) => {
+    timers.delete(id as unknown as number);
+  }) as typeof clearTimeout;
+  return {
+    delays: () => [...timers.values()].map(({ at }) => at - now),
+    advance(milliseconds: number) {
+      now += milliseconds;
+      for (;;) {
+        const due = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= now)
+          .sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) return;
+        timers.delete(due[0]);
+        due[1].run();
+      }
+    },
+    size: () => timers.size,
+    restore() {
+      Date.now = realNow;
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    },
+  };
+}
+
+async function settleMicrotasks(): Promise<void> {
+  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }
 
 const PROBE_EVIDENCE: InfraInfo = {
@@ -442,14 +494,21 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
   const originalProbe = RealBackend.prototype.probe;
   let probeCalls = 0;
   let offline = false;
+  let releaseOffline: (() => void) | undefined;
   RealBackend.prototype.probe = async function () {
     probeCalls++;
-    if (offline) throw new Error("server unavailable");
+    if (offline) {
+      await new Promise<void>((resolve) => {
+        releaseOffline = () => resolve();
+      });
+      throw new Error("server unavailable");
+    }
     return PROBE_EVIDENCE;
   };
   const environment = stubEventBootEnvironment("visible", true);
   try {
-    const { bootRunner, teardownRunner } = await import("./engine.svelte");
+    const { bootRunner, getRunner, teardownRunner } =
+      await import("./engine.svelte");
     const { store } = await import("../state/store.svelte");
     await bootRunner();
     expect(probeCalls).toBe(1);
@@ -457,15 +516,19 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
     expect(store.connectionValidation.latency.state).toBe("verified");
 
     offline = true;
-    environment.emit("offline");
-    environment.emit("offline");
+    const runner = getRunner() as RunnerCore;
+    runner.emit({ type: "connectivity", state: "offline" });
+    for (let turn = 0; turn < 10 && probeCalls < 2; turn++)
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    runner.emit({ type: "connectivity", state: "offline" });
+    releaseOffline?.();
     await settleValidation();
     expect(probeCalls).toBe(2);
     expect(store.connectionValidation.throughput.state).toBe("failed");
     expect(store.connectionValidation.latency.state).toBe("failed");
 
     offline = false;
-    environment.emit("online");
+    runner.emit({ type: "connectivity", state: "connected" });
     await settleValidation();
     expect(probeCalls).toBe(3);
     expect(store.connectionValidation.throughput.state).toBe("verified");
@@ -473,6 +536,94 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
     teardownRunner();
   } finally {
     RealBackend.prototype.probe = originalProbe;
+    environment.restore();
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("validation scheduler refreshes, backs off, defers hidden work, and tears down", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  const { RealBackend } = await import("./RealRunner");
+  const originalProbe = RealBackend.prototype.probe;
+  let probeCalls = 0;
+  let offline = false;
+  RealBackend.prototype.probe = async function () {
+    probeCalls++;
+    if (offline) throw new Error("server unavailable");
+    return PROBE_EVIDENCE;
+  };
+  const environment = stubEventBootEnvironment("visible", true);
+  const timers = stubValidationTimers();
+  try {
+    const { bootRunner, getRunner, teardownRunner } =
+      await import("./engine.svelte");
+    await bootRunner();
+    expect(probeCalls).toBe(1);
+    expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+
+    timers.advance(CONNECTION_FRESH_MS);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(2);
+
+    offline = true;
+    (getRunner() as RunnerCore).emit({
+      type: "connectivity",
+      state: "offline",
+    });
+    timers.advance(0);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(3);
+    expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+
+    timers.advance(CONNECTION_FRESH_MS - 1);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(3);
+    offline = false;
+    timers.advance(1);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(4);
+
+    environment.setVisibility("hidden");
+    expect(timers.size()).toBe(0);
+    timers.advance(CONNECTION_FRESH_MS * 2);
+    environment.setVisibility("visible");
+    expect(probeCalls).toBe(4);
+    timers.advance(0);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(5);
+
+    const runner = getRunner() as RunnerCore;
+    runner.emit({
+      type: "phase",
+      transition: { from: "idle", to: "download", stage: "download", t: 0 },
+    });
+    timers.advance(CONNECTION_FRESH_MS * 2);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(5);
+    runner.emit({
+      type: "phase",
+      transition: {
+        from: "download",
+        to: "complete",
+        stage: null,
+        t: CONNECTION_FRESH_MS * 2,
+      },
+    });
+    timers.advance(0);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(6);
+
+    teardownRunner();
+    expect(timers.size()).toBe(0);
+  } finally {
+    RealBackend.prototype.probe = originalProbe;
+    timers.restore();
     environment.restore();
     restoreWindow();
     for (const key of Object.keys(BUILD_TOKENS))

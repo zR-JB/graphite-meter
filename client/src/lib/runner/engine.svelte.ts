@@ -451,6 +451,10 @@ export async function validateConnections(
 }
 
 function ingestRunnerEvent(event: RunnerEvent) {
+  if (event.type === "connectivity") {
+    if (event.state === "offline") refreshAfterOffline();
+    else refreshAfterTransition();
+  }
   if (
     event.type === "phase" &&
     event.transition.to === "connecting" &&
@@ -497,6 +501,7 @@ function ingestRunnerEvent(event: RunnerEvent) {
 }
 
 function refreshAfterTransition() {
+  const active = validating.length > 0;
   if (
     connectivityOnline === true &&
     !CONNECTION_ROLES.some((role) =>
@@ -510,7 +515,7 @@ function refreshAfterTransition() {
   )
     return;
   connectivityOnline = true;
-  requestValidation();
+  if (!active) requestValidation();
 }
 
 function refreshAfterOffline() {
@@ -518,7 +523,10 @@ function refreshAfterOffline() {
   connectivityOnline = false;
   prepared = null;
   markValidation(CONNECTION_ROLES, "stale", "Connection changed; check again.");
-  requestValidation();
+  // The in-flight probe is already the check for this edge. Let its result
+  // establish the normal freshness or bounded-failure deadline instead of
+  // queuing a second immediate probe from the keepalive signal.
+  if (!validating.length) requestValidation();
 }
 
 // A hidden tab does no background work: the keepalive's ping socket and worker
