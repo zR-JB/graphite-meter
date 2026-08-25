@@ -4,6 +4,7 @@ import { failureDetail } from "./failurePresentation";
 test("failure presentation hides low-level transport details", () => {
   for (const detail of [
     "TypeError: Failed to fetch",
+    "RangeError: Invalid typed array length",
     "download stream 0 failed: Error: NetworkError",
     "HTTP 503",
     "webtransport session did not establish",
