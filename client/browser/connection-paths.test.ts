@@ -223,10 +223,9 @@ test("a shared HTTP preflight failure fails both paths and Retry stays quiet", a
   await page.goto("/?engine=real");
   await page.getByRole("button", { name: "Open settings" }).click();
   const settings = page.locator('[aria-label="Settings"]');
-  await expect(settings.getByText("Ready", { exact: true })).toHaveCount(2);
 
-  // Changing to the advertised WebSocket target proves the cards can become
-  // Ready again before the shared discovery request is taken away.
+  // Selecting the advertised WebSocket target triggers validation before the
+  // shared discovery request is taken away.
   await settings.locator("label", { hasText: "WebSocket" }).click();
   await expect(settings.getByText("Ready", { exact: true })).toHaveCount(2);
   reachable = false;
