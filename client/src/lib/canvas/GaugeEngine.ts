@@ -7,7 +7,11 @@ import { presentation, type PresentationHandle } from "./presentation";
 import { sweepTarget, angleForFraction, interpolateSweep } from "./gaugeSweep";
 import { gaugeLayout, type GaugeLayout } from "./gaugeLayout";
 import { canvasPixelRatio } from "./canvasResolution";
-import type { ResultArcPhase } from "../components/resultGauge";
+import {
+  resultGaugeFillTarget,
+  sortResultGaugeArcs,
+  type ResultArcPhase,
+} from "../components/resultGauge";
 
 export interface GaugeResultArc {
   phase: ResultArcPhase;
@@ -64,13 +68,14 @@ export class GaugeEngine implements CanvasEngine {
   #lastFrame = 0;
   #layout: GaugeLayout = gaugeLayout(0, 0, 0);
   #resultArcs: readonly GaugeResultArc[] = [];
+  #completedSweep = 0;
   #resultColors: Record<ResultArcPhase, string> = {
     download: "#4da3ff",
     upload: "#9b7cff",
     bidirectional: "#2fcca0",
   };
 
-  // Static geometry and the marker are cached at device resolution.
+  // Static geometry is cached at device resolution.
   #base: HTMLCanvasElement | null = null;
   #baseCtx: CanvasRenderingContext2D | null = null;
   #baseSig = "";
@@ -110,6 +115,7 @@ export class GaugeEngine implements CanvasEngine {
     this.#baseCtx = null;
     this.#head = null;
     this.#headCtx = null;
+    this.#completedSweep = 0;
   }
 
   invalidateTheme(): void {
@@ -200,7 +206,28 @@ export class GaugeEngine implements CanvasEngine {
     const s = this.#get();
     this.#layout = s.layout;
     this.#showValue = s.showValue ?? true;
-    this.#resultArcs = s.resultArcs ?? [];
+    this.#resultArcs = sortResultGaugeArcs(
+      (s.resultArcs ?? []).map((arc) => ({
+        phase: arc.phase,
+        label: arc.phase,
+        bytesPerSec: arc.fraction,
+        dashed: arc.dashed,
+      })),
+    ).map((arc) => ({
+      phase: arc.phase,
+      fraction: arc.bytesPerSec,
+      dashed: arc.dashed,
+    }));
+
+    const enteringComplete =
+      s.phase === "complete" && this.#lastPhase !== "complete";
+    if (enteringComplete && this.#resultArcs.length) {
+      // The completed layers have their own brief finish animation. Start at
+      // zero so the result is visibly earned without changing measurement data.
+      this.#completedSweep = 0;
+    } else if (s.phase !== "complete" || !this.#resultArcs.length) {
+      this.#completedSweep = 0;
+    }
 
     if (s.phase !== this.#lastPhase) {
       this.#resolveColors(s.phase);
@@ -220,7 +247,18 @@ export class GaugeEngine implements CanvasEngine {
     this.#lastFrame = now;
     const next = interpolateSweep(this.#sweep, target, dt, this.#reducedMotion);
     this.#sweep = next.value;
-    return next.active;
+    const completedTarget =
+      s.phase === "complete" && this.#resultArcs.length
+        ? resultGaugeFillTarget(this.#resultArcs.map((arc) => arc.fraction))
+        : 0;
+    const completed = interpolateSweep(
+      this.#completedSweep,
+      completedTarget,
+      dt,
+      this.#reducedMotion,
+    );
+    this.#completedSweep = completed.value;
+    return next.active || completed.active;
   }
 
   #draw(): void {
@@ -246,25 +284,29 @@ export class GaugeEngine implements CanvasEngine {
     }
 
     if (this.#lastPhase === "complete" && this.#resultArcs.length) {
-      const count = this.#resultArcs.length;
-      const lineWidth = count === 1 ? arcW : Math.max(3, arcW * 0.36);
-      const spacing = lineWidth + 2;
-      this.#resultArcs.forEach((arc, index) => {
-        const radius = r + (index - (count - 1) / 2) * spacing;
+      // Paint the highest result first (underneath), then progressively lower
+      // results on the same radius. The current finish position clips every
+      // layer, so the lowest endpoint hands off cleanly to the next layer.
+      for (const arc of this.#resultArcs) {
+        const visibleFraction = Math.min(
+          Math.max(0, arc.fraction),
+          this.#completedSweep,
+        );
+        if (visibleFraction <= 0.002) continue;
         ctx.strokeStyle = this.#resultColors[arc.phase];
-        ctx.lineWidth = lineWidth;
-        ctx.setLineDash(arc.dashed ? [lineWidth * 1.5, lineWidth] : []);
+        ctx.lineWidth = arcW;
+        ctx.setLineDash(arc.dashed ? [arcW * 1.5, arcW] : []);
         ctx.beginPath();
         ctx.arc(
           cx,
           cy,
-          radius,
+          r,
           layout.arcStart,
-          angleForFraction(arc.fraction, layout.arcStart, layout.arcSweep),
+          angleForFraction(visibleFraction, layout.arcStart, layout.arcSweep),
         );
         ctx.stroke();
-      });
-      ctx.setLineDash([]);
+        ctx.setLineDash([]);
+      }
       return;
     }
 
@@ -316,28 +358,6 @@ export class GaugeEngine implements CanvasEngine {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const hubGap = 2; // px gap from centre before each tick starts
-    const hubTick = 4; // px length of each tick
-    const hubRing = 6; // px radius of the faint outer ring
-    ctx.lineCap = "butt";
-    ctx.strokeStyle = this.#tick;
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - hubGap);
-    ctx.lineTo(cx, cy - hubGap - hubTick);
-    ctx.moveTo(cx, cy + hubGap);
-    ctx.lineTo(cx, cy + hubGap + hubTick);
-    ctx.moveTo(cx - hubGap, cy);
-    ctx.lineTo(cx - hubGap - hubTick, cy);
-    ctx.moveTo(cx + hubGap, cy);
-    ctx.lineTo(cx + hubGap + hubTick, cy);
-    ctx.stroke();
-    ctx.globalAlpha = 0.25;
-    ctx.beginPath();
-    ctx.arc(cx, cy, hubRing, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
     ctx.lineCap = "round"; // the major-tick loop below depends on the round cap
 
     ctx.strokeStyle = this.#tick;

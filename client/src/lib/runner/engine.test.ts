@@ -201,7 +201,7 @@ test("a preflight failure stays idle instead of manufacturing a run error", asyn
     for (let turn = 0; turn < 10 && store.preparing; turn++)
       await new Promise((resolve) => setTimeout(resolve, 0));
     expect(store.phase).toBe("idle");
-    expect(store.startError).toBe("Couldn't reach the server");
+    expect(store.startError).toBe("Connection check failed");
     expect(store.preparation.status).toBe("failed");
     restoreFetch();
     teardownRunner();

@@ -237,6 +237,25 @@ test("a delayed stale start can be cancelled and the idle view continues", async
   ).toBeVisible();
 });
 
+test("a failed start names the affected path in the gauge", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (value) => localStorage.setItem("graphite-meter:v1", value),
+    persistConfig(false),
+  );
+  await stubPreflight(page, []);
+  await page.route("**/probe?*", (route) => route.abort());
+
+  await page.goto("/?engine=real");
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(
+    page.getByText("Connection check failed", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/Throughput path is unavailable/)).toBeVisible();
+  await expect(page.locator(".run-error")).toHaveCount(0);
+});
+
 // Occupancy is a caution about neighbours, so it fires past half rather than at
 // it — one other user of two slots is not a busy server — and a server with no
 // measurement slots configured reports no occupancy at all.

@@ -152,3 +152,15 @@ test("interpolateSweep settles and honors reduced motion", () => {
     active: false,
   });
 });
+
+test("completed gauge reveal starts at zero and settles at bounded target", () => {
+  const live = 0;
+  const target = 0.8;
+  const reveal = interpolateSweep(live, target, 16, false);
+  expect(reveal.value).toBeGreaterThan(live);
+  expect(reveal.value).toBeLessThan(target);
+  expect(interpolateSweep(live, target, 16, true)).toEqual({
+    value: target,
+    active: false,
+  });
+});

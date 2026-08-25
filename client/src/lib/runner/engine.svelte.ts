@@ -489,7 +489,7 @@ export function toggleRun() {
       store.startError =
         cause instanceof TransportUnavailableError
           ? cause.message
-          : "Couldn't reach the server";
+          : "Connection check failed";
       updatePreparation("failed");
     })
     .finally(() => {
