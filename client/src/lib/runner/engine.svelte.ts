@@ -67,15 +67,46 @@ let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
 const SESSION_RUN_MARGIN_MS = 60_000;
 
+function preparationPathState(
+  role: ConnectionRole,
+): "checking" | "ready" | "failed" | "stale" | "disabled" {
+  if (
+    role === "throughput" &&
+    !(
+      store.config.stages.download ||
+      store.config.stages.upload ||
+      store.config.stages.bidirectional
+    )
+  )
+    return "disabled";
+  if (role === "latency" && !store.latencyEnabled) return "disabled";
+  const state = store.connectionValidation[role].state;
+  if (state === "verified") return "ready";
+  return state;
+}
+
+function updatePreparation(
+  status: "authenticating" | "checking" | "launching" | "failed" | "idle",
+): void {
+  store.preparation = {
+    status,
+    throughput: preparationPathState("throughput"),
+    latency: preparationPathState("latency"),
+  };
+}
+
 export function cancelPendingStart() {
   if (!pendingStartAbort) {
-    store.startPending = false;
+    if (store.preparation.status !== "idle") updatePreparation("idle");
     return;
   }
   pendingStartSeq++;
   pendingStartAbort.abort();
   pendingStartAbort = null;
-  store.startPending = false;
+  // Cancellation is not a runner failure: leave the phase idle and clear any
+  // stale transient error from the preparation attempt.
+  store.startError = "";
+  updatePreparation("idle");
 }
 
 // Mirror the persisted dev toggle into the main-thread debug logger, live.
@@ -201,6 +232,10 @@ function markValidation(
       verifiedAt,
     };
   store.connectionValidation = next;
+  if (store.preparing)
+    updatePreparation(
+      store.preparation.status === "launching" ? "launching" : "checking",
+    );
 }
 
 function preparedIsFresh(key: string): boolean {
@@ -215,6 +250,7 @@ function preparedIsFresh(key: string): boolean {
 export async function validateConnections(
   force = false,
   requestedRole?: ConnectionRole,
+  ownerSignal?: AbortSignal,
 ): Promise<InfraInfo> {
   if (!booted) throw new DOMException("Runner is not active", "AbortError");
   const config = $state.snapshot(store.config);
@@ -230,6 +266,9 @@ export async function validateConnections(
     store.transportDiscovery,
   );
   const abort = new AbortController();
+  const relayOwnerAbort = () => abort.abort();
+  ownerSignal?.addEventListener("abort", relayOwnerAbort, { once: true });
+  if (ownerSignal?.aborted) abort.abort();
   validationAbort = abort;
   const seq = ++validationSeq;
   validating = roles;
@@ -308,10 +347,20 @@ export async function validateConnections(
       validationAbort = null;
       validating = [];
     }
+    ownerSignal?.removeEventListener("abort", relayOwnerAbort);
   }
 }
 
 function ingestRunnerEvent(event: RunnerEvent) {
+  if (
+    event.type === "phase" &&
+    event.transition.to === "connecting" &&
+    pendingStartAbort
+  ) {
+    // RunnerCore now owns cancellation. Do not leave the preparation
+    // controller looking live while the button has become Abort.
+    pendingStartAbort = null;
+  }
   if (
     event.type === "transportDiscovery" &&
     store.transportDiscovery &&
@@ -380,21 +429,31 @@ export async function bootRunner() {
 }
 
 export function toggleRun() {
+  // Runner state wins during the narrow start handoff: RunnerCore emits
+  // `connecting` synchronously, while its start promise may still be settling.
+  // In that window the control is an Abort action, not preparation Cancel.
   if (store.isRunning) {
     cancelPendingStart();
     getRunner().abort();
     return;
   }
-  if (pendingStartAbort) return;
+  // Preparation has an explicit Cancel action. It must not be conflated with
+  // the runner's abort path because the visible phase is still idle.
+  if (pendingStartAbort) {
+    cancelPendingStart();
+    return;
+  }
   const cfg = $state.snapshot(store.config);
   const key = connectionKey(cfg, store.transportDiscovery);
   const startAbort = new AbortController();
   const startSeq = ++pendingStartSeq;
   pendingStartAbort = startAbort;
-  store.startPending = true;
+  store.startError = "";
+  updatePreparation("authenticating");
   const current = () =>
     pendingStartSeq === startSeq && !startAbort.signal.aborted;
   const start = async () => {
+    store.preparation = { ...store.preparation, status: "authenticating" };
     const budget = await requireSessionCoverage(
       buildSegments(cfg).totalMs + SESSION_RUN_MARGIN_MS,
       startAbort.signal,
@@ -402,13 +461,14 @@ export function toggleRun() {
     if (!current()) return;
     sessionBudget = budget;
     store.reset();
-    store.startPending = true;
+    updatePreparation("checking");
     if (!current()) return;
     const info = preparedIsFresh(key)
       ? prepared!.info
-      : await validateConnections();
+      : await validateConnections(false, undefined, startAbort.signal);
     if (!current()) return;
     if (!preparedIsFresh(connectionKey(cfg, store.transportDiscovery))) return;
+    updatePreparation("launching");
     store.activeConfig = structuredClone(cfg);
     store.activeConnections = $state.snapshot(store.connections);
     if (!current()) return;
@@ -417,27 +477,25 @@ export function toggleRun() {
   start()
     .catch((cause) => {
       if (!current()) return;
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
       if (cause instanceof SessionCoverageError) {
         store.startError = cause.message;
+        updatePreparation("failed");
         return;
       }
-      store.ingest({
-        type: "error",
-        error: {
-          reason:
-            cause instanceof TransportUnavailableError
-              ? "transport-unavailable"
-              : "preflight-failed",
-          message: "Couldn't reach the server",
-          phase: "connecting",
-          cause,
-        },
-      });
+      // A preflight failure happens before RunnerCore emits `connecting`.
+      // Keep the runner phase idle; the path cards and this transient message
+      // carry the failure without manufacturing a measurement error result.
+      store.startError =
+        cause instanceof TransportUnavailableError
+          ? cause.message
+          : "Connection check failed";
+      updatePreparation("failed");
     })
     .finally(() => {
       if (pendingStartAbort === startAbort) {
         pendingStartAbort = null;
-        store.startPending = false;
+        if (store.preparation.status === "launching") updatePreparation("idle");
       }
     });
 }

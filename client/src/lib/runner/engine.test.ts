@@ -127,46 +127,181 @@ test("teardown clears the probe evidence; a run reset keeps it", async () => {
 test("store reset clears a transient start error", async () => {
   const { store } = await import("../state/store.svelte");
   store.startError = "This test would outlast the session.";
-  store.startPending = true;
+  store.preparation = {
+    status: "checking",
+    throughput: "checking",
+    latency: "checking",
+  };
   store.reset();
   expect(store.startError).toBe("");
-  expect(store.startPending).toBe(false);
+  expect(store.preparation.status).toBe("idle");
 });
 
-test("repeated start clicks do not cancel a pending preflight", async () => {
+test("an explicit second start click cancels a pending preflight", async () => {
   Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
     ...BUILD_TOKENS,
   });
   const restoreWindow = stubGlobal("window", undefined);
   Reflect.deleteProperty(globalThis, "window");
   try {
-    const {
-      bootRunner,
-      cancelPendingStart,
-      hasPendingStart,
-      teardownRunner,
-      toggleRun,
-    } = await import("./engine.svelte");
+    const { bootRunner, hasPendingStart, teardownRunner, toggleRun } =
+      await import("./engine.svelte");
     const { store } = await import("../state/store.svelte");
     const restoreEnvironment = stubBootEnvironment("visible");
     await bootRunner();
+    let pendingSignal: AbortSignal | undefined;
     const restorePendingFetch = stubGlobal(
       "fetch",
-      () => new Promise<Response>(() => {}),
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        pendingSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      },
     );
     store.reset();
 
     toggleRun();
     expect(hasPendingStart()).toBe(true);
-    expect(store.startPending).toBe(true);
+    expect(store.preparing).toBe(true);
+    for (let turn = 0; turn < 10 && !pendingSignal; turn++)
+      await new Promise((resolve) => setTimeout(resolve, 0));
     toggleRun();
-    expect(hasPendingStart()).toBe(true);
-    expect(store.startPending).toBe(true);
-
-    cancelPendingStart();
     expect(hasPendingStart()).toBe(false);
-    expect(store.startPending).toBe(false);
+    expect(store.preparing).toBe(false);
+    expect(pendingSignal?.aborted).toBe(true);
+    expect(store.phase).toBe("idle");
+    expect(store.startError).toBe("");
+    expect(store.preparation.status).toBe("idle");
     restorePendingFetch();
+    teardownRunner();
+    restoreEnvironment();
+  } finally {
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("a preflight failure stays idle instead of manufacturing a run error", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  try {
+    const { bootRunner, teardownRunner, toggleRun } =
+      await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    const restoreEnvironment = stubBootEnvironment("visible");
+    await bootRunner();
+    const restoreFetch = stubGlobal("fetch", () =>
+      Promise.reject(new Error("offline")),
+    );
+    store.reset();
+    toggleRun();
+    for (let turn = 0; turn < 10 && store.preparing; turn++)
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.phase).toBe("idle");
+    expect(store.startError).toBe("Connection check failed");
+    expect(store.preparation.status).toBe("failed");
+    restoreFetch();
+    teardownRunner();
+    restoreEnvironment();
+  } finally {
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("preparation names a disabled throughput path for latency-only runs", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  try {
+    const { bootRunner, cancelPendingStart, teardownRunner, toggleRun } =
+      await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    const restoreEnvironment = stubBootEnvironment("visible");
+    await bootRunner();
+    const restoreFetch = stubGlobal(
+      "fetch",
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>(() => {
+          void init;
+        }),
+    );
+    const previousConfig = JSON.parse(JSON.stringify(store.config));
+    store.config.stages = {
+      latency: true,
+      download: false,
+      upload: false,
+      bidirectional: false,
+    };
+    store.config.skipLoadedLatencyWhenStageOff = true;
+    store.reset();
+    toggleRun();
+    for (
+      let turn = 0;
+      turn < 10 && store.preparation.latency !== "checking";
+      turn++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.preparation.throughput).toBe("disabled");
+    expect(store.preparation.latency).toBe("checking");
+    cancelPendingStart();
+    store.config = previousConfig;
+    restoreFetch();
+    teardownRunner();
+    restoreEnvironment();
+  } finally {
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("transfer-only preparation keeps throughput checking and latency disabled", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  try {
+    const { bootRunner, cancelPendingStart, teardownRunner, toggleRun } =
+      await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    const restoreEnvironment = stubBootEnvironment("visible");
+    await bootRunner();
+    const restoreFetch = stubGlobal(
+      "fetch",
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>(() => {
+          void init;
+        }),
+    );
+    const previousConfig = JSON.parse(JSON.stringify(store.config));
+    store.config.stages = {
+      latency: false,
+      download: true,
+      upload: false,
+      bidirectional: false,
+    };
+    store.config.skipLoadedLatencyWhenStageOff = true;
+    store.reset();
+    toggleRun();
+    for (
+      let turn = 0;
+      turn < 10 && store.preparation.throughput !== "checking";
+      turn++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(store.preparation.throughput).toBe("checking");
+    expect(store.preparation.latency).toBe("disabled");
+    cancelPendingStart();
+    store.config = previousConfig;
+    restoreFetch();
     teardownRunner();
     restoreEnvironment();
   } finally {

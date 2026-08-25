@@ -1082,7 +1082,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/_promote-oci.yml"
         text = path.read_text().replace(
-            "17da3ac5cadf2b27a3dcf7dea857c4cea558ef757641725fc0eec560030057b3",
+            "11203e84159f6568c517c1765ee9a6de15685972c86bc1d27648ba7061486f65",
             "a" * 64,
             1,
         )

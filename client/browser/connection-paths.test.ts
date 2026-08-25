@@ -182,6 +182,85 @@ test("the readiness badge names a failure over a check in flight", async ({
   await expect(badge).toHaveText("Path failed");
 });
 
+test("a delayed stale start can be cancelled and the idle view continues", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (value) => localStorage.setItem("graphite-meter:v1", value),
+    persistConfig(false),
+  );
+  await page.route("**/preflight?*", async (route) => {
+    // Keep boot/path validation in flight long enough for the user-visible
+    // preparation state and Escape cancellation to exercise the real seam.
+    await Bun.sleep(300);
+    await route.fulfill({
+      json: {
+        server: { name: "delayed-start" },
+        engineVersion: "test",
+        generation: "delayed-generation",
+        capabilities: {
+          throughput: [
+            { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
+          ],
+          latency: [],
+        },
+      },
+    });
+  });
+  await page.route("**/probe?*", async (route) => {
+    await Bun.sleep(300);
+    await route.fulfill({ json: PROBE });
+  });
+
+  await page.goto("/?engine=real");
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(page.getByText("Checking paths", { exact: true })).toBeVisible();
+  const live = page.locator('output[aria-live="polite"]');
+  await expect(live).toContainText("Starting test");
+  await expect(live).toContainText("Throughput path");
+  await expect(live).toContainText("Latency path");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "Start the speed test" }),
+  ).toBeVisible();
+  await expect(page.locator('[role="alert"]')).toHaveCount(0);
+  await Bun.sleep(500);
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible();
+  expect(await page.locator("#console").getAttribute("data-phase")).not.toBe(
+    "idle",
+  );
+  await page.getByRole("button", { name: "Abort test" }).click();
+  await expect(
+    page.getByRole("button", { name: "Run the test again" }),
+  ).toBeVisible();
+});
+
+test("a failed start names the affected path in the gauge", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (value) => localStorage.setItem("graphite-meter:v1", value),
+    persistConfig(false),
+  );
+  await stubPreflight(page, []);
+  await page.route("**/probe?*", (route) => route.abort());
+
+  await page.goto("/?engine=real");
+  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await expect(
+    page.getByText("Connection check failed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Throughput path is unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Connection check failed", { exact: true }),
+  ).toHaveCount(1);
+  await expect(page.locator(".run-error")).toHaveCount(0);
+});
+
 // Occupancy is a caution about neighbours, so it fires past half rather than at
 // it — one other user of two slots is not a busy server — and a server with no
 // measurement slots configured reports no occupancy at all.

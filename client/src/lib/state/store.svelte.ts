@@ -72,6 +72,15 @@ import {
   type SettingsTab,
 } from "./persistence";
 
+export type PreparationStatus =
+  "idle" | "authenticating" | "checking" | "launching" | "failed";
+
+export interface PreparationState {
+  status: PreparationStatus;
+  throughput: "checking" | "ready" | "failed" | "stale" | "disabled";
+  latency: "checking" | "ready" | "failed" | "stale" | "disabled";
+}
+
 const SCALE_DWELL_MS = 700;
 const LIVE_RATE_SAMPLE_LIMIT = 1_024;
 
@@ -111,7 +120,23 @@ const UNIT_STEP_UP_HEADROOM = 1.2;
 class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
-  startPending = $state(false);
+  /**
+   * Preparation is deliberately separate from the runner phase. A probe or
+   * session check can be cancelled while the visible runner remains idle; the
+   * first `phase` event is the authority for a started measurement.
+   */
+  preparation = $state<PreparationState>({
+    status: "idle",
+    throughput: "stale",
+    latency: "stale",
+  });
+  /** True only for an active preparation transaction; failed/idle states are
+   * retained for diagnostics without masquerading as an in-flight start. */
+  preparing = $derived(
+    this.preparation.status === "authenticating" ||
+      this.preparation.status === "checking" ||
+      this.preparation.status === "launching",
+  );
   throughput = $state<ThroughputSample[]>([]);
   throughputRevision = $state(0);
   liveThroughput = $state<ThroughputSample[]>([]);
@@ -485,6 +510,13 @@ class AppStore {
         this.phaseStartedAtMs = event.transition.t;
         this.phaseFraction = 0;
         this.uploadPresentationBytesPerSec = null;
+        if (event.transition.to === "connecting") {
+          this.preparation = {
+            status: "idle",
+            throughput: "ready",
+            latency: "ready",
+          };
+        }
         // Stamp the wall-clock run start once, not on every warmup segment.
         if (startsRun) this.startEpoch = Date.now();
         break;
@@ -619,7 +651,11 @@ class AppStore {
 
   reset() {
     this.startError = "";
-    this.startPending = false;
+    this.preparation = {
+      status: "idle",
+      throughput: "stale",
+      latency: "stale",
+    };
     this.throughput = [];
     this.throughputRevision = 0;
     this.liveThroughput = [];

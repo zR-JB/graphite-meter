@@ -272,6 +272,21 @@ test("a windowed desktop fits compact and final cards without token scrolling", 
   await expect(page.locator(".metric-wrap .terminal-unit")).toHaveText(
     /(?:bit|B)\/s$/,
   );
+  const terminalAlignment = await page
+    .locator(".terminal-unit")
+    .evaluate((unit) => {
+      const number = unit.parentElement?.querySelector(
+        ".terminal-result.download .terminal-number",
+      );
+      if (!(number instanceof HTMLElement))
+        throw new Error("missing terminal number");
+      const unitBox = unit.getBoundingClientRect();
+      const numberBox = number.getBoundingClientRect();
+      return { unitRight: unitBox.right, numberRight: numberBox.right };
+    });
+  expect(
+    Math.abs(terminalAlignment.unitRight - terminalAlignment.numberRight),
+  ).toBeLessThanOrEqual(1);
   await expectStageFits(page);
 });
 

@@ -21,6 +21,7 @@
     type PresentationHandle,
   } from "../canvas/presentation";
   import { resultGaugeArcs } from "./resultGauge";
+  import { preparationFailurePresentation } from "./preparationFailure";
   import { ICON } from "../constants";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
@@ -258,6 +259,7 @@
   );
 
   const hint = $derived.by(() => {
+    if (store.preparing) return "Checking paths";
     switch (store.phase) {
       case "idle":
         return "Press Start test to start your speed test";
@@ -269,6 +271,18 @@
         return "";
     }
   });
+
+  const preparationPathLabel = (state: string): string => {
+    if (state === "disabled") return "not needed";
+    return state;
+  };
+  const preparationAnnouncement = $derived.by(() => {
+    if (!store.preparing) return "";
+    return `Starting test. Throughput path ${preparationPathLabel(store.preparation.throughput)}; Latency path ${preparationPathLabel(store.preparation.latency)}`;
+  });
+  const preparationFailure = $derived(
+    preparationFailurePresentation(store.preparation, store.startError),
+  );
 
   const status = $derived.by(() => {
     switch (store.phase) {
@@ -292,7 +306,13 @@
   });
 
   const statusText = $derived(
-    status ? `${status.headline} — ${status.action}` : hint,
+    store.preparing
+      ? preparationAnnouncement
+      : preparationFailure
+        ? `${preparationFailure.headline} — ${preparationFailure.detail}`
+        : status
+          ? `${status.headline} — ${status.action}`
+          : hint,
   );
 
   // Wake the gauge loop for exactly the state GaugeEngine reads. The loop parks
@@ -489,12 +509,19 @@
         <span class="sr-only"
           >{accessibleDisplay.value} {accessibleDisplay.unit}</span
         >
-        {#if hint || status || failNotes.length}
+        {#if hint || status || preparationFailure || failNotes.length}
           <div class="gauge-notes">
             {#each failNotes as note (note)}<span class="gauge-fail"
                 >{note}</span
               >{/each}
-            {#if status}
+            {#if store.preparing}
+              <span class="gauge-status preparation">Checking paths</span>
+            {:else if preparationFailure}
+              <span class="gauge-status error"
+                >{preparationFailure.headline}</span
+              >
+              <span class="gauge-hint">{preparationFailure.detail}</span>
+            {:else if status}
               <span class="gauge-status" class:error={status.tone === "error"}>
                 {status.headline}
               </span>
@@ -796,10 +823,12 @@
   .terminal-number {
     min-width: 0;
     text-align: right;
+    color: var(--result-accent);
   }
   .terminal-unit {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 7px;
     width: 100%;
     font-family: var(--font-mono);
@@ -808,13 +837,6 @@
     letter-spacing: 0.07em;
     color: var(--text-soft);
     line-height: 1;
-  }
-  .terminal-unit::before,
-  .terminal-unit::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: color-mix(in srgb, var(--text-muted) 22%, transparent);
   }
   .gauge-unit {
     margin-top: var(--space-1);
@@ -827,7 +849,7 @@
   }
   @media (prefers-reduced-motion: no-preference) {
     .terminal-result {
-      animation: terminal-result-enter 180ms var(--ease-out) both;
+      animation: terminal-result-enter var(--dur-slide) var(--ease-out) both;
     }
     .terminal-result:nth-child(2) {
       animation-delay: 35ms;
@@ -836,7 +858,8 @@
       animation-delay: 70ms;
     }
     .terminal-unit {
-      animation: terminal-unit-enter 160ms var(--ease-out) 100ms both;
+      animation: terminal-unit-enter var(--dur-hover) var(--ease-out)
+        var(--dur-hover) both;
     }
   }
   @keyframes terminal-result-enter {
@@ -883,6 +906,9 @@
   }
   .gauge-status.error {
     color: var(--err);
+  }
+  .gauge-status.preparation {
+    color: var(--brand-strong);
   }
   .gauge-fail {
     font-size: 11.5px;

@@ -9,6 +9,31 @@ export interface ResultGaugeArc {
   dashed: boolean;
 }
 
+/** Highest throughput is painted first so lower values can layer over it. */
+export function sortResultGaugeArcs(
+  arcs: readonly ResultGaugeArc[],
+): ResultGaugeArc[] {
+  return arcs
+    .map((arc, index) => ({ arc, index }))
+    .sort(
+      (a, b) =>
+        (Number.isFinite(b.arc.bytesPerSec) ? b.arc.bytesPerSec : -Infinity) -
+          (Number.isFinite(a.arc.bytesPerSec)
+            ? a.arc.bytesPerSec
+            : -Infinity) || a.index - b.index,
+    )
+    .map(({ arc }) => arc);
+}
+
+/** Completion animation is always bounded to the gauge's normalized domain. */
+export function resultGaugeFillTarget(fractions: readonly number[]): number {
+  let maximum = 0;
+  for (const fraction of fractions) {
+    if (Number.isFinite(fraction)) maximum = Math.max(maximum, fraction);
+  }
+  return Math.min(1, Math.max(0, maximum));
+}
+
 export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
   if (!result) return [];
   const arcs: ResultGaugeArc[] = [];
@@ -41,5 +66,5 @@ export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
       bytesPerSec: (bidi.down ?? bidi.up)!.reportedBytesPerSec,
       dashed: true,
     });
-  return arcs;
+  return sortResultGaugeArcs(arcs);
 }
