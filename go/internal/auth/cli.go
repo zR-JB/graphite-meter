@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/url"
 	"time"
@@ -63,11 +64,7 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.now()
 	s.mu.Lock()
-	for key, pending := range s.approvals {
-		if !now.Before(pending.expires) {
-			delete(s.approvals, key)
-		}
-	}
+	maps.DeleteFunc(s.approvals, func(_ string, pending *cliApproval) bool { return !now.Before(pending.expires) })
 	approval := s.approvals[challenge]
 	if approval == nil {
 		count := 0

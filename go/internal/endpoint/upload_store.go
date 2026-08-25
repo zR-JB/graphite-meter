@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"hash/fnv"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -362,14 +363,15 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.Lock()
-		for id, agg := range sh.m {
-			if agg.posts.Load() == 0 && agg.lastTouchMono.Load() < aggCutoff {
-				delete(sh.m, id)
-				close(agg.expired)
-				s.live.Add(-1)
-				s.releaseOwner(agg)
+		maps.DeleteFunc(sh.m, func(_ string, agg *uploadAgg) bool {
+			if agg.posts.Load() != 0 || agg.lastTouchMono.Load() >= aggCutoff {
+				return false
 			}
-		}
+			close(agg.expired)
+			s.live.Add(-1)
+			s.releaseOwner(agg)
+			return true
+		})
 		sh.mu.Unlock()
 	}
 }

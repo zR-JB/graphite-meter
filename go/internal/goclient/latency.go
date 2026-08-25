@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -188,7 +189,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			// spinning this select for the whole window.
 			start = nil
 			mu.Lock()
-			pending = make(map[uint32]time.Time)
+			clear(pending)
 			mu.Unlock()
 			measuring.Store(true)
 			timer := time.NewTimer(duration)
@@ -228,7 +229,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			}
 			conn, proto = fresh, freshProto
 			mu.Lock()
-			pending = make(map[uint32]time.Time)
+			clear(pending)
 			mu.Unlock()
 			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
 			go readLoop(conn)
@@ -241,18 +242,19 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				continue
 			}
 			mu.Lock()
-			for id, sent := range pending {
-				if now.Sub(sent) >= lossAfter {
-					delete(pending, id)
-					stats.add(0, true)
-					r.emit(Event{
-						Kind:    EventLatency,
-						At:      now,
-						Stage:   stage,
-						Latency: LatencySample{Stage: stage, UnderLoad: underLoad, Lost: true},
-					})
+			maps.DeleteFunc(pending, func(_ uint32, sent time.Time) bool {
+				if now.Sub(sent) < lossAfter {
+					return false
 				}
-			}
+				stats.add(0, true)
+				r.emit(Event{
+					Kind:    EventLatency,
+					At:      now,
+					Stage:   stage,
+					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, Lost: true},
+				})
+				return true
+			})
 			mu.Unlock()
 		}
 	}

@@ -23,10 +23,8 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 	laneCtx, cancel := context.WithCancel(ctx)
 	g := &laneGroup{cancel: cancel, errs: make(chan error, streams)}
 	stagger := r.laneStaggerStep(streams)
-	for i := range streams {
-		g.wg.Add(1)
-		go func(lane int) {
-			defer g.wg.Done()
+	for lane := range streams {
+		g.wg.Go(func() {
 			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
@@ -36,7 +34,7 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 				default:
 				}
 			}
-		}(i)
+		})
 	}
 	return g
 }
@@ -176,7 +174,7 @@ func (s *latencyStats) snapshot() LatencyStats {
 		}
 		return LatencyStats{Loss: loss}
 	}
-	xs := append([]time.Duration(nil), s.values...)
+	xs := slices.Clone(s.values)
 	slices.Sort(xs)
 	var sum time.Duration
 	for _, v := range xs {

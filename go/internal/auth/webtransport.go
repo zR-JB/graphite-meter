@@ -9,6 +9,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"maps"
 	"net/http"
 	"time"
 )
@@ -95,12 +96,13 @@ func (s *Service) consumeWebTransportToken(raw string) (Principal, bool) {
 }
 
 func (s *Service) expireWTTokensLocked(now time.Time) {
-	for h, t := range s.wtTokens {
-		if !now.Before(t.expires) {
-			delete(s.wtTokens, h)
-			delete(t.sess.wtTokens, h)
+	maps.DeleteFunc(s.wtTokens, func(h [32]byte, t wtToken) bool {
+		if now.Before(t.expires) {
+			return false
 		}
-	}
+		delete(t.sess.wtTokens, h)
+		return true
+	})
 }
 
 // isWebTransportRoute names the extended-CONNECT session routes, the paths that
