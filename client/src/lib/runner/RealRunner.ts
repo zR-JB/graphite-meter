@@ -47,7 +47,10 @@ import {
   ROUTES,
 } from "./real/backendPure";
 import { ridesSession, transportRunnable } from "./real/transports";
-import { TransportUnavailableError } from "./real/transportError";
+import {
+  PreflightUnavailableError,
+  TransportUnavailableError,
+} from "./real/transportError";
 import {
   fetchLane,
   sessionLane,
@@ -67,7 +70,7 @@ import { IdleKeepalive, LatencyChannel } from "./real/latencyChannel";
 import { UploadProgressChannel } from "./real/uploadProgress";
 import { UploadPresentationBridge } from "./uploadPresentationBridge";
 
-export { TransportUnavailableError };
+export { PreflightUnavailableError, TransportUnavailableError };
 
 /** Enough for the server to open a lane and write it, small enough that the
  *  check costs nothing measurable. */
@@ -360,7 +363,7 @@ export class RealBackend implements RunnerBackend {
       )?.nextHopProtocol;
     } catch (cause) {
       await classifyAuthenticationFailure(signal);
-      throw new Error(`preflight request failed: ${String(cause)}`, { cause });
+      throw new PreflightUnavailableError("preflight unavailable", { cause });
     }
     this.#assertCurrentProbe(epoch);
     this.#discoveryOrigin = origin;

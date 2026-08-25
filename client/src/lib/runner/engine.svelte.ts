@@ -22,7 +22,11 @@ import { RunnerCore } from "./core";
 // Rollup deletes the branch and tree-shakes the whole module out, but only
 // while dummy.ts stays free of top-level side effects.
 import { DummyBackend } from "./dummy";
-import { RealBackend, TransportUnavailableError } from "./RealRunner";
+import {
+  PreflightUnavailableError,
+  RealBackend,
+  TransportUnavailableError,
+} from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
@@ -62,9 +66,12 @@ let lastDraftRoleKeys: Record<ConnectionRole, string> = {
   latency: "",
 };
 let pendingValidation = false;
-let hiddenAt = 0;
 let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
+let validationTimer: ReturnType<typeof setTimeout> | null = null;
+let validationDueAt = 0;
+let lastValidationAttemptAt = 0;
+let connectivityOnline: boolean | null = null;
 const SESSION_RUN_MARGIN_MS = 60_000;
 
 function preparationPathState(
@@ -93,6 +100,70 @@ function updatePreparation(
     throughput: preparationPathState("throughput"),
     latency: preparationPathState("latency"),
   };
+}
+
+function clearValidationTimer(): void {
+  if (validationTimer !== null) clearTimeout(validationTimer);
+  validationTimer = null;
+}
+
+function validationHidden(): boolean {
+  return document.visibilityState === "hidden";
+}
+
+function validationDue(): number {
+  const now = Date.now();
+  if (validationDueAt) return validationDueAt;
+  if (prepared) return prepared.verifiedAt + CONNECTION_FRESH_MS;
+  if (lastValidationAttemptAt)
+    return lastValidationAttemptAt + CONNECTION_FRESH_MS;
+  return now;
+}
+
+function scheduleValidation(): void {
+  clearValidationTimer();
+  if (!booted || store.isRunning || validationHidden()) return;
+  const dueAt = validationDue();
+  const delay = Math.max(0, dueAt - Date.now());
+  if (delay === 0) {
+    validationTimer = setTimeout(() => {
+      validationTimer = null;
+      serviceValidation();
+    }, 0);
+    return;
+  }
+  validationTimer = setTimeout(() => {
+    validationTimer = null;
+    serviceValidation();
+  }, delay);
+}
+
+function requestValidation(): void {
+  pendingValidation = true;
+  validationDueAt = Date.now();
+  scheduleValidation();
+}
+
+function serviceValidation(): void {
+  if (!booted || store.isRunning || validationHidden()) {
+    scheduleValidation();
+    return;
+  }
+  if (validating.length) return;
+  const due = validationDue() <= Date.now();
+  if (!pendingValidation && !due) {
+    scheduleValidation();
+    return;
+  }
+  pendingValidation = false;
+  validationDueAt = 0;
+  queueMicrotask(
+    () =>
+      void validateConnections(true).catch(() => {
+        // The validation state is the user-facing result; expected probe
+        // failures are recorded there and consumed at this UI boundary.
+      }),
+  );
 }
 
 export function cancelPendingStart() {
@@ -143,7 +214,7 @@ if (typeof window !== "undefined") {
         for (const role of changed)
           lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
         if (!needed.length) return;
-        pendingValidation = true;
+        requestValidation();
         if (running) {
           markValidation(
             changed.filter((role) => needed.includes(role)),
@@ -153,16 +224,7 @@ if (typeof window !== "undefined") {
           return;
         }
       }
-      if (running || !pendingValidation) return;
-      pendingValidation = false;
-      queueMicrotask(
-        () =>
-          // A rejection is already recorded as a "failed" role by markValidation.
-          void validateConnections(
-            false,
-            needed.length === 1 ? needed[0] : undefined,
-          ).catch(() => {}),
-      );
+      serviceValidation();
     });
   });
 }
@@ -210,9 +272,39 @@ export function getRunner(): NetworkRunner {
   return runner;
 }
 
-function validationMessage(cause: unknown): string {
-  if (cause instanceof TransportUnavailableError) return cause.message;
-  return cause instanceof Error ? cause.message : "Connection check failed";
+function isNetworkUnavailable(cause: unknown): boolean {
+  const seen = new Set<object>();
+  let current: unknown = cause;
+  while (
+    current &&
+    (typeof current === "object" || typeof current === "function")
+  ) {
+    const value = current as {
+      name?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (seen.has(value)) return false;
+    seen.add(value);
+    const name = typeof value.name === "string" ? value.name : "";
+    const message = typeof value.message === "string" ? value.message : "";
+    if (
+      name === "NetworkError" ||
+      /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i.test(
+        message,
+      )
+    )
+      return true;
+    current = value.cause;
+  }
+  return false;
+}
+
+export function connectionFailureMessage(cause: unknown): string {
+  return cause instanceof PreflightUnavailableError &&
+    isNetworkUnavailable(cause.cause)
+    ? "Server could not be reached"
+    : "Connection check failed";
 }
 
 function markValidation(
@@ -257,6 +349,9 @@ export async function validateConnections(
   const key = connectionKey(config, store.transportDiscovery);
   const draftKey = connectionDraftKey(config);
   if (!force && preparedIsFresh(key)) return prepared!.info;
+  lastValidationAttemptAt = Date.now();
+  validationDueAt = 0;
+  pendingValidation = false;
   if (validating.length) markValidation(validating, "stale");
   validationAbort?.abort();
   const roles = validationRoles(
@@ -308,13 +403,15 @@ export async function validateConnections(
         if (!transactionCurrent()) throw cause;
         firstFailure ??= cause;
         const failedRoles =
-          cause instanceof TransportUnavailableError && cause.role
-            ? [cause.role]
-            : batchRoles;
+          cause instanceof PreflightUnavailableError
+            ? CONNECTION_ROLES
+            : cause instanceof TransportUnavailableError && cause.role
+              ? [cause.role]
+              : batchRoles;
         markValidation(
           failedRoles,
           "failed",
-          validationMessage(cause),
+          connectionFailureMessage(cause),
           undefined,
           config,
         );
@@ -341,6 +438,7 @@ export async function validateConnections(
       info: latest,
       verifiedAt: Date.now(),
     };
+    validationDueAt = prepared.verifiedAt + CONNECTION_FRESH_MS;
     return latest;
   } finally {
     if (validationAbort === abort) {
@@ -348,10 +446,15 @@ export async function validateConnections(
       validating = [];
     }
     ownerSignal?.removeEventListener("abort", relayOwnerAbort);
+    scheduleValidation();
   }
 }
 
 function ingestRunnerEvent(event: RunnerEvent) {
+  if (event.type === "connectivity") {
+    if (event.state === "offline") refreshAfterOffline();
+    else refreshAfterTransition();
+  }
   if (
     event.type === "phase" &&
     event.transition.to === "connecting" &&
@@ -387,12 +490,43 @@ function ingestRunnerEvent(event: RunnerEvent) {
     );
   }
   store.ingest(event);
+  if (
+    event.type === "phase" &&
+    (event.transition.to === "complete" ||
+      event.transition.to === "aborted" ||
+      event.transition.to === "error")
+  ) {
+    scheduleValidation();
+  }
 }
 
 function refreshAfterTransition() {
-  // A rejection is already recorded as a "failed" role by markValidation.
-  if (booted && !store.isRunning)
-    void validateConnections(true).catch(() => {});
+  const active = validating.length > 0;
+  if (
+    connectivityOnline === true &&
+    !CONNECTION_ROLES.some((role) =>
+      roleNeedsValidation(
+        store.config,
+        store.connectionValidation,
+        role,
+        store.transportDiscovery,
+      ),
+    )
+  )
+    return;
+  connectivityOnline = true;
+  if (!active) requestValidation();
+}
+
+function refreshAfterOffline() {
+  if (connectivityOnline === false) return;
+  connectivityOnline = false;
+  prepared = null;
+  markValidation(CONNECTION_ROLES, "stale", "Connection changed; check again.");
+  // The in-flight probe is already the check for this edge. Let its result
+  // establish the normal freshness or bounded-failure deadline instead of
+  // queuing a second immediate probe from the keepalive signal.
+  if (!validating.length) requestValidation();
 }
 
 // A hidden tab does no background work: the keepalive's ping socket and worker
@@ -405,10 +539,9 @@ function refreshAfterVisibility() {
   // the flag decides whether it comes back when the run ends.
   runner?.setBackgroundActivity?.(!hidden);
   if (hidden) {
-    hiddenAt = Date.now();
-  } else if (hiddenAt && Date.now() - hiddenAt >= CONNECTION_FRESH_MS) {
-    hiddenAt = 0;
-    refreshAfterTransition();
+    clearValidationTimer();
+  } else {
+    scheduleValidation();
   }
 }
 
@@ -417,15 +550,18 @@ export async function bootRunner() {
   store.engineInfo = engine.describe();
   unsubscribe = engine.on(ingestRunnerEvent);
   booted = true;
+  connectivityOnline =
+    typeof navigator === "undefined" ? null : navigator.onLine;
   for (const role of CONNECTION_ROLES)
     lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
+  window.addEventListener("offline", refreshAfterOffline);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
   // A tab opened in the background gets no visibilitychange, so seed the flag
   // from the current state instead of assuming the page is visible.
   refreshAfterVisibility();
-  // A rejection is already recorded as a "failed" role by markValidation.
-  await validateConnections().catch(() => {});
+  if (validationHidden()) requestValidation();
+  else await validateConnections().catch(() => {});
 }
 
 export function toggleRun() {
@@ -486,10 +622,7 @@ export function toggleRun() {
       // A preflight failure happens before RunnerCore emits `connecting`.
       // Keep the runner phase idle; the path cards and this transient message
       // carry the failure without manufacturing a measurement error result.
-      store.startError =
-        cause instanceof TransportUnavailableError
-          ? cause.message
-          : "Connection check failed";
+      store.startError = connectionFailureMessage(cause);
       updatePreparation("failed");
     })
     .finally(() => {
@@ -514,8 +647,7 @@ export function returnToStart() {
   cancelPendingStart();
   if (store.isRunning) getRunner().abort();
   store.reset();
-  // A rejection is already recorded as a "failed" role by markValidation.
-  void validateConnections(true).catch(() => {});
+  requestValidation();
 }
 
 /**
@@ -578,7 +710,12 @@ export function teardownRunner() {
   validating = [];
   validationAbort?.abort();
   validationAbort = null;
+  clearValidationTimer();
+  validationDueAt = 0;
+  lastValidationAttemptAt = 0;
+  connectivityOnline = null;
   window.removeEventListener("online", refreshAfterTransition);
+  window.removeEventListener("offline", refreshAfterOffline);
   document.removeEventListener("visibilitychange", refreshAfterVisibility);
   unsubscribe?.();
   unsubscribe = null;

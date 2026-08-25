@@ -5,6 +5,7 @@
   import type { TransportRole } from "../runner/contract";
   import { fmtMs, niceDomain } from "../format";
   import { tooltip, JARGON } from "../actions/tooltip";
+  import { failureDetail } from "./failurePresentation";
   import {
     type MetricKey,
     metricLabel,
@@ -121,7 +122,7 @@
   {#if store.stagePresentation.latency.status === "failed"}
     <p class="lane-fail" role="alert">
       Latency skipped — {store.stagePresentation.latency.failure
-        ? store.stageFailures.latency?.message
+        ? failureDetail(store.stageFailures.latency?.message)
         : "unavailable"}
     </p>
   {/if}

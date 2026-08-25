@@ -7,6 +7,7 @@
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
   import { phaseKicker, phaseMessage } from "./phasePresentation";
+  import { failureDetail } from "./failurePresentation";
 
   // A terminal or skipped-stage notice earns a longer read than a routine
   // phase blink.
@@ -43,8 +44,9 @@
   const stallMessage = $derived.by(() => {
     const info = store.stallInfo;
     // Prefer the backend's human detail; else the friendly reason phrase.
-    const tail =
-      info?.detail ?? (info ? reasonLabel(info.reason) : "the link dropped");
+    const tail = info
+      ? failureDetail(info.detail, reasonLabel(info.reason))
+      : "the link dropped";
     return `Connection lost — ${tail}`;
   });
 
@@ -73,7 +75,7 @@
     const failures = Object.values(store.stageFailures);
     if (failures.length > prevFailCount) {
       const latest = failures[failures.length - 1];
-      skipMessage = `${STAGE_LABEL[latest.stage]} skipped — ${latest.message}`;
+      skipMessage = `${STAGE_LABEL[latest.stage]} skipped — ${failureDetail(latest.message)}`;
       visible = true;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {

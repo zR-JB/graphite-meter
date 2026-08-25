@@ -22,6 +22,7 @@
   } from "../canvas/presentation";
   import { resultGaugeArcs } from "./resultGauge";
   import { preparationFailurePresentation } from "./preparationFailure";
+  import { failureDetail } from "./failurePresentation";
   import { ICON } from "../constants";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
@@ -254,7 +255,7 @@
   };
   const failNotes = $derived(
     store.transferFailures.map(
-      (f) => `${STAGE_NAME[f.stage]} skipped — ${f.message}`,
+      (f) => `${STAGE_NAME[f.stage]} skipped — ${failureDetail(f.message)}`,
     ),
   );
 

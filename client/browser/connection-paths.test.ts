@@ -115,12 +115,42 @@ test("the diagnostics rows agree with the path card above them", async ({
   await expect(diagnosticRow(page, "Streams")).toHaveText(
     "Automatic · 1 continuous stream per direction",
   );
+
+  await page.evaluate(() => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText = () =>
+        Promise.reject(new Error("clipboard denied"));
+    } else {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: () => Promise.reject(new Error("clipboard denied")),
+        },
+      });
+    }
+  });
+  const errorStart = page.errors.length;
+  const consoleStart = page.console.length;
+  await endpoint
+    .getByRole("button", { name: "Copy diagnostic report" })
+    .click();
+  await expect(endpoint.locator(".sr-status")).toHaveText(
+    "Unable to copy diagnostic report",
+  );
+  expect(page.errors.slice(errorStart)).toEqual([]);
+  expect(
+    page.console
+      .slice(consoleStart)
+      .filter((entry) => entry.startsWith("error:")),
+  ).toEqual([]);
 });
 
 // Two pickers mount at once and each renders its own Retry. A <legend> does not
 // contribute to a descendant button's accessible name, so without one of their
 // own the button rotor reads "Retry, Retry".
 test("each path's Retry names the path it retries", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.addInitScript(
     (value) => localStorage.setItem("graphite-meter:v1", value),
     persistConfig(true),
@@ -142,6 +172,72 @@ test("each path's Retry names the path it retries", async ({ page }) => {
     settings.getByRole("button", { name: "Retry Throughput path" }),
   ).toBeVisible();
   await expect(settings.getByRole("button", { name: /^Retry/ })).toHaveCount(2);
+
+  const consoleStart = page.console.length;
+  await settings.getByRole("button", { name: "Retry Latency path" }).click();
+  await expect(
+    settings
+      .locator("fieldset", { hasText: "Latency path" })
+      .getByText("Connection check failed", { exact: true }),
+  ).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(
+    page.console
+      .slice(consoleStart)
+      .filter((entry) => entry.startsWith("error:")),
+  ).toEqual([]);
+});
+
+test("a shared HTTP preflight failure fails both paths and Retry stays quiet", async ({
+  page,
+}) => {
+  let reachable = true;
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.addInitScript(
+    (value) => localStorage.setItem("graphite-meter:v1", value),
+    persistConfig(true),
+  );
+  await page.route("**/preflight?*", async (route) => {
+    if (!reachable) {
+      await route.abort();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        server: { name: "paths-test" },
+        engineVersion: "test",
+        generation: "paths-generation",
+        capabilities: {
+          throughput: [
+            { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
+            { baseUrl: ".", transport: "websocket", protocol: "http1" },
+          ],
+          latency: [{ baseUrl: ".", transport: "websocket" }],
+        },
+      },
+    });
+  });
+  await page.route("**/probe?*", (route) => route.fulfill({ json: PROBE }));
+
+  await page.goto("/?engine=real");
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const settings = page.locator('[aria-label="Settings"]');
+  reachable = false;
+  const consoleStart = page.console.length;
+  // LocalRoute.abort() returns HTTP 503 in this harness. The genuine rejected
+  // fetch/network-unavailable classifier is covered by engine unit tests.
+  await settings.getByRole("button", { name: "Retry Throughput path" }).click();
+  await expect(
+    settings.getByText("Connection check failed", { exact: true }),
+  ).toHaveCount(2);
+  await expect(settings.getByText("Failed", { exact: true })).toHaveCount(2);
+  expect(pageErrors).toEqual([]);
+  expect(
+    page.console
+      .slice(consoleStart)
+      .filter((entry) => entry.startsWith("error:")),
+  ).toEqual([]);
 });
 
 // The badge is the one panel-level summary the user is meant to trust.
@@ -250,13 +346,17 @@ test("a failed start names the affected path in the gauge", async ({
   await page.goto("/?engine=real");
   await page.getByRole("button", { name: "Start the speed test" }).click();
   await expect(
-    page.getByText("Connection check failed", { exact: true }),
+    page.locator(".gauge-panel").getByText("Connection check failed", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByText("Throughput path is unavailable", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Connection check failed", { exact: true }),
+    page.locator(".gauge-panel").getByText("Connection check failed", {
+      exact: true,
+    }),
   ).toHaveCount(1);
   await expect(page.locator(".run-error")).toHaveCount(0);
 });

@@ -13,3 +13,6 @@ export class TransportUnavailableError extends Error {
     this.role = options?.role;
   }
 }
+
+/** The shared discovery request failed before either role could be checked. */
+export class PreflightUnavailableError extends Error {}
