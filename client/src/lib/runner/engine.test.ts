@@ -543,6 +543,48 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
   }
 });
 
+test("window connectivity listeners share failure and recovery scheduling", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  const { RealBackend } = await import("./RealRunner");
+  const originalProbe = RealBackend.prototype.probe;
+  let probeCalls = 0;
+  let offline = false;
+  RealBackend.prototype.probe = async function () {
+    probeCalls++;
+    if (offline) throw new Error("server unavailable");
+    return PROBE_EVIDENCE;
+  };
+  const environment = stubEventBootEnvironment("visible", true);
+  try {
+    const { bootRunner, teardownRunner } = await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    await bootRunner();
+    offline = true;
+    environment.emit("offline");
+    environment.emit("offline");
+    await settleValidation();
+    expect(probeCalls).toBe(2);
+    expect(store.connectionValidation.throughput.state).toBe("failed");
+
+    offline = false;
+    environment.emit("online");
+    await settleValidation();
+    expect(probeCalls).toBe(3);
+    expect(store.connectionValidation.throughput.state).toBe("verified");
+    teardownRunner();
+  } finally {
+    RealBackend.prototype.probe = originalProbe;
+    environment.restore();
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
 test("validation scheduler refreshes, backs off, defers hidden work, and tears down", async () => {
   Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
     ...BUILD_TOKENS,
@@ -589,9 +631,12 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
     await settleMicrotasks();
     expect(probeCalls).toBe(4);
 
+    timers.advance(CONNECTION_FRESH_MS - 1);
+    await settleMicrotasks();
+    expect(probeCalls).toBe(4);
     environment.setVisibility("hidden");
     expect(timers.size()).toBe(0);
-    timers.advance(CONNECTION_FRESH_MS * 2);
+    timers.advance(2);
     environment.setVisibility("visible");
     expect(probeCalls).toBe(4);
     timers.advance(0);
