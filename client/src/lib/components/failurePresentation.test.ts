@@ -8,6 +8,8 @@ test("failure presentation hides low-level transport details", () => {
     "download stream 0 failed: Error: NetworkError",
     "HTTP 503",
     "webtransport session did not establish",
+    "upload progress error",
+    "selected throughput target has no upload progress route",
   ]) {
     expect(failureDetail(detail)).toBe("Connection lost");
   }
