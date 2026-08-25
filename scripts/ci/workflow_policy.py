@@ -84,7 +84,7 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
             fail(f"{name} must declare packages: write")
         if '-e IMAGE="$image"' not in text:
             fail(f"{name} must pass IMAGE explicitly to the Skopeo container")
-        if "@sha256:17da3ac5cadf2b27a3dcf7dea857c4cea558ef757641725fc0eec560030057b3" not in text:
+        if "@sha256:11203e84159f6568c517c1765ee9a6de15685972c86bc1d27648ba7061486f65" not in text:
             fail(f"{name} must pin the Skopeo container by digest")
         if not re.search(
             r"(?m)^    env:\n"
