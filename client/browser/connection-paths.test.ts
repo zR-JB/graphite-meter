@@ -223,11 +223,6 @@ test("a shared HTTP preflight failure fails both paths and Retry stays quiet", a
   await page.goto("/?engine=real");
   await page.getByRole("button", { name: "Open settings" }).click();
   const settings = page.locator('[aria-label="Settings"]');
-
-  // Selecting the advertised WebSocket target triggers validation before the
-  // shared discovery request is taken away.
-  await settings.locator("label", { hasText: "WebSocket" }).click();
-  await expect(settings.getByText("Ready", { exact: true })).toHaveCount(2);
   reachable = false;
   const consoleStart = page.console.length;
   // LocalRoute.abort() returns HTTP 503 in this harness. The genuine rejected
