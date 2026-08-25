@@ -188,7 +188,7 @@ test("each path's Retry names the path it retries", async ({ page }) => {
   ).toEqual([]);
 });
 
-test("a shared preflight outage fails both paths and Retry stays quiet", async ({
+test("a shared HTTP preflight failure fails both paths and Retry stays quiet", async ({
   page,
 }) => {
   let reachable = true;
@@ -231,9 +231,11 @@ test("a shared preflight outage fails both paths and Retry stays quiet", async (
   await expect(settings.getByText("Ready", { exact: true })).toHaveCount(2);
   reachable = false;
   const consoleStart = page.console.length;
+  // LocalRoute.abort() returns HTTP 503 in this harness. The genuine rejected
+  // fetch/network-unavailable classifier is covered by engine unit tests.
   await settings.getByRole("button", { name: "Retry Throughput path" }).click();
   await expect(
-    settings.getByText("Server could not be reached", { exact: true }),
+    settings.getByText("Connection check failed", { exact: true }),
   ).toHaveCount(2);
   await expect(settings.getByText("Failed", { exact: true })).toHaveCount(2);
   expect(pageErrors).toEqual([]);
