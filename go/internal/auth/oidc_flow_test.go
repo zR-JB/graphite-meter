@@ -6,7 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -131,7 +131,7 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(value)
+	_ = json.MarshalWrite(w, value)
 }
 
 func (f *fakeOIDC) service(t *testing.T) *Service {
@@ -139,7 +139,7 @@ func (f *fakeOIDC) service(t *testing.T) *Service {
 	previous := http.DefaultTransport
 	http.DefaultTransport = f.server.Client().Transport
 	t.Cleanup(func() { http.DefaultTransport = previous })
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	s, err := New(ctx, config.AuthConfig{Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client", OIDCClientSecret: "secret", OIDCAllowedGroups: []string{"allowed"}, OIDCProviderName: "Provider"}, nil, false)
 	if err != nil {

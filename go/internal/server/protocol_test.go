@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net"
 	"net/http"
@@ -178,7 +178,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var probe wire.Probe
-	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+	if err := json.UnmarshalRead(res.Body, &probe); err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
@@ -233,7 +233,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var probe wire.Probe
-	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+	if err := json.UnmarshalRead(res.Body, &probe); err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
@@ -274,7 +274,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var probe wire.Probe
-	if err := json.NewDecoder(res.Body).Decode(&probe); err != nil {
+	if err := json.UnmarshalRead(res.Body, &probe); err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()

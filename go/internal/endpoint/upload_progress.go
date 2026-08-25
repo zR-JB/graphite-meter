@@ -2,7 +2,8 @@ package endpoint
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/netip"
@@ -102,9 +103,10 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return nil
 	}
-	enc := json.NewEncoder(w)
+	// NDJSON requires a stateful encoder and one newline-delimited record per event.
+	enc := jsontext.NewEncoder(w)
 	emit := func(event uploadProgressEvent) bool {
-		if err := enc.Encode(event); err != nil {
+		if err := json.MarshalEncode(enc, event); err != nil {
 			return false
 		}
 		flusher.Flush()
@@ -137,8 +139,9 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 // stream the server opens on a WebTransport upload session. Stream writes are
 // unbuffered, so there is no flush step.
 func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
-	enc := json.NewEncoder(w)
-	emit := func(event uploadProgressEvent) bool { return enc.Encode(event) == nil }
+	// This WebTransport feed is also NDJSON; retain Encoder framing per record.
+	enc := jsontext.NewEncoder(w)
+	emit := func(event uploadProgressEvent) bool { return json.MarshalEncode(enc, event) == nil }
 
 	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {

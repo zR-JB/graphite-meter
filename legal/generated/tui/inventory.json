@@ -18,7 +18,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/aymanbagabas/go-osc52/v2",
@@ -36,7 +36,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/bubbles",
@@ -54,7 +54,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/bubbletea",
@@ -72,7 +72,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/colorprofile",
@@ -90,7 +90,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/lipgloss",
@@ -108,7 +108,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/x/ansi",
@@ -126,7 +126,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/x/cellbuf",
@@ -144,7 +144,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/charmbracelet/x/term",
@@ -162,7 +162,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/clipperhouse/displaywidth",
@@ -180,7 +180,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/clipperhouse/uax29/v2",
@@ -198,7 +198,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/coder/websocket",
@@ -216,7 +216,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/dunglas/httpsfv",
@@ -234,7 +234,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/erikgeiser/coninput",
@@ -252,7 +252,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/lucasb-eyer/go-colorful",
@@ -270,7 +270,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/mattn/go-isatty",
@@ -284,11 +284,11 @@
         {
           "name": "LICENSE",
           "sha256": "08eab1118c80885fa1fa6a6dd7303f65a379fcb3733e063d20d1bbc2c76e6fa1",
-          "text": "Copyright (c) Yasuhiro MATSUMOTO \u003cmattn.jp@gmail.com\u003e\n\nMIT License (Expat)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
+          "text": "Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com>\n\nMIT License (Expat)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n",
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/mattn/go-localereader",
@@ -306,7 +306,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/mattn/go-runewidth",
@@ -324,7 +324,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/muesli/ansi",
@@ -342,7 +342,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/muesli/cancelreader",
@@ -360,7 +360,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/muesli/termenv",
@@ -378,7 +378,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/quic-go/qpack",
@@ -396,7 +396,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/quic-go/quic-go",
@@ -410,7 +410,7 @@
         {
           "name": "LICENSE",
           "sha256": "77d0b7b53e8abb84cf4dd3f9945a7fdf27044240d2e8023966a721a9a46fe96e",
-          "text": "MIT License\n\nCopyright (c) 2016 the quic-go authors \u0026 Google, Inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
+          "text": "MIT License\n\nCopyright (c) 2016 the quic-go authors & Google, Inc.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
           "kind": "license"
         },
         {
@@ -420,7 +420,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/quic-go/webtransport-go",
@@ -438,7 +438,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/rivo/uniseg",
@@ -456,7 +456,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "github.com/xo/terminfo",
@@ -474,7 +474,7 @@
           "kind": "license"
         }
       ],
-      "notices": null
+      "notices": []
     },
     {
       "name": "golang.org/x/crypto",

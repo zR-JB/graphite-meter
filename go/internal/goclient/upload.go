@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -120,7 +120,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 		return "", unexpectedStatus(res)
 	}
 	var out uploadSessionResponse
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+	if err := json.UnmarshalRead(res.Body, &out); err != nil {
 		return "", err
 	}
 	if out.UploadID == "" {

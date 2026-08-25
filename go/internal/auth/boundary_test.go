@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -19,7 +18,7 @@ func proxiedService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, false)
+	s, err := New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

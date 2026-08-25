@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"html/template"
 	"io"
@@ -32,7 +32,7 @@ func testService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia"}, nil, false)
+	s, err := New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ type countingReader struct {
 func (r *countingReader) Read(p []byte) (int, error) { n, e := r.r.Read(p); r.n += n; return n, e }
 
 func TestOffWrapperIsTransparent(t *testing.T) {
-	s, err := New(context.Background(), config.AuthConfig{Mode: "off"}, nil, false)
+	s, err := New(t.Context(), config.AuthConfig{Mode: "off"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestSessionRevocationCancelsActiveRequest(t *testing.T) {
 }
 
 func TestOrdinaryDeadlineIsNotSessionEnd(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
 	defer cancel()
 	<-ctx.Done()
 	if SessionEnded(ctx) {
@@ -570,7 +570,7 @@ func TestAuthRequiredExposesHeadersCrossOrigin(t *testing.T) {
 	}
 }
 func TestOffModeReservesAuthRoutes(t *testing.T) {
-	s, _ := New(context.Background(), config.AuthConfig{Mode: "off"}, nil, false)
+	s, _ := New(t.Context(), config.AuthConfig{Mode: "off"}, nil, false)
 	mux := http.NewServeMux()
 	s.Mount(mux)
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
@@ -752,7 +752,7 @@ func TestPasswordLoginPreservesFormEncodedPunctuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	s, err := New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -826,6 +826,27 @@ func TestUnknownCLIChallengeAllocatesNothing(t *testing.T) {
 	sum := sha256.Sum256([]byte(verifier))
 	if _, ok := s.approvals[base64.RawURLEncoding.EncodeToString(sum[:])]; ok {
 		t.Fatal("unknown verifier allocated state")
+	}
+}
+
+func TestCLITokenRejectsDuplicateJSONNames(t *testing.T) {
+	s := testService(t)
+	verifier := "strict-json-verifier"
+	_, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	challenge := challengeFor(verifier)
+	s.approvals[challenge] = &cliApproval{session: sess, expires: sess.expires, approved: true}
+	r := secureRequest("POST", "/auth/cli/token", &countingReader{r: bytes.NewReader([]byte(`{"verifier":"unknown","verifier":"` + verifier + `"}`))})
+	r.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.cliToken(rr, r)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("duplicate-name token request code=%d, want 202", rr.Code)
+	}
+	if len(sess.grants) != 0 {
+		t.Fatal("duplicate-name request issued a grant")
 	}
 }
 func TestVerificationCodeIsAlwaysEightCharacters(t *testing.T) {

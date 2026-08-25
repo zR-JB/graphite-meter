@@ -1,7 +1,7 @@
 package endpoint
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +26,7 @@ func TestUploadSessionMintsFreshID(t *testing.T) {
 		var body struct {
 			UploadID string `json:"uploadId"`
 		}
-		if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		if err := json.UnmarshalRead(res.Body, &body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		return body.UploadID

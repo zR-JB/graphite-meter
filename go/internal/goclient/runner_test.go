@@ -2,7 +2,7 @@ package goclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -242,13 +242,13 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		origin := "http://" + r.Host
-		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
 	})
 }
 
@@ -316,7 +316,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	var probeRequestProtocol string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(wire.Preflight{
+		_ = json.MarshalWrite(w, wire.Preflight{
 			Server: wire.ServerInfo{Name: "proxy"},
 			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("http2", origin, "http2", true),
@@ -325,7 +325,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		probeRequestProtocol = r.Proto
-		_ = json.NewEncoder(w).Encode(wire.Probe{
+		_ = json.MarshalWrite(w, wire.Probe{
 			ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket",
 			ProtocolNegotiated: "http/1.1", // proxy-to-Go evidence
 		})
@@ -358,14 +358,14 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 	var backendProtocol string
 	backendMux := http.NewServeMux()
 	backendMux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Protocol: "negotiated"}},
 			LatencyTargets:    []wire.LatencyTarget{{Origin: "."}},
 		}})
 	})
 	backendMux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		backendProtocol = r.Proto
-		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
 	})
 	backendMux.Handle("/ws/ping", echoPingHandler())
 	backend := httptest.NewServer(backendMux)
@@ -396,7 +396,7 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(wire.Preflight{
+		_ = json.MarshalWrite(w, wire.Preflight{
 			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("one", "http://one.example", "negotiated", false),
 				testTransfer("two", "http://two.example", "negotiated", false),
@@ -528,7 +528,7 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "bidi-upload"})
+		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "bidi-upload"})
 	})
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 32*1024)
@@ -639,7 +639,7 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 	})
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "lane-count"})
+		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "lane-count"})
 	})
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		note(Up, r)

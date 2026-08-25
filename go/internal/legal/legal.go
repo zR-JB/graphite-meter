@@ -5,7 +5,8 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -106,8 +107,7 @@ func ReadJSON[T any](path string, dst *T) error {
 	if err != nil {
 		return err
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	if err := dec.Decode(dst); err != nil {
+	if err := jsonv2.Unmarshal(b, dst); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
 	return nil
@@ -310,11 +310,12 @@ func RunGoList(repo, target, goos, goarch string) ([]GoPackage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("go list %s %s/%s: %w", target, goos, goarch, err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(out))
+	// go list -json is a stream of adjacent values, so decode each value in order.
+	dec := jsontext.NewDecoder(bytes.NewReader(out))
 	packages := make([]GoPackage, 0)
 	for {
 		var p GoPackage
-		err := dec.Decode(&p)
+		err := jsonv2.UnmarshalDecode(dec, &p)
 		if errors.Is(err, io.EOF) {
 			break
 		}

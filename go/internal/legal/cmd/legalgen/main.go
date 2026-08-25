@@ -5,7 +5,8 @@ import (
 	"bytes"
 	"cmp"
 	"compress/gzip"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
@@ -270,14 +271,14 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	}
 
 	legalInventory := map[string]any{"server": server, "tui": tui, "container": container}
-	inventoryData, err := json.MarshalIndent(legalInventory, "", "  ")
+	inventoryData, err := json.Marshal(legalInventory, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}
 	if err := addBytes(tarWriter, archiveRoot+"/LEGAL_INVENTORY.json", append(inventoryData, '\n')); err != nil {
 		return err
 	}
-	provenanceData, err := json.MarshalIndent(provenance, "", "  ")
+	provenanceData, err := json.Marshal(provenance, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}
@@ -993,7 +994,10 @@ func tuiReport(copyText, sourceURL string, licenseText []byte, noticesText strin
 }
 
 func marshal(value any) ([]byte, error) {
-	b, err := json.MarshalIndent(value, "", "  ")
+	// Generated legal artifacts have a checked-in indentation and trailing
+	// newline contract, so use deterministic v2 JSON with the same two-space
+	// indentation for reproducible snapshots.
+	b, err := json.Marshal(value, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err
 	}

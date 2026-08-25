@@ -2,7 +2,8 @@ package endpoint
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -366,7 +367,8 @@ func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session,
 	}
 	defer str.Close()
 	defer transport.UnblockWritesOnDone(ctx, str)()
-	_ = json.NewEncoder(str).Encode(uploadProgressEvent{
+	// The refusal is one record in the WebTransport progress stream, not a body.
+	_ = json.MarshalEncode(jsontext.NewEncoder(str), uploadProgressEvent{
 		Type:    "error",
 		Message: uploadAccessMessage(access),
 		Code:    uploadAccessCode(access),

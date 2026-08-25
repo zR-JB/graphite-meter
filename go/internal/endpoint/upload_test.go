@@ -2,7 +2,7 @@ package endpoint
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -37,7 +37,7 @@ func TestUploadCountsAndEchoes(t *testing.T) {
 	var echo struct {
 		Bytes int64 `json:"bytes"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&echo); err != nil {
+	if err := json.UnmarshalRead(res.Body, &echo); err != nil {
 		t.Fatalf("decode echo: %v", err)
 	}
 	if echo.Bytes != n {

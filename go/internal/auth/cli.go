@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"maps"
 	"net/http"
 	"net/url"
@@ -121,7 +121,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Verifier string `json:"verifier"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Verifier) > 128 {
+	if err := jsonv2.UnmarshalRead(r.Body, &req); err != nil || len(req.Verifier) > 128 {
 		s.writeGrantPending(w)
 		return
 	}
@@ -153,7 +153,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	expires := sess.expires
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"token": grant, "expires": expires})
+	_ = jsonv2.MarshalWrite(w, map[string]any{"token": grant, "expires": expires})
 }
 
 func (s *Service) writeGrantPending(w http.ResponseWriter) {

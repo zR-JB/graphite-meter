@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,7 +37,7 @@ func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	var out struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+	if err := json.UnmarshalRead(res.Body, &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.Token == "" {

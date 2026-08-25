@@ -3,7 +3,8 @@ package goclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -71,7 +72,7 @@ func TestMintUploadID(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "abc-123"})
+			_ = jsonv2.MarshalWrite(w, uploadSessionResponse{UploadID: "abc-123"})
 		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
@@ -98,7 +99,7 @@ func TestMintUploadID(t *testing.T) {
 	t.Run("empty uploadId is an error", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(uploadSessionResponse{})
+			_ = jsonv2.MarshalWrite(w, uploadSessionResponse{})
 		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
@@ -230,7 +231,8 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		flusher := w.(http.Flusher)
-		_ = json.NewEncoder(w).Encode(uploadProgressEvent{Type: "ready"})
+		enc := jsontext.NewEncoder(w)
+		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
 		flusher.Flush()
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
@@ -239,11 +241,11 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 			case <-r.Context().Done():
 				return
 			case <-finished:
-				_ = json.NewEncoder(w).Encode(uploadProgressEvent{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 				return
 			case <-ticker.C:
-				_ = json.NewEncoder(w).Encode(uploadProgressEvent{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 			}
 		}
@@ -260,7 +262,7 @@ func newFakeUploadServer(t *testing.T) *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "test-upload"})
+		_ = jsonv2.MarshalWrite(w, uploadSessionResponse{UploadID: "test-upload"})
 	})
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 32*1024)
@@ -317,7 +319,7 @@ func newStalledUploadServer() *httptest.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(uploadSessionResponse{UploadID: "stalled-upload"})
+		_ = jsonv2.MarshalWrite(w, uploadSessionResponse{UploadID: "stalled-upload"})
 	})
 	mux.HandleFunc("/upload", func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -329,8 +331,8 @@ func newStalledUploadServer() *httptest.Server {
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		flusher := w.(http.Flusher)
-		enc := json.NewEncoder(w)
-		_ = enc.Encode(uploadProgressEvent{Type: "ready"})
+		enc := jsontext.NewEncoder(w)
+		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
 		flusher.Flush()
 		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
@@ -339,7 +341,7 @@ func newStalledUploadServer() *httptest.Server {
 			case <-r.Context().Done():
 				return
 			case <-ticker.C:
-				_ = enc.Encode(uploadProgressEvent{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 			}
 		}
@@ -408,9 +410,9 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 	live, liveWriter := io.Pipe()
 	go func() {
 		defer liveWriter.Close()
-		enc := json.NewEncoder(liveWriter)
-		_ = enc.Encode(uploadProgressEvent{Type: "ready"})
-		_ = enc.Encode(uploadProgressEvent{Type: "complete", Bytes: 1000, Nanos: uint64(5 * time.Second)})
+		enc := jsontext.NewEncoder(liveWriter)
+		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
+		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "complete", Bytes: 1000, Nanos: uint64(5 * time.Second)})
 	}()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -427,7 +429,7 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 
 	stale, staleWriter := io.Pipe()
 	p.attach(stale)
-	if err := json.NewEncoder(staleWriter).Encode(uploadProgressEvent{Type: "progress", Bytes: 1000, Nanos: uint64(3200 * time.Millisecond)}); err != nil {
+	if err := jsonv2.MarshalEncode(jsontext.NewEncoder(staleWriter), uploadProgressEvent{Type: "progress", Bytes: 1000, Nanos: uint64(3200 * time.Millisecond)}); err != nil {
 		t.Fatalf("write the superseded feed's buffered record: %v", err)
 	}
 	staleWriter.Close()
@@ -670,12 +672,12 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 		gets.Add(1)
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		flusher := w.(http.Flusher)
-		enc := json.NewEncoder(w)
-		_ = enc.Encode(uploadProgressEvent{Type: "ready"})
+		enc := jsontext.NewEncoder(w)
+		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
 		flusher.Flush()
 		for range recordsPerFeed {
 			n := uint64(served.Add(1))
-			_ = enc.Encode(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: n})
+			_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: n, Nanos: n})
 			flusher.Flush()
 		}
 		// The handler returns: the request's bound, not the aggregate's.

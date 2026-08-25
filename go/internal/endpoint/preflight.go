@@ -3,7 +3,7 @@ package endpoint
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,7 +42,7 @@ func (p *Preflight) Handle(s transport.Session) error {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	return json.NewEncoder(w).Encode(p.build(r))
+	return json.MarshalWrite(w, p.build(r))
 }
 
 // build derives the bare hostname the client reached us on so native targets can

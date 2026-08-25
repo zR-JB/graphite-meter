@@ -2,7 +2,7 @@
 package wire
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/url"
 	"time"
 )
