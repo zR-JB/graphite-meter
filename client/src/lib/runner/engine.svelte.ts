@@ -497,7 +497,18 @@ function ingestRunnerEvent(event: RunnerEvent) {
 }
 
 function refreshAfterTransition() {
-  if (connectivityOnline === true) return;
+  if (
+    connectivityOnline === true &&
+    !CONNECTION_ROLES.some((role) =>
+      roleNeedsValidation(
+        store.config,
+        store.connectionValidation,
+        role,
+        store.transportDiscovery,
+      ),
+    )
+  )
+    return;
   connectivityOnline = true;
   requestValidation();
 }
