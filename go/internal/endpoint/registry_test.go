@@ -90,7 +90,7 @@ func TestMountResolvesHTTPAndWSIndependently(t *testing.T) {
 	reg.RegisterHTTP("/http-ep", &echoEndpoint{id: "http-reply"})
 	reg.RegisterWS("/ws-ep", &echoEndpoint{id: "ws-reply"})
 	mux := http.NewServeMux()
-	reg.Mount(context.Background(), mux)
+	reg.Mount(t.Context(), mux)
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -108,7 +108,7 @@ func TestMountResolvesHTTPAndWSIndependently(t *testing.T) {
 		t.Errorf("/http-ep body = %q, want %q", got, "http-reply")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, wsURL(srv.URL)+"/ws-ep", nil)
 	if err != nil {
@@ -225,11 +225,11 @@ func TestHTTPAdapterHandleErrorReturns500(t *testing.T) {
 func TestWSAdapterUpgradeSucceeds(t *testing.T) {
 	e := &countingEndpoint{}
 	mux := http.NewServeMux()
-	mux.Handle("/ws", wsAdapter(context.Background(), e))
+	mux.Handle("/ws", wsAdapter(t.Context(), e))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, wsURL(srv.URL)+"/ws", nil)
 	if err != nil {
@@ -251,11 +251,11 @@ func TestWSAdapterUpgradeSucceeds(t *testing.T) {
 func TestWSAdapterHandleErrorClosesWithInternalError(t *testing.T) {
 	e := &countingEndpoint{err: errBoom}
 	mux := http.NewServeMux()
-	mux.Handle("/ws", wsAdapter(context.Background(), e))
+	mux.Handle("/ws", wsAdapter(t.Context(), e))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, wsURL(srv.URL)+"/ws", nil)
 	if err != nil {
@@ -343,11 +343,11 @@ func TestHTTPAdapterNarrowsCORSToANamedOrigin(t *testing.T) {
 // text control messages, so the read limit sits far under the library default.
 func TestWSAdapterBoundsFrameSize(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle("/ws", wsAdapter(context.Background(), &drainEndpoint{}))
+	mux.Handle("/ws", wsAdapter(t.Context(), &drainEndpoint{}))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, wsURL(srv.URL)+"/ws", nil)
 	if err != nil {
@@ -358,7 +358,7 @@ func TestWSAdapterBoundsFrameSize(t *testing.T) {
 	if err := conn.Write(ctx, websocket.MessageText, make([]byte, 4096)); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	readCtx, cancelRead := context.WithTimeout(context.Background(), 3*time.Second)
+	readCtx, cancelRead := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancelRead()
 	_, _, err = conn.Read(readCtx)
 	if got := websocket.CloseStatus(err); got != websocket.StatusMessageTooBig {
@@ -375,7 +375,7 @@ func TestMountLongestPathWins(t *testing.T) {
 	reg.RegisterHTTP("/api/", &echoEndpoint{id: "subtree"})
 	reg.RegisterHTTP("/api/specific", &echoEndpoint{id: "specific"})
 	mux := http.NewServeMux()
-	reg.Mount(context.Background(), mux)
+	reg.Mount(t.Context(), mux)
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -404,7 +404,7 @@ func TestMountLongestPathWins(t *testing.T) {
 // on ctx.Done() (as conn.Read/Write would be) unblocks that handler promptly.
 func TestMountShutdownCancelUnblocksWSHandler(t *testing.T) {
 	e := &blockingEndpoint{unblocked: make(chan struct{})}
-	parent, cancelParent := context.WithCancel(context.Background())
+	parent, cancelParent := context.WithCancel(t.Context())
 	defer cancelParent()
 
 	reg := NewRegistry()
@@ -414,7 +414,7 @@ func TestMountShutdownCancelUnblocksWSHandler(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	dialCtx, cancelDial := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancelDial()
 	conn, _, err := websocket.Dial(dialCtx, wsURL(srv.URL)+"/ws", nil)
 	if err != nil {

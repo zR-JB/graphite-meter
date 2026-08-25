@@ -165,7 +165,7 @@ func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
 func splitQuoted(raw string, separator byte) ([]string, bool) {
 	var parts []string
 	start, quoted, escaped := 0, false, false
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		switch {
 		case escaped:
 			escaped = false

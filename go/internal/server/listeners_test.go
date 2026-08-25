@@ -32,11 +32,11 @@ func (b *observedBody) Read(p []byte) (int, error) {
 
 func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(context.Background(), e, muxTopology{bootstrap: true})
+	mux := listenerMux(t.Context(), e, muxTopology{bootstrap: true})
 	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -48,11 +48,11 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 
 func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(context.Background(), e, muxTopology{transfers: true, requiredProto: 2})
+	mux := listenerMux(t.Context(), e, muxTopology{transfers: true, requiredProto: 2})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
@@ -68,11 +68,11 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 
 func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(context.Background(), e, muxTopology{transfers: true, requiredProto: 2})
+	mux := listenerMux(t.Context(), e, muxTopology{transfers: true, requiredProto: 2})
 	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -95,11 +95,11 @@ func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 
 func TestH1MountsSPAAndDiscovery(t *testing.T) {
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMuxWithSPA(context.Background(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux := listenerMuxWithSPA(t.Context(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	for _, path := range []string{"/", "/preflight"} {
@@ -116,12 +116,12 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authn, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	authn, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			body := &observedBody{reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
-			mux := listenerMuxConfigured(context.Background(), e, test.topology, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
+			mux := listenerMuxConfigured(t.Context(), e, test.topology, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
 			handler := authn.Enforce(mux, test.listener)
 			req := httptest.NewRequest(http.MethodPost, "https://meter.example"+test.path, body)
 			req.Host = "meter.example"
@@ -163,17 +163,17 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 
 func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h1 := listenerMux(context.Background(), e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1})
+	h1 := listenerMux(t.Context(), e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1})
 	rec := httptest.NewRecorder()
 	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("H1 latency websocket is not mounted")
 	}
-	h3 := listenerMux(context.Background(), e, muxTopology{transfers: true})
+	h3 := listenerMux(t.Context(), e, muxTopology{transfers: true})
 	rec = httptest.NewRecorder()
 	h3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=unknown", nil))
 	if rec.Code == http.StatusNotFound {
@@ -203,7 +203,7 @@ func TestPublicH3Port(t *testing.T) {
 // is chosen and where server and contract are held together.
 func TestEndpointsCarryThePublishedIdleBound(t *testing.T) {
 	cfg := config.Default()
-	e, err := buildEndpoints(context.Background(), &cfg)
+	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authn, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	authn, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestServeHandlesRequestsOverAnExplicitListener(t *testing.T) {
 }
 
 func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	blockA, blockB := make(chan struct{}), make(chan struct{})
 	stoppedA, stoppedB := false, false
 	services := []service{
@@ -406,7 +406,7 @@ func TestRunServicesReturnsAndStopsOnListenerError(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- runServices(context.Background(), &config.Config{}, services) }()
+	go func() { done <- runServices(t.Context(), &config.Config{}, services) }()
 
 	select {
 	case err := <-done:

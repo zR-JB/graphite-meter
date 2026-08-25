@@ -20,7 +20,7 @@ import (
 
 func TestCyclingBodyWrapsDeterministically(t *testing.T) {
 	block := []byte{1, 2, 3, 4, 5}
-	b := &cyclingBody{ctx: context.Background(), block: block}
+	b := &cyclingBody{ctx: t.Context(), block: block}
 
 	buf := make([]byte, 12)
 	n, err := b.Read(buf)
@@ -39,7 +39,7 @@ func TestCyclingBodyWrapsDeterministically(t *testing.T) {
 func TestCyclingBodyStopsAtLimit(t *testing.T) {
 	// limit exercises the known-Content-Length path: the body emits exactly
 	// `limit` bytes (wrapping the block) and then reports io.EOF.
-	b := &cyclingBody{ctx: context.Background(), block: []byte{1, 2, 3}, limit: 7}
+	b := &cyclingBody{ctx: t.Context(), block: []byte{1, 2, 3}, limit: 7}
 	var got []byte
 	buf := make([]byte, 4)
 	for {
@@ -59,7 +59,7 @@ func TestCyclingBodyStopsAtLimit(t *testing.T) {
 }
 
 func TestCyclingBodyStopsOnCancelledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	b := &cyclingBody{ctx: ctx, block: []byte{1, 2, 3}}
 	if _, err := b.Read(make([]byte, 4)); err == nil {
@@ -75,7 +75,7 @@ func TestMintUploadID(t *testing.T) {
 		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
-		id, err := r.mintUploadID(context.Background())
+		id, err := r.mintUploadID(t.Context())
 		if err != nil {
 			t.Fatalf("mintUploadID: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestMintUploadID(t *testing.T) {
 		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
-		if _, err := r.mintUploadID(context.Background()); err == nil {
+		if _, err := r.mintUploadID(t.Context()); err == nil {
 			t.Fatal("want an error for a non-200 upload session response")
 		}
 	})
@@ -102,7 +102,7 @@ func TestMintUploadID(t *testing.T) {
 		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
-		if _, err := r.mintUploadID(context.Background()); err == nil {
+		if _, err := r.mintUploadID(t.Context()); err == nil {
 			t.Fatal("want an error for an empty uploadId")
 		}
 	})
@@ -114,7 +114,7 @@ func TestMintUploadID(t *testing.T) {
 		}))
 		defer srv.Close()
 		r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
-		if _, err := r.mintUploadID(context.Background()); err == nil {
+		if _, err := r.mintUploadID(t.Context()); err == nil {
 			t.Fatal("want an error for a malformed session response")
 		}
 	})
@@ -143,7 +143,7 @@ func TestUploadLaneDrainsBytes(t *testing.T) {
 	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 	block := make([]byte, 64*1024)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		_ = r.uploadLane(ctx, "test-id", 0, block)
@@ -175,7 +175,7 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &runner{cfg: Config{BaseURL: srv.URL, UploadBytesPerStream: 1024}, http: srv.Client()}
-	if err := r.uploadLane(context.Background(), "test-id", 0, make([]byte, 1024)); err == nil {
+	if err := r.uploadLane(t.Context(), "test-id", 0, make([]byte, 1024)); err == nil {
 		t.Fatal("HTTP 503 did not fail the upload lane")
 	}
 }
@@ -202,7 +202,7 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 	block := make([]byte, 64*1024)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		_ = r.uploadLane(ctx, "test-id", 0, block)
@@ -291,7 +291,7 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, start)
@@ -360,7 +360,7 @@ func TestMeasureUploadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, start)
@@ -386,7 +386,7 @@ func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	time.AfterFunc(200*time.Millisecond, cancel)
 
@@ -413,7 +413,7 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 		_ = enc.Encode(uploadProgressEvent{Type: "complete", Bytes: 1000, Nanos: uint64(5 * time.Second)})
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
 	p, err := r.readUploadProgress(ctx, live, "http://127.0.0.1/upload/progress")
@@ -466,7 +466,7 @@ func TestSampleServerUploadWindowHoldsTheHighestPair(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		stats, err := r.sampleServerUpload(context.Background(), "upload", p, 1, 5*time.Second, baselineN, baselineT, laneErr)
+		stats, err := r.sampleServerUpload(t.Context(), "upload", p, 1, 5*time.Second, baselineN, baselineT, laneErr)
 		done <- outcome{stats, err}
 	}()
 
@@ -487,26 +487,26 @@ func TestSampleServerUploadWindowHoldsTheHighestPair(t *testing.T) {
 // newWaitNextProgress builds a progress channel whose own context decides when
 // the report is over, which is what waitNext reads: an individual feed ending
 // only means a replacement session is about to re-attach.
-func newWaitNextProgress() (*uploadProgress, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.Background())
+func newWaitNextProgress(t *testing.T) (*uploadProgress, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(t.Context())
 	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1), errs: make(chan error, 1)}, cancel
 }
 
 func TestUploadProgressWaitNext(t *testing.T) {
 	t.Run("already advanced", func(t *testing.T) {
-		progress, cancel := newWaitNextProgress()
+		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
 		progress.seq.Store(2)
-		if !progress.waitNext(context.Background(), 1) {
+		if !progress.waitNext(t.Context(), 1) {
 			t.Fatal("waitNext rejected an available update")
 		}
 	})
 
 	t.Run("notification", func(t *testing.T) {
-		progress, cancel := newWaitNextProgress()
+		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
 		result := make(chan bool, 1)
-		go func() { result <- progress.waitNext(context.Background(), 0) }()
+		go func() { result <- progress.waitNext(t.Context(), 0) }()
 		progress.seq.Store(1)
 		progress.changed <- struct{}{}
 		if !<-result {
@@ -515,9 +515,9 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 
 	t.Run("cancellation", func(t *testing.T) {
-		progress, cancel := newWaitNextProgress()
+		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
-		ctx, cancelCaller := context.WithCancel(context.Background())
+		ctx, cancelCaller := context.WithCancel(t.Context())
 		cancelCaller()
 		if progress.waitNext(ctx, 0) {
 			t.Fatal("waitNext succeeded after cancellation")
@@ -525,9 +525,9 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 
 	t.Run("terminal", func(t *testing.T) {
-		progress, cancel := newWaitNextProgress()
+		progress, cancel := newWaitNextProgress(t)
 		cancel()
-		if progress.waitNext(context.Background(), 0) {
+		if progress.waitNext(t.Context(), 0) {
 			t.Fatal("waitNext succeeded after the progress channel closed")
 		}
 	})
@@ -540,9 +540,9 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	// resolves the race would never run.
 	t.Run("final update", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			progress, cancel := newWaitNextProgress()
+			progress, cancel := newWaitNextProgress(t)
 			result := make(chan bool, 1)
-			go func() { result <- progress.waitNext(context.Background(), 0) }()
+			go func() { result <- progress.waitNext(t.Context(), 0) }()
 			synctest.Wait() // the waiter is parked with nothing published
 			progress.seq.Store(1)
 			cancel()
@@ -555,10 +555,10 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	// A feed replaced mid-stage closes its own reader. Treating that as the end
 	// of the report would fail the stage on every session rollover.
 	t.Run("feed replaced", func(t *testing.T) {
-		progress, cancel := newWaitNextProgress()
+		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
 		result := make(chan bool, 1)
-		go func() { result <- progress.waitNext(context.Background(), 0) }()
+		go func() { result <- progress.waitNext(t.Context(), 0) }()
 		progress.mu.Lock()
 		close(progress.done)
 		progress.done = make(chan struct{})
@@ -684,7 +684,7 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	defer srv.Close()
 
 	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), http: srv.Client(), emit: func(Event) {}}
-	ctx, cancel := context.WithTimeout(context.Background(), window)
+	ctx, cancel := context.WithTimeout(t.Context(), window)
 	defer cancel()
 	p, err := r.openUploadProgress(ctx, srv.URL+"/upload/progress")
 	if err != nil {
@@ -708,7 +708,7 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 // already joined the last reader, so one installed behind it is never joined and
 // its records reach a counter nothing is reading.
 func TestAttachRefusesAReaderAfterClose(t *testing.T) {
-	progress, cancel := newWaitNextProgress()
+	progress, cancel := newWaitNextProgress(t)
 	before := progress.currentDone()
 	cancel()
 
@@ -730,7 +730,7 @@ func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 // prefix into the result for the whole requested window. Reattachment gets a
 // bounded chance; permanent refusal is a stage error.
 func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
-	progress, cancel := newWaitNextProgress()
+	progress, cancel := newWaitNextProgress(t)
 	defer cancel()
 	progress.count.Store(&uploadCount{bytes: 200, nanos: uint64(2 * time.Second)})
 	close(progress.done)
@@ -748,9 +748,9 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 		}, nil
 	})}, emit: func(Event) {}}
 	go r.reattachUploadProgress(progress, "http://progress.invalid/upload/progress")
-	stats, err := r.sampleServerUpload(context.Background(), "upload", progress, 1, 3*time.Second, 100, uint64(time.Second), make(chan error))
+	stats, err := r.sampleServerUpload(t.Context(), "upload", progress, 1, 3*time.Second, 100, uint64(time.Second), make(chan error))
 	if err == nil {
-		err = windowCarriedBytes(context.Background(), "upload", Up, stats)
+		err = windowCarriedBytes(t.Context(), "upload", Up, stats)
 	}
 	if err == nil {
 		t.Fatalf("dead progress feed published stale prefix: %+v", stats)

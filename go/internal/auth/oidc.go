@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -215,10 +216,7 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 		case <-time.After(delay):
 		}
 		if delay < time.Minute {
-			delay *= 2
-			if delay > time.Minute {
-				delay = time.Minute
-			}
+			delay = min(delay*2, time.Minute)
 		}
 	}
 }
@@ -257,11 +255,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	o := s.oidc
 	o.mu.Lock()
 	now := s.now()
-	for k, v := range o.tx {
-		if !now.Before(v.expires) {
-			delete(o.tx, k)
-		}
-	}
+	maps.DeleteFunc(o.tx, func(_ [32]byte, v oidcTransaction) bool { return !now.Before(v.expires) })
 	perClient := 0
 	for _, v := range o.tx {
 		if v.client == client {

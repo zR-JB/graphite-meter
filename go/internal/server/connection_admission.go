@@ -63,9 +63,7 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 		return nil, false
 	}
 	a.active++
-	if a.active > a.peak {
-		a.peak = a.active
-	}
+	a.peak = max(a.peak, a.active)
 	if key != exemptKey {
 		a.byClient[key]++
 	}

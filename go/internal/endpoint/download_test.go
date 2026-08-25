@@ -138,7 +138,7 @@ func BenchmarkDownloadBlockSize(b *testing.B) {
 		b.Run(strconv.Itoa(blockSize), func(b *testing.B) {
 			download := NewDownload(randomBlock(blockSize), nil)
 			session := &fakeSession{
-				ctx:   context.Background(),
+				ctx:   b.Context(),
 				query: "bytes=" + strconv.Itoa(size),
 				sink:  io.Discard,
 			}
@@ -159,7 +159,7 @@ func TestDownloadContextCancel(t *testing.T) {
 	block := randomBlock(4096)
 	dl := NewDownload(block, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	// The sink cancels the context after the first write and keeps counting: the
 	// loop must observe Done() and return instead of streaming all 10 MiB.
 	sink := &cancelOnWrite{cancel: cancel}

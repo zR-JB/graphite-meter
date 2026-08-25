@@ -62,7 +62,7 @@ func TestSaturationEnvelope(t *testing.T) {
 			old := runtime.GOMAXPROCS(mix.procs)
 			defer runtime.GOMAXPROCS(old)
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		loadBase := base
 		if mix.base != "" {
@@ -170,7 +170,7 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	cfg.PingInterval = 20 * time.Millisecond
 	var rtts []time.Duration
 	var lost, total int
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	err := goclient.Run(ctx, cfg, func(e goclient.Event) {
 		if e.Kind != goclient.EventLatency {

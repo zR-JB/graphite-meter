@@ -92,7 +92,7 @@ func TestLaneStaggerStep(t *testing.T) {
 func TestStaggerSleep(t *testing.T) {
 	t.Run("lane 0 returns immediately", func(t *testing.T) {
 		start := time.Now()
-		if !staggerSleep(context.Background(), 0, time.Hour) {
+		if !staggerSleep(t.Context(), 0, time.Hour) {
 			t.Fatal("want true for lane 0")
 		}
 		if time.Since(start) > 100*time.Millisecond {
@@ -101,14 +101,14 @@ func TestStaggerSleep(t *testing.T) {
 	})
 
 	t.Run("zero step returns immediately", func(t *testing.T) {
-		if !staggerSleep(context.Background(), 5, 0) {
+		if !staggerSleep(t.Context(), 5, 0) {
 			t.Fatal("want true for a zero step")
 		}
 	})
 
 	t.Run("waits out the delay then succeeds", func(t *testing.T) {
 		start := time.Now()
-		if !staggerSleep(context.Background(), 2, 20*time.Millisecond) {
+		if !staggerSleep(t.Context(), 2, 20*time.Millisecond) {
 			t.Fatal("want true once the delay elapses")
 		}
 		if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
@@ -117,7 +117,7 @@ func TestStaggerSleep(t *testing.T) {
 	})
 
 	t.Run("cancelled context aborts the wait", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		if staggerSleep(ctx, 3, time.Hour) {
 			t.Fatal("want false once the context is already cancelled")
@@ -178,7 +178,7 @@ func TestWarmupGate(t *testing.T) {
 		var mu sync.Mutex
 		var events []Event
 		r := &runner{cfg: Config{Warmup: 0}, emit: func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }}
-		start := r.warmupGate(context.Background(), "download")
+		start := r.warmupGate(t.Context(), "download")
 		select {
 		case <-start:
 		default:
@@ -199,7 +199,7 @@ func TestWarmupGate(t *testing.T) {
 			messages = append(messages, e.Message)
 			mu.Unlock()
 		}}
-		start := r.warmupGate(context.Background(), "download")
+		start := r.warmupGate(t.Context(), "download")
 		select {
 		case <-start:
 			t.Fatal("start should not be closed before the warmup timer fires")
@@ -226,7 +226,7 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if err := r.runLatencyStage(ctx, "latency", false, captureWindow); err != nil {
 		t.Fatalf("runLatencyStage: %v", err)
@@ -282,7 +282,7 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 
 	var mu sync.Mutex
 	var events []Event
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if err := Run(ctx, cfg, func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -344,7 +344,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 		DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true,
 		TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024,
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	if err := Run(ctx, cfg, func(Event) {}); err != nil {
 		t.Fatalf("Run through H2 proxy with H1 downstream evidence: %v", err)
@@ -378,7 +378,7 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.InsecureSkipTLSVerify = proxy.URL, true
-	prepared, err := Prepare(context.Background(), cfg)
+	prepared, err := Prepare(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +409,7 @@ func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL = srv.URL
 	cfg.Stages = StageSet{Download: true}
-	_, err := Prepare(context.Background(), cfg)
+	_, err := Prepare(t.Context(), cfg)
 	preparationErr, ok := errors.AsType[*PreparationError](err)
 	if !ok {
 		t.Fatalf("Prepare error = %T %v, want PreparationError", err, err)
@@ -442,7 +442,7 @@ func TestRunLatencyStageEndToEnd(t *testing.T) {
 
 	var mu sync.Mutex
 	var results []Result
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	err := Run(ctx, cfg, func(e Event) {
 		if e.Kind == EventResult {
@@ -477,7 +477,7 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 		DownloadBytesPerStream: 128 * 1024,
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(150*time.Millisecond, cancel)
 	defer cancel()
 
@@ -578,7 +578,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 
 			var mu sync.Mutex
 			var results []Result
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			if err := Run(ctx, cfg, func(e Event) {
 				if e.Kind == EventResult {
@@ -669,7 +669,7 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 		mu.Unlock()
 	}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, captureWindow); err != nil {
 		t.Fatalf("runTransferStage: %v", err)
@@ -717,7 +717,7 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	begin := time.Now()
 	err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, 3*time.Second)
@@ -776,7 +776,7 @@ func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
 	}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	err := r.runTransferStage(ctx, "download", []Direction{Down}, 3*time.Second)
 	if err == nil {
@@ -828,7 +828,7 @@ func TestLoadedLatencyResultPrecedesTheTransferResult(t *testing.T) {
 	}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if err := r.runTransferStage(ctx, "download", []Direction{Down}, captureWindow); err != nil {
 		t.Fatalf("runTransferStage: %v", err)

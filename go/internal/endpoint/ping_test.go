@@ -19,12 +19,12 @@ func TestPingEcho(t *testing.T) {
 	reg := NewRegistry()
 	reg.RegisterWS("/ws/ping", NewPing())
 	mux := http.NewServeMux()
-	reg.Mount(context.Background(), mux)
+	reg.Mount(t.Context(), mux)
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")

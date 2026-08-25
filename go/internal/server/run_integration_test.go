@@ -108,7 +108,7 @@ func waitForOK(t *testing.T, client *http.Client, url string) {
 // cancels it and asserts a clean (nil) shutdown.
 func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) func() {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- runWithSockets(ctx, cfg, sockets) }()
 	return func() {
@@ -236,7 +236,7 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.MaxConnections = -1 // fails validateLimits
-	err := Run(context.Background(), &cfg)
+	err := Run(t.Context(), &cfg)
 	if err == nil {
 		t.Fatal("Run accepted an invalid configuration")
 	}

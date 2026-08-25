@@ -140,7 +140,7 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	waitProgressText(t, rec, `{"type":"ready"}`)
 
 	takeover := newProgressRecorder()
-	ctx2, cancel2 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancel(t.Context())
 	done2 := make(chan struct{})
 	go func() {
 		h.ServeHTTP(takeover, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx2))
@@ -300,7 +300,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 	// answer 200 -- failing here immediately instead of hanging or flaking.
 	t.Run("any other method is a 405", func(t *testing.T) {
 		store := NewUploadStore()
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		req := httptest.NewRequest(http.MethodPut, "/upload/progress?id="+store.Mint(), nil).WithContext(ctx)
 		rec := httptest.NewRecorder()

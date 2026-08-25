@@ -364,9 +364,7 @@ func (m *model) apply(e goclient.Event) {
 		m.enterStage(e)
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
-		if e.Throughput.BytesPerSec > m.peaks[e.Direction] {
-			m.peaks[e.Direction] = e.Throughput.BytesPerSec
-		}
+		m.peaks[e.Direction] = max(m.peaks[e.Direction], e.Throughput.BytesPerSec)
 	case goclient.EventLatency:
 		if e.Latency.Lost {
 			m.lostStreak++

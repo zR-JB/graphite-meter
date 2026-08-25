@@ -38,7 +38,7 @@ func testPasswordAuth(t *testing.T, origin string) *auth.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := auth.New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	service, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
 	cp.SetHTTP1(true)
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: cp} //nolint:gosec
 	defer tr.CloseIdleConnections()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	_, res, err := websocket.Dial(ctx, "wss://"+ln.Addr().String()+"/ws/ping", &websocket.DialOptions{HTTPClient: &http.Client{Transport: tr}})
 	if err == nil {

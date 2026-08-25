@@ -36,7 +36,7 @@ func (c *fakeDatagramConn) ReceiveDatagram(context.Context) ([]byte, error) {
 
 func TestWebTransportBusSession(t *testing.T) {
 	conn := &fakeDatagramConn{incoming: []string{"PING,1"}}
-	sess := NewWebTransportBusSession(context.Background(), conn, url.Values{"id": {"gmu_x"}})
+	sess := NewWebTransportBusSession(t.Context(), conn, url.Values{"id": {"gmu_x"}})
 
 	if sess.Proto() != ProtoWebTransport {
 		t.Errorf("Proto() = %v, want ProtoWebTransport", sess.Proto())
@@ -80,7 +80,7 @@ func TestWebTransportBusSession(t *testing.T) {
 func TestWebTransportStreamSession(t *testing.T) {
 	var sink bytes.Buffer
 	src := strings.NewReader("payload")
-	sess := NewWebTransportStreamSession(context.Background(), url.Values{"bytes": {"64"}}, &sink, src, "client-key")
+	sess := NewWebTransportStreamSession(t.Context(), url.Values{"bytes": {"64"}}, &sink, src, "client-key")
 
 	if _, ok := sess.Bus(); ok {
 		t.Error("Bus() ok = true, want false")
@@ -119,7 +119,7 @@ func TestWebTransportStreamSession(t *testing.T) {
 }
 
 func TestWebTransportStreamSessionUnusedSeams(t *testing.T) {
-	sess := NewWebTransportStreamSession(context.Background(), nil, nil, nil, "")
+	sess := NewWebTransportStreamSession(t.Context(), nil, nil, nil, "")
 
 	if _, err := sess.OpenDownloadSink(); !errors.Is(err, ErrUnsupported) {
 		t.Errorf("OpenDownloadSink() err = %v, want ErrUnsupported", err)

@@ -43,7 +43,7 @@ func TestAuthenticatedClientAddsBearerOnlyOnCanonicalHTTPSHost(t *testing.T) {
 		seen = r.Header.Get("Authorization")
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
 	}))
-	req, _ := http.NewRequestWithContext(context.Background(), "GET", "https://meter.example:7247/probe", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), "GET", "https://meter.example:7247/probe", nil)
 	if _, err := client.Do(req); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAuthenticatedClientDoesNotSendBearerAfterServerChange(t *testing.T) {
 		seen = r.Header.Get("Authorization")
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
 	}))
-	req, _ := http.NewRequestWithContext(context.Background(), "GET", "https://other.example/preflight", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), "GET", "https://other.example/preflight", nil)
 	if _, err := client.Do(req); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestClassifyAuthFailureDetectsRevokedGrant(t *testing.T) {
 		header.Set("Graphite-Meter-Auth-URL", "https://meter.example/login")
 		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader("")), Header: header, Request: r}, nil
 	})}
-	err := classifyAuthFailure(context.Background(), client, "https://meter.example", runErr)
+	err := classifyAuthFailure(t.Context(), client, "https://meter.example", runErr)
 	authErr, ok := errors.AsType[*AuthRequiredError](err)
 	if !ok || authErr.URL != "https://meter.example/login" {
 		t.Fatalf("error=%v", err)
@@ -174,7 +174,7 @@ func TestPollSurfacesLastTransportErrorOnDeadline(t *testing.T) {
 			return nil, errors.New("connection refused")
 		})},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	_, err := p.Poll(ctx)
 	if err == nil || !strings.Contains(err.Error(), "connection refused") {
@@ -189,7 +189,7 @@ func TestPollReportsTimeoutWhenTheServerKeptAnswering(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"pending"}`)), Header: http.Header{}, Request: r}, nil
 		})},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	_, err := p.Poll(ctx)
 	if err == nil || !strings.Contains(err.Error(), "browser approval timed out") {
@@ -204,7 +204,7 @@ func TestPollPropagatesCancellation(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"pending"}`)), Header: http.Header{}, Request: r}, nil
 		})},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := p.Poll(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v, want context.Canceled", err)

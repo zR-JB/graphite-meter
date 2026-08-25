@@ -1,7 +1,6 @@
 package goclient
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -186,7 +185,7 @@ func TestPrepareRejectsAPingIntervalPastTheIdleBound(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.LatencyTransport = srv.URL, wire.TransportWebTransport
 	cfg.PingInterval = 45 * time.Second
-	if _, err := Prepare(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), MaxPingInterval.String()) {
+	if _, err := Prepare(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), MaxPingInterval.String()) {
 		t.Fatalf("Prepare with a 45s ping interval over the datagram bus = %v, want an error naming the %v bound", err, MaxPingInterval)
 	}
 }
@@ -201,7 +200,7 @@ func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.LatencyTransport = srv.URL, wire.TransportWebSocket
 	cfg.PingInterval = MaxPingInterval + 5*time.Second
-	if _, err := Prepare(context.Background(), cfg); err != nil {
+	if _, err := Prepare(t.Context(), cfg); err != nil {
 		t.Fatalf("Prepare over the WebSocket bus with a %v cadence = %v, want it accepted", cfg.PingInterval, err)
 	}
 }
@@ -232,7 +231,7 @@ func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL = srv.URL
 	cfg.PingInterval = MaxPingInterval + 5*time.Second
-	prepared, err := Prepare(context.Background(), cfg)
+	prepared, err := Prepare(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("Prepare after WebTransport fallback: %v", err)
 	}

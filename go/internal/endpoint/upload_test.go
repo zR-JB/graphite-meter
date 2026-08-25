@@ -2,7 +2,6 @@ package endpoint
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -106,7 +105,7 @@ func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 // aborting a streaming upload) returns cleanly without echoing.
 func TestUploadStopsOnReadError(t *testing.T) {
 	s := &uploadSession{
-		fakeSession: &fakeSession{ctx: context.Background()},
+		fakeSession: &fakeSession{ctx: t.Context()},
 		src:         &errReader{remaining: 4096},
 	}
 	if err := NewUpload(nil, nil).Handle(s); err != nil {
@@ -122,7 +121,7 @@ func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	s := &uploadSession{
-		fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id},
+		fakeSession: &fakeSession{ctx: t.Context(), query: "id=" + id},
 		src:         &errReader{remaining: 4096},
 	}
 	if err := NewUpload(nil, store).Handle(s); err != nil {
@@ -218,7 +217,7 @@ func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 	// A non-HTTP session with no ClientOwner, so the refusal path cannot fall
 	// back to writing a status.
 	s := &uploadSession{
-		fakeSession: &fakeSession{ctx: context.Background(), query: "id=" + id},
+		fakeSession: &fakeSession{ctx: t.Context(), query: "id=" + id},
 		src:         bytes.NewReader(make([]byte, 4096)),
 	}
 

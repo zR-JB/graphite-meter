@@ -93,7 +93,7 @@ func TestRequestAdmissionLifetime(t *testing.T) {
 		<-r.Context().Done()
 		close(done)
 	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	select {
 	case <-done:
 	default:
@@ -377,7 +377,7 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 		t.Fatal("rejected WebSocket reached handler")
 	}), nil, ""))
 	defer srv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	_, res, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
 	if err == nil {
@@ -401,9 +401,9 @@ func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
 		ping:      deadlineEndpoint{},
 		admission: newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour),
 	}
-	srv := httptest.NewServer(listenerMux(context.Background(), e, muxTopology{latency: true}))
+	srv := httptest.NewServer(listenerMux(t.Context(), e, muxTopology{latency: true}))
 	defer srv.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/ping", nil)
 	if err != nil {

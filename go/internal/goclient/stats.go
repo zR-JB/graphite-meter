@@ -123,9 +123,7 @@ func (s *rateStats) add(v float64) {
 		return
 	}
 	s.samples = append(s.samples, v)
-	if v > s.peak {
-		s.peak = v
-	}
+	s.peak = max(s.peak, v)
 }
 
 func (s *rateStats) setWindow(total uint64, elapsed time.Duration) {

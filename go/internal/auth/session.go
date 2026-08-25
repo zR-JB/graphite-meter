@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"maps"
 	"net/http"
 	"slices"
 	"time"
@@ -81,17 +82,15 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 // it: its native-client grants and any pending browser approvals.
 func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
-	for grant := range sess.grants {
+	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ struct{}) bool {
 		delete(s.grants, grant)
-	}
-	for token := range sess.wtTokens {
+		return true
+	})
+	maps.DeleteFunc(sess.wtTokens, func(token [32]byte, _ struct{}) bool {
 		delete(s.wtTokens, token)
-	}
-	for challenge, approval := range s.approvals {
-		if approval.session == sess {
-			delete(s.approvals, challenge)
-		}
-	}
+		return true
+	})
+	maps.DeleteFunc(s.approvals, func(_ string, approval *cliApproval) bool { return approval.session == sess })
 	sess.cancel()
 }
 

@@ -107,9 +107,7 @@ func (a *requestAdmission) acquire(key, sessionKey string) (release func(), stat
 		return nil, http.StatusServiceUnavailable
 	}
 	a.active++
-	if a.active > a.peak {
-		a.peak = a.active
-	}
+	a.peak = max(a.peak, a.active)
 	if session {
 		a.activeSessions++
 		a.sessionsByClient[sessionKey]++

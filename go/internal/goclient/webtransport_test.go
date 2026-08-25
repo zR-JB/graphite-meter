@@ -18,7 +18,7 @@ import (
 // liveWTSession is a session sentinel that reports itself usable. It stands in
 // for a dialled session so the lane state machine can be driven with no server:
 // only a QUIC handshake produces the embedded value, and nothing below reads it.
-func liveWTSession() *wtSession { return &wtSession{lifetime: context.Background()} }
+func liveWTSession(t *testing.T) *wtSession { return &wtSession{lifetime: t.Context()} }
 
 // deadWTSession is the state a session is in once it is gone: a lane that finds
 // one has to have it replaced before it can carry anything.
@@ -115,7 +115,7 @@ func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 
 	// The lane runs longer than one backoff before it fails, so the fast-failure
 	// ceiling cannot be what ends it: the redial bound is the only thing left.
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
 	defer cancel()
 	started := time.Now()
 	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
@@ -149,17 +149,17 @@ func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
 	t.Parallel()
 	var dials, entries atomic.Int64
 	host := &wtStageSession{
-		sess: liveWTSession(),
+		sess: liveWTSession(t),
 		dial: func(context.Context) (*wtSession, error) {
 			dials.Add(1)
-			return liveWTSession(), nil
+			return liveWTSession(t), nil
 		},
 	}
 
 	// Each failure outlasts wtRedialBackoff, which is what keeps it out of the
 	// fast-failure count.
 	const failure = wtRedialBackoff + 20*time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
 		entries.Add(1)
@@ -256,7 +256,7 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 			t.Parallel()
 			sess := deadWTSession()
 			if c.alive {
-				sess = liveWTSession()
+				sess = liveWTSession(t)
 			}
 			var dials, entries atomic.Int64
 			host := &wtStageSession{
@@ -264,12 +264,12 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 				dial: func(context.Context) (*wtSession, error) {
 					dials.Add(1)
 					if c.alive {
-						return liveWTSession(), nil
+						return liveWTSession(t), nil
 					}
 					return deadWTSession(), nil
 				},
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), c.budget)
+			ctx, cancel := context.WithTimeout(t.Context(), c.budget)
 			defer cancel()
 			err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
 				n := entries.Add(1)
@@ -309,7 +309,7 @@ func TestWTStageSessionDedupesConcurrentRedials(t *testing.T) {
 		sess: deadWTSession(),
 		dial: func(context.Context) (*wtSession, error) {
 			dials.Add(1)
-			return liveWTSession(), nil
+			return liveWTSession(t), nil
 		},
 	}
 
@@ -321,7 +321,7 @@ func TestWTStageSessionDedupesConcurrentRedials(t *testing.T) {
 	for range lanes {
 		wg.Go(func() {
 			<-start
-			errs <- host.redial(context.Background(), gen)
+			errs <- host.redial(t.Context(), gen)
 		})
 	}
 	close(start)
@@ -351,7 +351,7 @@ func TestWTStageSessionCloseIsFinal(t *testing.T) {
 		sess: sess,
 		dial: func(context.Context) (*wtSession, error) {
 			dials.Add(1)
-			return liveWTSession(), nil
+			return liveWTSession(t), nil
 		},
 	}
 
@@ -359,7 +359,7 @@ func TestWTStageSessionCloseIsFinal(t *testing.T) {
 	if !sess.closed.Load() {
 		t.Error("closing the stage host left its session open")
 	}
-	if err := host.redial(context.Background(), 0); err == nil {
+	if err := host.redial(t.Context(), 0); err == nil {
 		t.Error("a redial after the stage host closed reported success")
 	}
 	if got := dials.Load(); got != 0 {
@@ -380,7 +380,7 @@ func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	host := &wtStageSession{
 		sess: deadWTSession(),
 		dial: func(context.Context) (*wtSession, error) {
-			s := liveWTSession()
+			s := liveWTSession(t)
 			mu.Lock()
 			dialed = append(dialed, s)
 			mu.Unlock()
@@ -399,7 +399,7 @@ func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	}
 
 	started := time.Now()
-	if err := host.redial(context.Background(), 0); err != nil {
+	if err := host.redial(t.Context(), 0); err != nil {
 		t.Fatalf("redial: %v", err)
 	}
 	elapsed := time.Since(started)
@@ -432,7 +432,7 @@ func TestWTStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) 
 		},
 	}
 
-	err := host.redial(context.Background(), 0)
+	err := host.redial(t.Context(), 0)
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("redial error = %v, want AuthRequiredError", err)
 	}
@@ -446,12 +446,12 @@ func TestWTStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) 
 // clean stop and not a failed measurement.
 func TestRunWTLaneReportsACancelledStageAsAStop(t *testing.T) {
 	host := &wtStageSession{
-		sess: liveWTSession(),
+		sess: liveWTSession(t),
 		dial: func(context.Context) (*wtSession, error) {
 			return nil, errors.New("a cancelled stage must not dial")
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	entered := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -500,7 +500,7 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.Stages, cfg.ThroughputTransport = srv.URL, StageSet{Download: true}, "auto"
-	_, err := Prepare(context.Background(), cfg)
+	_, err := Prepare(t.Context(), cfg)
 	if err == nil {
 		t.Fatal("Prepare succeeded with no reachable throughput target")
 	}
@@ -527,7 +527,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 			// An unreachable base URL proves the check runs before discovery: a
 			// typo is answerable without a server.
 			cfg.BaseURL = wtUnreachableOrigin
-			_, err := Prepare(context.Background(), cfg)
+			_, err := Prepare(t.Context(), cfg)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("Prepare error = %v, want one containing %q", err, c.want)
 			}
@@ -540,8 +540,8 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 // without carrying one byte; repeating that schedule must not reset the bound.
 func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 	t.Parallel()
-	host := &wtStageSession{sess: liveWTSession()}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*wtLaneProgressWindow+300*time.Millisecond)
+	host := &wtStageSession{sess: liveWTSession(t)}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*wtLaneProgressWindow+300*time.Millisecond)
 	defer cancel()
 	entries := 0
 	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
@@ -563,8 +563,8 @@ func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 
 func TestRunWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 	t.Parallel()
-	host := &wtStageSession{sess: liveWTSession()}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	host := &wtStageSession{sess: liveWTSession(t)}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	entries := 0
 	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
@@ -586,8 +586,8 @@ func TestRunWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 }
 
 func TestRunWTLaneRealProgressResetsFailureBounds(t *testing.T) {
-	host := &wtStageSession{sess: liveWTSession()}
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	host := &wtStageSession{sess: liveWTSession(t)}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 	entries := 0
 	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {

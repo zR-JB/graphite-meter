@@ -95,9 +95,7 @@ func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	remaining := p.Expires.Sub(s.now())
-	if remaining < 0 {
-		remaining = 0
-	}
+	remaining = max(remaining, 0)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"name": p.Name, "provider": p.Provider, "expires": p.Expires,
 		"csrf": p.session.csrf, "remainingMs": remaining.Milliseconds(),

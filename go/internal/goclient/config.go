@@ -235,9 +235,7 @@ func (c Config) normalized() Config {
 	if c.LatencyTransport == "" {
 		c.LatencyTransport = "auto"
 	}
-	if c.Warmup < 0 {
-		c.Warmup = 0
-	}
+	c.Warmup = max(c.Warmup, 0)
 	if c.LatencyDuration <= 0 {
 		c.LatencyDuration = defaultLatencyDuration
 	}
@@ -250,18 +248,12 @@ func (c Config) normalized() Config {
 	if c.BidirectionalDuration <= 0 {
 		c.BidirectionalDuration = defaultTransferDuration
 	}
-	if c.TransferStreams.Forced < 0 {
-		c.TransferStreams.Forced = 0
-	}
+	c.TransferStreams.Forced = max(c.TransferStreams.Forced, 0)
 	if c.TransferStreams.AutomaticMax < 1 {
 		c.TransferStreams.AutomaticMax = defaultAutomaticStreams
 	}
-	if c.TransferStreams.AutomaticMax > maxTransferStreams {
-		c.TransferStreams.AutomaticMax = maxTransferStreams
-	}
-	if c.TransferStreams.Forced > maxTransferStreams {
-		c.TransferStreams.Forced = maxTransferStreams
-	}
+	c.TransferStreams.AutomaticMax = min(c.TransferStreams.AutomaticMax, maxTransferStreams)
+	c.TransferStreams.Forced = min(c.TransferStreams.Forced, maxTransferStreams)
 	if c.PingInterval <= 0 {
 		c.PingInterval = 250 * time.Millisecond
 	}

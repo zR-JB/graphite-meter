@@ -528,11 +528,7 @@ func (m model) liveView(w int) string {
 // rateScale is the live bars' denominator: the larger session peak across both
 // directions. Peaks only grow, so the scale is stable within a run.
 func (m model) rateScale() float64 {
-	s := m.peaks[goclient.Down]
-	if p := m.peaks[goclient.Up]; p > s {
-		s = p
-	}
-	return s
+	return max(m.peaks[goclient.Down], m.peaks[goclient.Up])
 }
 
 // resultsView is the finished stages. Every throughput row is measured before
@@ -549,9 +545,7 @@ func (m model) resultsView(w int) string {
 		if isLatencyResult(r) {
 			continue
 		}
-		if r.PeakBps > scale {
-			scale = r.PeakBps
-		}
+		scale = max(scale, r.PeakBps)
 		dir := "down"
 		if r.Direction == goclient.Up {
 			dir = "up"

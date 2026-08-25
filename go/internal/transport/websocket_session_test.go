@@ -75,7 +75,7 @@ func TestWebSocketSession(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")

@@ -193,12 +193,7 @@ func renderBar(value, scale float64, width int, lead bool) string {
 	cells := 0.0
 	if scale > 0 {
 		cells = value / scale * float64(width)
-		if cells < 0 {
-			cells = 0
-		}
-		if cells > float64(width) {
-			cells = float64(width)
-		}
+		cells = min(max(cells, 0), float64(width))
 	}
 	full := int(cells)
 	part := eighths[int((cells-float64(full))*8)]
