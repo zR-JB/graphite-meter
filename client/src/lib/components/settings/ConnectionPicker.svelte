@@ -87,7 +87,8 @@
       <button
         type="button"
         aria-label={`Retry ${title}`}
-        onclick={() => void validateConnections(true, role)}>Retry</button
+        onclick={() => void validateConnections(true, role).catch(() => {})}
+        >Retry</button
       >
     {/if}
   </div>

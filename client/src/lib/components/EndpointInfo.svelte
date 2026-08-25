@@ -93,6 +93,7 @@
     return `${value.slice(0, 8)}…`;
   });
   const serverLoad = $derived(serverLoadSummary(store.infra?.serverLoad));
+  let copyError = $state(false);
 
   // Every row here reads the same presentation the path cards do. `store.infra`
   // is the last probe's evidence, which outlives the selection that produced it
@@ -133,9 +134,15 @@
   }
 
   async function copyReport() {
-    await navigator.clipboard.writeText(diagnosticReport());
-    copied = true;
-    window.setTimeout(() => (copied = false), 1500);
+    copyError = false;
+    try {
+      await navigator.clipboard.writeText(diagnosticReport());
+      copied = true;
+      window.setTimeout(() => (copied = false), 1500);
+    } catch {
+      copied = false;
+      copyError = true;
+    }
   }
 </script>
 
@@ -284,7 +291,11 @@
         >{copied ? "Copied" : "Copy diagnostic report"}</button
       >
       <span class="sr-status" aria-live="polite"
-        >{copied ? "Diagnostic report copied" : ""}</span
+        >{copied
+          ? "Diagnostic report copied"
+          : copyError
+            ? "Unable to copy diagnostic report"
+            : ""}</span
       >
     </div>
   </details>

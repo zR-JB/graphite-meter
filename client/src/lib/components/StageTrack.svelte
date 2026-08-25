@@ -5,6 +5,7 @@
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageTrackModel } from "./stageTrack";
+  import { failureDetail } from "./failurePresentation";
 
   const STAGES: {
     key: Exclude<StageKey, "bidirectional">;
@@ -70,7 +71,7 @@
       aria-checked={s.selected}
       aria-label="{s.label} stage{s.reason ? ` (${s.reason})` : ''}"
       use:tooltip={s.failure
-        ? `${s.label} — ${s.failure.message}`
+        ? `${s.label} — ${failureDetail(s.failure.message)}`
         : s.reason
           ? s.reason === "skipped" && !s.locked
             ? `${s.label} — skipped, tap to include`
@@ -118,7 +119,7 @@
         ? ' — tap to exclude'
         : ' (running)'}"
       use:tooltip={bidiPresentation.failure
-        ? `Bi-dir — ${store.stageFailures.bidirectional?.message}`
+        ? `Bi-dir — ${failureDetail(store.stageFailures.bidirectional?.message)}`
         : store.canToggleStage("bidirectional")
           ? "Bidirectional — concurrent down + up. Tap to exclude (re-enable in Settings)."
           : "Bidirectional — running."}

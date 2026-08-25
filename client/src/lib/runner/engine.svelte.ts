@@ -22,7 +22,11 @@ import { RunnerCore } from "./core";
 // Rollup deletes the branch and tree-shakes the whole module out, but only
 // while dummy.ts stays free of top-level side effects.
 import { DummyBackend } from "./dummy";
-import { RealBackend, TransportUnavailableError } from "./RealRunner";
+import {
+  PreflightUnavailableError,
+  RealBackend,
+  TransportUnavailableError,
+} from "./RealRunner";
 import { store } from "../state/store.svelte";
 import { setDebugLogging } from "../debug";
 import { BUILD } from "../buildenv";
@@ -210,9 +214,13 @@ export function getRunner(): NetworkRunner {
   return runner;
 }
 
-function validationMessage(cause: unknown): string {
-  if (cause instanceof TransportUnavailableError) return cause.message;
-  return cause instanceof Error ? cause.message : "Connection check failed";
+export function connectionFailureMessage(cause: unknown): string {
+  if (cause instanceof PreflightUnavailableError) {
+    return cause.cause instanceof TypeError
+      ? "Server could not be reached"
+      : "Connection check failed";
+  }
+  return "Connection check failed";
 }
 
 function markValidation(
@@ -308,13 +316,15 @@ export async function validateConnections(
         if (!transactionCurrent()) throw cause;
         firstFailure ??= cause;
         const failedRoles =
-          cause instanceof TransportUnavailableError && cause.role
-            ? [cause.role]
-            : batchRoles;
+          cause instanceof PreflightUnavailableError
+            ? CONNECTION_ROLES
+            : cause instanceof TransportUnavailableError && cause.role
+              ? [cause.role]
+              : batchRoles;
         markValidation(
           failedRoles,
           "failed",
-          validationMessage(cause),
+          connectionFailureMessage(cause),
           undefined,
           config,
         );
@@ -486,10 +496,7 @@ export function toggleRun() {
       // A preflight failure happens before RunnerCore emits `connecting`.
       // Keep the runner phase idle; the path cards and this transient message
       // carry the failure without manufacturing a measurement error result.
-      store.startError =
-        cause instanceof TransportUnavailableError
-          ? cause.message
-          : "Connection check failed";
+      store.startError = connectionFailureMessage(cause);
       updatePreparation("failed");
     })
     .finally(() => {

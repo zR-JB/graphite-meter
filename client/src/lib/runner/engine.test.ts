@@ -7,6 +7,10 @@ import { plugin, Transpiler } from "bun";
 import { compileModule } from "svelte/compiler";
 import { RunnerCore } from "./core";
 import type { InfraInfo } from "./contract";
+import {
+  PreflightUnavailableError,
+  TransportUnavailableError,
+} from "./real/transportError";
 
 plugin({
   name: "svelte-runes",
@@ -211,6 +215,26 @@ test("a preflight failure stays idle instead of manufacturing a run error", asyn
     for (const key of Object.keys(BUILD_TOKENS))
       Reflect.deleteProperty(globalThis, key);
   }
+});
+
+test("connection failures use safe presentation copy", async () => {
+  const { connectionFailureMessage } = await import("./engine.svelte");
+
+  expect(
+    connectionFailureMessage(
+      new PreflightUnavailableError("preflight unavailable", {
+        cause: new TypeError("Failed to fetch"),
+      }),
+    ),
+  ).toBe("Server could not be reached");
+  expect(
+    connectionFailureMessage(
+      new TransportUnavailableError("throughput probe request failed", {
+        cause: new TypeError("Failed to fetch"),
+        role: "throughput",
+      }),
+    ),
+  ).toBe("Connection check failed");
 });
 
 test("preparation names a disabled throughput path for latency-only runs", async () => {

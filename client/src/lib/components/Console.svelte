@@ -201,9 +201,13 @@
     window.addEventListener("graphite-meter-auth-required", onAuthRequired);
     void bootRunner();
     if (authEnabled)
-      void import("./AccountControl.svelte").then(
-        (m) => (AccountControl = m.default),
-      );
+      void import("./AccountControl.svelte")
+        .then((m) => (AccountControl = m.default))
+        .catch(() => {
+          // The optional account control may be unavailable with an offline
+          // lazy chunk; the measurement UI remains usable without it.
+          AccountControl = null;
+        });
 
     return () => {
       window.removeEventListener("keydown", onKeydown);

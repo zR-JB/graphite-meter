@@ -1,0 +1,14 @@
+/** Replace known low-level network details at user-facing measurement seams.
+ *  The structured failure remains in state for diagnostics; this only keeps
+ *  browser/worker transport wording out of cards, toasts, and tooltips. */
+export function failureDetail(
+  detail: string | undefined,
+  fallback = "Connection lost",
+): string {
+  if (!detail) return fallback;
+  return /failed to fetch|networkerror|typeerror|domexception|aborterror|\berror:|\bhttp\s+\d{3}\b|\b(?:fetch|probe|request|transport|webtransport|websocket|stream|worker)\b/i.test(
+    detail,
+  )
+    ? fallback
+    : detail;
+}
