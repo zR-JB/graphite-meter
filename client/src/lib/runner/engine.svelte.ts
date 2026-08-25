@@ -214,13 +214,39 @@ export function getRunner(): NetworkRunner {
   return runner;
 }
 
-export function connectionFailureMessage(cause: unknown): string {
-  if (cause instanceof PreflightUnavailableError) {
-    return cause.cause instanceof TypeError
-      ? "Server could not be reached"
-      : "Connection check failed";
+function isNetworkUnavailable(cause: unknown): boolean {
+  const seen = new Set<object>();
+  let current: unknown = cause;
+  while (
+    current &&
+    (typeof current === "object" || typeof current === "function")
+  ) {
+    const value = current as {
+      name?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (seen.has(value)) return false;
+    seen.add(value);
+    const name = typeof value.name === "string" ? value.name : "";
+    const message = typeof value.message === "string" ? value.message : "";
+    if (
+      name === "NetworkError" ||
+      /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i.test(
+        message,
+      )
+    )
+      return true;
+    current = value.cause;
   }
-  return "Connection check failed";
+  return false;
+}
+
+export function connectionFailureMessage(cause: unknown): string {
+  return cause instanceof PreflightUnavailableError &&
+    isNetworkUnavailable(cause.cause)
+    ? "Server could not be reached"
+    : "Connection check failed";
 }
 
 function markValidation(

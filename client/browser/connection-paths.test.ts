@@ -350,13 +350,17 @@ test("a failed start names the affected path in the gauge", async ({
   await page.goto("/?engine=real");
   await page.getByRole("button", { name: "Start the speed test" }).click();
   await expect(
-    page.getByText("Connection check failed", { exact: true }),
+    page.locator(".gauge-panel").getByText("Connection check failed", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByText("Throughput path is unavailable", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("Connection check failed", { exact: true }),
+    page.locator(".gauge-panel").getByText("Connection check failed", {
+      exact: true,
+    }),
   ).toHaveCount(1);
   await expect(page.locator(".run-error")).toHaveCount(0);
 });

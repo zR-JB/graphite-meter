@@ -223,10 +223,31 @@ test("connection failures use safe presentation copy", async () => {
   expect(
     connectionFailureMessage(
       new PreflightUnavailableError("preflight unavailable", {
-        cause: new TypeError("Failed to fetch"),
+        cause: { name: "TypeError", message: "Failed to fetch" },
       }),
     ),
   ).toBe("Server could not be reached");
+  expect(
+    connectionFailureMessage(
+      new PreflightUnavailableError("preflight unavailable", {
+        cause: { name: "NetworkError", message: "Network request failed" },
+      }),
+    ),
+  ).toBe("Server could not be reached");
+  expect(
+    connectionFailureMessage(
+      new PreflightUnavailableError("preflight unavailable", {
+        cause: { name: "TypeError", message: "Unexpected programmer error" },
+      }),
+    ),
+  ).toBe("Connection check failed");
+  expect(
+    connectionFailureMessage(
+      new PreflightUnavailableError("preflight unavailable", {
+        cause: new Error("preflight returned HTTP 503"),
+      }),
+    ),
+  ).toBe("Connection check failed");
   expect(
     connectionFailureMessage(
       new TransportUnavailableError("throughput probe request failed", {
