@@ -137,23 +137,21 @@ func (e *discoveryFailure) Error() string { return "provider unavailable" }
 
 func classifyDiscoveryFailure(err error) *discoveryFailure {
 	reason := "discovery_response"
-	var issuer *oidc.IssuerMismatchError
-	var dns *net.DNSError
-	var unknownAuthority x509.UnknownAuthorityError
-	var hostname x509.HostnameError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = "timeout"
 	case errors.Is(err, context.Canceled):
 		reason = "cancelled"
-	case errors.As(err, &issuer):
-		reason = "issuer_mismatch"
-	case errors.As(err, &dns):
-		reason = "dns"
-	case errors.As(err, &unknownAuthority), errors.As(err, &hostname):
-		reason = "tls_verification"
 	default:
-		if _, ok := errors.AsType[*net.OpError](err); ok {
+		if _, ok := errors.AsType[*oidc.IssuerMismatchError](err); ok {
+			reason = "issuer_mismatch"
+		} else if _, ok := errors.AsType[*net.DNSError](err); ok {
+			reason = "dns"
+		} else if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
+			reason = "tls_verification"
+		} else if _, ok := errors.AsType[x509.HostnameError](err); ok {
+			reason = "tls_verification"
+		} else if _, ok := errors.AsType[*net.OpError](err); ok {
 			reason = "connection"
 		}
 	}
@@ -313,7 +311,7 @@ func validAuthCode(v string) bool {
 	if v == "" {
 		return false
 	}
-	for i := 0; i < len(v); i++ {
+	for i := range len(v) {
 		if v[i] < 0x20 || v[i] > 0x7e {
 			return false
 		}

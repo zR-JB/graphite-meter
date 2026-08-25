@@ -61,7 +61,7 @@ func TestPasswordLoginVerifierBusy(t *testing.T) {
 	s := testService(t)
 	// Saturate the Argon2 concurrency gate so verification is refused rather
 	// than queued.
-	for i := 0; i < cap(s.argon); i++ {
+	for range cap(s.argon) {
 		s.argon <- struct{}{}
 	}
 	if got := passwordError(t, s, passwordPost(s, "secret")); got != noticeBusy {

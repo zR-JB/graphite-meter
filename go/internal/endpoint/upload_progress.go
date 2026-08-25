@@ -39,8 +39,8 @@ const (
 
 type uploadProgressEvent struct {
 	Type    string `json:"type"`
-	Bytes   uint64 `json:"bytes,omitempty"`
-	Nanos   uint64 `json:"nanos,omitempty"`
+	Bytes   uint64 `json:"bytes,omitzero"`
+	Nanos   uint64 `json:"nanos,omitzero"`
 	Message string `json:"message,omitempty"`
 	Code    string `json:"code,omitempty"`
 }

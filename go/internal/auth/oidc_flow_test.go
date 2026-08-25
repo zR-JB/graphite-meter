@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -116,7 +117,7 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": 3600, "id_token": raw})
 	case "/userinfo":
 		f.mu.Lock()
-		subject, groups, status := f.userinfoSub, append([]string(nil), f.groups...), f.userinfoStatus
+		subject, groups, status := f.userinfoSub, slices.Clone(f.groups), f.userinfoStatus
 		f.mu.Unlock()
 		if status != 0 {
 			http.Error(w, "temporarily unavailable", status)

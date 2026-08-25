@@ -410,8 +410,8 @@ func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	cfg.BaseURL = srv.URL
 	cfg.Stages = StageSet{Download: true}
 	_, err := Prepare(context.Background(), cfg)
-	var preparationErr *PreparationError
-	if !errors.As(err, &preparationErr) {
+	preparationErr, ok := errors.AsType[*PreparationError](err)
+	if !ok {
 		t.Fatalf("Prepare error = %T %v, want PreparationError", err, err)
 	}
 	if got := len(preparationErr.Preflight.Capabilities.ThroughputTargets); got != 2 {

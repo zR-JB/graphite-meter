@@ -30,7 +30,7 @@ func (e *WTSession) ID() string { return "wt-session" }
 
 type wtSessionResponse struct {
 	Token   string `json:"token"`
-	Expires int64  `json:"expires,omitempty"`
+	Expires int64  `json:"expires,omitzero"`
 }
 
 func (e *WTSession) Handle(s transport.Session) error {

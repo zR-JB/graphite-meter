@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -26,7 +27,7 @@ type recordingConn struct {
 }
 
 func (c *recordingConn) SendDatagram(b []byte) error {
-	c.sent = append(c.sent, append([]byte(nil), b...))
+	c.sent = append(c.sent, bytes.Clone(b))
 	return nil
 }
 

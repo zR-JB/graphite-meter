@@ -144,7 +144,7 @@ func BenchmarkDownloadBlockSize(b *testing.B) {
 			}
 			b.SetBytes(size)
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				if err := download.Handle(session); err != nil {
 					b.Fatal(err)
 				}

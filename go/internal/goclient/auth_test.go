@@ -137,8 +137,8 @@ func TestClassifyAuthFailureDetectsRevokedGrant(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader("")), Header: header, Request: r}, nil
 	})}
 	err := classifyAuthFailure(context.Background(), client, "https://meter.example", runErr)
-	var authErr *AuthRequiredError
-	if !errors.As(err, &authErr) || authErr.URL != "https://meter.example/login" {
+	authErr, ok := errors.AsType[*AuthRequiredError](err)
+	if !ok || authErr.URL != "https://meter.example/login" {
 		t.Fatalf("error=%v", err)
 	}
 }

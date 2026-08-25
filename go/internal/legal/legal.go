@@ -2,16 +2,18 @@ package legal
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -182,7 +184,7 @@ func ReadLegalFiles(dir string) ([]LegalFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+	slices.SortFunc(files, func(a, b LegalFile) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no legal candidate file in %s", dir)
 	}
@@ -205,7 +207,7 @@ func ReadRootLegalFiles(dir string) ([]LegalFile, error) {
 		}
 		files = append(files, LegalFile{Name: entry.Name(), SHA256: SHA256(b), Text: string(b), Kind: fileKind(entry.Name())})
 	}
-	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+	slices.SortFunc(files, func(a, b LegalFile) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no legal candidate file in %s", dir)
 	}
@@ -283,11 +285,7 @@ func fingerprintMismatch(current, reviewed []LegalFile) (name, expected, actual 
 	for name := range reviewedFingerprint {
 		names[name] = struct{}{}
 	}
-	orderedNames := make([]string, 0, len(names))
-	for name := range names {
-		orderedNames = append(orderedNames, name)
-	}
-	sort.Strings(orderedNames)
+	orderedNames := slices.Sorted(maps.Keys(names))
 	for _, name := range orderedNames {
 		expectedHash, expectedOK := reviewedFingerprint[name]
 		actualHash, actualOK := currentFingerprint[name]

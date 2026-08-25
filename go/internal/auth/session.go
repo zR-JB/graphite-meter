@@ -11,7 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -56,7 +56,15 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 			own = append(own, x)
 		}
 	}
-	sort.Slice(own, func(i, j int) bool { return own[i].created.Before(own[j].created) })
+	slices.SortFunc(own, func(a, b *session) int {
+		if a.created.Before(b.created) {
+			return -1
+		}
+		if b.created.Before(a.created) {
+			return 1
+		}
+		return 0
+	})
 	if len(own) >= maxSubjectSessions {
 		s.deleteSessionLocked(own[0])
 	}

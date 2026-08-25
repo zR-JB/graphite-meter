@@ -286,7 +286,7 @@ func BenchmarkUploadBufferSize(b *testing.B) {
 			reader := bytes.NewReader(source)
 			b.SetBytes(size)
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for b.Loop() {
 				reader.Reset(source)
 				if _, err := io.CopyBuffer(discardSink{}, io.LimitReader(reader, size), buffer); err != nil {
 					b.Fatal(err)

@@ -158,8 +158,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
 	}
-	var preparationErr *goclient.PreparationError
-	preflightDecoded := errors.As(msg.err, &preparationErr)
+	preparationErr, preflightDecoded := errors.AsType[*goclient.PreparationError](msg.err)
 	if preflightDecoded {
 		pf := preparationErr.Preflight
 		m.discovery = &pf

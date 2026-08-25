@@ -3,19 +3,20 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -467,12 +468,12 @@ func goDiscoveryTargets(repo string) ([]goTarget, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		parts := strings.Split(line, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || seen[line] {
+		fields := slices.Collect(strings.SplitSeq(line, "/"))
+		if len(fields) != 2 || fields[0] == "" || fields[1] == "" || seen[line] {
 			return nil, fmt.Errorf("invalid or duplicate TUI target %q", line)
 		}
 		seen[line] = true
-		targets = append(targets, goTarget{"tui", parts[0], parts[1]})
+		targets = append(targets, goTarget{"tui", fields[0], fields[1]})
 	}
 	if len(targets) == 0 {
 		return nil, errors.New("scripts/tui-targets.txt contains no targets")
@@ -802,7 +803,7 @@ func npmComponent(root string, reviews []legal.Review) (legal.Component, error) 
 }
 
 func applyReviewedSelections(components []legal.Component, reviews []legal.Review) []legal.Component {
-	result := append([]legal.Component(nil), components...)
+	result := slices.Clone(components)
 	for i := range result {
 		for _, review := range reviews {
 			if review.Ecosystem == result[i].Ecosystem && review.Name == result[i].Name {
@@ -864,7 +865,7 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 				return nil, fmt.Errorf("provenance %s local artifact hash changed: %s", entry.Name, artifact.Path)
 			}
 		}
-		files := append([]legal.LegalFile(nil), entry.LocalLegalFiles...)
+		files := slices.Clone(entry.LocalLegalFiles)
 		for i := range files {
 			path := filepath.Join(repo, filepath.FromSlash(files[i].Name))
 			data, err := os.ReadFile(path)
@@ -909,10 +910,10 @@ func sortComponents(components []legal.Component) []legal.Component {
 	for _, component := range seen {
 		result = append(result, component)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		left := result[i].Ecosystem + "\x00" + result[i].Name + "\x00" + result[i].Version
-		right := result[j].Ecosystem + "\x00" + result[j].Name + "\x00" + result[j].Version
-		return left < right
+	slices.SortFunc(result, func(a, b legal.Component) int {
+		left := a.Ecosystem + "\x00" + a.Name + "\x00" + a.Version
+		right := b.Ecosystem + "\x00" + b.Name + "\x00" + b.Version
+		return cmp.Compare(left, right)
 	})
 	return result
 }
@@ -1077,9 +1078,5 @@ func printReviewAudit(server, tui, container []legal.Component, reviews []legal.
 }
 
 func values(values map[string]legal.Component) []legal.Component {
-	result := make([]legal.Component, 0, len(values))
-	for _, value := range values {
-		result = append(result, value)
-	}
-	return result
+	return slices.Collect(maps.Values(values))
 }
