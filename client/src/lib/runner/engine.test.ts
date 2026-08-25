@@ -74,6 +74,44 @@ function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
   };
 }
 
+function stubEventBootEnvironment(
+  visibility: "hidden" | "visible",
+  online: boolean,
+) {
+  const windowListeners = new Map<string, () => void>();
+  const documentState = { visibilityState: visibility };
+  const windowValue = {
+    addEventListener(type: string, listener: () => void) {
+      windowListeners.set(type, listener);
+    },
+    removeEventListener(type: string) {
+      windowListeners.delete(type);
+    },
+  };
+  const restores = [
+    stubGlobal("window", windowValue),
+    stubGlobal("document", {
+      ...documentState,
+      addEventListener() {},
+      removeEventListener() {},
+    }),
+    stubGlobal("navigator", { onLine: online }),
+  ];
+  return {
+    emit(type: string) {
+      windowListeners.get(type)?.();
+    },
+    restore() {
+      for (const restore of restores.reverse()) restore();
+    },
+  };
+}
+
+async function settleValidation(): Promise<void> {
+  for (let turn = 0; turn < 10; turn++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 const PROBE_EVIDENCE: InfraInfo = {
   clientIp: "203.0.113.7",
   clientIpVersion: 4,
@@ -388,6 +426,54 @@ test("bootRunner seeds background activity from the live visibilityState", async
     expect(seeded).toEqual([false, true]);
   } finally {
     RunnerCore.prototype.setBackgroundActivity = realSetBackground;
+    restoreWindow();
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("connectivity validation coalesces offline edges and recovers online", async () => {
+  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
+    ...BUILD_TOKENS,
+  });
+  const restoreWindow = stubGlobal("window", undefined);
+  Reflect.deleteProperty(globalThis, "window");
+  const { RealBackend } = await import("./RealRunner");
+  const originalProbe = RealBackend.prototype.probe;
+  let probeCalls = 0;
+  let offline = false;
+  RealBackend.prototype.probe = async function () {
+    probeCalls++;
+    if (offline) throw new Error("server unavailable");
+    return PROBE_EVIDENCE;
+  };
+  const environment = stubEventBootEnvironment("visible", true);
+  try {
+    const { bootRunner, teardownRunner } = await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    await bootRunner();
+    expect(probeCalls).toBe(1);
+    expect(store.connectionValidation.throughput.state).toBe("verified");
+    expect(store.connectionValidation.latency.state).toBe("verified");
+
+    offline = true;
+    environment.emit("offline");
+    environment.emit("offline");
+    await settleValidation();
+    expect(probeCalls).toBe(2);
+    expect(store.connectionValidation.throughput.state).toBe("failed");
+    expect(store.connectionValidation.latency.state).toBe("failed");
+
+    offline = false;
+    environment.emit("online");
+    await settleValidation();
+    expect(probeCalls).toBe(3);
+    expect(store.connectionValidation.throughput.state).toBe("verified");
+    expect(store.connectionValidation.latency.state).toBe("verified");
+    teardownRunner();
+  } finally {
+    RealBackend.prototype.probe = originalProbe;
+    environment.restore();
     restoreWindow();
     for (const key of Object.keys(BUILD_TOKENS))
       Reflect.deleteProperty(globalThis, key);

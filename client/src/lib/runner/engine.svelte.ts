@@ -66,9 +66,12 @@ let lastDraftRoleKeys: Record<ConnectionRole, string> = {
   latency: "",
 };
 let pendingValidation = false;
-let hiddenAt = 0;
 let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
+let validationTimer: ReturnType<typeof setTimeout> | null = null;
+let validationDueAt = 0;
+let lastValidationAttemptAt = 0;
+let connectivityOnline: boolean | null = null;
 const SESSION_RUN_MARGIN_MS = 60_000;
 
 function preparationPathState(
@@ -97,6 +100,70 @@ function updatePreparation(
     throughput: preparationPathState("throughput"),
     latency: preparationPathState("latency"),
   };
+}
+
+function clearValidationTimer(): void {
+  if (validationTimer !== null) clearTimeout(validationTimer);
+  validationTimer = null;
+}
+
+function validationHidden(): boolean {
+  return document.visibilityState === "hidden";
+}
+
+function validationDue(): number {
+  const now = Date.now();
+  if (validationDueAt) return validationDueAt;
+  if (prepared) return prepared.verifiedAt + CONNECTION_FRESH_MS;
+  if (lastValidationAttemptAt)
+    return lastValidationAttemptAt + CONNECTION_FRESH_MS;
+  return now;
+}
+
+function scheduleValidation(): void {
+  clearValidationTimer();
+  if (!booted || store.isRunning || validationHidden()) return;
+  const dueAt = validationDue();
+  const delay = Math.max(0, dueAt - Date.now());
+  if (delay === 0) {
+    validationTimer = setTimeout(() => {
+      validationTimer = null;
+      serviceValidation();
+    }, 0);
+    return;
+  }
+  validationTimer = setTimeout(() => {
+    validationTimer = null;
+    serviceValidation();
+  }, delay);
+}
+
+function requestValidation(): void {
+  pendingValidation = true;
+  validationDueAt = Date.now();
+  scheduleValidation();
+}
+
+function serviceValidation(): void {
+  if (!booted || store.isRunning || validationHidden()) {
+    scheduleValidation();
+    return;
+  }
+  if (validating.length) return;
+  const due = validationDue() <= Date.now();
+  if (!pendingValidation && !due) {
+    scheduleValidation();
+    return;
+  }
+  pendingValidation = false;
+  validationDueAt = 0;
+  queueMicrotask(
+    () =>
+      void validateConnections(true).catch(() => {
+        // The validation state is the user-facing result; expected probe
+        // failures are recorded there and consumed at this UI boundary.
+      }),
+  );
 }
 
 export function cancelPendingStart() {
@@ -147,7 +214,7 @@ if (typeof window !== "undefined") {
         for (const role of changed)
           lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
         if (!needed.length) return;
-        pendingValidation = true;
+        requestValidation();
         if (running) {
           markValidation(
             changed.filter((role) => needed.includes(role)),
@@ -157,16 +224,7 @@ if (typeof window !== "undefined") {
           return;
         }
       }
-      if (running || !pendingValidation) return;
-      pendingValidation = false;
-      queueMicrotask(
-        () =>
-          // A rejection is already recorded as a "failed" role by markValidation.
-          void validateConnections(
-            false,
-            needed.length === 1 ? needed[0] : undefined,
-          ).catch(() => {}),
-      );
+      serviceValidation();
     });
   });
 }
@@ -291,6 +349,9 @@ export async function validateConnections(
   const key = connectionKey(config, store.transportDiscovery);
   const draftKey = connectionDraftKey(config);
   if (!force && preparedIsFresh(key)) return prepared!.info;
+  lastValidationAttemptAt = Date.now();
+  validationDueAt = 0;
+  pendingValidation = false;
   if (validating.length) markValidation(validating, "stale");
   validationAbort?.abort();
   const roles = validationRoles(
@@ -377,6 +438,7 @@ export async function validateConnections(
       info: latest,
       verifiedAt: Date.now(),
     };
+    validationDueAt = prepared.verifiedAt + CONNECTION_FRESH_MS;
     return latest;
   } finally {
     if (validationAbort === abort) {
@@ -384,6 +446,7 @@ export async function validateConnections(
       validating = [];
     }
     ownerSignal?.removeEventListener("abort", relayOwnerAbort);
+    scheduleValidation();
   }
 }
 
@@ -423,12 +486,28 @@ function ingestRunnerEvent(event: RunnerEvent) {
     );
   }
   store.ingest(event);
+  if (
+    event.type === "phase" &&
+    (event.transition.to === "complete" ||
+      event.transition.to === "aborted" ||
+      event.transition.to === "error")
+  ) {
+    scheduleValidation();
+  }
 }
 
 function refreshAfterTransition() {
-  // A rejection is already recorded as a "failed" role by markValidation.
-  if (booted && !store.isRunning)
-    void validateConnections(true).catch(() => {});
+  if (connectivityOnline === true) return;
+  connectivityOnline = true;
+  requestValidation();
+}
+
+function refreshAfterOffline() {
+  if (connectivityOnline === false) return;
+  connectivityOnline = false;
+  prepared = null;
+  markValidation(CONNECTION_ROLES, "stale", "Connection changed; check again.");
+  requestValidation();
 }
 
 // A hidden tab does no background work: the keepalive's ping socket and worker
@@ -441,10 +520,9 @@ function refreshAfterVisibility() {
   // the flag decides whether it comes back when the run ends.
   runner?.setBackgroundActivity?.(!hidden);
   if (hidden) {
-    hiddenAt = Date.now();
-  } else if (hiddenAt && Date.now() - hiddenAt >= CONNECTION_FRESH_MS) {
-    hiddenAt = 0;
-    refreshAfterTransition();
+    clearValidationTimer();
+  } else {
+    scheduleValidation();
   }
 }
 
@@ -453,15 +531,18 @@ export async function bootRunner() {
   store.engineInfo = engine.describe();
   unsubscribe = engine.on(ingestRunnerEvent);
   booted = true;
+  connectivityOnline =
+    typeof navigator === "undefined" ? null : navigator.onLine;
   for (const role of CONNECTION_ROLES)
     lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
   window.addEventListener("online", refreshAfterTransition);
+  window.addEventListener("offline", refreshAfterOffline);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
   // A tab opened in the background gets no visibilitychange, so seed the flag
   // from the current state instead of assuming the page is visible.
   refreshAfterVisibility();
-  // A rejection is already recorded as a "failed" role by markValidation.
-  await validateConnections().catch(() => {});
+  if (validationHidden()) requestValidation();
+  else await validateConnections().catch(() => {});
 }
 
 export function toggleRun() {
@@ -547,8 +628,7 @@ export function returnToStart() {
   cancelPendingStart();
   if (store.isRunning) getRunner().abort();
   store.reset();
-  // A rejection is already recorded as a "failed" role by markValidation.
-  void validateConnections(true).catch(() => {});
+  requestValidation();
 }
 
 /**
@@ -611,7 +691,12 @@ export function teardownRunner() {
   validating = [];
   validationAbort?.abort();
   validationAbort = null;
+  clearValidationTimer();
+  validationDueAt = 0;
+  lastValidationAttemptAt = 0;
+  connectivityOnline = null;
   window.removeEventListener("online", refreshAfterTransition);
+  window.removeEventListener("offline", refreshAfterOffline);
   document.removeEventListener("visibilitychange", refreshAfterVisibility);
   unsubscribe?.();
   unsubscribe = null;
