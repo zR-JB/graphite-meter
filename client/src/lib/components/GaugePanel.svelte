@@ -21,6 +21,7 @@
     type PresentationHandle,
   } from "../canvas/presentation";
   import { resultGaugeArcs } from "./resultGauge";
+  import { preparationFailurePresentation } from "./preparationFailure";
   import { ICON } from "../constants";
 
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
@@ -279,18 +280,9 @@
     if (!store.preparing) return "";
     return `Starting test. Throughput path ${preparationPathLabel(store.preparation.throughput)}; Latency path ${preparationPathLabel(store.preparation.latency)}`;
   });
-  const preparationFailure = $derived.by(() => {
-    if (store.preparation.status !== "failed") return null;
-    const failed = [
-      store.preparation.throughput === "failed" ? "Throughput" : "",
-      store.preparation.latency === "failed" ? "Latency" : "",
-    ].filter(Boolean);
-    const paths = failed.length ? `${failed.join(" and ")} path` : "Path";
-    return {
-      headline: "Connection check failed",
-      detail: `${paths}${failed.length === 1 ? " is" : "s are"} unavailable${store.startError && store.startError !== "Connection check failed" ? ` — ${store.startError}` : ""}`,
-    };
-  });
+  const preparationFailure = $derived(
+    preparationFailurePresentation(store.preparation, store.startError),
+  );
 
   const status = $derived.by(() => {
     switch (store.phase) {

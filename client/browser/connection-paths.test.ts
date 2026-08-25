@@ -252,7 +252,12 @@ test("a failed start names the affected path in the gauge", async ({
   await expect(
     page.getByText("Connection check failed", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(/Throughput path is unavailable/)).toBeVisible();
+  await expect(
+    page.getByText("Throughput path is unavailable", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Connection check failed", { exact: true }),
+  ).toHaveCount(1);
   await expect(page.locator(".run-error")).toHaveCount(0);
 });
 
