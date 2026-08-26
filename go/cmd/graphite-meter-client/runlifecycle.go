@@ -161,7 +161,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	preparationErr, preflightDecoded := errors.AsType[*goclient.PreparationError](msg.err)
 	if preflightDecoded {
 		pf := preparationErr.Preflight
-		m.discovery = &pf
+		m.discovery = new(pf)
 	}
 	if msg.err != nil {
 		if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
@@ -191,7 +191,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	m.prepareError = ""
 	m.prepared = msg.connection
 	pf := msg.connection.Preflight
-	m.discovery = &pf
+	m.discovery = new(pf)
 	return m, nil
 }
 
@@ -260,9 +260,7 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeConfigure
 		m.prepared = nil
 		m.prepareStatus = "authorizing"
-		if m.prepareStep < stepPreflight {
-			m.prepareStep = stepPreflight
-		}
+		m.prepareStep = max(m.prepareStep, stepPreflight)
 		m.focusServer()
 		m.notice = "Authorization expired. Preparing the approval page…"
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)

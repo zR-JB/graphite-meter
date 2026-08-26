@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net/netip"
 	"net/url"
 	"os"
@@ -370,7 +371,7 @@ func (c Config) validateListeners() error {
 		}
 	}
 	if !c.AdvertiseAllNative {
-		for name := range c.AdvertisedNative {
+		for name := range maps.Keys(c.AdvertisedNative) {
 			if !c.nativeEnabled(name) {
 				return fmt.Errorf("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint %q", name)
 			}

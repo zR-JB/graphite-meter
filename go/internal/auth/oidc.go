@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
@@ -257,7 +258,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	maps.DeleteFunc(o.tx, func(_ [32]byte, v oidcTransaction) bool { return !now.Before(v.expires) })
 	perClient := 0
-	for _, v := range o.tx {
+	for v := range maps.Values(o.tx) {
 		if v.client == client {
 			perClient++
 		}
@@ -456,7 +457,7 @@ func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, tok
 	if !validSubject(idToken.Subject) {
 		return "", reasonInvalidSubject
 	}
-	name := firstNonEmpty(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
+	name := cmp.Or(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
 	return safeDisplayName(name), ""
 }
 
@@ -476,15 +477,6 @@ func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx 
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)
 	s.writeSignedInInterstitial(w, tx.cliChallenge)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
@@ -511,12 +503,7 @@ func validSubject(v string) bool {
 	if len(v) == 0 || len(v) > 256 {
 		return false
 	}
-	for _, r := range v {
-		if r < ' ' || r == 0x7f {
-			return false
-		}
-	}
-	return true
+	return !strings.ContainsFunc(v, func(r rune) bool { return r < ' ' || r == 0x7f })
 }
 func safeDisplayName(v string) string {
 	var b strings.Builder
@@ -536,10 +523,5 @@ func safeDisplayName(v string) string {
 }
 
 func allowedGroup(actual, allowed []string) bool {
-	for _, a := range actual {
-		if slices.Contains(allowed, a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(actual, func(a string) bool { return slices.Contains(allowed, a) })
 }

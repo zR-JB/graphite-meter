@@ -68,7 +68,7 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	approval := s.approvals[challenge]
 	if approval == nil {
 		count := 0
-		for _, pending := range s.approvals {
+		for pending := range maps.Values(s.approvals) {
 			if pending.session == p.session {
 				count++
 			}
@@ -142,7 +142,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	h := sha256.Sum256([]byte(grant))
 	sess := approval.session
 	if len(sess.grants) >= maxSessionGrants {
-		for old := range sess.grants {
+		for old := range maps.Keys(sess.grants) {
 			delete(sess.grants, old)
 			delete(s.grants, old)
 			break

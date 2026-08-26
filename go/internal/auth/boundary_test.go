@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -218,7 +219,7 @@ func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 			t.Fatalf("%s SameSite=%v, want %v", c.Name, c.SameSite, expect.sameSite)
 		}
 	}
-	for name := range want {
+	for name := range maps.Keys(want) {
 		if !seen[name] {
 			t.Fatalf("%s was never set", name)
 		}

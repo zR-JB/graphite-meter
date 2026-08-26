@@ -166,10 +166,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	}
 	go readLoop(conn)
 
-	ticker := time.NewTicker(r.cfg.PingInterval)
-	defer ticker.Stop()
-	timeoutTicker := time.NewTicker(50 * time.Millisecond)
-	defer timeoutTicker.Stop()
+	ticker := time.Tick(r.cfg.PingInterval)
+	timeoutTicker := time.Tick(50 * time.Millisecond)
 	send := func() error {
 		mu.Lock()
 		id := nextID
@@ -233,11 +231,11 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			mu.Unlock()
 			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
 			go readLoop(conn)
-		case <-ticker.C:
+		case <-ticker:
 			// A dead bus surfaces through recvErr and reconnects; a skipped ping
 			// costs one sample, not the stage.
 			_ = send()
-		case now := <-timeoutTicker.C:
+		case now := <-timeoutTicker:
 			if !measuring.Load() {
 				continue
 			}

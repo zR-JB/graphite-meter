@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -119,7 +120,7 @@ func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
 	_ = first.Close()
 	_ = second.Close()
 
-	if _, err := ln.Accept(); err != io.EOF {
+	if _, err := ln.Accept(); !errors.Is(err, io.EOF) {
 		t.Fatalf("drained listener error = %v, want EOF", err)
 	}
 }

@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"cmp"
 	"fmt"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"time"
@@ -217,24 +218,12 @@ func DefaultConfig() Config {
 }
 
 func (c Config) normalized() Config {
-	if c.BaseURL == "" {
-		c.BaseURL = "http://127.0.0.1:7246"
-	}
-	if c.ThroughputTarget == "" {
-		c.ThroughputTarget = "auto"
-	}
-	if c.ThroughputProtocol == "" {
-		c.ThroughputProtocol = "auto"
-	}
-	if c.ThroughputTransport == "" {
-		c.ThroughputTransport = "auto"
-	}
-	if c.LatencyTarget == "" {
-		c.LatencyTarget = "auto"
-	}
-	if c.LatencyTransport == "" {
-		c.LatencyTransport = "auto"
-	}
+	c.BaseURL = cmp.Or(c.BaseURL, "http://127.0.0.1:7246")
+	c.ThroughputTarget = cmp.Or(c.ThroughputTarget, "auto")
+	c.ThroughputProtocol = cmp.Or(c.ThroughputProtocol, "auto")
+	c.ThroughputTransport = cmp.Or(c.ThroughputTransport, "auto")
+	c.LatencyTarget = cmp.Or(c.LatencyTarget, "auto")
+	c.LatencyTransport = cmp.Or(c.LatencyTransport, "auto")
 	c.Warmup = max(c.Warmup, 0)
 	if c.LatencyDuration <= 0 {
 		c.LatencyDuration = defaultLatencyDuration

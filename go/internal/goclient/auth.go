@@ -138,8 +138,7 @@ func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 // lastTransportErr names the cause when the deadline arrives.
 func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	defer p.close()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	ticker := time.Tick(time.Second)
 	var lastTransportErr error
 	for {
 		body, _ := json.Marshal(map[string]string{"verifier": p.verifier})
@@ -174,7 +173,7 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 				return "", fmt.Errorf("server unreachable while waiting for browser approval: %w", lastTransportErr)
 			}
 			return "", errors.New("browser approval timed out")
-		case <-ticker.C:
+		case <-ticker:
 		}
 	}
 }

@@ -70,7 +70,7 @@ func (m *certificateManager) reload(now time.Time) error {
 	previous := m.current.Load()
 	changed := previous == nil || previous.Leaf == nil || !bytes.Equal(previous.Leaf.Raw, leaf.Raw)
 	cert.Leaf = leaf
-	m.current.Store(&cert)
+	m.current.Store(new(cert))
 	if changed {
 		remaining := leaf.NotAfter.Sub(now)
 		log.Printf("[gm:tls] certificate loaded; expires at %s", leaf.NotAfter.Format(time.RFC3339))
@@ -90,13 +90,12 @@ func (m *certificateManager) tlsConfig(nextProtos ...string) *tls.Config {
 }
 
 func (m *certificateManager) run(ctx context.Context) {
-	ticker := time.NewTicker(certPollInterval)
-	defer ticker.Stop()
+	ticker := time.Tick(certPollInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
+		case now := <-ticker:
 			if err := m.reload(now); err != nil {
 				log.Printf("[gm:tls] renewal rejected; keeping last valid certificate: %v", err)
 			}

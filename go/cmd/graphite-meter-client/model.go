@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -735,12 +736,7 @@ func (m model) durationValue(row int) string {
 }
 
 func activePreset(url string) int {
-	for i, preset := range serverPresets {
-		if preset.url == url {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(serverPresets, func(preset serverPreset) bool { return preset.url == url })
 }
 
 func (m model) capabilities() wire.Capabilities {
@@ -843,11 +839,11 @@ func (m model) selectedThroughputPath() *wire.ThroughputTarget {
 		return nil
 	}
 	targets := m.capabilities().ThroughputTargets
-	for i := range targets {
-		t := &targets[i]
-		if t.Transport == m.cfg.ThroughputTransport && origin.Key(t.Origin) == origin.Key(m.cfg.ThroughputTarget) {
-			return t
-		}
+	i := slices.IndexFunc(targets, func(t wire.ThroughputTarget) bool {
+		return t.Transport == m.cfg.ThroughputTransport && origin.Key(t.Origin) == origin.Key(m.cfg.ThroughputTarget)
+	})
+	if i >= 0 {
+		return &targets[i]
 	}
 	return nil
 }

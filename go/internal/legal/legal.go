@@ -255,7 +255,7 @@ func ValidateReview(c Component, reviews []Review) error {
 	if c.Modified != r.Modified {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: modification status changed for %s", c.Name)
 	}
-	currentFiles := append(append([]LegalFile{}, c.LegalTexts...), c.Notices...)
+	currentFiles := slices.Concat(c.LegalTexts, c.Notices)
 	if name, expected, actual, changed := fingerprintMismatch(currentFiles, r.LegalFiles); changed {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: legal fingerprint changed for %s:\n  %s\n  expected: %s\n  actual:   %s", c.Name, name, expected, actual)
 	}
@@ -279,10 +279,10 @@ func fingerprintMismatch(current, reviewed []LegalFile) (name, expected, actual 
 			displayNames[key] = file.Name
 		}
 	}
-	for name := range currentFingerprint {
+	for name := range maps.Keys(currentFingerprint) {
 		names[name] = struct{}{}
 	}
-	for name := range reviewedFingerprint {
+	for name := range maps.Keys(reviewedFingerprint) {
 		names[name] = struct{}{}
 	}
 	orderedNames := slices.Sorted(maps.Keys(names))

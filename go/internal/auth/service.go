@@ -183,14 +183,13 @@ func (s *Service) Mount(mux *http.ServeMux) {
 // runSecurityLog emits a one-line delta of the auth counters each minute, and
 // stays silent while every counter holds still.
 func (s *Service) runSecurityLog(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
-	defer t.Stop()
+	t := time.Tick(time.Minute)
 	var last [10]uint64
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-t:
 			values := [10]uint64{s.counters.local.Load(), s.counters.oidc.Load(), s.counters.invalidPassword.Load(), s.counters.oidcFailure.Load(), s.counters.groupDenial.Load(), s.counters.replayExpiry.Load(), s.counters.throttled.Load(), s.counters.logout.Load(), s.counters.cliApproval.Load(), s.counters.capacity.Load()}
 			if values == last {
 				continue

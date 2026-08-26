@@ -559,13 +559,12 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 }
 
 func runAdmissionLog(ctx context.Context, requests *requestAdmission, connections *connectionAdmission) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	ticker := time.Tick(30 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticker:
 			log.Print(admissionLogLine(requests.stats(), connections.stats()))
 		}
 	}

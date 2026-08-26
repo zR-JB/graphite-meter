@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"net/url"
 	"strings"
@@ -118,9 +119,7 @@ func unofferedPathLabel(target, transport string) string {
 		wire.TransportWebTransport:         "WebTransport",
 		wire.TransportWebTransportDatagram: "WebTransport datagrams",
 	}[transport]
-	if mechanism == "" {
-		mechanism = emptyDash(transport)
-	}
+	mechanism = cmp.Or(mechanism, emptyDash(transport))
 	if target == "auto" {
 		return mechanism + " · automatic origin"
 	}
@@ -278,9 +277,7 @@ func fmtBytes(n uint64) string {
 // fmtClock renders a running clock: tenths under a minute, whole seconds
 // above, where tenths only flicker.
 func fmtClock(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
+	d = max(d, 0)
 	if d < time.Minute {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}

@@ -163,10 +163,8 @@ func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w i
 // fires, or a newer feed supersedes this one. emit and heartbeat report false
 // once their sink is gone.
 func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
-	tick := time.NewTicker(uploadProgressTick)
-	defer tick.Stop()
-	beat := time.NewTicker(uploadProgressHeartbeat)
-	defer beat.Stop()
+	tick := time.Tick(uploadProgressTick)
+	beat := time.Tick(uploadProgressHeartbeat)
 	var lastBytes uint64
 	for {
 		select {
@@ -184,11 +182,11 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(upl
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
 			return
-		case <-beat.C:
+		case <-beat:
 			if !heartbeat() {
 				return
 			}
-		case <-tick.C:
+		case <-tick:
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {

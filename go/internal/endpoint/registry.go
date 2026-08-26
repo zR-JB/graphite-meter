@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/url"
 
@@ -25,13 +26,13 @@ type Registry struct {
 // moving a route between Register* calls fails the pin.
 func (r *Registry) Kinds() map[string]string {
 	kinds := make(map[string]string, len(r.httpEndpoints)+len(r.wsEndpoints)+len(r.wtEndpoints))
-	for path := range r.httpEndpoints {
+	for path := range maps.Keys(r.httpEndpoints) {
 		kinds[path] = "http"
 	}
-	for path := range r.wsEndpoints {
+	for path := range maps.Keys(r.wsEndpoints) {
 		kinds[path] = "ws"
 	}
-	for path := range r.wtEndpoints {
+	for path := range maps.Keys(r.wtEndpoints) {
 		kinds[path] = "wt"
 	}
 	return kinds

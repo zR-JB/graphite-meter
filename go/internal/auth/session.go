@@ -52,19 +52,13 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	defer s.mu.Unlock()
 	s.expireLocked(now)
 	var own []*session
-	for _, x := range s.sessions {
+	for x := range maps.Values(s.sessions) {
 		if x.subject == subject {
 			own = append(own, x)
 		}
 	}
 	slices.SortFunc(own, func(a, b *session) int {
-		if a.created.Before(b.created) {
-			return -1
-		}
-		if b.created.Before(a.created) {
-			return 1
-		}
-		return 0
+		return a.created.Compare(b.created)
 	})
 	if len(own) >= maxSubjectSessions {
 		s.deleteSessionLocked(own[0])
@@ -100,7 +94,7 @@ func (s *Service) deleteSessionLocked(sess *session) {
 // single-session logout cannot. Victims are collected first, not mid-range.
 func (s *Service) deleteSubjectSessionsLocked(subject string) int {
 	var victims []*session
-	for _, sess := range s.sessions {
+	for sess := range maps.Values(s.sessions) {
 		if sess.subject == subject {
 			victims = append(victims, sess)
 		}
@@ -124,7 +118,7 @@ func (s *Service) revokeSessionHash(h [32]byte, keep *session) {
 }
 
 func (s *Service) expireLocked(now time.Time) {
-	for _, sess := range s.sessions {
+	for sess := range maps.Values(s.sessions) {
 		if !now.Before(sess.expires) {
 			s.deleteSessionLocked(sess)
 		}
@@ -135,13 +129,12 @@ func (s *Service) sweep(ctx context.Context) {
 	// Faster than the shortest thing it reaps: a CONNECT token lives 30 s and
 	// occupies its session's cap until swept, so a minute would let dead tokens
 	// crowd out live ones for a client that dials often.
-	t := time.NewTicker(wtTokenLifetime)
-	defer t.Stop()
+	t := time.Tick(wtTokenLifetime)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-t:
 			s.mu.Lock()
 			s.expireLocked(s.now())
 			s.expireWTTokensLocked(s.now())

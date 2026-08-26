@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -438,9 +439,7 @@ func (m model) runView(w int) string {
 
 func (m model) summaryView(w int) string {
 	server := m.server
-	if server == "" {
-		server = "probing " + m.cfg.BaseURL
-	}
+	server = cmp.Or(server, "probing "+m.cfg.BaseURL)
 	mark := ""
 	switch {
 	case m.complete:

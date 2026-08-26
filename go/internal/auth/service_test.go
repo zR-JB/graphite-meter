@@ -17,6 +17,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -970,17 +971,9 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 	}
 	// auth.css states the light palette twice, per data-theme and as the OS
 	// fallback, so consecutive repeats collapse. Drift between them survives.
-	collapse := func(in []string) []string {
-		out := in[:0:0]
-		for _, value := range in {
-			if len(out) == 0 || out[len(out)-1] != value {
-				out = append(out, value)
-			}
-		}
-		return out
-	}
 	for _, name := range []string{"canvas", "surface-1", "surface-inset", "border", "text", "text-muted", "text-inverse", "brand", "brand-strong", "signal", "signal-soft", "err", "err-soft", "focus-ring", "edge-highlight"} {
-		if authValues, appValues := collapse(values(authCSS, name)), values(string(css), name); !reflect.DeepEqual(authValues, appValues) {
+		authValues := slices.Compact(values(authCSS, name))
+		if appValues := values(string(css), name); !reflect.DeepEqual(authValues, appValues) {
 			t.Errorf("token %s values %v do not match application values %v", name, authValues, appValues)
 		}
 	}

@@ -3,10 +3,12 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -205,7 +207,7 @@ func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testin
 	contents := map[string]string{}
 	for {
 		header, readErr := tarReader.Next()
-		if readErr == io.EOF {
+		if errors.Is(readErr, io.EOF) {
 			break
 		}
 		if readErr != nil {
@@ -295,7 +297,7 @@ func TestThirdPartySourceBundleIncludesBrowserComponent(t *testing.T) {
 	found := false
 	for {
 		header, readErr := tarReader.Next()
-		if readErr == io.EOF {
+		if errors.Is(readErr, io.EOF) {
 			break
 		}
 		if readErr != nil {
@@ -342,7 +344,7 @@ func TestLegalGeneratorFormattingHelpers(t *testing.T) {
 	if len(components) != 2 || components[0].Name != "a" || components[1].Name != "b" {
 		t.Fatalf("component ordering/deduplication mismatch: %#v", components)
 	}
-	if yesNo(true) != "yes" || yesNo(false) != "no" || !contains([]string{"tui"}, "tui") {
+	if yesNo(true) != "yes" || yesNo(false) != "no" || !slices.Contains([]string{"tui"}, "tui") {
 		t.Fatal("formatting helper mismatch")
 	}
 	notice := notices([]legal.Component{{
@@ -590,7 +592,7 @@ func TestThirdPartySourceBundleExcludesProjectBuildArtifacts(t *testing.T) {
 	tarReader := tar.NewReader(reader)
 	for {
 		header, readErr := tarReader.Next()
-		if readErr == io.EOF {
+		if errors.Is(readErr, io.EOF) {
 			return
 		}
 		if readErr != nil {

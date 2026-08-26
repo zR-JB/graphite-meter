@@ -46,7 +46,7 @@ func TestCyclingBodyStopsAtLimit(t *testing.T) {
 	for {
 		n, err := b.Read(buf)
 		got = append(got, buf[:n]...)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -234,8 +234,7 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 		enc := jsontext.NewEncoder(w)
 		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
 		flusher.Flush()
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
+		ticker := time.Tick(20 * time.Millisecond)
 		for {
 			select {
 			case <-r.Context().Done():
@@ -244,7 +243,7 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 				return
-			case <-ticker.C:
+			case <-ticker:
 				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 			}
@@ -334,13 +333,12 @@ func newStalledUploadServer() *httptest.Server {
 		enc := jsontext.NewEncoder(w)
 		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
 		flusher.Flush()
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
+		ticker := time.Tick(20 * time.Millisecond)
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case <-ticker.C:
+			case <-ticker:
 				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 			}

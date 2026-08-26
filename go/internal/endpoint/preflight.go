@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -51,9 +52,7 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	// SplitHostPort fails on a port-less Host; the fallback also unwraps the
 	// brackets of a literal IPv6 authority.
 	host, _, _ := net.SplitHostPort(r.Host)
-	if host == "" {
-		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
-	}
+	host = cmp.Or(host, strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "["))
 	return p.buildForHost(host)
 }
 

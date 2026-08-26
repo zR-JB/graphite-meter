@@ -42,7 +42,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := server.Run(ctx, &cfg); err != nil {
+	if err := server.Run(ctx, new(cfg)); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

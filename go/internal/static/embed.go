@@ -6,6 +6,7 @@ package static
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -87,7 +89,7 @@ func handlerForAuthenticated(fsys fs.FS) http.Handler {
 			return
 		}
 		marker := []byte(`<meta name="graphite-meter-auth" content="enabled">`)
-		index = bytes.Replace(index, []byte("</head>"), append(marker, []byte("</head>")...), 1)
+		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		// The marked index differs from the public one for the same URL, so it
 		// must not be cached and later replayed under the other mode.
@@ -106,9 +108,7 @@ func handlerFor(fsys fs.FS) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if name == "" {
-			name = "index.html"
-		}
+		name = cmp.Or(name, "index.html")
 		if f, err := fsys.Open(name); err == nil {
 			_ = f.Close()
 			fileServer.ServeHTTP(w, r)

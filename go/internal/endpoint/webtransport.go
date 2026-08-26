@@ -72,15 +72,14 @@ func (a *sessionActivity) bump() {
 }
 
 func (a *sessionActivity) watch(ctx context.Context, bound time.Duration) {
-	tick := time.NewTicker(bound / 2)
-	defer tick.Stop()
+	tick := time.Tick(bound / 2)
 	last := a.n.Load()
 	quiet := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-tick:
 			now := a.n.Load()
 			if now != last {
 				last, quiet = now, 0

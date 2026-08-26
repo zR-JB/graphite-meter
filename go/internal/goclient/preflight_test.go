@@ -133,7 +133,7 @@ func testChannel(id, origin string, tls bool) wire.LatencyTarget {
 
 func attachTestLatencyTarget(r *runner, origin string) {
 	c := testChannel("test-ws", origin, false)
-	r.latencyTarget = &c
+	r.latencyTarget = new(c)
 }
 
 func TestWSEndpoint(t *testing.T) {

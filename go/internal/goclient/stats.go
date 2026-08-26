@@ -79,8 +79,7 @@ type rateLoop struct {
 }
 
 func (l rateLoop) run(ctx context.Context) (rateStats, error) {
-	ticker := time.NewTicker(rateSampleInterval)
-	defer ticker.Stop()
+	ticker := time.Tick(rateSampleInterval)
 	var deadline <-chan time.Time
 	if l.duration > 0 {
 		timer := time.NewTimer(l.duration)
@@ -105,7 +104,7 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 		case err := <-l.stageErr:
 			l.window(&stats)
 			return stats, err
-		case now := <-ticker.C:
+		case now := <-ticker:
 			l.sample(now, &stats)
 		}
 	}

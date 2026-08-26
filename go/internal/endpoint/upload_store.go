@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,13 +22,11 @@ import (
 // drained byte count is authoritative. Creating an aggregate requires a
 // short-lived authenticated id from /upload/session; minting is stateless.
 type UploadStore struct {
-	shards       [uploadShardCount]uploadShard
-	tokenKey     [sha256.Size]byte
-	tokenKeyOnce sync.Once
-	tokenKeyOK   bool
-	live         atomic.Int32 // live aggregates retained through completion replay
-	ownersMu     sync.Mutex
-	byOwner      map[string]int
+	shards   [uploadShardCount]uploadShard
+	tokenKey func() ([sha256.Size]byte, bool)
+	live     atomic.Int32 // live aggregates retained through completion replay
+	ownersMu sync.Mutex
+	byOwner  map[string]int
 }
 
 // uploadShard is one lock's worth of the aggregate map. Only first-touch create
@@ -154,7 +153,14 @@ const (
 
 // NewUploadStore builds an empty store with its shard maps initialised.
 func NewUploadStore() *UploadStore {
-	s := &UploadStore{byOwner: make(map[string]int)}
+	s := &UploadStore{
+		byOwner: make(map[string]int),
+		tokenKey: sync.OnceValues(func() ([sha256.Size]byte, bool) {
+			var key [sha256.Size]byte
+			_, err := rand.Read(key[:])
+			return key, err == nil
+		}),
+	}
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
 	}
@@ -176,35 +182,29 @@ func (s *UploadStore) shard(id string) *uploadShard {
 // Mint generates a URL-safe, authenticated upload-session token without storing
 // per-token state. /upload/session calls this once per upload stage.
 func (s *UploadStore) Mint() string {
-	if !s.ensureTokenKey() {
+	key, ok := s.tokenKey()
+	if !ok {
 		return ""
 	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return ""
 	}
-	return s.signID(monoNanos(), nonce)
+	return s.signID(monoNanos(), nonce, key)
 }
 
-func (s *UploadStore) ensureTokenKey() bool {
-	s.tokenKeyOnce.Do(func() {
-		_, err := rand.Read(s.tokenKey[:])
-		s.tokenKeyOK = err == nil
-	})
-	return s.tokenKeyOK
-}
-
-func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
+func (s *UploadStore) signID(issued int64, nonce [16]byte, key [sha256.Size]byte) string {
 	var payload [8 + len(nonce)]byte
 	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- issued is a positive monotonic-nanos timestamp
 	copy(payload[8:], nonce[:])
-	mac := hmac.New(sha256.New, s.tokenKey[:])
+	mac := hmac.New(sha256.New, key[:])
 	_, _ = mac.Write(payload[:])
-	return "gmu_" + base64.RawURLEncoding.EncodeToString(append(payload[:], mac.Sum(nil)...))
+	return "gmu_" + base64.RawURLEncoding.EncodeToString(slices.Concat(payload[:], mac.Sum(nil)))
 }
 
 func (s *UploadStore) validID(id string) bool {
-	if len(id) < 4 || id[:4] != "gmu_" || !s.ensureTokenKey() {
+	key, ok := s.tokenKey()
+	if len(id) < 4 || id[:4] != "gmu_" || !ok {
 		return false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(id[4:])
@@ -212,7 +212,7 @@ func (s *UploadStore) validID(id string) bool {
 		return false
 	}
 	payload, tag := raw[:24], raw[24:]
-	mac := hmac.New(sha256.New, s.tokenKey[:])
+	mac := hmac.New(sha256.New, key[:])
 	_, _ = mac.Write(payload)
 	if !hmac.Equal(tag, mac.Sum(nil)) {
 		return false
@@ -380,13 +380,12 @@ func (s *UploadStore) sweep(ttl time.Duration) {
 // in its own goroutine (like Meter.Run). Request contexts independently bound
 // progress-handler goroutine lifetimes.
 func (s *UploadStore) RunSweeper(ctx context.Context) {
-	ticker := time.NewTicker(uploadSweepInterval)
-	defer ticker.Stop()
+	ticker := time.Tick(uploadSweepInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticker:
 			s.sweep(uploadIDTTL)
 		}
 	}

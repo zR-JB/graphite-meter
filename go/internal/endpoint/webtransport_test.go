@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -271,7 +272,7 @@ func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
 			t.Fatalf("read = %q, want %q", got, want)
 		}
 	}
-	if _, err := src.Read(buf); err != io.EOF {
+	if _, err := src.Read(buf); !errors.Is(err, io.EOF) {
 		t.Fatalf("read after drain = %v, want EOF", err)
 	}
 }

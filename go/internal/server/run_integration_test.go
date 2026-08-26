@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"testing"
@@ -27,10 +28,10 @@ func newTestListenerSockets(t *testing.T) *testListenerSockets {
 	t.Helper()
 	s := &testListenerSockets{t: t, tcp: make(map[string]net.Listener), udp: make(map[string]net.PacketConn)}
 	t.Cleanup(func() {
-		for _, ln := range s.tcp {
+		for ln := range maps.Values(s.tcp) {
 			_ = ln.Close()
 		}
-		for _, pc := range s.udp {
+		for pc := range maps.Values(s.udp) {
 			_ = pc.Close()
 		}
 	})

@@ -2,6 +2,7 @@
 package wire
 
 import (
+	"cmp"
 	"encoding/json/v2"
 	"net/url"
 	"time"
@@ -117,9 +118,7 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if raw.Transport == "" {
-		raw.Transport = TransportFetchStream
-	}
+	raw.Transport = cmp.Or(raw.Transport, TransportFetchStream)
 	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, raw.Protocol, DefaultThroughputRoutes()
 	t.TLS = u.Scheme == "https"
 	return nil
@@ -139,9 +138,7 @@ func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	if raw.Transport == "" {
-		raw.Transport = TransportWebSocket
-	}
+	raw.Transport = cmp.Or(raw.Transport, TransportWebSocket)
 	protocol := "http1"
 	if raw.Transport == TransportWebTransport {
 		protocol = "http3"
