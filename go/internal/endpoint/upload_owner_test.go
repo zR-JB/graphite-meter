@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"bufio"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -98,7 +99,7 @@ func TestUploadRefusalsMatchPin(t *testing.T) {
 			t.Errorf("%s: refusal header = %q, want %q", name, got, name)
 		}
 	}
-	for name := range pinned {
+	for name := range maps.Keys(pinned) {
 		if _, ok := refusals[name]; !ok {
 			t.Errorf("%s is pinned but Go never produces it", name)
 		}

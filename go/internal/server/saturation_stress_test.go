@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,7 +62,7 @@ func TestSaturationEnvelope(t *testing.T) {
 			old := runtime.GOMAXPROCS(mix.procs)
 			defer runtime.GOMAXPROCS(old)
 		}
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		loadBase := base
 		if mix.base != "" {
@@ -80,16 +80,12 @@ func TestSaturationEnvelope(t *testing.T) {
 			if upload {
 				bytes = &upBytes
 			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				loaderRun(ctx, loadBase, mix.transport, upload, bytes, &loaderExits)
-			}()
+			})
 		}
 		for range mix.spammers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				var err error
 				if mix.spamWT {
 					err = wtPingSpam(ctx, h3Base, &spamPings)
@@ -99,7 +95,7 @@ func TestSaturationEnvelope(t *testing.T) {
 				if err != nil && ctx.Err() == nil {
 					loaderExits.Add(1)
 				}
-			}()
+			})
 		}
 		// Let the loaders' congestion windows ramp before observing. The two
 		// observers run inside the same sustained load window.
@@ -174,7 +170,7 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	cfg.PingInterval = 20 * time.Millisecond
 	var rtts []time.Duration
 	var lost, total int
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	err := goclient.Run(ctx, cfg, func(e goclient.Event) {
 		if e.Kind != goclient.EventLatency {
@@ -290,8 +286,8 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error 
 }
 
 func pct(rtts []time.Duration, p int) time.Duration {
-	s := append([]time.Duration(nil), rtts...)
-	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+	s := slices.Clone(rtts)
+	slices.Sort(s)
 	i := min(len(s)-1, len(s)*p/100)
 	return s[i]
 }

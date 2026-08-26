@@ -2,16 +2,19 @@ package legal
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -104,8 +107,7 @@ func ReadJSON[T any](path string, dst *T) error {
 	if err != nil {
 		return err
 	}
-	dec := json.NewDecoder(bytes.NewReader(b))
-	if err := dec.Decode(dst); err != nil {
+	if err := jsonv2.Unmarshal(b, dst); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)
 	}
 	return nil
@@ -182,7 +184,7 @@ func ReadLegalFiles(dir string) ([]LegalFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+	slices.SortFunc(files, func(a, b LegalFile) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no legal candidate file in %s", dir)
 	}
@@ -205,7 +207,7 @@ func ReadRootLegalFiles(dir string) ([]LegalFile, error) {
 		}
 		files = append(files, LegalFile{Name: entry.Name(), SHA256: SHA256(b), Text: string(b), Kind: fileKind(entry.Name())})
 	}
-	sort.Slice(files, func(i, j int) bool { return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name) })
+	slices.SortFunc(files, func(a, b LegalFile) int { return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)) })
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no legal candidate file in %s", dir)
 	}
@@ -253,7 +255,7 @@ func ValidateReview(c Component, reviews []Review) error {
 	if c.Modified != r.Modified {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: modification status changed for %s", c.Name)
 	}
-	currentFiles := append(append([]LegalFile{}, c.LegalTexts...), c.Notices...)
+	currentFiles := slices.Concat(c.LegalTexts, c.Notices)
 	if name, expected, actual, changed := fingerprintMismatch(currentFiles, r.LegalFiles); changed {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: legal fingerprint changed for %s:\n  %s\n  expected: %s\n  actual:   %s", c.Name, name, expected, actual)
 	}
@@ -277,17 +279,13 @@ func fingerprintMismatch(current, reviewed []LegalFile) (name, expected, actual 
 			displayNames[key] = file.Name
 		}
 	}
-	for name := range currentFingerprint {
+	for name := range maps.Keys(currentFingerprint) {
 		names[name] = struct{}{}
 	}
-	for name := range reviewedFingerprint {
+	for name := range maps.Keys(reviewedFingerprint) {
 		names[name] = struct{}{}
 	}
-	orderedNames := make([]string, 0, len(names))
-	for name := range names {
-		orderedNames = append(orderedNames, name)
-	}
-	sort.Strings(orderedNames)
+	orderedNames := slices.Sorted(maps.Keys(names))
 	for _, name := range orderedNames {
 		expectedHash, expectedOK := reviewedFingerprint[name]
 		actualHash, actualOK := currentFingerprint[name]
@@ -312,11 +310,12 @@ func RunGoList(repo, target, goos, goarch string) ([]GoPackage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("go list %s %s/%s: %w", target, goos, goarch, err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(out))
+	// go list -json is a stream of adjacent values, so decode each value in order.
+	dec := jsontext.NewDecoder(bytes.NewReader(out))
 	packages := make([]GoPackage, 0)
 	for {
 		var p GoPackage
-		err := dec.Decode(&p)
+		err := jsonv2.UnmarshalDecode(dec, &p)
 		if errors.Is(err, io.EOF) {
 			break
 		}

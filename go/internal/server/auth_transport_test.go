@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net"
 	"net/http"
@@ -38,7 +38,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	// companion, so assembly never releases and races to rebind it.
 	sockets := newTestListenerSockets(t)
 	cfg.Native.H3 = sockets.reserveH3()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
 	uiLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -81,6 +81,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	for _, svc := range build.services {
 		run, stop := svc.run, svc.stop
 		go func() { _ = run() }()
+		// Service cleanup must still run after t.Context is canceled.
 		t.Cleanup(func() { _ = stop(context.Background()) })
 	}
 
@@ -210,7 +211,7 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	var out struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+	if err := json.UnmarshalRead(res.Body, &out); err != nil {
 		t.Fatal(err)
 	}
 	if res.StatusCode != http.StatusOK || out.Token == "" {
@@ -279,7 +280,7 @@ func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
 		{"bearer-grant", http.Header{"Authorization": {"Bearer " + bearer}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			conn, res, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: s.uiClient, HTTPHeader: tc.headers})
 			if err != nil {

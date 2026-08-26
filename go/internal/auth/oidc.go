@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -137,23 +139,21 @@ func (e *discoveryFailure) Error() string { return "provider unavailable" }
 
 func classifyDiscoveryFailure(err error) *discoveryFailure {
 	reason := "discovery_response"
-	var issuer *oidc.IssuerMismatchError
-	var dns *net.DNSError
-	var unknownAuthority x509.UnknownAuthorityError
-	var hostname x509.HostnameError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		reason = "timeout"
 	case errors.Is(err, context.Canceled):
 		reason = "cancelled"
-	case errors.As(err, &issuer):
-		reason = "issuer_mismatch"
-	case errors.As(err, &dns):
-		reason = "dns"
-	case errors.As(err, &unknownAuthority), errors.As(err, &hostname):
-		reason = "tls_verification"
 	default:
-		if _, ok := errors.AsType[*net.OpError](err); ok {
+		if _, ok := errors.AsType[*oidc.IssuerMismatchError](err); ok {
+			reason = "issuer_mismatch"
+		} else if _, ok := errors.AsType[*net.DNSError](err); ok {
+			reason = "dns"
+		} else if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
+			reason = "tls_verification"
+		} else if _, ok := errors.AsType[x509.HostnameError](err); ok {
+			reason = "tls_verification"
+		} else if _, ok := errors.AsType[*net.OpError](err); ok {
 			reason = "connection"
 		}
 	}
@@ -217,10 +217,7 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 		case <-time.After(delay):
 		}
 		if delay < time.Minute {
-			delay *= 2
-			if delay > time.Minute {
-				delay = time.Minute
-			}
+			delay = min(delay*2, time.Minute)
 		}
 	}
 }
@@ -259,13 +256,9 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	o := s.oidc
 	o.mu.Lock()
 	now := s.now()
-	for k, v := range o.tx {
-		if !now.Before(v.expires) {
-			delete(o.tx, k)
-		}
-	}
+	maps.DeleteFunc(o.tx, func(_ [32]byte, v oidcTransaction) bool { return !now.Before(v.expires) })
 	perClient := 0
-	for _, v := range o.tx {
+	for v := range maps.Values(o.tx) {
 		if v.client == client {
 			perClient++
 		}
@@ -313,7 +306,7 @@ func validAuthCode(v string) bool {
 	if v == "" {
 		return false
 	}
-	for i := 0; i < len(v); i++ {
+	for i := range len(v) {
 		if v[i] < 0x20 || v[i] > 0x7e {
 			return false
 		}
@@ -464,7 +457,7 @@ func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, tok
 	if !validSubject(idToken.Subject) {
 		return "", reasonInvalidSubject
 	}
-	name := firstNonEmpty(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
+	name := cmp.Or(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
 	return safeDisplayName(name), ""
 }
 
@@ -484,15 +477,6 @@ func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx 
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)
 	s.writeSignedInInterstitial(w, tx.cliChallenge)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
@@ -519,12 +503,7 @@ func validSubject(v string) bool {
 	if len(v) == 0 || len(v) > 256 {
 		return false
 	}
-	for _, r := range v {
-		if r < ' ' || r == 0x7f {
-			return false
-		}
-	}
-	return true
+	return !strings.ContainsFunc(v, func(r rune) bool { return r < ' ' || r == 0x7f })
 }
 func safeDisplayName(v string) string {
 	var b strings.Builder
@@ -544,10 +523,5 @@ func safeDisplayName(v string) string {
 }
 
 func allowedGroup(actual, allowed []string) bool {
-	for _, a := range actual {
-		if slices.Contains(allowed, a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(actual, func(a string) bool { return slices.Contains(allowed, a) })
 }

@@ -44,7 +44,11 @@ func TestUploadStoreRejectsTamperedAndExpiredID(t *testing.T) {
 		t.Fatal("tampered id created an aggregate")
 	}
 	var nonce [16]byte
-	expired := s.signID(monoNanos()-int64(uploadTokenTTL)-int64(time.Second), nonce)
+	key, ok := s.tokenKey()
+	if !ok {
+		t.Fatal("token key generation failed")
+	}
+	expired := s.signID(monoNanos()-int64(uploadTokenTTL)-int64(time.Second), nonce, key)
 	if _, ok := s.getOrCreate(expired); ok {
 		t.Fatal("expired id created an aggregate")
 	}

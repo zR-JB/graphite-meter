@@ -158,11 +158,10 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
 	}
-	var preparationErr *goclient.PreparationError
-	preflightDecoded := errors.As(msg.err, &preparationErr)
+	preparationErr, preflightDecoded := errors.AsType[*goclient.PreparationError](msg.err)
 	if preflightDecoded {
 		pf := preparationErr.Preflight
-		m.discovery = &pf
+		m.discovery = new(pf)
 	}
 	if msg.err != nil {
 		if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
@@ -192,7 +191,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	m.prepareError = ""
 	m.prepared = msg.connection
 	pf := msg.connection.Preflight
-	m.discovery = &pf
+	m.discovery = new(pf)
 	return m, nil
 }
 
@@ -261,9 +260,7 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeConfigure
 		m.prepared = nil
 		m.prepareStatus = "authorizing"
-		if m.prepareStep < stepPreflight {
-			m.prepareStep = stepPreflight
-		}
+		m.prepareStep = max(m.prepareStep, stepPreflight)
 		m.focusServer()
 		m.notice = "Authorization expired. Preparing the approval page…"
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
@@ -365,9 +362,7 @@ func (m *model) apply(e goclient.Event) {
 		m.enterStage(e)
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
-		if e.Throughput.BytesPerSec > m.peaks[e.Direction] {
-			m.peaks[e.Direction] = e.Throughput.BytesPerSec
-		}
+		m.peaks[e.Direction] = max(m.peaks[e.Direction], e.Throughput.BytesPerSec)
 	case goclient.EventLatency:
 		if e.Latency.Lost {
 			m.lostStreak++

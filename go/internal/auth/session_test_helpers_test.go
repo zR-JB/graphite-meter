@@ -14,6 +14,8 @@ func (s *Service) createSessionUntil(subject, name, provider string, expires tim
 		expires = sess.expires
 	}
 	sess.cancel()
+	// This context represents the session's absolute expiry, independent of the
+	// test lifetime that created it.
 	sess.ctx, sess.cancel = context.WithDeadline(context.Background(), expires)
 	sess.expires = expires
 	return raw, sess, nil

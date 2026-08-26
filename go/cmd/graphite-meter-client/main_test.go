@@ -1969,7 +1969,7 @@ func TestUpdate_EventsMsg(t *testing.T) {
 
 func TestWaitEventsDrainsBuffered(t *testing.T) {
 	events := make(chan goclient.Event, 3)
-	for i := 0; i < cap(events); i++ {
+	for i := range cap(events) {
 		events <- goclient.Event{Kind: goclient.EventStage, Stage: string(rune('0' + i))}
 	}
 	close(events)
@@ -1998,7 +1998,7 @@ func BenchmarkUpdateEventBatch(b *testing.B) {
 	m.events = make(chan goclient.Event)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		next, _ := m.Update(events)
 		m = next.(model)
 	}
@@ -2013,7 +2013,7 @@ func BenchmarkViewConfigure(b *testing.B) {
 	m.width = 100
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		benchmarkView = m.View()
 	}
 }
@@ -2034,7 +2034,7 @@ func BenchmarkViewTransfer(b *testing.B) {
 	m.stages[1].state, m.stages[1].since = stageMeasuring, m.now.Add(-2*time.Second)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		benchmarkView = m.View()
 	}
 }
@@ -2055,7 +2055,7 @@ func BenchmarkViewComplete(b *testing.B) {
 	m.stages = plannedStages(m.cfg)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		benchmarkView = m.View()
 	}
 }
@@ -2169,7 +2169,7 @@ func TestView_DrawsOneSelectionPerScreen(t *testing.T) {
 		m.width = width
 		for sec := range sectionCount {
 			m.section = sec
-			for row := 0; row < m.rowCount(); row++ {
+			for row := range m.rowCount() {
 				m.row = row
 				view := ansiPattern.ReplaceAllString(m.View(), "")
 				// The marker opens a panel body line; "‹1/2›" cycle positions sit

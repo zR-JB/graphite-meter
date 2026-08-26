@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -119,18 +120,18 @@ func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
 	_ = first.Close()
 	_ = second.Close()
 
-	if _, err := ln.Accept(); err != io.EOF {
+	if _, err := ln.Accept(); !errors.Is(err, io.EOF) {
 		t.Fatalf("drained listener error = %v, want EOF", err)
 	}
 }
 
 func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 	a := newConnectionAdmission(1, 1, nil)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	if _, err := a.connContext(ctx, &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.1:1")}); err != nil {
 		t.Fatalf("first connContext: %v", err)
 	}
-	if _, err := a.connContext(context.Background(), &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.2:1")}); err == nil {
+	if _, err := a.connContext(t.Context(), &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.2:1")}); err == nil {
 		t.Fatal("second connContext admitted past the global limit")
 	}
 

@@ -226,7 +226,7 @@ var benchmarkResult Result
 
 func BenchmarkMeasurementReduction(b *testing.B) {
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		var rates rateStats
 		for sample := range 100 {
 			rates.add(float64(100_000_000 + sample))

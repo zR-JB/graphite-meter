@@ -119,8 +119,8 @@ func Encode(f Frame) string {
 // cut splits s at the first occurrence of sep into (before, after). When sep is
 // absent, before is the whole string and after is empty.
 func cut(s string, sep byte) (before, after string) {
-	if i := strings.IndexByte(s, sep); i >= 0 {
-		return s[:i], s[i+1:]
+	if before, after, found := strings.Cut(s, string(sep)); found {
+		return before, after
 	}
 	return s, ""
 }

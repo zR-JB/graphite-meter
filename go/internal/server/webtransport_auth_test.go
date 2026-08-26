@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,7 +37,7 @@ func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	var out struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+	if err := json.UnmarshalRead(res.Body, &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.Token == "" {
@@ -58,7 +58,7 @@ func (s *authenticatedStack) wtTransport(t *testing.T) *webtransport.Transport {
 // reports the CONNECT status a refusal answered with.
 func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport, query string, hdr http.Header) (*webtransport.Session, int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	target := s.h3URL + routeWTPing + query
 	for {
@@ -81,7 +81,7 @@ func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport
 // completing a handshake.
 func answersPing(t *testing.T, sess *webtransport.Session) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	for ctx.Err() == nil {
 		if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "wt"}))); err != nil {

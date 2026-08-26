@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -132,9 +133,7 @@ func ConnectionSummary(transport, protocol string, tls bool) string {
 		wire.TransportWebTransport:         "WebTransport",
 		wire.TransportWebTransportDatagram: "WebTransport datagrams",
 	}[transport]
-	if mechanism == "" {
-		mechanism = "Fetch stream"
-	}
+	mechanism = cmp.Or(mechanism, "Fetch stream")
 	security := "clear"
 	if tls {
 		security = "TLS"
@@ -320,7 +319,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		if err != nil {
 			return fail(err)
 		}
-		latencyProbe = &p
+		latencyProbe = new(p)
 		if latencyTarget.Transport == wire.TransportWebSocket {
 			if err := verifyLatencyWebSocket(ctx, wsClient, latencyTarget); err != nil {
 				return fail(err)
@@ -357,7 +356,7 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 	if target.Protocol == "negotiated" {
 		throughputProtocol = probe.ProtocolNegotiated
 	}
-	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: &pf, Probe: &probe, LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol, ThroughputTransport: target.Transport}
+	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: new(pf), Probe: new(probe), LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol, ThroughputTransport: target.Transport}
 	if latencyTarget != nil {
 		event.LatencyTarget = latencyTarget.ID
 		event.LatencyTransport = latencyTarget.Transport
@@ -470,7 +469,7 @@ func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bo
 		r.idleRTT = stats.P50
 	}
 	res := Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}
-	r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: &res})
+	r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(res)})
 	return nil
 }
 
@@ -550,10 +549,10 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	// goes out first: a consumer that keys results by stage keeps the last one
 	// it sees, and the transfer result is the stage's headline.
 	for res := range latency {
-		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: &res})
+		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(res)})
 	}
 	for res := range results {
-		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Direction: res.Direction, Result: &res})
+		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Direction: res.Direction, Result: new(res)})
 	}
 	return nil
 }

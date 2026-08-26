@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -19,7 +19,7 @@ func proxiedService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, false)
+	s, err := New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 			t.Fatalf("%s SameSite=%v, want %v", c.Name, c.SameSite, expect.sameSite)
 		}
 	}
-	for name := range want {
+	for name := range maps.Keys(want) {
 		if !seen[name] {
 			t.Fatalf("%s was never set", name)
 		}

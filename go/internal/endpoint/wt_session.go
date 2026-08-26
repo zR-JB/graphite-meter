@@ -1,7 +1,7 @@
 package endpoint
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"time"
 
@@ -30,7 +30,7 @@ func (e *WTSession) ID() string { return "wt-session" }
 
 type wtSessionResponse struct {
 	Token   string `json:"token"`
-	Expires int64  `json:"expires,omitempty"`
+	Expires int64  `json:"expires,omitzero"`
 }
 
 func (e *WTSession) Handle(s transport.Session) error {
@@ -66,5 +66,5 @@ func (e *WTSession) Handle(s transport.Session) error {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	return json.NewEncoder(w).Encode(response)
+	return json.MarshalWrite(w, response)
 }

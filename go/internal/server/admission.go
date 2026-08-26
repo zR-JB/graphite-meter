@@ -107,9 +107,7 @@ func (a *requestAdmission) acquire(key, sessionKey string) (release func(), stat
 		return nil, http.StatusServiceUnavailable
 	}
 	a.active++
-	if a.active > a.peak {
-		a.peak = a.active
-	}
+	a.peak = max(a.peak, a.active)
 	if session {
 		a.activeSessions++
 		a.sessionsByClient[sessionKey]++
@@ -167,7 +165,10 @@ func (a *requestAdmission) stats() requestAdmissionStats {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return requestAdmissionStats{
-		admissionStats:        admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient},
+		active:                a.active,
+		peak:                  a.peak,
+		rejectedGlobal:        a.rejectedGlobal,
+		rejectedClient:        a.rejectedClient,
 		activeSessions:        a.activeSessions,
 		sessionMax:            a.sessionMax,
 		sessionClientMax:      a.sessionClientMax,

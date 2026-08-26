@@ -101,7 +101,7 @@ func ReadPassword(reader *bufio.Reader, input *os.File) (string, error) {
 		return string(value), err
 	}
 	value, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
 	return strings.TrimRight(value, "\r\n"), nil

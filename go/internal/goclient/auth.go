@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -138,8 +138,7 @@ func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 // lastTransportErr names the cause when the deadline arrives.
 func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	defer p.close()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	ticker := time.Tick(time.Second)
 	var lastTransportErr error
 	for {
 		body, _ := json.Marshal(map[string]string{"verifier": p.verifier})
@@ -156,7 +155,7 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 			}
 			// A body that fails to decode leaves Token empty, which the checks
 			// below already treat as "not approved yet".
-			_ = json.NewDecoder(res.Body).Decode(&out)
+			_ = json.UnmarshalRead(res.Body, &out)
 			_ = res.Body.Close()
 			if res.StatusCode == http.StatusOK && out.Token != "" {
 				return out.Token, nil
@@ -174,7 +173,7 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 				return "", fmt.Errorf("server unreachable while waiting for browser approval: %w", lastTransportErr)
 			}
 			return "", errors.New("browser approval timed out")
-		case <-ticker.C:
+		case <-ticker:
 		}
 	}
 }

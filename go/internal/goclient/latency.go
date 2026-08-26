@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -165,10 +166,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	}
 	go readLoop(conn)
 
-	ticker := time.NewTicker(r.cfg.PingInterval)
-	defer ticker.Stop()
-	timeoutTicker := time.NewTicker(50 * time.Millisecond)
-	defer timeoutTicker.Stop()
+	ticker := time.Tick(r.cfg.PingInterval)
+	timeoutTicker := time.Tick(50 * time.Millisecond)
 	send := func() error {
 		mu.Lock()
 		id := nextID
@@ -188,7 +187,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			// spinning this select for the whole window.
 			start = nil
 			mu.Lock()
-			pending = make(map[uint32]time.Time)
+			clear(pending)
 			mu.Unlock()
 			measuring.Store(true)
 			timer := time.NewTimer(duration)
@@ -228,31 +227,32 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			}
 			conn, proto = fresh, freshProto
 			mu.Lock()
-			pending = make(map[uint32]time.Time)
+			clear(pending)
 			mu.Unlock()
 			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
 			go readLoop(conn)
-		case <-ticker.C:
+		case <-ticker:
 			// A dead bus surfaces through recvErr and reconnects; a skipped ping
 			// costs one sample, not the stage.
 			_ = send()
-		case now := <-timeoutTicker.C:
+		case now := <-timeoutTicker:
 			if !measuring.Load() {
 				continue
 			}
 			mu.Lock()
-			for id, sent := range pending {
-				if now.Sub(sent) >= lossAfter {
-					delete(pending, id)
-					stats.add(0, true)
-					r.emit(Event{
-						Kind:    EventLatency,
-						At:      now,
-						Stage:   stage,
-						Latency: LatencySample{Stage: stage, UnderLoad: underLoad, Lost: true},
-					})
+			maps.DeleteFunc(pending, func(_ uint32, sent time.Time) bool {
+				if now.Sub(sent) < lossAfter {
+					return false
 				}
-			}
+				stats.add(0, true)
+				r.emit(Event{
+					Kind:    EventLatency,
+					At:      now,
+					Stage:   stage,
+					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, Lost: true},
+				})
+				return true
+			})
 			mu.Unlock()
 		}
 	}

@@ -2,7 +2,7 @@ package wire
 
 import (
 	"encoding/binary"
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 )
 

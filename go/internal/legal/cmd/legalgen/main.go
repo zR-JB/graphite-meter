@@ -3,19 +3,21 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"compress/gzip"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -77,9 +79,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if *version == "" {
-		*version = "development"
-	}
+	*version = cmp.Or(*version, "development")
 
 	project, err := legal.ReadProject(repo)
 	if err != nil {
@@ -97,9 +97,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	if *browserScan == "" {
-		*browserScan = os.Getenv("GM_LEGAL_SCAN_MODULES")
-	}
+	*browserScan = cmp.Or(*browserScan, os.Getenv("GM_LEGAL_SCAN_MODULES"))
 	if *browserScan == "" {
 		fatal(errors.New("browser scan output is required; run the temporary production Vite scan first"))
 	}
@@ -107,8 +105,8 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	server := append(append([]legal.Component{}, serverGo...), browser...)
-	tui := append([]legal.Component{}, tuiGo...)
+	server := slices.Concat(serverGo, browser)
+	tui := slices.Clone(tuiGo)
 	server, err = addProvenance(repo, server, provenance, "server/browser")
 	if err != nil {
 		fatal(err)
@@ -117,7 +115,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	container := append([]legal.Component{}, server...)
+	container := slices.Clone(server)
 	container, err = addProvenance(repo, container, provenance, "container")
 	if err != nil {
 		fatal(err)
@@ -194,9 +192,7 @@ func fatal(err error) {
 }
 
 func thirdPartySourceBundle(repo string, project legal.Project, version string, server, tui, container []legal.Component, provenance []legal.Provenance, output string) error {
-	if output == "" {
-		output = filepath.Join(repo, "go", "dist", fmt.Sprintf("graphite-meter_%s_third-party-source.tar.gz", version))
-	}
+	output = cmp.Or(output, filepath.Join(repo, "go", "dist", fmt.Sprintf("graphite-meter_%s_third-party-source.tar.gz", version)))
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return err
 	}
@@ -216,7 +212,7 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	}
 
 	seen := map[string]bool{}
-	for _, component := range append(append(server, tui...), container...) {
+	for _, component := range slices.Concat(server, tui, container) {
 		if component.Ecosystem != "go" || component.Name == "Go standard library" || seen[component.Name+"\x00"+component.Version] {
 			continue
 		}
@@ -235,9 +231,7 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 		}
 		seen[component.Name+"\x00"+component.Version] = true
 		dir := component.SourcePath
-		if dir == "" {
-			dir = filepath.Join(repo, "client", "node_modules", filepath.FromSlash(component.Name))
-		}
+		dir = cmp.Or(dir, filepath.Join(repo, "client", "node_modules", filepath.FromSlash(component.Name)))
 		if _, err := os.Stat(dir); err != nil {
 			return fmt.Errorf("browser source component %s: %w", component.Name, err)
 		}
@@ -251,7 +245,7 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 			return err
 		}
 		base = archiveRoot + "/" + base
-		for _, local := range append(append([]string{}, entry.LocalPaths...), legalFilePaths(entry.LocalLegalFiles)...) {
+		for _, local := range slices.Concat(entry.LocalPaths, legalFilePaths(entry.LocalLegalFiles)) {
 			if filepath.IsAbs(local) {
 				continue
 			}
@@ -269,14 +263,14 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	}
 
 	legalInventory := map[string]any{"server": server, "tui": tui, "container": container}
-	inventoryData, err := json.MarshalIndent(legalInventory, "", "  ")
+	inventoryData, err := json.Marshal(legalInventory, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}
 	if err := addBytes(tarWriter, archiveRoot+"/LEGAL_INVENTORY.json", append(inventoryData, '\n')); err != nil {
 		return err
 	}
-	provenanceData, err := json.MarshalIndent(provenance, "", "  ")
+	provenanceData, err := json.Marshal(provenance, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}
@@ -467,12 +461,12 @@ func goDiscoveryTargets(repo string) ([]goTarget, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		parts := strings.Split(line, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || seen[line] {
+		fields := slices.Collect(strings.SplitSeq(line, "/"))
+		if len(fields) != 2 || fields[0] == "" || fields[1] == "" || seen[line] {
 			return nil, fmt.Errorf("invalid or duplicate TUI target %q", line)
 		}
 		seen[line] = true
-		targets = append(targets, goTarget{"tui", parts[0], parts[1]})
+		targets = append(targets, goTarget{"tui", fields[0], fields[1]})
 	}
 	if len(targets) == 0 {
 		return nil, errors.New("scripts/tui-targets.txt contains no targets")
@@ -486,7 +480,7 @@ func goDiscoveryTargets(repo string) ([]goTarget, error) {
 	if len(serverTargets) != 2 {
 		return nil, errors.New("scripts/tui-targets.txt must include linux/amd64 and linux/arm64")
 	}
-	return append(serverTargets, targets...), nil
+	return slices.Concat(serverTargets, targets), nil
 }
 
 func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope string) bool {
@@ -494,7 +488,7 @@ func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope
 		if entry.Ecosystem != "go" || entry.Name != name || entry.Version == "" {
 			continue
 		}
-		if !contains(entry.ArtifactScopes, scope) && !(scope == "server" && contains(entry.ArtifactScopes, "server/browser")) {
+		if !slices.Contains(entry.ArtifactScopes, scope) && !(scope == "server" && slices.Contains(entry.ArtifactScopes, "server/browser")) {
 			continue
 		}
 		if version == "" || entry.Version == version {
@@ -551,10 +545,11 @@ func componentLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([
 }
 
 func findReview(ecosystem, name string, reviews []legal.Review) *legal.Review {
-	for i := range reviews {
-		if reviews[i].Ecosystem == ecosystem && reviews[i].Name == name {
-			return &reviews[i]
-		}
+	i := slices.IndexFunc(reviews, func(review legal.Review) bool {
+		return review.Ecosystem == ecosystem && review.Name == name
+	})
+	if i >= 0 {
+		return &reviews[i]
 	}
 	return nil
 }
@@ -751,7 +746,7 @@ func discoverBrowser(repo, scanPath string, reviews []legal.Review) ([]legal.Com
 		roots[root] = struct{}{}
 	}
 	var result []legal.Component
-	for root := range roots {
+	for root := range maps.Keys(roots) {
 		component, err := npmComponent(root, reviews)
 		if err != nil {
 			return nil, err
@@ -802,7 +797,7 @@ func npmComponent(root string, reviews []legal.Review) (legal.Component, error) 
 }
 
 func applyReviewedSelections(components []legal.Component, reviews []legal.Review) []legal.Component {
-	result := append([]legal.Component(nil), components...)
+	result := slices.Clone(components)
 	for i := range result {
 		for _, review := range reviews {
 			if review.Ecosystem == result[i].Ecosystem && review.Name == result[i].Name {
@@ -842,7 +837,7 @@ func repositoryURL(value any, name string) string {
 
 func addProvenance(repo string, components []legal.Component, entries []legal.Provenance, scope string) ([]legal.Component, error) {
 	for _, entry := range entries {
-		if !contains(entry.ArtifactScopes, scope) && !(scope == "server/browser" && contains(entry.ArtifactScopes, "server")) {
+		if !slices.Contains(entry.ArtifactScopes, scope) && !(scope == "server/browser" && slices.Contains(entry.ArtifactScopes, "server")) {
 			continue
 		}
 		if entry.Name == "" || entry.Version == "" || entry.LicenseExpression == "" || strings.Contains(strings.ToUpper(entry.LicenseExpression), "UNKNOWN") || entry.ReviewNotes == "" {
@@ -864,7 +859,7 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 				return nil, fmt.Errorf("provenance %s local artifact hash changed: %s", entry.Name, artifact.Path)
 			}
 		}
-		files := append([]legal.LegalFile(nil), entry.LocalLegalFiles...)
+		files := slices.Clone(entry.LocalLegalFiles)
 		for i := range files {
 			path := filepath.Join(repo, filepath.FromSlash(files[i].Name))
 			data, err := os.ReadFile(path)
@@ -896,25 +891,16 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 	return sortComponents(components), nil
 }
 
-func contains(values []string, want string) bool {
-	return slices.Contains(values, want)
-}
-
 func sortComponents(components []legal.Component) []legal.Component {
 	seen := map[string]legal.Component{}
 	for _, component := range components {
 		seen[component.Ecosystem+"\x00"+component.Name+"\x00"+component.Version] = component
 	}
-	result := make([]legal.Component, 0, len(seen))
-	for _, component := range seen {
-		result = append(result, component)
-	}
-	sort.Slice(result, func(i, j int) bool {
-		left := result[i].Ecosystem + "\x00" + result[i].Name + "\x00" + result[i].Version
-		right := result[j].Ecosystem + "\x00" + result[j].Name + "\x00" + result[j].Version
-		return left < right
+	return slices.SortedFunc(maps.Values(seen), func(a, b legal.Component) int {
+		left := a.Ecosystem + "\x00" + a.Name + "\x00" + a.Version
+		right := b.Ecosystem + "\x00" + b.Name + "\x00" + b.Version
+		return cmp.Compare(left, right)
 	})
-	return result
 }
 
 func render(repo string, project legal.Project, version string, server, tui, container []legal.Component) ([]outputFile, error) {
@@ -992,7 +978,10 @@ func tuiReport(copyText, sourceURL string, licenseText []byte, noticesText strin
 }
 
 func marshal(value any) ([]byte, error) {
-	b, err := json.MarshalIndent(value, "", "  ")
+	// Generated legal artifacts have a checked-in indentation and trailing
+	// newline contract, so use deterministic v2 JSON with the same two-space
+	// indentation for reproducible snapshots.
+	b, err := json.Marshal(value, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err
 	}
@@ -1024,12 +1013,16 @@ func yesNo(value bool) string {
 
 func printReviewTemplate(server, tui, container []legal.Component, reviews []legal.Review) {
 	seen := map[string]legal.Component{}
-	for _, component := range append(append(server, tui...), container...) {
+	for _, component := range slices.Concat(server, tui, container) {
 		seen[component.Ecosystem+"\x00"+component.Name] = component
 	}
 	var out []map[string]any
-	for _, component := range sortComponents(values(seen)) {
-		files := append(append([]legal.LegalFile{}, component.LegalTexts...), component.Notices...)
+	for _, component := range slices.SortedFunc(maps.Values(seen), func(a, b legal.Component) int {
+		left := a.Ecosystem + "\x00" + a.Name + "\x00" + a.Version
+		right := b.Ecosystem + "\x00" + b.Name + "\x00" + b.Version
+		return cmp.Compare(left, right)
+	}) {
+		files := slices.Concat(component.LegalTexts, component.Notices)
 		out = append(out, map[string]any{
 			"ecosystem": component.Ecosystem, "name": component.Name, "reviewedVersion": component.Version,
 			"upstream": component.Source, "declaredLicenseExpression": component.DeclaredLicenseExpression,
@@ -1055,13 +1048,7 @@ func printReviewAudit(server, tui, container []legal.Component, reviews []legal.
 		{"server/browser", server}, {"tui", tui}, {"container", container},
 	} {
 		for _, component := range scoped.components {
-			var matched *legal.Review
-			for i := range reviews {
-				if reviews[i].Ecosystem == component.Ecosystem && reviews[i].Name == component.Name {
-					matched = &reviews[i]
-					break
-				}
-			}
+			matched := findReview(component.Ecosystem, component.Name, reviews)
 			state := "review-required"
 			if matched != nil && legal.ValidateReview(component, []legal.Review{*matched}) == nil {
 				state = "fingerprint-matches"
@@ -1074,12 +1061,4 @@ func printReviewAudit(server, tui, container []legal.Component, reviews []legal.
 		fatal(err)
 	}
 	fmt.Print(string(b))
-}
-
-func values(values map[string]legal.Component) []legal.Component {
-	result := make([]legal.Component, 0, len(values))
-	for _, value := range values {
-		result = append(result, value)
-	}
-	return result
 }

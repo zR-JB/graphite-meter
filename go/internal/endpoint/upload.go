@@ -48,8 +48,7 @@ const uploadBufSize = 256 * 1024
 // allocation. It stores *[]byte so Get/Put do not box the slice header.
 var scratchPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, uploadBufSize)
-		return &b
+		return new(make([]byte, uploadBufSize))
 	},
 }
 

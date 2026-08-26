@@ -2,7 +2,8 @@ package endpoint
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -71,15 +72,14 @@ func (a *sessionActivity) bump() {
 }
 
 func (a *sessionActivity) watch(ctx context.Context, bound time.Duration) {
-	tick := time.NewTicker(bound / 2)
-	defer tick.Stop()
+	tick := time.Tick(bound / 2)
 	last := a.n.Load()
 	quiet := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-tick:
 			now := a.n.Load()
 			if now != last {
 				last, quiet = now, 0
@@ -366,7 +366,8 @@ func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session,
 	}
 	defer str.Close()
 	defer transport.UnblockWritesOnDone(ctx, str)()
-	_ = json.NewEncoder(str).Encode(uploadProgressEvent{
+	// The refusal is one record in the WebTransport progress stream, not a body.
+	_ = json.MarshalEncode(jsontext.NewEncoder(str), uploadProgressEvent{
 		Type:    "error",
 		Message: uploadAccessMessage(access),
 		Code:    uploadAccessCode(access),

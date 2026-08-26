@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -72,12 +73,7 @@ func prefixContains(ps []netip.Prefix, a netip.Addr) bool {
 	if a.Is4In6() {
 		a = a.Unmap()
 	}
-	for _, p := range ps {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(ps, func(p netip.Prefix) bool { return p.Contains(a) })
 }
 
 // authClientAddress resolves the address an attempt budget is charged to. A

@@ -1,8 +1,7 @@
 package goclient
 
 import (
-	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -168,13 +167,13 @@ func newWTLatencyServer(t *testing.T) *httptest.Server {
 		origin := "http://" + r.Host
 		wtPing := testChannel("wt-ping", origin, false)
 		wtPing.Transport, wtPing.Protocol = wire.TransportWebTransport, "http3"
-		_ = json.NewEncoder(w).Encode(wire.Preflight{Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{wtPing},
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
 	})
 	return httptest.NewServer(mux)
 }
@@ -186,7 +185,7 @@ func TestPrepareRejectsAPingIntervalPastTheIdleBound(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.LatencyTransport = srv.URL, wire.TransportWebTransport
 	cfg.PingInterval = 45 * time.Second
-	if _, err := Prepare(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), MaxPingInterval.String()) {
+	if _, err := Prepare(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), MaxPingInterval.String()) {
 		t.Fatalf("Prepare with a 45s ping interval over the datagram bus = %v, want an error naming the %v bound", err, MaxPingInterval)
 	}
 }
@@ -201,7 +200,7 @@ func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.LatencyTransport = srv.URL, wire.TransportWebSocket
 	cfg.PingInterval = MaxPingInterval + 5*time.Second
-	if _, err := Prepare(context.Background(), cfg); err != nil {
+	if _, err := Prepare(t.Context(), cfg); err != nil {
 		t.Fatalf("Prepare over the WebSocket bus with a %v cadence = %v, want it accepted", cfg.PingInterval, err)
 	}
 }
@@ -217,13 +216,13 @@ func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
 		ws := testChannel("ws", origin, false)
 		wt := testChannel("wt", origin, false)
 		wt.Transport, wt.Protocol = wire.TransportWebTransport, "http3"
-		_ = json.NewEncoder(w).Encode(wire.Preflight{Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("fetch", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{ws, wt},
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(wire.Probe{ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{ProtocolNegotiated: "http/1.1"})
 	})
 	mux.Handle("/ws/ping", echoPingHandler())
 	srv := httptest.NewServer(mux)
@@ -232,7 +231,7 @@ func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.BaseURL = srv.URL
 	cfg.PingInterval = MaxPingInterval + 5*time.Second
-	prepared, err := Prepare(context.Background(), cfg)
+	prepared, err := Prepare(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("Prepare after WebTransport fallback: %v", err)
 	}

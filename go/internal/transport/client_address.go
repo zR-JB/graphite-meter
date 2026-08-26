@@ -3,6 +3,7 @@ package transport
 import (
 	"net/http"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -106,9 +107,8 @@ func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 		return chain, len(chain) > 0
 	}
 	if raw := h.Get("X-Forwarded-For"); raw != "" {
-		parts := strings.Split(raw, ",")
-		chain := make([]netip.Addr, 0, len(parts))
-		for _, part := range parts {
+		chain := make([]netip.Addr, 0, strings.Count(raw, ",")+1)
+		for part := range strings.SplitSeq(raw, ",") {
 			addr, ok := parseAddress(part)
 			if !ok {
 				return nil, false
@@ -151,12 +151,7 @@ func parseAddress(raw string) (netip.Addr, bool) {
 }
 
 func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
-	for _, prefix := range prefixes {
-		if prefix.Contains(addr) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(prefixes, func(prefix netip.Prefix) bool { return prefix.Contains(addr) })
 }
 
 // splitQuoted splits on separator outside RFC 7239 quoted-strings, reporting
@@ -165,7 +160,7 @@ func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
 func splitQuoted(raw string, separator byte) ([]string, bool) {
 	var parts []string
 	start, quoted, escaped := 0, false, false
-	for i := 0; i < len(raw); i++ {
+	for i := range len(raw) {
 		switch {
 		case escaped:
 			escaped = false

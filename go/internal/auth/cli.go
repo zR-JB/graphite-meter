@@ -4,7 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
+	"maps"
 	"net/http"
 	"net/url"
 	"time"
@@ -63,15 +64,11 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	now := s.now()
 	s.mu.Lock()
-	for key, pending := range s.approvals {
-		if !now.Before(pending.expires) {
-			delete(s.approvals, key)
-		}
-	}
+	maps.DeleteFunc(s.approvals, func(_ string, pending *cliApproval) bool { return !now.Before(pending.expires) })
 	approval := s.approvals[challenge]
 	if approval == nil {
 		count := 0
-		for _, pending := range s.approvals {
+		for pending := range maps.Values(s.approvals) {
 			if pending.session == p.session {
 				count++
 			}
@@ -124,7 +121,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Verifier string `json:"verifier"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Verifier) > 128 {
+	if err := jsonv2.UnmarshalRead(r.Body, &req); err != nil || len(req.Verifier) > 128 {
 		s.writeGrantPending(w)
 		return
 	}
@@ -145,7 +142,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	h := sha256.Sum256([]byte(grant))
 	sess := approval.session
 	if len(sess.grants) >= maxSessionGrants {
-		for old := range sess.grants {
+		for old := range maps.Keys(sess.grants) {
 			delete(sess.grants, old)
 			delete(s.grants, old)
 			break
@@ -156,7 +153,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	expires := sess.expires
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"token": grant, "expires": expires})
+	_ = jsonv2.MarshalWrite(w, map[string]any{"token": grant, "expires": expires})
 }
 
 func (s *Service) writeGrantPending(w http.ResponseWriter) {

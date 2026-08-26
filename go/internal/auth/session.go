@@ -10,8 +10,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 )
 
@@ -51,12 +52,14 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	defer s.mu.Unlock()
 	s.expireLocked(now)
 	var own []*session
-	for _, x := range s.sessions {
+	for x := range maps.Values(s.sessions) {
 		if x.subject == subject {
 			own = append(own, x)
 		}
 	}
-	sort.Slice(own, func(i, j int) bool { return own[i].created.Before(own[j].created) })
+	slices.SortFunc(own, func(a, b *session) int {
+		return a.created.Compare(b.created)
+	})
 	if len(own) >= maxSubjectSessions {
 		s.deleteSessionLocked(own[0])
 	}
@@ -73,17 +76,15 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 // it: its native-client grants and any pending browser approvals.
 func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
-	for grant := range sess.grants {
+	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ struct{}) bool {
 		delete(s.grants, grant)
-	}
-	for token := range sess.wtTokens {
+		return true
+	})
+	maps.DeleteFunc(sess.wtTokens, func(token [32]byte, _ struct{}) bool {
 		delete(s.wtTokens, token)
-	}
-	for challenge, approval := range s.approvals {
-		if approval.session == sess {
-			delete(s.approvals, challenge)
-		}
-	}
+		return true
+	})
+	maps.DeleteFunc(s.approvals, func(_ string, approval *cliApproval) bool { return approval.session == sess })
 	sess.cancel()
 }
 
@@ -93,7 +94,7 @@ func (s *Service) deleteSessionLocked(sess *session) {
 // single-session logout cannot. Victims are collected first, not mid-range.
 func (s *Service) deleteSubjectSessionsLocked(subject string) int {
 	var victims []*session
-	for _, sess := range s.sessions {
+	for sess := range maps.Values(s.sessions) {
 		if sess.subject == subject {
 			victims = append(victims, sess)
 		}
@@ -117,7 +118,7 @@ func (s *Service) revokeSessionHash(h [32]byte, keep *session) {
 }
 
 func (s *Service) expireLocked(now time.Time) {
-	for _, sess := range s.sessions {
+	for sess := range maps.Values(s.sessions) {
 		if !now.Before(sess.expires) {
 			s.deleteSessionLocked(sess)
 		}
@@ -128,13 +129,12 @@ func (s *Service) sweep(ctx context.Context) {
 	// Faster than the shortest thing it reaps: a CONNECT token lives 30 s and
 	// occupies its session's cap until swept, so a minute would let dead tokens
 	// crowd out live ones for a client that dials often.
-	t := time.NewTicker(wtTokenLifetime)
-	defer t.Stop()
+	t := time.Tick(wtTokenLifetime)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-t:
 			s.mu.Lock()
 			s.expireLocked(s.now())
 			s.expireWTTokensLocked(s.now())

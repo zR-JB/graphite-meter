@@ -8,6 +8,7 @@ package auth
 
 import (
 	"log"
+	"maps"
 	"net/http"
 	"net/netip"
 	"time"
@@ -55,14 +56,14 @@ func budgetKey(addr netip.Addr) string {
 // caller commits only after every other budget has also cleared.
 func (s *Service) attemptRoomLocked(store map[string]loginAttempt, name, key string, limit int, now time.Time) ([]time.Time, bool) {
 	if _, exists := store[key]; !exists && len(store) >= maxBudgetKeys {
-		for k, v := range store {
+		maps.DeleteFunc(store, func(k string, v loginAttempt) bool {
 			v.times = recentAttempts(v.times, now)
 			if len(v.times) == 0 {
-				delete(store, k)
-			} else {
-				store[k] = v
+				return true
 			}
-		}
+			store[k] = v
+			return false
+		})
 		if len(store) >= maxBudgetKeys {
 			s.noteCeilingLocked(name+"-address", now)
 			return nil, false

@@ -32,7 +32,7 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
@@ -83,7 +83,7 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	// lossAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
@@ -147,7 +147,7 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
@@ -217,7 +217,7 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
@@ -257,7 +257,7 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	attachTestLatencyTarget(r, srv.URL)
 
 	start := make(chan struct{}) // never closed: measurement never begins
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -292,7 +292,7 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 
 	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
-	_, _, err := r.redialPingBus(context.Background(), time.Now().Add(busRedialWindow))
+	_, _, err := r.redialPingBus(t.Context(), time.Now().Add(busRedialWindow))
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("redial error = %v, want AuthRequiredError", err)
 	}

@@ -34,7 +34,7 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: size}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var total atomic.Uint64
 	done := make(chan struct{})
@@ -85,7 +85,7 @@ func TestMeasureDownloadReportsBytes(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	res, err := r.measureDownload(ctx, "download", 350*time.Millisecond, start)
@@ -110,7 +110,7 @@ func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
 	defer srv.Close()
 	r := &runner{cfg: Config{DownloadBytesPerStream: 1024}, http: srv.Client()}
 	var total atomic.Uint64
-	if err := r.downloadLane(context.Background(), srv.URL, 0, &total); err == nil {
+	if err := r.downloadLane(t.Context(), srv.URL, 0, &total); err == nil {
 		t.Fatal("HTTP 429 did not fail the download lane")
 	}
 }
@@ -127,7 +127,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(150*time.Millisecond, cancel)
 	defer cancel()
 
@@ -183,7 +183,7 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: partial * 4}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
 
-	ctx, cancel := context.WithTimeout(context.Background(), window)
+	ctx, cancel := context.WithTimeout(t.Context(), window)
 	defer cancel()
 	var total atomic.Uint64
 	done := make(chan struct{})
@@ -234,7 +234,7 @@ func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	res, err := r.measureDownload(ctx, "download", 300*time.Millisecond, start)
@@ -258,7 +258,7 @@ func TestMeasureDownloadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 
 	start := make(chan struct{})
 	close(start)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	time.AfterFunc(200*time.Millisecond, cancel)
 
@@ -278,7 +278,7 @@ func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	start := make(chan struct{}) // never closed: still "warming up"
 

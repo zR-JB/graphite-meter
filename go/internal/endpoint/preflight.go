@@ -1,9 +1,10 @@
 package endpoint
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,7 +43,7 @@ func (p *Preflight) Handle(s transport.Session) error {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	return json.NewEncoder(w).Encode(p.build(r))
+	return json.MarshalWrite(w, p.build(r))
 }
 
 // build derives the bare hostname the client reached us on so native targets can
@@ -51,9 +52,7 @@ func (p *Preflight) build(r *http.Request) wire.Preflight {
 	// SplitHostPort fails on a port-less Host; the fallback also unwraps the
 	// brackets of a literal IPv6 authority.
 	host, _, _ := net.SplitHostPort(r.Host)
-	if host == "" {
-		host = strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "[")
-	}
+	host = cmp.Or(host, strings.TrimPrefix(strings.TrimSuffix(r.Host, "]"), "["))
 	return p.buildForHost(host)
 }
 

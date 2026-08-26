@@ -41,7 +41,7 @@ func TestNativeReference(t *testing.T) {
 				cfg.TransferStreams = goclient.TransferStreamPolicy{Forced: lanes}
 				cfg.LoadedLatency = false
 
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 				defer cancel()
 				var mean, peak float64
 				if err := goclient.Run(ctx, cfg, func(e goclient.Event) {

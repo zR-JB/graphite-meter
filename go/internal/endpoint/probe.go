@@ -1,7 +1,7 @@
 package endpoint
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -51,5 +51,5 @@ func (p *Probe) Handle(s transport.Session) error {
 		active, max := p.load()
 		probe.Load = &wire.ProbeLoad{Active: active, Max: max}
 	}
-	return json.NewEncoder(w).Encode(probe)
+	return json.MarshalWrite(w, probe)
 }

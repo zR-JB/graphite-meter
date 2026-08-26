@@ -63,26 +63,21 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 		return nil, false
 	}
 	a.active++
-	if a.active > a.peak {
-		a.peak = a.active
-	}
+	a.peak = max(a.peak, a.active)
 	if key != exemptKey {
 		a.byClient[key]++
 	}
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			a.mu.Lock()
-			a.active--
-			if key != exemptKey {
-				a.byClient[key]--
-				if a.byClient[key] == 0 {
-					delete(a.byClient, key)
-				}
+	return sync.OnceFunc(func() {
+		a.mu.Lock()
+		a.active--
+		if key != exemptKey {
+			a.byClient[key]--
+			if a.byClient[key] == 0 {
+				delete(a.byClient, key)
 			}
-			a.mu.Unlock()
-		})
-	}, true
+		}
+		a.mu.Unlock()
+	}), true
 }
 
 func (a *connectionAdmission) stats() admissionStats {

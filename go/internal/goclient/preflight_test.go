@@ -1,7 +1,6 @@
 package goclient
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -134,7 +133,7 @@ func testChannel(id, origin string, tls bool) wire.LatencyTarget {
 
 func attachTestLatencyTarget(r *runner, origin string) {
 	c := testChannel("test-ws", origin, false)
-	r.latencyTarget = &c
+	r.latencyTarget = new(c)
 }
 
 func TestWSEndpoint(t *testing.T) {
@@ -166,7 +165,7 @@ func TestGetPreflight(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		pf, err := getPreflight(context.Background(), srv.Client(), srv.URL)
+		pf, err := getPreflight(t.Context(), srv.Client(), srv.URL)
 		if err != nil {
 			t.Fatalf("getPreflight() error: %v", err)
 		}
@@ -185,7 +184,7 @@ func TestGetPreflight(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		_, err := getPreflight(context.Background(), srv.Client(), srv.URL)
+		_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -201,7 +200,7 @@ func TestGetPreflight(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		_, err := getPreflight(context.Background(), srv.Client(), srv.URL)
+		_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
 		if err == nil {
 			t.Fatal("expected decode error, got nil")
 		}

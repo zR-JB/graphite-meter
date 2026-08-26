@@ -23,10 +23,8 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 	laneCtx, cancel := context.WithCancel(ctx)
 	g := &laneGroup{cancel: cancel, errs: make(chan error, streams)}
 	stagger := r.laneStaggerStep(streams)
-	for i := range streams {
-		g.wg.Add(1)
-		go func(lane int) {
-			defer g.wg.Done()
+	for lane := range streams {
+		g.wg.Go(func() {
 			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
@@ -36,7 +34,7 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 				default:
 				}
 			}
-		}(i)
+		})
 	}
 	return g
 }
@@ -81,8 +79,7 @@ type rateLoop struct {
 }
 
 func (l rateLoop) run(ctx context.Context) (rateStats, error) {
-	ticker := time.NewTicker(rateSampleInterval)
-	defer ticker.Stop()
+	ticker := time.Tick(rateSampleInterval)
 	var deadline <-chan time.Time
 	if l.duration > 0 {
 		timer := time.NewTimer(l.duration)
@@ -107,7 +104,7 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 		case err := <-l.stageErr:
 			l.window(&stats)
 			return stats, err
-		case now := <-ticker.C:
+		case now := <-ticker:
 			l.sample(now, &stats)
 		}
 	}
@@ -125,9 +122,7 @@ func (s *rateStats) add(v float64) {
 		return
 	}
 	s.samples = append(s.samples, v)
-	if v > s.peak {
-		s.peak = v
-	}
+	s.peak = max(s.peak, v)
 }
 
 func (s *rateStats) setWindow(total uint64, elapsed time.Duration) {
@@ -176,7 +171,7 @@ func (s *latencyStats) snapshot() LatencyStats {
 		}
 		return LatencyStats{Loss: loss}
 	}
-	xs := append([]time.Duration(nil), s.values...)
+	xs := slices.Clone(s.values)
 	slices.Sort(xs)
 	var sum time.Duration
 	for _, v := range xs {

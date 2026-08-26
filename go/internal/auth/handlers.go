@@ -4,7 +4,7 @@ package auth
 // password, session-info, and logout handlers mounted behind Enforce.
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/url"
 	"time"
@@ -95,10 +95,8 @@ func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	remaining := p.Expires.Sub(s.now())
-	if remaining < 0 {
-		remaining = 0
-	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	remaining = max(remaining, 0)
+	_ = json.MarshalWrite(w, map[string]any{
 		"name": p.Name, "provider": p.Provider, "expires": p.Expires,
 		"csrf": p.session.csrf, "remainingMs": remaining.Milliseconds(),
 		"maximumLifetimeMs": sessionLifetime.Milliseconds(),

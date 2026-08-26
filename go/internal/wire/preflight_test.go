@@ -2,7 +2,7 @@ package wire
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"testing"
 
@@ -95,6 +95,31 @@ func TestTargetsWithoutATransportKeepTheirLegacyDefault(t *testing.T) {
 	}
 	if got := latency.Transport; got != TransportWebSocket {
 		t.Errorf("latency transport = %q, want the pre-transport default %q", got, TransportWebSocket)
+	}
+}
+
+func TestTargetJSONUsesStrictNativeV2Decoding(t *testing.T) {
+	tests := []struct {
+		name, document string
+	}{
+		{"duplicate name", `{"baseUrl":"https://one.example","baseUrl":"https://two.example"}`},
+		{"invalid UTF-8", "{\"baseUrl\":\"\xff\"}"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var target ThroughputTarget
+			if err := json.Unmarshal([]byte(test.document), &target); err == nil {
+				t.Fatalf("accepted malformed JSON %s", test.document)
+			}
+		})
+	}
+
+	var target ThroughputTarget
+	if err := json.Unmarshal([]byte(`{"BaseUrl":"https://speed.example:7246"}`), &target); err != nil {
+		t.Fatal(err)
+	}
+	if target.Origin != "" {
+		t.Fatalf("case-insensitive field match populated Origin=%q", target.Origin)
 	}
 }
 

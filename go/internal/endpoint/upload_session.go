@@ -1,7 +1,7 @@
 package endpoint
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -47,8 +47,5 @@ func (u *UploadSession) Handle(s transport.Session) error {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	enc := json.NewEncoder(w)
-	// The id is base64url, so HTML escaping would only mangle it.
-	enc.SetEscapeHTML(false)
-	return enc.Encode(uploadSessionResponse{UploadID: id})
+	return json.MarshalWrite(w, uploadSessionResponse{UploadID: id})
 }

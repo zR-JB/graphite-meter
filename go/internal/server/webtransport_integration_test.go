@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -101,7 +101,7 @@ func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*con
 func wtShapedServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (string, string, *endpoints) {
 	t.Helper()
 	cfg, sockets := wtTestConfig(t, tune)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
 	build, err := newListenerBuild(ctx, &cfg, sockets)
@@ -117,6 +117,7 @@ func wtShapedServer(t *testing.T, tune func(*config.Config), shape func(*endpoin
 	for _, svc := range build.services {
 		run, stop := svc.run, svc.stop
 		go func() { _ = run() }()
+		// Service cleanup must still run after t.Context is canceled.
 		t.Cleanup(func() { _ = stop(context.Background()) })
 	}
 
@@ -137,7 +138,7 @@ func insecureWTTransport() *webtransport.Transport {
 // dialWT opens a session, retrying while the QUIC listener finishes coming up.
 func dialWT(t *testing.T, wtTransport *testWTTransport, url string) *webtransport.Session {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	for {
 		_, sess, err := wtTransport.Dial(ctx, url, nil)
@@ -159,7 +160,7 @@ func TestWebTransportPingEchoesOverDatagrams(t *testing.T) {
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/ping")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	// Datagrams may be dropped, so each frame is re-sent until its reply lands
@@ -200,7 +201,7 @@ func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=1048576&streams=2")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	const want = 1 << 20
 	for lane := range 3 {
@@ -236,7 +237,7 @@ func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			sess := dialWT(t, wtTransport, base+"/wt/download?"+tc.query)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			// One accept past the expected count must find nothing.
 			seen := 0
@@ -268,7 +269,7 @@ func mintUploadID(t *testing.T, httpBase string) string {
 	var minted struct {
 		UploadID string `json:"uploadId"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&minted); err != nil {
+	if err := json.UnmarshalRead(res.Body, &minted); err != nil {
 		t.Fatalf("decode upload session: %v", err)
 	}
 	if minted.UploadID == "" {
@@ -297,7 +298,7 @@ func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
 	var writable atomic.Int64
 	var wg sync.WaitGroup
 	for lane := range opened {
-		openCtx, cancelOpen := context.WithTimeout(context.Background(), 10*time.Second)
+		openCtx, cancelOpen := context.WithTimeout(t.Context(), 10*time.Second)
 		str, err := sess.OpenUniStreamSync(openCtx)
 		cancelOpen()
 		if err != nil {
@@ -337,7 +338,7 @@ func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
 func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
 	base, httpBase, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id="+mintUploadID(t, httpBase))
-	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
+	acceptCtx, cancelAccept := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelAccept()
 	progress, err := sess.AcceptUniStream(acceptCtx)
 	if err != nil {
@@ -398,7 +399,7 @@ func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id=gmu_never_minted")
 	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
-	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
+	acceptCtx, cancelAccept := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelAccept()
 	progress, err := sess.AcceptUniStream(acceptCtx)
 	if err != nil {
@@ -410,7 +411,10 @@ func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
 		if line == "" {
 			continue
 		}
-		var event struct{ Type, Message string }
+		var event struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		}
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("decode record %q: %v", line, err)
 		}
@@ -431,7 +435,7 @@ func TestWebTransportDatagramFloodRepeats(t *testing.T) {
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	for got := 0; got <= 2000; {
 		d, err := sess.ReceiveDatagram(ctx)
@@ -455,7 +459,7 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=0")
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	if str, err := sess.AcceptUniStream(ctx); err == nil {
 		t.Fatalf("verify session opened a stream: %v", str)
@@ -479,7 +483,7 @@ func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	base, _, wtTransport := wtTestServerWithIdleBound(t, bound, nil)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=262144&streams=1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	start := time.Now()
 	deadline := start.Add(6 * bound)
@@ -523,7 +527,7 @@ func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?id=gmu_nosuchupload")
 
-	openCtx, cancelOpen := context.WithTimeout(context.Background(), 10*time.Second)
+	openCtx, cancelOpen := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelOpen()
 	lane, err := sess.OpenUniStreamSync(openCtx)
 	if err != nil {
@@ -555,9 +559,11 @@ func probeLoad(t *testing.T, httpBase string) int {
 	}
 	defer res.Body.Close()
 	var body struct {
-		Load *struct{ Active int } `json:"load"`
+		Load *struct {
+			Active int `json:"active"`
+		} `json:"load"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.UnmarshalRead(res.Body, &body); err != nil {
 		t.Fatalf("decode probe: %v", err)
 	}
 	if body.Load == nil {
@@ -662,7 +668,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 // answered: that is the outcome, whatever it says.
 func dialWTUntilAnswered(t *testing.T, d *webtransport.Transport, target string, hdr http.Header) (*http.Response, *webtransport.Session, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	for {
 		res, sess, err := d.Dial(ctx, target, hdr)
@@ -714,7 +720,7 @@ func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 	client := http.DefaultClient
 	id := mintUploadID(t, httpBase)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+id)
-	acceptCtx, cancelAccept := context.WithTimeout(context.Background(), 10*time.Second)
+	acceptCtx, cancelAccept := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelAccept()
 	progress, err := sess.AcceptUniStream(acceptCtx)
 	if err != nil {
@@ -726,7 +732,7 @@ func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 	}
 
 	const want = 4 << 20
-	lane, err := sess.OpenUniStreamSync(context.Background())
+	lane, err := sess.OpenUniStreamSync(t.Context())
 	if err != nil {
 		t.Fatalf("open lane: %v", err)
 	}
@@ -785,7 +791,7 @@ func TestGoClientRunsOverWebTransport(t *testing.T) {
 	clientCfg.DownloadDuration = 500 * time.Millisecond
 	clientCfg.UploadDuration = 500 * time.Millisecond
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	prepared, err := goclient.Prepare(ctx, clientCfg)
 	if err != nil {
@@ -838,7 +844,7 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 	clientCfg.DownloadDuration = 5 * time.Second
 	clientCfg.UploadDuration = 5 * time.Second
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	results := map[string]goclient.Result{}
 	err := goclient.Run(ctx, clientCfg, func(e goclient.Event) {
@@ -932,9 +938,8 @@ func (c *wtLaneCounter) enterLane(ctx context.Context) (*wtObservedSession, int)
 	}
 	c.lanes++
 	obs.lanes++
-	if obs.live++; obs.live > obs.peak {
-		obs.peak = obs.live
-	}
+	obs.live++
+	obs.peak = max(obs.peak, obs.live)
 	return obs, c.lanes
 }
 
@@ -1052,7 +1057,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	clientCfg.Stages = goclient.StageSet{Download: true}
 	clientCfg.DownloadDuration = 10 * time.Second
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	var mu sync.Mutex
 	closed, downloadResults := false, 0
@@ -1113,7 +1118,7 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		clientCfg.UploadDuration = 700 * time.Millisecond
 		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 		defer cancel()
 		results := map[string]goclient.Result{}
 		err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
@@ -1197,7 +1202,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 	clientCfg.UploadDuration = 3 * time.Second
 	clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: lanes}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	results := map[string]goclient.Result{}
 	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {

@@ -2,8 +2,10 @@ package endpoint
 
 import (
 	"bufio"
+	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +28,7 @@ type recordingConn struct {
 }
 
 func (c *recordingConn) SendDatagram(b []byte) error {
-	c.sent = append(c.sent, append([]byte(nil), b...))
+	c.sent = append(c.sent, bytes.Clone(b))
 	return nil
 }
 
@@ -152,7 +154,7 @@ func TestServeLaneStopsOnceAPeerRefusesALane(t *testing.T) {
 	lanes := &countingLanes{limit: 64}
 	h := &wtDownload{download: NewDownload(make([]byte, 4096), nil)}
 
-	h.serveLane(context.Background(), lanes, url.Values{"bytes": {"4096"}}, nil)
+	h.serveLane(t.Context(), lanes, url.Values{"bytes": {"4096"}}, nil)
 
 	if lanes.opened != 1 {
 		t.Fatalf("opened %d lanes against a peer that refused every one, want 1: the loop reopens streams for as long as the peer keeps refusing them", lanes.opened)
@@ -259,7 +261,7 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 }
 
 func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
-	src := datagramSource{conn: &recordingConn{incoming: []string{"first", "second"}}, ctx: context.Background()}
+	src := datagramSource{conn: &recordingConn{incoming: []string{"first", "second"}}, ctx: t.Context()}
 	buf := make([]byte, 64)
 	for _, want := range []string{"first", "second"} {
 		n, err := src.Read(buf)
@@ -270,7 +272,7 @@ func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
 			t.Fatalf("read = %q, want %q", got, want)
 		}
 	}
-	if _, err := src.Read(buf); err != io.EOF {
+	if _, err := src.Read(buf); !errors.Is(err, io.EOF) {
 		t.Fatalf("read after drain = %v, want EOF", err)
 	}
 }
@@ -278,7 +280,7 @@ func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
 // The drain feeds the upload counter, so a datagram larger than the buffer must
 // refuse rather than deliver a prefix and undercount the rest.
 func TestDatagramSourceRefusesToTruncate(t *testing.T) {
-	src := datagramSource{conn: &recordingConn{incoming: []string{"a datagram longer than the buffer"}}, ctx: context.Background()}
+	src := datagramSource{conn: &recordingConn{incoming: []string{"a datagram longer than the buffer"}}, ctx: t.Context()}
 	if _, err := src.Read(make([]byte, 8)); err != io.ErrShortBuffer {
 		t.Fatalf("read into a short buffer = %v, want io.ErrShortBuffer", err)
 	}
@@ -289,7 +291,7 @@ func TestDatagramSourceRefusesToTruncate(t *testing.T) {
 // left a timer armed for the whole read bound.
 func TestIdleTimeoutSourceDisarmsWhenTheDrainEnds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		// Long enough that a still-armed timer cannot be mistaken for a fired one.
 		src := newIdleTimeoutSource(ctx, &recordingConn{}, time.Hour, nil)
 		cancel()
@@ -314,7 +316,7 @@ func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
 
 	r, w := io.Pipe()
 	go func() {
-		NewUploadProgress(store).HandleStream(context.Background(), id, "owner", w)
+		NewUploadProgress(store).HandleStream(t.Context(), id, "owner", w)
 		_ = w.Close()
 	}()
 
@@ -339,7 +341,7 @@ func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
 // record, since a stream has no status code.
 func TestUploadProgressHandleStreamRefusesAnUnknownID(t *testing.T) {
 	var out strings.Builder
-	NewUploadProgress(NewUploadStore()).HandleStream(context.Background(), "gmu_missing", "owner", &out)
+	NewUploadProgress(NewUploadStore()).HandleStream(t.Context(), "gmu_missing", "owner", &out)
 
 	var event uploadProgressEvent
 	if err := json.Unmarshal([]byte(out.String()), &event); err != nil {

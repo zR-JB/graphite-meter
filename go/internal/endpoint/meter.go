@@ -49,15 +49,14 @@ func (m *Meter) Run(ctx context.Context) {
 	if m == nil {
 		return
 	}
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	ticker := time.Tick(time.Second)
 	var last int64
 	lastTick := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
+		case now := <-ticker:
 			total := m.bytes.Load()
 			delta := total - last
 			last = total

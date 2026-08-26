@@ -2,7 +2,7 @@ package goclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -35,7 +35,7 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 		return wire.Preflight{}, fmt.Errorf("preflight returned HTTP %d", res.StatusCode)
 	}
 	var pf wire.Preflight
-	if err := json.NewDecoder(res.Body).Decode(&pf); err != nil {
+	if err := json.UnmarshalRead(res.Body, &pf); err != nil {
 		return wire.Preflight{}, err
 	}
 	baseOrigin, err := url.Parse(res.Request.URL.String())
@@ -92,7 +92,7 @@ func getProbe(ctx context.Context, hc *http.Client, target *wire.ThroughputTarge
 		return wire.Probe{}, "", fmt.Errorf("probe returned HTTP %d", res.StatusCode)
 	}
 	var p wire.Probe
-	if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+	if err := json.UnmarshalRead(res.Body, &p); err != nil {
 		return wire.Probe{}, "", err
 	}
 	return p, res.Proto, nil
@@ -119,7 +119,7 @@ func getLatencyProbe(ctx context.Context, hc *http.Client, target *wire.LatencyT
 		return wire.Probe{}, fmt.Errorf("latency probe returned HTTP %d", res.StatusCode)
 	}
 	var p wire.Probe
-	if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+	if err := json.UnmarshalRead(res.Body, &p); err != nil {
 		return wire.Probe{}, err
 	}
 	return p, nil

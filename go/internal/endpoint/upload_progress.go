@@ -2,7 +2,8 @@ package endpoint
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/netip"
@@ -39,8 +40,8 @@ const (
 
 type uploadProgressEvent struct {
 	Type    string `json:"type"`
-	Bytes   uint64 `json:"bytes,omitempty"`
-	Nanos   uint64 `json:"nanos,omitempty"`
+	Bytes   uint64 `json:"bytes,omitzero"`
+	Nanos   uint64 `json:"nanos,omitzero"`
 	Message string `json:"message,omitempty"`
 	Code    string `json:"code,omitempty"`
 }
@@ -102,9 +103,10 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return nil
 	}
-	enc := json.NewEncoder(w)
+	// NDJSON requires a stateful encoder and one newline-delimited record per event.
+	enc := jsontext.NewEncoder(w)
 	emit := func(event uploadProgressEvent) bool {
-		if err := enc.Encode(event); err != nil {
+		if err := json.MarshalEncode(enc, event); err != nil {
 			return false
 		}
 		flusher.Flush()
@@ -137,8 +139,9 @@ func (e *UploadProgress) Handle(s transport.Session) error {
 // stream the server opens on a WebTransport upload session. Stream writes are
 // unbuffered, so there is no flush step.
 func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
-	enc := json.NewEncoder(w)
-	emit := func(event uploadProgressEvent) bool { return enc.Encode(event) == nil }
+	// This WebTransport feed is also NDJSON; retain Encoder framing per record.
+	enc := jsontext.NewEncoder(w)
+	emit := func(event uploadProgressEvent) bool { return json.MarshalEncode(enc, event) == nil }
 
 	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {
@@ -160,10 +163,8 @@ func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w i
 // fires, or a newer feed supersedes this one. emit and heartbeat report false
 // once their sink is gone.
 func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
-	tick := time.NewTicker(uploadProgressTick)
-	defer tick.Stop()
-	beat := time.NewTicker(uploadProgressHeartbeat)
-	defer beat.Stop()
+	tick := time.Tick(uploadProgressTick)
+	beat := time.Tick(uploadProgressHeartbeat)
 	var lastBytes uint64
 	for {
 		select {
@@ -181,11 +182,11 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(upl
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
 			return
-		case <-beat.C:
+		case <-beat:
 			if !heartbeat() {
 				return
 			}
-		case <-tick.C:
+		case <-tick:
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {

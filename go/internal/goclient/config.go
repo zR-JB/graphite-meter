@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"cmp"
 	"fmt"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"time"
@@ -217,27 +218,13 @@ func DefaultConfig() Config {
 }
 
 func (c Config) normalized() Config {
-	if c.BaseURL == "" {
-		c.BaseURL = "http://127.0.0.1:7246"
-	}
-	if c.ThroughputTarget == "" {
-		c.ThroughputTarget = "auto"
-	}
-	if c.ThroughputProtocol == "" {
-		c.ThroughputProtocol = "auto"
-	}
-	if c.ThroughputTransport == "" {
-		c.ThroughputTransport = "auto"
-	}
-	if c.LatencyTarget == "" {
-		c.LatencyTarget = "auto"
-	}
-	if c.LatencyTransport == "" {
-		c.LatencyTransport = "auto"
-	}
-	if c.Warmup < 0 {
-		c.Warmup = 0
-	}
+	c.BaseURL = cmp.Or(c.BaseURL, "http://127.0.0.1:7246")
+	c.ThroughputTarget = cmp.Or(c.ThroughputTarget, "auto")
+	c.ThroughputProtocol = cmp.Or(c.ThroughputProtocol, "auto")
+	c.ThroughputTransport = cmp.Or(c.ThroughputTransport, "auto")
+	c.LatencyTarget = cmp.Or(c.LatencyTarget, "auto")
+	c.LatencyTransport = cmp.Or(c.LatencyTransport, "auto")
+	c.Warmup = max(c.Warmup, 0)
 	if c.LatencyDuration <= 0 {
 		c.LatencyDuration = defaultLatencyDuration
 	}
@@ -250,18 +237,12 @@ func (c Config) normalized() Config {
 	if c.BidirectionalDuration <= 0 {
 		c.BidirectionalDuration = defaultTransferDuration
 	}
-	if c.TransferStreams.Forced < 0 {
-		c.TransferStreams.Forced = 0
-	}
+	c.TransferStreams.Forced = max(c.TransferStreams.Forced, 0)
 	if c.TransferStreams.AutomaticMax < 1 {
 		c.TransferStreams.AutomaticMax = defaultAutomaticStreams
 	}
-	if c.TransferStreams.AutomaticMax > maxTransferStreams {
-		c.TransferStreams.AutomaticMax = maxTransferStreams
-	}
-	if c.TransferStreams.Forced > maxTransferStreams {
-		c.TransferStreams.Forced = maxTransferStreams
-	}
+	c.TransferStreams.AutomaticMax = min(c.TransferStreams.AutomaticMax, maxTransferStreams)
+	c.TransferStreams.Forced = min(c.TransferStreams.Forced, maxTransferStreams)
 	if c.PingInterval <= 0 {
 		c.PingInterval = 250 * time.Millisecond
 	}

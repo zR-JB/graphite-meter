@@ -87,8 +87,5 @@ func parseBytes(raw string) int64 {
 	if err != nil || n < 0 {
 		return defaultBytes
 	}
-	if n > maxBytes {
-		return maxBytes
-	}
-	return n
+	return min(n, maxBytes)
 }
