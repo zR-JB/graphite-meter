@@ -213,6 +213,45 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	return out.Token
 }
 
+func authenticatedDownload(t *testing.T, client *http.Client, base, origin string, cookie *http.Cookie, bearer string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, base+"/download?bytes=1", nil)
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(body) != 1 {
+		t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
+	}
+}
+
+func assertUnauthenticatedDownload(t *testing.T, client *http.Client, base string) {
+	t.Helper()
+	res, err := client.Get(base + "/download?bytes=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", res.StatusCode)
+	}
+	if res.Header.Get("Graphite-Meter-Auth") != "required" {
+		t.Fatalf("missing auth marker: %v", res.Header)
+	}
+}
+
 // The positive path over the real transports.
 func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 	s := newAuthenticatedStack(t)
@@ -228,32 +267,11 @@ func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 		{"http3", s.h3Client, s.h3URL},
 	} {
 		t.Run(tc.name+"/session-cookie", func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, tc.base+"/download?bytes=1", nil)
-			req.AddCookie(s.session)
-			req.Header.Set("Origin", s.origin)
-			res, err := tc.client.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode != http.StatusOK || len(body) != 1 {
-				t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
-			}
+			authenticatedDownload(t, tc.client, tc.base, s.origin, s.session, "")
 		})
 
 		t.Run(tc.name+"/bearer-grant", func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, tc.base+"/download?bytes=1", nil)
-			req.Header.Set("Authorization", "Bearer "+bearer)
-			res, err := tc.client.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode != http.StatusOK || len(body) != 1 {
-				t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
-			}
+			authenticatedDownload(t, tc.client, tc.base, "", nil, bearer)
 		})
 	}
 }
@@ -318,18 +336,7 @@ func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
 		{"http3", s.h3Client, s.h3URL},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := tc.client.Get(tc.base + "/download?bytes=1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
-			if res.StatusCode != http.StatusForbidden {
-				t.Fatalf("status=%d, want 403", res.StatusCode)
-			}
-			if res.Header.Get("Graphite-Meter-Auth") != "required" {
-				t.Fatalf("missing auth marker: %v", res.Header)
-			}
+			assertUnauthenticatedDownload(t, tc.client, tc.base)
 		})
 	}
 }

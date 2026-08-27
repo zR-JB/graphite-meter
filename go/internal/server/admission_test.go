@@ -87,34 +87,28 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 	}
 }
 
-func TestRequestAdmissionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, 10*time.Millisecond, time.Hour)
+func assertAdmissionLifetime(t *testing.T, path string, requestLifetime, sessionLifetime time.Duration) {
+	t.Helper()
+	a := newRequestAdmission(1, 1, 1, 4, requestLifetime, sessionLifetime)
 	done := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 		close(done)
 	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	select {
 	case <-done:
 	default:
-		t.Fatal("handler did not observe lifetime deadline")
+		t.Fatalf("handler did not observe %s lifetime deadline", path)
 	}
 }
 
+func TestRequestAdmissionLifetime(t *testing.T) {
+	assertAdmissionLifetime(t, "/", 10*time.Millisecond, time.Hour)
+}
+
 func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, time.Minute, 10*time.Millisecond)
-	done := make(chan struct{})
-	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-		close(done)
-	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/wt/download", nil))
-	select {
-	case <-done:
-	default:
-		t.Fatal("session route did not observe the session deadline")
-	}
+	assertAdmissionLifetime(t, "/wt/download", time.Minute, 10*time.Millisecond)
 }
 
 // Session routes carry their own per-client budget, since one holds a slot for a whole test rather than a request.

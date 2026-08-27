@@ -31,12 +31,18 @@ func (b *observedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func TestH3BootstrapCannotServeTransfers(t *testing.T) {
+func testEndpoints(t *testing.T) *endpoints {
+	t.Helper()
 	cfg := config.Default()
 	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return e
+}
+
+func TestH3BootstrapCannotServeTransfers(t *testing.T) {
+	e := testEndpoints(t)
 	mux := listenerMuxConfigured(t.Context(), e, muxTopology{bootstrap: true}, static.Handler(), nil)
 	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
 		rec := httptest.NewRecorder()
@@ -48,11 +54,7 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 }
 
 func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
-	cfg := config.Default()
-	e, err := buildEndpoints(t.Context(), &cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := testEndpoints(t)
 	mux := listenerMuxConfigured(t.Context(), e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
@@ -68,11 +70,7 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 }
 
 func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
-	cfg := config.Default()
-	e, err := buildEndpoints(t.Context(), &cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := testEndpoints(t)
 	mux := listenerMuxConfigured(t.Context(), e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), nil)
 	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
 		rec := httptest.NewRecorder()
@@ -95,11 +93,7 @@ func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 }
 
 func TestH1MountsSPAAndDiscovery(t *testing.T) {
-	cfg := config.Default()
-	e, err := buildEndpoints(t.Context(), &cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := testEndpoints(t)
 	mux := listenerMuxConfigured(t.Context(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}), nil)
@@ -113,19 +107,8 @@ func TestH1MountsSPAAndDiscovery(t *testing.T) {
 }
 
 func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
-	hash, err := auth.HashPassword("secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	authn, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := config.Default()
-	e, err := buildEndpoints(t.Context(), &cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	authn := testPasswordAuth(t, "https://meter.example")
+	e := testEndpoints(t)
 	tests := []struct {
 		name     string
 		topology muxTopology
@@ -163,11 +146,7 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 }
 
 func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
-	cfg := config.Default()
-	e, err := buildEndpoints(t.Context(), &cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := testEndpoints(t)
 	h1 := listenerMuxConfigured(t.Context(), e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1}, static.Handler(), nil)
 	rec := httptest.NewRecorder()
 	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
@@ -234,14 +213,7 @@ func TestH3UniStreamCreditOutrunsABrowsersLaneCeiling(t *testing.T) {
 
 // The unit half of TestWebTransportConnectRefusesAForeignOrigin.
 func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
-	hash, err := auth.HashPassword("secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	authn, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	authn := testPasswordAuth(t, "https://meter.example")
 	withOrigin := func(origin string) *http.Request {
 		r := httptest.NewRequest(http.MethodConnect, "/wt/ping", nil)
 		if origin != "" {

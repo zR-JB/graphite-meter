@@ -443,12 +443,10 @@ func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 
 // An upload session carries only what the peer sends, and the one thing the server puts on it -- the progress feed --.
 func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
-	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
-
-	// Dial an upload session with a real id and then send nothing at all.
-	dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
-	waitForLoad(t, httpBase, 1)
-	waitForLoad(t, httpBase, 0)
+	assertWTSlotReleased(t, func(base, httpBase string, wtTransport *testWTTransport) {
+		// Dial an upload session with a real id and then send nothing at all.
+		dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
+	})
 }
 
 // A byte stream carries no channel to report a refusal on, so the refusal is the reset.
@@ -512,34 +510,36 @@ func waitForLoad(t *testing.T, httpBase string, want int) {
 	}
 }
 
-// A peer that stops reading and never closes still has to give its slot back.
-func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
+func assertWTSlotReleased(t *testing.T, open func(base, httpBase string, wtTransport *testWTTransport)) {
+	t.Helper()
 	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
-
-	// Never accept the lane.
-	dialWT(t, wtTransport, base+"/wt/download?bytes=1073741824&streams=1")
+	open(base, httpBase, wtTransport)
 	waitForLoad(t, httpBase, 1)
 	waitForLoad(t, httpBase, 0)
+}
+
+// A peer that stops reading and never closes still has to give its slot back.
+func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
+	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
+		// Never accept the lane.
+		dialWT(t, wtTransport, base+"/wt/download?bytes=1073741824&streams=1")
+	})
 }
 
 // A datagram download is served entirely by the server: the peer sends nothing on it.
 func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
-	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
-
-	// Dial the flood and never read a datagram.
-	dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
-	waitForLoad(t, httpBase, 1)
-	waitForLoad(t, httpBase, 0)
+	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
+		// Dial the flood and never read a datagram.
+		dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
+	})
 }
 
 // The datagram ping bus is not a session route, so it keeps the request bound and the request bucket -- but an idle.
 func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
-	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, nil)
-
-	// Dial and then send nothing.
-	dialWT(t, wtTransport, base+routeWTPing)
-	waitForLoad(t, httpBase, 1)
-	waitForLoad(t, httpBase, 0)
+	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
+		// Dial and then send nothing.
+		dialWT(t, wtTransport, base+routeWTPing)
+	})
 }
 
 // wtOriginCheck is the ONLY origin policy a WebTransport CONNECT passes through.

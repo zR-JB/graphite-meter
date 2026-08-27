@@ -83,6 +83,12 @@ func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
 	return net.ListenPacket("udp", addr)
 }
 
+func runTestTLS(t *testing.T) (string, string) {
+	t.Helper()
+	return writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
+		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+}
+
 // waitForOK polls a URL until it answers 200 or the deadline passes.
 func waitForOK(t *testing.T, client *http.Client, url string) {
 	t.Helper()
@@ -143,8 +149,7 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 }
 
 func TestRunServesTLSH1(t *testing.T) {
-	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	cert, key := runTestTLS(t)
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
 	cfg.Native.H1 = sockets.reserveTCP()
@@ -162,8 +167,7 @@ func TestRunServesTLSH1(t *testing.T) {
 }
 
 func TestRunServesH3(t *testing.T) {
-	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	cert, key := runTestTLS(t)
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
 	cfg.Native.H1 = sockets.reserveTCP()
@@ -190,8 +194,7 @@ func TestRunServesH3(t *testing.T) {
 }
 
 func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
-	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	cert, key := runTestTLS(t)
 
 	// Hold a port so the TLS listener cannot bind it.
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")

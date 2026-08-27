@@ -137,9 +137,7 @@ type loadMix struct {
 // observe runs one latency-only client over the named bus and returns its raw RTT samples and loss ratio.
 func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	t.Helper()
-	cfg := goclient.DefaultConfig()
-	cfg.BaseURL = base
-	cfg.InsecureSkipTLSVerify = true
+	cfg := stressClientConfig(base)
 	cfg.LatencyTransport = bus
 	cfg.Stages = goclient.StageSet{Latency: true}
 	cfg.Warmup = 200 * time.Millisecond
@@ -171,10 +169,8 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 
 // loaderRun drives one continuous transfer client until ctx ends, counting the bytes it moves.
 func loaderRun(ctx context.Context, base, transport string, upload bool, bytes, exits *atomic.Uint64) {
-	cfg := goclient.DefaultConfig()
-	cfg.BaseURL = base
+	cfg := stressClientConfig(base)
 	cfg.ThroughputTransport = transport
-	cfg.InsecureSkipTLSVerify = true
 	cfg.Stages = goclient.StageSet{Download: !upload, Upload: upload}
 	cfg.Warmup = 100 * time.Millisecond
 	cfg.DownloadDuration = time.Hour
@@ -196,6 +192,13 @@ func loaderRun(ctx context.Context, base, transport string, upload bool, bytes, 
 	}
 }
 
+func stressClientConfig(base string) goclient.Config {
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = base
+	cfg.InsecureSkipTLSVerify = true
+	return cfg
+}
+
 // wsPingSpam runs one reply-driven chain over a WebSocket: a new PING the moment the PONG lands.
 func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 	conn, _, err := websocket.Dial(ctx, url, nil)
@@ -204,27 +207,15 @@ func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 	}
 	defer conn.CloseNow()
 	var id uint32
-	send := func() error {
-		id++
-		return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
-	}
-	if err := send(); err != nil {
-		return err
-	}
-	for ctx.Err() == nil {
-		_, msg, err := conn.Read(ctx)
-		if err != nil {
-			return nil
-		}
-		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
-			continue
-		}
-		pings.Add(1)
-		if err := send(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return pingSpam(ctx, pings,
+		func() error {
+			id++
+			return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+		},
+		func(ctx context.Context) (string, error) {
+			_, msg, err := conn.Read(ctx)
+			return string(msg), err
+		})
 }
 
 // wtPingSpam is the same chain over session datagrams.
@@ -237,19 +228,27 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error 
 	}
 	defer sess.CloseWithError(0, "")
 	var id uint32
-	send := func() error {
-		id++
-		return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
-	}
+	return pingSpam(ctx, pings,
+		func() error {
+			id++
+			return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+		},
+		func(ctx context.Context) (string, error) {
+			msg, err := sess.ReceiveDatagram(ctx)
+			return string(msg), err
+		})
+}
+
+func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error, receive func(context.Context) (string, error)) error {
 	if err := send(); err != nil {
 		return err
 	}
 	for ctx.Err() == nil {
-		msg, err := sess.ReceiveDatagram(ctx)
+		msg, err := receive(ctx)
 		if err != nil {
 			return nil
 		}
-		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
+		if f, err := wire.Decode(msg); err != nil || f.Op != wire.OpPONG {
 			continue
 		}
 		pings.Add(1)
